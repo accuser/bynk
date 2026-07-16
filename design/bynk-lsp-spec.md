@@ -160,6 +160,12 @@ never resolved against text the user has already edited past.
   is gone; freshness is the contract, not a per-handler choice. `completion` and
   `document_symbol` remain outside it (they resolve against **live** buffer text
   directly, so there is no snapshot to be stale).
+- **A multi-file edit needs more than the per-file gate.** `rename` emits
+  versioned edits across every file referencing the symbol, so it refreshes
+  **every open buffer** (`analysis_covering_open_buffers`), not just the
+  cursor's — a buffer edited but not under the cursor would otherwise be stamped
+  with a stale version and the client would reject the whole rename. The per-URI
+  gate is right for a request that reads one file, not one that writes many.
 - **Decline, not stale.** The gate returns nothing — the request answers empty —
   only when it cannot reach the client's version: single-file mode (no project),
   a file outside every `include` root (never a snapshot key), or a concurrent

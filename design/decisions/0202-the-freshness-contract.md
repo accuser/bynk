@@ -68,6 +68,19 @@ outside every `include` root, or a concurrent edit that raced the refresh (rare;
 the next request is current). It never returns a snapshot older than the buffer.
 Declining briefly is the honest failure; a confident wrong answer is not.
 
+*Per-URI is not enough for a multi-file edit.* `rename` emits versioned edits
+across every file that references the symbol, and each is stamped with that
+file's analysed version — so it needs the round current for **every open
+buffer**, not just the cursor's. `analysis_for(cursor)` would leave a buffer
+edited-but-not-under-the-cursor stale, its edit stamped with an old version, and
+the client rejects the whole rename. `rename` therefore uses
+`analysis_covering_open_buffers`, which restores the whole-project guarantee the
+pre-v0.179 `fresh_analysis` gave — as a version-aware refresh, not an
+unconditional one. This is the boundary of the per-URI gate: it is right for a
+request that *reads* one file, wrong for one that *writes* many. (Review of #666
+caught this; `rename` was, before the gate, the one handler with the strongest
+freshness.)
+
 `completion` and `document_symbol` stay outside the contract — they resolve
 against **live** buffer text, so there is no snapshot to be stale. `type_receiver`
 (completion's member typing and signature help) keeps its own freshness path: it

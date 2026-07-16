@@ -755,6 +755,58 @@ impl Backend {
         current(&a).then_some(a)
     }
 
+    /// Slice B: the analysis for a handler that emits **multi-file versioned
+    /// edits** — today, `rename`. Per-URI freshness ([`Self::analysis_for`]) is
+    /// not enough here: a rename touches every file that references the symbol,
+    /// and each edit is stamped with *that* file's analysed version, so the
+    /// round must be current for **every open buffer**, not just the cursor's.
+    ///
+    /// Without this, a buffer edited since the last round but not under the
+    /// cursor keeps its stale version in the round; `rename`'s edit for it is
+    /// then stamped with that old version and the client rejects the whole
+    /// operation (VS Code: "document changed since the refactoring was
+    /// requested"). This restores the whole-project guarantee the pre-v0.179
+    /// `fresh_analysis` gave — as a version-aware refresh, not an unconditional
+    /// one. Returns `None` on the same terms as `analysis_for` (no project, or a
+    /// concurrent edit that raced the refresh).
+    async fn analysis_covering_open_buffers(&self) -> Option<Arc<Analysis>> {
+        // Every open buffer that maps into the project must be analysed at its
+        // current version. A buffer outside the project (no snapshot key) is not
+        // part of a project rename and does not gate it.
+        let all_current =
+            |a: &Arc<Analysis>, docs: &std::collections::HashMap<Url, DocumentState>| {
+                docs.iter()
+                    .all(|(uri, doc)| match Self::uri_to_rel(a, uri) {
+                        Some(rel) if a.snapshots.contains_key(&rel) => {
+                            a.versions.get(&rel) == Some(&doc.version)
+                        }
+                        _ => true,
+                    })
+            };
+
+        {
+            let state = self.state.read().await;
+            if let Some(a) = state.analysis.clone()
+                && all_current(&a, &state.docs)
+            {
+                return Some(a);
+            }
+        }
+        let _guard = self.refresh_lock.lock().await;
+        {
+            let state = self.state.read().await;
+            if let Some(a) = state.analysis.clone()
+                && all_current(&a, &state.docs)
+            {
+                return Some(a);
+            }
+        }
+        self.refresh_now().await;
+        let state = self.state.read().await;
+        let a = state.analysis.clone()?;
+        all_current(&a, &state.docs).then_some(a)
+    }
+
     /// Run a round now, superseding any pending debounced one. Bumping the
     /// generation makes a scheduled round (which checks it before running) bail,
     /// so a request-driven refresh does not race a redundant debounce round that
@@ -1978,10 +2030,25 @@ impl LanguageServer for Backend {
             message: msg.into(),
             data: None,
         };
-        // Plan against a *fresh* analysis of the current buffers, so the
-        // edits and the captured versions describe live state.
-        let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
+        // Slice B: rename emits versioned edits across *every* file that
+        // references the symbol, so it needs the round current for **all** open
+        // buffers, not just the cursor's (`analysis_for` would leave a dirty
+        // non-cursor file stale and its edit would be stamped with an old
+        // version, which the client rejects). `analysis_covering_open_buffers`
+        // restores the whole-project freshness the pre-v0.179 `fresh_analysis`
+        // gave. The cursor's file is one of those buffers, so it is current too;
+        // resolve `rel`/`offset` against it here (what `index_position` did).
+        let Some(analysis) = self.analysis_covering_open_buffers().await else {
             return Err(refused("rename requires a project (bynk.toml)".into()));
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
+            return Ok(None);
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Ok(None);
+        };
+        let Some(offset) = crate::position::position_to_offset(text, pos) else {
+            return Ok(None);
         };
         let plan = crate::index_queries::plan_rename(&analysis.index, &rel, offset, &new_name)
             .map_err(refused)?;
@@ -3225,6 +3292,97 @@ mod tests {
             backend.analysis_for(&uri).await.is_none(),
             "a file outside the include roots is never a snapshot key — decline, \
              don't serve a round that doesn't cover it",
+        );
+    }
+
+    /// Review of #666: rename emits versioned edits across every file that
+    /// references the symbol, so it must refresh **all** open buffers, not just
+    /// the cursor's. Edit a non-cursor file that references the symbol, then
+    /// rename from the (unedited) definition file: the edit for the dirty file
+    /// must carry its *current* version, or the client rejects the whole rename.
+    /// Under the per-URI gate the cursor's file was current, so no refresh ran
+    /// and the dirty file kept its stale version.
+    #[tokio::test]
+    async fn a_multi_file_rename_stamps_a_dirty_non_cursor_file_at_its_current_version() {
+        let util = "commons demo.util\n\ntype Money = Int where Positive\n";
+        let thing = "commons demo.thing\n\nuses demo.util\n\nfn f(m: Money) -> Money {\n  m\n}\n";
+        let s = scratch_project(
+            "rename_multi",
+            &[
+                ("bynk.toml", "[project]\nname=\"demo\"\n"),
+                ("src/demo/util.bynk", util),
+                ("src/demo/thing.bynk", thing),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let uri = |rel: &str| {
+            let abs = s.0.join(rel);
+            Url::from_file_path(abs.canonicalize().unwrap_or(abs)).unwrap()
+        };
+        let util_uri = uri("src/demo/util.bynk");
+        let thing_uri = uri("src/demo/thing.bynk");
+
+        for (u, text) in [(&util_uri, util), (&thing_uri, thing)] {
+            backend
+                .did_open(DidOpenTextDocumentParams {
+                    text_document: TextDocumentItem {
+                        uri: u.clone(),
+                        language_id: "bynk".into(),
+                        version: 1,
+                        text: text.to_string(),
+                    },
+                })
+                .await;
+        }
+        backend.run_project_diagnostics().await;
+
+        // Edit the NON-cursor file (`thing`) to version 2 — a blank line above,
+        // so `Money`'s references shift but still resolve.
+        let thing_v2 = format!("\n{thing}");
+        backend
+            .did_change(DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    uri: thing_uri.clone(),
+                    version: 2,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: thing_v2.clone(),
+                }],
+            })
+            .await;
+
+        // Rename `Money` from its definition in `util` (untouched, still v1).
+        let money_off = util.find("Money").unwrap();
+        let pos = crate::position::offset_to_position(util, money_off);
+        let edit = backend
+            .rename(RenameParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: util_uri.clone(),
+                    },
+                    position: pos,
+                },
+                new_name: "Amount".into(),
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("rename must not error")
+            .expect("rename must produce edits");
+
+        let DocumentChanges::Edits(edits) = edit.document_changes.unwrap() else {
+            panic!("expected document-change edits");
+        };
+        let thing_edit = edits
+            .iter()
+            .find(|e| e.text_document.uri == thing_uri)
+            .expect("the rename must edit `thing`, which references the symbol");
+        assert_eq!(
+            thing_edit.text_document.version,
+            Some(2),
+            "the dirty non-cursor file's edit must carry its current version (2), \
+             not the stale round's (1) — else the client rejects the whole rename",
         );
     }
 
