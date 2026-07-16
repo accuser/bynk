@@ -4,10 +4,10 @@
   [#656](https://github.com/accuser/bynk/issues/656)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); this doc
   lands via a **settling draft PR** ("Part of #656" — never `Closes`, which would
-  kill the spine at adoption). Draft status *is* the settling phase: **Q2, Q3 and
-  Q7 are settled** (§4.2.1, §4.1.2, §4.1.1) — which unblocks **Slice A**, the
-  unit-tier surface. **Q1 and Q4–Q6 remain open** in §7 and must be closed before
-  the PR is marked ready for review. Merging the PR settles *direction* and is
+  kill the spine at adoption). Draft status *is* the settling phase: **Q1, Q2, Q3
+  and Q7 are settled** (§3.4, §4.2.1, §4.1.2, §4.1.1) — which unblocks **Slice A**
+  and **Slice B**. **Q4–Q6 remain open** in §7 and must be closed before the PR is
+  marked ready for review. Merging the PR settles *direction* and is
   **not** build authorisation — a slice is approved to build only when its own
   proposal is `accepted`. Live slice state is on the spine.
 - **Realises:** the rung the retired testing track's subject ladder
@@ -27,8 +27,9 @@
   settling state; none is settled unless it says so.
   - **A tier already chooses the entry — an http service has a second door**
     (§3 — *proposed, the doc's spine claim*).
-  - **`system_needs_wire` relaxes to "≥ 2 contexts *or* a public boundary"**
-    (§3.4 — **Q1, open**).
+  - **`system_needs_wire`'s count becomes the property it proxied: a `system`
+    suite needs a real serialisation edge — a consumed context, `http`, or
+    `queue`; not `cron`** (§3.4 — **Q1, settled**; amends ADR 0153 D5 *and* D6).
   - **A case names its principal with `by <Actor>(<identity>)` at the call site —
     an actor is the caller, not a seam** (§4.2.1 — **Q2, settled**).
   - **How a case addresses a parameterised route — the pattern is the name;
@@ -96,7 +97,7 @@ it with an identity, which needs no crypto, no `fetch`, and no ADR amendment.
 The second — a full `fetch` request carrying a properly formed identity — is a
 distinct problem with its own prerequisites (§4.2, §8). Conflating them is the
 main way this track could stall: the cheap, high-value slice would end up waiting
-on a signer and an ADR amendment it does not need.
+on a signer and an ADR amendment (§3.4) it does not need.
 
 **Out of scope — `websocket`.** It is structurally different, not merely harder,
 and should get its own concept rather than be bent into this one:
@@ -262,7 +263,7 @@ The one thing a slice must not do is frame this as "let a test construct an
 invalid `Title`". That ask loses against a v0.156 decision that already rejected
 a *weaker* version of it.
 
-### 3.4 The one amendment: `system_needs_wire`
+### 3.4 The one amendment: `system_needs_wire` — Q1, SETTLED
 
 `suite todos as system` is refused today:
 
@@ -272,20 +273,87 @@ a *weaker* version of it.
   note: … test a single context with `unit` or `integration`
 ```
 
-`todo` is a single context that consumes nothing. Under ADR 0153 D5/D6 the
-`system` tier is defined as the cross-context wired tier and requires ≥ 2
-contexts, because when it was written the only wire *was* cross-context.
+`todo` is a single context that consumes nothing, so its inferred participant set
+is one, and ADR 0153 D5 rejects it.
 
-Once the public route table is a door, a single context with an http service
-**does** have something to wire: its own boundary. The rule becomes:
+**The rule is a proxy, and the implementation says so.** The check is
+`participants.len() < 2` (`bynk-emit/src/project/tests_emit.rs:411`), but its own
+comment gives the reason:
 
-> a `system` suite needs **≥ 2 contexts _or_ a public boundary**
+> `// least one consumed context. Fewer than two participants means there is`
+> `// nothing to serialise across (replaces `too_few_participants`).`
 
-This is a real amendment to a settled ADR, and it is the track's one genuine
-change to the existing test model. It is narrow and well-motivated — far smaller
-than the new orthogonal axis an earlier draft proposed. Note the diagnostic's
-current note ("test a single context with `unit` or `integration`") also becomes
-misleading and must change: those tiers have no boundary.
+The *purpose* is **"nothing to serialise across"**. The count is how that was
+measured when the only serialisation edge *was* cross-context — an exact proxy at
+the time, and D6's "`system` is the cross-context, wired tier (it stands up ≥ 2
+contexts across the real serialisation edge)" reads the same way. Once the public
+door is reachable (§3), the proxy under-counts: `todo` has no consumed context and
+a real serialisation edge, and the rule cannot tell.
+
+**The decision: a `system` suite needs a real serialisation edge.** The count is
+replaced by the property it was standing in for.
+
+**What qualifies — and cron does not.** "A public boundary" (an earlier draft's
+wording) is too coarse. Not every public entry serialises:
+
+| entry | inbound | outbound | edge? |
+|---|---|---|---|
+| consumed context | `callService` → JSON | decoded result | **yes** |
+| `http` | `deserialise_<Body>`, path params via `<T>.of` | `serialise_<T>` → response body | **yes** |
+| `queue` | `deserialise_<Msg>(msg.body)` | verdict is `msg.ack()`/`retry()`, in-process | **yes** (inbound) |
+| `cron` | `event.cron` string switch; `scheduledTime` a number | **return value dropped** (`console.error`, `workers_entry.rs:505-508`) | **no** |
+
+`scheduled` deserialises nothing and serialises nothing: it switches on a literal
+string and may pass a `number`. So a cron-only context at `system` would promise an
+edge it does not have — precisely the empty promise D5 exists to prevent. **Cron
+alone does not admit a suite to `system`**, and that costs nothing: a cron handler
+is fully covered at `unit`, and its schedule string is a compile-time-resolved name
+exactly as a route pattern is (§3.2), so a mistyped schedule is an unknown-handler
+error rather than something a tier could catch.
+
+So the rule is:
+
+> A `system` suite needs at least one **real serialisation edge** — a consumed
+> context, or a service whose entry serialises (`http`, `queue`). A target with
+> neither is `bynk.tier.system_needs_wire`.
+
+**The scope of the amendment, stated honestly.** This touches two decisions, not
+one:
+
+- **D5** — `participants.len() < 2` becomes "no serialisation edge". The
+  `consumes`-closure inference it settled is untouched; only the sufficiency test
+  changes.
+- **D6** — "`system` is the **cross-context**, wired tier" becomes "`system` is the
+  tier that crosses a real serialisation edge — cross-context *or* the public
+  boundary". This is the load-bearing half: `system` stops meaning *cross-context*
+  and starts meaning *serialising*. D6's split of constraints by tier survives, and
+  `integration` is untouched — it remains real collaborators within one context, no
+  wire.
+
+**D5's re-openability clause does not apply, and this does not lean on it.** D5 is
+re-openable "only against a concrete case where the participant set is genuinely
+ambiguous"; `todo`'s set is not ambiguous, it is empty. So this wins as a straight
+amendment or not at all, on the argument above: the rule is a proxy, the proxy's
+own comment names the purpose, and the purpose is met.
+
+**The diagnostic changes with it.** Both the message ("has nothing to wire — the
+target consumes no other context") and the note ("test a single context with `unit`
+or `integration`") become wrong: the note recommends two tiers that have no
+boundary, which is the advice that sent this investigation looking for a fourth
+tier in the first place. New shape:
+
+```
+[bynk.tier.system_needs_wire] `system`-tier suite for `pure.helpers` has no
+  serialisation edge — the target consumes no other context and exposes no `http`
+  or `queue` service
+  note: a `system` case crosses a real serialise → JSON → deserialise boundary;
+  this target has none to cross, so `unit` already covers it
+```
+
+**Left to the slice:** whether the diagnostic keeps the name `system_needs_wire`.
+"Wire" now means *serialisation edge* rather than *cross-context link*, which is a
+stretch but arguably the generalisation the word always wanted; renaming costs
+churn in fixtures and docs for a cosmetic gain. Recorded, not decided.
 
 ## 4. The surface
 
@@ -732,15 +800,17 @@ while the Bearer question is a design decision.
 
 ## 7. Open questions (settle before slicing)
 
-- **Q1 — Does `system_needs_wire` relax as §3.4 proposes?** This is the one
-  amendment to a settled ADR and it gates the system-tier slice (not the unit-tier
-  one). ADR 0153 D5/D6 attach the ≥2-context rule to the tier; the proposal
-  re-attaches it to "has something to wire". **Note the ADR's own re-openability
-  clause does not help here:** D5 is re-openable only "against a concrete case
-  where the participant set is genuinely ambiguous", and `todo`'s set is not
-  ambiguous — it is empty. So this must win as a straight amendment, on the
-  argument that D6 defined `system` as cross-context *because the only wire then
-  was cross-context*, not because the boundary was considered and excluded.
+- **Q1 — Does `system_needs_wire` relax? — SETTLED (§3.4).** Yes, but as the
+  *property* the count proxied, not as a wider count. A `system` suite needs a real
+  **serialisation edge**: a consumed context, or an `http`/`queue` service. **`cron`
+  does not qualify** — `scheduled` switches on a literal string and may pass a
+  `number`, serialising nothing in either direction, so admitting it would be the
+  empty promise D5 exists to prevent. Amends **D5** (the count → the edge) and
+  **D6** (`system` stops meaning *cross-context* and starts meaning *serialising*);
+  `integration` and the `consumes`-closure inference are untouched. Does **not**
+  lean on D5's re-openability clause, which is scoped to an ambiguous participant
+  set — `todo`'s is empty, not ambiguous. The diagnostic's message and note both
+  change with it.
 - **Q2 — What is the spelling for arranging an actor? — SETTLED (§4.2.1).**
   `by <Actor>(<identity>)` at the **call site**. `stub` is not widened: an actor is
   the caller, not a collaborator, so it is the wrong semantic category and ADR 0154
@@ -783,7 +853,9 @@ wiring in a mixed suite) and ADR 0154's (**provider substitution across the
 ## 8. Slice decomposition (ordered, candidate)
 
 The ordering follows §2's separability: the unit-tier surface ships first and
-alone, because it needs no crypto, no `fetch`, and no ADR amendment.
+alone, because it needs no crypto, no `fetch`, and no ADR amendment. Note **`cron`
+appears only in Slice A** — it has no serialisation edge, so it has no `system`
+tier at all (§3.4); `unit` is its whole story.
 
 - **Slice 0 — the addressing generalisation.** Widen `symbols.rs:614-620` beyond
   `HandlerKind::Call`, and replace the `calls.rs:1741` `method.name == "call"`
@@ -799,11 +871,15 @@ alone, because it needs no crypto, no `fetch`, and no ADR amendment.
   two gates. It needs neither `Wire` (system-only) nor Q1. **Ready to propose.**
 - **Slice B — the system-tier boundary.** `as system` on an http suite: a full
   `fetch` request carrying a properly formed identity, asserting on the decoded
-  `HttpResult`. Needs Q1 (the `system_needs_wire` relaxation), Q3, Q5.
-- **Slice C — the rejection paths.** Raw pre-validation input → 400; missing or
-  invalid credential → 401; the 405/OPTIONS fall-through. This is the slice that
-  pays for the boundary work (§1), and it depends on Slice B's raw-payload
-  position.
+  `HttpResult`. Lands the §3.4 amendment (the `system_needs_wire` count becomes the
+  serialisation-edge property) — the track's one change to a settled ADR, and the
+  reason this slice carries an ADR while Slice A does not. **Q1 and Q3 are settled;
+  it needs Q5** (where the signer lives).
+- **Slice C — the rejection paths.** `Wire` input → 400; missing or invalid
+  credential → 401; the 405/OPTIONS fall-through. This is the slice that pays for
+  the boundary work (§1). Depends on Slice B, and owns §4.3.1's residual: whether
+  the rejection payload surfaces `BoundaryError` whole or a narrower http-only sum.
+  Must not encode #659's current unstamped-400 behaviour as expected (§4.3).
 - **Deferred — websocket** (§2), **OIDC** (Q6), and the **case-level `by` default**
   (§4.2.1).
 
