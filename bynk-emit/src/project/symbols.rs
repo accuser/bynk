@@ -529,6 +529,13 @@ pub struct FileDeclIndex {
     pub methods: HashMap<String, HashMap<String, PathBuf>>,
 }
 
+/// **Tree-relative, deliberately.** This is an *emit* structure, not an index:
+/// `record_name_ref` compares these paths against `ctx.source_path`
+/// (`emitter.rs`), which is the file's `include`-root-relative path. Keying it
+/// by `identity_path` (ADR 0198) makes `path != &ctx.source_path` always true
+/// for a split project, so a name declared in the *same* file is emitted as a
+/// sibling import of itself — the module then cannot load, and a workers
+/// runtime test hangs rather than fails. See ADR 0200 (E).
 pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDeclIndex {
     let mut idx = FileDeclIndex {
         types: HashMap::new(),
@@ -536,7 +543,7 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
         methods: HashMap::new(),
     };
     for &i in indices {
-        let path = parsed[i].identity_path.clone();
+        let path = parsed[i].source_path.clone();
         for item in parsed[i].items() {
             match item {
                 CommonsItem::Type(t) => {

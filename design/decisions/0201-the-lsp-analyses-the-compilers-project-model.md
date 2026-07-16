@@ -131,8 +131,19 @@ chasing the failure.
 
 *Consequence:* the emit paths deliberately **not** covered — `ts_output_path`,
 `CompiledFile::source_path`, `tests_prefix.join(…)` for a reported test path,
-`is_multi_file_layout` — stay tree-relative, and now have a test that would fail
-if someone "fixed" them. They are a third role, not a missed conversion.
+`is_multi_file_layout`, and `build_file_decl_index` — stay tree-relative. They
+are a third role, not a missed conversion.
+
+`build_file_decl_index` is the one that proves the point, because converting it
+looked right and was not. `record_name_ref` (`emitter.rs`) compares its paths
+against `ctx.source_path`, which is tree-relative; keying it by identity makes
+`path != &ctx.source_path` **always true** for a split project, so a name
+declared in the *same* file emits a sibling import of itself. The module then
+cannot load — and the failure is a **hang**, not an assertion: `workers_runtime_smoke`
+polls a workerd that never serves. The invariant in this section cannot catch
+this, because the defect is a path that must *not* be an analysis key. Only
+running the workers test catches it, which is the argument for never skipping a
+test to make a gate go green.
 
 ## Consequences
 
