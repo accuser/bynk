@@ -67,7 +67,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`deploy.md`](deploy.md) | [#558](https://github.com/accuser/bynk/issues/558) | Settling — no slice authorised | The `bynk deploy` verb: provisioning + remote deploy, and the load-bearing provisioning-state model |
-| [`lsp-foundations.md`](lsp-foundations.md) | [#640](https://github.com/accuser/bynk/issues/640) | Slicing (slice A proposed) | The foundation under the shipped LSP surface: one project model shared with `bynkc`, a freshness contract, the lifecycle, and the test seam that makes all three testable |
+| [`lsp-foundations.md`](lsp-foundations.md) | [#640](https://github.com/accuser/bynk/issues/640) | Slicing (slice 0 shipped) | The foundation under the shipped LSP surface: one project model shared with `bynkc`, a freshness contract, the lifecycle, and the test seam that makes all three testable |
 
 (`documentation.md` and `deploy.md` pre-date the GitHub-native flow, so their
 docs were committed by ordinary PRs rather than settling draft PRs; the spine
