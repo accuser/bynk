@@ -136,11 +136,17 @@ The LSP server runs the existing Bynk compiler on the project's source corpus an
   does not close it).
 - Project-level diagnostics with no single owning file (group/cycle/
   directory validations) surface on `bynk.toml` at position 0:0.
-- Single-file mode (no `bynk.toml`): the per-buffer `diagnose` path,
-  unchanged.
-- Debounce: 200ms, generation-counter based (a typing burst produces one
-  analysis). Incremental/salsa-style recompute is deferred — full
-  re-analysis is acceptable at current scale.
+- Single-file mode (no `bynk.toml`): the per-buffer `diagnose` path — also
+  debounced (v0.184), so a burst runs one `diagnose`, not one per keystroke.
+- Debounce (v0.184, one scheduler over both modes): a single generation-based
+  debounce at the configured `[lsp] diagnostics_debounce_ms` (default 300 ms).
+  A typing burst produces one analysis. Before v0.184 the project path
+  debounced twice — the configured delay *plus* a hardcoded 200 ms — and
+  single-file mode had no generation; both are now the one scheduler. A round
+  already in flight when a newer edit arrives is not aborted (a whole-project
+  analysis runs on a blocking thread and cannot be cancelled) — its result is
+  discarded at commit instead, never published. Incremental/salsa-style
+  recompute is deferred — full re-analysis is acceptable at current scale.
 - Reported back via `textDocument/publishDiagnostics`.
 
 **Severity levels:**
