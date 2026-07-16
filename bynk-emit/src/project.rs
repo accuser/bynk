@@ -3344,7 +3344,7 @@ fn build_output(
                 // `consumed_types[ctx_name]`, so the two sides cannot disagree.
                 let own_types =
                     crate::project::symbols::combined_types_for(ctx_name, &unit_tables, &unit_uses);
-                let own_contracts = own_contract_hashes(ctx_name, table, &own_types);
+                let own_contracts = own_contract_hashes(table, &own_types);
                 let entry_ts = emitter::emit_worker_entry(ctx_name, table, &own_contracts);
                 let binding_modules: HashMap<String, String> = adapter_bindings
                     .iter()
@@ -3425,23 +3425,40 @@ fn build_output(
                 // What this context expects of each dependency — the same hash
                 // it stamps at each call site, computed the same way: in the
                 // *dependency's* namespace, from the dependency's own table.
+                //
+                // Only the services this context actually **calls**. Recording
+                // everything the dependency provides would refuse a deploy over a
+                // service this caller never touches — a skew its runtime check
+                // could never fire on. See `called_cross_context_services`.
+                let called = called_cross_context_services(
+                    table,
+                    unit_consumes
+                        .get(ctx_name)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                    &aliases,
+                );
                 let mut expects: std::collections::BTreeMap<
                     String,
                     std::collections::BTreeMap<String, String>,
                 > = std::collections::BTreeMap::new();
-                for dep in unit_consumes.get(ctx_name).into_iter().flatten() {
+                for (dep, services) in &called {
                     let Some(dep_table) = unit_tables.get(dep) else {
                         continue;
                     };
                     let dep_types =
                         crate::project::symbols::combined_types_for(dep, &unit_tables, &unit_uses);
-                    let hashes = own_contract_hashes(dep, dep_table, &dep_types);
+                    let all = own_contract_hashes(dep_table, &dep_types);
+                    let hashes: std::collections::BTreeMap<String, String> = all
+                        .into_iter()
+                        .filter(|(svc, _)| services.contains(svc))
+                        .collect();
                     if !hashes.is_empty() {
                         expects.insert(dep.clone(), hashes);
                     }
                 }
                 if let Some(manifest) = emitter::contracts::emit_contracts_manifest(
-                    &own_contract_hashes(ctx_name, table, &own_types),
+                    &own_contract_hashes(table, &own_types),
                     &expects,
                 ) {
                     compiled.push(CompiledFile {
@@ -4281,6 +4298,69 @@ fn _ensure_components_used(_p: &Path) {
     let _ = Component::CurDir;
 }
 
+/// v0.177 (#643, review of #658): the cross-context services a context actually
+/// **calls**, as `consumed context → service names`.
+///
+/// This is not the same as "every service the dependency provides", and the
+/// difference is the difference between a gate that reports what it *knows* is
+/// skewed and one that reports what merely *differs*. If `payment` provides
+/// `authorise` and `refund`, `orders` calls only `authorise`, and `refund`'s
+/// contract changed, then recording `refund` in `orders`'s `expects` would refuse
+/// `deploy --context orders` over a service `orders` never touches and whose
+/// runtime check could never fire. ADR 0200 Decision E rejects a per-*context*
+/// hash for exactly this reason — that it becomes a deployment tax — and a
+/// per-context *gate* over per-service hashes would reintroduce it one layer up.
+///
+/// So the manifest's `expects` mirrors the runtime check's granularity: one entry
+/// per call site, discovered the same way the lowering discovers it — an ident
+/// chain on the receiver that resolves to a consumed context.
+fn called_cross_context_services(
+    table: &UnitTable,
+    consumed: &[String],
+    aliases: &HashMap<String, String>,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    if consumed.is_empty() {
+        return out;
+    }
+    // Resolve a receiver chain to a consumed context: an alias, or the dotted
+    // name itself. Mirrors `CrossContextInfo::resolve_prefix`, over the maps
+    // `build_output` already holds.
+    let resolve = |chain: &str| -> Option<String> {
+        if let Some(target) = aliases.get(chain) {
+            return Some(target.clone());
+        }
+        consumed.iter().find(|c| *c == chain).cloned()
+    };
+    let mut visit = |e: &bynk_syntax::ast::Expr| {
+        if let bynk_syntax::ast::ExprKind::MethodCall {
+            receiver, method, ..
+        } = &e.kind
+            && let Some(chain) = emitter::flatten_emit_ident_chain(receiver)
+            && let Some(target) = resolve(&chain)
+        {
+            out.entry(target).or_default().insert(method.name.clone());
+        }
+    };
+    for service in table.services.values() {
+        for h in &service.handlers {
+            emitter::walk_block_exprs(&h.body, &mut visit);
+        }
+    }
+    for agent in table.agents.values() {
+        for h in &agent.handlers {
+            emitter::walk_block_exprs(&h.body, &mut visit);
+        }
+    }
+    for provider in table.providers.values() {
+        for op in &provider.ops {
+            emitter::walk_block_exprs(&op.body, &mut visit);
+        }
+    }
+    out
+}
+
 /// v0.177 (#643): a context's own `on call` contract hashes, keyed by service
 /// name — the constants its Worker entry compares an incoming
 /// `X-Bynk-Contract` against.
@@ -4292,11 +4372,9 @@ fn _ensure_components_used(_p: &Path) {
 /// caller and a callee compiled from one source tree must agree, or the check
 /// fires on every call instead of only on real skew.
 fn own_contract_hashes(
-    ctx_name: &str,
     table: &UnitTable,
     own_types: &HashMap<String, bynk_syntax::ast::TypeDecl>,
 ) -> std::collections::BTreeMap<String, String> {
-    let _ = ctx_name;
     let mut out = std::collections::BTreeMap::new();
     for (sname, sdecl) in &table.services {
         let Some(handler) = sdecl

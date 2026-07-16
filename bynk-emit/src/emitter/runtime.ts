@@ -282,20 +282,31 @@ export async function callService<T, E>(
     body: JSON.stringify(argsJson),
   });
   const response = await binding.fetch(request);
-  // v0.177 (#643): a 409 from the internal boundary is the callee refusing a
-  // skewed contract. Surface it as the named `ContractMismatch` rather than a
-  // generic transport failure — the whole point of failing closed is that the
-  // operator learns *what* is wrong, and "409 with an opaque body" would bury
-  // it. Anything else stays a `Transport`.
-  if (response.status === 409) {
-    const detail = (await response.json().catch(() => null)) as ContractMismatch | null;
-    if (detail && detail.kind === "ContractMismatch") throw boundaryError(detail);
-  }
   if (!response.ok) {
+    // Read the body **once**: the stream is consumed on first read, so a second
+    // read throws `TypeError: Body is unusable` — which would replace the very
+    // diagnosis this increment exists to give with an opaque failure from inside
+    // the runtime.
+    const raw = await response.text();
+    // v0.177 (#643): a 409 from the internal boundary is the callee refusing a
+    // skewed contract. Surface it as the named `ContractMismatch` rather than a
+    // generic transport failure — the whole point of failing closed is that the
+    // operator learns *what* is wrong, and "409 with an opaque body" would bury
+    // it. Anything else — including a 409 that is not ours, or one whose body
+    // does not parse — stays a `Transport`.
+    if (response.status === 409) {
+      let detail: ContractMismatch | null = null;
+      try {
+        detail = JSON.parse(raw) as ContractMismatch;
+      } catch {
+        // Not a Bynk 409; fall through to `Transport`.
+      }
+      if (detail && detail.kind === "ContractMismatch") throw boundaryError(detail);
+    }
     throw boundaryError({
       kind: "Transport",
       status: response.status,
-      details: await response.text(),
+      details: raw,
     });
   }
   let responseJson: JsonValue;

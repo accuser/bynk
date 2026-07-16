@@ -20,15 +20,24 @@ use std::path::Path;
 fn every_stamped_hash_matches_its_callees_constant() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/positive");
     let stamp =
-        regex::Regex::new(r#"callService\([^)]*?"([A-Za-z_][A-Za-z0-9_]*)",.*?"([0-9a-f]{16})"\)"#)
+        // Capture the binding (whose worker is called), the service, and the
+        // stamped hash.
+        regex::Regex::new(
+            r#"callService\(deps\.env\.([A-Z0-9_]+), "([A-Za-z_][A-Za-z0-9_]*)",.*?"([0-9a-f]{16})"\)"#,
+        )
             .unwrap();
     let expect = regex::Regex::new(
         r#"kind: "ContractMismatch", service: "([^"]+)", expected: "([0-9a-f]{16})""#,
     )
     .unwrap();
 
-    let mut expected: HashMap<(String, String), String> = HashMap::new();
-    let mut stamped: Vec<(String, String, String)> = Vec::new();
+    // Keyed by (fixture, **worker**, service): two contexts in one fixture may
+    // each provide a same-named service, and a (fixture, service) key would
+    // collide — last write wins, giving a false pass or a false failure.
+    let mut expected: HashMap<(String, String, String), String> = HashMap::new();
+    // A caller records which worker it *targets*, since that is whose constant
+    // it must match.
+    let mut stamped: Vec<(String, String, String, String)> = Vec::new();
 
     let Ok(entries) = std::fs::read_dir(&root) else {
         panic!("fixture root not readable: {}", root.display());
@@ -40,15 +49,32 @@ fn every_stamped_hash_matches_its_callees_constant() {
             continue;
         };
         for d in dirs.flatten() {
-            if let Ok(s) = std::fs::read_to_string(d.path().join("handlers.ts")) {
-                for c in stamp.captures_iter(&s) {
-                    stamped.push((fx.clone(), c[1].to_string(), c[2].to_string()));
-                }
-            }
+            let worker = d.file_name().to_string_lossy().to_string();
             if let Ok(s) = std::fs::read_to_string(d.path().join("index.ts")) {
                 for c in expect.captures_iter(&s) {
-                    expected.insert((fx.clone(), c[1].to_string()), c[2].to_string());
+                    expected.insert(
+                        (fx.clone(), worker.clone(), c[1].to_string()),
+                        c[2].to_string(),
+                    );
                 }
+            }
+        }
+        // Callers live in a Worker's `handlers.ts` *and* in the emitted
+        // integration tests, which route through the same
+        // `lower_workers_cross_context_call`. Scanning only the former would
+        // leave a whole class of stamped call site unchecked here; they would
+        // fail loudly under workerd, but this guard is the cheap one.
+        for f in caller_sources(&e.path()) {
+            let Ok(s) = std::fs::read_to_string(&f) else {
+                continue;
+            };
+            for c in stamp.captures_iter(&s) {
+                stamped.push((
+                    fx.clone(),
+                    c[1].to_string(),
+                    c[2].to_string(),
+                    c[3].to_string(),
+                ));
             }
         }
     }
@@ -59,13 +85,15 @@ fn every_stamped_hash_matches_its_callees_constant() {
     );
 
     let mut problems: Vec<String> = Vec::new();
-    for (fx, svc, h) in &stamped {
-        match expected.get(&(fx.clone(), svc.clone())) {
+    for (fx, binding, svc, h) in &stamped {
+        // `deps.env.SHOP_PAYMENT` → the `shop-payment` worker directory.
+        let worker = binding.to_ascii_lowercase().replace('_', "-");
+        match expected.get(&(fx.clone(), worker.clone(), svc.clone())) {
             None => problems.push(format!(
-                "{fx}/{svc}: caller stamps {h} but the callee emits no contract check"
+                "{fx}: caller stamps {h} for {worker}.{svc}, but that worker emits no contract check"
             )),
             Some(e) if e != h => problems.push(format!(
-                "{fx}/{svc}: caller stamps {h} but the callee expects {e} — \
+                "{fx}: caller stamps {h} for {worker}.{svc} but the callee expects {e} — \
                  a spurious 409 on every call"
             )),
             Some(_) => {}
@@ -142,4 +170,22 @@ fn a_parameter_rename_changes_the_hash() {
         "param-renamed",
     );
     assert_ne!(a, b, "a parameter rename must change the hash");
+}
+
+/// Every emitted file that may contain a stamped cross-context call: each
+/// Worker's `handlers.ts`, plus the emitted integration tests, which lower
+/// through the same path.
+fn caller_sources(fixture: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(dirs) = std::fs::read_dir(fixture.join("expected/workers")) {
+        for d in dirs.flatten() {
+            out.push(d.path().join("handlers.ts"));
+        }
+    }
+    if let Ok(files) = std::fs::read_dir(fixture.join("expected/tests")) {
+        for f in files.flatten() {
+            out.push(f.path());
+        }
+    }
+    out
 }

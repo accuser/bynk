@@ -74,33 +74,77 @@ fn canon_type(
     types: &HashMap<String, TypeDecl>,
     seen: &mut HashSet<String>,
 ) -> String {
+    canon_type_in(t, types, seen, &HashMap::new())
+}
+
+/// `subst` binds a generic declaration's type-parameter **names** to the
+/// canonical form of the concrete argument supplied at the use site.
+///
+/// A generic body MUST expand with its parameters substituted, or the
+/// parameter's *name* leaks into the form: `type Page[T] = { items: List[T] }`
+/// and the same declaration spelled with `U` are the same type with the same
+/// wire shape, but would hash differently. Across a deploy that renames a type
+/// parameter — a pure refactor with no wire consequence — every call would 409.
+/// That is the same class of spurious failure the sorted fields and the
+/// predicate set exist to prevent, and it is the one the module's own standard
+/// ("semantically-equal contracts must hash equal") forbids.
+fn canon_type_in(
+    t: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    seen: &mut HashSet<String>,
+    subst: &HashMap<String, String>,
+) -> String {
     match t {
         TypeRef::Base(b, _) => b.name().to_string(),
         TypeRef::Unit(_) => "()".to_string(),
         // An `Effect` wraps the handler, not the payload — the caller awaits the
         // promise, so it is not part of the wire contract.
-        TypeRef::Effect(inner, _) => canon_type(inner, types, seen),
-        TypeRef::List(a, _) => format!("List[{}]", canon_type(a, types, seen)),
-        TypeRef::Option(a, _) => format!("Option[{}]", canon_type(a, types, seen)),
+        TypeRef::Effect(inner, _) => canon_type_in(inner, types, seen, subst),
+        TypeRef::List(a, _) => format!("List[{}]", canon_type_in(a, types, seen, subst)),
+        TypeRef::Option(a, _) => format!("Option[{}]", canon_type_in(a, types, seen, subst)),
         TypeRef::Result(a, b, _) => format!(
             "Result[{}, {}]",
-            canon_type(a, types, seen),
-            canon_type(b, types, seen)
+            canon_type_in(a, types, seen, subst),
+            canon_type_in(b, types, seen, subst)
         ),
         TypeRef::Map(k, v, _) => format!(
             "Map[{}, {}]",
-            canon_type(k, types, seen),
-            canon_type(v, types, seen)
+            canon_type_in(k, types, seen, subst),
+            canon_type_in(v, types, seen, subst)
         ),
         // Generic-record instantiation: the arguments are positional, so their
         // order *is* semantic and is preserved (unlike a record's fields).
         TypeRef::App { name, args, .. } => {
-            let inner: Vec<String> = args.iter().map(|a| canon_type(a, types, seen)).collect();
-            let head = canon_named(&name.name, types, seen);
+            let inner: Vec<String> = args
+                .iter()
+                .map(|a| canon_type_in(a, types, seen, subst))
+                .collect();
+            // Bind the declaration's parameters to these arguments so the body
+            // expands over concrete types and the parameter's name never reaches
+            // the form.
+            let bound: HashMap<String, String> = types
+                .get(&name.name)
+                .map(|d| {
+                    d.type_params
+                        .iter()
+                        .zip(&inner)
+                        .map(|(p, a)| (p.name.name.clone(), a.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let head = canon_named_in(&name.name, types, seen, &bound);
             format!("{head}[{}]", inner.join(", "))
         }
-        TypeRef::Named(id) => canon_named(&id.name, types, seen),
-        TypeRef::HttpResult(a, _) => format!("HttpResult[{}]", canon_type(a, types, seen)),
+        TypeRef::Named(id) => {
+            // A bound type parameter renders as the argument it stands for.
+            match subst.get(&id.name) {
+                Some(bound) => bound.clone(),
+                None => canon_named_in(&id.name, types, seen, subst),
+            }
+        }
+        TypeRef::HttpResult(a, _) => {
+            format!("HttpResult[{}]", canon_type_in(a, types, seen, subst))
+        }
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
@@ -115,10 +159,11 @@ fn canon_type(
     }
 }
 
-fn canon_named(
+fn canon_named_in(
     name: &str,
     types: &HashMap<String, TypeDecl>,
     seen: &mut HashSet<String>,
+    subst: &HashMap<String, String>,
 ) -> String {
     // A recursive record terminates on the data, so its codec is finite and it
     // is a legal contract — but its *expansion* is not. Emit a back-reference on
@@ -142,7 +187,13 @@ fn canon_named(
             let mut fields: Vec<String> = r
                 .fields
                 .iter()
-                .map(|f| format!("{}: {}", f.name.name, canon_type(&f.type_ref, types, seen)))
+                .map(|f| {
+                    format!(
+                        "{}: {}",
+                        f.name.name,
+                        canon_type_in(&f.type_ref, types, seen, subst)
+                    )
+                })
                 .collect();
             fields.sort();
             format!("{{{}}}", fields.join(", "))
@@ -157,7 +208,7 @@ fn canon_named(
                     let payload: Vec<String> = v
                         .payload
                         .iter()
-                        .map(|p| canon_type(&p.type_ref, types, seen))
+                        .map(|p| canon_type_in(&p.type_ref, types, seen, subst))
                         .collect();
                     if payload.is_empty() {
                         v.name.name.clone()
@@ -460,6 +511,79 @@ mod tests {
         let b = types_of("commons x\n\ntype Node = { v: String, next: Option[Node] }\n");
         let ha = service_contract_hash(&svc(named("Node")), &a);
         assert_ne!(ha, service_contract_hash(&svc(named("Node")), &b));
+    }
+
+    /// A generic type's **parameter name** is not wire-observable: `Page[T]` and
+    /// the same declaration spelled with `U` are the same type with the same
+    /// shape. Renaming one is a refactor, and must not 409 a caller.
+    ///
+    /// Caught in review of #658: the body used to expand with the parameter
+    /// *unsubstituted*, so the name leaked into the form. Same class as record
+    /// field order and predicate order — the false-positive side the module's
+    /// standard exists to protect.
+    #[test]
+    fn a_generic_type_parameter_rename_does_not_change_the_hash() {
+        let t = types_of(
+            "commons x\n\ntype Order = { id: Int }\ntype Page[T] = { items: List[T], total: Int }\n",
+        );
+        let u = types_of(
+            "commons x\n\ntype Order = { id: Int }\ntype Page[U] = { items: List[U], total: Int }\n",
+        );
+        let app = TypeRef::App {
+            name: bynk_syntax::ast::Ident {
+                name: "Page".to_string(),
+                span: sp(),
+            },
+            args: vec![named("Order")],
+            span: sp(),
+        };
+        assert_eq!(
+            service_contract_hash(&svc(app.clone()), &t),
+            service_contract_hash(&svc(app), &u),
+            "renaming a generic type parameter must not change the contract hash"
+        );
+    }
+
+    /// The converse: the *argument* a generic is instantiated at is entirely
+    /// wire-observable, so it must still move the hash.
+    #[test]
+    fn a_generic_argument_change_does_change_the_hash() {
+        let t = types_of(
+            "commons x\n\ntype Order = { id: Int }\ntype Other = { id: String }\ntype Page[T] = { items: List[T] }\n",
+        );
+        let app = |arg: &str| TypeRef::App {
+            name: bynk_syntax::ast::Ident {
+                name: "Page".to_string(),
+                span: sp(),
+            },
+            args: vec![named(arg)],
+            span: sp(),
+        };
+        assert_ne!(
+            service_contract_hash(&svc(app("Order")), &t),
+            service_contract_hash(&svc(app("Other")), &t),
+        );
+    }
+
+    /// And the parameter is genuinely *substituted*, not merely ignored: the form
+    /// shows the instantiated shape rather than a dangling `T`.
+    #[test]
+    fn a_generic_body_expands_over_its_concrete_argument() {
+        let t = types_of("commons x\n\ntype Page[T] = { items: List[T] }\n");
+        let app = TypeRef::App {
+            name: bynk_syntax::ast::Ident {
+                name: "Page".to_string(),
+                span: sp(),
+            },
+            args: vec![TypeRef::Base(bynk_syntax::ast::BaseType::Int, sp())],
+            span: sp(),
+        };
+        let nf = service_normal_form(&svc(app), &t);
+        assert!(nf.contains("List[Int]"), "{nf}");
+        assert!(
+            !nf.contains("List[T]"),
+            "the parameter must not survive: {nf}"
+        );
     }
 
     fn sp() -> bynk_syntax::span::Span {

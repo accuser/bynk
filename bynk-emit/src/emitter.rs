@@ -616,7 +616,7 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
     b.statements.iter().any(|s| stmt(s, m)) || expr(&b.tail, m)
 }
 
-fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
     for s in &b.statements {
         match s {
             Statement::Let(l) | Statement::EffectLet(l) => walk_exprs(&l.value, f),

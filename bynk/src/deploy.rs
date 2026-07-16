@@ -443,12 +443,13 @@ fn contract_skews(
     let mut out = Vec::new();
     for (dependency, services) in expects {
         let worker = worker_of(dependency);
+        // No record — a pre-v0.177 push, or never deployed. Silence is not a
+        // match: report only what is *known* to be skewed. (An empty-but-present
+        // record is different, and is checked: it means the callee is known to
+        // provide nothing, so every expected service is absent.)
         let Some(live) = lock.live_contracts("default", &worker) else {
             continue;
         };
-        if live.is_empty() {
-            continue;
-        }
         for (service, expected) in services {
             match live.get(service) {
                 Some(actual) if actual != expected => out.push(ContractSkew {
@@ -528,11 +529,19 @@ struct WorkerRecord {
     /// `deploy --context A` compares A's compiled `expects` against these, and
     /// refuses rather than shipping a caller that will 409 in production.
     ///
-    /// Additive and `default`ed, so a pre-v0.177 ledger still reads — such a
-    /// ledger simply has nothing to say about contracts, and the gate treats
-    /// silence as "cannot know" rather than "matches".
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    contracts: BTreeMap<String, String>,
+    /// `None` means **no record** — a Worker pushed by a pre-v0.177 driver, which
+    /// has nothing to say about contracts either way. `Some({})` means the
+    /// Worker is *known* to provide no `on call` service at all.
+    ///
+    /// The distinction is load-bearing, and an empty map cannot carry it: a
+    /// callee that removes **all** its services emits no manifest, so a
+    /// bare-`BTreeMap` field would record `{}` — indistinguishable from "old
+    /// ledger" — and the gate's `continue` would let a total, real skew through.
+    /// `Option` keeps "silence is not a match" while still catching removal.
+    ///
+    /// Additive and `default`ed, so a pre-v0.177 ledger still reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contracts: Option<BTreeMap<String, String>>,
 }
 
 impl DeployLock {
@@ -547,7 +556,7 @@ impl DeployLock {
         &mut self,
         environment: &str,
         worker: &str,
-        contracts: BTreeMap<String, String>,
+        contracts: Option<BTreeMap<String, String>>,
     ) {
         self.environments
             .entry(environment.to_string())
@@ -563,11 +572,15 @@ impl DeployLock {
     }
 
     /// v0.177 (#643): what the ledger believes `worker` currently provides.
+    ///
+    /// `None` for both "never deployed" and "deployed before contracts were
+    /// recorded" — in each case the ledger cannot speak, and the gate must not
+    /// invent an answer.
     fn live_contracts(&self, environment: &str, worker: &str) -> Option<&BTreeMap<String, String>> {
         self.environments
             .get(environment)
             .and_then(|env| env.workers.get(worker))
-            .map(|record| &record.contracts)
+            .and_then(|record| record.contracts.as_ref())
     }
 
     fn has_queue(&self, environment: &str, queue: &str) -> bool {
@@ -890,9 +903,12 @@ pub fn run(
                 // v0.177 (#643): record what this Worker now *provides*, so a
                 // later `--context` push of one of its callers can be refused
                 // before it ships a caller that would 409.
+                // `Some` even when empty: this build *knows* what the Worker
+                // provides, and "knows it provides nothing" must not read as
+                // "no record" at the next gate.
                 let provided = read_contracts_manifest(&workers_dir.join(worker))
-                    .map(|m| m.provides)
-                    .unwrap_or_default();
+                    .map(|m| Some(m.provides))
+                    .unwrap_or(None);
                 lock.record_deployed("default", worker, provided);
                 if let Err(e) = write_lock(&lock_path, &lock) {
                     eprintln!(
@@ -2087,7 +2103,7 @@ mod tests {
     fn lock_with_deployed(workers: &[&str]) -> DeployLock {
         let mut lock = DeployLock::default();
         for worker in workers {
-            lock.record_deployed("default", worker, Default::default());
+            lock.record_deployed("default", worker, Some(Default::default()));
         }
         lock
     }
@@ -2618,7 +2634,7 @@ mod tests {
             version: 1,
             ..Default::default()
         };
-        lock.record_deployed("default", "api", Default::default());
+        lock.record_deployed("default", "api", Some(Default::default()));
         assert!(!toml::to_string_pretty(&lock).unwrap().contains("queues"));
     }
     #[test]
@@ -3495,7 +3511,7 @@ WITH_EQUALS=a=b
         // than an observation about today's struct.
         const SENTINEL: &str = "sk_live_do_not_commit_me";
         let mut lock = DeployLock::default();
-        lock.record_deployed("default", "api", Default::default());
+        lock.record_deployed("default", "api", Some(Default::default()));
         lock.record_queue("default", "intake");
         let text = toml::to_string_pretty(&lock).expect("the ledger serialises");
         assert!(!text.contains(SENTINEL));
@@ -3512,10 +3528,12 @@ WITH_EQUALS=a=b
         lock.record_deployed(
             "default",
             worker,
-            contracts
-                .iter()
-                .map(|(s, h)| (s.to_string(), h.to_string()))
-                .collect(),
+            Some(
+                contracts
+                    .iter()
+                    .map(|(s, h)| (s.to_string(), h.to_string()))
+                    .collect(),
+            ),
         );
         lock
     }
@@ -3574,13 +3592,32 @@ WITH_EQUALS=a=b
         // is skewed — never what it merely cannot rule out. The runtime check is
         // the backstop for exactly this case, so a false accusation here would
         // block a legitimate deploy for no gain.
-        let lock = lock_with("app-b", &[]);
+        let mut lock = DeployLock::default();
+        lock.record_deployed("default", "app-b", None);
         let found = contract_skews(
             &expects("app.b", "whoami", "317bdd3de84d2176"),
             &lock,
             |c| c.replace('.', "-"),
         );
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_callee_that_now_provides_nothing_is_a_total_skew() {
+        // The counterpart to the rule above, and why the sentinel is `Option`
+        // rather than an empty map: a callee that removed *all* its `on call`
+        // services emits no manifest, so a bare-map field would record `{}` —
+        // indistinguishable from "old ledger" — and the gate would wave through
+        // the most complete skew there is. `Some({})` says "known to provide
+        // nothing", which is a finding.
+        let lock = lock_with("app-b", &[]);
+        let found = contract_skews(
+            &expects("app.b", "whoami", "317bdd3de84d2176"),
+            &lock,
+            |c| c.replace('.', "-"),
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].live, "<absent>");
     }
 
     #[test]

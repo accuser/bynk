@@ -61,6 +61,14 @@ stay positional, because there they are semantic. A recursive record emits a
 named back-reference (`Node{next: Option[@Node]}`), so the walk terminates while
 two different recursive shapes still differ.
 
+A generic record's body expands with its **type parameters substituted**, so a
+parameter's *name* never reaches the form: `type Page[T] = { items: List[T] }`
+and the same declaration spelled with `U` are the same type with the same wire
+shape, and a rename across a deploy must not 409 every call. (The first revision
+expanded the body unsubstituted and did; caught in review of #658 — the same
+class as field order and predicate order, and the one the false-positive standard
+exists to forbid.)
+
 One form, two consumers. If the matcher and the hash disagreed about "the same
 contract", a program could type-check at compile time and 409 at runtime — the
 worst failure this increment could produce.
@@ -98,10 +106,24 @@ disagree: the owner tightening `Matches(…)` would 409 every caller for a chang
 none of them can observe. ADR 0199 took the same position on opacity from the
 same premise (its Decision F), and the two increments agree.
 
-**[DECISION E] Per-service hash, not per-context (Recommended: per-service).** A
-context may evolve service `X` while callers of `Y` are untouched. A per-context
-hash would break every caller on any change to any service — turning the guard
-into a deployment tax and training authors to route around it.
+**[DECISION E] Per-service hash, not per-context — and the *gate* must honour the
+same granularity (Recommended: per-service throughout).** A context may evolve
+service `X` while callers of `Y` are untouched. A per-context hash would break
+every caller on any change to any service — turning the guard into a deployment
+tax and training authors to route around it.
+
+The same reasoning binds the deploy gate, one layer up, and the first revision
+missed it. `expects` recorded every service the dependency *provides*, not the
+subset this context *calls* — so if `payment` provided `authorise` and `refund`,
+`orders` called only `authorise`, and `refund` changed, `deploy --context orders`
+was refused over a service `orders` never touches and whose runtime check could
+never fire. That is a per-context gate over per-service hashes: precisely the
+deployment tax this decision rejects, reintroduced. `expects` now records only
+the called subset, discovered the same way the lowering discovers a call site (an
+ident chain on the receiver resolving to a consumed context), so the gate and the
+runtime check agree about what "skew" means. Caught in review of #658; fixture
+377 discriminates the two designs, which no earlier fixture did — every callee in
+the corpus provided exactly one service.
 
 **[DECISION F] FNV-1a 64-bit, hand-rolled, no new dependency (Recommended:
 FNV-1a).** 16 lowercase hex chars. Trust here is static and channel-based and this
@@ -175,6 +197,13 @@ routing around the driver — but the deploy gate is what makes the guarantee
 usable. **Silence is not a match:** a dependency the ledger has no contract record
 for (pushed by a pre-v0.177 driver) yields no finding. The gate reports what it
 *knows* is skewed, never what it merely cannot rule out.
+
+The ledger field is `Option<BTreeMap>`, not a bare map, because an empty map
+cannot carry that distinction: a callee that removes **all** its `on call`
+services emits no manifest, so a bare map would record `{}` — indistinguishable
+from "old ledger" — and the gate would wave through the most total skew there is.
+`None` is "no record"; `Some({})` is "known to provide nothing", which is a
+finding. (Caught in review of #658.)
 
 **The correction.** ADR 0199 Decision G stated that self-contained Workers (its
 deferred Decision B) was a **prerequisite** for this increment, "which would
