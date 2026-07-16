@@ -140,7 +140,7 @@ fn hover_at(r: &ProjectDiagnostics, rel: &Path, text: &str, offset: usize) -> Op
         uri: &uri,
         // No src_root: the cross-file / first-party rungs are not what these
         // fixtures exercise, and `examples/todo` is single-file.
-        src_root: None,
+        files: None,
     })
 }
 

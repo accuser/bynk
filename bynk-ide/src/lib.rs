@@ -1,7 +1,8 @@
 //! Bynk's IDE/LSP analysis surface.
 //!
 //! The non-bailing diagnostics the language server consumes — single-file
-//! ([`diagnose`]) and whole-project ([`diagnose_project`]) — plus the result
+//! ([`diagnose`]) and whole-project ([`diagnose_project_with`], with
+//! [`diagnose_project`] the single-tree convenience) — plus the result
 //! types ([`Diagnostic`], [`FileDiagnostics`], [`ProjectDiagnostics`]). These
 //! are *queries* over the captured tables produced during analysis (the binding
 //! index, inlay hints, expression types, locals — all in `bynk-check`); the
@@ -150,12 +151,77 @@ pub struct ProjectDiagnostics {
     pub unit_sources: HashMap<String, Vec<PathBuf>>,
 }
 
+/// Slice A: which trees a project's analysis walks.
+///
+/// `bynk-ide` owns this rather than re-exporting `bynk_emit::project::Roots`:
+/// this crate is the IDE-facing published surface, and `Roots` carries
+/// `tests_prefix` semantics an IDE caller has no business knowing. The lowering
+/// is a few lines and it is the seam where the LSP's needs and the compiler's
+/// can diverge later without a break.
+#[derive(Debug, Clone)]
+pub enum AnalysisRoots {
+    /// One tree, walked as a single root, with no manifest consulted — the
+    /// pre-slice-A behaviour and what [`diagnose_project`] still means.
+    SingleTree(PathBuf),
+    /// A manifest-backed project rooted here: `bynk.toml`'s `[paths]
+    /// include`/`exclude` decide the trees, exactly as `bynkc` reads them.
+    /// Mirrors `bynk-driver`'s `project_options` — the compiler's own choice.
+    Project(PathBuf),
+}
+
+impl AnalysisRoots {
+    fn lower(&self) -> bynk_emit::project::Roots {
+        match self {
+            AnalysisRoots::SingleTree(root) => bynk_emit::project::Roots::Single(root.clone()),
+            AnalysisRoots::Project(root) => bynk_emit::project::Roots::Split {
+                project_root: root.clone(),
+                paths: bynk_emit::project::read_project_paths(root),
+            },
+        }
+    }
+
+    /// The project root every analysed `source_path` is relative to. For
+    /// `SingleTree` that is the tree itself (identity ≡ tree-relative, ADR
+    /// 0198).
+    pub fn project_root(&self) -> &Path {
+        match self {
+            AnalysisRoots::SingleTree(r) | AnalysisRoots::Project(r) => r,
+        }
+    }
+}
+
+/// Slice A: the `.bynk` files these roots contain — the same discovery
+/// `compile_project` performs, `exclude` and the `out`/`node_modules` caches
+/// honoured. For enumerating a project's units without analysing it.
+pub fn discover_files(roots: &AnalysisRoots) -> Vec<PathBuf> {
+    bynk_emit::project::discover_project_files(&roots.lower())
+}
+
 /// v0.24 (ADR 0052): non-bailing, overlay-aware, file-attributed project
 /// diagnostics — the LSP analysis entry point, distinct from
 /// `compile_project` (which bails and emits). `overlay` maps
 /// canonicalised absolute paths to buffer text layered over disk reads.
+///
+/// Slice A: this is the **single-tree convenience** over
+/// [`diagnose_project_with`] — it walks `root` as one tree and consults no
+/// manifest, which is what every caller handing in a fixture root already
+/// means. A manifest-backed project wants
+/// `diagnose_project_with(&AnalysisRoots::Project(root), …)`.
 pub fn diagnose_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> ProjectDiagnostics {
-    let analysis = bynk_emit::project::analyse_project(root, overlay);
+    diagnose_project_with(&AnalysisRoots::SingleTree(root.to_path_buf()), overlay)
+}
+
+/// Slice A: project diagnostics over manifest-resolved roots — the LSP analyses
+/// exactly the files `bynkc` compiles, from the same manifest, through the same
+/// discovery.
+///
+/// Every path in the result is **project-relative** (ADR 0198), so a file is
+/// named uniquely across `include` roots.
+pub fn diagnose_project_with(
+    roots: &AnalysisRoots,
+    overlay: &HashMap<PathBuf, String>,
+) -> ProjectDiagnostics {
+    let analysis = bynk_emit::project::analyse_project_with(&roots.lower(), overlay);
     let mut by_file: HashMap<PathBuf, Vec<Diagnostic>> = HashMap::new();
     let mut unattributed = Vec::new();
     for ae in analysis.errors {

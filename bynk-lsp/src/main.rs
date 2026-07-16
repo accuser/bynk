@@ -60,9 +60,11 @@ struct DocumentState {
 /// edits against exactly these versions).
 #[derive(Debug)]
 struct Analysis {
-    /// Canonicalised source root the snapshots' relative paths resolve
-    /// against.
-    src_root: PathBuf,
+    /// Slice A: the canonicalised **project root** every path in this round
+    /// resolves against. Was the single `src` directory; the round now covers
+    /// every `include` tree, and ADR 0198 makes each file's path
+    /// project-relative — so this is the one base that resolves all of them.
+    project_root: PathBuf,
     index: bynk_check::index::ProjectIndex,
     /// Project-relative path → the analysed text.
     snapshots: std::collections::HashMap<PathBuf, String>,
@@ -277,15 +279,17 @@ impl Backend {
     /// against the **analysed snapshots**, and publish via the pure
     /// publish-plan (clears included).
     async fn run_project_diagnostics(&self) {
-        let (round, root, src_root, overlay, versions, previously_dirty) = {
+        let (round, root, canonical_root, overlay, versions, previously_dirty) = {
             let mut state = self.state.write().await;
             let Some(root) = state.project_root.clone() else {
                 return;
             };
             state.analysis_round_started += 1;
             let round = state.analysis_round_started;
-            let src_root = root.join(&state.config.src_dir);
-            let canonical_src_root = src_root.canonicalize().unwrap_or_else(|_| src_root.clone());
+            // Slice A: the analysis is rooted at the *project*, not at one
+            // `include` tree, and every path it returns is project-relative
+            // (ADR 0198) — so this is the base the overlay keys against too.
+            let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
             let mut overlay = std::collections::HashMap::new();
             let mut versions = std::collections::HashMap::new();
             for (uri, doc) in &state.docs {
@@ -293,21 +297,21 @@ impl Backend {
                     let canonical = p.canonicalize().unwrap_or(p);
                     // v0.25: capture the version the overlay snapshot came
                     // from, keyed project-relative like the analysis output.
-                    if let Ok(rel) = canonical.strip_prefix(&canonical_src_root) {
+                    if let Ok(rel) = canonical.strip_prefix(&canonical_root) {
                         versions.insert(rel.to_path_buf(), doc.version);
                     }
                     overlay.insert(canonical, doc.text.clone());
                 }
             }
             let published = state.published.clone();
-            (round, root, src_root, overlay, versions, published)
+            (round, root, canonical_root, overlay, versions, published)
         };
 
-        let analysis_root = src_root.clone();
-        let Ok(result) = tokio::task::spawn_blocking(move || {
-            bynk_ide::diagnose_project(&analysis_root, &overlay)
-        })
-        .await
+        // Slice A: manifest-aware, multi-root — the same trees `bynkc` compiles.
+        let roots = bynk_ide::AnalysisRoots::Project(root.clone());
+        let Ok(result) =
+            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project_with(&roots, &overlay))
+                .await
         else {
             return;
         };
@@ -318,7 +322,7 @@ impl Backend {
         let mut diagnostics: std::collections::HashMap<PathBuf, Vec<bynk_ide::Diagnostic>> =
             std::collections::HashMap::new();
         for file in &result.files {
-            let abs = src_root.join(&file.source_path);
+            let abs = canonical_root.join(&file.source_path);
             let abs = abs.canonicalize().unwrap_or(abs);
             let Ok(uri) = Url::from_file_path(&abs) else {
                 continue;
@@ -339,7 +343,7 @@ impl Backend {
         // diagnostics, for `codeAction` (the suggestions ride on them).
         {
             let analysis = Arc::new(Analysis {
-                src_root: src_root.canonicalize().unwrap_or_else(|_| src_root.clone()),
+                project_root: canonical_root.clone(),
                 index: result.index.clone(),
                 snapshots,
                 versions,
@@ -369,7 +373,7 @@ impl Backend {
                 Url::from_file_path(toml).ok()
             } else {
                 result.files.first().and_then(|f| {
-                    let abs = src_root.join(&f.source_path);
+                    let abs = canonical_root.join(&f.source_path);
                     let abs = abs.canonicalize().unwrap_or(abs);
                     Url::from_file_path(abs).ok()
                 })
@@ -405,13 +409,27 @@ impl Backend {
         }
     }
 
-    /// Project source root resolved against the active `bynk.toml`'s
-    /// `[paths].src`. Returns `None` when no project root is known (single-
-    /// file mode), in which case cross-file lookups are skipped.
-    async fn project_src_root(&self) -> Option<PathBuf> {
+    /// Slice A: the analysis roots for the active project — the manifest's,
+    /// resolved by the compiler's own discovery. `None` in single-file mode (no
+    /// project root), where cross-file lookups are skipped.
+    ///
+    /// Replaces `project_src_root`, which returned `root.join(config.src_dir)`:
+    /// one tree, chosen by reducing `[paths] include` to its first entry and
+    /// ignoring `exclude`. That reduction is the defect this slice removes.
+    async fn analysis_roots(&self) -> Option<bynk_ide::AnalysisRoots> {
         let state = self.state.read().await;
         let root = state.project_root.as_ref()?;
-        Some(root.join(&state.config.src_dir))
+        Some(bynk_ide::AnalysisRoots::Project(root.clone()))
+    }
+
+    /// The project's `.bynk` files, from the compiler's discovery — `exclude`
+    /// and the `out`/`node_modules` caches honoured. Backs the unit enumeration
+    /// completion does; `None` in single-file mode.
+    async fn project_files(&self) -> Option<Vec<PathBuf>> {
+        let roots = self.analysis_roots().await?;
+        tokio::task::spawn_blocking(move || bynk_ide::discover_files(&roots))
+            .await
+            .ok()
     }
 
     /// v0.31: the def + use spans of the local under the cursor (def first), or
@@ -468,7 +486,7 @@ impl Backend {
         let Some(text) = analysis.snapshots.get(rel) else {
             return Vec::new();
         };
-        let Ok(uri) = Url::from_file_path(analysis.src_root.join(rel)) else {
+        let Ok(uri) = Url::from_file_path(analysis.project_root.join(rel)) else {
             return Vec::new();
         };
         spans
@@ -498,8 +516,8 @@ impl Backend {
         let Some(ty) = self.type_receiver(uri, rewritten, recv_offset).await else {
             return Vec::new();
         };
-        let src_root = self.project_src_root().await;
-        completion::value_member_candidates(&ty, text, src_root.as_deref())
+        let files = self.project_files().await;
+        completion::value_member_candidates(&ty, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
             .collect()
@@ -553,8 +571,8 @@ impl Backend {
         let Some(ty) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
-        let src_root = self.project_src_root().await;
-        completion::variants_for_ty(&ty, text, src_root.as_deref())
+        let files = self.project_files().await;
+        completion::variants_for_ty(&ty, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
             .collect()
@@ -578,8 +596,8 @@ impl Backend {
         let Some(ty) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
-        let src_root = self.project_src_root().await;
-        completion::nested_variant_completions(&ty, &variant, text, src_root.as_deref())
+        let files = self.project_files().await;
+        completion::nested_variant_completions(&ty, &variant, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
             .collect()
@@ -595,11 +613,15 @@ impl Backend {
         rewritten: String,
         recv_offset: usize,
     ) -> Option<bynk_check::checker::Ty> {
-        let src_root = self.project_src_root().await?;
-        let canonical_src_root = src_root.canonicalize().unwrap_or_else(|_| src_root.clone());
+        let roots = self.analysis_roots().await?;
+        let project_root = roots.project_root().to_path_buf();
+        let canonical_root = project_root
+            .canonicalize()
+            .unwrap_or_else(|_| project_root.clone());
         let cur = uri.to_file_path().ok()?;
         let cur = cur.canonicalize().unwrap_or(cur);
-        let rel = cur.strip_prefix(&canonical_src_root).ok()?.to_path_buf();
+        // Slice A: project-relative, matching the round's identity (ADR 0198).
+        let rel = cur.strip_prefix(&canonical_root).ok()?.to_path_buf();
         // Overlay every open doc, with this one rewritten so it parses.
         let overlay = {
             let state = self.state.read().await;
@@ -629,7 +651,7 @@ impl Backend {
             return bynk_check::expr_types::type_at_offset(entries, recv_offset).cloned();
         }
         let result =
-            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project(&src_root, &overlay))
+            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project_with(&roots, &overlay))
                 .await
                 .ok()?;
         let (_, entries) = result.expr_types.iter().find(|(p, _)| **p == rel)?;
@@ -658,8 +680,12 @@ impl Backend {
     fn uri_to_rel(analysis: &Analysis, uri: &Url) -> Option<PathBuf> {
         let p = uri.to_file_path().ok()?;
         let canonical = p.canonicalize().unwrap_or(p);
+        // Slice A: one `strip_prefix` still, but against the *project* root —
+        // which is total across `include` trees, where the old `src` base could
+        // only ever name files in one of them. A file under no root strips fine
+        // and simply misses every lookup, which is correct: it was not analysed.
         canonical
-            .strip_prefix(&analysis.src_root)
+            .strip_prefix(&analysis.project_root)
             .ok()
             .map(|r| r.to_path_buf())
     }
@@ -679,7 +705,7 @@ impl Backend {
         for (unit, span) in crate::symbols::unit_reference_spans(&text) {
             if span.start <= offset && offset <= span.end {
                 let rel = analysis.unit_sources.get(&unit)?.first()?;
-                let target = Url::from_file_path(analysis.src_root.join(rel)).ok()?;
+                let target = Url::from_file_path(analysis.project_root.join(rel)).ok()?;
                 return Some(Location {
                     uri: target,
                     range: Range::default(),
@@ -696,7 +722,7 @@ impl Backend {
         site: &bynk_check::index::SiteRef,
     ) -> Option<Location> {
         let text = analysis.snapshots.get(&site.path)?;
-        let abs = analysis.src_root.join(&site.path);
+        let abs = analysis.project_root.join(&site.path);
         let uri = Url::from_file_path(abs).ok()?;
         Some(Location {
             uri,
@@ -972,7 +998,7 @@ impl LanguageServer for Backend {
         let doc = doc_text
             .as_deref()
             .and_then(|t| Some((t, crate::position::position_to_offset(t, pos)?)));
-        let src_root = self.project_src_root().await;
+        let files = self.project_files().await;
         let analysis = positioned
             .as_ref()
             .map(|(a, rel, offset)| crate::hover::HoverAnalysis {
@@ -987,7 +1013,7 @@ impl LanguageServer for Backend {
             analysis,
             doc,
             uri: &uri,
-            src_root: src_root.as_deref(),
+            files: files.as_deref(),
         });
         Ok(content.map(|value| Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -1014,32 +1040,32 @@ impl LanguageServer for Backend {
         let Some(ctx) = crate::signature_help::call_context(&text, offset) else {
             return Ok(None);
         };
-        let src_root = self.project_src_root().await;
+        let files = self.project_files().await;
         // Name callees (free fns, statics, capability ops, of/unsafe) — lexical.
-        let label =
-            match crate::signature_help::resolve_label(&ctx.callee, &text, src_root.as_deref()) {
-                Some(l) => Some(l),
-                // v0.32 slice 2: a value-receiver method (`xs.fold(`) — type the
-                // receiver via the rewrite + re-analyse, then the kernel signature.
-                None => match crate::signature_help::value_receiver_method(&ctx.callee) {
-                    Some((_, method)) => {
-                        if let Some((rewritten, recv_offset)) =
-                            crate::signature_help::value_receiver_rewrite(
-                                &text,
-                                &ctx.callee,
-                                ctx.open_paren,
-                                offset,
-                            )
-                            && let Some(ty) = self.type_receiver(&uri, rewritten, recv_offset).await
-                        {
-                            crate::signature_help::kernel_method_signature(&ty, method)
-                        } else {
-                            None
-                        }
+        let label = match crate::signature_help::resolve_label(&ctx.callee, &text, files.as_deref())
+        {
+            Some(l) => Some(l),
+            // v0.32 slice 2: a value-receiver method (`xs.fold(`) — type the
+            // receiver via the rewrite + re-analyse, then the kernel signature.
+            None => match crate::signature_help::value_receiver_method(&ctx.callee) {
+                Some((_, method)) => {
+                    if let Some((rewritten, recv_offset)) =
+                        crate::signature_help::value_receiver_rewrite(
+                            &text,
+                            &ctx.callee,
+                            ctx.open_paren,
+                            offset,
+                        )
+                        && let Some(ty) = self.type_receiver(&uri, rewritten, recv_offset).await
+                    {
+                        crate::signature_help::kernel_method_signature(&ty, method)
+                    } else {
+                        None
                     }
-                    None => None,
-                },
-            };
+                }
+                None => None,
+            },
+        };
         let Some(label) = label else { return Ok(None) };
         let active = ctx.active_param as u32;
         let parameters: Vec<ParameterInformation> = crate::signature_help::param_ranges(&label)
@@ -1295,7 +1321,7 @@ impl LanguageServer for Backend {
             .into_iter()
             .filter_map(|(unit, span)| {
                 let rel = analysis.unit_sources.get(&unit)?.first()?;
-                let target = Url::from_file_path(analysis.src_root.join(rel)).ok()?;
+                let target = Url::from_file_path(analysis.project_root.join(rel)).ok()?;
                 Some(DocumentLink {
                     range: crate::position::span_to_range(&text, span),
                     target: Some(target),
@@ -1323,8 +1349,8 @@ impl LanguageServer for Backend {
         // Derived from the converted offset (always a char boundary), not by
         // slicing the line at `pos.character` bytes.
         let line_prefix = text[..offset].rsplit('\n').next().unwrap_or("").to_string();
-        let src_root = self.project_src_root().await;
-        let candidates = completion::complete(&line_prefix, &text, src_root.as_deref());
+        let files = self.project_files().await;
+        let candidates = completion::complete(&line_prefix, &text, files.as_deref());
         let mut items: Vec<CompletionItem> =
             candidates.into_iter().map(to_completion_item).collect();
         // ADR 0064/0093 D3: offer in-scope locals/params at keyword position
@@ -1424,10 +1450,10 @@ impl LanguageServer for Backend {
         {
             Some(md) => Some(md),
             None => self
-                .project_src_root()
+                .project_files()
                 .await
-                .and_then(|root| {
-                    crate::symbols::describe_symbol_cross_file(&root, &uri, &item.label)
+                .and_then(|files| {
+                    crate::symbols::describe_symbol_cross_file(&files, &uri, &item.label)
                 })
                 .map(|(_uri, md)| md)
                 // Slice 9: stdlib/surface symbols (e.g. a `uses bynk.list` combinator)
@@ -1495,8 +1521,8 @@ impl LanguageServer for Backend {
             })));
         }
         // Cross-file fallback (v1.1; LSP spec §3.4).
-        if let Some(root) = self.project_src_root().await
-            && let Some(found) = crate::symbols::find_declaration_cross_file(&root, &uri, &name)
+        if let Some(files) = self.project_files().await
+            && let Some(found) = crate::symbols::find_declaration_cross_file(&files, &uri, &name)
         {
             let range = crate::position::span_to_range(&found.source, found.span);
             return Ok(Some(GotoDefinitionResponse::Scalar(Location {
@@ -1863,21 +1889,30 @@ impl LanguageServer for Backend {
         // Validator 1 + 2 input: re-analyse with the edits applied. Every
         // snapshot is pinned via the overlay so the re-analysis differs from
         // the plan's baseline only by the edits themselves.
+        //
+        // Slice A: this must re-analyse over the **same roots** the baseline
+        // round used (`AnalysisRoots::Project`, manifest-aware), not the
+        // single-tree `diagnose_project`. `diagnose_project(project_root)`
+        // resolves to `Roots::Single`, which walks the whole tree with **no
+        // `exclude`** and no `out`/`node_modules` skip — so `post` would cover a
+        // superset of the baseline's files, and validators 1 and 2 (which
+        // compare `post` against baselines from the manifest-aware round) would
+        // read a diagnostic or index site in an excluded tree as *new* and
+        // refuse a valid rename.
         let mut overlay = std::collections::HashMap::new();
         for (rel_path, text) in &analysis.snapshots {
             let edited = match plan.edits.get(rel_path) {
                 Some(spans) => crate::index_queries::apply_edits(text, spans, &plan.new_name),
                 None => text.clone(),
             };
-            let abs = analysis.src_root.join(rel_path);
+            let abs = analysis.project_root.join(rel_path);
             let abs = abs.canonicalize().unwrap_or(abs);
             overlay.insert(abs, edited);
         }
-        let analysis_root = analysis.src_root.clone();
-        let Ok(post) = tokio::task::spawn_blocking(move || {
-            bynk_ide::diagnose_project(&analysis_root, &overlay)
-        })
-        .await
+        let roots = bynk_ide::AnalysisRoots::Project(analysis.project_root.clone());
+        let Ok(post) =
+            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project_with(&roots, &overlay))
+                .await
         else {
             return Err(refused("rename validation failed to run".into()));
         };
@@ -1912,7 +1947,7 @@ impl LanguageServer for Backend {
             let Some(text) = analysis.snapshots.get(rel_path) else {
                 continue;
             };
-            let abs = analysis.src_root.join(rel_path);
+            let abs = analysis.project_root.join(rel_path);
             let Ok(file_uri) = Url::from_file_path(&abs) else {
                 continue;
             };
@@ -2666,6 +2701,239 @@ async fn main() {
 mod tests {
     use super::*;
 
+    // -- Slice A: the project model, driven through `Backend` ---------------
+    //
+    // These are the crate's first *behaviour-over-time* tests: they drive the
+    // real `Backend` — the layer the track doc (§4.1) notes has always been
+    // testable in-crate via `LspService::new(Backend::new)`, and never was.
+    // Everything else in this module asserts *static* shape.
+    //
+    // Hermetic on purpose. `bynk-lsp` is published and `Cargo.toml`'s `exclude`
+    // list can only drop `tests/*.rs`, never this file — so an in-crate test
+    // reading a sibling directory would fail `cargo test` on the released
+    // tarball. (`find_source_root_walks_up_to_the_nearest_src` below already
+    // does exactly that; not this slice's to fix.) The sibling-reading fixtures
+    // live in `tests/project_model.rs`, which *is* excluded.
+
+    /// A throwaway project, removed on drop — including on panic.
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scratch_project(tag: &str, files: &[(&str, &str)]) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "bynk_lsp_sliceA_{tag}_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (rel, body) in files {
+            let p = dir.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, body).unwrap();
+        }
+        Scratch(dir)
+    }
+
+    /// Build a `Backend` over a real `LspService`, rooted at `root`.
+    ///
+    /// `LspService::new(Backend::new)` is what `main` itself calls — the
+    /// `Client` it hands back is the only thing `Backend` needed, and it has
+    /// been available for this since the server was written.
+    async fn backend_at(root: &std::path::Path) -> Backend {
+        let (service, _socket) = tower_lsp::LspService::new(Backend::new);
+        let backend = service.inner().clone();
+        {
+            let mut state = backend.state.write().await;
+            state.project_root = Some(root.to_path_buf());
+            state.config = project::load_config(root).unwrap_or_default();
+        }
+        backend
+    }
+
+    /// The slice, end to end through the server: a round covers **every**
+    /// `include` tree, and each file keeps a distinct project-relative identity
+    /// (ADR 0198). Before slice A the round was handed `<root>/src` and the
+    /// `tests/` tree did not exist as far as the LSP was concerned.
+    #[tokio::test]
+    async fn a_round_covers_every_include_tree() {
+        let s = scratch_project(
+            "round",
+            &[
+                ("bynk.toml", "[project]\nname = \"round\"\n"),
+                ("src/thing.bynk", "context thing\n"),
+                // Same basename, second root — the ADR 0198 collision.
+                ("tests/thing.bynk", "suite thing\n"),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        backend.run_project_diagnostics().await;
+
+        let analysis = backend
+            .state
+            .read()
+            .await
+            .analysis
+            .clone()
+            .expect("a round committed");
+        let mut keys: Vec<String> = analysis
+            .snapshots
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec!["src/thing.bynk", "tests/thing.bynk"],
+            "the round must cover both include trees, with distinct identities",
+        );
+    }
+
+    /// The identity a request resolves through. `uri_to_rel` is one
+    /// `strip_prefix` against the project root — total across `include` trees,
+    /// where the old `src` base could only ever name files in one of them.
+    #[tokio::test]
+    async fn a_uri_in_any_include_tree_resolves_to_its_analysed_file() {
+        let s = scratch_project(
+            "uri",
+            &[
+                ("bynk.toml", "[project]\nname = \"uri\"\n"),
+                ("src/thing.bynk", "context thing\n"),
+                ("tests/thing.bynk", "suite thing\n"),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        backend.run_project_diagnostics().await;
+        let analysis = backend.state.read().await.analysis.clone().expect("round");
+
+        for (rel, label) in [
+            ("src/thing.bynk", "primary"),
+            ("tests/thing.bynk", "secondary"),
+        ] {
+            let abs = s.0.join(rel);
+            let uri = Url::from_file_path(abs.canonicalize().unwrap_or(abs)).unwrap();
+            let resolved = Backend::uri_to_rel(&analysis, &uri)
+                .unwrap_or_else(|| panic!("{label} root URI must resolve"));
+            assert_eq!(
+                resolved.to_string_lossy().replace('\\', "/"),
+                rel,
+                "a {label}-tree URI must name its own analysed file",
+            );
+            assert!(
+                analysis.snapshots.contains_key(&resolved),
+                "…and that file must be in the round",
+            );
+        }
+    }
+
+    /// `exclude` reaches the server, not just the compiler. `project.rs` used to
+    /// parse it and throw it away — its own comment said the analyse walk "does
+    /// not yet prune by `exclude`".
+    #[tokio::test]
+    async fn an_excluded_tree_is_not_analysed() {
+        let s = scratch_project(
+            "excl",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"excl\"\n\n[paths]\ninclude = [\".\"]\nexclude = [\"generated\"]\n",
+                ),
+                ("a.bynk", "context a\n"),
+                ("generated/gen.bynk", "context gen\n"),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        backend.run_project_diagnostics().await;
+        let analysis = backend.state.read().await.analysis.clone().expect("round");
+        let keys: Vec<String> = analysis
+            .snapshots
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(keys, vec!["a.bynk"], "excluded trees stay out of the round");
+    }
+
+    /// CI repro (#653): the VS Code extension's fixture workspace — a legacy
+    /// `[paths] src`/`tests` manifest (keys ADR 0147 retired, so
+    /// `read_project_paths` ignores them → `conventional()` → `["src"]`) with a
+    /// dotted commons in `src/`. Drives the real `references` handler.
+    #[tokio::test]
+    async fn references_resolve_in_the_vscode_fixture_layout() {
+        let s = scratch_project(
+            "vsc",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n\n[paths]\nsrc = \"src\"\ntests = \"tests\"\n",
+                ),
+                (
+                    "src/text.bynk",
+                    "commons fixture.text\n\nfn shout(s: String) -> String {\n  s\n}\n\nfn greet(name: String) -> String {\n  \"Hi, \\(shout(name))!\"\n}\n",
+                ),
+            ],
+        );
+        // Root exactly as `initialize` does: resolve from the workspace folder.
+        let (root, config) = Backend::resolve_root(&s.0).expect("bynk.toml is present");
+        assert_eq!(root, s.0, "the manifest's directory is the project root");
+
+        let (service, _socket) = tower_lsp::LspService::new(Backend::new);
+        let backend = service.inner().clone();
+        {
+            let mut st = backend.state.write().await;
+            st.project_root = Some(root.clone());
+            st.config = config;
+        }
+        backend.run_project_diagnostics().await;
+
+        let analysis = backend
+            .state
+            .read()
+            .await
+            .analysis
+            .clone()
+            .expect("a round committed");
+        let keys: Vec<String> = analysis
+            .snapshots
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(keys, vec!["src/text.bynk"], "the fixture file is analysed");
+
+        // The URI the editor sends, mapped through the round's identity.
+        let abs = s.0.join("src/text.bynk");
+        let uri = Url::from_file_path(abs.canonicalize().unwrap_or(abs)).unwrap();
+        let rel = Backend::uri_to_rel(&analysis, &uri).expect("URI resolves into the round");
+        assert_eq!(rel, PathBuf::from("src/text.bynk"));
+
+        // `shout`'s declaration site: line 2 (0-based), at `fn shout`.
+        let text = analysis.snapshots.get(&rel).expect("snapshot present");
+        let decl = text.find("shout").expect("`shout` in source");
+        let pos = crate::position::offset_to_position(text, decl);
+
+        let refs = backend
+            .references(ReferenceParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position: pos,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: ReferenceContext {
+                    include_declaration: true,
+                },
+            })
+            .await
+            .expect("references must not error");
+        let found = refs.unwrap_or_default();
+        assert!(
+            !found.is_empty(),
+            "`shout` is referenced by `greet` — references must resolve; got none",
+        );
+    }
+
     /// #485: a rootless multi-file-commons file (a `src/` tree with no
     /// `bynk.toml`, the layout the compiler fixtures use) resolves its
     /// implicit source root — the nearest ancestor `src/` — so project-mode
@@ -2689,11 +2957,28 @@ mod tests {
         );
 
         // No `bynk.toml` on the path, so resolution falls back to the implicit
-        // src tree. The project root is `src`'s parent, chosen so that
-        // `root.join(config.src_dir)` re-derives exactly the analysis root —
-        // the invariant `run_project_diagnostics` relies on.
-        let (root, config) = Backend::resolve_root(&make).expect("implicit project");
-        assert_eq!(root.join(&config.src_dir), src);
+        // src tree, and the project root is `src`'s parent.
+        //
+        // Slice A: the old invariant here was `root.join(config.src_dir) == src`
+        // — the analysis root re-derived by reducing the manifest to one
+        // directory. That reduction is gone: the round is rooted at the project
+        // and `bynk_ide::AnalysisRoots::Project` resolves the trees from the
+        // manifest (here, absent → `ProjectPaths::conventional`, which picks up
+        // exactly this `src/`). So what must hold is that the root is `src`'s
+        // parent, and that conventional discovery finds this file from it.
+        let (root, _config) = Backend::resolve_root(&make).expect("implicit project");
+        assert_eq!(root, src.parent().expect("src has a parent"));
+
+        let found = bynk_ide::discover_files(&bynk_ide::AnalysisRoots::Project(root.clone()));
+        let make_canon = make.canonicalize().unwrap_or(make.clone());
+        assert!(
+            found
+                .iter()
+                .any(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == make_canon),
+            "the compiler's own discovery must reach {} from the project root {}; got {found:?}",
+            make.display(),
+            root.display(),
+        );
     }
 
     /// A file with no `bynk.toml` and no ancestor `src/` stays in single-file

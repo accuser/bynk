@@ -109,7 +109,11 @@ project root. That single fact decides the feature set:
 
 - **With a project root** — cross-file lookups, project-wide diagnostics,
   workspace symbols, rename, and the index-backed navigation features all apply.
-  The source directory is taken from the manifest's `[paths].src`.
+  The files analysed are **exactly the files `bynkc` compiles**: every tree in
+  the manifest's [`[paths] include`](/docs/manifest/), with `exclude` honoured,
+  read through the compiler's own discovery. A conventional project needs no
+  `[paths]` at all — `src/` and, when present, `tests/` are picked up; a flat
+  project (`.bynk` at the root) works as-is.
 - **Single-file mode (no manifest)** — each buffer is analysed on its own and
   the workspace features are unavailable; diagnostics still work per buffer.
 

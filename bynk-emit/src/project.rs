@@ -600,21 +600,62 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
     }
 }
 
+/// Slice A: the `.bynk` files these roots contain — the **same walk**
+/// `compile_project` performs, honouring `exclude` and the tool's own `out`/
+/// `node_modules` caches.
+///
+/// Exposed so the IDE surface consumes the compiler's discovery instead of
+/// re-deriving a lesser one. The LSP's completion previously hand-rolled a walk
+/// of a single directory with no excludes, which is the same class of defect as
+/// the analysis root itself being wrong.
+pub fn discover_project_files(roots: &Roots) -> Vec<PathBuf> {
+    let (src_root, tests_root) = roots.resolve();
+    let excludes = roots.excludes();
+    let mut out = discover_bynk_files(&src_root, &excludes).unwrap_or_default();
+    // The secondary tree is optional, and equals the primary when `include` has
+    // one entry — in which case `run_checks` walks once and so must this.
+    if src_root != tests_root && tests_root.exists() {
+        out.extend(discover_bynk_files(&tests_root, &excludes).unwrap_or_default());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// v0.24: analyse a project without building — non-bailing, overlay-aware,
 /// file-attributed (ADR 0052). `overlay` maps canonicalised absolute paths
 /// to buffer text layered over disk reads (unsaved editor buffers).
+///
+/// Slice A: the single-tree convenience over [`analyse_project_with`]
+/// (`Roots::Single`), preserving the pre-slice-A behaviour for callers that
+/// hand in one fixture root and want one tree walked.
 pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
+    analyse_project_with(&Roots::Single(root.to_path_buf()), overlay)
+}
+
+/// Slice A: analyse a project whose roots are resolved from its manifest — the
+/// same [`Roots`] `compile_project` consumes, resolved the same way, so the LSP
+/// discovers exactly the files `bynkc` compiles.
+///
+/// Identity is project-relative (ADR 0198): a file's `source_path` here is
+/// unique across `include` roots.
+pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
+    // Resolved exactly as `compile_project` does — one project model, not two.
+    let (src_root, tests_root) = roots.resolve();
+    let src_prefix = roots.src_prefix();
+    let tests_prefix = roots.tests_prefix();
+    let excludes = roots.excludes();
     match run_checks(
-        root,
-        root,
-        Path::new(""),
-        Path::new(""),
+        &src_root,
+        &tests_root,
+        &src_prefix,
+        &tests_prefix,
         BuildTarget::Bundle,
         Platform::default(),
         ImportExt::Js,
         Mode::Analyse,
         overlay,
-        &[],
+        &excludes,
         None,
         false,
     ) {
@@ -1342,7 +1383,7 @@ fn phase_resolve_consumes(
             .map(|t| t.capabilities.keys().cloned().collect())
             .unwrap_or_default();
         for &i in indices {
-            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
             for c in parsed[i].consumes() {
                 let target = c.target.joined();
                 if kind != UnitKind::Context && kind != UnitKind::Adapter {
@@ -1685,7 +1726,7 @@ fn phase_validate_type_exports(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, (Visibility, Span)> = HashMap::new();
         for &i in indices {
-            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
             for clause in parsed[i].exports() {
                 // v0.15: `exports capability { ... }` clauses are validated
                 // separately (§4.1); 6b handles only type exports.
@@ -1790,7 +1831,7 @@ fn phase_validate_capability_exports(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, Span> = HashMap::new();
         for &i in indices {
-            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
             for clause in parsed[i].exports() {
                 if !matches!(clause.kind, ExportKind::Capability) {
                     continue;
@@ -2961,7 +3002,7 @@ fn run_checks(
                 });
                 let (_, warnings) =
                     crate::emitter::secrets::secret_reads_of(handlers.flatten(), flattened);
-                let rel = parsed[i].source_path.clone();
+                let rel = parsed[i].identity_path.clone();
                 errors.extend_for(Some(&rel), warnings);
             }
         }

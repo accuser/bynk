@@ -8,57 +8,17 @@ use std::path::Path;
 use bynk_fmt::{FormatOptions, IndentStyle};
 use serde::Deserialize;
 
+/// Slice A: only the sections the **server** owns. `[paths]` is deliberately
+/// absent — the project's trees are the *compiler's* to resolve
+/// (`bynk_ide::AnalysisRoots::Project` → `read_project_paths`), and this file
+/// re-deriving them is precisely the defect slice A removes. `[project]` is
+/// absent because nothing read it.
 #[derive(Debug, Deserialize, Default)]
 struct RawConfig {
-    #[serde(default)]
-    project: ProjectSection,
-    #[serde(default)]
-    paths: PathsSection,
     #[serde(default)]
     fmt: FmtSection,
     #[serde(default)]
     lsp: LspSection,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-struct ProjectSection {
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub version: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct PathsSection {
-    // v0.113 (DECISION S): flat `include`/`exclude` layout. The legacy
-    // role-named `src`/`tests` keys are gone; an old config that still carries
-    // them is tolerated (unknown keys are ignored) and falls back to defaults.
-    #[serde(default = "default_include")]
-    pub include: Vec<String>,
-    // Parsed for round-trip fidelity; the LSP's analyse walk does not yet prune
-    // by `exclude` (the compiler's discovery does).
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub exclude: Vec<String>,
-    #[serde(default = "default_out")]
-    pub out: String,
-}
-
-impl Default for PathsSection {
-    fn default() -> Self {
-        Self {
-            include: default_include(),
-            exclude: Vec::new(),
-            out: default_out(),
-        }
-    }
-}
-
-fn default_include() -> Vec<String> {
-    vec!["src".into()]
-}
-fn default_out() -> String {
-    "out".into()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -118,16 +78,15 @@ fn default_diagnostics_debounce_ms() -> u64 {
     300
 }
 
-/// Effective project configuration with all defaults resolved.
+/// Effective **server** configuration with all defaults resolved.
+///
+/// Slice A: this no longer carries a source root. It used to reduce `[paths]
+/// include` to a single `src_dir` string — dropping every root but the first
+/// and ignoring `exclude` — which made the LSP analyse a different project than
+/// `bynkc` compiles. The trees now come from the compiler's own discovery; what
+/// is left here is what the *server* owns: formatting and the diagnostics mode.
 #[derive(Debug, Clone)]
 pub struct ProjectConfig {
-    #[allow(dead_code)]
-    pub project_name: Option<String>,
-    #[allow(dead_code)]
-    pub project_version: Option<String>,
-    pub src_dir: String,
-    #[allow(dead_code)]
-    pub out_dir: String,
     pub indent: IndentStyle,
     pub max_line_width: u32,
     pub trailing_comma: bool,
@@ -138,10 +97,6 @@ pub struct ProjectConfig {
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
-            project_name: None,
-            project_version: None,
-            src_dir: "src".into(),
-            out_dir: "out".into(),
             indent: IndentStyle::Tab,
             max_line_width: 100,
             trailing_comma: true,
@@ -182,17 +137,6 @@ pub fn load_config(root: &Path) -> Option<ProjectConfig> {
         _ => DiagnosticsMode::Live,
     };
     Some(ProjectConfig {
-        project_name: raw.project.name,
-        project_version: raw.project.version,
-        // The primary `include` tree is the source root used for cross-file
-        // lookups (defaults to `src`).
-        src_dir: raw
-            .paths
-            .include
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "src".into()),
-        out_dir: raw.paths.out,
         indent,
         max_line_width: raw.fmt.max_line_width,
         trailing_comma: raw.fmt.trailing_comma,
