@@ -531,7 +531,7 @@ pub fn check_handler_body(
             given_anchor,
         },
         in_test_body: false,
-        test_services: HashSet::new(),
+        test_services: HashMap::new(),
         type_vars: HashSet::new(),
         store_cells,
         store_maps,
@@ -724,7 +724,7 @@ pub fn check_invariants(
                 given_anchor: None,
             },
             in_test_body: false,
-            test_services: HashSet::new(),
+            test_services: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -862,7 +862,7 @@ pub fn check_contracts(
                 given_anchor: None,
             },
             in_test_body: false,
-            test_services: HashSet::new(),
+            test_services: HashMap::new(),
             type_vars: type_vars.clone(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -1080,7 +1080,7 @@ pub fn check_transitions(
                 given_anchor: None,
             },
             in_test_body: false,
-            test_services: HashSet::new(),
+            test_services: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -1234,6 +1234,30 @@ pub struct CapabilityCtx {
     pub given_anchor: Option<Span>,
 }
 
+/// v0.178 (testing-the-boundary Slice 0, #662): the shape a test body needs to
+/// resolve a `svc.call(args)` invocation. Built by the project test pass from
+/// the target unit's service declarations, so the checker can verify the
+/// `on call` handler exists and that the call's arity and argument types match.
+#[derive(Debug, Clone)]
+pub struct TestServiceSig {
+    /// The service's protocol as an author-facing word (`"http"`, `"cron"`,
+    /// `"queue"`, `"websocket"`), or `None` for a plain `service X { on call }`.
+    /// Used only to shape the "no `on call` handler" diagnostic.
+    pub protocol: Option<String>,
+    /// The `on call` handler's parameters and declaration span, if the service
+    /// has one. `None` for a `from http`/`cron`/`queue` service — which makes
+    /// `svc.call(...)` `bynk.test.service_no_call_handler` rather than a call.
+    pub call_handler: Option<TestCallHandler>,
+}
+
+/// The `on call` handler signature a test-body `svc.call(args)` is checked
+/// against (v0.178).
+#[derive(Debug, Clone)]
+pub struct TestCallHandler {
+    pub params: Vec<bynk_syntax::ast::Param>,
+    pub span: Span,
+}
+
 pub struct Ctx<'a> {
     pub input: &'a ResolvedCommons,
     pub expr_types: &'a mut HashMap<Span, Ty>,
@@ -1275,11 +1299,14 @@ pub struct Ctx<'a> {
     /// True when the body being checked is a test case body. Permits
     /// `expect` statements (v0.7; renamed from `assert` in v0.112).
     pub in_test_body: bool,
-    /// The target unit's service names, populated for test case bodies
-    /// (v0.25). `svc.call(args)` in a test invokes the target's service —
-    /// the emitter wires it from the same set; the checker records the
-    /// binding edge here so test-file references index.
-    pub test_services: HashSet<String>,
+    /// The target unit's services, populated for test case bodies (v0.25).
+    /// `svc.call(args)` in a test invokes the target's service; the checker
+    /// resolves the service's `on call` handler here to check the call's
+    /// arity and argument types, and records the binding edge so test-file
+    /// references index. A service with no `on call` handler (a `from http`
+    /// / `cron` / `queue` service) carries `None` for `call_handler`, which
+    /// makes `svc.call(...)` a diagnostic rather than a silent runtime crash.
+    pub test_services: HashMap<String, TestServiceSig>,
     /// v0.20a: the enclosing function's type parameters (rigid vars), so
     /// nested explicit type arguments (`identity[A](x)` inside a generic
     /// body) resolve. Empty outside generic fn bodies.

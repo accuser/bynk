@@ -1365,6 +1365,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A deployment unit uses a platform-native capability but the build selects another `--platform`.",
         &["consumes_decl"],
     ),
+    dg(
+        "bynk.test.service_call_arity",
+        "A test body's `svc.call(...)` passes the wrong number of arguments for the service's `on call` handler.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.service_no_call_handler",
+        "A test body invokes `svc.call(...)` on a service with no `on call` handler (a `from http`/`cron`/`queue` service).",
+        &["case"],
+    ),
     d(
         "bynk.tier.property_has_tier",
         "A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance.",

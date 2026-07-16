@@ -129,7 +129,7 @@ pub(crate) fn check_fn(
         commit_seen: false,
         caps: CapabilityCtx::default(),
         in_test_body: false,
-        test_services: HashSet::new(),
+        test_services: HashMap::new(),
         type_vars: vars.clone(),
         store_cells: HashMap::new(),
         store_maps: HashMap::new(),
@@ -198,7 +198,7 @@ pub fn check_state_initialiser(
             commit_seen: false,
             caps: CapabilityCtx::default(),
             in_test_body: false,
-            test_services: HashSet::new(),
+            test_services: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -1732,23 +1732,92 @@ pub(crate) fn check_method_call(
         }
         return None;
     }
-    // v0.25: a test body invokes the target's service as `svc.call(args)`.
-    // The emitter wires it from the same service set; the checker types it
-    // loosely (the runner recovers outcomes at runtime), but the binding
-    // edge is real — record it so test-file references index. Returns here:
-    // the loose typing must not fall through to the receiver walk, which
-    // would report the service name as unknown (#504 backstop).
+    // v0.25 / v0.178: a test body invokes the target's service as
+    // `svc.call(args)`. The emitter wires the call from the same service set;
+    // the checker resolves the service's `on call` handler and verifies the
+    // call's arity and argument types (v0.178, #662 — before this, the branch
+    // matched the literal method name `call` without checking the handler
+    // exists, so `api.call(…)` on a `from http` service passed `check` and
+    // crashed at runtime, #654). The outcome type stays loose — the runner
+    // recovers `Result`/`Effect` shapes at runtime — but the binding edge is
+    // real, so it is recorded for test-file references. Returns here: the
+    // resolution must not fall through to the receiver walk, which would
+    // report the service name as unknown (#504 backstop).
     if let ExprKind::Ident(id) = &receiver.kind
         && method.name == "call"
         && ctx.lookup(id.name.as_str()).is_none()
-        && ctx.test_services.contains(&id.name)
+        && let Some(sig) = ctx.test_services.get(&id.name).cloned()
     {
         if let Some(unit) = ctx.input.cross_context.self_context.clone() {
             ctx.refs
                 .record_in_unit(id.span, SymbolKind::Service, &id.name, &unit);
         }
-        for a in args {
-            let _ = type_of(a, None, ctx);
+        let Some(handler) = sig.call_handler else {
+            // The service exists but has no `on call` handler — a `from http`
+            // / `cron` / `queue` service, addressable only by its own trigger
+            // surface (a later slice), not by `.call`. A plain `service X`
+            // (protocol `None`) always declares `on call` handlers, so it never
+            // reaches here; the `None` arm below is defensive, phrased without a
+            // `from <protocol>` clause that a plain service does not write.
+            let message = match &sig.protocol {
+                Some(protocol) => format!(
+                    "`{}` is a `from {protocol}` service and has no `on call` handler to invoke",
+                    id.name
+                ),
+                None => format!("service `{}` has no `on call` handler to invoke", id.name),
+            };
+            ctx.errors.push(
+                CompileError::new("bynk.test.service_no_call_handler", method.span, message)
+                .with_note(
+                    "only a service with an `on call` handler is addressable as `svc.call(...)` in a test body today",
+                ),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        if handler.params.len() != args.len() {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.service_call_arity",
+                    method.span,
+                    format!(
+                        "service `{}.call` expects {} argument(s), but {} were given",
+                        id.name,
+                        handler.params.len(),
+                        args.len()
+                    ),
+                )
+                .with_label(handler.span, "handler declared here"),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        }
+        // Type each argument against its declared parameter, so a wrong-typed
+        // argument is a `check` diagnostic rather than emitted-TS drift.
+        for (i, (param, arg)) in handler.params.iter().zip(args.iter()).enumerate() {
+            record_param_hint(ctx.hints, &param.name.name, arg);
+            let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
+            let arg_ty = type_of(arg, expected.as_ref(), ctx);
+            if let (Some(a), Some(p)) = (arg_ty.as_ref(), expected.as_ref())
+                && !compatible(a, p)
+            {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    arg.span,
+                    format!(
+                        "argument {} has type `{}`, but `{}.call` expects `{}` for `{}`",
+                        i + 1,
+                        a.display(),
+                        id.name,
+                        p.display(),
+                        param.name.name
+                    ),
+                ));
+            }
         }
         return None;
     }

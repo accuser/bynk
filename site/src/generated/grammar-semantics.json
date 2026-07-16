@@ -150,6 +150,14 @@
     {
       "code": "bynk.suite.duplicate_case_name",
       "summary": "Two `case`s share a description."
+    },
+    {
+      "code": "bynk.test.service_call_arity",
+      "summary": "A test body's `svc.call(...)` passes the wrong number of arguments for the service's `on call` handler."
+    },
+    {
+      "code": "bynk.test.service_no_call_handler",
+      "summary": "A test body invokes `svc.call(...)` on a service with no `on call` handler (a `from http`/`cron`/`queue` service)."
     }
   ],
   "consumes_decl": [
