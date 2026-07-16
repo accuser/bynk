@@ -113,7 +113,10 @@ The LSP server runs the existing Bynk compiler on the project's source corpus an
 - Publish: **all-and-clear** — every file with diagnostics is published;
   every file that carried diagnostics last round and is now clean gets an
   **empty publish**. The publish/clear diff is a pure function
-  (`bynk-lsp/src/publish.rs`), unit-tested without a transport.
+  (`bynk-lsp/src/publish.rs`), unit-tested without a transport. **Each publish
+  carries the document version the round analysed the file at** (v0.179, the
+  freshness contract §3.2.1 — a disk-only file carries none), so a client drops
+  a range whose buffer has already moved past it.
 - **Positions convert against the analysed snapshot** — `diagnose_project`
   returns the per-file text it analysed; spans never convert against a
   newer buffer (the analyse→publish window is real; debounce narrows but
@@ -141,6 +144,41 @@ The LSP server runs the existing Bynk compiler on the project's source corpus an
 - Error category code (e.g., `bynk.types.if_branch_mismatch`) included in the diagnostic for filterability.
 
 **Configuration:** Users can set `[lsp].diagnostics_mode = "on_save"` to disable live diagnostics. In on-save mode, diagnostics run only when the file is saved.
+
+### 3.2.1 The freshness contract (v0.179, ADR 0202)
+
+An **index-backed request always answers against the buffer the client
+currently holds.** Each analysed file records the document version it was
+analysed at (`Analysis.versions`, keyed project-relative). A request for a file
+whose open buffer has moved past the last round triggers a **refresh** — a round
+over the current buffers — before the request is answered, so a position is
+never resolved against text the user has already edited past.
+
+- **Uniform.** Every index-backed handler routes through one gate
+  (`Backend::analysis_for`). The pre-v0.179 split — some handlers on the cached
+  round, `rename` alone on a fresh one, several reading `state.analysis` raw —
+  is gone; freshness is the contract, not a per-handler choice. `completion` and
+  `document_symbol` remain outside it (they resolve against **live** buffer text
+  directly, so there is no snapshot to be stale).
+- **Decline, not stale.** The gate returns nothing — the request answers empty —
+  only when it cannot reach the client's version: single-file mode (no project),
+  a file outside every `include` root (never a snapshot key), or a concurrent
+  edit that raced the refresh (rare; the next request is current). It never
+  returns a snapshot older than the client's buffer.
+- **Affordable, and coalesced.** A round is whole-project (no incremental layer)
+  but fast — single-digit milliseconds for a typical project, under ~100 ms at
+  200 files, measured before this was settled (Q3). A request-driven refresh
+  supersedes the pending debounce round rather than racing it, and concurrent
+  requests after one edit share a single refresh (a serialising lock). The
+  scaling cliff — a many-hundred-file project would make a per-request full
+  round noticeable — is the one thing that would revisit this; not present at
+  Bynk's scale.
+
+This **revises** the pre-v0.179 rule that requests convert against "the analysed
+snapshot" of "the cached round": for an index-backed request the snapshot is now
+*made* current before it is read. The rule still holds for **diagnostics** — a
+published range converts against the round's snapshot (the analyse→publish window
+is real) and now carries that round's version so the client can reject it.
 
 ### 3.3 Hover
 
@@ -373,7 +411,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Keying.** A diagnostic's suggestions are offered when the requested range intersects the **diagnostic's span** — never the edits' spans, which can land far from the squiggle (both `given` fixes do: the diagnostic sits on the usage site or the return type; the edit lands in the clause).
 
-**Serving.** Actions are computed from the **cached analysis round** (the same retained snapshots/versions that back references and rename, extended to retain the round's per-file diagnostics), never a fresh analysis — a fresh run is slow and can disagree with the squiggles the client is showing. A request arriving **before the first analysis round**, or for a file **outside the project**, returns the empty list. The request range converts against the analysed snapshot (§3.2's rule); each action's `WorkspaceEdit` is a **versioned** `TextDocumentEdit` against the analysed document version, so a drifted buffer rejects the edit rather than mis-applying it.
+**Serving.** Actions are computed from the analysis round, which the freshness contract (§3.2.1, v0.179) keeps **current for the requested file** — a stale round is refreshed before serving, where the pre-v0.179 server served the cached round outright. A request for a file **outside the project**, or one the gate cannot bring to the client's version, returns the empty list. The round retains the per-file diagnostics the suggestions ride on. The request range converts against the analysed snapshot (§3.2's rule); each action's `WorkspaceEdit` is a **versioned** `TextDocumentEdit` against the analysed document version, so a drifted buffer rejects the edit rather than mis-applying it.
 
 **Applicability.** Only `MachineApplicable` suggestions surface as quick-fixes; `HasPlaceholders` exists for a future CLI `--fix` and is never offered as a one-click edit.
 
@@ -401,7 +439,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Harvesting (ADR 0056).** Hints are a curated per-file set recorded by the **checker** at each binding site as it computes the binding's final type — never a tool-side re-inference, and not the raw typed model (which cannot position a hint). The sink is a `&mut` parameter (the `RefSink` shape), so recorded hints **survive a transient type error** at every site the checker still reaches; a fn-body error short-circuits that file's v0.5 declaration pass, so its **handler-body** hints are suppressed until the error clears. Synthetic and test/integration files record nothing.
 
-**Serving.** Hints are served from the **cached analysis round** only, like code actions (§3.10): a request before the first round, or for a file outside the project, returns the empty list — as does a file whose group's composition failed (no analysed model). The visible range and the hint positions convert against the analysed snapshot (§3.2's rule). The server always produces hints; visibility is the client's (the editor's built-in inlay toggle; a `bynk.inlayHints.enable` extension setting is a B-1 surface item). `inlayHint/resolve` is not declared — labels are computed eagerly.
+**Serving.** Hints are served from the analysis round the freshness contract (§3.2.1) keeps current for the requested file, like code actions (§3.10): a request for a file outside the project, or one the gate cannot bring to the client's version, returns the empty list — as does a file whose group's composition failed (no analysed model). The visible range and the hint positions convert against the analysed snapshot (§3.2's rule). The server always produces hints; visibility is the client's (the editor's built-in inlay toggle; a `bynk.inlayHints.enable` extension setting is a B-1 surface item). `inlayHint/resolve` is not declared — labels are computed eagerly.
 
 ### 3.14 Semantic tokens (v0.28)
 
@@ -420,7 +458,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Sources (ADR 0057).** A pure `index_queries` producer reads **two** sources from the cached round: `ProjectIndex.symbols` (user-defined defs + refs) and **`ProjectIndex.foreign_refs`** — references to first-party (`bynk.*`) symbols, which `symbols` deliberately drops (synthetic defs point at files not on disk; definition/rename/workspace-symbol must never surface them). The side table is tokens-only; the v0.25 navigation invariants on `symbols` are untouched. `test`/`integration` files' references are in the index, so semantic tokens light up test files too.
 
-**Serving & encoding.** Tokens are served from the **cached analysis round** only (no cached round / non-project file → empty); positions and the `range` request convert against the analysed snapshot (§3.2's rule). The token array is delta-encoded per the protocol — relative line/char, position-sorted (name segments never overlap), lengths in UTF-16 code units. The **`delta`** request variant is not declared (a later optimisation).
+**Serving & encoding.** Tokens are served from the analysis round the freshness contract (§3.2.1) keeps current for the requested file (non-project file, or a round the gate cannot bring to the client's version → empty); positions and the `range` request convert against that current snapshot. The token array is delta-encoded per the protocol — relative line/char, position-sorted (name segments never overlap), lengths in UTF-16 code units. The **`delta`** request variant is not declared (a later optimisation).
 
 **Client theming (v0.29, ADR 0058).** The custom token types (`capability`/`service`/`agent`/`provider`) and modifiers (`refined`/`opaque`/`platformNative`) render with **no colour** under default themes unless the *client* declares them. The VS Code extension therefore declares them in `contributes.semanticTokenTypes` / `semanticTokenModifiers` (each custom type with a standard `superType` — `interface`/`type`/`class`/`function` — so semantic-highlighting themes colour it) and maps fallback TextMate scopes in `contributes.semanticTokenScopes` for theme without semantic rules. The declared **names are a cross-component contract** with the server's frozen legend — they must match exactly, or those tokens silently go unthemed — enforced by a `bynk-lsp` test that parses the extension's `package.json` against `semantic_tokens_legend()` (the single source of truth). Token *visibility* is the client's: the built-in `editor.semanticHighlighting.enabled`, with no Bynk-specific toggle.
 
@@ -504,7 +542,7 @@ Signatures render through the **same `type_ref_str` renderer as hover** (§3.3) 
 
 ### 3.17 CodeLens (v0.33)
 
-`textDocument/codeLens` returns one **reference-count lens** above each top-level **index definition** in the file — types, free fns, capabilities, services, agents, providers (the v0.25 index set; locals/methods/fields aren't indexed and get none). Served from the **cached analysis round**, positions against the analysed snapshot (§3.2's rule). The count is `refs.len()` from the binding index (a pure `code_lenses(index, path)` query returning `(def site, reference sites)`, sorted by definition position). The lens title is `"{n} reference(s)"` with the standard **`editor.action.showReferences`** command (args: the def URI, the def position, the reference `Location`s) — clicking peeks the references, no extension support required; non-VS-Code clients still render the title. **`"0 references"` is shown** (a dead-code signal). Computed eagerly (`resolve_provider: false`) — the count is `O(1)` off the index. The **test-run lens** ("▶ Run") needs test discovery + a run command and is deferred.
+`textDocument/codeLens` returns one **reference-count lens** above each top-level **index definition** in the file — types, free fns, capabilities, services, agents, providers (the v0.25 index set; locals/methods/fields aren't indexed and get none). Served from the analysis round the freshness contract (§3.2.1) keeps current for the requested file, positions against that current snapshot. The count is `refs.len()` from the binding index (a pure `code_lenses(index, path)` query returning `(def site, reference sites)`, sorted by definition position). The lens title is `"{n} reference(s)"` with the standard **`editor.action.showReferences`** command (args: the def URI, the def position, the reference `Location`s) — clicking peeks the references, no extension support required; non-VS-Code clients still render the title. **`"0 references"` is shown** (a dead-code signal). Computed eagerly (`resolve_provider: false`) — the count is `O(1)` off the index. The **test-run lens** ("▶ Run") needs test discovery + a run command and is deferred.
 
 ### 3.18 Call hierarchy (v0.34)
 
@@ -512,7 +550,7 @@ Call hierarchy is a three-call protocol served from the binding index's **call g
 
 The graph is a `CallEdge { caller, callee, site }` side table on `ProjectIndex`, built by **preserving `RefEdge.owner`** — the enclosing top-level declaration already recorded around each fn/service/agent/provider/capability body (`index.rs:73`) and, until now, used only for file re-attribution and then dropped. At assembly the owner resolves to the caller's `SymbolKey` through an `owner_keys` map populated in `add_def` alongside the existing `owner_files`, the same `(namespace, owner)` lookup the re-attribution uses. **Callees are `Fn` only** (method/op/dispatch callees aren't index symbols — deferred index kinds); **any indexed owner may be a caller** (so a service handler calling a free fn shows the service as a caller). Method owners (`"T.m"`) aren't index symbols, so they record no edge — visible as a callee whose reference count exceeds its incoming-call count. The call site (the callee-name span) is the `fromRanges` for both directions.
 
-Pure `index_queries::{prepare_call_hierarchy, incoming_calls, outgoing_calls}` over `ProjectIndex.calls`, served from the **cached round**. The resolved `SymbolKey` round-trips through `CallHierarchyItem.data` (a `SerKey`, since the index kind isn't `Serialize`) so the follow-ups resolve straight off it; a missing/garbled payload returns no calls. Method/op/dispatch edges join the graph for free once the deferred index kinds land; **implementation navigation** (`given Cap` → provider) is §3.19.
+Pure `index_queries::{prepare_call_hierarchy, incoming_calls, outgoing_calls}` over `ProjectIndex.calls`, served from the round the freshness contract (§3.2.1) keeps current for the requested file. The resolved `SymbolKey` round-trips through `CallHierarchyItem.data` (a `SerKey`, since the index kind isn't `Serialize`) so the follow-ups resolve straight off it; a missing/garbled payload returns no calls. Method/op/dispatch edges join the graph for free once the deferred index kinds land; **implementation navigation** (`given Cap` → provider) is §3.19.
 
 ### 3.19 Implementation navigation (v0.35)
 
@@ -520,7 +558,7 @@ Pure `index_queries::{prepare_call_hierarchy, incoming_calls, outgoing_calls}` o
 
 The edge comes from the `provides Cap = Provider` clause, which records a `Capability` reference whose owner is the provider. A provider may *also* declare `given Cap2` (its own deps) — also a capability ref owned by the same provider — so the owner alone can't tell "implements" from "depends on". The `provides` clause therefore records its ref with a **`provides` flag**; only flagged edges whose owner resolves to a `Provider` become `ImplEdge`s (the ref still counts as an ordinary capability reference). Cross-context `provides` links the capability's key in its defining unit to the provider's key in the providing unit, by construction.
 
-`implementation` resolves the symbol at the cursor, requires it be a `Capability`, and returns the providers' def sites (a provider is an index symbol — the edge only names it), sorted by position; a non-capability symbol or a capability with no providers returns `None`. The **reverse** (provider → its capability) is already **goto-definition** on the `provides Cap` name and isn't re-plumbed. **External/adapter providers** are included — navigation lands on the Bynk `provides Cap = Name { external }` declaration, never the off-tree `.binding.ts`. Pure `index_queries::implementations(index, key)` over `ProjectIndex.impls`, served from the **cached round**.
+`implementation` resolves the symbol at the cursor, requires it be a `Capability`, and returns the providers' def sites (a provider is an index symbol — the edge only names it), sorted by position; a non-capability symbol or a capability with no providers returns `None`. The **reverse** (provider → its capability) is already **goto-definition** on the `provides Cap` name and isn't re-plumbed. **External/adapter providers** are included — navigation lands on the Bynk `provides Cap = Name { external }` declaration, never the off-tree `.binding.ts`. Pure `index_queries::implementations(index, key)` over `ProjectIndex.impls`, served from the round the freshness contract (§3.2.1) keeps current for the requested file.
 
 **Go-to-type-definition (`textDocument/typeDefinition`, slice 6).** From a **value** at the cursor to the declaration of its (user-declared) type. The round's `expr_types` is now retained in the LSP `Analysis` (alongside the index/snapshots/locals); the handler reads the value's `Ty` at the offset (`type_at_offset`), unwraps a single-parameter container (`Option`/`Effect`/`List`/`HttpResult`) to its `Named` element, and returns that `Type` symbol's definition site(s). The lookup is a **bare-name match** (`Ty::Named.name` and the index both use bare names), so a type name shared across units yields several locations — the LSP-conventional resolution, the client lets the user choose. Built-in, function, actor, and two-parameter (`Result`/`Map`) types have no single type-declaration target and return `None`, as does a cursor not on a typed expression in a clean round. The **consumed-context** half (`uses B` / `B.Cap` → the context's source file) stays deferred — context units aren't index symbols, so it needs the unit→file map (also the basis for document links).
 

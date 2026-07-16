@@ -87,8 +87,10 @@ live buffer, which may already have moved on. A round carries:
   workspace symbols all read;
 - per-file analysed **snapshots** — the exact text each span is an offset into;
   every span-to-position conversion uses these;
-- the **open-document versions** captured when the overlay was built, so rename
-  can emit versioned edits against precisely those versions;
+- the **open-document versions** captured when the overlay was built — the
+  freshness contract gates on these (below), rename emits versioned edits
+  against them, and published diagnostics carry them so a client can drop a
+  range its buffer has moved past;
 - the full **diagnostics** per file, including the structured suggestions that
   code actions ride on (clean files retain an empty entry);
 - **inferred-type hints** and the **capability-requirement ledger** that drive
@@ -97,9 +99,16 @@ live buffer, which may already have moved on. A round carries:
 - **expression types**, which back go-to-type-definition; and
 - a **unit-name-to-source map**, which backs document links.
 
-Because reads convert against the retained snapshots, a request that arrives
-mid-edit still resolves consistently against the last completed round rather
-than against a buffer the analysis never checked.
+**The freshness contract.** An index-backed request always answers against the
+buffer the client currently holds. Each analysed file records the document
+version it was analysed at; when a request arrives for a file whose buffer has
+moved past the last round, the server refreshes — runs a round over the current
+buffers — before answering, so a position is never resolved against text the
+user has already edited past. When it cannot reach the requested version (a file
+outside the project, or a concurrent edit that raced the refresh) it returns
+nothing rather than a stale answer. A round is fast (single-digit milliseconds
+for a typical project), and concurrent requests after one edit share a single
+refresh.
 
 ## Project discovery and performance
 

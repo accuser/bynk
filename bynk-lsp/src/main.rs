@@ -145,6 +145,11 @@ struct State {
 struct Backend {
     client: Client,
     state: Arc<RwLock<State>>,
+    /// Slice B (the freshness contract): serialises request-driven refreshes so
+    /// concurrent index-backed requests after one edit coalesce onto a single
+    /// round instead of each spawning its own. Held only across `analysis_for`'s
+    /// refresh; never across a `state` lock.
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Backend {
@@ -152,6 +157,7 @@ impl Backend {
         Self {
             client,
             state: Arc::new(RwLock::new(State::default())),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -318,6 +324,12 @@ impl Backend {
 
         let mut new_by_uri: std::collections::HashMap<Url, Vec<Diagnostic>> =
             std::collections::HashMap::new();
+        // Slice B (DECISION C): the document version each file was analysed at,
+        // keyed by URI — so the publish can carry it and the client can drop a
+        // range computed against a buffer it has already edited past. `None` for
+        // a file read from disk (no open buffer, no version).
+        let mut version_by_uri: std::collections::HashMap<Url, Option<i32>> =
+            std::collections::HashMap::new();
         let mut snapshots = std::collections::HashMap::new();
         let mut diagnostics: std::collections::HashMap<PathBuf, Vec<bynk_ide::Diagnostic>> =
             std::collections::HashMap::new();
@@ -334,6 +346,7 @@ impl Backend {
                 .iter()
                 .map(|d| make_diagnostic(d, &file.text, &uri))
                 .collect();
+            version_by_uri.insert(uri.clone(), versions.get(&file.source_path).copied());
             new_by_uri.insert(uri, diags);
             diagnostics.insert(file.source_path.clone(), file.diagnostics.clone());
             snapshots.insert(file.source_path.clone(), file.text.clone());
@@ -401,7 +414,12 @@ impl Backend {
 
         let (publishes, dirty) = publish::publish_plan(&previously_dirty, new_by_uri);
         for (uri, diags) in publishes {
-            self.client.publish_diagnostics(uri, diags, None).await;
+            // Slice B (DECISION C): stamp the publish with the version the round
+            // analysed this file at (was `None`), so a client can reject a range
+            // its buffer has moved past. A clearing publish for a now-absent file
+            // carries no version — it has no entry in `version_by_uri`.
+            let version = version_by_uri.get(&uri).copied().flatten();
+            self.client.publish_diagnostics(uri, diags, version).await;
         }
         let mut state = self.state.write().await;
         if state.analysis_round_committed == round {
@@ -451,7 +469,10 @@ impl Backend {
     /// good round's bindings around the cursor are what's wanted). Positions
     /// convert against the cached snapshot, like the other cached-round reads.
     async fn locals_completions(&self, uri: &Url, pos: Position) -> Vec<CompletionItem> {
-        let analysis = self.state.read().await.analysis.clone();
+        // Slice B: completion's locals sub-path resolves `pos` against the
+        // round's snapshot (like `index_position`), so it refreshes too — the
+        // one exposed reader the §4.2 table missed.
+        let analysis = self.analysis_for(uri).await;
         let Some(analysis) = analysis else {
             return Vec::new();
         };
@@ -665,15 +686,82 @@ impl Backend {
         if let Some(a) = self.state.read().await.analysis.clone() {
             return Some(a);
         }
-        self.run_project_diagnostics().await;
+        self.refresh_now().await;
         self.state.read().await.analysis.clone()
     }
 
-    /// v0.25: a fresh analysis of the current buffers — rename plans against
-    /// live state, not the last debounced round.
-    async fn fresh_analysis(&self) -> Option<Arc<Analysis>> {
+    /// Slice B — the freshness contract (Q3, settled #663). The analysis a
+    /// request must answer from, **current for `uri`**: cold start triggers a
+    /// round; a round that predates `uri`'s buffer triggers a refresh.
+    ///
+    /// The client's request position refers to `uri`'s current document
+    /// version — messages are ordered, so `docs[uri].version` reflects every
+    /// `didChange` sent before the request. The returned analysis is guaranteed
+    /// to have analysed *that* version of `uri`, so `position_to_offset` against
+    /// its snapshot is never resolved against text the user edited past.
+    ///
+    /// Returns `None` — decline, per Q3 — only when the request cannot be
+    /// answered at the version the client holds: single-file mode (no project),
+    /// a file outside every `include` root (never a snapshot key), or a
+    /// concurrent edit that moved past the refresh (rare; the next request is
+    /// current). Never returns an analysis whose snapshot for `uri` is stale.
+    async fn analysis_for(&self, uri: &Url) -> Option<Arc<Analysis>> {
+        // The version the request's position is stated against. `None` when the
+        // file is not an open buffer — then any round is as authoritative as it
+        // gets (nothing newer to be stale against), so the freshness gate is a
+        // no-op and only cold start matters.
+        let want = self.state.read().await.docs.get(uri).map(|d| d.version);
+        let current = |a: &Arc<Analysis>| {
+            let Some(rel) = Self::uri_to_rel(a, uri) else {
+                return false; // unmappable URI — cannot be answered
+            };
+            // The file must actually be *analysed* (a snapshot key), not merely
+            // have a version entry: `versions` is built from open docs, so a
+            // file open but outside every `include` root has a version and no
+            // snapshot. Such a file is never answerable — decline.
+            if !a.snapshots.contains_key(&rel) {
+                return false;
+            }
+            match want {
+                // Open buffer: the analysed snapshot must be at the client's
+                // version, or the position resolves against text edited past.
+                Some(v) => a.versions.get(&rel) == Some(&v),
+                // Not an open buffer (a closed/disk file, e.g. a goto target):
+                // the analysed round is authoritative — nothing newer to lag.
+                None => true,
+            }
+        };
+
+        if let Some(a) = self.state.read().await.analysis.clone()
+            && current(&a)
+        {
+            return Some(a);
+        }
+
+        // Refresh. The lock serialises concurrent requests: the first runs the
+        // round, the rest wait and then find it already current below — so N
+        // requests after one edit share one round, not N.
+        let _guard = self.refresh_lock.lock().await;
+        if let Some(a) = self.state.read().await.analysis.clone()
+            && current(&a)
+        {
+            return Some(a);
+        }
+        self.refresh_now().await;
+        let a = self.state.read().await.analysis.clone()?;
+        // Strict: only answer if the fresh round is actually current for `uri`.
+        // An edit that landed during the round leaves us behind — decline, and
+        // the next request refreshes again. Never a position against stale text.
+        current(&a).then_some(a)
+    }
+
+    /// Run a round now, superseding any pending debounced one. Bumping the
+    /// generation makes a scheduled round (which checks it before running) bail,
+    /// so a request-driven refresh does not race a redundant debounce round that
+    /// would produce the same result 200 ms later.
+    async fn refresh_now(&self) {
+        self.state.write().await.analysis_generation += 1;
         self.run_project_diagnostics().await;
-        self.state.read().await.analysis.clone()
     }
 
     /// Map a request URI to the analysis' project-relative path.
@@ -696,10 +784,19 @@ impl Backend {
     /// Spans come from the live buffer; the target from the round's unit→source
     /// map. `None` for a first-party/unresolved unit or a non-unit position.
     async fn unit_reference_definition(&self, uri: &Url, pos: Position) -> Option<Location> {
-        let (text, analysis) = {
-            let s = self.state.read().await;
-            (s.docs.get(uri).map(|d| d.text.clone()), s.analysis.clone())
-        };
+        // Slice B: the position is resolved against *live* text (no stale-offset
+        // risk), but the `uses`/`consumes` → source lookup reads the round's
+        // `unit_sources`, so route that through the gate — fresh or decline,
+        // never a stale unit map. Cheap here: `goto_definition` already
+        // refreshed via `index_position`, so this hits the current-round path.
+        let analysis = self.analysis_for(uri).await;
+        let text = self
+            .state
+            .read()
+            .await
+            .docs
+            .get(uri)
+            .map(|d| d.text.clone());
         let (text, analysis) = (text?, analysis?);
         let offset = cursor_offset(&text, pos);
         for (unit, span) in crate::symbols::unit_reference_spans(&text) {
@@ -769,7 +866,7 @@ impl Backend {
     /// analysed snapshot, and run the pure producer. Empty when no round is
     /// cached or the file is outside the project.
     async fn semantic_tokens_for(&self, uri: &Url, range: Option<Range>) -> Vec<SemanticToken> {
-        let analysis = { self.state.read().await.analysis.clone() };
+        let analysis = self.analysis_for(uri).await;
         let Some(analysis) = analysis else {
             return Vec::new();
         };
@@ -811,13 +908,12 @@ impl Backend {
         &self,
         uri: &Url,
         position: Position,
-        fresh: bool,
     ) -> Option<(Arc<Analysis>, PathBuf, usize)> {
-        let analysis = if fresh {
-            self.fresh_analysis().await?
-        } else {
-            self.ensure_analysis().await?
-        };
+        // Slice B: `analysis_for` guarantees the round analysed `uri`'s current
+        // version, so `position_to_offset` resolves against the same text the
+        // client's position refers to — the `fresh` flag every caller used to
+        // pass is gone (freshness is the contract now, not a per-call choice).
+        let analysis = self.analysis_for(uri).await?;
         let rel = Self::uri_to_rel(&analysis, uri)?;
         let text = analysis.snapshots.get(&rel)?;
         let offset = crate::position::position_to_offset(text, position)?;
@@ -988,7 +1084,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         // The analysed round, positioned — absent for a file outside it.
-        let positioned = self.index_position(&uri, pos, false).await;
+        let positioned = self.index_position(&uri, pos).await;
         // The live buffer — absent when the document is not open. Distinct from
         // the snapshot above, which lags while the user types.
         let doc_text = {
@@ -1091,7 +1187,7 @@ impl LanguageServer for Backend {
     /// clickable to peek the references. Served from the cached round.
     async fn code_lens(&self, params: CodeLensParams) -> JsonRpcResult<Option<Vec<CodeLens>>> {
         let uri = params.text_document.uri;
-        let analysis = { self.state.read().await.analysis.clone() };
+        let analysis = self.analysis_for(&uri).await;
         let Some(analysis) = analysis else {
             return Ok(Some(Vec::new()));
         };
@@ -1182,7 +1278,7 @@ impl LanguageServer for Backend {
     ) -> JsonRpcResult<Option<Vec<CallHierarchyItem>>> {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
             return Ok(None);
         };
         let Some((key, def)) =
@@ -1197,7 +1293,7 @@ impl LanguageServer for Backend {
         &self,
         params: CallHierarchyIncomingCallsParams,
     ) -> JsonRpcResult<Option<Vec<CallHierarchyIncomingCall>>> {
-        let analysis = { self.state.read().await.analysis.clone() };
+        let analysis = self.analysis_for(&params.item.uri).await;
         let Some(analysis) = analysis else {
             return Ok(Some(Vec::new()));
         };
@@ -1219,7 +1315,7 @@ impl LanguageServer for Backend {
         &self,
         params: CallHierarchyOutgoingCallsParams,
     ) -> JsonRpcResult<Option<Vec<CallHierarchyOutgoingCall>>> {
-        let analysis = { self.state.read().await.analysis.clone() };
+        let analysis = self.analysis_for(&params.item.uri).await;
         let Some(analysis) = analysis else {
             return Ok(Some(Vec::new()));
         };
@@ -1247,7 +1343,7 @@ impl LanguageServer for Backend {
     ) -> JsonRpcResult<Option<GotoImplementationResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
             return Ok(None);
         };
         let Some((key, _)) = analysis.index.symbol_at(&rel, offset) else {
@@ -1277,7 +1373,7 @@ impl LanguageServer for Backend {
     ) -> JsonRpcResult<Option<GotoTypeDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
             return Ok(None);
         };
         let Some(entries) = analysis.expr_types.get(&rel) else {
@@ -1310,10 +1406,14 @@ impl LanguageServer for Backend {
         params: DocumentLinkParams,
     ) -> JsonRpcResult<Option<Vec<DocumentLink>>> {
         let uri = params.text_document.uri;
-        let (text, analysis) = {
-            let s = self.state.read().await;
-            (s.docs.get(&uri).map(|d| d.text.clone()), s.analysis.clone())
-        };
+        let analysis = self.analysis_for(&uri).await;
+        let text = self
+            .state
+            .read()
+            .await
+            .docs
+            .get(&uri)
+            .map(|d| d.text.clone());
         let (Some(text), Some(analysis)) = (text, analysis) else {
             return Ok(None);
         };
@@ -1483,7 +1583,7 @@ impl LanguageServer for Backend {
         // name-collision mis-navigation of the string-matching path). The
         // legacy path remains as fallback for not-yet-indexed symbol kinds
         // (locals, methods, fields, ops).
-        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await {
+        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await {
             if let Some((_, def)) =
                 crate::index_queries::definition_at(&analysis.index, &rel, offset)
                 && let Some(location) = Self::site_to_location(&analysis, def)
@@ -1639,7 +1739,7 @@ impl LanguageServer for Backend {
     async fn references(&self, params: ReferenceParams) -> JsonRpcResult<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
-        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
             return Ok(None);
         };
         let include_decl = params.context.include_declaration;
@@ -1675,7 +1775,7 @@ impl LanguageServer for Backend {
         params: CodeActionParams,
     ) -> JsonRpcResult<Option<CodeActionResponse>> {
         let uri = params.text_document.uri;
-        let analysis = { self.state.read().await.analysis.clone() };
+        let analysis = self.analysis_for(&uri).await;
         let Some(analysis) = analysis else {
             return Ok(Some(Vec::new()));
         };
@@ -1711,7 +1811,7 @@ impl LanguageServer for Backend {
     /// convert against the analysed snapshot (the v0.24 rule).
     async fn inlay_hint(&self, params: InlayHintParams) -> JsonRpcResult<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
-        let analysis = { self.state.read().await.analysis.clone() };
+        let analysis = self.analysis_for(&uri).await;
         let Some(analysis) = analysis else {
             return Ok(Some(Vec::new()));
         };
@@ -1812,7 +1912,7 @@ impl LanguageServer for Backend {
     ) -> JsonRpcResult<Option<Vec<DocumentHighlight>>> {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
             return Ok(None);
         };
         let Some(text) = analysis.snapshots.get(&rel) else {
@@ -1853,7 +1953,7 @@ impl LanguageServer for Backend {
         // Refuse (None) for anything the index does not cover — locals,
         // methods, record fields, capability ops, unit names — rather than
         // falling through to a partial or name-matched rename.
-        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
             return Ok(None);
         };
         let Some((key, site)) = crate::index_queries::prepare_rename(&analysis.index, &rel, offset)
@@ -1880,7 +1980,7 @@ impl LanguageServer for Backend {
         };
         // Plan against a *fresh* analysis of the current buffers, so the
         // edits and the captured versions describe live state.
-        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, true).await else {
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
             return Err(refused("rename requires a project (bynk.toml)".into()));
         };
         let plan = crate::index_queries::plan_rename(&analysis.index, &rel, offset, &new_name)
@@ -2931,6 +3031,200 @@ mod tests {
         assert!(
             !found.is_empty(),
             "`shout` is referenced by `greet` — references must resolve; got none",
+        );
+    }
+
+    // -- Slice B: the freshness contract, driven through a real Backend -------
+    //
+    // These are behaviour-over-time tests (§4.1): they edit a buffer and then
+    // make a request, asserting the request answers against the *new* text.
+    // The static tests above can't see this — the defect lives between the
+    // edit and the request, which only a driven sequence exercises.
+
+    /// Open `src/a.bynk`, round it, then edit and drive `did_change`. `uri`,
+    /// the round-1 relative path, and the edited version are returned.
+    async fn open_round_edit(
+        backend: &Backend,
+        root: &std::path::Path,
+        v1_text: &str,
+        v2_text: &str,
+    ) -> (Url, PathBuf) {
+        let abs = root.join("src/a.bynk");
+        let uri = Url::from_file_path(abs.canonicalize().unwrap_or(abs)).unwrap();
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "bynk".into(),
+                    version: 1,
+                    text: v1_text.to_string(),
+                },
+            })
+            .await;
+        backend.run_project_diagnostics().await;
+
+        // The round exists and is version 1.
+        let a1 = backend
+            .state
+            .read()
+            .await
+            .analysis
+            .clone()
+            .expect("round 1");
+        let rel = Backend::uri_to_rel(&a1, &uri).expect("uri resolves");
+        assert_eq!(a1.versions.get(&rel), Some(&1), "round 1 is version 1");
+
+        // Edit: the buffer becomes `v2_text` at version 2. The debounce this
+        // schedules is superseded by the request-driven refresh below.
+        backend
+            .did_change(DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version: 2,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: v2_text.to_string(),
+                }],
+            })
+            .await;
+        (uri, rel)
+    }
+
+    /// The headline. After an edit that inserts a line above a symbol, a
+    /// position request at the symbol's *new* location resolves to the symbol —
+    /// because the gate refreshes to the edited buffer first. Under the old
+    /// behaviour the new position was resolved against the round-1 snapshot,
+    /// landing on the wrong text.
+    #[tokio::test]
+    async fn a_position_after_an_edit_resolves_against_the_new_text() {
+        let v1 = "commons q.a\n\nfn target(x: Int) -> Int {\n  x\n}\n";
+        // Prepend a blank line: `target` moves from line 2 to line 3.
+        let v2 = format!("\n{v1}");
+        let s = scratch_project(
+            "fresh_hd",
+            &[("bynk.toml", "[project]\nname=\"q\"\n"), ("src/a.bynk", v1)],
+        );
+        let backend = backend_at(&s.0).await;
+        let (uri, rel) = open_round_edit(&backend, &s.0, v1, &v2).await;
+
+        // The gate refreshes to the edited version and text.
+        let a = backend.analysis_for(&uri).await.expect("current analysis");
+        assert_eq!(a.versions.get(&rel), Some(&2), "gate refreshed to the edit");
+        assert_eq!(a.snapshots.get(&rel).map(String::as_str), Some(v2.as_str()));
+
+        // `target`'s new position resolves to `target` in the refreshed snapshot.
+        let off_v2 = v2.find("target").unwrap();
+        let new_pos = crate::position::offset_to_position(&v2, off_v2);
+        let (a2, rel2, off) = backend
+            .index_position(&uri, new_pos)
+            .await
+            .expect("position resolves");
+        assert!(
+            a2.snapshots.get(&rel2).unwrap()[off..].starts_with("target"),
+            "the new position must land on `target` in the current snapshot — \
+             the whole point of refreshing",
+        );
+    }
+
+    /// The gate never returns a round whose snapshot for the file predates the
+    /// buffer. A cached round at version 1 with the buffer at version 2 must be
+    /// refreshed, not served.
+    #[tokio::test]
+    async fn a_stale_round_is_never_served() {
+        let v1 = "commons q.a\n\nfn f(x: Int) -> Int {\n  x\n}\n";
+        let v2 = format!("{v1}\nfn g(y: Int) -> Int {{\n  y\n}}\n");
+        let s = scratch_project(
+            "fresh_stale",
+            &[("bynk.toml", "[project]\nname=\"q\"\n"), ("src/a.bynk", v1)],
+        );
+        let backend = backend_at(&s.0).await;
+        let (uri, rel) = open_round_edit(&backend, &s.0, v1, &v2).await;
+
+        // Precondition: the *cached* round is still version 1 (no refresh yet).
+        let cached = backend.state.read().await.analysis.clone().unwrap();
+        assert_eq!(cached.versions.get(&rel), Some(&1), "cached round is stale");
+
+        // The gate must not hand back that stale round.
+        let a = backend.analysis_for(&uri).await.unwrap();
+        assert_eq!(
+            a.versions.get(&rel),
+            Some(&2),
+            "analysis_for must refresh past a stale cached round, never serve it",
+        );
+    }
+
+    /// DECISION B: concurrent requests after one edit coalesce onto a single
+    /// round, not one each. The refresh lock serialises them; the second finds
+    /// the first's round already current.
+    #[tokio::test]
+    async fn concurrent_requests_after_one_edit_share_one_round() {
+        let v1 = "commons q.a\n\nfn f(x: Int) -> Int {\n  x\n}\n";
+        let v2 = format!("\n{v1}");
+        let s = scratch_project(
+            "fresh_coal",
+            &[("bynk.toml", "[project]\nname=\"q\"\n"), ("src/a.bynk", v1)],
+        );
+        let backend = backend_at(&s.0).await;
+        let (uri, _rel) = open_round_edit(&backend, &s.0, v1, &v2).await;
+
+        let started_before = backend.state.read().await.analysis_round_started;
+
+        // Fire several gate calls concurrently.
+        let calls = (0..5).map(|_| {
+            let b = backend.clone();
+            let u = uri.clone();
+            tokio::spawn(async move { b.analysis_for(&u).await.is_some() })
+        });
+        for c in calls {
+            assert!(
+                c.await.unwrap(),
+                "each concurrent request must get an analysis"
+            );
+        }
+
+        let started_after = backend.state.read().await.analysis_round_started;
+        assert_eq!(
+            started_after - started_before,
+            1,
+            "five concurrent requests after one edit must share ONE round, not run five",
+        );
+    }
+
+    /// DECISION D: a file outside every `include` root cannot be answered at the
+    /// client's version — the gate declines rather than serving something.
+    #[tokio::test]
+    async fn a_file_outside_the_project_is_declined() {
+        let v1 = "commons q.a\n\nfn f(x: Int) -> Int {\n  x\n}\n";
+        let s = scratch_project(
+            "fresh_out",
+            &[("bynk.toml", "[project]\nname=\"q\"\n"), ("src/a.bynk", v1)],
+        );
+        let backend = backend_at(&s.0).await;
+        // Round the project so a cached analysis exists.
+        backend.run_project_diagnostics().await;
+
+        // A URI for a file the project does not contain, opened as a buffer.
+        let outside = s.0.join("elsewhere.bynk");
+        std::fs::write(&outside, v1).unwrap();
+        let uri = Url::from_file_path(outside.canonicalize().unwrap()).unwrap();
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "bynk".into(),
+                    version: 1,
+                    text: v1.to_string(),
+                },
+            })
+            .await;
+
+        assert!(
+            backend.analysis_for(&uri).await.is_none(),
+            "a file outside the include roots is never a snapshot key — decline, \
+             don't serve a round that doesn't cover it",
         );
     }
 
