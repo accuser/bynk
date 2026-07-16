@@ -313,6 +313,35 @@ handler's `deps` as the `CallerId` identity, so `<binder>.identity` lowers to
 channel-based — no crypto — and a binder-less `on call` reads no header and is
 byte-unchanged.
 
+### §7.3.4b The cross-context boundary codec (v0.176)
+
+Every value crossing a `workers` cross-context boundary is encoded and decoded by
+a **generated codec** — the same `serialise_*` / `deserialise_*` helpers
+[§7.2](#72-targets) requires, monomorphised per instantiation. No wire position
+asserts a value with an `as JsonValue` cast, and no return type decodes through an
+unvalidated identity function.
+
+The boundary is therefore **symmetric by construction**: the same dispatch names
+the serialiser and the deserialiser, so a type cannot be encoded one way and
+decoded another. This is what admits a bare `Bytes` in a cross-context signature
+— it base64-encodes outbound and base64-decodes (with validation) inbound. Before
+v0.176 the boundary carried its own codec dispatch, which cast a `Bytes` outbound
+while decoding it inbound; the resulting mis-encode was diagnosed rather than
+emitted (ADR 0142 D8). With one dispatch, the asymmetry — and so the restriction
+— is gone.
+
+Two positions are deliberately *not* codec-checked, and both are stated here
+rather than left to be discovered:
+
+- The **runtime-owned error types** (`ValidationError`, `JsonError`, `HttpResult`,
+  `QueueResult`) pass through uncoded. They are declared by the runtime rather
+  than by a type declaration the emitter can walk, so there is no helper to
+  generate; their JSON shape is fixed by the runtime, so the pass-through is
+  unchecked rather than wrong.
+- A **consumed context's codecs** are still reached through that context's module.
+  A context does not yet generate its own view of a callee-owned type's codec, so
+  a `workers` build's caller and callee share one compiled view of the contract.
+
 ### §7.3.5 Tests
 
 Each test unit emits a per-target test module; an aggregating runner

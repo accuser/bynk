@@ -12,7 +12,7 @@ export function compose(env: Env) {
   const Jwt = new tokens__binding.JoseJwt();
   const deps = { Jwt };
   return {
-    async login(secret: any) {
+    async login(secret: string) {
       return handlers.login.call(secret, deps);
     },
   };

@@ -1566,63 +1566,76 @@ pub(crate) fn lower_workers_cross_context_call(
     stmts: &mut Vec<String>,
     cx: &mut LowerCtx<'_>,
 ) -> String {
+    use crate::emitter::serialisation::{deserialise_ref_via, serialise_expr_via};
+
     let info = cx.cross_context;
-    let consumed_ns = qualified_to_ns(consumed);
     let binding = crate::emitter::wrangler::consumed_binding_name(consumed);
 
     // Look up the service signature on the consumed context.
+    //
+    // v0.176 (#642, Decision C): the checker resolved this call before the
+    // emitter ran, so an absent signature is the emitter disagreeing with the
+    // checker — a compiler bug. It used to lower to `value as JsonValue` and an
+    // `((j: any) => ({ tag: "Ok", value: j }))` identity deserialiser, shipping
+    // an unvalidated `any` to production to paper over that bug. Fail instead.
     let svc = info
         .consumed_services
         .get(consumed)
-        .and_then(|map| map.get(&method.name));
+        .and_then(|map| map.get(&method.name))
+        .unwrap_or_else(|| {
+            panic!(
+                "bynk.emit.unresolved_cross_context_signature: no signature for \
+                 `{consumed}.{}` at emit time, though the checker resolved the call",
+                method.name
+            )
+        });
 
-    // Build serialised-arg expression. If we know the parameter types, use
-    // the owning context's serialise_<T> helper; otherwise fall back to
-    // `value as JsonValue`.
+    // The codecs are still reached through the consumed context's namespace.
+    // Decision B (the caller generating its *own* codecs) is deliberately not
+    // done here: a caller-side codec for a callee-owned type needs the callee's
+    // *type declarations* too — `deserialise_AuthId` must name `AuthId` in its
+    // return type, and `emit_refined` reaches for the type's own `.of`
+    // constructor — so it is a self-contained emitter increment, not a detail of
+    // unifying the dispatch. Tracked separately; see #642.
+    let ns = format!("{}.", qualified_to_ns(consumed));
+
+    // One invariant for arity, asserted once, in both directions. The checker
+    // validated it (`bynk.consumes.service_arity`) before emit ran, so a mismatch
+    // either way is the emitter disagreeing with the checker — the same internal
+    // fault the signature lookup above asserts on, and it gets the same answer.
+    // (Previously the two directions disagreed: a surplus argument panicked, while
+    // a missing one silently emitted `null` into the args object — quietly sending
+    // a wrong payload for exactly the fault the other direction refused to ship.)
+    assert_eq!(
+        args.len(),
+        svc.params.len(),
+        "bynk.emit.unresolved_cross_context_signature: `{consumed}.{}` takes {} argument(s) \
+         but the call site has {}, though the checker accepted the call's arity",
+        method.name,
+        svc.params.len(),
+        args.len(),
+    );
+
     let mut args_serialised: Vec<String> = Vec::new();
     for (i, a) in args.iter().enumerate() {
         let lowered = lower_expr(a, stmts, cx);
-        let param_ty = svc.and_then(|s| s.params.get(i)).map(|(_, t)| t);
-        let serialised = match param_ty {
-            Some(tr) => workers_serialise_expr(tr, &lowered, &consumed_ns),
-            None => format!("{lowered} as JsonValue"),
-        };
-        args_serialised.push(serialised);
+        let (_, param_ty) = &svc.params[i];
+        args_serialised.push(serialise_expr_via(param_ty, &lowered, &ns));
     }
     let args_json = if args_serialised.len() == 1 {
         args_serialised.into_iter().next().unwrap()
     } else {
         // Multi-arg: wrap into an object literal keyed by parameter names.
         let pairs: Vec<String> = svc
-            .map(|s| {
-                s.params
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (name, _))| {
-                        let serialised = args_serialised
-                            .get(i)
-                            .cloned()
-                            .unwrap_or_else(|| "null".to_string());
-                        format!("{name}: {serialised}")
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|| {
-                args_serialised
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .map(|(i, s)| format!("arg{i}: {s}"))
-                    .collect()
-            });
+            .params
+            .iter()
+            .zip(&args_serialised)
+            .map(|((name, _), serialised)| format!("{name}: {serialised}"))
+            .collect();
         format!("{{ {} }}", pairs.join(", "))
     };
 
-    // Deserialise the return value via the consumed context's helper.
-    let deser_ref = match svc {
-        Some(s) => workers_deserialise_ref(&s.return_type, &consumed_ns),
-        None => "((j: any) => ({ tag: \"Ok\", value: j }))".to_string(),
-    };
+    let deser_ref = deserialise_ref_via(&svc.return_type, &ns);
 
     // v0.54: stamp the calling context's qualified name so the callee's
     // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
@@ -1632,83 +1645,6 @@ pub(crate) fn lower_workers_cross_context_call(
         "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\")",
         method.name
     )
-}
-
-fn workers_serialise_expr(tr: &TypeRef, value: &str, owning_ns: &str) -> String {
-    match tr {
-        TypeRef::Base(_, _) => format!("{value} as JsonValue"),
-        TypeRef::Named(id) => format!("{owning_ns}.serialise_{}({value})", id.name),
-        TypeRef::Result(_, _, _) | TypeRef::Option(_, _) => {
-            let inst = workers_inner_ts_name(tr);
-            format!("{owning_ns}.serialise_{inst}({value})")
-        }
-        TypeRef::Effect(inner, _) => workers_serialise_expr(inner, value, owning_ns),
-        _ => format!("{value} as JsonValue"),
-    }
-}
-
-fn workers_deserialise_ref(tr: &TypeRef, owning_ns: &str) -> String {
-    // Strip the Effect wrapper — the caller already awaits the Promise.
-    let inner = match tr {
-        TypeRef::Effect(t, _) => t.as_ref(),
-        other => other,
-    };
-    match inner {
-        TypeRef::Named(id) => format!("{owning_ns}.deserialise_{}", id.name),
-        TypeRef::Result(_, _, _)
-        | TypeRef::Option(_, _)
-        | TypeRef::List(_, _)
-        | TypeRef::Map(_, _, _) => {
-            let inst = workers_inner_ts_name(inner);
-            format!("{owning_ns}.deserialise_{inst}")
-        }
-        _ => "((j: any) => ({ tag: \"Ok\", value: j }))".to_string(),
-    }
-}
-
-fn workers_inner_ts_name(t: &TypeRef) -> String {
-    match t {
-        TypeRef::Base(b, _) => b.name().to_string(),
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        TypeRef::Named(id) => id.name.clone(),
-        TypeRef::Result(a, b, _) => format!(
-            "Result_{}_{}",
-            workers_inner_ts_name(a),
-            workers_inner_ts_name(b)
-        ),
-        TypeRef::Option(a, _) => format!("Option_{}", workers_inner_ts_name(a)),
-        TypeRef::Effect(a, _) => format!("Effect_{}", workers_inner_ts_name(a)),
-        TypeRef::HttpResult(a, _) => format!("HttpResult_{}", workers_inner_ts_name(a)),
-        TypeRef::List(a, _) => format!("List_{}", workers_inner_ts_name(a)),
-        TypeRef::Map(k, v, _) => format!(
-            "Map_{}_{}",
-            workers_inner_ts_name(k),
-            workers_inner_ts_name(v)
-        ),
-        TypeRef::QueueResult(_) => "QueueResult".to_string(),
-        TypeRef::ValidationError(_) => "ValidationError".to_string(),
-        TypeRef::JsonError(_) => "JsonError".to_string(),
-        TypeRef::Unit(_) => "Unit".to_string(),
-        // v0.174 (#592): a generic-record instantiation names its monomorphised
-        // codec — `Paginated[User]` → `Paginated_User`.
-        TypeRef::App { name, args, .. } => {
-            let mut s = name.name.clone();
-            for a in args {
-                s.push('_');
-                s.push_str(&workers_inner_ts_name(a));
-            }
-            s
-        }
-    }
 }
 
 /// If `receiver` is a dotted chain or single ident that matches one of the
@@ -1787,7 +1723,7 @@ pub(crate) fn param_cast(
 /// If the type-ref names a single user type at its root, return that name.
 /// (For generics like `Result[T, E]`, we don't emit a cast at the outer
 /// layer — TypeScript handles the variance through the intersection.)
-fn type_ref_named_root(r: &TypeRef) -> Option<&str> {
+pub(crate) fn type_ref_named_root(r: &TypeRef) -> Option<&str> {
     match r {
         TypeRef::Named(id) => Some(id.name.as_str()),
         _ => None,

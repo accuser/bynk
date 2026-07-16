@@ -17,7 +17,7 @@ export default {
         switch (servicePath) {
           case "mk": {
             const args = await request.json() as JsonValue;
-            const __r_n = (typeof args === "number" && Number.isInteger(args) ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(args) }) as Result<any, BoundaryError>);
+            const __r_n = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(args);
             if (__r_n.tag === "Err") return new Response(JSON.stringify(__r_n.error), { status: 400, headers: { "content-type": "application/json" } });
             const n = __r_n.value;
             const result = await surface.mk(n);

@@ -13,7 +13,7 @@ export function compose(env: Env) {
   const Logger = new bynk__binding.LoggerProvider();
   const deps = { Clock, Logger };
   return {
-    async ordering(sku: any) {
+    async ordering(sku: string) {
       return handlers.ordering.call(sku, deps);
     },
   };

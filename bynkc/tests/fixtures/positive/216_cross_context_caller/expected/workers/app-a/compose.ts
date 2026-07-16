@@ -11,7 +11,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async ask(ping: any) {
+    async ask(ping: string) {
       return handlers.ask.call(ping, deps);
     },
   };

@@ -10,7 +10,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async mk(n: any) {
+    async mk(n: number) {
       return handlers.mk.call(n, deps);
     },
   };

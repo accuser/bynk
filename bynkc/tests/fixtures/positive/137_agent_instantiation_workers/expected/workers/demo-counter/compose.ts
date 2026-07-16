@@ -13,10 +13,10 @@ type DurableObjectNamespace = { idFromName(name: string): { toString(): string }
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async bump(id: any) {
+    async bump(id: handlers.CounterId) {
       return handlers.bump.call(id, deps);
     },
-    async read(id: any) {
+    async read(id: handlers.CounterId) {
       return handlers.read.call(id, deps);
     },
   };

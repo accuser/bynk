@@ -25,7 +25,7 @@ const __SessionsRegistry = new StateRegistry();
 function __zeroOfSessionsState(): SessionsState { return { live: {} }; }
 
 function __rehydrateSessionsState(s: SessionsState): void {
-  for (const __e of Object.values(s.live)) { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "live", expected: "number", actual: typeof __v } as BoundaryError))((__e.v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Sessions", __r.error); }
+  for (const __e of Object.values(s.live)) { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "live", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "live", expected: "integer", actual: String(__v) } as BoundaryError))((__e.v as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Sessions", __r.error); }
 }
 
 export class Sessions {

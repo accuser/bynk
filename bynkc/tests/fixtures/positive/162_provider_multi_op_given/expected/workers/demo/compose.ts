@@ -12,7 +12,7 @@ export function compose(env: Env) {
   const Store = new handlers.LoggingStore({ Logger });
   const deps = { Logger, Store };
   return {
-    async api(key: any) {
+    async api(key: string) {
       return handlers.api.call(key, deps);
     },
   };

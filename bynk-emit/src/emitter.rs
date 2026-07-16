@@ -341,23 +341,40 @@ pub fn emit_project(
     // (no new line, no body-column shift), so the source map computed above from
     // the pre-injection text stays valid.
     if out.contains("__bynkBytes") {
-        out = inject_bytes_runtime_imports(out);
+        out = inject_bytes_runtime_imports(
+            out,
+            &runtime_import_for(&ctx.source_path, ctx.import_ext),
+        );
     }
     (out, source_map)
 }
 
 /// v0.110 (ADR 0142): append the `Bytes` runtime helpers to a module's existing
-/// `./runtime.js` import (the line carrying `type ValidationError`). Done as a
-/// post-pass so the decision keys on what the body references, without a second
-/// emission or a source-map-shifting reorder.
-fn inject_bytes_runtime_imports(out: String) -> String {
+/// runtime import. Done as a post-pass so the decision keys on what the body
+/// references, without a second emission or a source-map-shifting reorder.
+///
+/// v0.176 (#642): anchored on the runtime import's **exact specifier** rather
+/// than on the `type ValidationError` binding it happens to carry. With `Bytes`
+/// now able to cross a workers boundary (ADR 0142 D8's guard retired), the
+/// *Worker entry* references `__bynkBytesFromBase64` too — and its import line
+/// names no `ValidationError`, so the old anchor silently failed to inject and
+/// `tsc` reported an unresolved name.
+///
+/// The specifier is matched exactly (`from "<specifier>"`), not by substring: a
+/// `contains("runtime.js")` would also match a *user* module that happens to be
+/// named `runtime` — or anything like `"./my-runtime.js"` — and appending the
+/// `__bynkBytes*` bindings to that import would produce an unresolved export.
+/// The caller already knows the exact path it emitted, so there is no reason to
+/// guess.
+pub(crate) fn inject_bytes_runtime_imports(out: String, runtime_specifier: &str) -> String {
     let mut result = String::with_capacity(out.len() + BYTES_RUNTIME_IMPORTS.len());
     let mut injected = false;
+    let from_runtime = format!(" }} from \"{runtime_specifier}\"");
     for line in out.split_inclusive('\n') {
         if !injected
             && line.starts_with("import {")
-            && line.contains("type ValidationError")
-            && let Some(pos) = line.rfind(" } from \"")
+            && line.contains(&from_runtime)
+            && let Some(pos) = line.rfind(&from_runtime)
         {
             result.push_str(&line[..pos]);
             result.push_str(BYTES_RUNTIME_IMPORTS);

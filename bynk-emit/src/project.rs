@@ -3191,15 +3191,14 @@ fn run_checks(
         errors.extend_for(None, lock_errors);
     }
 
-    // v0.110 (ADR 0142 D8): under `--target workers`, a bare `Bytes` in a wire
-    // signature crosses the erased cross-context boundary, which does not
-    // base64-encode it. Diagnose it rather than mis-encode; the typed paths
-    // (`bundle` calls, `store`/record fields) round-trip a `Bytes` fine.
-    if target == BuildTarget::Workers {
-        let mut bytes_boundary_errors: Vec<CompileError> = Vec::new();
-        check_bytes_workers_boundaries(&parsed, &mut bytes_boundary_errors);
-        errors.extend_for(None, bytes_boundary_errors);
-    }
+    // v0.176 (#642): the `Bytes`-at-a-workers-boundary guard (ADR 0142 D8) is
+    // retired here. It existed because the workers boundary carried its own
+    // codec dispatch, which cast a `Bytes` to `JsonValue` on the way out while
+    // base64-decoding it on the way in — so a `Bytes` mis-round-tripped, and a
+    // diagnostic was better than silent corruption. That dispatch is gone: every
+    // wire position now routes through `serialisation.rs`, whose `Bytes` arm
+    // base64-encodes. The restriction has no remaining cause, and ADR 0142 D8's
+    // deferral to "the roadmap's typed cross-context boundary fix" is discharged.
 
     RunChecks::Checked {
         errors,

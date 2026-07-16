@@ -20,7 +20,7 @@ const __LedgerRegistry = new StateRegistry();
 function __zeroOfLedgerState(): LedgerState { return { placed: 0 }; }
 
 function __rehydrateLedgerState(s: LedgerState): void {
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "placed", expected: "number", actual: typeof __v } as BoundaryError))((s.placed as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "placed", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "placed", expected: "integer", actual: String(__v) } as BoundaryError))((s.placed as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Ledger", __r.error); }
 }
 
 export class Ledger {

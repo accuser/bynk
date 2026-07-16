@@ -29,7 +29,7 @@ const __CounterRegistry = new StateRegistry();
 function __zeroOfCounterState(): CounterState { return { count: 0, label: "" }; }
 
 function __rehydrateCounterState(s: CounterState): void {
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "number", actual: typeof __v } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); }
   { const __r = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "label", expected: "string", actual: typeof __v } as BoundaryError))((s.label as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Counter", __r.error); }
 }
 

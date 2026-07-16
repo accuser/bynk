@@ -29,8 +29,8 @@ const __WalletRegistry = new StateRegistry();
 function __zeroOfWalletState(): WalletState { return { balance: 0, pending: 0 }; }
 
 function __rehydrateWalletState(s: WalletState): void {
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "balance", expected: "number", actual: typeof __v } as BoundaryError))((s.balance as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); }
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "pending", expected: "number", actual: typeof __v } as BoundaryError))((s.pending as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "balance", expected: "integer", actual: String(__v) } as BoundaryError))((s.balance as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "pending", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "pending", expected: "integer", actual: String(__v) } as BoundaryError))((s.pending as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Wallet", __r.error); }
 }
 
 export class Wallet {

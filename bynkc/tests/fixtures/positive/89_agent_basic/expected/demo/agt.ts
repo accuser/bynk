@@ -28,7 +28,7 @@ const __BoxRegistry = new StateRegistry();
 function __zeroOfBoxState(): BoxState { return { n: 0 }; }
 
 function __rehydrateBoxState(s: BoxState): void {
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "n", expected: "number", actual: typeof __v } as BoundaryError))((s.n as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Box", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "n", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "n", expected: "integer", actual: String(__v) } as BoundaryError))((s.n as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Box", __r.error); }
 }
 
 export class Box {

@@ -19,7 +19,7 @@ export default {
             const args = await request.json() as JsonValue;
             const __r_total = handlers.deserialise_Money(args, "$");
             if (__r_total.tag === "Err") return new Response(JSON.stringify(__r_total.error), { status: 400, headers: { "content-type": "application/json" } });
-            const total = __r_total.value;
+            const total = __r_total.value as unknown as handlers.Money;
             const result = await surface.placeOrder(total);
             const body = handlers.serialise_Result_Unit_OrderError(result);
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });

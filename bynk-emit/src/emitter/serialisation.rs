@@ -721,6 +721,15 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
 }
 
 fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
+    serialise_field_expr_via(t, value, "")
+}
+
+/// The same dispatch, reaching its helpers through `ns` — `""` for a
+/// module-local call, `"handlers."` from a Worker entry point that imports the
+/// context's handlers as a namespace. Threading the prefix (rather than each
+/// caller owning a parallel dispatch) is what keeps the boundary to **one**
+/// codec path.
+fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str) -> String {
     match t {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
@@ -735,7 +744,7 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         // v0.174 (#592): a generic-record instantiation serialises through its
         // monomorphised codec (`serialise_Paginated_User`).
         TypeRef::App { name, args, .. } => {
-            format!("serialise_{}({value})", app_ts_name(&name.name, args))
+            format!("{ns}serialise_{}({value})", app_ts_name(&name.name, args))
         }
         // v0.21: serialising a non-finite `Float` is a contract violation
         // (`JSON.stringify(NaN)` would silently produce `null`); the guard is
@@ -749,21 +758,30 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
             format!("__bynkBytesToBase64({value}) as JsonValue")
         }
         TypeRef::Base(_, _) => format!("{value} as JsonValue"),
-        TypeRef::Named(id) => format!("serialise_{}({value})", id.name),
+        TypeRef::Named(id) => format!("{ns}serialise_{}({value})", id.name),
         TypeRef::Result(a, b, _) => format!(
-            "serialise_Result_{}_{}({value})",
+            "{ns}serialise_Result_{}_{}({value})",
             inner_ts_name(a),
             inner_ts_name(b)
         ),
-        TypeRef::Option(a, _) => format!("serialise_Option_{}({value})", inner_ts_name(a)),
-        TypeRef::List(a, _) => format!("serialise_List_{}({value})", inner_ts_name(a)),
+        TypeRef::Option(a, _) => format!("{ns}serialise_Option_{}({value})", inner_ts_name(a)),
+        TypeRef::List(a, _) => format!("{ns}serialise_List_{}({value})", inner_ts_name(a)),
         TypeRef::Map(k, v, _) => format!(
-            "serialise_Map_{}_{}({value})",
+            "{ns}serialise_Map_{}_{}({value})",
             inner_ts_name(k),
             inner_ts_name(v)
         ),
-        TypeRef::Effect(_, _)
-        | TypeRef::ValidationError(_)
+        // An `Effect` is stripped by the caller before it reaches a wire
+        // position; reaching one here means the payload, not the wrapper.
+        TypeRef::Effect(inner, _) => serialise_field_expr_via(inner, value, ns),
+        // The runtime-owned error types have no *generated* codec — they are
+        // declared by the runtime, not by a `TypeDecl` this emitter can walk, so
+        // there is no `serialise_ValidationError` to name. They keep the
+        // pass-through the whole boundary used before this increment; unifying
+        // the user-type paths does not reach them. Their JSON shape is fixed by
+        // the runtime (`errors.ts`), so the cast is not *wrong* — it is simply
+        // unchecked, and it is the one remaining unchecked arm at the boundary.
+        TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::HttpResult(_, _)
         | TypeRef::QueueResult(_) => {
@@ -886,12 +904,63 @@ pub fn serialise_expr(t: &TypeRef, value: &str) -> String {
     serialise_field_expr(t, value)
 }
 
+/// v0.176 (#642): the one serialise dispatch for the workers cross-context
+/// boundary, reaching helpers through `ns`. Replaces the two parallel
+/// dispatches this boundary used to carry — `emit.rs`'s `workers_serialise_expr`
+/// (which dropped `List`/`Map` to a bare `as JsonValue` cast) and
+/// `workers_entry.rs`'s `serialise_call` (which did the same to `Bytes`, the
+/// asymmetry that forced `bynk.types.bytes_at_workers_boundary`).
+pub fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str) -> String {
+    serialise_field_expr_via(t, value, ns)
+}
+
+/// v0.176 (#642): a deserialise **reference** for `ns`, shaped to
+/// `callService`'s `deserialiseResult` parameter. The inline arms become a
+/// lambda rather than the unvalidated `((j: any) => ({ tag: "Ok", value: j }))`
+/// identity the caller path used to fall back to.
+pub fn deserialise_ref_via(t: &TypeRef, ns: &str) -> String {
+    match strip_effect(t) {
+        TypeRef::Named(id) => format!("{ns}deserialise_{}", id.name),
+        t @ (TypeRef::Result(..)
+        | TypeRef::Option(..)
+        | TypeRef::List(..)
+        | TypeRef::Map(..)
+        | TypeRef::App { .. }) => format!("{ns}deserialise_{}", inner_ts_name(t)),
+        other => format!(
+            "(__j: JsonValue) => {}",
+            deserialise_expr_via(other, "__j", "$", ns)
+        ),
+    }
+}
+
+/// An `Effect[T]` in a handler signature wraps the *handler*, not the wire
+/// payload — the caller awaits the Promise, so the codec is `T`'s.
+fn strip_effect(t: &TypeRef) -> &TypeRef {
+    match t {
+        TypeRef::Effect(inner, _) => strip_effect(inner),
+        other => other,
+    }
+}
+
 /// v0.22b: an expression-form deserialise call for a codec target. Named
 /// types and generic instantiations go through their (module-local)
 /// helpers; bases inline the structural check.
 pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
+    deserialise_expr_via(t, json, path, "")
+}
+
+/// v0.176 (#642): the one deserialise dispatch for the workers cross-context
+/// boundary, reaching helpers through `ns`. Replaces `workers_entry.rs`'s
+/// `deserialise_call`; the `Json.decode` entry (`deserialise_expr`) is the same
+/// function with an empty prefix.
+///
+/// This carries two arms the `Json` codec path never needs, because the
+/// checker's codec-domain rule rejects them there but the cross-context
+/// boundary admits them: `Unit` (an `on call` may return `Effect[Result[(), E]]`)
+/// and the runtime-owned error types.
+pub fn deserialise_expr_via(t: &TypeRef, json: &str, path: &str, ns: &str) -> String {
     match t {
-        TypeRef::Named(id) => format!("deserialise_{}({json}, \"{path}\")", id.name),
+        TypeRef::Named(id) => format!("{ns}deserialise_{}({json}, \"{path}\")", id.name),
         TypeRef::Result(..)
         | TypeRef::Option(..)
         | TypeRef::List(..)
@@ -899,7 +968,27 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
         // v0.174 (#592): a generic-record instantiation decodes through its
         // monomorphised codec (`deserialise_Paginated_User`).
         | TypeRef::App { .. } => {
-            format!("deserialise_{}({json}, \"{path}\")", inner_ts_name(t))
+            format!("{ns}deserialise_{}({json}, \"{path}\")", inner_ts_name(t))
+        }
+        TypeRef::Effect(inner, _) => deserialise_expr_via(inner, json, path, ns),
+        // A `()` carries no wire content — the wire slot is `null` and the value
+        // is `undefined`. Nothing to validate, so `Ok` is the honest answer here
+        // rather than an erosion.
+        //
+        // Reached only by a **bare** `()` in a wire position. A `Result`-wrapped
+        // one — `on call () -> Effect[Result[(), E]]`, the common shape — strips
+        // its `Effect` and then goes through `deserialise_Result_Unit_E`, whose
+        // generated body handles the `Unit` payload itself (`emit_generic_helpers`),
+        // so it never lands here. No fixture currently exercises this arm; it is
+        // defensive, and saying so is more useful than implying coverage.
+        TypeRef::Unit(_) => "Ok(undefined) as Result<void, BoundaryError>".to_string(),
+        // The runtime-owned error types: no generated codec to name (see
+        // `serialise_field_expr_via`). The one unchecked arm left at the boundary.
+        TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::HttpResult(_, _)
+        | TypeRef::QueueResult(_) => {
+            format!("Ok({json} as any) as Result<any, BoundaryError>")
         }
         // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 string; decode it
         // (rejecting a non-string or invalid base64) to a `Uint8Array`.
@@ -927,12 +1016,55 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
                 }
                 _ => "",
             };
+            // v0.176 (#642): report what was *required*, not just the `typeof`
+            // that was tested. For the arms carrying an `extra` predicate the two
+            // differ, and reporting the bare `typeof` makes the error useless in
+            // exactly the case the predicate exists to catch: a `3.5` for an `Int`
+            // would read `expected: "number", actual: "number"`.
+            let expected = match b {
+                BaseType::Int | BaseType::Duration | BaseType::Instant => "integer",
+                BaseType::Float => "finite number",
+                _ => typeof_str,
+            };
+            let err = |actual: &str| {
+                format!(
+                    "Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"{expected}\", actual: {actual} }} as BoundaryError)"
+                )
+            };
+            if extra.is_empty() {
+                return format!(
+                    "((__v) => typeof __v === \"{typeof_str}\" ? Ok(__v) : {})({json})",
+                    err("typeof __v")
+                );
+            }
+            // The two failure modes are **not** the same error, and collapsing
+            // them is what made both predecessors imprecise in opposite
+            // directions. The `Json` path reported `typeof` for both, losing the
+            // predicate failure's detail; the workers path reported
+            // `String(value)` for both, which echoes an arbitrary caller-supplied
+            // value into a 400 response body (an `Int` sent `"hunter2"` reported
+            // `actual: "hunter2"`) and violates the ADR 0107 discipline of never
+            // reporting the offending value.
+            //
+            // Split them and both problems go away. A wrong `typeof` reports the
+            // `typeof` — the value could be anything, so it is never echoed. A
+            // *failed predicate* means the `typeof` already matched, so the value
+            // is provably a **number**: `String(__v)` is `"3.5"` for a
+            // non-integer `Int`, and provably one of `"NaN"` / `"Infinity"` /
+            // `"-Infinity"` for a non-finite `Float` — a closed set. That is
+            // strictly more precise than either predecessor, with strictly less
+            // exposure.
+            let predicate = extra.trim_start_matches(" && ");
             format!(
-                "((__v) => typeof __v === \"{typeof_str}\"{extra} ? Ok(__v) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"{typeof_str}\", actual: typeof __v }} as BoundaryError))({json})"
+                "((__v) => typeof __v !== \"{typeof_str}\" ? {} : {predicate} ? Ok(__v) : {})({json})",
+                err("typeof __v"),
+                err("String(__v)")
             )
         }
-        // Everything else is rejected by the checker's codec-domain rule.
-        _ => unreachable!("non-codable type reached the Json codec lowering"),
+        // Everything else is rejected by the checker's codec-domain rule (the
+        // `Json` path) or by the boundary rules (the workers path). Shared by
+        // three callers, so the message names the type rather than one caller.
+        other => unreachable!("non-codable type reached a codec lowering: {other:?}"),
     }
 }
 

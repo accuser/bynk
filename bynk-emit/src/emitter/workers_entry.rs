@@ -289,7 +289,7 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             out,
             "            const args = await request.json() as JsonValue;"
         );
-        emit_call_handler_dispatch(&mut out, sname, h, &table.actors);
+        emit_call_handler_dispatch(&mut out, sname, h, &table.actors, &table.types);
         let _ = writeln!(out, "          }}");
     }
     let _ = writeln!(out, "          default:");
@@ -460,6 +460,14 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     }
 
     let _ = writeln!(out, "}};");
+
+    // v0.176 (#642): a `Bytes` may now cross a workers boundary, so the entry's
+    // inbound codec can reference the base64 helpers. Same post-pass the module
+    // emitter runs, keyed on what the body actually references.
+    if out.contains("__bynkBytes") {
+        // The entry's own runtime import, emitted verbatim above.
+        out = crate::emitter::inject_bytes_runtime_imports(out, "../../runtime.js");
+    }
 
     out
 }
@@ -1199,6 +1207,7 @@ fn emit_call_handler_dispatch(
     sname: &str,
     h: &Handler,
     actors: &std::collections::HashMap<String, bynk_syntax::ast::ActorDecl>,
+    local_types: &std::collections::HashMap<String, TypeDecl>,
 ) {
     // v0.54: a `by c: Caller` handler reads the caller's context name from the
     // `X-Bynk-Caller` header (stamped by `callService`) and threads it into the
@@ -1226,7 +1235,11 @@ fn emit_call_handler_dispatch(
             out,
             "            if (__r_{pname}.tag === \"Err\") return new Response(JSON.stringify(__r_{pname}.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
         );
-        let _ = writeln!(out, "            const {pname} = __r_{pname}.value;");
+        let _ = writeln!(
+            out,
+            "            const {pname} = __r_{pname}.value{};",
+            brand_assertion(&p.type_ref, local_types)
+        );
         let _ = writeln!(
             out,
             "            const result = await surface.{sname}({caller_args}{pname});"
@@ -1253,7 +1266,11 @@ fn emit_call_handler_dispatch(
                 out,
                 "            if (__r_{pname}.tag === \"Err\") return new Response(JSON.stringify(__r_{pname}.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
             );
-            let _ = writeln!(out, "            const {pname} = __r_{pname}.value;");
+            let _ = writeln!(
+                out,
+                "            const {pname} = __r_{pname}.value{};",
+                brand_assertion(&p.type_ref, local_types)
+            );
             names.push(pname.clone());
         }
         // Prepend the caller (when present) without a dangling comma for the
@@ -1358,125 +1375,19 @@ fn http_value_serialiser(t: &TypeRef) -> String {
     }
 }
 
+/// v0.176 (#642): the callee side of the workers cross-context boundary. Both
+/// of these used to be a *parallel* dispatch that shadowed
+/// `serialisation.rs`'s — and drifted from it. `serialise_call` cast a `Bytes`
+/// to `JsonValue` while `deserialise_call` base64-decoded it, the asymmetry that
+/// made `bynk.types.bytes_at_workers_boundary` necessary. They are now one line
+/// each over the shared dispatch, reaching this context's helpers through the
+/// `handlers` namespace the entry point imports.
 pub(crate) fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
-    match t {
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        // v0.174 (#592): a generic-record instantiation decodes through its
-        // monomorphised codec.
-        TypeRef::App { .. } => {
-            let inst_name = inner_ts_name(t);
-            format!("handlers.deserialise_{inst_name}({json_expr}, \"{path}\")")
-        }
-        // v0.110 (ADR 0142 D8): a `Bytes` at a `workers` boundary is diagnosed
-        // as not-yet-supported by the project validator, so this arm is
-        // normally unreachable. Emit a correct base64 decode anyway (defence in
-        // depth — never a silent mis-encode) rather than fall through to the
-        // number/string typeof check.
-        TypeRef::Base(BaseType::Bytes, _) => {
-            format!(
-                "(typeof {json_expr} === \"string\" ? ((__b) => __b.tag === \"Some\" ? Ok(__b.value) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"base64 string\", actual: \"invalid base64\" }})) (__bynkBytesFromBase64({json_expr})) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"base64 string\", actual: typeof {json_expr} }})) as Result<any, BoundaryError>"
-            )
-        }
-        TypeRef::Base(b, _) => {
-            let typeof_str = match b {
-                BaseType::Int => "number",
-                BaseType::String => "string",
-                BaseType::Bool => "boolean",
-                BaseType::Float => "number",
-                BaseType::Duration | BaseType::Instant => "number",
-                // Unreachable: handled by the dedicated `Bytes` arm above.
-                BaseType::Bytes => "string",
-            };
-            // v0.22b: bare `Int` params validate integrality (ADR 0049). v0.86:
-            // a `Duration` is whole milliseconds, so it validates integrality too.
-            if *b == BaseType::Int || *b == BaseType::Duration || *b == BaseType::Instant {
-                return format!(
-                    "(typeof {json_expr} === \"number\" && Number.isInteger({json_expr}) ? Ok({json_expr}) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"integer\", actual: String({json_expr}) }}) as Result<any, BoundaryError>)"
-                );
-            }
-            // v0.21: boundary `Float` values are finite (ADR 0040).
-            if *b == BaseType::Float {
-                return format!(
-                    "(typeof {json_expr} === \"number\" && Number.isFinite({json_expr}) ? Ok({json_expr}) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"finite number\", actual: String({json_expr}) }}) as Result<any, BoundaryError>)"
-                );
-            }
-            format!(
-                "(typeof {json_expr} === \"{typeof_str}\" ? Ok({json_expr}) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"{typeof_str}\", actual: typeof {json_expr} }}) as Result<any, BoundaryError>)"
-            )
-        }
-        TypeRef::Named(id) => {
-            format!("handlers.deserialise_{}({json_expr}, \"{path}\")", id.name)
-        }
-        TypeRef::Result(_, _, _)
-        | TypeRef::Option(_, _)
-        | TypeRef::List(_, _)
-        | TypeRef::Map(_, _, _) => {
-            let inst_name = inner_ts_name(t);
-            format!("handlers.deserialise_{inst_name}({json_expr}, \"{path}\")")
-        }
-        TypeRef::Effect(inner, _) => deserialise_call(inner, json_expr, path),
-        TypeRef::HttpResult(_, _)
-        | TypeRef::QueueResult(_)
-        | TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_)
-        | TypeRef::Unit(_) => {
-            format!("Ok({json_expr} as any) as Result<any, BoundaryError>")
-        }
-    }
+    crate::emitter::serialisation::deserialise_expr_via(t, json_expr, path, "handlers.")
 }
 
 fn serialise_call(t: &TypeRef, value: &str) -> String {
-    match t {
-        // v0.21: serialising a non-finite `Float` is a contract violation
-        // (ADR 0040) — `JSON.stringify(NaN)` would silently produce `null`.
-        TypeRef::Base(BaseType::Float, _) => format!(
-            "((v: number) => {{ if (!Number.isFinite(v)) throw new Error(\"non-finite Float at boundary\"); return v as JsonValue; }})({value})"
-        ),
-        TypeRef::Base(_, _) => format!("{value} as JsonValue"),
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        // v0.174 (#592): a generic-record instantiation serialises through its
-        // monomorphised codec.
-        TypeRef::App { .. } => {
-            let inst_name = inner_ts_name(t);
-            format!("handlers.serialise_{inst_name}({value})")
-        }
-        TypeRef::Named(id) => format!("handlers.serialise_{}({value})", id.name),
-        TypeRef::Result(_, _, _)
-        | TypeRef::Option(_, _)
-        | TypeRef::List(_, _)
-        | TypeRef::Map(_, _, _) => {
-            let inst_name = inner_ts_name(t);
-            format!("handlers.serialise_{inst_name}({value})")
-        }
-        TypeRef::Effect(inner, _) => serialise_call(inner, value),
-        // Unit serialises to JSON `null` (the value is `void`, which cannot be
-        // cast to `JsonValue` under `tsc --strict`).
-        TypeRef::Unit(_) => "null".to_string(),
-        TypeRef::HttpResult(_, _)
-        | TypeRef::QueueResult(_)
-        | TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_) => {
-            format!("{value} as JsonValue")
-        }
-    }
+    crate::emitter::serialisation::serialise_expr_via(t, value, "handlers.")
 }
 
 fn inner_ts_name(t: &TypeRef) -> String {
@@ -1513,5 +1424,44 @@ fn inner_ts_name(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
+    }
+}
+
+/// v0.176 (#642): re-assert a deserialised value into this context's *branded*
+/// view of a type it `uses` from a commons.
+///
+/// A context rebrands the commons types it `uses` (`Money & { __ctxBrand:
+/// "commerce.orders" }`, ADR §6.2) so the same commons type is nominally distinct
+/// per context. The boundary codec for such a type lives in the *commons* module
+/// and necessarily returns the **unbranded** commons type, while the handler it
+/// feeds is typed against the branded one — so the entry must bridge them.
+/// Routing through `unknown` is the established spelling: a direct cast is
+/// rejected under `tsc --strict` because the brand discriminants are
+/// incompatible, and Bynk has already guaranteed the value's shape structurally
+/// at the boundary (the same reasoning as the bundle path's cross-context
+/// argument cast). The gap has always existed; it was invisible while the compose
+/// wrapper typed every parameter `any` (Decision E).
+///
+/// **Only an imported type is asserted, and the narrowness is the point.** An
+/// `as unknown as T` is exactly the unchecked assertion this increment exists to
+/// delete, so it must not be applied one position wider than the gap it bridges.
+/// For a **context-declared** type there is no brand gap at all: the type is
+/// declared here, `handlers.ts` exports it, and `deserialise_<T>` already returns
+/// precisely `handlers.<T>` — asserting there would re-disarm the very check
+/// Decision E just bought, letting a wrong codec type-check again. `table.types`
+/// holds only this unit's own declarations, so absence from it means the name was
+/// imported (the `uses`-commons case, where the brands genuinely differ).
+///
+/// Only a *named root* is asserted, mirroring the bundle path: for a generic
+/// (`List[Money]`) TypeScript resolves the brand through the intersection.
+fn brand_assertion(
+    t: &TypeRef,
+    local_types: &std::collections::HashMap<String, TypeDecl>,
+) -> String {
+    match crate::emitter::emit::type_ref_named_root(t) {
+        Some(name) if !local_types.contains_key(name) => {
+            format!(" as unknown as handlers.{name}")
+        }
+        _ => String::new(),
     }
 }
