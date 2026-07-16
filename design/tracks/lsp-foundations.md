@@ -8,10 +8,10 @@
   re-scoped to slice 0 by #649). **Q5 is settled (model first)**, and the model
   led as it decided. **Slice B shipped (v0.179, ADR 0202)** — the freshness
   contract Q3 settled: an index-backed request refreshes to the current buffer,
-  never answers against stale text. **Q6 (harness depth) is settled —
-  in-process; slice C's proposal can be cut.** Q4 remains open in §7 and
-  continues settling via reviewed PRs against this doc, each gating the slice
-  that turns on it.
+  never answers against stale text. **Slice C shipped (v0.180)** — the `[lib]`
+  seam (Q6 settled: in-process; no ADR, a refactor). **Q4 remains open** in §7
+  and continues settling via reviewed PRs against this doc, each gating the
+  slice that turns on it.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
@@ -695,9 +695,11 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   path — including `code_lens`, which carries the staleness defect as well as
   the cold-start one; diagnostics published with the captured version,
   re-checked immediately before publish. Explicit ADR 0156 delta (§5).
-- **Slice C — the seam.** `[lib]` target; `Backend`/state/impl to `src/lib.rs`;
-  `main.rs` reduced to `fn main()`; the nine test files migrated off `#[path]`
-  includes; transport tests moved out of the binary they test. No behaviour
+- **Slice C — the seam.** ✅ *shipped v0.180, #669 (no ADR — a refactor).*
+  `[lib]` target; `Backend`/state/impl to `src/lib.rs`;
+  `main.rs` reduced to `fn main()`; the nine `#[path]`-using test files migrated
+  to `use bynk_lsp::…` (which also removed their redundant re-runs of module unit
+  tests); transport tests moved out of the binary they test. No behaviour
   change. *No ADR* — a refactor settles nothing. **Hygiene, not a precondition**
   (§4.1). Per Q5 it trails slice A; it is otherwise unblocked and may land
   whenever.

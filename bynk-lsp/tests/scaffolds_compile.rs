@@ -18,15 +18,10 @@ mod support;
 // bynk-lsp is a binary crate: include the pure module directly (the pattern
 // `legend_drift.rs` established). `symbols` satisfies completion's one
 // `crate::symbols` reference.
-#[allow(dead_code)]
-#[path = "../src/completion.rs"]
-mod completion;
-#[allow(dead_code)]
-#[path = "../src/symbols.rs"]
-mod symbols;
 
 use std::path::Path;
 
+use bynk_lsp::completion;
 use bynk_syntax::lexer::tokenize;
 use bynk_syntax::parser::parse_unit_with_recovery;
 

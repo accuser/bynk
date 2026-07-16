@@ -298,7 +298,8 @@ fn in_type_arg_list(head: &str) -> bool {
 /// A bare word at a declaration/statement start: the line up to the cursor is
 /// only leading whitespace plus an optional partial identifier (no operators,
 /// colons, or brackets). Fires on an empty line too. Disjoint from
-/// [`is_type_position`], whose triggers (`:`/`->`/`[`) make this false.
+/// `is_type_position` (an internal helper), whose triggers (`:`/`->`/`[`) make
+/// this false.
 pub fn is_keyword_position(line: &str) -> bool {
     line.trim().chars().all(|c| c.is_alphanumeric() || c == '_')
 }
@@ -1091,7 +1092,7 @@ const BUILTIN_TYPES: &[&str] = &[
 
 /// Declaration snippets (`CompletionItemKind::SNIPPET`), as LSP snippet bodies.
 /// `pub(crate)` so `tests/scaffolds_compile.rs` (ADR 0157) can enumerate them.
-pub(crate) const SNIPPETS: &[(&str, &str)] = &[
+pub const SNIPPETS: &[(&str, &str)] = &[
     // -- Units --
     ("context", "context ${1:name} {\n\t$0\n}"),
     ("commons", "commons ${1:my.lib}\n\n$0"),
@@ -1299,7 +1300,7 @@ fn free_function_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Co
 /// The one-line doc for a name in the `keywords` registry, if present.
 /// `pub(crate)` so hover's bare-keyword fallback (ADR 0156) can reuse it —
 /// completion and hover render the same doc, never a parallel copy.
-pub(crate) fn keyword_doc(word: &str) -> Option<&'static str> {
+pub fn keyword_doc(word: &str) -> Option<&'static str> {
     keywords::KEYWORDS
         .iter()
         .find(|k| k.word == word)

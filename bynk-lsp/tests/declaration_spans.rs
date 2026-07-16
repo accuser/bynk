@@ -30,10 +30,7 @@
 //! it. Skipping when a root is absent is not the alternative: ADR 0190 D6
 //! requires these to read real output, and a skip could pass vacuously in-repo.
 
-#[allow(dead_code)]
-#[path = "../src/symbols.rs"]
-mod symbols;
-
+use bynk_lsp::symbols;
 use std::collections::HashMap;
 use std::path::Path;
 

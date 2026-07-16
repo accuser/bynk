@@ -35,32 +35,11 @@
 //! it. Skipping when a root is absent is not the alternative: ADR 0190 D6
 //! requires these to read real output, and a skip could pass vacuously in-repo.
 
-#[allow(dead_code)]
-#[path = "../src/completion.rs"]
-mod completion;
-#[allow(dead_code)]
-#[path = "../src/hover.rs"]
-mod hover;
-#[allow(dead_code)]
-#[path = "../src/index_queries.rs"]
-mod index_queries;
-#[allow(dead_code)]
-#[path = "../src/locals_nav.rs"]
-mod locals_nav;
-#[allow(dead_code)]
-#[path = "../src/position.rs"]
-mod position;
-#[allow(dead_code)]
-#[path = "../src/signature_help.rs"]
-mod signature_help;
-#[allow(dead_code)]
-#[path = "../src/symbols.rs"]
-mod symbols;
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bynk_ide::ProjectDiagnostics;
+use bynk_lsp::hover;
 use tower_lsp::lsp_types::Url;
 
 /// The analysed `examples/todo` project — the issue's reproduction.

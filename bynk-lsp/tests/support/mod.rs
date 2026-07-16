@@ -1,8 +1,7 @@
 //! v0.121 (ADR 0156/0157): shared helpers for the editor-currency guardrail
-//! tests — pure functions only. The `bynk-lsp` source modules themselves are
-//! included per test binary (each binary is its own crate; see
-//! `scaffolds_compile.rs`/`editor_coverage.rs` for the `#[path]` inclusion,
-//! the pattern `legend_drift.rs` established).
+//! tests — pure functions only. Slice C gave `bynk-lsp` a `[lib]` target, so
+//! the source modules are now reached via `use bynk_lsp::…` rather than the
+//! `#[path]`-include workaround these tests used before.
 
 #![allow(dead_code)]
 

@@ -21,7 +21,7 @@ use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::Url;
 
 /// The analysed round's tables, positioned at the cursor.
-pub(crate) struct HoverAnalysis<'a> {
+pub struct HoverAnalysis<'a> {
     pub index: &'a bynk_check::index::ProjectIndex,
     /// Project-relative path → the analysed text.
     pub snapshots: &'a HashMap<PathBuf, String>,
@@ -33,7 +33,7 @@ pub(crate) struct HoverAnalysis<'a> {
 }
 
 /// Everything the ladder reads.
-pub(crate) struct HoverInput<'a> {
+pub struct HoverInput<'a> {
     /// The analysed round; `None` when the file is outside it — the lexical
     /// rungs still answer from the live buffer.
     pub analysis: Option<HoverAnalysis<'a>>,
@@ -51,7 +51,7 @@ pub(crate) struct HoverInput<'a> {
 ///
 /// The rung order is the contract; see the module doc. Each rung is tried in
 /// turn and the first `Some` wins.
-pub(crate) fn hover_content(input: &HoverInput<'_>) -> Option<String> {
+pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
     if let Some(a) = &input.analysis {
         // 1. v0.25: binding-index path — a resolved symbol reference, described
         //    from its *defining* file (names are unique per file, so the per-file

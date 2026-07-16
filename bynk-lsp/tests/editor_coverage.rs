@@ -10,13 +10,8 @@
 // bynk-lsp is a binary crate: include the pure modules directly (the pattern
 // `legend_drift.rs` established). `symbols` satisfies completion's one
 // `crate::symbols` reference.
-#[allow(dead_code)]
-#[path = "../src/completion.rs"]
-mod completion;
-#[allow(dead_code)]
-#[path = "../src/symbols.rs"]
-mod symbols;
 
+use bynk_lsp::{completion, symbols};
 use bynk_syntax::keywords::{CONTEXTUAL_KEYWORDS, KEYWORDS};
 
 fn lowercase_keywords() -> impl Iterator<Item = &'static str> {
