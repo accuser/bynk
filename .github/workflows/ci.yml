@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Merge queue: the full cross-OS test matrix runs here (see the `test` job's
+  # dynamic matrix), so PRs can stay Linux-only for speed/cost while the
+  # byte-for-byte fixture comparison is still verified on all three OSes before
+  # anything actually lands on main. A no-op until a merge queue is enabled on
+  # the repo; harmless to declare in advance.
+  merge_group:
   # Weekly health check: re-run the full pipeline so dependency/advisory drift
   # (a freshly published RUSTSEC advisory, a bitrotted dep) is caught even when
   # no one has opened a PR. Mondays 07:00 UTC.
@@ -54,6 +60,12 @@ jobs:
       playground: ${{ steps.filter.outputs.playground }}
       site: ${{ steps.filter.outputs.site }}
       all: ${{ steps.all.outputs.value }}
+      # JSON array of OSes for the `test` matrix. PRs run Linux-only (fast,
+      # cheap — macOS is billed at 10x and Windows at 2x Linux minutes); every
+      # other event (push to main, the merge queue, the weekly schedule) runs
+      # the full three-OS matrix so the byte-for-byte fixture comparison is
+      # verified on all hosts before code lands.
+      test_os: ${{ steps.test-os.outputs.value }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
@@ -118,6 +130,15 @@ jobs:
           else
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
+      # Decide the `test` job's OS matrix from the event: Linux-only on PRs,
+      # all three OSes on everything else (push/main, merge_group, schedule).
+      - id: test-os
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo 'value=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'value=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+          fi
 
   fmt:
     name: Formatting (cargo fmt)
@@ -180,11 +201,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Linux-only on PRs, all three OSes on push/merge_group/schedule — see
+        # the `test_os` output on the `changes` job.
+        os: ${{ fromJSON(needs.changes.outputs.test_os) }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # nextest runs one process pool across every test binary at once (the
+      # fixture corpus is dozens of separate binaries `cargo test` would run
+      # serially), cutting this leg's wall-clock. Prebuilt binary — no compile.
+      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: nextest
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
@@ -193,7 +222,8 @@ jobs:
       # major with no repo change, and the tsc_verify fallback already pins @5.
       - name: Install TypeScript
         run: npm install -g typescript@5
-      # `cargo test --workspace` runs every crate's suite. bynkc's includes:
+      # `cargo nextest run --workspace` runs every crate's suite (no rustdoc
+      # doctests exist in the tree, so nextest loses nothing). bynkc's includes:
       #   - doc_examples        — the example-compilation gate (the Book)
       #   - diagnostics_registry / keywords_reference / cli_reference / grammar_reference
       #     — assert the generated reference pages are up to date
@@ -203,7 +233,7 @@ jobs:
       # --locked: fail if Cargo.lock would change (no silent lockfile drift).
       # BYNK_REQUIRE_TSC makes a missing `tsc` a hard failure rather than a skip.
       - name: Run tests
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked --profile ci
         env:
           BYNK_REQUIRE_TSC: "1"
           # The workerd smoke (#518) must actually run somewhere: required on
@@ -223,7 +253,14 @@ jobs:
     # rust-version, so a future drop below what the code needs goes red here.
     name: MSRV (cargo check on declared rust-version)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
+    # Gated on `all` rather than the broad `rust` filter: this leg's job is to
+    # verify the *declared* rust-version, which only moves via a manifest edit.
+    # `all` is true exactly when a global file changed (Cargo.toml / Cargo.lock /
+    # rust-toolchain.toml / a workflow) or the event isn't a PR — so a new or
+    # bumped dependency (which touches Cargo.lock) still re-checks the MSRV,
+    # while a plain `**/*.rs` PR no longer pays for a redundant full-workspace
+    # build (the main 1.95 legs already compile that code on the same toolchain).
+    if: needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -261,8 +298,11 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+      # Prebuilt binary — avoids recompiling cargo-llvm-cov from source on every
+      # run (minutes of pure build cost on a report-only, continue-on-error job).
+      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: cargo-llvm-cov
       - name: Coverage summary
         run: cargo llvm-cov --workspace --locked --summary-only
 
@@ -516,12 +556,15 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: nextest
       - name: Grammar appendix ↔ tree-sitter grammar
-        run: cargo test -p bynkc --test grammar_reference
+        run: cargo nextest run -p bynkc --test grammar_reference
       - name: LSP legend ↔ extension package.json
-        run: cargo test -p bynk-lsp --test legend_drift
+        run: cargo nextest run -p bynk-lsp --test legend_drift
       - name: Decision-record index ↔ ADR files
-        run: cargo test -p bynkc --test decisions_index
+        run: cargo nextest run -p bynkc --test decisions_index
 
   audit:
     # Scans Cargo.lock against the RustSec advisory database. Only the lockfile

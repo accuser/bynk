@@ -1,0 +1,31 @@
+# cargo-nextest configuration. The `test` and `drift` CI legs run under the
+# `ci` profile (`cargo nextest run --profile ci`); local `cargo nextest run`
+# uses `default`.
+#
+# Why nextest at all: the suite is ~700 tests spread across dozens of
+# integration-test binaries (the bynkc/tests/fixtures/** corpus especially).
+# `cargo test` runs those binaries sequentially; nextest runs one process pool
+# across all of them, cutting the test leg's wall-clock. There are no rustdoc
+# doctests in the tree (nextest cannot run those), so nothing is lost — the
+# `doc_examples` gate is an ordinary `#[test]`, which nextest runs normally.
+
+[profile.ci]
+# Surface every failure in one run rather than stopping at the first, so a
+# single red fixture doesn't mask the rest — mirrors the matrix's
+# `fail-fast: false` intent at the individual-test level.
+fail-fast = false
+
+# The fixture suite is deterministic (byte-for-byte emitted-TS comparison), so
+# retries never paper over a real product bug there. They exist only to absorb
+# the occasional cold-sandbox flake in the external smokes (the workerd boot
+# and the tsc-verify shell-out); a genuine failure still fails after retrying.
+retries = { backoff = "fixed", count = 1, delay = "1s" }
+
+# CI output: compact while green, but print the full output of anything that
+# failed (or was retried) at the end so a red run is diagnosable from the log.
+failure-output = "final"
+status-level = "fail"
+
+[profile.default]
+# Local runs keep the default (0) retries so flakes surface immediately.
+retries = 0
