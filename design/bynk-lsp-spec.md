@@ -84,11 +84,11 @@ The LSP applies defaults for everything else. The file's *presence* is what mark
 
 Future configuration alternatives (`.yaml`, `.json`) are not supported in this increment but the schema is designed to translate cleanly.
 
-### 2.3 Workspace discovery
+### 2.3 Startup analysis and watchers (v0.183)
 
-Once the project root is found, the LSP discovers all `.bynk` files under the configured `src` directory (recursive). These files form the project's source corpus. The LSP loads, parses, resolves, and type-checks them all on startup.
+On `initialized`, the server **discovers every project under the workspace folders** — a bounded walk for `bynk.toml` (skipping `out`, `node_modules`, `target`, `.git`, and dot-directories), plus any manifest at or above a folder — and analyses each, so diagnostics appear at activation **without a file being opened**. A workspace folder added later (`workspace/didChangeWorkspaceFolders`) is warmed the same way. Each project's file set is exactly what `bynkc` compiles: the manifest's `[paths] include`, with `exclude` honoured (§2.1, [ADR 0201](../decisions/0201-the-lsp-analyses-the-compilers-project-model.md)).
 
-File watching is enabled for the `src` directory. Changes (file added, removed, modified externally) trigger re-discovery and re-resolution of affected files.
+The server **registers its file watchers itself**. On `initialized`, if the client supports `workspace/didChangeWatchedFiles` dynamic registration, the server registers `**/*.bynk` and `**/bynk.toml` (one global registration, folder-independent — §2.4). A `.bynk` change re-analyses the owning project; a `bynk.toml` change reloads that project's config first. A client that does *not* support dynamic registration supplies the watchers itself (as the VS Code extension did before v0.183, and no longer needs to). Either way the server is notified — it no longer depends on a specific client to provide watchers.
 
 ### 2.4 Per-workspace state (v0.182)
 
@@ -97,7 +97,7 @@ The server implements the workspace-folders capability it advertises: one editor
 - **Routing is by discovered project root, not by workspace folder.** A URI routes to its nearest enclosing `bynk.toml` (§2.1) — so nested or overlapping folders raise no ambiguity (each file lands in its nearest project), a folder holding two `bynk.toml` projects yields two projects, and two folders sharing one project share one entry. Workspace folders are **discovery seeds** — they bound where the server looks for and prunes projects — never the routing key.
 - **A file under no project stays in single-file mode** — per-buffer diagnostics, no cross-file navigation. Requests that need an index decline for it; they do not error.
 - **`workspace/didChangeWorkspaceFolders`** adds and removes seeds. A project no longer reachable from any remaining folder is dropped and its diagnostics cleared — unless it still holds an open buffer, which retains it until the last buffer closes.
-- **One global `workspace/didChangeWatchedFiles` registration** (`**/*.bynk`, `**/bynk.toml`) covers every folder; the folder set does not change it, so folder changes never re-register.
+- **One global `workspace/didChangeWatchedFiles` registration** (`**/*.bynk`, `**/bynk.toml`), registered dynamically by the server at `initialized` (§2.3), covers every folder; the folder set does not change it, so folder changes never re-register.
 
 Each project carries its own `bynk.toml` config, analysis round (with its own freshness generation, §3.2.1), and published-diagnostics set. `workspace/symbol` (§3.11) is the one cross-project query — it aggregates over every project.
 

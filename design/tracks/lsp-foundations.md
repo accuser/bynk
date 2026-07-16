@@ -13,8 +13,10 @@
   settled. **Slice D shipped (v0.182, ADR 0204)** — real multi-root: a
   project-root-keyed state map, routing by the file's nearest `bynk.toml` (Q4),
   `did_change_workspace_folders`, and the advertised workspace-folders capability
-  made true. Remaining is **E** (startup + dynamic watcher registration), **F**
-  (one scheduler), **G** (doc consolidation, no bump) — none gated.
+  made true. **Slice E shipped (v0.183)** — startup analysis (a `bynk.toml`
+  tree-walk warms every project on activation) and server-side dynamic
+  `didChangeWatchedFiles` registration, so any client is notified. Remaining is
+  **F** (one scheduler) and **G** (doc consolidation, no bump) — neither gated.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
@@ -446,24 +448,22 @@ across projects — the one cross-project query.
 
 ### 4.4 Startup and watchers
 
-`initialized` (`main.rs:865-885`) logs on both branches and returns. The spec
-documents a startup project analysis; there isn't one. A workspace activated by
-`workspaceContains:bynk.toml` therefore shows no diagnostics until a `.bynk`
-file is opened or an analysis-backed request arrives.
+**Shipped in slice E (v0.183).** Before it, `initialized` logged on both
+branches and returned: the spec documented a startup project analysis that did
+not exist, so a workspace activated by `workspaceContains:bynk.toml` showed no
+diagnostics until a `.bynk` file was opened. Now `initialized` warms every
+project the folders hold (`discover_projects_under`, a bounded `bynk.toml`
+walk), so diagnostics appear at activation, and it registers the file watchers
+server-side (below).
 
-`register_capability` is called nowhere in the crate. A `did_change_watched_files`
-handler *does* exist (`main.rs:1943`) — it works only because the VS Code
-extension supplies the watchers client-side:
-
-```ts
-// vscode-bynk/src/extension.ts:141-151
-synchronize: { fileEvents: [
-  vscode.workspace.createFileSystemWatcher("**/*.bynk"),
-  vscode.workspace.createFileSystemWatcher("**/bynk.toml"),
-] }
-```
-
-For any other client, that handler is dead code.
+Before slice E, `register_capability` was called nowhere: the
+`did_change_watched_files` handler worked *only* because the VS Code extension
+supplied the watchers client-side (`synchronize.fileEvents`), so for any other
+client it was dead code. Slice E registers `**/*.bynk`/`**/bynk.toml`
+server-side (dynamic registration, gated on the client capability), and the
+extension **drops its client-side `fileEvents`** so the server's registration is
+the single source (no double-notification). A client without dynamic
+registration still supplies watchers itself, so it is never left without.
 
 ### 4.5 One scheduler
 
@@ -789,10 +789,16 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   `analysis_covering_open_buffers`) — no handler body changed. The load-bearing
   detail: the map key, `Analysis.project_root`, and routing all canonicalise, or
   a symlinked workspace path routes to a different key than the round filled.
-- **Slice E — startup & watchers.** The documented startup analysis in
-  `initialized`; dynamic `register_capability` for
-  `workspace/didChangeWatchedFiles`, so a non-VS-Code client is notified;
-  VS Code's client-side watchers kept working (no double-notification).
+- **Slice E — startup & watchers.** ✅ *shipped v0.183, #676 (no ADR — settled
+  direction).* The documented startup analysis in `initialized`: a bounded
+  `bynk.toml` tree-walk (`discover_projects_under`, the "one tree-walk" ADR 0204
+  §C named) warms every project under the folders — reused for added folders and
+  workspace-symbol seeding (closing D's nested-monorepo gap). Dynamic
+  `register_capability` for `workspace/didChangeWatchedFiles`, gated on the
+  client capability captured at `initialize`; the VS Code extension **drops its
+  client-side `synchronize.fileEvents`** so the server's registration is the one
+  source (no double-notification). The registration call is validated by the
+  VS Code integration CI job (not observable in `cargo test`).
 - **Slice F — one scheduler.** A single generation-based scheduler over both
   modes; the hardcoded 200 ms folded into the configured debounce; in-flight
   supersession (§4.5) settled.

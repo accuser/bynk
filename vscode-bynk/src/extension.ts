@@ -139,15 +139,13 @@ async function startServer(
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "bynk" }],
     synchronize: {
-      // Forward both source edits and `bynk.toml` manifest edits to the server
-      // as `workspace/didChangeWatchedFiles`. The manifest watcher lets the
-      // server reload format/diagnostics settings and the source root live,
-      // without an LSP restart (the separate `tomlWatcher` above only drives
-      // the `bynk.hasProject` context key and does not reach the server).
-      fileEvents: [
-        vscode.workspace.createFileSystemWatcher("**/*.bynk"),
-        vscode.workspace.createFileSystemWatcher("**/bynk.toml"),
-      ],
+      // No client-side `fileEvents` here: since v0.183 (LSP foundations slice
+      // E) the server registers the `**/*.bynk` and `**/bynk.toml` watchers
+      // itself via `workspace/didChangeWatchedFiles` dynamic registration, so
+      // it is notified of source and manifest edits for *any* client. Keeping a
+      // client-side watcher too would double-notify the server. The separate
+      // `tomlWatcher` above is unrelated — it only drives the `bynk.hasProject`
+      // context key and never reaches the server.
       configurationSection: "bynk",
     },
     outputChannel: output,

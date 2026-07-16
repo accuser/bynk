@@ -168,6 +168,12 @@ struct State {
     /// Open documents keyed by URI — a client-global set; each doc routes to
     /// its project via `resolve_root`.
     docs: std::collections::HashMap<Url, DocumentState>,
+    /// Slice E: whether the client advertised `didChangeWatchedFiles`
+    /// **dynamic registration** at `initialize`. When set, `initialized`
+    /// registers the file watchers server-side (so any client is notified);
+    /// when not, the client is expected to supply them itself (as VS Code did
+    /// before the extension's client-side watchers were removed).
+    supports_dynamic_watchers: bool,
 }
 
 #[derive(Clone)]
@@ -261,6 +267,60 @@ impl Backend {
     /// The canonical project root owning `uri`, or `None` in single-file mode.
     fn root_for_uri(uri: &Url) -> Option<PathBuf> {
         Self::resolve_canonical(uri).map(|(root, _)| root)
+    }
+
+    /// Slice E: every project root under `folder` — the folder's own
+    /// `resolve_root` (a manifest at or above it, the folder-inside-a-project
+    /// case) plus a bounded recursive walk collecting each directory that holds
+    /// a `bynk.toml`. Roots are **canonical** (the `projects` map key). The walk
+    /// skips the caches and heavy dirs it should never descend (`out`,
+    /// `node_modules`, `target`, `.git`, and dot-dirs). This is the "one
+    /// tree-walk" [ADR 0204](../decisions/0204-per-workspace-project-state.md) §C
+    /// named — shared by startup warming, added-folder warming, and
+    /// workspace-symbol seeding.
+    fn discover_projects_under(folder: &std::path::Path) -> Vec<PathBuf> {
+        fn should_skip(name: &std::ffi::OsStr) -> bool {
+            let name = name.to_string_lossy();
+            matches!(name.as_ref(), "out" | "node_modules" | "target" | ".git")
+                || name.starts_with('.')
+        }
+        fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+            if dir.join("bynk.toml").is_file() {
+                let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+                if !out.contains(&canon) {
+                    out.push(canon);
+                }
+            }
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && !should_skip(&entry.file_name()) {
+                    walk(&path, out);
+                }
+            }
+        }
+        let mut roots = Vec::new();
+        // A manifest at or above the folder (the folder sits inside a project).
+        if let Some((root, _)) = Self::resolve_root(folder) {
+            let canon = root.canonicalize().unwrap_or(root);
+            roots.push(canon);
+        }
+        // The implicit-`src/` shape (#485): a `src/` tree with no `bynk.toml`.
+        // `resolve_root` only finds a `src/` *ancestor*, so the folder-is-the-root
+        // case (folder holds `src/`, no manifest) needs an explicit check — else
+        // a rootless project would warm only lazily on first open, not at startup.
+        if folder.join("src").is_dir() && !folder.join("bynk.toml").is_file() {
+            let canon = folder
+                .canonicalize()
+                .unwrap_or_else(|_| folder.to_path_buf());
+            if !roots.contains(&canon) {
+                roots.push(canon);
+            }
+        }
+        walk(folder, &mut roots);
+        roots
     }
 
     /// Re-run the compiler on the document at `uri` and publish diagnostics.
@@ -841,6 +901,72 @@ impl Backend {
         to_clear
     }
 
+    /// Slice E: discover and warm every project under `folders` — create each
+    /// entry (idempotent, keyed by canonical root) and schedule its round — so a
+    /// workspace shows diagnostics without a file being opened. Non-blocking:
+    /// entries are created synchronously (routing is immediately correct) and the
+    /// rounds run on the debounce path. Shared by `initialized` (all folders) and
+    /// the `did_change_workspace_folders` added branch (the new folders).
+    async fn warm_projects(&self, folders: &[PathBuf]) {
+        // Discover off the lock (FS I/O), dedup across folders.
+        let mut roots: Vec<PathBuf> = Vec::new();
+        for folder in folders {
+            for root in Self::discover_projects_under(folder) {
+                if !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+        }
+        for root in roots {
+            let config = project::load_config(&root).unwrap_or_default();
+            {
+                let mut state = self.state.write().await;
+                state
+                    .projects
+                    .entry(root.clone())
+                    .or_insert_with(|| ProjectState {
+                        config,
+                        ..Default::default()
+                    });
+            }
+            self.schedule_project_diagnostics(root).await;
+        }
+    }
+
+    /// Slice E: register the `workspace/didChangeWatchedFiles` capability with
+    /// the client — once, with folder-independent globs (`**/*.bynk`,
+    /// `**/bynk.toml`), per Q4 (ADR 0204 §D). So a client that supports dynamic
+    /// registration is notified of source and manifest changes without watching
+    /// files itself. Best-effort: a registration failure is logged, not fatal.
+    async fn register_file_watchers(&self) {
+        use tower_lsp::lsp_types::{
+            DidChangeWatchedFilesRegistrationOptions, FileSystemWatcher, GlobPattern, Registration,
+        };
+        let watchers = ["**/*.bynk", "**/bynk.toml"]
+            .into_iter()
+            .map(|g| FileSystemWatcher {
+                glob_pattern: GlobPattern::String(g.to_string()),
+                kind: None, // create | change | delete
+            })
+            .collect();
+        let registration = Registration {
+            id: "bynk-watched-files".to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+                watchers,
+            })
+            .ok(),
+        };
+        if let Err(e) = self.client.register_capability(vec![registration]).await {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("bynkc-lsp: file-watcher registration failed: {e}"),
+                )
+                .await;
+        }
+    }
+
     /// The `bynk.toml` config governing `uri` — its project's, or the default
     /// (single-file mode). Backs the per-file diagnostics mode/debounce and the
     /// formatting options, which now differ by project.
@@ -1203,17 +1329,26 @@ impl LanguageServer for Backend {
         // Slice D (Q4): record **every** workspace folder as a discovery seed
         // (was `folders.first()` only). Folders do not own URIs — a request
         // routes by its nearest enclosing `bynk.toml` (`resolve_root`) — so this
-        // seeds only where `did_change_workspace_folders` prunes and (slice E)
-        // where a startup scan will look. Projects are created lazily on first
-        // touch; no startup analysis here (slice E), matching the pre-slice-D
-        // server, whose `initialized` merely logged.
-        if let Some(folders) = &params.workspace_folders {
+        // seeds where `did_change_workspace_folders` prunes and where slice E's
+        // startup scan looks. Slice E: also capture whether the client accepts a
+        // server-side `didChangeWatchedFiles` registration, used in `initialized`.
+        let dynamic_watchers = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.did_change_watched_files.as_ref())
+            .and_then(|d| d.dynamic_registration)
+            .unwrap_or(false);
+        {
             let mut state = self.state.write().await;
-            state.folders = folders
-                .iter()
-                .filter_map(|f| f.uri.to_file_path().ok())
-                .map(|p| p.canonicalize().unwrap_or(p))
-                .collect();
+            state.supports_dynamic_watchers = dynamic_watchers;
+            if let Some(folders) = &params.workspace_folders {
+                state.folders = folders
+                    .iter()
+                    .filter_map(|f| f.uri.to_file_path().ok())
+                    .map(|p| p.canonicalize().unwrap_or(p))
+                    .collect();
+            }
         }
         Ok(InitializeResult {
             capabilities: server_capabilities(),
@@ -1225,11 +1360,28 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        let folders = self.state.read().await.folders.len();
-        let msg = if folders == 0 {
+        let (folders, dynamic) = {
+            let s = self.state.read().await;
+            (s.folders.clone(), s.supports_dynamic_watchers)
+        };
+        // Slice E (Q4/ADR 0204 §D): register the file watchers server-side, once,
+        // with folder-independent globs — so any client is notified, and the VS
+        // Code extension no longer supplies them (avoiding a double
+        // notification). Only when the client accepts dynamic registration;
+        // otherwise it is expected to watch files itself.
+        if dynamic {
+            self.register_file_watchers().await;
+        }
+        // Slice E: warm every project under the workspace folders, so diagnostics
+        // appear at activation without a file being opened (spec §2.3).
+        self.warm_projects(&folders).await;
+        let msg = if folders.is_empty() {
             "bynkc-lsp: no workspace folders; single-file mode".to_string()
         } else {
-            format!("bynkc-lsp: {folders} workspace folder(s); projects resolved per file")
+            format!(
+                "bynkc-lsp: {} workspace folder(s); projects resolved per file",
+                folders.len()
+            )
         };
         self.client.log_message(MessageType::INFO, msg).await;
     }
@@ -2118,16 +2270,23 @@ impl LanguageServer for Backend {
         params: WorkspaceSymbolParams,
     ) -> JsonRpcResult<Option<Vec<SymbolInformation>>> {
         let candidates: Vec<(PathBuf, ProjectConfig)> = {
-            let state = self.state.read().await;
-            let mut set: std::collections::HashMap<PathBuf, ProjectConfig> = state
-                .projects
-                .iter()
-                .map(|(r, p)| (r.clone(), p.config.clone()))
-                .collect();
-            for folder in &state.folders {
-                if let Some((root, config)) = Self::resolve_root(folder) {
-                    let root = root.canonicalize().unwrap_or(root);
-                    set.entry(root).or_insert(config);
+            // Snapshot the known projects and folders under the lock, then
+            // discover (FS I/O) off it. Slice E: full discovery (not just
+            // `resolve_root(folder)`) so a monorepo's nested projects are
+            // searchable before any file in them is opened.
+            let (mut set, folders) = {
+                let state = self.state.read().await;
+                let known: std::collections::HashMap<PathBuf, ProjectConfig> = state
+                    .projects
+                    .iter()
+                    .map(|(r, p)| (r.clone(), p.config.clone()))
+                    .collect();
+                (known, state.folders.clone())
+            };
+            for folder in &folders {
+                for root in Self::discover_projects_under(folder) {
+                    set.entry(root.clone())
+                        .or_insert_with(|| project::load_config(&root).unwrap_or_default());
                 }
             }
             set.into_iter().collect()
@@ -2413,17 +2572,18 @@ impl LanguageServer for Backend {
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
         // Slice D (Q4): folders are discovery seeds, not routing owners.
-        // Added folders extend the seed set (projects under them resolve lazily
-        // on first touch — the same path `did_open` takes; proactive analysis is
-        // slice E). Removed folders shrink it; then any project a removed folder
-        // orphaned — no remaining folder, no open buffer — is pruned.
-        {
+        // Added folders extend the seed set; removed folders shrink it, then any
+        // project a removed folder orphaned — no remaining folder, no open
+        // buffer — is pruned.
+        let added_dirs: Vec<PathBuf> = {
             let mut state = self.state.write().await;
-            for added in &params.event.added {
-                if let Ok(p) = added.uri.to_file_path() {
+            let mut added = Vec::new();
+            for a in &params.event.added {
+                if let Ok(p) = a.uri.to_file_path() {
                     let dir = p.canonicalize().unwrap_or(p);
                     if !state.folders.contains(&dir) {
-                        state.folders.push(dir);
+                        state.folders.push(dir.clone());
+                        added.push(dir);
                     }
                 }
             }
@@ -2433,7 +2593,11 @@ impl LanguageServer for Backend {
                     state.folders.retain(|f| f != &dir);
                 }
             }
-        }
+            added
+        };
+        // Slice E: warm the added folders proactively — the analysis D deferred
+        // to here, using the same discovery walk as startup.
+        self.warm_projects(&added_dirs).await;
         // Clear the dropped projects' diagnostics so the client does not keep
         // showing stale squiggles for a folder that is gone.
         for uri in self.prune_orphaned_projects().await {
@@ -4228,6 +4392,160 @@ mod tests {
         assert!(
             edit.is_some(),
             "a rename in project A must not be blocked by a dirty buffer in project B",
+        );
+    }
+
+    // ---- Slice E: startup analysis & dynamic watchers ----
+
+    /// `initialize` captures the client's `didChangeWatchedFiles` dynamic-
+    /// registration support, which gates the server-side watcher registration.
+    #[tokio::test]
+    async fn initialize_captures_the_dynamic_watcher_capability() {
+        let backend = bare_backend().await;
+        let params = InitializeParams {
+            capabilities: ClientCapabilities {
+                workspace: Some(WorkspaceClientCapabilities {
+                    did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
+                        dynamic_registration: Some(true),
+                        relative_pattern_support: None,
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        backend.initialize(params).await.expect("initialize");
+        assert!(
+            backend.state.read().await.supports_dynamic_watchers,
+            "the client's dynamic-registration support must be captured for `initialized`",
+        );
+    }
+
+    /// The discovery walk finds every nested `bynk.toml` project under a folder
+    /// (a monorepo), and skips the caches it must never descend.
+    #[tokio::test]
+    async fn discover_projects_under_finds_nested_projects_and_skips_caches() {
+        let s = scratch_project(
+            "e_discover",
+            &[
+                ("packages/a/bynk.toml", "[project]\nname=\"a\"\n"),
+                ("packages/a/src/x.bynk", "commons a.x\n"),
+                ("packages/b/bynk.toml", "[project]\nname=\"b\"\n"),
+                ("packages/b/src/y.bynk", "commons b.y\n"),
+                // A manifest under a skipped dir must NOT be discovered.
+                ("node_modules/dep/bynk.toml", "[project]\nname=\"dep\"\n"),
+            ],
+        );
+        let mut roots = Backend::discover_projects_under(&s.0);
+        roots.sort();
+        let names: Vec<String> = roots
+            .iter()
+            .map(|r| r.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["a", "b"],
+            "both monorepo projects found, node_modules skipped; got {roots:?}",
+        );
+    }
+
+    /// Startup analysis: `initialized` warms every project under the workspace
+    /// folders — creating each entry so diagnostics/features are ready — **with
+    /// no `did_open`**. This is spec §2.3's documented startup analysis.
+    #[tokio::test]
+    async fn initialized_warms_every_project_under_the_folders() {
+        let s = scratch_project(
+            "e_warm",
+            &[
+                ("packages/a/bynk.toml", "[project]\nname=\"a\"\n"),
+                (
+                    "packages/a/src/x.bynk",
+                    "commons a.x\n\nfn ax(n: Int) -> Int {\n  n\n}\n",
+                ),
+                ("packages/b/bynk.toml", "[project]\nname=\"b\"\n"),
+                (
+                    "packages/b/src/y.bynk",
+                    "commons b.y\n\nfn by(n: Int) -> Int {\n  n\n}\n",
+                ),
+            ],
+        );
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+
+        // No file opened — just the handshake completion.
+        backend.initialized(InitializedParams {}).await;
+
+        assert_eq!(
+            backend.state.read().await.projects.len(),
+            2,
+            "both monorepo projects are warmed at `initialized`, before any open",
+        );
+        // And each is genuinely analysable without an open buffer.
+        let ax = file_uri(&s.0, "packages/a/src/x.bynk");
+        assert!(
+            backend.analysis_for(&ax).await.is_some(),
+            "a warmed project answers index requests with no `did_open`",
+        );
+    }
+
+    /// The implicit-`src/` project (#485 — a `src/` tree with no `bynk.toml`) is
+    /// warmed at startup too, not only lazily on first open. `resolve_root` finds
+    /// only a `src/` *ancestor*, so the folder-is-the-root case needs the explicit
+    /// check in `discover_projects_under`.
+    #[tokio::test]
+    async fn initialized_warms_an_implicit_src_project() {
+        let s = scratch_project(
+            "e_implicit",
+            &[(
+                "src/a.bynk",
+                "commons demo.a\n\nfn f(n: Int) -> Int {\n  n\n}\n",
+            )],
+        );
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+        backend.initialized(InitializedParams {}).await;
+        assert_eq!(
+            backend.state.read().await.projects.len(),
+            1,
+            "a rootless `src/` project is warmed at startup, not only on open",
+        );
+    }
+
+    /// A folder added at runtime is warmed the same way (the proactive scan
+    /// slice D deferred to E), so its projects appear without an open.
+    #[tokio::test]
+    async fn an_added_folder_is_warmed() {
+        let s = scratch_project(
+            "e_added",
+            &[
+                ("bynk.toml", "[project]\nname=\"p\"\n"),
+                (
+                    "src/a.bynk",
+                    "commons p.a\n\nfn f(n: Int) -> Int {\n  n\n}\n",
+                ),
+            ],
+        );
+        let folder = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let backend = bare_backend().await; // no folders yet
+        assert!(backend.state.read().await.projects.is_empty());
+
+        backend
+            .did_change_workspace_folders(DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent {
+                    added: vec![WorkspaceFolder {
+                        uri: Url::from_file_path(&folder).unwrap(),
+                        name: "p".into(),
+                    }],
+                    removed: vec![],
+                },
+            })
+            .await;
+
+        assert_eq!(
+            backend.state.read().await.projects.len(),
+            1,
+            "an added workspace folder's project is warmed proactively",
         );
     }
 }
