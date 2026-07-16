@@ -19,12 +19,43 @@ Case descriptions within a suite must be unique
 (`bynk.suite.unknown_target`). Test files live under the project's `tests/` tree —
 see [Lay out a project](/book/guides/projects-build-and-deployment/layout/).
 
-A case invokes the target's RPC service as `svc.call(args)`. The call is
-resolved against the service's `on call` handler and checked like any other
-call: the handler must exist, and the arguments must match its arity and types.
-A service with **no** `on call` handler — a `from http` / `cron` / `queue`
-service — is not addressable this way (`bynk.test.service_no_call_handler`);
-its trigger surface is driven by a later part of the testing story, not `.call`.
+A case drives the target's services by their natural surface — resolved against
+the declared handler and checked for arity and argument types:
+
+| service | address |
+|---|---|
+| `on call` | `svc.call(args)` |
+| `from http` | `svc.GET("/path")`, `svc.POST("/path", body)` — the path is the route **pattern**, then the handler's params (path params, then body) |
+| `from cron` | `svc.schedule("<expr>")` — matched to the handler with that schedule |
+| `from queue` | `svc.message(msg)` |
+
+A route/schedule the service does not declare is `bynk.test.service_unknown_route`;
+`svc.call(...)` on a service with no `on call` handler is
+`bynk.test.service_no_call_handler`.
+
+### Acting as an actor — `by <Actor>(<identity>)` {#call-site-by}
+
+A handler guarded by an actor (`by u: User`) runs as a verified identity. A case
+supplies that identity with a call-site `by` clause on the effect-let:
+
+```bynk
+case "each owner's list is private" {
+  let _    <- api.POST("/todos", AddRequest { title: "bob's" }) by User("bob")
+  let mine <- api.GET("/todos")                                 by User("carol")
+  expect mine is Ok(_)
+}
+```
+
+- `by User("bob")` — the actor and the identity value. The value is typed against
+  the actor's identity type, so `by User("")` fails `UserId`'s refinement.
+- `by Visitor` — a unit-identity actor takes **no** argument
+  (`bynk.test.actor_no_identity` if one is given; `bynk.test.actor_identity_required`
+  if an identity-carrying actor is written bare).
+- cron and queue run as their internal actor and need no `by`.
+
+At the `unit` tier the identity is *given*, not verified — the handler runs
+in-process against fresh, per-case agent state. Driving the real verification seam
+with a signed credential is the `system` tier, a later slice.
 
 ## `expect`
 

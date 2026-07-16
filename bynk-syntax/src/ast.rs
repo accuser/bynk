@@ -1092,6 +1092,22 @@ impl ByClause {
     }
 }
 
+/// v0.182 (testing-the-boundary Slice A, #664): a call-site actor clause on a
+/// test-body `let x <- <service address> by <Actor>(<identity>)`. Distinct from
+/// [`ByClause`] (the handler/header form): the *declaration* names which actor
+/// may call and binds the verified identity, whereas the *call site* names the
+/// actor the case is acting as and supplies the identity value. A unit-identity
+/// actor (`Visitor`, and cron/queue's internal actors) carries no `identity`.
+#[derive(Debug, Clone)]
+pub struct CallSiteActor {
+    /// The actor the case acts as — a local actor decl or a prelude actor.
+    pub actor: Ident,
+    /// The supplied identity value (`"bob"` in `by User("bob")`), or `None` for a
+    /// unit-identity actor written `by Visitor` with no argument.
+    pub identity: Option<Box<Expr>>,
+    pub span: Span,
+}
+
 /// A handler block — `on call(args) -> T given C1, C2 { body }`.
 /// Used by both services and agents.
 #[derive(Debug, Clone)]
@@ -1872,6 +1888,11 @@ pub struct LetStmt {
     pub name: Ident,
     pub type_annot: Option<TypeRef>,
     pub value: Expr,
+    /// v0.182 (#664): the call-site `by <Actor>(<identity>)` clause on an
+    /// `EffectLet` whose value addresses a test service handler. `None` on a pure
+    /// `Let` (the `by` is parsed only in the `<-` arm) and on an effect-let with
+    /// no principal.
+    pub principal: Option<CallSiteActor>,
     pub span: Span,
     pub trivia: Trivia,
 }

@@ -1,0 +1,43 @@
+================================================================================
+call-site actor clause: http address with identity, cron with unit-identity actor
+================================================================================
+
+suite s {
+  case "c" {
+    let r <- api.POST("/todos", body) by User("bob")
+    let n <- sched.schedule("* * * * *") by Scheduler
+    expect r is Ok(_)
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    target: (qualified_name (identifier))
+    (case
+      name: (string_literal)
+      (effect_let_stmt
+        name: (identifier)
+        value: (method_call
+          receiver: (identifier)
+          method: (identifier)
+          arg: (string_literal)
+          arg: (identifier))
+        principal: (call_site_actor
+          actor: (identifier)
+          identity: (string_literal)))
+      (effect_let_stmt
+        name: (identifier)
+        value: (method_call
+          receiver: (identifier)
+          method: (identifier)
+          arg: (string_literal))
+        principal: (call_site_actor
+          actor: (identifier)))
+      (expect_expr
+        cond: (is_expr
+          value: (identifier)
+          pattern: (variant_pattern
+            variant: (identifier)
+            (wildcard_pattern)))))))

@@ -1,0 +1,6 @@
+suite demo.api {
+  case "an undeclared route" {
+    let r <- api.GET("/nope") by Visitor
+    expect r is Ok(_)
+  }
+}

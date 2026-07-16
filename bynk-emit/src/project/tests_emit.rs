@@ -718,6 +718,7 @@ fn check_integration_case_body(
         caps: checker::CapabilityCtx::default(),
         in_test_body: true,
         test_services: HashMap::new(),
+        test_actors: HashMap::new(),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -1359,8 +1360,29 @@ fn register_call_record_types(
 /// `svc.call(args)` in a case can be resolved rather than string-matched. A
 /// service with no `on call` handler carries `None`, which turns `svc.call(...)`
 /// into `bynk.test.service_no_call_handler` instead of a silent runtime crash.
+fn target_service_handler_kinds(
+    table: Option<&UnitTable>,
+) -> HashMap<String, Vec<bynk_syntax::ast::HandlerKind>> {
+    let Some(t) = table else {
+        return HashMap::new();
+    };
+    t.services
+        .iter()
+        .map(|(name, decl)| {
+            (
+                name.clone(),
+                decl.handlers.iter().map(|h| h.kind.clone()).collect(),
+            )
+        })
+        .collect()
+}
+
+fn target_test_actors(table: Option<&UnitTable>) -> HashMap<String, bynk_syntax::ast::ActorDecl> {
+    table.map(|t| t.actors.clone()).unwrap_or_default()
+}
+
 fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::TestServiceSig> {
-    use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
+    use bynk_syntax::ast::ServiceProtocol;
     let Some(t) = table else {
         return HashMap::new();
     };
@@ -1374,21 +1396,17 @@ fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::T
                 ServiceProtocol::Queue { .. } => Some("queue".to_string()),
                 ServiceProtocol::WebSocket { .. } => Some("websocket".to_string()),
             };
-            let call_handler = decl
+            let handlers = decl
                 .handlers
                 .iter()
-                .find(|h| matches!(h.kind, HandlerKind::Call))
-                .map(|h| checker::TestCallHandler {
+                .map(|h| checker::TestHandler {
+                    kind: h.kind.clone(),
                     params: h.params.clone(),
+                    by_clause: h.by_clause.clone(),
                     span: h.span,
-                });
-            (
-                name.clone(),
-                checker::TestServiceSig {
-                    protocol,
-                    call_handler,
-                },
-            )
+                })
+                .collect();
+            (name.clone(), checker::TestServiceSig { protocol, handlers })
         })
         .collect()
 }
@@ -1494,6 +1512,7 @@ fn typecheck_case_body(
         },
         in_test_body: true,
         test_services: target_test_services(unit_tables.get(target_name)),
+        test_actors: target_test_actors(unit_tables.get(target_name)),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -2457,6 +2476,7 @@ fn check_property_body(
         },
         in_test_body: true,
         test_services: target_test_services(unit_tables.get(target_name)),
+        test_actors: target_test_actors(unit_tables.get(target_name)),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -3907,6 +3927,7 @@ fn emit_test_case_function(
         &mut typed,
         &cross,
         test_services,
+        target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
         source,
         rel_path,
@@ -4723,6 +4744,7 @@ fn emit_test_property_function(
         &mut typed,
         &cross,
         test_services,
+        target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
         source,
         rel_path,
@@ -4896,6 +4918,7 @@ fn emit_test_history_property_function(
         &mut typed,
         &cross,
         test_services,
+        target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
         source,
         rel_path,
