@@ -1,16 +1,17 @@
 # Testing the boundary — teaching the tier dial the other door
 
-- **Status:** **Settling — not adopted.** The spine is
-  [#656](https://github.com/accuser/bynk/issues/656)
-  ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); this doc
-  lands via a **settling draft PR** ("Part of #656" — never `Closes`, which would
-  kill the spine at adoption). Draft status *is* the settling phase: **every open
-  question is settled** — Q1–Q5 and Q7 (§3.4, §4.2.1, §4.1.2, §4.2.0, §4.3.2,
-  §4.1.1), with **Q6 (OIDC) scoped out to a follow-on** (§7). Slices 0, A and B are
-  unblocked. **This PR is ready to be marked ready for review.** Merging settles
-  *direction* and is
-  **not** build authorisation — a slice is approved to build only when its own
-  proposal is `accepted`. Live slice state is on the spine.
+- **Status:** **Adopted — slicing. Slice 0 shipped (v0.181, ADR 0203, #662/#671).**
+  The spine is [#656](https://github.com/accuser/bynk/issues/656)
+  ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); direction
+  was settled by the merge of the settling PR (#657). **Every design question is
+  settled** — Q1–Q5 and Q7 (§3.4, §4.2.1, §4.1.2, §4.2.0, §4.3.2, §4.1.1), with
+  **Q6 (OIDC) scoped out to a follow-on** (§7). Adoption is **not** build
+  authorisation — a slice is approved to build only when its own proposal is
+  `accepted`. **Slice 0** landed the checker resolution (§8, ADR 0203) and — the
+  load-bearing correction it forced — established that the `symbols.rs`/`consumes`
+  widening the candidate decomposition once carried **has no consumer** and is
+  dropped, not deferred. **Slices A and B** are unblocked and unstarted. Live slice
+  state is on the spine.
 - **Realises:** the rung the retired testing track's subject ladder
   (`value → domain → call → snapshot → step → history`,
   [`../archive/retired-tracks.md`](../archive/retired-tracks.md)) never had — the
@@ -164,7 +165,8 @@ carries a `default: 404` *inside* the `if`), and `bynk.http.reserved_prefix`
 (`bynk-emit/src/project/validate.rs:3178-3187`) forbids a user route under
 `/_bynk/…`.
 
-The hard stop is upstream of the dial, at `bynk-emit/src/project/symbols.rs:614-620`:
+There is a `HandlerKind::Call` filter upstream of the dial, at
+`bynk-emit/src/project/symbols.rs:614-620`:
 
 ```rust
 let Some(handler) = sdecl.handlers.iter()
@@ -172,8 +174,14 @@ let Some(handler) = sdecl.handlers.iter()
 else { continue; };
 ```
 
-Only `HandlerKind::Call` services enter `consumed_services`. Every http, cron,
-queue, and websocket service is silently skipped — at every tier.
+Only `HandlerKind::Call` services enter `consumed_services`; every http, cron,
+queue, and websocket service is skipped there. **An early draft called this "the
+hard stop" and was wrong** — `consumed_services` is the *cross-context* path, and
+cross-context calls are `on call`-only *by construction* (a consumed context's
+http routes are its public boundary, unreachable through a service binding), so
+this filter is **correct**. The real hard stop is the checker's own `test_services`
+branch for the *target's* services — which Slice 0 fixed (§8, ADR 0203). This
+distinction is recorded here because it is easy to re-make.
 
 ### 3.1 One body, three lowerings
 
@@ -1027,11 +1035,19 @@ alone, because it needs no crypto, no `fetch`, and no ADR amendment. Note **`cro
 appears only in Slice A** — it has no serialisation edge, so it has no `system`
 tier at all (§3.4); `unit` is its whole story.
 
-- **Slice 0 — the addressing generalisation.** Widen `symbols.rs:614-620` beyond
-  `HandlerKind::Call`, and replace the `calls.rs:1741` `method.name == "call"`
-  hardcode with a real handler lookup. Fixes #654 as a side effect. Buys nothing
-  user-visible alone, but every later slice needs it and it is the one change to
-  the checker's service branch.
+- **Slice 0 — the checker resolves the `on call` handler. ✅ Shipped (v0.181, ADR
+  0203, #662/#671).** Replaced the `calls.rs` `method.name == "call"` hardcode
+  with a real handler lookup: `svc.call(args)` now checks the handler exists and
+  that the arguments fit its arity and types. Closed #654 (a `.call` on a `from
+  http` service used to pass `check` and crash at runtime). **What changed from the
+  candidate:** this slice was originally scoped to *also* "widen `symbols.rs:614-620`
+  beyond `HandlerKind::Call`". It does not — and neither does any later slice.
+  Grounding the implementation established the widening feeds `consumed_services`,
+  the **cross-context** path, which is `on call`-only *by construction* (a consumed
+  context's http/cron/queue routes are its public boundary, unreachable through a
+  service binding). The "hard stop is `symbols.rs`" framing conflated the target's
+  own services (the `test_services`/checker path this slice fixed) with consumed
+  ones. The widening is **dropped**; ADR 0203 records it.
 - **Slice A — the unit-tier surface.** Address `http`/`cron`/`queue` handlers at
   `unit`, and give `makeTestDeps()` an `identity` (fixing #655). This is where
   most of the value is: it makes every example's service testable, and gives
