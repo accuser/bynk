@@ -2847,6 +2847,84 @@ mod tests {
         assert_eq!(keys, vec!["a.bynk"], "excluded trees stay out of the round");
     }
 
+    /// CI repro (#653): the VS Code extension's fixture workspace — a legacy
+    /// `[paths] src`/`tests` manifest (keys ADR 0147 retired, so
+    /// `read_project_paths` ignores them → `conventional()` → `["src"]`) with a
+    /// dotted commons in `src/`. Drives the real `references` handler.
+    #[tokio::test]
+    async fn references_resolve_in_the_vscode_fixture_layout() {
+        let s = scratch_project(
+            "vsc",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n\n[paths]\nsrc = \"src\"\ntests = \"tests\"\n",
+                ),
+                (
+                    "src/text.bynk",
+                    "commons fixture.text\n\nfn shout(s: String) -> String {\n  s\n}\n\nfn greet(name: String) -> String {\n  \"Hi, \\(shout(name))!\"\n}\n",
+                ),
+            ],
+        );
+        // Root exactly as `initialize` does: resolve from the workspace folder.
+        let (root, config) = Backend::resolve_root(&s.0).expect("bynk.toml is present");
+        assert_eq!(root, s.0, "the manifest's directory is the project root");
+
+        let (service, _socket) = tower_lsp::LspService::new(Backend::new);
+        let backend = service.inner().clone();
+        {
+            let mut st = backend.state.write().await;
+            st.project_root = Some(root.clone());
+            st.config = config;
+        }
+        backend.run_project_diagnostics().await;
+
+        let analysis = backend
+            .state
+            .read()
+            .await
+            .analysis
+            .clone()
+            .expect("a round committed");
+        let keys: Vec<String> = analysis
+            .snapshots
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(keys, vec!["src/text.bynk"], "the fixture file is analysed");
+
+        // The URI the editor sends, mapped through the round's identity.
+        let abs = s.0.join("src/text.bynk");
+        let uri = Url::from_file_path(abs.canonicalize().unwrap_or(abs)).unwrap();
+        let rel = Backend::uri_to_rel(&analysis, &uri).expect("URI resolves into the round");
+        assert_eq!(rel, PathBuf::from("src/text.bynk"));
+
+        // `shout`'s declaration site: line 2 (0-based), at `fn shout`.
+        let text = analysis.snapshots.get(&rel).expect("snapshot present");
+        let decl = text.find("shout").expect("`shout` in source");
+        let pos = crate::position::offset_to_position(text, decl);
+
+        let refs = backend
+            .references(ReferenceParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position: pos,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: ReferenceContext {
+                    include_declaration: true,
+                },
+            })
+            .await
+            .expect("references must not error");
+        let found = refs.unwrap_or_default();
+        assert!(
+            !found.is_empty(),
+            "`shout` is referenced by `greet` — references must resolve; got none",
+        );
+    }
+
     /// #485: a rootless multi-file-commons file (a `src/` tree with no
     /// `bynk.toml`, the layout the compiler fixtures use) resolves its
     /// implicit source root — the nearest ancestor `src/` — so project-mode

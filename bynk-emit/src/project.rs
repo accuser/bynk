@@ -1383,7 +1383,7 @@ fn phase_resolve_consumes(
             .map(|t| t.capabilities.keys().cloned().collect())
             .unwrap_or_default();
         for &i in indices {
-            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
             for c in parsed[i].consumes() {
                 let target = c.target.joined();
                 if kind != UnitKind::Context && kind != UnitKind::Adapter {
@@ -1726,7 +1726,7 @@ fn phase_validate_type_exports(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, (Visibility, Span)> = HashMap::new();
         for &i in indices {
-            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
             for clause in parsed[i].exports() {
                 // v0.15: `exports capability { ... }` clauses are validated
                 // separately (§4.1); 6b handles only type exports.
@@ -1831,7 +1831,7 @@ fn phase_validate_capability_exports(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, Span> = HashMap::new();
         for &i in indices {
-            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
             for clause in parsed[i].exports() {
                 if !matches!(clause.kind, ExportKind::Capability) {
                     continue;
@@ -3002,7 +3002,7 @@ fn run_checks(
                 });
                 let (_, warnings) =
                     crate::emitter::secrets::secret_reads_of(handlers.flatten(), flattened);
-                let rel = parsed[i].source_path.clone();
+                let rel = parsed[i].identity_path.clone();
                 errors.extend_for(Some(&rel), warnings);
             }
         }

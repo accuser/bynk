@@ -73,7 +73,12 @@ struct ResolvedStub {
     clauses: Vec<StubClause>,
     /// The test file declaring the first clause — the recording context for
     /// edges in its value expressions (v0.25).
-    source_path: PathBuf,
+    ///
+    /// ADR 0198/0200: a *recording context* is an index key, so this is the
+    /// file's **identity** (project-relative), not its `include`-root-relative
+    /// unit path. Everything the index keys must name a file the round
+    /// analysed.
+    identity_path: PathBuf,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -277,14 +282,14 @@ fn resolve_stubs(
         let Some(t) = parsed[i].test() else { continue };
         for case in &t.cases {
             for pc in &case.stubs {
-                collected.push((pc.clone(), parsed[i].source_path.clone()));
+                collected.push((pc.clone(), parsed[i].identity_path.clone()));
             }
         }
     }
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
         for pc in &t.stubs {
-            collected.push((pc.clone(), parsed[i].source_path.clone()));
+            collected.push((pc.clone(), parsed[i].identity_path.clone()));
         }
     }
 
@@ -304,7 +309,7 @@ fn resolve_stubs(
     };
 
     let mut out: HashMap<String, ResolvedStub> = HashMap::new();
-    for (pc, source_path) in collected {
+    for (pc, identity_path) in collected {
         let cap_name = pc.capability.name.clone();
         let Some(cap_decl) = resolve_cap(&cap_name) else {
             // Commons have no seams at all; contexts may still name a
@@ -352,7 +357,7 @@ fn resolve_stubs(
             cap: cap_name.clone(),
             cap_decl: cap_decl.clone(),
             clauses: Vec::new(),
-            source_path: source_path.clone(),
+            identity_path: identity_path.clone(),
         });
         entry.clauses.push(pc);
     }
@@ -490,7 +495,7 @@ pub(crate) fn process_integration_tests(
             let Some(d) = parsed[i].integration() else {
                 continue;
             };
-            refs.enter_file(&parsed[i].source_path, &harness_name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path, &harness_name, parsed[i].synthetic);
             for case in &d.cases {
                 check_integration_case_body(
                     &participants,
@@ -1134,7 +1139,7 @@ fn check_test_bodies(
         )
     {
         for rp in stubs.values() {
-            refs.enter_file(&rp.source_path, target_name, false);
+            refs.enter_file(&rp.identity_path, target_name, false);
             for clause in &rp.clauses {
                 let Some(op) = rp
                     .cap_decl
@@ -1181,7 +1186,7 @@ fn check_test_bodies(
         };
         // v0.25: test-case edges record in the test file, resolving bare
         // names through the *target* unit's namespace.
-        refs.enter_file(&parsed[i].source_path, target_name, parsed[i].synthetic);
+        refs.enter_file(&parsed[i].identity_path, target_name, parsed[i].synthetic);
         for case in &test_decl.cases {
             check_test_case_body(
                 target_name,

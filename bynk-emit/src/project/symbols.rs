@@ -70,7 +70,7 @@ pub(crate) fn assemble_index(
             continue;
         }
         let site = |id: &Ident| SiteRef {
-            path: pf.source_path.clone(),
+            path: pf.identity_path.clone(),
             span: id.span,
         };
         for item in pf.items() {
@@ -119,7 +119,7 @@ pub(crate) fn assemble_index(
                         // v0.36 (ADR 0069): a method is a first-class symbol
                         // keyed by the compound `"Type.method"` name, and (as
                         // before) an attribution owner for call-hierarchy.
-                        builder.add_owner(&unit, &f.name.display(), &pf.source_path);
+                        builder.add_owner(&unit, &f.name.display(), &pf.identity_path);
                         builder.add_def(
                             &unit,
                             SymbolKind::Method,
@@ -536,7 +536,7 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
         methods: HashMap::new(),
     };
     for &i in indices {
-        let path = parsed[i].source_path.clone();
+        let path = parsed[i].identity_path.clone();
         for item in parsed[i].items() {
             match item {
                 CommonsItem::Type(t) => {

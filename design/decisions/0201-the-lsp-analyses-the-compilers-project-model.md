@@ -107,6 +107,33 @@ the same bug alive in the surface a user touches most. It would also have become
 exclude-blind walk would sweep `out/` and `node_modules/` straight into the
 candidate list.
 
+**(E) Every path a round produces must name a file the round analysed — as a
+test, not a convention.** [[0198]] split identity from the unit-validation path
+and converted the keyed sinks *by grepping for `&pf.source_path`*. That pattern
+missed: three `refs.enter_file` calls spelled `&parsed[i].source_path`, an error
+attribution, a `ResolvedStub` field whose own doc called it "the recording
+context", and — the ones that actually broke — three site paths in
+`project/symbols.rs`, a **different file**, which is where the index's def/ref
+sites are built.
+
+All were no-ops while the prefix was empty. All broke the moment this slice made
+it non-empty, and the symptom was a timeout: `references` and `codeLens`
+returning nothing, because `index.symbol_at("src/text.bynk", …)` could not match
+sites recorded as `"text.bynk"`. Silent, and exactly the shape [[0198]] set out
+to remove.
+
+So the invariant is asserted: for a genuinely multi-root project, every path in
+`index` (defs, refs, foreign refs, call and impl edges), `hints`, `locals`,
+`expr_types`, `requirements` and `unit_sources` must be a `snapshots` key. A
+grep finds the sites you thought of; this finds the ones you did not — it caught
+the `tests_emit.rs` recording contexts immediately after the six found by
+chasing the failure.
+
+*Consequence:* the emit paths deliberately **not** covered — `ts_output_path`,
+`CompiledFile::source_path`, `tests_prefix.join(…)` for a reported test path,
+`is_multi_file_layout` — stay tree-relative, and now have a test that would fail
+if someone "fixed" them. They are a third role, not a missed conversion.
+
 ## Consequences
 
 - The server analyses **exactly** the files `bynkc` compiles. `examples/todo`'s

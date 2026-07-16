@@ -211,3 +211,113 @@ fn out_and_node_modules_are_skipped() {
     );
     assert_eq!(rel_files(&s.0), vec!["a.bynk"]);
 }
+
+/// CI repro: the VS Code extension's fixture workspace. Its `bynk.toml` still
+/// uses the **legacy** `[paths] src`/`tests` keys ADR 0147 retired, which
+/// `read_project_paths` ignores → `conventional()` → `include = ["src"]`.
+#[test]
+fn the_vscode_fixture_workspace_layout() {
+    let s = scratch(
+        "vscode",
+        &[
+            (
+                "bynk.toml",
+                "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n\n[paths]\nsrc = \"src\"\ntests = \"tests\"\n",
+            ),
+            (
+                "src/text.bynk",
+                "commons text\n\nfn shout(s: String) -> String {\n  s\n}\n",
+            ),
+        ],
+    );
+    let files = rel_files(&s.0);
+    assert_eq!(
+        files,
+        vec!["src/text.bynk"],
+        "the fixture's one file must be analysed"
+    );
+}
+
+/// **The invariant.** Every path a round produces must name a file the round
+/// analysed — i.e. must be a `snapshots` key.
+///
+/// This is what should have caught the CI failure that sent this slice back.
+/// ADR 0198 split a file's identity from its unit-validation path, and the
+/// keyed sinks were converted by *grepping for a pattern* (`&pf.source_path`).
+/// That pattern missed `&parsed[i].source_path` in three `refs.enter_file`
+/// calls, an error attribution, and — the ones that actually bit — three site
+/// paths in a different file entirely (`project/symbols.rs`), which is where
+/// the index's def/ref sites are built. All were no-ops while the prefix was
+/// empty, and all broke the moment slice A made it non-empty. Exactly the
+/// "fails quietly, same shape as the bug" the slice-0 review warned about.
+///
+/// A grep finds the sites you thought of. This asserts the property.
+///
+/// `examples/todo` is the fixture because it is genuinely two-rooted *and* has
+/// a `suite`, so it reaches the test-file index paths a hermetic commons-only
+/// project never would.
+#[test]
+fn every_path_a_round_produces_is_a_file_the_round_analysed() {
+    let root = workspace().join("examples/todo");
+    let r = bynk_ide::diagnose_project_with(
+        &bynk_ide::AnalysisRoots::Project(root.clone()),
+        &HashMap::new(),
+    );
+
+    let known: std::collections::BTreeSet<PathBuf> =
+        r.files.iter().map(|f| f.source_path.clone()).collect();
+    assert!(
+        known.len() > 1,
+        "the fixture must be multi-rooted or this proves nothing; got {known:?}",
+    );
+
+    let mut stray: Vec<String> = Vec::new();
+    let mut check = |sink: &str, p: &Path| {
+        if !known.contains(p) {
+            stray.push(format!("{sink}: {}", p.display()));
+        }
+    };
+
+    for (key, entry) in &r.index.symbols {
+        if let Some(def) = &entry.def {
+            check(&format!("index def {}", key.name), &def.path);
+        }
+        for s in &entry.refs {
+            check(&format!("index ref {}", key.name), &s.path);
+        }
+    }
+    for fr in &r.index.foreign_refs {
+        check("index foreign_ref", &fr.site.path);
+    }
+    for e in &r.index.calls {
+        check("index call site", &e.site.path);
+    }
+    for e in &r.index.impls {
+        check("index impl site", &e.site.path);
+    }
+    for (p, _) in r.hints.iter() {
+        check("hints", p);
+    }
+    for (p, _) in r.locals.iter() {
+        check("locals", p);
+    }
+    for (p, _) in r.expr_types.iter() {
+        check("expr_types", p);
+    }
+    for (p, _) in r.requirements.iter() {
+        check("requirements", p);
+    }
+    for (unit, paths) in &r.unit_sources {
+        for p in paths {
+            check(&format!("unit_sources[{unit}]"), p);
+        }
+    }
+
+    assert!(
+        stray.is_empty(),
+        "every path a round produces must be one of its analysed files.\n\
+         analysed: {known:?}\n\
+         strays:\n  {}",
+        stray.join("\n  "),
+    );
+}
