@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "cache": "b232012bc9c63357"
+  },
+  "expects": {}
+}

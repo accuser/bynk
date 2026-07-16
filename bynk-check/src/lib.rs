@@ -17,6 +17,7 @@
 pub mod actors;
 pub mod builtin_names;
 pub mod checker;
+pub mod contract;
 pub mod expr_types;
 pub mod firstparty;
 pub mod hints;

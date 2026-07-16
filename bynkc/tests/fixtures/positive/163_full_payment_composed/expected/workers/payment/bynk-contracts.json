@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "authorise": "97210e17c705d810"
+  },
+  "expects": {}
+}

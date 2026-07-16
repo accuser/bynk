@@ -7,7 +7,7 @@ import * as app_b from "../app-b/handlers.js";
 
 export const ask = {
   async call(ping: string, deps: { env: { APP_B: ServiceBinding } }): Promise<Result<string, string>> {
-    const r = await callService(deps.env.APP_B, "whoami", ping as JsonValue, app_b.deserialise_Result_String_String, "app.a");
+    const r = await callService(deps.env.APP_B, "whoami", ping as JsonValue, app_b.deserialise_Result_String_String, "app.a", "317bdd3de84d2176");
     return r;
   },
 };

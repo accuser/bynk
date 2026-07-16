@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "upload": "907a4efd1ed861a2"
+  },
+  "expects": {
+    "app.blobs": {
+      "objects": "b27f41b7d9f34c77"
+    }
+  }
+}

@@ -14,7 +14,7 @@ export const OrderError = {
 
 export const place = {
   async call(cents: number, deps: { env: { SHOP_PAYMENT: ServiceBinding } }): Promise<Result<number, OrderError>> {
-    const a = await callService(deps.env.SHOP_PAYMENT, "authorise", cents as JsonValue, shop_payment.deserialise_Result_Int_PayError, "shop.orders");
+    const a = await callService(deps.env.SHOP_PAYMENT, "authorise", cents as JsonValue, shop_payment.deserialise_Result_Int_PayError, "shop.orders", "e32eb3baff10120b");
     switch (a.tag) {
       case "Ok": {
         const n = a.value;

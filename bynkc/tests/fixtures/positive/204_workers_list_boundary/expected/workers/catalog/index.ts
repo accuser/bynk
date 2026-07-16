@@ -16,6 +16,8 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "orders": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "e0b68a63b531655d") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "orders", expected: "e0b68a63b531655d", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_ids = handlers.deserialise_List_String(args, "$");
             if (__r_ids.tag === "Err") return new Response(JSON.stringify(__r_ids.error), { status: 400, headers: { "content-type": "application/json" } });

@@ -16,6 +16,8 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "allKeys": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "4ca5743dc330a4ac") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "allKeys", expected: "4ca5743dc330a4ac", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_unused = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(args);
             if (__r_unused.tag === "Err") return new Response(JSON.stringify(__r_unused.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -25,6 +27,8 @@ export default {
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "cache": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "5c2188409f152319") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "cache", expected: "5c2188409f152319", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             if (typeof args !== "object" || args === null || Array.isArray(args)) return new Response(JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: JsonValue };
@@ -39,6 +43,8 @@ export default {
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "scan": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "6f9f79a650dc3db6") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "scan", expected: "6f9f79a650dc3db6", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_prefix = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_prefix.tag === "Err") return new Response(JSON.stringify(__r_prefix.error), { status: 400, headers: { "content-type": "application/json" } });

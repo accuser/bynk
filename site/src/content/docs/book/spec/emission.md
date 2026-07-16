@@ -342,6 +342,43 @@ rather than left to be discovered:
   A context does not yet generate its own view of a callee-owned type's codec, so
   a `workers` build's caller and callee share one compiled view of the contract.
 
+### §7.3.4c The contract seam (v0.177)
+
+A cross-context call carries a **contract hash** beside the caller identity: a
+reserved `X-Bynk-Contract` header holding a compile-time constant, exactly as
+[§7.3.4a](#734a-actors--the-verification-seam-v045)'s `X-Bynk-Caller` does. The
+args body is unchanged.
+
+The constant is the **canonical normal form** of the callee's `on call` contract,
+hashed. The form is deterministic and order-insensitive where the wire is:
+refinement predicates canonicalise as a *set*, and record fields and sum variants
+sort by name — a JSON object is unordered and a sum carries a `kind`
+discriminant, so their order is not wire-observable and MUST NOT change the hash.
+Field *presence*, field types, parameter names, parameter order, and the return
+type all MUST change it. An **opaque** type contributes its representation but
+**not** its predicate: a consumer cannot observe that predicate, so it is not
+part of the contract between them.
+
+Caller and callee canonicalise the callee's contract **in the callee's own
+namespace**, from the callee's own type table. A caller MUST NOT canonicalise a
+consumed type in its own namespace, where rebranding would render the same type
+differently.
+
+The callee compares the header against its own constant **before reading the
+request body** — and so before the caller check — and on mismatch answers `409`
+with a `ContractMismatch` body naming the service, the expected hash, and what
+arrived. Once the contracts disagree the body's interpretation is precisely what
+is in doubt, so validating it first would misreport the fault. An **absent or
+empty** header is a mismatch: a Bynk caller always stamps one.
+
+`ContractMismatch` is not a `BoundaryError` — a codec cannot produce it — so the
+call surface is typed `CallError = BoundaryError | ContractMismatch`
+([§7.4](/book/spec/runtime-library/)).
+
+Each Worker also emits `bynk-contracts.json` beside its `wrangler.toml`, carrying
+what the context **provides** per service and what it **expects** of each
+dependency. This is a driver artifact, not part of the wire.
+
 ### §7.3.5 Tests
 
 Each test unit emits a per-target test module; an aggregating runner
