@@ -7,7 +7,7 @@ import * as app_blobs from "../app-blobs/handlers.js";
 
 export const upload = {
   async call(payload: Uint8Array, deps: { env: { APP_BLOBS: ServiceBinding } }): Promise<Result<number, void>> {
-    const n = await callService(deps.env.APP_BLOBS, "objects", __bynkBytesToBase64(payload) as JsonValue, app_blobs.deserialise_Result_Int_Unit, "app.api");
+    const n = await callService(deps.env.APP_BLOBS, "objects", __bynkBytesToBase64(payload) as JsonValue, app_blobs.deserialise_Result_Int_Unit, "app.api", "b27f41b7d9f34c77");
     return n;
   },
 };

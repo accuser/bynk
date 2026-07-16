@@ -815,7 +815,15 @@ pub(crate) fn resolve_given_cap_ref(
 /// types of every commons it `uses`. Used by cross-context resolution so we
 /// can resolve a consumed context's service signatures against that context's
 /// own view of types (v0.6 §4.5).
-fn combined_types_for(
+/// v0.177 (#643): the callee's own type namespace — its local declarations plus
+/// the commons types it `uses`.
+///
+/// Shared deliberately. The **caller** reaches this table through
+/// `consumed_types[callee]` and the **callee** builds it for itself; both must
+/// canonicalise the callee's contract from the *same* table or their hashes
+/// diverge and every call 409s. Routing both through one function makes that
+/// agreement structural rather than a thing to keep in step by hand.
+pub(crate) fn combined_types_for(
     unit: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,

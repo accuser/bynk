@@ -16,6 +16,8 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "upload": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "907a4efd1ed861a2") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "upload", expected: "907a4efd1ed861a2", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_payload = ((__v) => typeof __v === "string" ? ((__b) => __b.tag === "Some" ? Ok(__b.value) : Err({ kind: "StructuralMismatch", path: "$", expected: "base64 string", actual: "invalid base64" } as BoundaryError))(__bynkBytesFromBase64(__v)) : Err({ kind: "StructuralMismatch", path: "$", expected: "base64 string", actual: typeof __v } as BoundaryError))(args);
             if (__r_payload.tag === "Err") return new Response(JSON.stringify(__r_payload.error), { status: 400, headers: { "content-type": "application/json" } });

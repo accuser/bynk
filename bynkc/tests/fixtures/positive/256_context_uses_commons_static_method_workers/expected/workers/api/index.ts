@@ -16,6 +16,8 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "mk": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "e6092097306a4c48") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "mk", expected: "e6092097306a4c48", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_n = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(args);
             if (__r_n.tag === "Err") return new Response(JSON.stringify(__r_n.error), { status: 400, headers: { "content-type": "application/json" } });
