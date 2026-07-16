@@ -1889,6 +1889,16 @@ impl LanguageServer for Backend {
         // Validator 1 + 2 input: re-analyse with the edits applied. Every
         // snapshot is pinned via the overlay so the re-analysis differs from
         // the plan's baseline only by the edits themselves.
+        //
+        // Slice A: this must re-analyse over the **same roots** the baseline
+        // round used (`AnalysisRoots::Project`, manifest-aware), not the
+        // single-tree `diagnose_project`. `diagnose_project(project_root)`
+        // resolves to `Roots::Single`, which walks the whole tree with **no
+        // `exclude`** and no `out`/`node_modules` skip — so `post` would cover a
+        // superset of the baseline's files, and validators 1 and 2 (which
+        // compare `post` against baselines from the manifest-aware round) would
+        // read a diagnostic or index site in an excluded tree as *new* and
+        // refuse a valid rename.
         let mut overlay = std::collections::HashMap::new();
         for (rel_path, text) in &analysis.snapshots {
             let edited = match plan.edits.get(rel_path) {
@@ -1899,11 +1909,10 @@ impl LanguageServer for Backend {
             let abs = abs.canonicalize().unwrap_or(abs);
             overlay.insert(abs, edited);
         }
-        let analysis_root = analysis.project_root.clone();
-        let Ok(post) = tokio::task::spawn_blocking(move || {
-            bynk_ide::diagnose_project(&analysis_root, &overlay)
-        })
-        .await
+        let roots = bynk_ide::AnalysisRoots::Project(analysis.project_root.clone());
+        let Ok(post) =
+            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project_with(&roots, &overlay))
+                .await
         else {
             return Err(refused("rename validation failed to run".into()));
         };

@@ -321,3 +321,58 @@ fn every_path_a_round_produces_is_a_file_the_round_analysed() {
         stray.join("\n  "),
     );
 }
+
+/// Rename validation re-analyses the edited buffers and compares the result
+/// against the round's baseline. It must re-analyse over the **same roots** the
+/// round used, or the two file sets diverge and a valid rename is spuriously
+/// refused. This pins the property the round and the validator must share: for
+/// a project with an `exclude`d `.bynk` tree, single-tree analysis (what a bare
+/// `diagnose_project(project_root)` gives) sees strictly more files than the
+/// manifest-aware round — so the validator cannot use it.
+#[test]
+fn single_tree_and_project_analysis_disagree_when_exclude_is_in_play() {
+    let s = scratch(
+        "rename_excl",
+        &[
+            (
+                "bynk.toml",
+                "[project]\nname = \"m\"\n\n[paths]\ninclude = [\".\"]\nexclude = [\"generated\"]\n",
+            ),
+            ("a.bynk", "context a\n"),
+            ("generated/gen.bynk", "context gen\n"),
+        ],
+    );
+
+    // The round: manifest-aware, `exclude` honoured.
+    let project = bynk_ide::diagnose_project_with(
+        &bynk_ide::AnalysisRoots::Project(s.0.clone()),
+        &HashMap::new(),
+    );
+    let project_files: std::collections::BTreeSet<String> = project
+        .files
+        .iter()
+        .map(|f| f.source_path.to_string_lossy().replace('\\', "/"))
+        .collect();
+
+    // The straggler: `diagnose_project(project_root)` → single-tree, no exclude.
+    let single = bynk_ide::diagnose_project(&s.0, &HashMap::new());
+    let single_files: std::collections::BTreeSet<String> = single
+        .files
+        .iter()
+        .map(|f| f.source_path.to_string_lossy().replace('\\', "/"))
+        .collect();
+
+    assert!(
+        project_files.iter().all(|f| !f.contains("generated/")),
+        "the round must exclude `generated/`; got {project_files:?}",
+    );
+    assert!(
+        single_files.iter().any(|f| f.contains("gen.bynk")),
+        "single-tree analysis sweeps the excluded tree — that is exactly why \
+         rename must not use it; got {single_files:?}",
+    );
+    assert_ne!(
+        project_files, single_files,
+        "the two must differ, or this test proves nothing about the bug",
+    );
+}

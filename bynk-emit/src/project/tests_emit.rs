@@ -74,7 +74,7 @@ struct ResolvedStub {
     /// The test file declaring the first clause — the recording context for
     /// edges in its value expressions (v0.25).
     ///
-    /// ADR 0198/0200: a *recording context* is an index key, so this is the
+    /// ADR 0198/0201: a *recording context* is an index key, so this is the
     /// file's **identity** (project-relative), not its `include`-root-relative
     /// unit path. Everything the index keys must name a file the round
     /// analysed.

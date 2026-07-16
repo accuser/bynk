@@ -535,7 +535,7 @@ pub struct FileDeclIndex {
 /// by `identity_path` (ADR 0198) makes `path != &ctx.source_path` always true
 /// for a split project, so a name declared in the *same* file is emitted as a
 /// sibling import of itself — the module then cannot load, and a workers
-/// runtime test hangs rather than fails. See ADR 0200 (E).
+/// runtime test hangs rather than fails. See ADR 0201 (E).
 pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDeclIndex {
     let mut idx = FileDeclIndex {
         types: HashMap::new(),
