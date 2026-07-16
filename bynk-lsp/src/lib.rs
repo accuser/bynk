@@ -117,34 +117,57 @@ impl Analysis {
     }
 }
 
-/// Mutable project state.
+/// One project's mutable state — the fields that were flat on `State` before
+/// slice D, now one set per discovered project root. Every request routes by
+/// URI (via `resolve_root`) to its owning entry, so two projects analyse,
+/// version, and publish independently.
 #[derive(Debug, Default)]
-struct State {
-    /// Path to the project root (the directory containing `bynk.toml`). If
-    /// no project root is found, this is None and the server operates in
-    /// single-file mode for any open file.
-    project_root: Option<PathBuf>,
-    /// Parsed `bynk.toml` configuration. Defaults applied for missing fields.
+struct ProjectState {
+    /// Parsed `bynk.toml` configuration for this root. Defaults for missing
+    /// fields. Read live for the diagnostics mode/debounce and formatting;
+    /// reloaded on a `bynk.toml` change (`reload_config`).
     config: ProjectConfig,
-    /// Open documents keyed by URI.
-    docs: std::collections::HashMap<Url, DocumentState>,
-    /// v0.24: URIs that currently carry published project diagnostics — the
-    /// previous round's dirty set, so newly-clean files get a clearing
-    /// (empty) publish.
-    published: std::collections::HashSet<Url>,
-    /// v0.24: debounce generation. Each change bumps it; a scheduled
-    /// analysis runs only if it is still the latest when the delay elapses.
-    analysis_generation: u64,
     /// v0.25: the latest analysis round's index + snapshots. References,
     /// rename, and the re-pointed definition/hover read this; positions
     /// convert against the analysed snapshots (v0.24 rule).
     analysis: Option<Arc<Analysis>>,
+    /// v0.24: URIs that currently carry published project diagnostics — the
+    /// previous round's dirty set, so newly-clean files get a clearing
+    /// (empty) publish. Per-project (slice D): a round for this root must only
+    /// clear its own files, never another project's.
+    published: std::collections::HashSet<Url>,
+    /// v0.24: debounce generation. Each change bumps it; a scheduled
+    /// analysis runs only if it is still the latest when the delay elapses.
+    /// Per-project: two projects debounce independently.
+    analysis_generation: u64,
     /// Monotonic id handed to each analysis round as it *starts*. Together
     /// with `analysis_round_committed` this orders round completions: an old
     /// slow round must never overwrite a newer round's results (#513).
+    /// Per-project (slice D): a global counter would let one project's round
+    /// discard another's.
     analysis_round_started: u64,
     /// The id of the newest round whose results have been committed.
     analysis_round_committed: u64,
+}
+
+/// Mutable server state. Slice D: a map of projects (was one flat project),
+/// plus the open buffers (client-global) and the workspace-folder seeds.
+#[derive(Debug, Default)]
+struct State {
+    /// Discovered projects, keyed by **canonical project root** (Q4: the
+    /// directory a file's `resolve_root` walk lands on — a `bynk.toml`, else an
+    /// implicit `src/` parent). Empty in single-file mode. A request routes to
+    /// its entry by URI; the entry is created lazily on first touch (open or
+    /// request) and pruned when no folder covers it and it holds no open buffer.
+    projects: std::collections::HashMap<PathBuf, ProjectState>,
+    /// The workspace-folder roots the client has open (slice D). **Discovery
+    /// seeds, not routing owners** (Q4): they bound where
+    /// `did_change_workspace_folders` prunes, but a URI routes by its nearest
+    /// enclosing `bynk.toml`, which may sit above every folder.
+    folders: Vec<PathBuf>,
+    /// Open documents keyed by URI — a client-global set; each doc routes to
+    /// its project via `resolve_root`.
+    docs: std::collections::HashMap<Url, DocumentState>,
 }
 
 #[derive(Clone)]
@@ -223,6 +246,23 @@ impl Backend {
         Some((root, project::ProjectConfig::default()))
     }
 
+    /// Slice D (Q4): the **canonical** project root that owns `uri`, with its
+    /// config, or `None` for a file under no project (single-file mode). Routing
+    /// is `resolve_root`'s walk-up — the same project `bynkc` attributes the file
+    /// to — canonicalised so it matches the `projects` map key and every
+    /// `Analysis.project_root`. Workspace folders do not enter here: a URI routes
+    /// by its nearest enclosing `bynk.toml`, whatever folder it sits in.
+    fn resolve_canonical(uri: &Url) -> Option<(PathBuf, project::ProjectConfig)> {
+        let path = uri.to_file_path().ok()?;
+        let (root, config) = Self::resolve_root(&path)?;
+        Some((root.canonicalize().unwrap_or(root), config))
+    }
+
+    /// The canonical project root owning `uri`, or `None` in single-file mode.
+    fn root_for_uri(uri: &Url) -> Option<PathBuf> {
+        Self::resolve_canonical(uri).map(|(root, _)| root)
+    }
+
     /// Re-run the compiler on the document at `uri` and publish diagnostics.
     /// Best-effort: a malformed file produces diagnostics rather than a
     /// hard failure.
@@ -230,8 +270,21 @@ impl Backend {
         // v0.24 (ADR 0052): with a project root, diagnostics are
         // project-wide (every file, contexts included) on a debounce.
         // Single-file mode (no bynk.toml) keeps the per-buffer path below.
-        if self.state.read().await.project_root.is_some() {
-            self.schedule_project_diagnostics().await;
+        // Slice D: route by URI to the owning project, creating its entry on
+        // first touch (a file opened before any folder scan). Q4: the root is
+        // the file's nearest enclosing `bynk.toml`, not its workspace folder.
+        if let Some((root, config)) = Self::resolve_canonical(uri) {
+            {
+                let mut state = self.state.write().await;
+                state
+                    .projects
+                    .entry(root.clone())
+                    .or_insert_with(|| ProjectState {
+                        config,
+                        ..Default::default()
+                    });
+            }
+            self.schedule_project_diagnostics(root).await;
             return;
         }
         let text = {
@@ -253,36 +306,44 @@ impl Backend {
             .await;
     }
 
-    /// Reload `bynk.toml` for the active project root after an external edit,
-    /// so the format options, the diagnostics mode/debounce, and the source
-    /// root take effect without restarting the server. The config's consumers
+    /// Reload `bynk.toml` for one project root after an external edit, so the
+    /// format options, the diagnostics mode/debounce, and the source root take
+    /// effect without restarting the server. The config's consumers
     /// (`formatting`, `did_change`, `run_project_diagnostics`) all read it live
     /// off `state`, so refreshing the stored config is enough — the caller
-    /// schedules the re-analysis. A no-op in single-file mode (no root).
-    async fn reload_config(&self) {
+    /// schedules the re-analysis. A no-op if the root has no entry.
+    async fn reload_config(&self, root: &std::path::Path) {
         let mut state = self.state.write().await;
-        let Some(root) = state.project_root.clone() else {
-            return;
-        };
-        state.config = project::load_config(&root).unwrap_or_default();
+        if let Some(ps) = state.projects.get_mut(root) {
+            ps.config = project::load_config(root).unwrap_or_default();
+        }
     }
 
-    /// v0.24: debounce a project-wide analysis — each call bumps the
+    /// v0.24: debounce a project-wide analysis — each call bumps the project's
     /// generation; the spawned task runs only if still the latest after the
-    /// delay, so a typing burst produces one analysis.
-    async fn schedule_project_diagnostics(&self) {
+    /// delay, so a typing burst produces one analysis. Slice D: keyed on one
+    /// project root, so two projects debounce independently. A no-op if the
+    /// root's entry is gone (its folder was removed mid-debounce).
+    async fn schedule_project_diagnostics(&self, root: PathBuf) {
         let generation = {
             let mut state = self.state.write().await;
-            state.analysis_generation += 1;
-            state.analysis_generation
+            let Some(ps) = state.projects.get_mut(&root) else {
+                return;
+            };
+            ps.analysis_generation += 1;
+            ps.analysis_generation
         };
         let this = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            if this.state.read().await.analysis_generation != generation {
+            let superseded = match this.state.read().await.projects.get(&root) {
+                Some(ps) => ps.analysis_generation != generation,
+                None => true, // entry pruned — nothing to analyse
+            };
+            if superseded {
                 return;
             }
-            this.run_project_diagnostics().await;
+            this.run_project_diagnostics(root).await;
         });
     }
 
@@ -290,20 +351,29 @@ impl Backend {
     /// open buffers over disk, analyse off the async runtime, convert spans
     /// against the **analysed snapshots**, and publish via the pure
     /// publish-plan (clears included).
-    async fn run_project_diagnostics(&self) {
+    async fn run_project_diagnostics(&self, root: PathBuf) {
         let (round, root, canonical_root, overlay, versions, previously_dirty) = {
             let mut state = self.state.write().await;
-            let Some(root) = state.project_root.clone() else {
+            // Slice D: the round is for one project's entry. If it was pruned
+            // (its folder removed) between scheduling and now, there is nothing
+            // to analyse — bail.
+            let Some(ps) = state.projects.get_mut(&root) else {
                 return;
             };
-            state.analysis_round_started += 1;
-            let round = state.analysis_round_started;
+            ps.analysis_round_started += 1;
+            let round = ps.analysis_round_started;
             // Slice A: the analysis is rooted at the *project*, not at one
             // `include` tree, and every path it returns is project-relative
             // (ADR 0198) — so this is the base the overlay keys against too.
             let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+            let previously_dirty = ps.published.clone();
             let mut overlay = std::collections::HashMap::new();
             let mut versions = std::collections::HashMap::new();
+            // Every open buffer overlays disk. A buffer belonging to another
+            // project keys to an absolute path outside this root, so it is inert
+            // here — discovery never matches it — and its `versions` entry is
+            // skipped by the `strip_prefix` guard. So the round stays scoped to
+            // this project without filtering the doc set.
             for (uri, doc) in &state.docs {
                 if let Ok(p) = uri.to_file_path() {
                     let canonical = p.canonicalize().unwrap_or(p);
@@ -315,8 +385,14 @@ impl Backend {
                     overlay.insert(canonical, doc.text.clone());
                 }
             }
-            let published = state.published.clone();
-            (round, root, canonical_root, overlay, versions, published)
+            (
+                round,
+                root,
+                canonical_root,
+                overlay,
+                versions,
+                previously_dirty,
+            )
         };
 
         // Slice A: manifest-aware, multi-root — the same trees `bynkc` compiles.
@@ -374,13 +450,16 @@ impl Backend {
                 unit_sources: result.unit_sources,
             });
             let mut state = self.state.write().await;
+            let Some(ps) = state.projects.get_mut(&root) else {
+                return; // pruned mid-round
+            };
             // Completion order is not start order: a slow old round finishing
             // after a newer one must be dropped, not committed (#513).
-            if state.analysis_round_committed >= round {
+            if ps.analysis_round_committed >= round {
                 return;
             }
-            state.analysis_round_committed = round;
-            state.analysis = Some(analysis);
+            ps.analysis_round_committed = round;
+            ps.analysis = Some(analysis);
         }
         // Project-level diagnostics with no single owning file surface at
         // position 0:0 rather than vanishing — on `bynk.toml` when it exists,
@@ -428,29 +507,31 @@ impl Backend {
             self.client.publish_diagnostics(uri, diags, version).await;
         }
         let mut state = self.state.write().await;
-        if state.analysis_round_committed == round {
-            state.published = dirty;
+        if let Some(ps) = state.projects.get_mut(&root)
+            && ps.analysis_round_committed == round
+        {
+            ps.published = dirty;
         }
     }
 
-    /// Slice A: the analysis roots for the active project — the manifest's,
-    /// resolved by the compiler's own discovery. `None` in single-file mode (no
-    /// project root), where cross-file lookups are skipped.
+    /// Slice A: the analysis roots for the project that owns `uri` — the
+    /// manifest's, resolved by the compiler's own discovery. `None` in
+    /// single-file mode (no project root), where cross-file lookups are skipped.
+    /// Slice D: routes by URI (Q4), so a completion in project B enumerates B's
+    /// units, not the first project's.
     ///
     /// Replaces `project_src_root`, which returned `root.join(config.src_dir)`:
     /// one tree, chosen by reducing `[paths] include` to its first entry and
-    /// ignoring `exclude`. That reduction is the defect this slice removes.
-    async fn analysis_roots(&self) -> Option<bynk_ide::AnalysisRoots> {
-        let state = self.state.read().await;
-        let root = state.project_root.as_ref()?;
-        Some(bynk_ide::AnalysisRoots::Project(root.clone()))
+    /// ignoring `exclude`. That reduction is the defect slice A removed.
+    fn analysis_roots_for(uri: &Url) -> Option<bynk_ide::AnalysisRoots> {
+        Some(bynk_ide::AnalysisRoots::Project(Self::root_for_uri(uri)?))
     }
 
-    /// The project's `.bynk` files, from the compiler's discovery — `exclude`
-    /// and the `out`/`node_modules` caches honoured. Backs the unit enumeration
-    /// completion does; `None` in single-file mode.
-    async fn project_files(&self) -> Option<Vec<PathBuf>> {
-        let roots = self.analysis_roots().await?;
+    /// The owning project's `.bynk` files, from the compiler's discovery —
+    /// `exclude` and the `out`/`node_modules` caches honoured. Backs the unit
+    /// enumeration completion does; `None` in single-file mode.
+    async fn project_files(&self, uri: &Url) -> Option<Vec<PathBuf>> {
+        let roots = Self::analysis_roots_for(uri)?;
         tokio::task::spawn_blocking(move || bynk_ide::discover_files(&roots))
             .await
             .ok()
@@ -543,7 +624,7 @@ impl Backend {
         let Some(ty) = self.type_receiver(uri, rewritten, recv_offset).await else {
             return Vec::new();
         };
-        let files = self.project_files().await;
+        let files = self.project_files(uri).await;
         completion::value_member_candidates(&ty, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
@@ -598,7 +679,7 @@ impl Backend {
         let Some(ty) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
-        let files = self.project_files().await;
+        let files = self.project_files(uri).await;
         completion::variants_for_ty(&ty, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
@@ -623,7 +704,7 @@ impl Backend {
         let Some(ty) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
-        let files = self.project_files().await;
+        let files = self.project_files(uri).await;
         completion::nested_variant_completions(&ty, &variant, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
@@ -640,7 +721,7 @@ impl Backend {
         rewritten: String,
         recv_offset: usize,
     ) -> Option<bynk_check::checker::Ty> {
-        let roots = self.analysis_roots().await?;
+        let roots = Self::analysis_roots_for(uri)?;
         let project_root = roots.project_root().to_path_buf();
         let canonical_root = project_root
             .canonicalize()
@@ -671,7 +752,7 @@ impl Backend {
         // usually byte-identical to the snapshot the last debounced round
         // analysed. Reuse that round's expression types instead of running a
         // synchronous whole-project re-analysis on the request path.
-        if let Some(analysis) = self.state.read().await.analysis.clone()
+        if let Some(analysis) = self.project_analysis_for(uri).await
             && analysis.snapshots.get(&rel).map(String::as_str) == Some(rewritten.as_str())
             && let Some((_, entries)) = analysis.expr_types.iter().find(|(p, _)| **p == rel)
         {
@@ -685,15 +766,95 @@ impl Backend {
         bynk_check::expr_types::type_at_offset(entries, recv_offset).cloned()
     }
 
-    /// v0.25: the latest analysis, running one synchronously if none has
-    /// completed yet (a request can arrive before the first debounced
-    /// round).
-    async fn ensure_analysis(&self) -> Option<Arc<Analysis>> {
-        if let Some(a) = self.state.read().await.analysis.clone() {
+    /// Slice D: the committed analysis for one project root, ungated — the raw
+    /// last round, or `None` if the root has no entry or has not analysed yet.
+    async fn project_analysis(&self, root: &std::path::Path) -> Option<Arc<Analysis>> {
+        self.state.read().await.projects.get(root)?.analysis.clone()
+    }
+
+    /// The owning project's committed analysis for `uri`, ungated. For callers
+    /// that reuse a round opportunistically (completion's receiver-typing fast
+    /// path); the freshness gate is [`Self::analysis_for`].
+    async fn project_analysis_for(&self, uri: &Url) -> Option<Arc<Analysis>> {
+        self.project_analysis(&Self::root_for_uri(uri)?).await
+    }
+
+    /// Ensure `root` has an entry (created with `config` if absent) and a
+    /// committed analysis (one round run if none yet), and return it. For the
+    /// cross-project workspace-symbol scan, which must answer over every project
+    /// including ones no request has warmed. `None` if the round produced none.
+    async fn ensure_project_analysed(
+        &self,
+        root: PathBuf,
+        config: ProjectConfig,
+    ) -> Option<Arc<Analysis>> {
+        {
+            let mut state = self.state.write().await;
+            state
+                .projects
+                .entry(root.clone())
+                .or_insert_with(|| ProjectState {
+                    config,
+                    ..Default::default()
+                });
+        }
+        if let Some(a) = self.project_analysis(&root).await {
             return Some(a);
         }
-        self.refresh_now().await;
-        self.state.read().await.analysis.clone()
+        self.refresh_now(root.clone()).await;
+        self.project_analysis(&root).await
+    }
+
+    /// Slice D (Q4 lifecycle): drop every project no longer reachable from a
+    /// workspace folder **and** holding no open buffer, clearing its published
+    /// diagnostics. A project is retained while some remaining folder relates to
+    /// it (one is a path-prefix of the other — a file under that folder can still
+    /// route to the root) or while any open buffer routes to it. Shared by the
+    /// two events that can orphan a project: a folder leaving
+    /// (`did_change_workspace_folders`) and its last buffer closing (`did_close`)
+    /// — a project falls only when *both* its seed and its buffers are gone.
+    /// Returns the URIs whose diagnostics were cleared so the caller can publish
+    /// the clears (done outside the lock).
+    async fn prune_orphaned_projects(&self) -> Vec<Url> {
+        let mut state = self.state.write().await;
+        let folders = state.folders.clone();
+        let open_roots: std::collections::HashSet<PathBuf> =
+            state.docs.keys().filter_map(Self::root_for_uri).collect();
+        let covered = |root: &std::path::Path| {
+            folders
+                .iter()
+                .any(|f| f.starts_with(root) || root.starts_with(f))
+                || open_roots.contains(root)
+        };
+        let orphaned: Vec<PathBuf> = state
+            .projects
+            .keys()
+            .filter(|r| !covered(r))
+            .cloned()
+            .collect();
+        let mut to_clear = Vec::new();
+        for root in orphaned {
+            if let Some(ps) = state.projects.remove(&root) {
+                to_clear.extend(ps.published);
+            }
+        }
+        to_clear
+    }
+
+    /// The `bynk.toml` config governing `uri` — its project's, or the default
+    /// (single-file mode). Backs the per-file diagnostics mode/debounce and the
+    /// formatting options, which now differ by project.
+    async fn config_for(&self, uri: &Url) -> ProjectConfig {
+        let Some(root) = Self::root_for_uri(uri) else {
+            return ProjectConfig::default();
+        };
+        self.state
+            .read()
+            .await
+            .projects
+            .get(&root)
+            .map(|p| p.config.clone())
+            .unwrap_or_default()
     }
 
     /// Slice B — the freshness contract (Q3, settled #663). The analysis a
@@ -706,12 +867,17 @@ impl Backend {
     /// to have analysed *that* version of `uri`, so `position_to_offset` against
     /// its snapshot is never resolved against text the user edited past.
     ///
+    /// Slice D: routes to the project that owns `uri` (Q4) before gating, so the
+    /// freshness check is against *that* project's round. A file under no
+    /// project (single-file mode) is never index-answerable — decline.
+    ///
     /// Returns `None` — decline, per Q3 — only when the request cannot be
     /// answered at the version the client holds: single-file mode (no project),
     /// a file outside every `include` root (never a snapshot key), or a
     /// concurrent edit that moved past the refresh (rare; the next request is
     /// current). Never returns an analysis whose snapshot for `uri` is stale.
     async fn analysis_for(&self, uri: &Url) -> Option<Arc<Analysis>> {
+        let root = Self::root_for_uri(uri)?;
         // The version the request's position is stated against. `None` when the
         // file is not an open buffer — then any round is as authoritative as it
         // gets (nothing newer to be stale against), so the freshness gate is a
@@ -738,7 +904,7 @@ impl Backend {
             }
         };
 
-        if let Some(a) = self.state.read().await.analysis.clone()
+        if let Some(a) = self.project_analysis(&root).await
             && current(&a)
         {
             return Some(a);
@@ -746,15 +912,16 @@ impl Backend {
 
         // Refresh. The lock serialises concurrent requests: the first runs the
         // round, the rest wait and then find it already current below — so N
-        // requests after one edit share one round, not N.
+        // requests after one edit share one round, not N. (One lock across all
+        // projects is fine — a refresh holds it only across its own round.)
         let _guard = self.refresh_lock.lock().await;
-        if let Some(a) = self.state.read().await.analysis.clone()
+        if let Some(a) = self.project_analysis(&root).await
             && current(&a)
         {
             return Some(a);
         }
-        self.refresh_now().await;
-        let a = self.state.read().await.analysis.clone()?;
+        self.refresh_now(root.clone()).await;
+        let a = self.project_analysis(&root).await?;
         // Strict: only answer if the fresh round is actually current for `uri`.
         // An edit that landed during the round leaves us behind — decline, and
         // the next request refreshes again. Never a position against stale text.
@@ -775,7 +942,16 @@ impl Backend {
     /// `fresh_analysis` gave — as a version-aware refresh, not an unconditional
     /// one. Returns `None` on the same terms as `analysis_for` (no project, or a
     /// concurrent edit that raced the refresh).
-    async fn analysis_covering_open_buffers(&self) -> Option<Arc<Analysis>> {
+    ///
+    /// Slice D: takes the rename's project `root` — a rename spans one project
+    /// (the symbol and its references live under one root), so the round must
+    /// cover *that* project's open buffers. A buffer in another project strips
+    /// against a different `project_root`, so `uri_to_rel` returns `None` for it
+    /// and it does not gate this rename.
+    async fn analysis_covering_open_buffers(
+        &self,
+        root: &std::path::Path,
+    ) -> Option<Arc<Analysis>> {
         // Every open buffer that maps into the project must be analysed at its
         // current version. A buffer outside the project (no snapshot key) is not
         // part of a project rename and does not gate it.
@@ -792,7 +968,7 @@ impl Backend {
 
         {
             let state = self.state.read().await;
-            if let Some(a) = state.analysis.clone()
+            if let Some(a) = state.projects.get(root).and_then(|p| p.analysis.clone())
                 && all_current(&a, &state.docs)
             {
                 return Some(a);
@@ -801,25 +977,27 @@ impl Backend {
         let _guard = self.refresh_lock.lock().await;
         {
             let state = self.state.read().await;
-            if let Some(a) = state.analysis.clone()
+            if let Some(a) = state.projects.get(root).and_then(|p| p.analysis.clone())
                 && all_current(&a, &state.docs)
             {
                 return Some(a);
             }
         }
-        self.refresh_now().await;
+        self.refresh_now(root.to_path_buf()).await;
         let state = self.state.read().await;
-        let a = state.analysis.clone()?;
+        let a = state.projects.get(root).and_then(|p| p.analysis.clone())?;
         all_current(&a, &state.docs).then_some(a)
     }
 
-    /// Run a round now, superseding any pending debounced one. Bumping the
-    /// generation makes a scheduled round (which checks it before running) bail,
-    /// so a request-driven refresh does not race a redundant debounce round that
-    /// would produce the same result 200 ms later.
-    async fn refresh_now(&self) {
-        self.state.write().await.analysis_generation += 1;
-        self.run_project_diagnostics().await;
+    /// Run a round now for one project, superseding any pending debounced one.
+    /// Bumping the project's generation makes a scheduled round (which checks it
+    /// before running) bail, so a request-driven refresh does not race a
+    /// redundant debounce round that would produce the same result 200 ms later.
+    async fn refresh_now(&self, root: PathBuf) {
+        if let Some(ps) = self.state.write().await.projects.get_mut(&root) {
+            ps.analysis_generation += 1;
+        }
+        self.run_project_diagnostics(root).await;
     }
 
     /// Map a request URI to the analysis' project-relative path.
@@ -1022,16 +1200,20 @@ impl Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> JsonRpcResult<InitializeResult> {
-        // Resolve project root from workspace folders or the first folder URI.
-        if let Some(folders) = &params.workspace_folders
-            && let Some(first) = folders.first()
-            && let Ok(path) = first.uri.to_file_path()
-        {
+        // Slice D (Q4): record **every** workspace folder as a discovery seed
+        // (was `folders.first()` only). Folders do not own URIs — a request
+        // routes by its nearest enclosing `bynk.toml` (`resolve_root`) — so this
+        // seeds only where `did_change_workspace_folders` prunes and (slice E)
+        // where a startup scan will look. Projects are created lazily on first
+        // touch; no startup analysis here (slice E), matching the pre-slice-D
+        // server, whose `initialized` merely logged.
+        if let Some(folders) = &params.workspace_folders {
             let mut state = self.state.write().await;
-            if let Some((root, config)) = Self::resolve_root(&path) {
-                state.config = config;
-                state.project_root = Some(root);
-            }
+            state.folders = folders
+                .iter()
+                .filter_map(|f| f.uri.to_file_path().ok())
+                .map(|p| p.canonicalize().unwrap_or(p))
+                .collect();
         }
         Ok(InitializeResult {
             capabilities: server_capabilities(),
@@ -1043,25 +1225,13 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        let root = { self.state.read().await.project_root.clone() };
-        match root {
-            Some(root) => {
-                self.client
-                    .log_message(
-                        MessageType::INFO,
-                        format!("bynkc-lsp: project root at {}", root.display()),
-                    )
-                    .await;
-            }
-            None => {
-                self.client
-                    .log_message(
-                        MessageType::INFO,
-                        "bynkc-lsp: no bynk.toml found; single-file mode",
-                    )
-                    .await;
-            }
-        }
+        let folders = self.state.read().await.folders.len();
+        let msg = if folders == 0 {
+            "bynkc-lsp: no workspace folders; single-file mode".to_string()
+        } else {
+            format!("bynkc-lsp: {folders} workspace folder(s); projects resolved per file")
+        };
+        self.client.log_message(MessageType::INFO, msg).await;
     }
 
     async fn shutdown(&self) -> JsonRpcResult<()> {
@@ -1072,15 +1242,6 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         {
             let mut state = self.state.write().await;
-            // First open in a single-file context may need to set project root
-            // — a `bynk.toml` project, or (#485) an implicit `src/` tree.
-            if state.project_root.is_none()
-                && let Ok(path) = uri.to_file_path()
-                && let Some((root, config)) = Self::resolve_root(&path)
-            {
-                state.config = config;
-                state.project_root = Some(root);
-            }
             state.docs.insert(
                 uri.clone(),
                 DocumentState {
@@ -1089,6 +1250,8 @@ impl LanguageServer for Backend {
                 },
             );
         }
+        // Slice D: `recompile_and_publish` routes the URI to its project and
+        // creates the entry on first touch — no separate root-setting step.
         self.recompile_and_publish(&uri).await;
     }
 
@@ -1105,10 +1268,10 @@ impl LanguageServer for Backend {
         }
         // `[lsp] diagnostics_mode = "on_save"`: no per-keystroke rounds — the
         // buffer state is updated above and diagnosis waits for `didSave`.
-        let (mode, debounce_ms) = {
-            let s = self.state.read().await;
-            (s.config.diagnostics_mode, s.config.diagnostics_debounce_ms)
-        };
+        // Slice D: the mode/debounce are the *owning project's* (config differs
+        // per project); a single-file buffer uses the defaults.
+        let config = self.config_for(&uri).await;
+        let (mode, debounce_ms) = (config.diagnostics_mode, config.diagnostics_debounce_ms);
         if mode == crate::project::DiagnosticsMode::OnSave {
             return;
         }
@@ -1130,8 +1293,19 @@ impl LanguageServer for Backend {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        let mut state = self.state.write().await;
-        state.docs.remove(&uri);
+        {
+            let mut state = self.state.write().await;
+            state.docs.remove(&uri);
+        }
+        // Slice D (Q4 §C): closing the last buffer can orphan a project whose
+        // folder was already removed — it was retained *because* a buffer held
+        // it. Prune it now and clear its diagnostics, the mirror of the folder
+        // path, so a fully-orphaned project never lingers with stale squiggles.
+        for cleared in self.prune_orphaned_projects().await {
+            self.client
+                .publish_diagnostics(cleared, Vec::new(), None)
+                .await;
+        }
     }
 
     /// Transport only: resolve the position, gather the round's tables and the
@@ -1152,7 +1326,7 @@ impl LanguageServer for Backend {
         let doc = doc_text
             .as_deref()
             .and_then(|t| Some((t, crate::position::position_to_offset(t, pos)?)));
-        let files = self.project_files().await;
+        let files = self.project_files(&uri).await;
         let analysis = positioned
             .as_ref()
             .map(|(a, rel, offset)| crate::hover::HoverAnalysis {
@@ -1194,7 +1368,7 @@ impl LanguageServer for Backend {
         let Some(ctx) = crate::signature_help::call_context(&text, offset) else {
             return Ok(None);
         };
-        let files = self.project_files().await;
+        let files = self.project_files(&uri).await;
         // Name callees (free fns, statics, capability ops, of/unsafe) — lexical.
         let label = match crate::signature_help::resolve_label(&ctx.callee, &text, files.as_deref())
         {
@@ -1507,7 +1681,7 @@ impl LanguageServer for Backend {
         // Derived from the converted offset (always a char boundary), not by
         // slicing the line at `pos.character` bytes.
         let line_prefix = text[..offset].rsplit('\n').next().unwrap_or("").to_string();
-        let files = self.project_files().await;
+        let files = self.project_files(&uri).await;
         let candidates = completion::complete(&line_prefix, &text, files.as_deref());
         let mut items: Vec<CompletionItem> =
             candidates.into_iter().map(to_completion_item).collect();
@@ -1608,7 +1782,7 @@ impl LanguageServer for Backend {
         {
             Some(md) => Some(md),
             None => self
-                .project_files()
+                .project_files(&uri)
                 .await
                 .and_then(|files| {
                     crate::symbols::describe_symbol_cross_file(&files, &uri, &item.label)
@@ -1679,7 +1853,7 @@ impl LanguageServer for Backend {
             })));
         }
         // Cross-file fallback (v1.1; LSP spec §3.4).
-        if let Some(files) = self.project_files().await
+        if let Some(files) = self.project_files(&uri).await
             && let Some(found) = crate::symbols::find_declaration_cross_file(&files, &uri, &name)
         {
             let range = crate::position::span_to_range(&found.source, found.span);
@@ -1701,10 +1875,9 @@ impl LanguageServer for Backend {
             s.docs.get(&uri).map(|d| d.text.clone())
         };
         let Some(text) = text else { return Ok(None) };
-        let opts = {
-            let s = self.state.read().await;
-            s.config.format_options()
-        };
+        // Slice D: the format options are the owning project's (or the defaults
+        // in single-file mode).
+        let opts = self.config_for(&uri).await.format_options();
         match bynk_fmt::format_source(&text, &opts) {
             Ok(formatted) => {
                 if formatted == text {
@@ -1933,31 +2106,63 @@ impl LanguageServer for Backend {
         })))
     }
 
-    /// v0.26 rider (ADR 0055): project-wide symbol search — the index's
-    /// definitions, filtered by the query.
+    /// v0.26 rider (ADR 0055): workspace-wide symbol search — the index's
+    /// definitions, filtered by the query. Slice D (Q4): one server, many
+    /// projects — aggregate across **every** project. Candidate roots are the
+    /// projects already touched plus each workspace folder's own root, so a
+    /// query answers before any file is opened (as the single-project server
+    /// did). Nested projects a folder holds but no file has touched join on
+    /// first open, or via slice E's startup scan.
     async fn symbol(
         &self,
         params: WorkspaceSymbolParams,
     ) -> JsonRpcResult<Option<Vec<SymbolInformation>>> {
-        let Some(analysis) = self.ensure_analysis().await else {
-            return Ok(None);
+        let candidates: Vec<(PathBuf, ProjectConfig)> = {
+            let state = self.state.read().await;
+            let mut set: std::collections::HashMap<PathBuf, ProjectConfig> = state
+                .projects
+                .iter()
+                .map(|(r, p)| (r.clone(), p.config.clone()))
+                .collect();
+            for folder in &state.folders {
+                if let Some((root, config)) = Self::resolve_root(folder) {
+                    let root = root.canonicalize().unwrap_or(root);
+                    set.entry(root).or_insert(config);
+                }
+            }
+            set.into_iter().collect()
         };
-        let matches = crate::index_queries::workspace_symbols(&analysis.index, &params.query);
-        let symbols: Vec<SymbolInformation> = matches
-            .into_iter()
-            .filter_map(|(key, def)| {
-                let location = Self::site_to_location(&analysis, def)?;
+        let mut symbols: Vec<SymbolInformation> = Vec::new();
+        for (root, config) in candidates {
+            let Some(analysis) = self.ensure_project_analysed(root, config).await else {
+                continue;
+            };
+            for (key, def) in
+                crate::index_queries::workspace_symbols(&analysis.index, &params.query)
+            {
+                let Some(location) = Self::site_to_location(&analysis, def) else {
+                    continue;
+                };
                 #[allow(deprecated)]
-                Some(SymbolInformation {
+                symbols.push(SymbolInformation {
                     name: key.name.clone(),
                     kind: lsp_symbol_kind(key.kind),
                     tags: None,
                     deprecated: None,
                     location,
                     container_name: Some(key.unit.clone()),
-                })
-            })
-            .collect();
+                });
+            }
+        }
+        // Aggregating across projects (a `HashMap`-derived candidate list) groups
+        // matches by project in arbitrary order; the spec (§3.11) promises a
+        // stable `(name, unit)` ordering, so sort the merged result. `unit` is
+        // the container name.
+        symbols.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.container_name.cmp(&b.container_name))
+        });
         Ok(Some(symbols))
     }
 
@@ -2044,7 +2249,12 @@ impl LanguageServer for Backend {
         // restores the whole-project freshness the pre-v0.179 `fresh_analysis`
         // gave. The cursor's file is one of those buffers, so it is current too;
         // resolve `rel`/`offset` against it here (what `index_position` did).
-        let Some(analysis) = self.analysis_covering_open_buffers().await else {
+        // Slice D (Q4): route by the cursor's project — a rename spans one
+        // project, so the round need only cover *that* project's buffers.
+        let Some(root) = Self::root_for_uri(&uri) else {
+            return Err(refused("rename requires a project (bynk.toml)".into()));
+        };
+        let Some(analysis) = self.analysis_covering_open_buffers(&root).await else {
             return Err(refused("rename requires a project (bynk.toml)".into()));
         };
         let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
@@ -2154,35 +2364,80 @@ impl LanguageServer for Backend {
         // edit) still invalidate the project index — schedule a project round
         // so cross-file state doesn't go stale (#513).
         let mut uris_to_refresh = Vec::new();
-        let mut non_open_change = false;
+        // Slice D: route each change to its owning project root, so a change in
+        // project A never re-analyses project B.
+        let mut roots_to_reanalyse: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
         // A `bynk.toml` edit changes the formatting style, the diagnostics
         // mode/debounce, and the source root — none of which were re-read after
         // the initial load, so the settings only took effect on an LSP restart.
-        // Detect the change here and reload the config before re-analysing.
-        let mut config_changed = false;
+        // Detect the change here and reload that project's config before
+        // re-analysing it.
+        let mut config_changed_roots: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
         {
             let state = self.state.read().await;
             for ev in &params.changes {
                 if is_bynk_toml(&ev.uri) {
-                    config_changed = true;
+                    // The manifest's own directory is the project root.
+                    if let Ok(p) = ev.uri.to_file_path()
+                        && let Some(dir) = p.parent()
+                    {
+                        let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+                        config_changed_roots.insert(root.clone());
+                        roots_to_reanalyse.insert(root);
+                    }
                 } else if state.docs.contains_key(&ev.uri) {
                     uris_to_refresh.push(ev.uri.clone());
-                } else if ev.uri.path().ends_with(".bynk") {
-                    non_open_change = true;
+                } else if ev.uri.path().ends_with(".bynk")
+                    && let Some(root) = Self::root_for_uri(&ev.uri)
+                {
+                    roots_to_reanalyse.insert(root);
                 }
             }
         }
-        if config_changed {
-            self.reload_config().await;
+        for root in &config_changed_roots {
+            self.reload_config(root).await;
         }
         for uri in uris_to_refresh {
             self.recompile_and_publish(&uri).await;
         }
-        // A reloaded config re-derives the analysis root and diagnostics
-        // behaviour, so re-analyse the whole project against it — same
-        // debounced round the non-open `.bynk` change schedules.
-        if config_changed || non_open_change {
-            self.schedule_project_diagnostics().await;
+        // A reloaded config re-derives the diagnostics behaviour, so re-analyse
+        // each affected project against it — the same debounced round a non-open
+        // `.bynk` change schedules. A no-op for a root with no entry (a project
+        // no file has opened): nothing is published there to go stale.
+        for root in roots_to_reanalyse {
+            self.schedule_project_diagnostics(root).await;
+        }
+    }
+
+    async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        // Slice D (Q4): folders are discovery seeds, not routing owners.
+        // Added folders extend the seed set (projects under them resolve lazily
+        // on first touch — the same path `did_open` takes; proactive analysis is
+        // slice E). Removed folders shrink it; then any project a removed folder
+        // orphaned — no remaining folder, no open buffer — is pruned.
+        {
+            let mut state = self.state.write().await;
+            for added in &params.event.added {
+                if let Ok(p) = added.uri.to_file_path() {
+                    let dir = p.canonicalize().unwrap_or(p);
+                    if !state.folders.contains(&dir) {
+                        state.folders.push(dir);
+                    }
+                }
+            }
+            for removed in &params.event.removed {
+                if let Ok(p) = removed.uri.to_file_path() {
+                    let dir = p.canonicalize().unwrap_or(p);
+                    state.folders.retain(|f| f != &dir);
+                }
+            }
+        }
+        // Clear the dropped projects' diagnostics so the client does not keep
+        // showing stale squiggles for a folder that is gone.
+        for uri in self.prune_orphaned_projects().await {
+            self.client.publish_diagnostics(uri, Vec::new(), None).await;
         }
     }
 }
@@ -2920,12 +3175,55 @@ mod tests {
     async fn backend_at(root: &std::path::Path) -> Backend {
         let (service, _socket) = tower_lsp::LspService::new(Backend::new);
         let backend = service.inner().clone();
+        // Slice D: seed one project entry, keyed by the **canonical** root so a
+        // request's `resolve_root`-based routing lands on the same key.
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         {
             let mut state = backend.state.write().await;
-            state.project_root = Some(root.to_path_buf());
-            state.config = project::load_config(root).unwrap_or_default();
+            state.folders.push(canonical.clone());
+            state.projects.insert(
+                canonical.clone(),
+                ProjectState {
+                    config: project::load_config(&canonical).unwrap_or_default(),
+                    ..Default::default()
+                },
+            );
         }
         backend
+    }
+
+    /// Test helpers for the single-project behaviour tests (each builds exactly
+    /// one project via `backend_at` or an equivalent insert). They read whatever
+    /// the one entry's key is, so a test need not thread the canonical root.
+    impl Backend {
+        async fn test_root(&self) -> PathBuf {
+            self.state
+                .read()
+                .await
+                .projects
+                .keys()
+                .next()
+                .cloned()
+                .expect("a test project entry")
+        }
+        async fn run_round(&self) {
+            let root = self.test_root().await;
+            self.run_project_diagnostics(root).await;
+        }
+        async fn test_analysis(&self) -> Option<Arc<Analysis>> {
+            let root = self.test_root().await;
+            self.project_analysis(&root).await
+        }
+        async fn test_round_started(&self) -> u64 {
+            let root = self.test_root().await;
+            self.state
+                .read()
+                .await
+                .projects
+                .get(&root)
+                .map(|p| p.analysis_round_started)
+                .unwrap_or(0)
+        }
     }
 
     /// The slice, end to end through the server: a round covers **every**
@@ -2944,15 +3242,9 @@ mod tests {
             ],
         );
         let backend = backend_at(&s.0).await;
-        backend.run_project_diagnostics().await;
+        backend.run_round().await;
 
-        let analysis = backend
-            .state
-            .read()
-            .await
-            .analysis
-            .clone()
-            .expect("a round committed");
+        let analysis = backend.test_analysis().await.expect("a round committed");
         let mut keys: Vec<String> = analysis
             .snapshots
             .keys()
@@ -2980,8 +3272,8 @@ mod tests {
             ],
         );
         let backend = backend_at(&s.0).await;
-        backend.run_project_diagnostics().await;
-        let analysis = backend.state.read().await.analysis.clone().expect("round");
+        backend.run_round().await;
+        let analysis = backend.test_analysis().await.expect("round");
 
         for (rel, label) in [
             ("src/thing.bynk", "primary"),
@@ -3020,8 +3312,8 @@ mod tests {
             ],
         );
         let backend = backend_at(&s.0).await;
-        backend.run_project_diagnostics().await;
-        let analysis = backend.state.read().await.analysis.clone().expect("round");
+        backend.run_round().await;
+        let analysis = backend.test_analysis().await.expect("round");
         let keys: Vec<String> = analysis
             .snapshots
             .keys()
@@ -3057,18 +3349,20 @@ mod tests {
         let backend = service.inner().clone();
         {
             let mut st = backend.state.write().await;
-            st.project_root = Some(root.clone());
-            st.config = config;
+            // Key by the canonical root, so the entry matches `references`'
+            // URI-based routing (`resolve_root` canonicalises).
+            let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
+            st.projects.insert(
+                canonical,
+                ProjectState {
+                    config,
+                    ..Default::default()
+                },
+            );
         }
-        backend.run_project_diagnostics().await;
+        backend.run_round().await;
 
-        let analysis = backend
-            .state
-            .read()
-            .await
-            .analysis
-            .clone()
-            .expect("a round committed");
+        let analysis = backend.test_analysis().await.expect("a round committed");
         let keys: Vec<String> = analysis
             .snapshots
             .keys()
@@ -3136,16 +3430,10 @@ mod tests {
                 },
             })
             .await;
-        backend.run_project_diagnostics().await;
+        backend.run_round().await;
 
         // The round exists and is version 1.
-        let a1 = backend
-            .state
-            .read()
-            .await
-            .analysis
-            .clone()
-            .expect("round 1");
+        let a1 = backend.test_analysis().await.expect("round 1");
         let rel = Backend::uri_to_rel(&a1, &uri).expect("uri resolves");
         assert_eq!(a1.versions.get(&rel), Some(&1), "round 1 is version 1");
 
@@ -3218,7 +3506,7 @@ mod tests {
         let (uri, rel) = open_round_edit(&backend, &s.0, v1, &v2).await;
 
         // Precondition: the *cached* round is still version 1 (no refresh yet).
-        let cached = backend.state.read().await.analysis.clone().unwrap();
+        let cached = backend.test_analysis().await.unwrap();
         assert_eq!(cached.versions.get(&rel), Some(&1), "cached round is stale");
 
         // The gate must not hand back that stale round.
@@ -3244,7 +3532,7 @@ mod tests {
         let backend = backend_at(&s.0).await;
         let (uri, _rel) = open_round_edit(&backend, &s.0, v1, &v2).await;
 
-        let started_before = backend.state.read().await.analysis_round_started;
+        let started_before = backend.test_round_started().await;
 
         // Fire several gate calls concurrently.
         let calls = (0..5).map(|_| {
@@ -3259,7 +3547,7 @@ mod tests {
             );
         }
 
-        let started_after = backend.state.read().await.analysis_round_started;
+        let started_after = backend.test_round_started().await;
         assert_eq!(
             started_after - started_before,
             1,
@@ -3278,7 +3566,7 @@ mod tests {
         );
         let backend = backend_at(&s.0).await;
         // Round the project so a cached analysis exists.
-        backend.run_project_diagnostics().await;
+        backend.run_round().await;
 
         // A URI for a file the project does not contain, opened as a buffer.
         let outside = s.0.join("elsewhere.bynk");
@@ -3341,7 +3629,7 @@ mod tests {
                 })
                 .await;
         }
-        backend.run_project_diagnostics().await;
+        backend.run_round().await;
 
         // Edit the NON-cursor file (`thing`) to version 2 — a blank line above,
         // so `Money`'s references shift but still resolve.
@@ -3663,5 +3951,283 @@ mod tests {
         assert_eq!(opts.full, Some(SemanticTokensFullOptions::Bool(true)));
         assert_eq!(opts.range, Some(true));
         assert_eq!(opts.legend, crate::index_queries::semantic_tokens_legend());
+    }
+
+    // ---- Slice D: per-workspace state (Q4) ----
+
+    /// A backend with **no** seeded project — the real lazy-discovery flow,
+    /// where `did_open` and requests create entries by routing (`resolve_root`).
+    async fn bare_backend() -> Backend {
+        let (service, _socket) = tower_lsp::LspService::new(Backend::new);
+        service.inner().clone()
+    }
+
+    fn file_uri(root: &std::path::Path, rel: &str) -> Url {
+        let abs = root.join(rel);
+        Url::from_file_path(abs.canonicalize().unwrap_or(abs)).unwrap()
+    }
+
+    async fn set_folders(backend: &Backend, roots: &[&std::path::Path]) {
+        backend.state.write().await.folders = roots
+            .iter()
+            .map(|r| r.canonicalize().unwrap_or_else(|_| r.to_path_buf()))
+            .collect();
+    }
+
+    async fn open(backend: &Backend, uri: &Url, text: &str) {
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "bynk".into(),
+                    version: 1,
+                    text: text.to_string(),
+                },
+            })
+            .await;
+    }
+
+    fn snapshot_keys(a: &Analysis) -> Vec<String> {
+        let mut keys: Vec<String> = a
+            .snapshots
+            .keys()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// Two `bynk.toml` projects under **one** workspace folder are two projects
+    /// (Q4: route by discovered root, not folder). Opening a file in each creates
+    /// its own entry, and each analyses **only its own** tree — the overlay
+    /// isolation guard, too: project A's round never sees project B's file.
+    #[tokio::test]
+    async fn two_projects_under_one_folder_are_two_projects() {
+        let ax_src = "commons a.x\n\nfn ax(n: Int) -> Int {\n  n\n}\n";
+        let by_src = "commons b.y\n\nfn by(n: Int) -> Int {\n  n\n}\n";
+        let s = scratch_project(
+            "d_two",
+            &[
+                ("a/bynk.toml", "[project]\nname=\"a\"\n"),
+                ("a/src/x.bynk", ax_src),
+                ("b/bynk.toml", "[project]\nname=\"b\"\n"),
+                ("b/src/y.bynk", by_src),
+            ],
+        );
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+        let ax = file_uri(&s.0, "a/src/x.bynk");
+        let by = file_uri(&s.0, "b/src/y.bynk");
+        open(&backend, &ax, ax_src).await;
+        open(&backend, &by, by_src).await;
+
+        assert_ne!(
+            Backend::root_for_uri(&ax).unwrap(),
+            Backend::root_for_uri(&by).unwrap(),
+            "the two files resolve to different project roots",
+        );
+        assert_eq!(
+            backend.state.read().await.projects.len(),
+            2,
+            "one entry per project, not one for the shared folder",
+        );
+
+        let a = backend.analysis_for(&ax).await.expect("A analysed");
+        let b = backend.analysis_for(&by).await.expect("B analysed");
+        assert_eq!(
+            snapshot_keys(&a),
+            vec!["src/x.bynk"],
+            "A sees only A's file"
+        );
+        assert_eq!(
+            snapshot_keys(&b),
+            vec!["src/y.bynk"],
+            "B sees only B's file"
+        );
+    }
+
+    /// Q4 lifecycle: `did_change_workspace_folders` removing a folder with **no
+    /// open buffer** prunes the idle project entry and clears nothing it must
+    /// keep. Routing no longer resolves it because the seed is gone.
+    #[tokio::test]
+    async fn removing_a_folder_prunes_an_idle_project() {
+        let a = "commons p.a\n\nfn f(n: Int) -> Int {\n  n\n}\n";
+        let s = scratch_project(
+            "d_prune",
+            &[("bynk.toml", "[project]\nname=\"p\"\n"), ("src/a.bynk", a)],
+        );
+        let folder = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+        let uri = file_uri(&s.0, "src/a.bynk");
+        open(&backend, &uri, a).await;
+        backend.analysis_for(&uri).await.expect("analysed");
+        // Close the buffer, so nothing but the folder pins the project.
+        backend
+            .did_close(DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+            })
+            .await;
+        assert_eq!(backend.state.read().await.projects.len(), 1);
+
+        backend
+            .did_change_workspace_folders(DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent {
+                    added: vec![],
+                    removed: vec![WorkspaceFolder {
+                        uri: Url::from_file_path(&folder).unwrap(),
+                        name: "p".into(),
+                    }],
+                },
+            })
+            .await;
+        assert!(
+            backend.state.read().await.projects.is_empty(),
+            "an idle project is pruned when its last covering folder is removed",
+        );
+    }
+
+    /// Q4 lifecycle: a project that still holds an **open buffer** survives folder
+    /// removal — routing needs it until the buffer closes.
+    #[tokio::test]
+    async fn removing_a_folder_retains_a_project_with_an_open_buffer() {
+        let a = "commons p.a\n\nfn f(n: Int) -> Int {\n  n\n}\n";
+        let s = scratch_project(
+            "d_retain",
+            &[("bynk.toml", "[project]\nname=\"p\"\n"), ("src/a.bynk", a)],
+        );
+        let folder = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+        let uri = file_uri(&s.0, "src/a.bynk");
+        open(&backend, &uri, a).await; // buffer stays open
+
+        backend
+            .did_change_workspace_folders(DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent {
+                    added: vec![],
+                    removed: vec![WorkspaceFolder {
+                        uri: Url::from_file_path(&folder).unwrap(),
+                        name: "p".into(),
+                    }],
+                },
+            })
+            .await;
+        assert_eq!(
+            backend.state.read().await.projects.len(),
+            1,
+            "a project with an open buffer must survive folder removal",
+        );
+        assert!(
+            backend.analysis_for(&uri).await.is_some(),
+            "and it must still answer requests",
+        );
+    }
+
+    /// Q4 §C: closing the **last** buffer of a project whose folder was already
+    /// removed prunes it — the mirror of the folder path. Without it the project
+    /// lingers forever with published diagnostics no folder or buffer justifies.
+    #[tokio::test]
+    async fn closing_the_last_buffer_of_a_folder_removed_project_prunes_it() {
+        let a = "commons p.a\n\nfn f(n: Int) -> Int {\n  n\n}\n";
+        let s = scratch_project(
+            "d_close_prune",
+            &[("bynk.toml", "[project]\nname=\"p\"\n"), ("src/a.bynk", a)],
+        );
+        let folder = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+        let uri = file_uri(&s.0, "src/a.bynk");
+        open(&backend, &uri, a).await;
+        backend.analysis_for(&uri).await.expect("analysed");
+
+        // Remove the folder while the buffer is open — retained (its buffer pins it).
+        backend
+            .did_change_workspace_folders(DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent {
+                    added: vec![],
+                    removed: vec![WorkspaceFolder {
+                        uri: Url::from_file_path(&folder).unwrap(),
+                        name: "p".into(),
+                    }],
+                },
+            })
+            .await;
+        assert_eq!(
+            backend.state.read().await.projects.len(),
+            1,
+            "retained while its buffer is open",
+        );
+
+        // Close the last buffer — now fully orphaned (no folder, no buffer).
+        backend
+            .did_close(DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+            })
+            .await;
+        assert!(
+            backend.state.read().await.projects.is_empty(),
+            "closing the last buffer of a folder-removed project must prune it",
+        );
+    }
+
+    /// Q4: a rename spans **one** project — a stale buffer in another project must
+    /// not block it (`analysis_covering_open_buffers` is per-project). Under a
+    /// whole-server gate, B's dirty buffer would refuse A's rename.
+    #[tokio::test]
+    async fn a_rename_in_one_project_ignores_a_dirty_buffer_in_another() {
+        let a_src = "commons a.x\n\ntype Money = Int where Positive\n\nfn charge(m: Money) -> Money {\n  m\n}\n";
+        let b_src = "commons b.y\n\nfn by(n: Int) -> Int {\n  n\n}\n";
+        let s = scratch_project(
+            "d_rename_iso",
+            &[
+                ("a/bynk.toml", "[project]\nname=\"a\"\n"),
+                ("a/src/x.bynk", a_src),
+                ("b/bynk.toml", "[project]\nname=\"b\"\n"),
+                ("b/src/y.bynk", b_src),
+            ],
+        );
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+        let ax = file_uri(&s.0, "a/src/x.bynk");
+        let by = file_uri(&s.0, "b/src/y.bynk");
+        open(&backend, &ax, a_src).await;
+        open(&backend, &by, b_src).await;
+        backend.analysis_for(&ax).await.expect("A analysed");
+        backend.analysis_for(&by).await.expect("B analysed");
+
+        // Make B's buffer dirty (version 2, not yet re-analysed).
+        backend
+            .did_change(DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    uri: by.clone(),
+                    version: 2,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: format!("\n{b_src}"),
+                }],
+            })
+            .await;
+
+        // Rename `Money` in A — must succeed despite B being dirty.
+        let off = a_src.find("Money").unwrap();
+        let pos = crate::position::offset_to_position(a_src, off);
+        let edit = backend
+            .rename(RenameParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: ax.clone() },
+                    position: pos,
+                },
+                new_name: "Amount".into(),
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("rename must not error");
+        assert!(
+            edit.is_some(),
+            "a rename in project A must not be blocked by a dirty buffer in project B",
+        );
     }
 }
