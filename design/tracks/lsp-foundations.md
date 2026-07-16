@@ -792,9 +792,12 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
 - **Slice E — startup & watchers.** ✅ *shipped v0.183, #676 (no ADR — settled
   direction).* The documented startup analysis in `initialized`: a bounded
   `bynk.toml` tree-walk (`discover_projects_under`, the "one tree-walk" ADR 0204
-  §C named) warms every project under the folders — reused for added folders and
-  workspace-symbol seeding (closing D's nested-monorepo gap). Dynamic
-  `register_capability` for `workspace/didChangeWatchedFiles`, gated on the
+  §C named, run off the executor via `spawn_blocking`, with a visited-set cycle
+  guard) warms every project under the folders — reused for added folders and a
+  `bynk.toml` created later (warmed via its watcher event). `workspace/symbol`
+  reads the **warmed set** (not a per-query walk — it can fire per keystroke),
+  which closes D's nested-monorepo gap because startup already warmed them.
+  Dynamic `register_capability` for `workspace/didChangeWatchedFiles`, gated on the
   client capability captured at `initialize`; the VS Code extension **drops its
   client-side `synchronize.fileEvents`** so the server's registration is the one
   source (no double-notification). The registration call is validated by the

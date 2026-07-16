@@ -125,7 +125,7 @@ impl Analysis {
 struct ProjectState {
     /// Parsed `bynk.toml` configuration for this root. Defaults for missing
     /// fields. Read live for the diagnostics mode/debounce and formatting;
-    /// reloaded on a `bynk.toml` change (`reload_config`).
+    /// reloaded on a `bynk.toml` change (`did_change_watched_files`).
     config: ProjectConfig,
     /// v0.25: the latest analysis round's index + snapshots. References,
     /// rename, and the re-pointed definition/hover read this; positions
@@ -274,22 +274,31 @@ impl Backend {
     /// case) plus a bounded recursive walk collecting each directory that holds
     /// a `bynk.toml`. Roots are **canonical** (the `projects` map key). The walk
     /// skips the caches and heavy dirs it should never descend (`out`,
-    /// `node_modules`, `target`, `.git`, and dot-dirs). This is the "one
-    /// tree-walk" [ADR 0204](../decisions/0204-per-workspace-project-state.md) §C
-    /// named — shared by startup warming, added-folder warming, and
-    /// workspace-symbol seeding.
+    /// `node_modules`, `target`, `.git`, and dot-dirs), and a **visited-set of
+    /// canonicalised dirs** stops a symlink cycle (`ln -s . loop`) from recursing
+    /// forever. Synchronous FS I/O — callers run it via `spawn_blocking`, off the
+    /// executor. This is the "one tree-walk"
+    /// [ADR 0204](../decisions/0204-per-workspace-project-state.md) §C named —
+    /// shared by startup warming and added-folder warming.
     fn discover_projects_under(folder: &std::path::Path) -> Vec<PathBuf> {
         fn should_skip(name: &std::ffi::OsStr) -> bool {
             let name = name.to_string_lossy();
             matches!(name.as_ref(), "out" | "node_modules" | "target" | ".git")
                 || name.starts_with('.')
         }
-        fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-            if dir.join("bynk.toml").is_file() {
-                let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-                if !out.contains(&canon) {
-                    out.push(canon);
-                }
+        fn walk(
+            dir: &std::path::Path,
+            out: &mut Vec<PathBuf>,
+            visited: &mut std::collections::HashSet<PathBuf>,
+        ) {
+            // Guard against symlink cycles: a directory reached twice (by its
+            // canonical path) is not descended again.
+            let canon_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+            if !visited.insert(canon_dir.clone()) {
+                return;
+            }
+            if dir.join("bynk.toml").is_file() && !out.contains(&canon_dir) {
+                out.push(canon_dir);
             }
             let Ok(entries) = std::fs::read_dir(dir) else {
                 return;
@@ -297,7 +306,7 @@ impl Backend {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() && !should_skip(&entry.file_name()) {
-                    walk(&path, out);
+                    walk(&path, out, visited);
                 }
             }
         }
@@ -319,7 +328,8 @@ impl Backend {
                 roots.push(canon);
             }
         }
-        walk(folder, &mut roots);
+        let mut visited = std::collections::HashSet::new();
+        walk(folder, &mut roots, &mut visited);
         roots
     }
 
@@ -364,19 +374,6 @@ impl Backend {
         self.client
             .publish_diagnostics(uri.clone(), lsp_diags, version)
             .await;
-    }
-
-    /// Reload `bynk.toml` for one project root after an external edit, so the
-    /// format options, the diagnostics mode/debounce, and the source root take
-    /// effect without restarting the server. The config's consumers
-    /// (`formatting`, `did_change`, `run_project_diagnostics`) all read it live
-    /// off `state`, so refreshing the stored config is enough — the caller
-    /// schedules the re-analysis. A no-op if the root has no entry.
-    async fn reload_config(&self, root: &std::path::Path) {
-        let mut state = self.state.write().await;
-        if let Some(ps) = state.projects.get_mut(root) {
-            ps.config = project::load_config(root).unwrap_or_default();
-        }
     }
 
     /// v0.24: debounce a project-wide analysis — each call bumps the project's
@@ -908,15 +905,26 @@ impl Backend {
     /// rounds run on the debounce path. Shared by `initialized` (all folders) and
     /// the `did_change_workspace_folders` added branch (the new folders).
     async fn warm_projects(&self, folders: &[PathBuf]) {
-        // Discover off the lock (FS I/O), dedup across folders.
-        let mut roots: Vec<PathBuf> = Vec::new();
-        for folder in folders {
-            for root in Self::discover_projects_under(folder) {
-                if !roots.contains(&root) {
-                    roots.push(root);
+        if folders.is_empty() {
+            return;
+        }
+        // Discover off the lock **and** off the executor: the walk is synchronous
+        // FS I/O, so run it on a blocking thread rather than stalling an async
+        // worker while a workspace tree is scanned.
+        let folders = folders.to_vec();
+        let roots = tokio::task::spawn_blocking(move || {
+            let mut roots: Vec<PathBuf> = Vec::new();
+            for folder in &folders {
+                for root in Self::discover_projects_under(folder) {
+                    if !roots.contains(&root) {
+                        roots.push(root);
+                    }
                 }
             }
-        }
+            roots
+        })
+        .await
+        .unwrap_or_default();
         for root in roots {
             let config = project::load_config(&root).unwrap_or_default();
             {
@@ -2260,20 +2268,20 @@ impl LanguageServer for Backend {
 
     /// v0.26 rider (ADR 0055): workspace-wide symbol search — the index's
     /// definitions, filtered by the query. Slice D (Q4): one server, many
-    /// projects — aggregate across **every** project. Candidate roots are the
-    /// projects already touched plus each workspace folder's own root, so a
-    /// query answers before any file is opened (as the single-project server
-    /// did). Nested projects a folder holds but no file has touched join on
-    /// first open, or via slice E's startup scan.
+    /// projects — aggregate across **every** project. Candidates are the
+    /// **already-warmed** projects (slice E warms every project under the folders
+    /// at `initialized`, and the watcher warms one created later), plus each
+    /// folder's own `resolve_root` — a cheap bounded walk-*up*, the pre-slice-E
+    /// seeding. No full tree-walk on this request path: a `workspace/symbol`
+    /// query can fire per keystroke, and the warmed set already holds the nested
+    /// monorepo projects a walk would rediscover.
     async fn symbol(
         &self,
         params: WorkspaceSymbolParams,
     ) -> JsonRpcResult<Option<Vec<SymbolInformation>>> {
         let candidates: Vec<(PathBuf, ProjectConfig)> = {
-            // Snapshot the known projects and folders under the lock, then
-            // discover (FS I/O) off it. Slice E: full discovery (not just
-            // `resolve_root(folder)`) so a monorepo's nested projects are
-            // searchable before any file in them is opened.
+            // Snapshot warmed projects + folders under the lock; resolve the
+            // folders' own roots off it (a bounded walk-up, but still FS I/O).
             let (mut set, folders) = {
                 let state = self.state.read().await;
                 let known: std::collections::HashMap<PathBuf, ProjectConfig> = state
@@ -2284,9 +2292,9 @@ impl LanguageServer for Backend {
                 (known, state.folders.clone())
             };
             for folder in &folders {
-                for root in Self::discover_projects_under(folder) {
-                    set.entry(root.clone())
-                        .or_insert_with(|| project::load_config(&root).unwrap_or_default());
+                if let Some((root, config)) = Self::resolve_root(folder) {
+                    let root = root.canonicalize().unwrap_or(root);
+                    set.entry(root).or_insert(config);
                 }
             }
             set.into_iter().collect()
@@ -2555,8 +2563,21 @@ impl LanguageServer for Backend {
                 }
             }
         }
+        // A `bynk.toml` change reloads its project's config — and, if the
+        // manifest was just *created*, warms the new project (create the entry).
+        // Slice E: this is how a project added after startup is picked up now
+        // that `workspace/symbol` no longer walks the tree per query.
         for root in &config_changed_roots {
-            self.reload_config(root).await;
+            let config = project::load_config(root).unwrap_or_default();
+            let mut state = self.state.write().await;
+            state
+                .projects
+                .entry(root.clone())
+                .and_modify(|ps| ps.config = config.clone())
+                .or_insert_with(|| ProjectState {
+                    config,
+                    ..Default::default()
+                });
         }
         for uri in uris_to_refresh {
             self.recompile_and_publish(&uri).await;
@@ -4509,6 +4530,60 @@ mod tests {
             backend.state.read().await.projects.len(),
             1,
             "a rootless `src/` project is warmed at startup, not only on open",
+        );
+    }
+
+    /// Review of #677: the discovery walk must not follow a symlink cycle into a
+    /// stack overflow — a `loop -> .` in an ordinary directory. The visited-set
+    /// (canonicalised dirs) bounds it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn discover_projects_under_survives_a_symlink_cycle() {
+        let s = scratch_project(
+            "e_cycle",
+            &[
+                ("bynk.toml", "[project]\nname=\"p\"\n"),
+                ("src/a.bynk", "commons p.a\n"),
+            ],
+        );
+        // A directory symlink pointing back at the folder — a cycle.
+        std::os::unix::fs::symlink(&s.0, s.0.join("loop")).ok();
+        let roots = Backend::discover_projects_under(&s.0); // must terminate
+        let canon = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        assert!(
+            roots.contains(&canon),
+            "the project is found and the walk terminates despite the cycle",
+        );
+    }
+
+    /// Review of #677: with the per-query `workspace/symbol` walk dropped, a
+    /// `bynk.toml` **created** after startup is picked up via its watcher event
+    /// — the watcher warms the new project.
+    #[tokio::test]
+    async fn a_created_manifest_warms_a_new_project() {
+        let s = scratch_project("e_created", &[("src/a.bynk", "commons p.a\n")]);
+        std::fs::write(s.0.join("bynk.toml"), "[project]\nname=\"p\"\n").unwrap();
+        let root = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+        assert!(
+            backend.state.read().await.projects.is_empty(),
+            "no entry before the watcher fires",
+        );
+
+        let toml_uri = Url::from_file_path(root.join("bynk.toml")).unwrap();
+        backend
+            .did_change_watched_files(DidChangeWatchedFilesParams {
+                changes: vec![FileEvent {
+                    uri: toml_uri,
+                    typ: FileChangeType::CREATED,
+                }],
+            })
+            .await;
+        assert_eq!(
+            backend.state.read().await.projects.len(),
+            1,
+            "a created bynk.toml warms its project via the watcher event",
         );
     }
 
