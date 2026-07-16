@@ -9,9 +9,11 @@
   led as it decided. **Slice B shipped (v0.179, ADR 0202)** — the freshness
   contract Q3 settled: an index-backed request refreshes to the current buffer,
   never answers against stale text. **Slice C shipped (v0.180)** — the `[lib]`
-  seam (Q6 settled: in-process; no ADR, a refactor). **Q4 remains open** in §7
-  and continues settling via reviewed PRs against this doc, each gating the
-  slice that turns on it.
+  seam (Q6 settled: in-process; no ADR, a refactor). **Q4 is settled** (§7:
+  routing is by discovered project root, not folder boundary; a file under no
+  project stays single-file; one global watcher registration) — the last open
+  question closes, so what remains is the lifecycle work, no longer gated on an
+  unsettled surface. Slice D (per-workspace state) is next to authorise.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
@@ -426,10 +428,18 @@ The capability is advertised (`main.rs:2071-2075`: `supported: true`,
 are silently ignored.
 
 Settled by this track's scoping: **implement it**, don't withdraw it. That makes
-state a map keyed by folder — each entry its own `ProjectConfig`, `Analysis`,
-generation counter, and published-diagnostics set — and makes every request
-route by URI to its owning folder. Routing, and what happens to a file under no
-folder, is **Q4**.
+state a map — each entry its own `ProjectConfig`, `Analysis`, generation counter,
+and published-diagnostics set — and makes every request route by URI to its
+owning entry. What that entry is keyed by, and what answers a request for a file
+that has no entry, is **Q4** — now settled in §7: **the key is the discovered
+project root, not the workspace folder.** Routing reuses `resolve_root`
+(`main.rs:212` today), which already walks a file's path up to its nearest
+enclosing `bynk.toml` (else `src/`, else `None`) — the same attribution `bynkc`
+gives that file. Workspace folders seed *discovery*; they do not own URIs.
+A file whose walk finds no root keeps single-file mode, exactly as today. So the
+state map is keyed `project_root → entry`; `did_change_workspace_folders` adds
+and removes *discovery seeds*, not routing owners; and a nested folder pair
+collapses to whatever set of `bynk.toml` roots lies under it, ambiguity-free.
 
 ### 4.4 Startup and watchers
 
@@ -590,10 +600,72 @@ settled below; Q1/Q2 have moved to slice A's proposal as `[DECISION]` forks.
   carries `analysis_round_started`/`committed` and a generation counter to build
   on), so a hover during active typing rides the round the keystroke already
   triggered rather than racing a second one.
-- **Q4 — request routing under multiple folders.** Which folder owns a URI when
-  folders nest? What answers a request for a file under *no* folder — the
-  single-file path, or nothing? Does one `didChangeWatchedFiles` registration
-  cover all folders or one per folder?
+- **Q4 — request routing under multiple folders. — SETTLED: route by the
+  discovered project root, not the workspace folder; a file under no project
+  stays single-file; one global `didChangeWatchedFiles` registration.** The
+  three sub-questions, and why each answer is the grounded one:
+
+  *Which folder owns a URI when folders nest? — none; the project does.* The
+  premise mis-locates ownership. A file already has a well-defined owner and the
+  server already computes it: `resolve_root` (`main.rs:212`) walks the file's
+  path **upward to the nearest enclosing `bynk.toml`** (else the nearest `src/`,
+  else `None`) — which is exactly the project `bynkc` attributes that file to.
+  So routing is `resolve_root(uri) → project_root`, and the state map is keyed by
+  that root, not by workspace folder. Nesting then has no tie to break:
+  overlapping or nested folders resolve to whatever set of `bynk.toml` roots
+  lies beneath them, and each file lands in its nearest one. Two folders sharing
+  one root share one project entry (not two); one folder holding two roots yields
+  two entries. Workspace folders are **discovery seeds** — where the server looks
+  for roots on startup (slice E) and on `did_change_workspace_folders` — never
+  the routing key. This keeps the track's core invariant: the LSP agrees with
+  `bynkc` about which project a file is in, by using the *same* walk-up rule
+  rather than a second, folder-shaped one.
+
+  *What answers a request for a file under no project? — the single-file path,
+  not nothing.* When `resolve_root` returns `None` (no ancestor `bynk.toml`, no
+  `src/`), the file analyses as a lone tree — `bynk_ide::diagnose` over the open
+  buffer, `Roots::Single` for index-backed handlers. This is not a new decision;
+  it is what the server does **today** (`main.rs:233-253`: no project root ⇒ the
+  per-buffer path) and what slice A settled for the rootless tree. Declining to
+  *nothing* would regress a file the user can open and get diagnostics on right
+  now. Decline stays reserved for the genuinely unanswerable (Q3's rule), never
+  for "outside every folder."
+
+  *One `didChangeWatchedFiles` registration, or one per folder? — one global.*
+  The patterns Bynk needs are folder-independent — `**/*.bynk` and `**/bynk.toml`
+  — so a single dynamic registration with those two globs covers every folder the
+  client holds, and a file event carries an absolute URI that routes through
+  `resolve_root` regardless of which registration matched. This mirrors what VS
+  Code supplies client-side today (§4.4: one `createFileSystemWatcher("**/*.bynk")`,
+  not one per folder). `did_change_workspace_folders` therefore does **not**
+  re-register watchers — the glob set does not depend on the folder list — which
+  avoids an unregister/register churn on every folder change.
+
+  *Prior art, honestly.* rust-analyzer and gopls both key analysis on the
+  **manifest**, not the editor's folder list — a crate/module discovered by
+  walking to `Cargo.toml`/`go.mod`, with a file routed to its narrowest
+  enclosing one and a standalone view for files outside every manifest
+  (rust-analyzer's *detached file*, gopls's ad-hoc `command-line-arguments`
+  package). Q4 lands in the same place: manifest is the unit, nearest-enclosing
+  is the route, single-file is the fallback. The one
+  place Bynk diverges is watcher registration: rust-analyzer registers *per-project*
+  watchers with relative patterns **because** it watches directories outside the
+  workspace (sysroot, the registry cache). Bynk has no out-of-tree sources — every
+  `.bynk` file of interest is under a workspace folder — so the reason for
+  per-folder registration does not apply, and one global glob is both sufficient
+  and simpler.
+
+  *Consequences for slice D (recorded, decided at implementation).* Keying by
+  project root, not folder, means `did_change_workspace_folders` **added** folders
+  are scanned for roots and spun up (proactive, so diagnostics appear before a
+  file is opened — the startup-scan machinery slice E also uses); **removed**
+  folders drop the entries for roots no longer under any remaining folder — except
+  an entry still holding open documents, which routing needs and which is retained
+  until its last buffer closes. This per-workspace project model — the protocol's
+  multi-root capability mapped onto Bynk's manifest-discovered projects — is a
+  durable architectural commitment, so **slice D lands an ADR** for it, numbered
+  at merge (it is not one of the header's front-loaded ADRs; it was identified
+  here, at the settling of the question it turns on).
 - **Q5 — slice ordering: seam or model first? — SETTLED: model first.**
   Slice A leads; the seam (slice C) lands on its own merits whenever, and is
   **not** a precondition for anything.
@@ -703,10 +775,13 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   change. *No ADR* — a refactor settles nothing. **Hygiene, not a precondition**
   (§4.1). Per Q5 it trails slice A; it is otherwise unblocked and may land
   whenever.
-- **Slice D — per-workspace state.** Folder-keyed state map; URI routing (Q4);
-  `did_change_workspace_folders`; the advertised capability made true. **The one
-  structural dependency: lands after slice A** — it multiplies whatever the
-  project model turns out to be.
+- **Slice D — per-workspace state.** A **project-root-keyed** state map (Q4:
+  keyed by the discovered root, not the workspace folder); URI routing via
+  `resolve_root`'s existing walk-up; `did_change_workspace_folders` adding and
+  removing discovery seeds; a file under no project staying single-file; the
+  advertised capability made true. Lands an **ADR** — the per-workspace project
+  model is a durable commitment (Q4). **The one structural dependency: lands
+  after slice A** — it multiplies whatever the project model turns out to be.
 - **Slice E — startup & watchers.** The documented startup analysis in
   `initialized`; dynamic `register_capability` for
   `workspace/didChangeWatchedFiles`, so a non-VS-Code client is notified;
@@ -749,8 +824,8 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   many-hundred-file project would reopen this. That is a named cliff, not a
   present hazard.
 - **Slice D multiplies whatever slice A lands.** Ordering is load-bearing; a
-  folder-keyed map over the wrong project model doubles the rework. This is the
-  track's only forced ordering.
+  project-root-keyed map (Q4) over the wrong project model doubles the rework.
+  This is the track's only forced ordering.
 - **The `bynk-ide` API is public.** It is a published crate; changing
   `diagnose_project`'s signature is a breaking change for any external consumer.
   Pre-1.0 this is cheap, but the slice must say so.
