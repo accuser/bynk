@@ -68,12 +68,14 @@ each track's spine issue; this table is deliberately just the map.
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`deploy.md`](deploy.md) | [#558](https://github.com/accuser/bynk/issues/558) | Settling — no slice authorised | The `bynk deploy` verb: provisioning + remote deploy, and the load-bearing provisioning-state model |
 | [`lsp-foundations.md`](lsp-foundations.md) | [#640](https://github.com/accuser/bynk/issues/640) | Slicing (slice 0 shipped) | The foundation under the shipped LSP surface: one project model shared with `bynkc`, a freshness contract, the lifecycle, and the test seam that makes all three testable |
+| [`testing-the-boundary.md`](testing-the-boundary.md) | [#656](https://github.com/accuser/bynk/issues/656) | Settling — no slice authorised | Driving a service endpoint from a `case`, and the identity that reaches it: teaching the tier dial the public door it was never taught |
 
 (`documentation.md` and `deploy.md` pre-date the GitHub-native flow, so their
 docs were committed by ordinary PRs rather than settling draft PRs; the spine
 issues were opened retroactively. `deploy.md` continues settling via reviewed
 PRs against the doc. `lsp-foundations.md` is the first track to run the ADR 0167
-flow from the start — spine issue first, doc via a settling draft PR.
+flow from the start — spine issue first, doc via a settling draft PR;
+`testing-the-boundary.md` is the second.
 `agent-capability-encapsulation.md` is a committed Draft that appears in neither
 this table nor `retired-tracks.md`; it predates this row's addition and needs a
 spine issue or a retirement — tracked separately, not by this table.)
