@@ -2,11 +2,12 @@
 
 - **Status:** Adopted — direction settled by the merge of the settling PR
   (#641). Adoption is **not** build authorisation: a slice is approved to build
-  only when its own proposal is `accepted`. **Q5 is settled (model first): of
-  the LSP slices, A leads (#647, accepted).** It is currently **blocked on slice
-  0** — a compiler-layer identity defect found while writing that proposal
-  (§3.1), which re-scoped **Q2** out of the track's LSP work entirely. Q1 lives
-  in #647 as `[DECISION A]`; Q3/Q4/Q6 remain open in §7 and continue settling
+  only when its own proposal is `accepted`. **Slice 0 shipped (v0.175, ADR
+  0198)** — the compiler-layer identity prerequisite found while writing slice
+  A's proposal (§3.1), which re-scoped **Q2** out of the track's LSP work
+  entirely. **Q5 is settled (model first): of the LSP slices, A leads (#647,
+  `accepted`, now unblocked).** Q1 lives in #647 as `[DECISION A]`; Q3/Q4/Q6
+  remain open in §7 and continue settling
   via reviewed PRs against this doc, each gating the slice that turns on it.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
@@ -301,12 +302,28 @@ agree while there is one root:
   legally hold a non-test unit, which would then fail alignment. Correct for
   `examples/todo`, wrong for a layout the ADR explicitly permits.
 
-So identity must be **separated from the unit-validation path** rather than
-redefined: unit validation keeps the tree-relative form, and the analysis
-result gains an unambiguous project-relative key. That is slice 0's subject and
-its ADR's call. Note `Roots::Single(root)` resolves to `(root, root)`, so
-project-relative ≡ tree-relative for it — every existing single-tree caller is
-unaffected by construction, and the blast radius is confined to split projects.
+So identity had to be **separated from the unit-validation path** rather than
+redefined: unit validation keeps the tree-relative form, and the analysis result
+gained an unambiguous project-relative key (`ParsedFile::identity_path`).
+[ADR 0198](../decisions/0198-file-identity-is-not-the-unit-validation-path.md)
+settles it.
+
+Two corrections review surfaced, recorded because each is this track's own
+failure mode aimed at itself:
+
+- **"Unaffected by construction" was narrower than it sounded** — an earlier
+  draft of this section said it, and it was false. `Roots::Single` is not "one
+  `include` root": `bynk-driver` selects `Roots::Split` whenever a `bynk.toml`
+  exists *or* `src/` is a directory, so a conventional `src/`-only project has
+  one root and **still** re-bases (`math.bynk` → `src/math.bynk`). Untouched are
+  `Roots::Single` (no manifest **and** no `src/`), in-memory builds, and the flat
+  layout (`include = ["."]`, normalised to an empty prefix — `.` only *looks*
+  like a join identity).
+- **The green suite proved nothing.** Thirteen fixtures re-base and none
+  observes it: `expected_error.txt` asserts category strings, never paths. The
+  churn the proposal budgeted for was absent for precisely the reason the defect
+  survived sixty increments. The coverage hole and the bug have one shape — which
+  is why slice 0's tests are in-crate and mutation-checked.
 
 ## 4. Internal architecture
 
@@ -555,8 +572,9 @@ compiler-layer prerequisite found while writing A's proposal (§3.1), which A
 cannot be built on top of. Structural dependencies are now `A after 0` and
 `D after A`. B, E and F remain independent.
 
-- **Slice 0 — file identity in `ProjectAnalysis`.** *(front-loaded ADR: "file
-  identity is not the unit-validation path")* **Compiler-layer, not LSP.** A
+- **Slice 0 — file identity in `ProjectAnalysis`.** ✅ *shipped v0.175,
+  [ADR 0198](../decisions/0198-file-identity-is-not-the-unit-validation-path.md),
+  #650.* **Compiler-layer, not LSP.** A
   project's analysis result gains an unambiguous project-relative identity,
   separate from the tree-relative `source_path` that
   `check_path_name_alignment` needs (§3.1 shows why neither can simply become
@@ -569,7 +587,7 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   own rather than A's to smuggle. Testable through `compile_project` with
   `Roots::Split`, which exists today — it does not depend on any LSP change.
 - **Slice A — one project model.** *(front-loaded ADR: "the LSP analyses the
-  compiler's project model")* **Blocked on slice 0.** `bynk-ide` exposes the
+  compiler's project model")* **Unblocked — slice 0 shipped.** `bynk-ide` exposes the
   manifest-aware multi-root API (Q1); `analyse_project` resolves `Roots` like
   `compile_project`; the LSP passes the true root and adopts slice 0's identity.
   Regression fixture: `examples/todo/tests/todos.bynk` resolves. Harness
