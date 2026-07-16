@@ -4,10 +4,10 @@
   [#656](https://github.com/accuser/bynk/issues/656)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); this doc
   lands via a **settling draft PR** ("Part of #656" — never `Closes`, which would
-  kill the spine at adoption). Draft status *is* the settling phase: **Q1, Q2, Q3
-  and Q7 are settled** (§3.4, §4.2.1, §4.1.2, §4.1.1) — which unblocks **Slice A**
-  and **Slice B**. **Q4–Q6 remain open** in §7 and must be closed before the PR is
-  marked ready for review. Merging the PR settles *direction* and is
+  kill the spine at adoption). Draft status *is* the settling phase: **Q1, Q2, Q3,
+  Q5 and Q7 are settled** (§3.4, §4.2.1, §4.1.2, §4.2.0, §4.1.1) — which unblocks
+  **Slices 0, A and B**. **Q4 and Q6 remain open** in §7 and must be closed before
+  the PR is marked ready for review. Merging the PR settles *direction* and is
   **not** build authorisation — a slice is approved to build only when its own
   proposal is `accepted`. Live slice state is on the spine.
 - **Realises:** the rung the retired testing track's subject ladder
@@ -38,6 +38,8 @@
     follows the arguments** (§4.1.2, §4.3.1 — **Q3, settled**).
   - **What a principal means is tier-dependent — injected at `unit`, a credential
     at `system`** (§4.2 — *proposed*).
+  - **The credential minters are emitted test-only, not into the shipped runtime —
+    whose crypto surface stays verify-only** (§4.2.0 — **Q5, settled**).
 
   Each is created and numbered by the slice that lands it — this doc deliberately
   does not pre-allocate numbers, since concurrent tracks would collide.
@@ -531,6 +533,77 @@ identity is minted at the real seam, by the real code. The case never asserts
 
 The spelling is **`by <Actor>(<identity>)` at the call site** — settled, §4.2.1.
 
+#### 4.2.0 Where the minting machinery lives — Q5, SETTLED
+
+**The decision: the credential minters are emitted into the test tree, not
+`runtime.ts`.**
+
+**The precedent does not settle this, and it is worth saying so plainly.**
+`out/runtime.ts` is a single shared blob — `out/tests/*.test.ts` imports
+`../runtime.js`, the same file `out/workers/` uses — and it already houses
+*harness* helpers: `TestConnection` (`runtime.ts:1216`) and `makeTestState` are
+both test-only and both ship in every production bundle. So "no test code in the
+runtime" is not a rule available to argue from; the runtime has been accumulating
+harness helpers for some time.
+
+**The line that does settle it: the runtime's crypto surface is verify-only.**
+Three verifiers — `verifyBearerJwtHs256`, `verifySignatureHmacSha256`,
+`verifyOidcJwt` — and **zero signers**. A minter would be the first, and it would
+ship in every bundle.
+
+The difference from `TestConnection`/`makeTestState` is one of kind, not degree:
+those are **inert** — reachable or not, they cannot affect a deployed Worker. A
+signer is not inert in the same way.
+
+**Being honest about how strong that is.** The security gain is *defence in depth*,
+not a vulnerability fix: code executing inside the Worker already reads the secret
+from `env` (that is what the compose wrapper does), so a shipped signer saves an
+attacker a dozen lines rather than granting anything. The argument is the one
+ADR 0164 made for `nosniff` — not shipping it never hurts — plus this codebase's
+demonstrated posture: [ADR 0182](../decisions/0182-refined-no-user-unsafe.md)
+removed `.unsafe` outright having *rejected* a reviewer's proposal to merely
+confine it. "We ship a credential minter because one runtime is simpler" is not
+what that corpus does.
+
+**And the location already exists.** A signer is a *harness* helper, not a
+*runtime* helper — it is used by the thing that **drives** the program, not by the
+program. `out/tests/` is already a test-only emission tree (`main.ts`,
+`*.test.ts`), so this needs no new mechanism, and it leaves the drift-guarded
+runtime blob byte-for-byte unchanged.
+
+**Scope: the secret-based schemes, both of them.**
+
+| scheme | what a `system` case must mint | secret |
+|---|---|---|
+| `Bearer` | an HS256 JWT (`sub` + `exp`) | env, named on the actor |
+| `Signature` | an HMAC-SHA-256 over the body + a timestamp — `verifySignatureHmacSha256(body, secret, signatureHeader, timestamp, toleranceSecs)` | env, named on the actor |
+| `Oidc` | RSA/ES256 against a JWKS — **not** secret-based | **Q6** |
+
+A `Signature` actor carries no *identity* (`by Webhook`, no argument — §4.2.1), but
+a case still has to produce a valid signature to get past the seam, so it needs the
+same machinery. `Oidc` needs a keypair and a mocked JWKS instead, and rides on Q6.
+
+**The recipe exists.** `bynkc/tests/bearer_auth.rs:94-110` is a complete HS256
+signer in Node — `b64url` the header and payload, `crypto.subtle.importKey` with
+HMAC/SHA-256, `crypto.subtle.sign`, concatenate. Seventeen lines, already written,
+already exercised against the very verifier it must satisfy.
+
+**The secret needs no compiler change.** The emitted read already falls back to
+`process.env[<NAME>]` (`bynk-emit/src/emitter/workers.rs:693`), and the name is a
+literal fixed at parse time on the actor declaration, recorded in
+`bynk-secrets.json` `declared` (`bynk-emit/src/emitter/secrets.rs`). So the harness
+knows every name it must supply and can set them before standing the Worker up.
+
+**Left to the slice:** whether the test secret is a per-run generated value or a
+fixed constant. Generated is the better default — it never becomes a literal in
+emitted output, which keeps it clear of the emitted-TypeScript scanning planned in
+#255, and nothing asserts on it so there is no reproducibility cost. Recorded, not
+decided.
+
+**A note on drift.** Signer and verifier must agree, and they are generated from
+the same knowledge. If the verifier tightens (a required `kid`, say) and the signer
+does not, every system case 401s — loudly, at the first run. Drift fails closed.
+
 #### 4.2.1 The spelling: `by <Actor>(<identity>)` at the call site — SETTLED
 
 ```bynk
@@ -829,9 +902,18 @@ while the Bearer question is a design decision.
 - **Q4 — Can a case assert on the wrapper stack?** Security headers are
   unconditional (§4.3). Is asserting `nosniff` in scope, or the compiler's own
   business?
-- **Q5 — Where does the signer live?** Emitted runtime (present in production
-  bundles) vs test-only emission (stripped per ADR 0147, which is the honesty
-  mechanism and probably the answer).
+- **Q5 — Where does the signer live? — SETTLED (§4.2.0).** The test tree, not
+  `runtime.ts`. The precedent cuts the other way and is acknowledged — `TestConnection`
+  and `makeTestState` are harness helpers already shipping in the runtime blob — but
+  the runtime's crypto surface is **verify-only** (three verifiers, zero signers), and
+  those two are *inert* in a way a minter is not. The gain is defence-in-depth, not a
+  vulnerability fix; the deciding argument is posture (ADR 0182 removed `.unsafe`
+  rather than confining it) plus the fact that `out/tests/` is already a test-only
+  emission tree, so this needs no new mechanism and leaves the drift-guarded runtime
+  untouched. Covers **`Bearer`** (HS256 JWT) and **`Signature`** (HMAC over the body);
+  `Oidc` is not secret-based and rides on Q6. No compiler change is needed for the
+  secret — the emitted read already falls back to `process.env`. **Residual:** per-run
+  generated secret vs a fixed constant.
 - **Q6 — OIDC** (*narrowed by Q2*). Refined actors are no longer open: `by
   Admin("bob")` names the actor, and the compiler derives the claims from its
   declaration (§4.2.1) — nothing is spelled by hand. What remains is OIDC's
@@ -873,8 +955,9 @@ tier at all (§3.4); `unit` is its whole story.
   `fetch` request carrying a properly formed identity, asserting on the decoded
   `HttpResult`. Lands the §3.4 amendment (the `system_needs_wire` count becomes the
   serialisation-edge property) — the track's one change to a settled ADR, and the
-  reason this slice carries an ADR while Slice A does not. **Q1 and Q3 are settled;
-  it needs Q5** (where the signer lives).
+  reason this slice carries an ADR while Slice A does not. **No open question blocks
+  it:** Q1, Q3 and Q5 are settled (§3.4, §4.1.2, §4.2.0). Q4 bounds what it may
+  *assert*, not whether it can be built.
 - **Slice C — the rejection paths.** `Wire` input → 400; missing or invalid
   credential → 401; the 405/OPTIONS fall-through. This is the slice that pays for
   the boundary work (§1). Depends on Slice B, and owns §4.3.1's residual: whether
