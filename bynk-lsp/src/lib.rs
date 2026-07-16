@@ -805,6 +805,42 @@ impl Backend {
         self.project_analysis(&root).await
     }
 
+    /// Slice D (Q4 lifecycle): drop every project no longer reachable from a
+    /// workspace folder **and** holding no open buffer, clearing its published
+    /// diagnostics. A project is retained while some remaining folder relates to
+    /// it (one is a path-prefix of the other — a file under that folder can still
+    /// route to the root) or while any open buffer routes to it. Shared by the
+    /// two events that can orphan a project: a folder leaving
+    /// (`did_change_workspace_folders`) and its last buffer closing (`did_close`)
+    /// — a project falls only when *both* its seed and its buffers are gone.
+    /// Returns the URIs whose diagnostics were cleared so the caller can publish
+    /// the clears (done outside the lock).
+    async fn prune_orphaned_projects(&self) -> Vec<Url> {
+        let mut state = self.state.write().await;
+        let folders = state.folders.clone();
+        let open_roots: std::collections::HashSet<PathBuf> =
+            state.docs.keys().filter_map(Self::root_for_uri).collect();
+        let covered = |root: &std::path::Path| {
+            folders
+                .iter()
+                .any(|f| f.starts_with(root) || root.starts_with(f))
+                || open_roots.contains(root)
+        };
+        let orphaned: Vec<PathBuf> = state
+            .projects
+            .keys()
+            .filter(|r| !covered(r))
+            .cloned()
+            .collect();
+        let mut to_clear = Vec::new();
+        for root in orphaned {
+            if let Some(ps) = state.projects.remove(&root) {
+                to_clear.extend(ps.published);
+            }
+        }
+        to_clear
+    }
+
     /// The `bynk.toml` config governing `uri` — its project's, or the default
     /// (single-file mode). Backs the per-file diagnostics mode/debounce and the
     /// formatting options, which now differ by project.
@@ -1257,8 +1293,19 @@ impl LanguageServer for Backend {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        let mut state = self.state.write().await;
-        state.docs.remove(&uri);
+        {
+            let mut state = self.state.write().await;
+            state.docs.remove(&uri);
+        }
+        // Slice D (Q4 §C): closing the last buffer can orphan a project whose
+        // folder was already removed — it was retained *because* a buffer held
+        // it. Prune it now and clear its diagnostics, the mirror of the folder
+        // path, so a fully-orphaned project never lingers with stale squiggles.
+        for cleared in self.prune_orphaned_projects().await {
+            self.client
+                .publish_diagnostics(cleared, Vec::new(), None)
+                .await;
+        }
     }
 
     /// Transport only: resolve the position, gather the round's tables and the
@@ -2107,6 +2154,15 @@ impl LanguageServer for Backend {
                 });
             }
         }
+        // Aggregating across projects (a `HashMap`-derived candidate list) groups
+        // matches by project in arbitrary order; the spec (§3.11) promises a
+        // stable `(name, unit)` ordering, so sort the merged result. `unit` is
+        // the container name.
+        symbols.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.container_name.cmp(&b.container_name))
+        });
         Ok(Some(symbols))
     }
 
@@ -2359,10 +2415,9 @@ impl LanguageServer for Backend {
         // Slice D (Q4): folders are discovery seeds, not routing owners.
         // Added folders extend the seed set (projects under them resolve lazily
         // on first touch — the same path `did_open` takes; proactive analysis is
-        // slice E). Removed folders shrink it, and any project entry no longer
-        // reachable from a remaining folder — and holding no open buffer — is
-        // dropped, its published diagnostics cleared.
-        let to_clear: Vec<Url> = {
+        // slice E). Removed folders shrink it; then any project a removed folder
+        // orphaned — no remaining folder, no open buffer — is pruned.
+        {
             let mut state = self.state.write().await;
             for added in &params.event.added {
                 if let Ok(p) = added.uri.to_file_path() {
@@ -2378,35 +2433,10 @@ impl LanguageServer for Backend {
                     state.folders.retain(|f| f != &dir);
                 }
             }
-            // A project is retained while some remaining folder relates to it
-            // (one is a path-prefix of the other — a file under that folder can
-            // still route to the root), or while it holds an open buffer.
-            let folders = state.folders.clone();
-            let open_roots: std::collections::HashSet<PathBuf> =
-                state.docs.keys().filter_map(Self::root_for_uri).collect();
-            let covered = |root: &std::path::Path| {
-                folders
-                    .iter()
-                    .any(|f| f.starts_with(root) || root.starts_with(f))
-                    || open_roots.contains(root)
-            };
-            let orphaned: Vec<PathBuf> = state
-                .projects
-                .keys()
-                .filter(|r| !covered(r))
-                .cloned()
-                .collect();
-            let mut to_clear = Vec::new();
-            for root in orphaned {
-                if let Some(ps) = state.projects.remove(&root) {
-                    to_clear.extend(ps.published);
-                }
-            }
-            to_clear
-        };
+        }
         // Clear the dropped projects' diagnostics so the client does not keep
         // showing stale squiggles for a folder that is gone.
-        for uri in to_clear {
+        for uri in self.prune_orphaned_projects().await {
             self.client.publish_diagnostics(uri, Vec::new(), None).await;
         }
     }
@@ -4091,6 +4121,53 @@ mod tests {
         assert!(
             backend.analysis_for(&uri).await.is_some(),
             "and it must still answer requests",
+        );
+    }
+
+    /// Q4 §C: closing the **last** buffer of a project whose folder was already
+    /// removed prunes it — the mirror of the folder path. Without it the project
+    /// lingers forever with published diagnostics no folder or buffer justifies.
+    #[tokio::test]
+    async fn closing_the_last_buffer_of_a_folder_removed_project_prunes_it() {
+        let a = "commons p.a\n\nfn f(n: Int) -> Int {\n  n\n}\n";
+        let s = scratch_project(
+            "d_close_prune",
+            &[("bynk.toml", "[project]\nname=\"p\"\n"), ("src/a.bynk", a)],
+        );
+        let folder = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let backend = bare_backend().await;
+        set_folders(&backend, &[&s.0]).await;
+        let uri = file_uri(&s.0, "src/a.bynk");
+        open(&backend, &uri, a).await;
+        backend.analysis_for(&uri).await.expect("analysed");
+
+        // Remove the folder while the buffer is open — retained (its buffer pins it).
+        backend
+            .did_change_workspace_folders(DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent {
+                    added: vec![],
+                    removed: vec![WorkspaceFolder {
+                        uri: Url::from_file_path(&folder).unwrap(),
+                        name: "p".into(),
+                    }],
+                },
+            })
+            .await;
+        assert_eq!(
+            backend.state.read().await.projects.len(),
+            1,
+            "retained while its buffer is open",
+        );
+
+        // Close the last buffer — now fully orphaned (no folder, no buffer).
+        backend
+            .did_close(DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+            })
+            .await;
+        assert!(
+            backend.state.read().await.projects.is_empty(),
+            "closing the last buffer of a folder-removed project must prune it",
         );
     }
 

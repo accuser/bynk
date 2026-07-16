@@ -62,7 +62,10 @@ Added folders extend it; projects under them resolve lazily on first touch (the
 path `did_open` already takes). Removed folders shrink it, and any project no
 longer reachable from a remaining folder — *and* holding no open buffer — is
 dropped and its diagnostics cleared. A project with an open buffer is retained
-until its last buffer closes, because routing still needs it. Proactive analysis
+until its last buffer closes, because routing still needs it — so the **same
+prune runs from `did_close`**: a project falls only when *both* its seed (folder)
+and its buffers are gone, whichever leaves last. One `prune_orphaned_projects`
+helper serves both events, so the two paths cannot drift. Proactive analysis
 of a folder *before* any file opens is **not** here: `initialized` runs no
 startup round today, so a lazy map preserves current behaviour exactly, and the
 proactive startup scan is a later slice (E) that reuses one tree-walk for both
