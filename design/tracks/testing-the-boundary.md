@@ -22,14 +22,20 @@
   its own fixtures), **surface not yet settled** (there is no Bynk expression
   that names a route, and no agreed spelling for one), and **a security/safety
   boundary** (§6 — though far less of one than a first pass suggests).
-- **Front-loaded decisions (named, not numbered):** **a tier already chooses the
-  entry — an http service has a second door** (§3); **`system_needs_wire` relaxes
-  to "≥ 2 contexts *or* a public boundary"** (§3.4); **a case names its principal
-  with `by <Actor>(<identity>)` at the call site — an actor is the caller, not a
-  seam** (§4.2.1, Q2 settled); **what that principal means is tier-dependent —
-  injected at `unit`, a credential at `system`** (§4.2). Each is created and
-  numbered by the slice that lands it — this doc deliberately does not
-  pre-allocate numbers, since concurrent tracks would collide.
+- **Front-loaded decisions (named, not numbered).** Each is annotated with its
+  settling state; none is settled unless it says so.
+  - **A tier already chooses the entry — an http service has a second door**
+    (§3 — *proposed, the doc's spine claim*).
+  - **`system_needs_wire` relaxes to "≥ 2 contexts *or* a public boundary"**
+    (§3.4 — **Q1, open**).
+  - **A case names its principal with `by <Actor>(<identity>)` at the call site —
+    an actor is the caller, not a seam** (§4.2.1 — **Q2, settled**).
+  - **How a case addresses a parameterised route** (§4.1.1 — **Q7, open**).
+  - **What a principal means is tier-dependent — injected at `unit`, a credential
+    at `system`** (§4.2 — *proposed*).
+
+  Each is created and numbered by the slice that lands it — this doc deliberately
+  does not pre-allocate numbers, since concurrent tracks would collide.
 
 ## 1. Motivation
 
@@ -288,7 +294,7 @@ stable, source-derivable key:
 | protocol | entry | dispatch key | in source? |
 |---|---|---|---|
 | call | `fetch` `/_bynk/call/` | service name | yes |
-| http | `fetch` route table | method + path | yes |
+| http | `fetch` route table | method + path **pattern** (§4.1.1) | yes |
 | cron | `scheduled` | `event.cron` | yes (the schedule string) |
 | queue | `queue` | `batch.queue` | yes (the header arg) |
 
@@ -302,9 +308,58 @@ Naming routes (`on POST("/todos") as addTodo`) is the obvious idea and should be
 rejected: it reinvents `on call`, and a name-addressed invocation would skip the
 route table at `system` — the thing under test.
 
+#### 4.1.1 A parameterised route — Q7, OPEN
+
+**The row above says "method + path" and that is under-specified**, because for a
+parameterised route there are *two* strings and they are not the same one.
+`matchPath(pattern, path)` (`bynk-emit/src/emitter/runtime.ts:364`) takes both.
+§3.2 leans on each without saying so:
+
+- "A mistyped path in a case is an **unknown-handler error**" needs the case to
+  name the **pattern**, resolved against the handler set at compile time.
+- "**Path parameters actually match** — `matchPath("/todos/:id/complete", path)`
+  runs at `system`" needs a **concrete** path. Fed its own pattern, `matchPath`
+  proves nothing.
+
+This is not a corner: **11 of 29 http handlers across `examples/` are
+parameterised** — including `todo`'s own `on POST("/todos/:id/complete")
+(id: String)`, the very route §3.2 uses to illustrate the point. Every example in
+this doc (§3.1, §4.2.1, §8) happens to use a static path, which is how the gap
+survived a draft.
+
+Note it is **not** covered by Q3, which asks about *body* argument modes (typed
+vs raw JSON). This is about *path* arguments, and it bites at `unit` too: calling
+`http_POST_todos_id_complete` means supplying `id` somehow, whatever the tier.
+
+**The proposed answer** (needs settling, not assumed): **the pattern is the name;
+the parameters are ordinary arguments; at `system` the compiler substitutes them
+into the pattern to build the concrete path.**
+
+```bynk
+let r <- api.POST("/todos/:id/complete", "1") by User("bob")
+```
+
+- At `unit` → `handlers.api.http_POST_todos_id_complete(deps, "1")`. The pattern
+  resolves the handler at compile time; `"1"` is the `id` argument.
+- At `system` → substitute `:id` → `"1"`, request `/todos/1/complete` through the
+  real `fetch`; `matchPath` runs for real and recovers `id = "1"`.
+
+Both §3.2 properties survive: the pattern is still a compile-time-resolved name,
+and `matchPath` still sees a genuinely concrete path. Arguments are positional
+against the handler's declared parameter list, so a body composes the same way —
+`on PUT("/flags/:name") (name: FlagKey, body: Flag)` becomes
+`api.PUT("/flags/:name", Val[FlagKey]("beta"), Flag { … })`.
+
+**The open sub-question this exposes:** a refined path parameter. `FlagKey` is
+`String where MinLength(1) && MaxLength(64)`, so the happy path takes a typed
+`FlagKey` — but the rejection path (`/flags/` with an invalid name → 400) needs a
+**raw** string, for exactly the reason §3.3 gives about bodies. So Q3's
+typed-vs-raw question is not body-specific after all; it applies to path
+arguments too, and the two should be settled together rather than separately.
+
 ### 4.2 An identity, per tier
 
-`deps_identity_binder` (`bynk-emit/src/emitter/emitter.rs:2240`) is the single
+`deps_identity_binder` (`bynk-emit/src/emitter.rs:2240`) is the single
 generalised field Bearer, Oidc, and Caller all thread through; `u.identity`
 lowers to plain `deps.identity` (`bynk-emit/src/emitter/lower.rs:3533-3538`). The
 handler is already a pure function of `(args, deps)` — there is no in-handler
@@ -377,8 +432,9 @@ keyword — `by u: User` at the declaration ("*a* User may call; bind them as `u
 precedent is direct: ADR 0153 D1 faced the same objection for `as` (already taken
 by `consumes … as Alias`) and resolved it by showing the header is a distinct
 production, then D4 made the tier names contextual rather than reserved. `by`
-currently appears in exactly six places, all handler declarations
-(`grammar.js:764-849`), so a service-call position is new.
+is referenced in seven places: six handler declarations (`grammar.js:764-849`)
+and one **service-level default** (`grammar.js:591`, `field("default_by", …)`).
+So a service-call position is new.
 
 **The call site, not the header, is forced** — by the test the track exists to
 make possible. Agent state is fresh per case (ADR 0153 D7), so an isolation claim
@@ -417,10 +473,19 @@ payload is what makes the hard cases collapse:
 **Left open deliberately.** Two details, neither blocking:
 
 - **A case-level default.** `case "…" by User("bob")`, inherited and overridable at
-  the call site, would mirror `as <tier>`'s suite→case precedence (ADR 0153 D2) and
-  would spare `todo`'s single-principal cases three repetitions. Recommended as a
-  **named follow-on**, not part of the first slice: sugar cannot be removed once
-  shipped, and the repetition may prove to read fine.
+  the call site, would spare `todo`'s single-principal cases three repetitions.
+  **The production surface already has exactly this shape**, which is a stronger
+  argument than the ergonomics: `service_decl` carries an optional `default_by`
+  (`grammar.js:591`, v0.155) — "the ambient contract every handler inherits unless
+  it declares its own", as in `service api from http by Visitor { … }`
+  (`bynkc/tests/fixtures/positive/348_service_default_by`). A header-position `by`
+  that members inherit and may override is therefore **not a novel invention** for
+  this track; a case-level default would mirror `default_by` on the declaration
+  side and `as <tier>`'s suite→case precedence (ADR 0153 D2) on the test side.
+  Still recommended as a **named follow-on** rather than part of the first slice —
+  minimal surface first, and sugar cannot be removed once shipped — but the
+  symmetry argument means the defer should be revisited on evidence, not treated
+  as settled against.
 - **Binding.** `by` binds to the **service-call expression**, not the `let`. Trivial
   in `let x <- api.GET("/todos") by User("bob")`; worth specifying rather than
   discovering in `let x <- f(api.GET("/todos")) by …`.
@@ -428,7 +493,7 @@ payload is what makes the hard cases collapse:
 ### 4.3 What a case receives
 
 `HttpResult` **is** the status vocabulary: `Ok`→200, `Created`→201, `NotFound`→404,
-across a flat 30-variant table (`bynk-emit/src/emitter/runtime.ts:385-417`). So
+across a flat 31-variant table (`bynk-emit/src/emitter/runtime.ts:385-417`). So
 `expect todos is Ok(_)` asserts the status *in Bynk's own words* — better than a
 raw `res.status == 200`, and it is the same assertion at both tiers.
 
@@ -459,7 +524,7 @@ The result channel is where the protocols genuinely diverge:
   `ack()`/`retry()` on a **caller-supplied** message object
   (`workers_entry.rs:523-573`). The test supplies the batch, so it can pass spies
   and read the verdict cleanly. `Ack | Retry(reason)` is two variants against
-  `HttpResult`'s thirty.
+  `HttpResult`'s thirty-one.
 
 ## 5. Prior art — this is already done, from Rust
 
@@ -482,7 +547,9 @@ Same shape in `http_security_behaviour.rs`, `http_caching_behaviour.rs`,
 `cross_context_caller.rs:93-118`.
 
 **`fetch(request, env)` is already the seam**, and the system harness already
-stands it up in-process (`bynk-emit/src/project/tests_emit.rs:940-952`). This
+stands it up in-process (`bynk-emit/src/project/tests_emit.rs:940-952` — the
+legacy name is `emit_integration_harness`, but the system tier emits it too, via
+the `SystemCaseInput` path at `tests_emit.rs:797`). This
 track proposes no new harness: the reference implementation exists and is in daily
 use; it has no Bynk spelling.
 
@@ -538,16 +605,23 @@ while the Bearer question is a design decision.
 - **Q1 — Does `system_needs_wire` relax as §3.4 proposes?** This is the one
   amendment to a settled ADR and it gates the system-tier slice (not the unit-tier
   one). ADR 0153 D5/D6 attach the ≥2-context rule to the tier; the proposal
-  re-attaches it to "has something to wire".
+  re-attaches it to "has something to wire". **Note the ADR's own re-openability
+  clause does not help here:** D5 is re-openable only "against a concrete case
+  where the participant set is genuinely ambiguous", and `todo`'s set is not
+  ambiguous — it is empty. So this must win as a straight amendment, on the
+  argument that D6 defined `system` as cross-context *because the only wire then
+  was cross-context*, not because the boundary was considered and excluded.
 - **Q2 — What is the spelling for arranging an actor? — SETTLED (§4.2.1).**
   `by <Actor>(<identity>)` at the **call site**. `stub` is not widened: an actor is
   the caller, not a collaborator, so it is the wrong semantic category and ADR 0154
   D4 stands untouched. The call site (not the case header) is forced by the
   two-principal isolation case. A case-level default is a **named follow-on**, and
   `by` binds to the service-call expression.
-- **Q3 — Does a `system` address accept both typed args and raw JSON?** The happy
-  path wants `api.POST("/todos", AddRequest { … })`; the rejection path needs raw
+- **Q3 — Does an address accept both typed args and raw input?** The happy path
+  wants `api.POST("/todos", AddRequest { … })`; the rejection path needs raw
   `{"title": ""}`. One address with two argument modes, or two spellings?
+  **Widened by Q7:** this is not body-specific — a refined *path* parameter
+  (`FlagKey`) has the same typed-vs-raw split, so Q3 and Q7 should settle together.
 - **Q4 — Can a case assert on the wrapper stack?** Security headers are
   unconditional (§4.3). Is asserting `nosniff` in scope, or the compiler's own
   business?
@@ -560,6 +634,14 @@ while the Bearer question is a design decision.
   *mechanics*: RSA/ES256 plus a mocked JWKS rather than a shared secret.
   `bynkc/tests/oidc_auth.rs` proves it is doable but it is not one line. System-tier
   only, and deferrable behind Bearer.
+- **Q7 — How does a case address a *parameterised* route? (§4.1.1).** For
+  `on POST("/todos/:id/complete")` there are two strings — the pattern and the
+  concrete path — and §3.2's two properties each need a different one. **11 of 29
+  http handlers across `examples/` are parameterised**, so this is the common case,
+  not a corner. Proposed: the pattern is the name, parameters are positional
+  arguments, and `system` substitutes them to build the concrete path. **This gates
+  Slice A, not Slice B** — supplying `id` is a surface decision that bites at
+  `unit` too. Settle with Q3.
 
 Adjacent live threads worth pulling rather than re-deriving: ADR 0153's
 re-openables (**observing/asserting across the `system` wire**; per-case `system`
@@ -580,9 +662,11 @@ alone, because it needs no crypto, no `fetch`, and no ADR amendment.
   `unit`, and give `makeTestDeps()` an `identity` (fixing #655). This is where
   most of the value is: it makes every example's service testable, and gives
   `scheduled` and `queue` their **first-ever execution coverage** (§1). No
-  signer, no `fetch`, no `system_needs_wire` change. **Q2 is settled (§4.2.1), so
-  this slice has no open question blocking it** — it lands `by <Actor>(<identity>)`
-  at the call site together with the `unit` lowering, and is ready to propose.
+  signer, no `fetch`, no `system_needs_wire` change. **Blocked on Q7, not Q1.**
+  Q2 settles the *actor* spelling, but not the *address* spelling for the 38% of
+  example routes that take a path parameter — and supplying `id` is a surface
+  decision that bites at `unit` too. This slice is ready to propose once Q7 (with
+  Q3) closes; Q1 is not in its way.
 - **Slice B — the system-tier boundary.** `as system` on an http suite: a full
   `fetch` request carrying a properly formed identity, asserting on the decoded
   `HttpResult`. Needs Q1 (the `system_needs_wire` relaxation), Q3, Q5.
