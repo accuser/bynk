@@ -152,12 +152,40 @@
       "summary": "Two `case`s share a description."
     },
     {
+      "code": "bynk.test.actor_identity_required",
+      "summary": "A call-site `by <Actor>` omits the identity an identity-carrying actor requires."
+    },
+    {
+      "code": "bynk.test.actor_no_identity",
+      "summary": "A call-site `by <Actor>(x)` supplies an identity to a unit-identity actor (e.g. `Visitor`)."
+    },
+    {
+      "code": "bynk.test.principal_identity_mismatch",
+      "summary": "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor."
+    },
+    {
+      "code": "bynk.test.principal_required",
+      "summary": "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`."
+    },
+    {
+      "code": "bynk.test.service_bad_address",
+      "summary": "A test body addresses a service the wrong way for its protocol (e.g. an http route without a leading path string)."
+    },
+    {
       "code": "bynk.test.service_call_arity",
       "summary": "A test body's `svc.call(...)` passes the wrong number of arguments for the service's `on call` handler."
     },
     {
       "code": "bynk.test.service_no_call_handler",
       "summary": "A test body invokes `svc.call(...)` on a service with no `on call` handler (a `from http`/`cron`/`queue` service)."
+    },
+    {
+      "code": "bynk.test.service_unknown_route",
+      "summary": "A test body addresses an http route / cron schedule / queue message the service does not declare."
+    },
+    {
+      "code": "bynk.test.unknown_actor",
+      "summary": "A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor."
     }
   ],
   "consumes_decl": [

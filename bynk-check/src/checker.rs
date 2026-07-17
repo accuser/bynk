@@ -532,6 +532,7 @@ pub fn check_handler_body(
         },
         in_test_body: false,
         test_services: HashMap::new(),
+        test_actors: HashMap::new(),
         type_vars: HashSet::new(),
         store_cells,
         store_maps,
@@ -725,6 +726,7 @@ pub fn check_invariants(
             },
             in_test_body: false,
             test_services: HashMap::new(),
+            test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -863,6 +865,7 @@ pub fn check_contracts(
             },
             in_test_body: false,
             test_services: HashMap::new(),
+            test_actors: HashMap::new(),
             type_vars: type_vars.clone(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -1081,6 +1084,7 @@ pub fn check_transitions(
             },
             in_test_body: false,
             test_services: HashMap::new(),
+            test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -1234,28 +1238,40 @@ pub struct CapabilityCtx {
     pub given_anchor: Option<Span>,
 }
 
-/// v0.178 (testing-the-boundary Slice 0, #662): the shape a test body needs to
-/// resolve a `svc.call(args)` invocation. Built by the project test pass from
-/// the target unit's service declarations, so the checker can verify the
-/// `on call` handler exists and that the call's arity and argument types match.
+/// v0.178 (Slice 0, #662) / v0.182 (Slice A, #664): the shape a test body needs
+/// to resolve a service invocation. Built by the project test pass from the
+/// target unit's service declarations, so the checker can resolve the addressed
+/// handler (`svc.call(...)` on an `on call` service, or — Slice A —
+/// `svc.GET("/x")` / `svc.schedule("…")` / `svc.message(m)` on a `from http` /
+/// `cron` / `queue` service) and check its arity, argument types, and principal.
 #[derive(Debug, Clone)]
 pub struct TestServiceSig {
     /// The service's protocol as an author-facing word (`"http"`, `"cron"`,
     /// `"queue"`, `"websocket"`), or `None` for a plain `service X { on call }`.
-    /// Used only to shape the "no `on call` handler" diagnostic.
     pub protocol: Option<String>,
-    /// The `on call` handler's parameters and declaration span, if the service
-    /// has one. `None` for a `from http`/`cron`/`queue` service — which makes
-    /// `svc.call(...)` `bynk.test.service_no_call_handler` rather than a call.
-    pub call_handler: Option<TestCallHandler>,
+    /// Every handler the service declares, so the branch can resolve any address
+    /// form. Slice 0 only reads the `on call` entry.
+    pub handlers: Vec<TestHandler>,
 }
 
-/// The `on call` handler signature a test-body `svc.call(args)` is checked
-/// against (v0.178).
+/// One service handler, as a test body sees it (v0.178 / v0.182).
 #[derive(Debug, Clone)]
-pub struct TestCallHandler {
+pub struct TestHandler {
+    pub kind: bynk_syntax::ast::HandlerKind,
     pub params: Vec<bynk_syntax::ast::Param>,
+    /// The handler's declared `by <Actor>` clause, if any — the actor a call-site
+    /// principal is checked against. `None` inherits the protocol default actor.
+    pub by_clause: Option<bynk_syntax::ast::ByClause>,
     pub span: Span,
+}
+
+impl TestServiceSig {
+    /// The `on call` handler, if the service declares one.
+    pub fn call_handler(&self) -> Option<&TestHandler> {
+        self.handlers
+            .iter()
+            .find(|h| matches!(h.kind, bynk_syntax::ast::HandlerKind::Call))
+    }
 }
 
 pub struct Ctx<'a> {
@@ -1307,6 +1323,12 @@ pub struct Ctx<'a> {
     /// / `cron` / `queue` service) carries `None` for `call_handler`, which
     /// makes `svc.call(...)` a diagnostic rather than a silent runtime crash.
     pub test_services: HashMap<String, TestServiceSig>,
+    /// v0.182 (Slice A, #664): the target unit's actor declarations, so a
+    /// call-site `by <Actor>(<identity>)` can resolve the actor and type the
+    /// identity value against its declared identity type. Prelude actors
+    /// (`Visitor`, `Caller`, …) are resolved separately. Empty outside test
+    /// bodies.
+    pub test_actors: HashMap<String, bynk_syntax::ast::ActorDecl>,
     /// v0.20a: the enclosing function's type parameters (rigid vars), so
     /// nested explicit type arguments (`identity[A](x)` inside a generic
     /// body) resolve. Empty outside generic fn bodies.
@@ -2091,6 +2113,11 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                 // The expected type for the RHS is `Effect[annot]` if annot present.
                 let rhs_expected = annot_ty.as_ref().map(|t| Ty::Effect(Box::new(t.clone())));
                 let rhs_ty = type_of(&l.value, rhs_expected.as_ref(), ctx);
+                // v0.182 (#664): validate the call-site principal against the
+                // addressed handler — including the *absent* case, where an
+                // identity-carrying handler driven with no `by` would silently
+                // drop the identity.
+                calls::check_effect_let_principal(&l.value, l.principal.as_ref(), ctx);
                 let inner_ty = match rhs_ty {
                     Some(Ty::Effect(t)) => Some((*t).clone()),
                     Some(other) => {

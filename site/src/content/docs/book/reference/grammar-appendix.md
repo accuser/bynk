@@ -98,7 +98,8 @@ for_all_binding ::= identifier ":" type_ref
 block ::= "{" statement* expression? "}"
 statement ::= let_stmt | effect_let_stmt | effect_send_stmt | do_stmt | assign_stmt | expect_expr
 let_stmt ::= "let" binding_name (":" type_ref)? "=" expression
-effect_let_stmt ::= "let" binding_name (":" type_ref)? "<-" expression
+effect_let_stmt ::= "let" binding_name (":" type_ref)? "<-" expression call_site_actor?
+call_site_actor ::= "by" identifier ("(" expression ")")?
 effect_send_stmt ::= "~>" expression
 do_stmt ::= "do" expression
 assign_stmt ::= identifier ":=" expression

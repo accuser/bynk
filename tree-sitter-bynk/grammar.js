@@ -1044,6 +1044,22 @@ module.exports = grammar({
         optional(seq(":", field("type", $._type_ref))),
         "<-",
         field("value", $._expression),
+        // v0.182 (#664): an optional call-site actor clause — the test-body form
+        // `let x <- <service address> by <Actor>(<identity>)`. Distinct from
+        // `by_clause` (the handler form): the identity is an argument, not a
+        // binder, and there is no actor sum.
+        optional(field("principal", $.call_site_actor)),
+      ),
+    // v0.182 (#664): `by <Actor>` (unit identity) or `by <Actor>(<identity>)`.
+    // `prec.right` so an immediately-following `(` is taken as the identity
+    // argument rather than starting a fresh token sequence.
+    call_site_actor: ($) =>
+      prec.right(
+        seq(
+          "by",
+          field("actor", $.identifier),
+          optional(seq("(", field("identity", $._expression), ")")),
+        ),
       ),
     // v0.79: `~> expr` — an asynchronous fire-and-forget send (no binder).
     effect_send_stmt: ($) => seq("~>", field("value", $._expression)),

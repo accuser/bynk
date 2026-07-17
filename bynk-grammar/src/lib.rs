@@ -403,7 +403,9 @@ mod tests {
         // added: do_stmt (the `do e` effect statement). Net +1. v0.157 (ADR
         // 0183) added: applied_type_ref (a user generic-type application
         // `Name[Arg, …]`). Net +1.
-        assert_eq!(rules.len(), 138);
+        // v0.184 (ADR 0205) added: call_site_actor (the test-body
+        // `by <Actor>(<identity>)` clause). Net +1.
+        assert_eq!(rules.len(), 139);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

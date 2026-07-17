@@ -1457,10 +1457,22 @@ Binds a pure value: `let name = expr`.
 
 {{#grammar effect_let_stmt}}
 
-Binds the result of an effect: `let name <- effect`.
+Binds the result of an effect: `let name <- effect`. In a test `case` body it may
+carry a trailing [`call_site_actor`](#rule-call_site_actor) clause naming the
+principal the case acts as when the effect drives a service handler.
 
 **Static semantics.**
 {{#grammar-semantics effect_let_stmt}}
+
+### call_site_actor {#rule-call_site_actor}
+
+{{#grammar call_site_actor}}
+
+The test-body `by <Actor>(<identity>)` clause (v0.182): names the actor a `case`
+acts as when it drives a service handler, and supplies the identity value. Written
+`by User("bob")` for an identity-carrying actor, or `by Visitor` (no argument) for
+a unit-identity actor. Distinct from [`by_clause`](#rule-by_clause), the handler
+form, which binds an actor and admits a sum but carries no identity argument.
 
 ### effect_send_stmt {#rule-effect_send_stmt}
 
