@@ -1410,6 +1410,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor.",
         &["case"],
     ),
+    dg(
+        "bynk.test.wire_needs_system",
+        "A `Wire(...)` raw argument is used outside a `system`-tier service address; `Wire` hands pre-validation input to the boundary and is meaningless at `unit` or in any other position.",
+        &["case"],
+    ),
     d(
         "bynk.tier.property_has_tier",
         "A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance.",

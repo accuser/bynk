@@ -2257,6 +2257,14 @@ pub enum ExprKind {
         type_ref: TypeRef,
         args: Vec<Expr>,
     },
+    /// `Wire(<String>)` — a raw, pre-validation argument to a `system`-tier
+    /// service address (testing-the-boundary Slice C). The inner expression is a
+    /// `String` carrying the wire form the boundary will receive *unvalidated* —
+    /// a body's JSON text or a path segment — so a case can drive the router with
+    /// input the type system forbids and observe the rejection. Legal only at
+    /// `system` (there is no wire at `unit`); the router validates it, so no
+    /// refined value is ever minted from a `Wire` (ADR 0182 untouched).
+    Wire(Box<Expr>),
     /// `[a, b, c]` — list literal (v0.20b). An empty `[]` requires an
     /// expected type (`bynk.types.uninferable_element_type`).
     ListLit(Vec<Expr>),
@@ -2315,6 +2323,7 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
         | ExprKind::ConstructorCall { args, .. }
         | ExprKind::Val { args, .. }
         | ExprKind::ListLit(args) => out.extend(args.iter()),
+        ExprKind::Wire(inner) => out.push(inner.as_ref()),
         ExprKind::Lambda(l) => out.push(l.body.as_ref()),
         ExprKind::BinOp(_, l, r) => {
             out.push(l.as_ref());

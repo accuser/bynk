@@ -417,6 +417,7 @@ pub(crate) fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
         | ExprKind::Ok(i)
         | ExprKind::Err(i)
         | ExprKind::Some(i)
+        | ExprKind::Wire(i)
         | ExprKind::Question(i) => walk_exprs(i, f),
         ExprKind::Val { args, .. }
         | ExprKind::Call { args, .. }
@@ -1437,6 +1438,7 @@ fn collect_refs_in_expr(
         | ExprKind::None
         | ExprKind::UnitLit => {}
         // v0.43: a hole's expression may reference imported names.
+        ExprKind::Wire(inner) => collect_refs_in_expr(inner, local_to_file, commons, ctx, out),
         ExprKind::InterpStr(parts) => {
             for part in parts {
                 if let InterpPart::Hole(hole) = part {

@@ -2621,6 +2621,17 @@ fn check_address_args(
     }
     for (i, (param, arg)) in params.iter().zip(positional.iter()).enumerate() {
         record_param_hint(ctx.hints, &param.name.name, arg);
+        // Slice C: a `Wire(<String>)` argument is *raw* — it deliberately bypasses
+        // the param's type so a case can drive the boundary with input the type
+        // forbids. Validate only that the inner is a `String` (the wire form); the
+        // `system`-only tier rule is enforced at emit time (where the tier is
+        // known), alongside `system_needs_wire`. Intercept before the generic
+        // `type_of`, which would otherwise report the address-arg `Wire` as
+        // misplaced.
+        if let bynk_syntax::ast::ExprKind::Wire(inner) = &arg.kind {
+            let _ = type_of(inner, Some(&Ty::Base(BaseType::String)), ctx);
+            continue;
+        }
         let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
         let arg_ty = type_of(arg, expected.as_ref(), ctx);
         if let (Some(a), Some(p)) = (arg_ty.as_ref(), expected.as_ref())

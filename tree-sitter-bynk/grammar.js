@@ -1260,6 +1260,7 @@ module.exports = grammar({
         $.none_expr,
         $.effect_pure_expr,
         $.val_expr,
+        $.wire_expr,
         $.trace_expr,
         $.list_literal,
         $.block,
@@ -1406,6 +1407,12 @@ module.exports = grammar({
         seq("(", sep1(field("pin", $._expression), ","), optional(","), ")"),
         seq("{", optional(sep1($.field_init, ",")), optional(","), "}"),
       ),
+
+    // Slice C: `Wire(<String>)` — a raw, pre-validation argument to a
+    // `system`-tier service address. `prec.right` resolves the `(` against an
+    // ordinary call. The test-context and `system`-tier restrictions are
+    // semantic, left to the checker.
+    wire_expr: ($) => prec.right(seq("Wire", "(", field("input", $._expression), ")")),
 
     self_expr: () => "self",
 

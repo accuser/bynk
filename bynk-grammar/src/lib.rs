@@ -405,7 +405,9 @@ mod tests {
         // `Name[Arg, …]`). Net +1.
         // v0.184 (ADR 0205) added: call_site_actor (the test-body
         // `by <Actor>(<identity>)` clause). Net +1.
-        assert_eq!(rules.len(), 139);
+        // Slice C added: wire_expr (the `Wire(<String>)` raw system-tier
+        // argument). Net +1.
+        assert_eq!(rules.len(), 140);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

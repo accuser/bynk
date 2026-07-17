@@ -2145,6 +2145,7 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
                 format!("Val[{t}]({a})")
             }
         }
+        ExprKind::Wire(inner) => format!("Wire({})", expr_with_prec(inner, 0)),
         ExprKind::Trace { cap, op } => format!("trace({}.{})", cap.name, op.name),
         ExprKind::Observation(o) => {
             let subject = format!("{}.{}", o.cap.name, o.op.name);

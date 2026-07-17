@@ -1311,6 +1311,17 @@ test bodies. Replaces the retired `Mock[T]` (v0.114).
 
 The pin arguments to a `Val[T]`: positional values or a record of field pins.
 
+### wire_expr {#rule-wire_expr}
+
+{{#grammar wire_expr}}
+
+`Wire(<String>)` — a raw, pre-validation argument to a `system`-tier service
+address (testing-the-boundary). The inner `String` is the wire form the boundary
+receives *unvalidated* — a body's JSON text or a path segment — so a `case` can
+drive the router with input the type system forbids and observe the rejection.
+Valid only as a service-address argument in a `system`-tier `case`; the router
+validates it, so no refined value is ever minted from a `Wire`.
+
 ### lambda_expr {#rule-lambda_expr}
 
 {{#grammar lambda_expr}}

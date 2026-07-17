@@ -1103,6 +1103,21 @@ fn check_expr_references(
                 );
             }
         }
+        // Slice C: `Wire(<String>)` — the raw inner expression resolves as an
+        // ordinary value (a string literal in practice).
+        ExprKind::Wire(inner) => {
+            check_expr_references(
+                inner,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
+            );
+        }
         // v0.20a: a lambda introduces a scope frame holding its params; the
         // body walks with the frame in place. Annotated param types resolve
         // through the ordinary type-ref check.

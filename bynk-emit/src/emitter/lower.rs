@@ -599,6 +599,10 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
     }
     match &e.kind {
         ExprKind::IntLit { value: n, .. } => n.to_string(),
+        // Slice C: `Wire(<String>)` in a generic position lowers to its raw inner
+        // string. The system-http driver site intercepts `Wire` args before this
+        // to route them raw (no serialisation) and switch to the outcome decoder.
+        ExprKind::Wire(inner) => lower_expr(inner, stmts, cx),
         // v0.21: the stored lexeme verbatim — `1e10` must not normalise.
         ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
         // v0.86 (ADR 0112): a `Duration` literal lowers to its constant
@@ -1448,7 +1452,19 @@ fn lower_method_call(
         let rest: Vec<String> = args[1..].iter().map(|a| lower_expr(a, stmts, cx)).collect();
         let mut all = rest;
         all.push(sub);
-        return format!("__sysdrive_{}_{}({})", id.name, key, all.join(", "));
+        // Slice C: a `Wire(…)` argument drives the *raw* driver (the input is
+        // sent unvalidated and the result decodes to an `HttpOutcome`); a fully
+        // typed call keeps the serialising driver. `lower_expr` already lowers a
+        // `Wire(s)` to its raw inner string.
+        let has_wire = args[1..]
+            .iter()
+            .any(|a| matches!(&a.kind, ExprKind::Wire(_)));
+        let driver = if has_wire {
+            "__sysdrive_raw"
+        } else {
+            "__sysdrive"
+        };
+        return format!("{}_{}_{}({})", driver, id.name, key, all.join(", "));
     }
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.test_services.contains(&id.name)

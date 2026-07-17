@@ -684,6 +684,44 @@ export async function responseToHttpResult<T>(
   }
 }
 
+// Slice C (testing-the-boundary): the outcome of a `system`-tier address driven
+// with a raw `Wire(…)` argument. A boundary rejection never produces an
+// `HttpResult` (the handler never ran), so a `Wire`-carrying call yields this
+// sum instead: `Rejected(detail)` when the router refused the input before the
+// handler, or `Handled(httpResult)` when it ran. The rejection `detail` carries a
+// `tag` mirroring the router's `BoundaryError.kind` (`RefinementViolation`,
+// `MalformedJson`, `StructuralMismatch`), so `expect r is Rejected(
+// RefinementViolation(_))` lowers to a plain `.tag` test — the value is decoded
+// here; the checker keeps the outcome loose (the runner recovers the shape).
+export type HttpOutcome<T> =
+  | { readonly tag: "Rejected"; readonly value: { readonly tag: string; readonly [k: string]: unknown } }
+  | { readonly tag: "Handled"; readonly value: HttpResult<T> };
+
+export async function responseToHttpOutcome<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpOutcome<T>> {
+  // A pre-handler rejection is a `400` (a refinement/structural violation or
+  // malformed JSON) whose body is the router's `BoundaryError` JSON. `415`
+  // (unsupported media type) is the same class. Anything else — a `2xx`, a
+  // handler-returned error status — is a response the handler produced, so it is
+  // `Handled`. (401/405 rejections are a follow-on: they need a credential
+  // override and wrong-method addressing the address surface does not yet carry.)
+  if (response.status === 400 || response.status === 415) {
+    let detail: { readonly tag: string; readonly [k: string]: unknown };
+    try {
+      const body = (await response.json()) as { kind?: string; [k: string]: unknown };
+      const kind = typeof body?.kind === "string" ? body.kind : "MalformedJson";
+      detail = { ...body, tag: kind };
+    } catch {
+      detail = { tag: "MalformedJson" };
+    }
+    return { tag: "Rejected", value: detail };
+  }
+  const handled = await responseToHttpResult(response, deserialiseValue);
+  return { tag: "Handled", value: handled };
+}
+
 // v0.131 (ADR 0159): the cross-origin (CORS) policy a `from http` service carries
 // via its `cors { }` section. The compiler synthesises one of these per
 // CORS-enabled service and threads it into the entry router. `allowMethods` is

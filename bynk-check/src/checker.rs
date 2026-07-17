@@ -2790,6 +2790,25 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
         ExprKind::Val { type_ref, args } => check_val(type_ref, args, expr.span, ctx),
         ExprKind::Observation(o) => check_observation(o, expr.span, ctx),
         ExprKind::Trace { cap, op } => check_trace(cap, op, expr.span, ctx),
+        // Slice C: a `Wire(<String>)` reached through the ordinary expression
+        // checker is *misplaced* — a valid `Wire` is intercepted by the service-
+        // address argument checker (`check_address_args`), which validates the
+        // inner and the `system` tier. Anywhere else it is an error. The inner is
+        // still typed so a mistake inside it is reported too.
+        ExprKind::Wire(inner) => {
+            let _ = type_of(inner, Some(&Ty::Base(BaseType::String)), ctx);
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.wire_needs_system",
+                    expr.span,
+                    "`Wire(...)` may only be passed as an argument to a service address in a `system`-tier case",
+                )
+                .with_note(
+                    "`Wire` hands raw, pre-validation input to the boundary; there is no wire to be raw about at `unit`, and it is meaningless outside a service address",
+                ),
+            );
+            None
+        }
     };
     if let Some(ty) = &ty {
         ctx.expr_types.insert(expr.span, ty.clone());
