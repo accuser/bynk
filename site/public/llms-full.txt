@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.185).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.186).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.185) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.186) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -13221,7 +13221,7 @@ There are **405** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.185**.
+written against **v0.186**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -13246,6 +13246,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.186.0** | **Increments are stamped on merge, not authored** (tooling; ADR 0206, increment-allocation track, [#691](https://github.com/accuser/bynk/issues/691)). Completes the increment-allocation track. A feature PR now lands a `design/pending/<slug>.md` carrying only its **intent** — a bump level, a one-line changelog blurb, and any ADR prose — with **no version and no ADR number**; a per-merge GitHub Actions workflow runs `cargo xtask stamp` on `main` to assign both **in merge order** and materialise them (the version bump, the changelog row, the numbered ADR + index row), deleting the consumed pending file. Two increments developed in parallel no longer touch any shared version or index line, so they stop colliding on the two serial counters — and the loser no longer silently ships a number another increment already took. Built across three slices: the pending-increment format + validator ([#688](https://github.com/accuser/bynk/pull/688)), the `cargo xtask stamp` command ([#690](https://github.com/accuser/bynk/pull/690)), and the workflow here. This is the last increment stamped by hand. No language, grammar, or runtime change; no author-facing surface beyond the new `design/pending/` step. |
 | **v0.185.0** | **A test drives an http/cron/queue handler at the unit tier** (grammar + checker + emitter; ADR 0205, testing-the-boundary track, [#664](https://github.com/accuser/bynk/issues/664)). A `case` addresses a service handler by its surface — `api.POST("/todos", body)`, `sched.schedule("*/5 * * * *")`, `q.message(job)` — and names the identity it acts as with a call-site `by <Actor>(<identity>)` clause: `let item <- api.POST("/todos", body) by User("bob")`. The address is checked against the declared handler (arity, argument types, `service_unknown_route`); the principal is checked **against that handler** — an identity-carrying handler driven with no `by`, or with a unit-identity actor like `by Visitor`, is `bynk.test.principal_required` / `principal_identity_mismatch` (the isolation the slice exists to provide, which `tsc` cannot catch); and the identity is typed against the handler's identity type, so `by User("")` fails `UserId`'s refinement. At the `unit` tier the identity is *given* and the handler runs in-process against fresh per-case agent state — `scheduled` and `queue` handlers **execute under a test for the first time**. The proposal's feared `deps.env`↔`makeTestState` bridge was unnecessary: bundle-mode emission already resolves an http handler's agent via the in-memory registry. No new runtime, no `fetch`; the `system` tier is a later slice. Grammar gains `call_site_actor` (Rust parser + tree-sitter + formatter). **#655 is not closed** — its root is the cross-context `makeSurface`, a separate emitter concern (ADR 0205). |
 | **v0.184.0** | **One diagnostics scheduler** (tooling; **closes [#678](https://github.com/accuser/bynk/issues/678)**, LSP foundations track, [#640](https://github.com/accuser/bynk/issues/640)). The language server debounced diagnostics with two stacked delays — the configured `diagnostics_debounce_ms` in `did_change`, then a *second*, hardcoded 200 ms in the round scheduler — so live squiggles lagged the configured value by 200 ms; and a single-file buffer (no `bynk.toml`) had no generation counter at all, so a burst of keystrokes ran one `diagnose` per change instead of coalescing. Both are now one generation-based scheduler over both modes, debouncing exactly once at the configured delay. A round already analysing when a newer edit lands still runs to completion (a whole-project analysis on a blocking thread can't be cancelled) but its result is discarded rather than published — unchanged, and documented. No language, grammar, or runtime change; no author-facing surface beyond the (now honest) debounce timing. |
 | **v0.183.0** | **The language server analyses a workspace on open and registers its own file watchers** (tooling; **closes [#676](https://github.com/accuser/bynk/issues/676)**, LSP foundations track, [#640](https://github.com/accuser/bynk/issues/640)). Two lifecycle gaps the server documented or leaned on a client for. First: it advertised a startup analysis but ran none, so a freshly-opened Bynk workspace showed no diagnostics until you opened a `.bynk` file. Now on activation the server discovers every project under the workspace folders — a bounded walk for `bynk.toml`, so a monorepo's packages are all found — and analyses them, so diagnostics (and workspace-symbol search) are ready before you open anything; a folder added later is warmed the same way. Second: watched-file notifications only worked because the VS Code extension supplied the watchers client-side, so every other editor got a dead handler. Now the server registers `**/*.bynk` and `**/bynk.toml` itself (dynamic `didChangeWatchedFiles`), so any client is notified — and the VS Code extension drops its client-side watchers so the server isn't told twice. No language, grammar, or runtime change; no author-facing surface. |
@@ -13471,7 +13472,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.185**. It states what a conforming
+`bynkc` at the **current version, v0.186**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -13541,7 +13542,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.185**. It is maintained as the single source of
+at the **current version, v0.186**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -18123,7 +18124,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.185**
+This specification defines the language at its **current version, v0.186**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -18454,7 +18455,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.185) rather than in large releases.
+steps (the book is written against v0.186) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

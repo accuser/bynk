@@ -1,18 +1,23 @@
 # Increment allocation — the version and the ADR number are stamped at merge, not chosen at authoring
 
-- **Status:** **Adopted — slicing. Slices 0–1 shipped.** The spine is
+- **Status:** **Adopted — core complete. Slices 0–2 shipped (v0.186, ADR 0206); only the
+  deferrable Slice 3 remains.** The contention this track exists to remove is gone: a feature
+  PR lands a `design/pending/` file with no numbers, and the per-merge stamp workflow assigns
+  the version + ADR number on `main`. The track is a candidate for retirement (Slice 3 —
+  surface-shrink — can be a standalone follow-on rather than a blocker). The spine is
   [#685](https://github.com/accuser/bynk/issues/685)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); direction was settled
   by the merge of the settling PR [#684](https://github.com/accuser/bynk/pull/684). Adoption
   is **not** build authorisation — a slice is approved to build only when its own proposal is
   `accepted`. **Slice 0** ([#688](https://github.com/accuser/bynk/pull/688), #687) shipped the
-  `design/pending/` format and the `xtask` validator; **Slice 1** (#689) shipped the
-  `cargo xtask stamp` command (version + changelog + ADR materialisation + consume). The §5.1
-  question (per-merge stamp vs. batched release PR) is **settled**: per-merge. **The Slice 1/2
-  boundary was re-cut** (Slice 1 #689 DECISION A): idempotency (delete-what-you-consume)
-  entangles version and ADR assignment, so Slice 1 absorbed ADR materialisation, and the
-  per-merge *workflow* — with the open bot-identity/branch-protection question — is now its
-  own Slice 2 (§7). Live slice state is on the spine.
+  `design/pending/` format and the `xtask` validator; **Slice 1** ([#690](https://github.com/accuser/bynk/pull/690), #689) shipped the
+  `cargo xtask stamp` command (version + changelog + ADR materialisation + consume); **Slice 2**
+  (#691, ADR 0206) shipped the per-merge workflow. The §5.1 question (per-merge stamp vs.
+  batched release PR) is **settled**: per-merge. **The Slice 1/2 boundary was re-cut** (Slice 1
+  #689 DECISION A): idempotency (delete-what-you-consume) entangles version and ADR assignment,
+  so Slice 1 absorbed ADR materialisation, and the per-merge *workflow* became its own Slice 2.
+  Its open question — bot identity / branch protection — **resolved**: `main` is unprotected,
+  so the default `GITHUB_TOKEN` pushes the stamp directly (ADR 0206). Live slice state is on the spine.
 - **Realises:** [`../README.md` §"Versioning & release"](../README.md) (the single-repo
   version, `scripts/bump-version.sh`, the tag→publish backbone) and
   [`../bynk-release-discipline.md`](../bynk-release-discipline.md) (daily increments each
@@ -251,11 +256,12 @@ sub-issue before build.
   deletes the consumed pending file(s); dry-run by default. **Absorbs ADR materialisation**
   (#689 DECISION A: idempotency entangles version and ADR assignment into one atomic consume).
   **Shipped — #689.**
-- **Slice 2 — the per-merge workflow.** Run the stamp automatically on merge to `main` and
-  commit the result. Resolves the open question §9 (the bot identity and its composition with
-  branch protection) and carries the load-bearing **allocation-on-`main`** ADR — deferred to
-  here from Slice 1 so it describes the mechanism once it is *operative*, not a command yet to
-  be wired. (Split out of Slice 1 so the tested command lands independent of the risky wiring.)
+- **Slice 2 — the per-merge workflow.** Runs the stamp automatically on merge to `main` and
+  commits the result (`.github/workflows/stamp.yml`). Resolved the open question §9 (`main` is
+  unprotected → the default `GITHUB_TOKEN` pushes directly; a token push triggers no CI, which
+  is the loop prevention *and* why the workflow self-validates before pushing) and carries the
+  load-bearing **allocation-on-`main`** ADR ([0206](../decisions/0206-allocation-on-main.md)),
+  deferred here from Slice 1 so it describes the mechanism once *operative*. **Shipped — v0.186, #691.**
 - **Slice 3 (deferrable) — shrink the surface.** Move derived copies to CI generation (§6).
 
 ## 8. Prior art

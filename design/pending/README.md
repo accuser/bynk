@@ -83,7 +83,9 @@ what makes a re-run a no-op.
 
 ## Lifecycle
 
-The stamp command exists, but the **per-merge workflow** that runs it
-automatically is a follow-on slice. Until it lands, a maintainer runs
-`cargo xtask stamp --apply` when the increment merges (or removes the pending
-file by hand). Once the workflow lands, this is automatic on merge to `main`.
+On merge to `main`, the **stamp workflow** (`.github/workflows/stamp.yml`) runs
+`cargo xtask stamp --apply` automatically: it assigns the version and ADR
+number(s) in merge order, materialises them, and deletes this file — so a merged
+pending file becomes a stamp commit on `main` with the bump, the changelog row,
+and the numbered ADR(s). `cargo xtask stamp --apply` also remains a manual/local
+run for recovery. See [ADR 0206](../decisions/0206-allocation-on-main.md).
