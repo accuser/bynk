@@ -194,7 +194,7 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
         fs::write(&readme_path, readme)?;
     }
 
-    // Bump the manifests (regenerates llms-full from the just-written changelog).
+    // Bump the manifests to the final version.
     bump(plan.final_version())?;
 
     // Consume last: delete each pending file only once the bump has succeeded, so
