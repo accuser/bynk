@@ -44,7 +44,7 @@ increment, at authoring time, hours before the merge that actually orders them.
 concrete `X.Y.Z` into roughly fifteen files: `Cargo.toml`'s `[workspace.package]` version
 *and* every in-workspace dependency requirement, `Cargo.lock`, both
 `vscode-bynk`/`tree-sitter-bynk` `package.json` + `package-lock.json` pairs, the
-`bynkServerVersion` extension pin, eight Book/docs current-version banners (guarded by
+`bynkServerVersion` extension pin, seven Book/docs current-version banners (guarded by
 `bynkc/tests/doc_version.rs`), every `bynk*/README.md` `[dependencies]` example, and the
 regenerated `site/public/llms-full.txt`. Two branches that both pick "the next version" edit
 the *identical lines* of all fifteen. A merge conflict is guaranteed; and per
@@ -94,7 +94,8 @@ tag.
   moment of assignment moves.
 - **Multi-package independent versioning.** The repo carries one version while everything
   lives together ([`../README.md`](../README.md)); the packaging track
-  ([`packaging.md`](packaging.md), gated on ABI stability ≈1.0) owns any future split. This
+  (`design/tracks/packaging.md`, gated on ABI stability ≈1.0 — an untracked draft not yet on
+  `main`, so named here rather than linked) owns any future split. This
   track must not pre-empt it — its mechanism has to keep working as one counter and, later,
   as several.
 - **A new release cadence.** Whether the stamp fires per-merge or batches into a release PR
