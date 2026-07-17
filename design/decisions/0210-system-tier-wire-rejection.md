@@ -1,12 +1,6 @@
----
-level: minor
-changelog: A `system`-tier test case drives an http route with a raw `Wire(<String>)` argument — pre-validation input the type system forbids — and observes the boundary reject it before the handler (`Rejected`) or handle it (`Handled`), via a raw driver and the `responseToHttpOutcome` decoder
----
+# 0210 — A `system`-tier case drives the boundary with raw `Wire(…)` input and observes the rejection
 
-## ADR: system-tier-wire-rejection
-
-title: A `system`-tier case drives the boundary with raw `Wire(…)` input and observes the rejection
-summary: `Wire(<String>)` is a raw, `system`-only service-address argument that hands the router pre-validation input; the call yields `Rejected(detail) | Handled(HttpResult[T])` (decoded by `responseToHttpOutcome`) so a case can prove the boundary refused input the type system forbids. Scoped to the `400` rejection class; `401`, `405`, and rejection-kind discrimination are noted follow-ons.
+- **Status:** Accepted (v0.189)
 
 **Context.** Slice B (#697) let a `case` drive an http route at `system` over a real `fetch`, but only with **typed** arguments — which are valid by construction, so the boundary can never reject them. The testing-the-boundary track's §1 thesis is that *no Bynk test can observe the boundary rejecting attacker input*; `examples/feature-flags/tests/keys.bynk:15` ("an empty flag name is rejected at the boundary") asserts the refinement *predicate*, not the router. To close that, a case must be able to hand the boundary input the type system forbids — which no typed argument can express.
 
