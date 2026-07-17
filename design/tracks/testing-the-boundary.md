@@ -1,6 +1,6 @@
 # Testing the boundary — teaching the tier dial the other door
 
-- **Status:** **Adopted — slicing. Slices 0 and A shipped.**
+- **Status:** **Adopted — slicing. Slices 0, A, and B shipped; Slice C is next.**
   The spine is [#656](https://github.com/accuser/bynk/issues/656)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); direction
   was settled by the merge of the settling PR (#657). **Every design question is
@@ -1079,13 +1079,18 @@ tier at all (§3.4); `unit` is its whole story.
   the `by` clause to close it, but its root is the cross-context `makeSurface`
   (`emit_make_surface`), a distinct deploy-surface concern from the test surface
   (ADR 0205). The test side is fixed; #655 stays open with that diagnosis.
-- **Slice B — the system-tier boundary.** `as system` on an http suite: a full
-  `fetch` request carrying a properly formed identity, asserting on the decoded
-  `HttpResult`. Lands the §3.4 amendment (the `system_needs_wire` count becomes the
-  serialisation-edge property) — the track's one change to a settled ADR, and the
-  reason this slice carries an ADR while Slice A does not. **No open question blocks
-  it:** Q1, Q3, Q4 and Q5 are all settled. It asserts the decoded `HttpResult`;
-  header assertions are a follow-on, not this slice's concern (§4.3.2).
+- **Slice B — the system-tier boundary. ✅ Shipped (v0.187, ADR 0207, #667/#697).**
+  `as system` on an http suite drives a full `fetch` request carrying a
+  framework-signed identity, asserting on the decoded `HttpResult`. Landed the §3.4
+  amendment (the `system_needs_wire` count became the serialisation-edge property) —
+  the track's one change to a settled ADR, and the reason this slice carries an ADR
+  while Slice A does not. It asserts the decoded `HttpResult`; header assertions are a
+  follow-on, not this slice's concern (§4.3.2). **What changed from the plan:** the
+  serialisation edge admits **`http` only**, not `http`-or-`queue` — a `queue`
+  message serialises, but driving a queue over a real wire at `system` is not built
+  this slice, so admitting it would let a queue-only target compile as `system` then
+  fall through to the unit-tier direct call (no wire). Queue-at-system is a noted
+  follow-on; negative fixture 384 locks the gate.
 - **Slice C — the rejection paths.** `Wire` input → 400; missing or invalid
   credential → 401; the 405/OPTIONS fall-through. This is the slice that pays for
   the boundary work (§1). Depends on Slice B, and owns §4.3.1's residual: whether
