@@ -414,17 +414,20 @@ pub(crate) fn process_integration_tests(
         // **serialisation edge** — not merely ≥ 2 participants. The original rule
         // (`participants.len() < 2`) was a proxy for "nothing to serialise
         // across", exact only when the sole edge was cross-context. A single
-        // context that exposes an `http` or `queue` service has a real edge (the
-        // public boundary: deserialise → handler → serialise), so it qualifies.
-        // `cron` does not — `scheduled` serialises nothing in either direction.
+        // context that exposes an `http` service has a real edge (the public
+        // boundary: deserialise → handler → serialise), so it qualifies.
+        //
+        // Only `http` is admitted here, because only http-at-system is *wired*
+        // (`emit_system_http_support` drives `worker.fetch`). A `queue` service
+        // does serialise its message, but driving a queue over a real wire at
+        // `system` is not built this slice — admitting it would let a queue-only
+        // target compile as `system` while `q.message(...)` silently fell through
+        // to the unit-tier direct call (no wire). `cron` never qualifies —
+        // `scheduled` serialises nothing. Queue-at-system is a noted follow-on.
         let has_serialisation_edge = unit_tables.get(&suite_target).is_some_and(|t| {
-            t.services.values().any(|s| {
-                matches!(
-                    s.protocol,
-                    bynk_syntax::ast::ServiceProtocol::Http
-                        | bynk_syntax::ast::ServiceProtocol::Queue { .. }
-                )
-            })
+            t.services
+                .values()
+                .any(|s| matches!(s.protocol, bynk_syntax::ast::ServiceProtocol::Http))
         });
         if participants.len() < 2 && !has_serialisation_edge {
             errors.push(
@@ -432,7 +435,7 @@ pub(crate) fn process_integration_tests(
                     "bynk.tier.system_needs_wire",
                     decl.target.span,
                     format!(
-                        "`system`-tier suite for `{suite_target}` has no serialisation edge — the target consumes no other context and exposes no `http` or `queue` service",
+                        "`system`-tier suite for `{suite_target}` has no serialisation edge — the target consumes no other context and exposes no `http` service",
                     ),
                 )
                 .with_note(

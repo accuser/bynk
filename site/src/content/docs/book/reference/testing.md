@@ -114,10 +114,11 @@ A case's effective tier is `case.tier ?? suite.tier ?? unit`. Promotion changes
   graph. There is no `wires` clause.
 - **`system` needs a serialisation edge**: a `system` suite must cross a real
   serialise → JSON → deserialise boundary — either two or more wired contexts, **or**
-  a single target that exposes an `http` or `queue` service (its public boundary).
-  A target with neither — a `cron`-only or pure in-process context — is
-  `bynk.tier.system_needs_wire`. `integration` carries no such rule — it is real
-  collaborators within one context, no wire.
+  a single target that exposes an `http` service (its public boundary). A target
+  with neither is `bynk.tier.system_needs_wire`. (A `queue` service serialises its
+  message too, but driving a queue over a real wire at `system` is a later slice, so
+  a queue-only target does not yet qualify.) `integration` carries no such rule — it
+  is real collaborators within one context, no wire.
 - Tiers are **`case`-only**: a `property` generates and does not promote, so a
   suite-level `as` binds its `case` members only; an `as` on a `property` header is
   `bynk.tier.property_has_tier`.
