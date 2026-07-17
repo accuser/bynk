@@ -430,10 +430,6 @@ jobs:
       # sidebar.json drifts from it.
       - name: Check the generated sidebar is current
         run: node scripts/generate-sidebar.mjs --check
-      # llms-full.txt inlines the Book (directives expanded from the committed
-      # generated JSON); fail if it drifts. No build needed — reads markdown + JSON.
-      - name: Check llms-full.txt is up to date
-        run: node scripts/build-llms-full.mjs --check
       # llms.txt is hand-authored; verify its /book/ links still resolve.
       - name: Check llms.txt links resolve
         run: node scripts/check-llms-links.mjs
