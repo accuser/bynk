@@ -1093,27 +1093,32 @@ fn emit_system_http_support(
             // path params flow into the URL, the body string is sent verbatim (no
             // `serialise`), and the response decodes to an `HttpOutcome` —
             // `Rejected(detail)` when the router refused the input before the
-            // handler, `Handled(httpResult)` when it ran.
-            let raw_params: Vec<String> = h
-                .params
-                .iter()
-                .map(|p| format!("{}: string", crate::emitter::ts_ident(&p.name.name)))
-                .collect();
-            let raw_body_init = match body_ps.first() {
-                Some(p) => format!("body: {}, ", crate::emitter::ts_ident(&p.name.name)),
-                None => String::new(),
-            };
-            routes.push_str(&format!(
+            // handler, `Handled(httpResult)` when it ran. Emitted only for a route
+            // with a `Wire`-eligible slot (a body or a path param); a bodyless,
+            // path-param-less route (e.g. `GET /cart/size`) can carry no `Wire`
+            // argument, so its raw driver would be dead code.
+            if !h.params.is_empty() {
+                let raw_params: Vec<String> = h
+                    .params
+                    .iter()
+                    .map(|p| format!("{}: string", crate::emitter::ts_ident(&p.name.name)))
+                    .collect();
+                let raw_body_init = match body_ps.first() {
+                    Some(p) => format!("body: {}, ", crate::emitter::ts_ident(&p.name.name)),
+                    None => String::new(),
+                };
+                routes.push_str(&format!(
                 "async function __sysdrive_raw_{sname}_{key}({params}{sep}__sub: string) {{\n\
                  \x20 const __h = makeHarness();\n\
                  \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {raw_body_init}}});\n\
                  \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
                  \x20 return responseToHttpOutcome(__res, {payload_deser});\n\
                  }}\n",
-                params = raw_params.join(", "),
-                sep = if raw_params.is_empty() { "" } else { ", " },
-                method = method.as_str(),
-            ));
+                    params = raw_params.join(", "),
+                    sep = if raw_params.is_empty() { "" } else { ", " },
+                    method = method.as_str(),
+                ));
+            }
         }
     }
 

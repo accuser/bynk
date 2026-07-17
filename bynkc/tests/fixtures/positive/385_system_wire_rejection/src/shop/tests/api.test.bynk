@@ -15,4 +15,8 @@ suite shop.api as system {
     let r <- api.POST("/cart", Wire("{\"sku\": \"raw-ok\"}")) by User("alice")
     expect r is Handled(_)
   }
+  case "a handler-returned 400 is Handled, not a boundary rejection" {
+    let r <- api.POST("/reject", Wire("{\"sku\": \"ok\"}")) by User("alice")
+    expect r is Handled(_)
+  }
 }

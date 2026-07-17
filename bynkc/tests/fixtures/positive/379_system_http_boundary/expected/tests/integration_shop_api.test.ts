@@ -66,12 +66,6 @@ async function __sysdrive_api_http_GET_cart_size(__sub: string) {
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpResult(__res, (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j));
 }
-async function __sysdrive_raw_api_http_GET_cart_size(__sub: string) {
-  const __h = makeHarness();
-  const __req = new Request(`https://test/cart/size`, { method: "GET", headers: { "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, });
-  const __res = await __h.env.SHOP_API.fetch(__req);
-  return responseToHttpOutcome(__res, (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j));
-}
 
 async function test_a_create_returns_Created_over_the_real_wire() {
   try {

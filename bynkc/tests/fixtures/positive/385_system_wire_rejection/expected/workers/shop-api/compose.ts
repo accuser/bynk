@@ -24,5 +24,16 @@ export function compose(env: Env) {
       if (__id.tag === "Err") return HttpResult.Unauthorized;
       return handlers.api.http_POST_cart(body, { ...deps, identity: __id.value });
     },
+    async http_POST_reject(request: Request, body: any) {
+      const __authz = request.headers.get("Authorization");
+      if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
+      const __secret = (env as unknown as Record<string, unknown>)["AUTH_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["AUTH_SECRET"];
+      if (typeof __secret !== "string") return HttpResult.Unauthorized;
+      const __claims = await verifyBearerJwtHs256(__authz.slice(7), __secret);
+      if (__claims.tag === "Err") return HttpResult.Unauthorized;
+      const __id = handlers.UserId.of(__claims.value.sub);
+      if (__id.tag === "Err") return HttpResult.Unauthorized;
+      return handlers.api.http_POST_reject(body, { ...deps, identity: __id.value });
+    },
   };
 }

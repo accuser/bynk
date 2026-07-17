@@ -376,26 +376,35 @@ export type HttpOutcome<T> =
   | { readonly tag: "Rejected"; readonly value: { readonly tag: string; readonly [k: string]: unknown } }
   | { readonly tag: "Handled"; readonly value: HttpResult<T> };
 
+// The `BoundaryError.kind`s the router emits when it refuses input *before* the
+// handler — the only shapes that make an outcome `Rejected`. Kept in sync with
+// the router's rejection bodies in `workers_entry.rs`.
+const BOUNDARY_REJECTION_KINDS = new Set(["RefinementViolation", "MalformedJson", "StructuralMismatch"]);
+
 export async function responseToHttpOutcome<T>(
   response: Response,
   deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
 ): Promise<HttpOutcome<T>> {
-  // A pre-handler rejection is a `400` (a refinement/structural violation or
-  // malformed JSON) whose body is the router's `BoundaryError` JSON. `415`
-  // (unsupported media type) is the same class. Anything else — a `2xx`, a
-  // handler-returned error status — is a response the handler produced, so it is
-  // `Handled`. (401/405 rejections are a follow-on: they need a credential
-  // override and wrong-method addressing the address surface does not yet carry.)
-  if (response.status === 400 || response.status === 415) {
-    let detail: { readonly tag: string; readonly [k: string]: unknown };
+  // Classify on the body's *shape*, not its status. A pre-handler rejection is a
+  // `400` whose body is a `BoundaryError` carrying a recognised `kind`. A
+  // handler that *ran* and returned `BadRequest(msg)` also yields a `400`, but
+  // its body is `{ error: msg }` with no `kind` — the handler produced it, so it
+  // is `Handled`, not `Rejected`. Reading `kind` (rather than the status) is what
+  // keeps "the handler never ran" — the whole meaning of `Rejected` — accurate.
+  if (response.status === 400) {
+    let body: { kind?: unknown } | null = null;
     try {
-      const body = (await response.json()) as { kind?: string; [k: string]: unknown };
-      const kind = typeof body?.kind === "string" ? body.kind : "MalformedJson";
-      detail = { ...body, tag: kind };
+      body = (await response.clone().json()) as { kind?: unknown };
     } catch {
-      detail = { tag: "MalformedJson" };
+      body = null;
     }
-    return { tag: "Rejected", value: detail };
+    if (body && typeof body.kind === "string" && BOUNDARY_REJECTION_KINDS.has(body.kind)) {
+      return {
+        tag: "Rejected",
+        value: { ...(body as Record<string, unknown>), tag: body.kind },
+      };
+    }
+    // No boundary `kind` → the handler produced this `400`; fall through.
   }
   const handled = await responseToHttpResult(response, deserialiseValue);
   return { tag: "Handled", value: handled };

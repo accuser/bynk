@@ -94,6 +94,9 @@ export const api = {
     const saved = await __makeCart(deps.identity, deps.env).add(body, deps);
     return HttpResult.Created(saved);
   },
+  async http_POST_reject(body: Item, deps: { identity: UserId }): Promise<HttpResult<Item>> {
+    return HttpResult.BadRequest("the handler ran and rejected it");
+  },
 };
 
 export function __resetAgents(): void {

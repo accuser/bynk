@@ -60,6 +60,19 @@ async function __sysdrive_raw_api_http_POST_cart(body: string, __sub: string) {
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpOutcome(__res, shop_api.deserialise_Item);
 }
+async function __sysdrive_api_http_POST_reject(body: any, __sub: string) {
+  const __body = JSON.stringify(shop_api.serialise_Item(body));
+  const __h = makeHarness();
+  const __req = new Request(`https://test/reject`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
+  const __res = await __h.env.SHOP_API.fetch(__req);
+  return responseToHttpResult(__res, shop_api.deserialise_Item);
+}
+async function __sysdrive_raw_api_http_POST_reject(body: string, __sub: string) {
+  const __h = makeHarness();
+  const __req = new Request(`https://test/reject`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
+  const __res = await __h.env.SHOP_API.fetch(__req);
+  return responseToHttpOutcome(__res, shop_api.deserialise_Item);
+}
 
 async function test_a_typed_create_returns_Created_over_the_real_wire() {
   try {
@@ -117,6 +130,20 @@ async function test_valid_raw_input_passes_the_boundary_to_the_handler() {
   }
 }
 
+async function test_a_handler_returned_400_is_Handled__not_a_boundary_rejection() {
+  try {
+    const deps = makeHarness();
+    const r = await __sysdrive_raw_api_http_POST_reject("{\"sku\": \"ok\"}", "alice");
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:20:12", 857, 872, "expect r is Handled(_)"); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
@@ -124,5 +151,6 @@ export async function run(only?: string) {
   if (want("an empty sku is rejected at the boundary before the handler")) results.push({ name: "an empty sku is rejected at the boundary before the handler", ...(await test_an_empty_sku_is_rejected_at_the_boundary_before_the_handler()) });
   if (want("malformed json is rejected at the boundary")) results.push({ name: "malformed json is rejected at the boundary", ...(await test_malformed_json_is_rejected_at_the_boundary()) });
   if (want("valid raw input passes the boundary to the handler")) results.push({ name: "valid raw input passes the boundary to the handler", ...(await test_valid_raw_input_passes_the_boundary_to_the_handler()) });
+  if (want("a handler-returned 400 is Handled, not a boundary rejection")) results.push({ name: "a handler-returned 400 is Handled, not a boundary rejection", ...(await test_a_handler_returned_400_is_Handled__not_a_boundary_rejection()) });
   return results;
 }

@@ -38,7 +38,27 @@ export default {
           return applySecurityHeaders(httpResultToResponse(result, handlers.serialise_Item), __security_api);
         }
       }
+      {
+        if (method === "POST" && path === "/reject") {
+          let __body_json: JsonValue;
+          try {
+            __body_json = (await request.json()) as JsonValue;
+          } catch {
+            return applySecurityHeaders(new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
+          }
+          const __r_body = handlers.deserialise_Item(__body_json, "$");
+          if (__r_body.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
+          const body = __r_body.value;
+          const result = await surface.http_POST_reject(request, body);
+          return applySecurityHeaders(httpResultToResponse(result, handlers.serialise_Item), __security_api);
+        }
+      }
       if (path === "/cart") {
+        const __status = method === "OPTIONS" ? 204 : 405;
+        const __res = new Response(null, { status: __status, headers: { allow: "OPTIONS, POST" } });
+        return applySecurityHeaders(__res, __security_api);
+      }
+      if (path === "/reject") {
         const __status = method === "OPTIONS" ? 204 : 405;
         const __res = new Response(null, { status: __status, headers: { allow: "OPTIONS, POST" } });
         return applySecurityHeaders(__res, __security_api);
