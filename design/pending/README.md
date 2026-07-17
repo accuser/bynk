@@ -1,8 +1,9 @@
 # Pending increments
 
-Part of the **increment-allocation** track
-([`../tracks/increment-allocation.md`](../tracks/increment-allocation.md), spine
-[#685](https://github.com/accuser/bynk/issues/685)).
+The mechanism from the **increment-allocation** track (now retired — closing
+summary in [`../archive/retired-tracks.md`](../archive/retired-tracks.md), spine
+[#685](https://github.com/accuser/bynk/issues/685)); the load-bearing decision is
+[ADR 0206](../decisions/0206-allocation-on-main.md).
 
 A feature PR does **not** choose its version or its ADR number. Both are
 strictly-increasing counters, and a value picked while a PR is open races every

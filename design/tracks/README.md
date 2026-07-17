@@ -68,7 +68,6 @@ each track's spine issue; this table is deliberately just the map.
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`deploy.md`](deploy.md) | [#558](https://github.com/accuser/bynk/issues/558) | Settling — no slice authorised | The `bynk deploy` verb: provisioning + remote deploy, and the load-bearing provisioning-state model |
 | [`testing-the-boundary.md`](testing-the-boundary.md) | [#656](https://github.com/accuser/bynk/issues/656) | Slicing (slice 0 shipped) | Driving a service endpoint from a `case`, and the identity that reaches it: teaching the tier dial the public door it was never taught |
-| [`increment-allocation.md`](increment-allocation.md) | [#685](https://github.com/accuser/bynk/issues/685) | Complete — ready to retire (Slices 0–3 shipped) | Defer the version and ADR-number assignment to a per-merge stamp on `main`, so parallel increments stop conflicting on the two serial counters |
 
 (`documentation.md` and `deploy.md` pre-date the GitHub-native flow, so their
 docs were committed by ordinary PRs rather than settling draft PRs; the spine
@@ -86,6 +85,11 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`increment-allocation.md`** — the version and the ADR number, two serial
+  counters that collided across parallel increments, are now assigned by a
+  per-merge stamp on `main` (an `xtask` command + a workflow) from a numberless
+  `design/pending/` file, not chosen in the feature PR; the surface-shrink also
+  made `llms-full.txt` a build artifact. Slices 0–3 shipped (ADR 0206).
 - **`lsp-foundations.md`** — the foundation under the shipped LSP surface: one
   project model shared with `bynkc`, a freshness contract, real multi-root
   workspaces, startup analysis + server-registered watchers, one scheduler, and

@@ -3,9 +3,9 @@
 //! A feature PR adds one `design/pending/<slug>.md` declaring its bump level, a
 //! one-line changelog blurb, and — when it records a decision — one or more ADR
 //! prose blocks. It writes *no* version and *no* ADR number: those are the two
-//! serial counters the track defers to a merge-time stamp (a later slice), so
-//! that parallel increments stop conflicting on them. See
-//! `design/tracks/increment-allocation.md` and `design/pending/README.md`.
+//! serial counters that the merge-time stamp assigns on `main`, so that parallel
+//! increments stop conflicting on them. See `design/pending/README.md` and
+//! ADR 0206 (`design/decisions/0206-allocation-on-main.md`).
 //!
 //! This module is the *format contract* between that human-authored file and the
 //! future stamp. It is process tooling, not compiler behaviour, which is why it
