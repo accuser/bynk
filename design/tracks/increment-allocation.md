@@ -1,12 +1,18 @@
 # Increment allocation — the version and the ADR number are stamped at merge, not chosen at authoring
 
-- **Status:** **Adopted — slicing; no slice authorised.** The spine is
+- **Status:** **Adopted — slicing. Slices 0–1 shipped.** The spine is
   [#685](https://github.com/accuser/bynk/issues/685)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); direction was settled
   by the merge of the settling PR [#684](https://github.com/accuser/bynk/pull/684). Adoption
   is **not** build authorisation — a slice is approved to build only when its own proposal is
-  `accepted`. The §5.1 question (per-merge stamp vs. batched release PR) is **settled**:
-  per-merge. Live slice state is on the spine.
+  `accepted`. **Slice 0** ([#688](https://github.com/accuser/bynk/pull/688), #687) shipped the
+  `design/pending/` format and the `xtask` validator; **Slice 1** (#689) shipped the
+  `cargo xtask stamp` command (version + changelog + ADR materialisation + consume). The §5.1
+  question (per-merge stamp vs. batched release PR) is **settled**: per-merge. **The Slice 1/2
+  boundary was re-cut** (Slice 1 #689 DECISION A): idempotency (delete-what-you-consume)
+  entangles version and ADR assignment, so Slice 1 absorbed ADR materialisation, and the
+  per-merge *workflow* — with the open bot-identity/branch-protection question — is now its
+  own Slice 2 (§7). Live slice state is on the spine.
 - **Realises:** [`../README.md` §"Versioning & release"](../README.md) (the single-repo
   version, `scripts/bump-version.sh`, the tag→publish backbone) and
   [`../bynk-release-discipline.md`](../bynk-release-discipline.md) (daily increments each
@@ -236,15 +242,20 @@ conflict class on its own. Sequenced last, and only if it earns its keep against
 Numbers are provisional; each slice is an ordinary increment proposal, `accepted` on its own
 sub-issue before build.
 
-- **Slice 0 — the pending-increment unit.** Define the file format and a validator (a
-  malformed pending file fails CI in the feature PR). No stamp yet; the format lands and is
-  exercised first. Load-bearing ADR: the pending unit.
-- **Slice 1 — the merge-time stamp (version).** The `main` automation that consumes pending
-  files, computes the version, runs `bump-version.sh`, writes the changelog row, and commits
-  per-merge (§5.1, settled). Load-bearing ADR: allocation-on-`main`.
-- **Slice 2 — ADR materialisation.** Extend the stamp to assign numbers, write the numbered
-  ADR files, and add index rows, keeping `decisions_index` satisfied at every step. Load-
-  bearing ADR: prose-reviewed-in-PR, number-assigned-at-merge.
+- **Slice 0 — the pending-increment unit.** The file format and a validator (a malformed
+  pending file fails CI in the feature PR). No stamp yet; the format lands and is exercised
+  first. **Shipped — #688 (#687).**
+- **Slice 1 — the `cargo xtask stamp` command.** Reads the pending files, assigns each its
+  next version (in merge order) and the next ADR number(s), and — with `--apply` — runs
+  `bump-version.sh`, prepends the changelog row(s), writes the ADR file(s) + index row(s), and
+  deletes the consumed pending file(s); dry-run by default. **Absorbs ADR materialisation**
+  (#689 DECISION A: idempotency entangles version and ADR assignment into one atomic consume).
+  **Shipped — #689.**
+- **Slice 2 — the per-merge workflow.** Run the stamp automatically on merge to `main` and
+  commit the result. Resolves the open question §9 (the bot identity and its composition with
+  branch protection) and carries the load-bearing **allocation-on-`main`** ADR — deferred to
+  here from Slice 1 so it describes the mechanism once it is *operative*, not a command yet to
+  be wired. (Split out of Slice 1 so the tested command lands independent of the risky wiring.)
 - **Slice 3 (deferrable) — shrink the surface.** Move derived copies to CI generation (§6).
 
 ## 8. Prior art

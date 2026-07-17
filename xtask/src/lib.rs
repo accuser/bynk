@@ -17,6 +17,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod stamp;
+
 /// The bump level an increment declares. The stamp turns this into the next
 /// `X.Y.Z` in merge order; the format never carries a concrete number.
 #[derive(Debug, PartialEq, Eq)]
@@ -25,12 +27,31 @@ pub enum Level {
     Patch,
 }
 
-/// One ADR prose block. The stamp moves `body` verbatim into
-/// `design/decisions/NNNN-<slug>.md`, assigning `NNNN` at merge.
+/// One ADR block. The stamp writes `design/decisions/NNNN-<slug>.md` — a
+/// `# NNNN — <title>` heading, a status line, then `body` verbatim — and a
+/// `decisions/README.md` index row (`**<title>** … <summary>`), assigning
+/// `NNNN` at merge. `title` is required (the file heading and the index bold
+/// need it); `summary` defaults to `title`, `status` to `Accepted`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Adr {
     pub slug: String,
+    pub title: String,
+    pub summary: Option<String>,
+    pub status: Option<String>,
     pub body: String,
+}
+
+impl Adr {
+    /// The one-line distillation for the index row — the author's `summary`, or
+    /// the title when none was given.
+    pub fn summary(&self) -> &str {
+        self.summary.as_deref().unwrap_or(&self.title)
+    }
+
+    /// The ADR status — the author's `status`, or `Accepted`.
+    pub fn status(&self) -> &str {
+        self.status.as_deref().unwrap_or("Accepted")
+    }
 }
 
 /// A parsed, validated pending-increment file.
@@ -52,8 +73,14 @@ pub fn pending_dir() -> PathBuf {
 /// number of pending files validated, or every error found across all files
 /// (each prefixed with its filename) so one run reports the whole picture.
 pub fn check_all() -> Result<usize, Vec<String>> {
-    let dir = pending_dir();
-    let entries = match fs::read_dir(&dir) {
+    validated_pending_in(&pending_dir()).map(|ps| ps.len())
+}
+
+/// Read and validate the pending files in `dir` (skipping `README.md`), sorted
+/// by filename. Root-parameterised so the stamp — and its fixture tests — can
+/// target any tree; [`check_all`] is this over the real [`pending_dir`].
+pub fn validated_pending_in(dir: &Path) -> Result<Vec<(String, Pending)>, Vec<String>> {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(err) => return Err(vec![format!("cannot read {}: {err}", dir.display())]),
     };
@@ -65,24 +92,24 @@ pub fn check_all() -> Result<usize, Vec<String>> {
         .collect();
     names.sort();
 
+    let mut parsed = Vec::new();
     let mut errors = Vec::new();
-    for name in &names {
-        let content = match fs::read_to_string(dir.join(name)) {
+    for name in names {
+        let content = match fs::read_to_string(dir.join(&name)) {
             Ok(c) => c,
             Err(err) => {
                 errors.push(format!("{name}: cannot read: {err}"));
                 continue;
             }
         };
-        if let Err(errs) = validate(name, &content) {
-            for e in errs {
-                errors.push(format!("{name}: {e}"));
-            }
+        match validate(&name, &content) {
+            Ok(p) => parsed.push((name, p)),
+            Err(errs) => errors.extend(errs.into_iter().map(|e| format!("{name}: {e}"))),
         }
     }
 
     if errors.is_empty() {
-        Ok(names.len())
+        Ok(parsed)
     } else {
         Err(errors)
     }
@@ -252,12 +279,37 @@ fn parse_adrs(content: &str, errors: &mut Vec<String>) -> Vec<Adr> {
                 .trim()
                 .to_string();
             i += 1;
-            let mut body = Vec::new();
+            let mut block = Vec::new();
             while i < body_lines.len() && !is_header[i] {
-                body.push(body_lines[i]);
+                block.push(body_lines[i]);
                 i += 1;
             }
-            let body = body.join("\n").trim().to_string();
+
+            // The block opens with `title:`/`summary:`/`status:` key lines (any
+            // order, `title` required), then a blank line, then the verbatim
+            // body. Consume leading blanks and known keys; the first other line
+            // starts the body.
+            let mut title = None;
+            let mut summary = None;
+            let mut status = None;
+            let mut body_start = block.len();
+            for (idx, raw) in block.iter().enumerate() {
+                let line = raw.trim();
+                if line.is_empty() && title.is_none() && summary.is_none() && status.is_none() {
+                    continue;
+                }
+                if let Some(v) = line.strip_prefix("title:") {
+                    title = Some(v.trim().to_string());
+                } else if let Some(v) = line.strip_prefix("summary:") {
+                    summary = Some(v.trim().to_string());
+                } else if let Some(v) = line.strip_prefix("status:") {
+                    status = Some(v.trim().to_string());
+                } else {
+                    body_start = idx;
+                    break;
+                }
+            }
+            let body = block[body_start..].join("\n").trim().to_string();
 
             if !is_kebab(&slug) {
                 errors.push(format!(
@@ -266,10 +318,23 @@ fn parse_adrs(content: &str, errors: &mut Vec<String>) -> Vec<Adr> {
             } else if adrs.iter().any(|a| a.slug == slug) {
                 errors.push(format!("duplicate ADR slug {slug:?}"));
             }
+            match &title {
+                Some(t) if t.is_empty() => {
+                    errors.push(format!("ADR {slug:?} has an empty `title:`"))
+                }
+                None => errors.push(format!("ADR {slug:?} is missing a `title:` line")),
+                _ => {}
+            }
             if body.is_empty() {
                 errors.push(format!("ADR {slug:?} has an empty body"));
             }
-            adrs.push(Adr { slug, body });
+            adrs.push(Adr {
+                slug,
+                title: title.unwrap_or_default(),
+                summary: summary.filter(|s| !s.is_empty()),
+                status: status.filter(|s| !s.is_empty()),
+                body,
+            });
         } else {
             i += 1;
         }
@@ -344,21 +409,50 @@ mod tests {
     }
 
     #[test]
-    fn one_adr_parses_slug_and_body() {
+    fn one_adr_parses_slug_title_and_body() {
         let p = ok(
             "unit-tier.md",
-            "---\nlevel: minor\nchangelog: Drive a handler at the unit tier\n---\n\n## ADR: unit-tier-service-address\n\n**Decision.** A case addresses by surface.\n",
+            "---\nlevel: minor\nchangelog: Drive a handler at the unit tier\n---\n\n## ADR: unit-tier-service-address\ntitle: A case addresses a handler by surface\n\n**Decision.** A case addresses by surface.\n",
         );
         assert_eq!(p.adrs.len(), 1);
-        assert_eq!(p.adrs[0].slug, "unit-tier-service-address");
-        assert!(p.adrs[0].body.contains("addresses by surface"));
+        let adr = &p.adrs[0];
+        assert_eq!(adr.slug, "unit-tier-service-address");
+        assert_eq!(adr.title, "A case addresses a handler by surface");
+        // summary/status default to title/"Accepted" when absent.
+        assert_eq!(adr.summary(), adr.title);
+        assert_eq!(adr.status(), "Accepted");
+        assert!(adr.body.contains("addresses by surface"));
+        assert!(!adr.body.contains("title:"), "the title line is not body");
+    }
+
+    #[test]
+    fn adr_summary_and_status_are_parsed() {
+        let p = ok(
+            "x.md",
+            "---\nlevel: minor\nchangelog: x\n---\n\n## ADR: a-slug\ntitle: The title\nsummary: The one-line index distillation\nstatus: Proposed\n\nBody.\n",
+        );
+        let adr = &p.adrs[0];
+        assert_eq!(adr.summary(), "The one-line index distillation");
+        assert_eq!(adr.status(), "Proposed");
+    }
+
+    #[test]
+    fn adr_missing_title_rejected() {
+        assert!(
+            err(
+                "x.md",
+                "---\nlevel: minor\nchangelog: x\n---\n\n## ADR: a-slug\n\nBody with no title line.\n"
+            )
+            .iter()
+            .any(|e| e.contains("missing a `title:`"))
+        );
     }
 
     #[test]
     fn two_adrs_parse() {
         let p = ok(
             "two.md",
-            "---\nlevel: minor\nchangelog: Two decisions\n---\n\n## ADR: first-one\nBody one.\n\n## ADR: second-one\nBody two.\n",
+            "---\nlevel: minor\nchangelog: Two decisions\n---\n\n## ADR: first-one\ntitle: First\n\nBody one.\n\n## ADR: second-one\ntitle: Second\n\nBody two.\n",
         );
         assert_eq!(p.adrs.len(), 2);
         assert_eq!(p.adrs[0].slug, "first-one");
@@ -454,7 +548,7 @@ mod tests {
             "x.md",
             "---\nlevel: minor\nchangelog: Document the format\n---\n\n\
              Example:\n\n```markdown\n## ADR: not-a-real-block\nfenced prose\n```\n\n\
-             ## ADR: the-real-one\nReal body.\n",
+             ## ADR: the-real-one\ntitle: The real one\n\nReal body.\n",
         );
         assert_eq!(p.adrs.len(), 1);
         assert_eq!(p.adrs[0].slug, "the-real-one");
@@ -492,7 +586,7 @@ mod tests {
         assert!(
             err(
                 "x.md",
-                "---\nlevel: minor\nchangelog: x\n---\n\n## ADR: Not_Kebab\nBody.\n"
+                "---\nlevel: minor\nchangelog: x\n---\n\n## ADR: Not_Kebab\ntitle: T\n\nBody.\n"
             )
             .iter()
             .any(|e| e.contains("not a kebab-case slug"))
@@ -503,7 +597,7 @@ mod tests {
     fn duplicate_adr_slug_rejected() {
         assert!(err(
             "x.md",
-            "---\nlevel: minor\nchangelog: x\n---\n\n## ADR: dup\nBody a.\n\n## ADR: dup\nBody b.\n"
+            "---\nlevel: minor\nchangelog: x\n---\n\n## ADR: dup\ntitle: A\n\nBody a.\n\n## ADR: dup\ntitle: B\n\nBody b.\n"
         )
         .iter()
         .any(|e| e.contains("duplicate ADR slug")));
@@ -514,7 +608,7 @@ mod tests {
         assert!(
             err(
                 "x.md",
-                "---\nlevel: minor\nchangelog: x\n---\n\n## ADR: empty\n\n## ADR: next\nBody.\n"
+                "---\nlevel: minor\nchangelog: x\n---\n\n## ADR: empty\ntitle: T\n\n## ADR: next\ntitle: N\n\nBody.\n"
             )
             .iter()
             .any(|e| e.contains("empty body"))
