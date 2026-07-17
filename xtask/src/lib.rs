@@ -167,6 +167,9 @@ fn parse_frontmatter(
         let value = value.trim();
         match key {
             "level" => {
+                if saw_level {
+                    errors.push("duplicate frontmatter key `level`".into());
+                }
                 saw_level = true;
                 level = match value {
                     "minor" => Some(Level::Minor),
@@ -178,6 +181,9 @@ fn parse_frontmatter(
                 };
             }
             "changelog" => {
+                if saw_changelog {
+                    errors.push("duplicate frontmatter key `changelog`".into());
+                }
                 saw_changelog = true;
                 if value.is_empty() {
                     errors.push("changelog must not be empty".into());
@@ -220,15 +226,34 @@ fn parse_adrs(content: &str, errors: &mut Vec<String>) -> Vec<Adr> {
         body_lines.push(line);
     }
 
+    // A `## ADR:` line inside a ``` code fence is prose (e.g. a pending file
+    // documenting the format inline), not a block header. Mark each line's
+    // header-ness up front, toggling on backtick-fence delimiters, so both the
+    // outer scan and the body-collecting loop below agree on where blocks start.
+    let mut in_fence = false;
+    let is_header: Vec<bool> = body_lines
+        .iter()
+        .map(|line| {
+            if line.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+                false
+            } else {
+                !in_fence && adr_header_slug(line).is_some()
+            }
+        })
+        .collect();
+
     let mut adrs: Vec<Adr> = Vec::new();
     let mut i = 0;
     while i < body_lines.len() {
-        let line = body_lines[i];
-        if let Some(rest) = adr_header_slug(line) {
-            let slug = rest.trim().to_string();
+        if is_header[i] {
+            let slug = adr_header_slug(body_lines[i])
+                .expect("is_header implies an ADR header")
+                .trim()
+                .to_string();
             i += 1;
             let mut body = Vec::new();
-            while i < body_lines.len() && adr_header_slug(body_lines[i]).is_none() {
+            while i < body_lines.len() && !is_header[i] {
                 body.push(body_lines[i]);
                 i += 1;
             }
@@ -267,16 +292,21 @@ fn is_kebab(s: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// Whether the changelog's first token reads as a version (optionally `v`-prefixed,
-/// with at least one dot between digit groups) — the stamp prepends the number,
-/// so the blurb must not carry one.
+/// Whether the changelog's first token reads as a repo version the author has
+/// accidentally prefixed — the stamp prepends the number, so the blurb must not
+/// carry one. Matched to the repo's actual spellings: a `v` prefix (`v0.186`,
+/// the banner form) or three-plus numeric groups (`0.186.0`, the Cargo form).
+/// A bare two-group token like `3.0` is *not* a version here, so a blurb such as
+/// "3.0 rendering pipeline added" is allowed.
 fn looks_like_version_prefix(changelog: &str) -> bool {
-    let tok = changelog.split_whitespace().next().unwrap_or("");
-    let tok = tok.trim_start_matches(['v', 'V']);
-    tok.contains('.')
-        && tok
-            .split('.')
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    let raw = changelog.split_whitespace().next().unwrap_or("");
+    let had_v = raw.starts_with('v') || raw.starts_with('V');
+    let groups: Vec<&str> = raw.trim_start_matches(['v', 'V']).split('.').collect();
+    let all_numeric = groups.len() >= 2
+        && groups
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    all_numeric && (had_v || groups.len() >= 3)
 }
 
 #[cfg(test)]
@@ -392,6 +422,42 @@ mod tests {
             "x.md",
             "---\nlevel: minor\nchangelog: Support semver ranges like 1.2.3\n---\n",
         );
+    }
+
+    #[test]
+    fn bare_two_group_leading_number_is_allowed() {
+        // `3.0` is not a repo version (no `v`, only two groups) — a blurb may
+        // legitimately open with it.
+        ok(
+            "x.md",
+            "---\nlevel: minor\nchangelog: 3.0 rendering pipeline added\n---\n",
+        );
+    }
+
+    #[test]
+    fn duplicate_frontmatter_key_rejected() {
+        assert!(
+            err(
+                "x.md",
+                "---\nlevel: minor\nlevel: patch\nchangelog: x\n---\n"
+            )
+            .iter()
+            .any(|e| e.contains("duplicate frontmatter key `level`"))
+        );
+    }
+
+    #[test]
+    fn adr_header_inside_a_code_fence_is_not_a_block() {
+        // A pending file documenting the format inline must not have its fenced
+        // `## ADR:` example split off into a spurious block.
+        let p = ok(
+            "x.md",
+            "---\nlevel: minor\nchangelog: Document the format\n---\n\n\
+             Example:\n\n```markdown\n## ADR: not-a-real-block\nfenced prose\n```\n\n\
+             ## ADR: the-real-one\nReal body.\n",
+        );
+        assert_eq!(p.adrs.len(), 1);
+        assert_eq!(p.adrs[0].slug, "the-real-one");
     }
 
     #[test]
