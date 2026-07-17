@@ -182,6 +182,8 @@ impl Lin<'_> {
                     self.walk_expr(a, state);
                 }
             }
+            // Slice C: `Wire(<String>)` — walk the raw inner expression.
+            ExprKind::Wire(inner) => self.walk_expr(inner, state),
             ExprKind::If {
                 cond,
                 then_block,

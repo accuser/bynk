@@ -60,18 +60,25 @@ async function __sysdrive_raw_api_http_POST_cart(body: string, __sub: string) {
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToHttpOutcome(__res, shop_api.deserialise_Item);
 }
-async function __sysdrive_api_http_GET_cart_size(__sub: string) {
+async function __sysdrive_api_http_POST_reject(body: any, __sub: string) {
+  const __body = JSON.stringify(shop_api.serialise_Item(body));
   const __h = makeHarness();
-  const __req = new Request(`https://test/cart/size`, { method: "GET", headers: { "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, });
+  const __req = new Request(`https://test/reject`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: __body, });
   const __res = await __h.env.SHOP_API.fetch(__req);
-  return responseToHttpResult(__res, (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j));
+  return responseToHttpResult(__res, shop_api.deserialise_Item);
+}
+async function __sysdrive_raw_api_http_POST_reject(body: string, __sub: string) {
+  const __h = makeHarness();
+  const __req = new Request(`https://test/reject`, { method: "POST", headers: { "content-type": "application/json", "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, body: body, });
+  const __res = await __h.env.SHOP_API.fetch(__req);
+  return responseToHttpOutcome(__res, shop_api.deserialise_Item);
 }
 
-async function test_a_create_returns_Created_over_the_real_wire() {
+async function test_a_typed_create_returns_Created_over_the_real_wire() {
   try {
     const deps = makeHarness();
     const item = await __sysdrive_api_http_POST_cart({ sku: "widget" }, "alice");
-    if (!(item.tag === "Created")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:4:12", 168, 186, "expect item is Created(_)"); }
+    if (!(item.tag === "Created")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:4:12", 174, 192, "expect item is Created(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -81,11 +88,53 @@ async function test_a_create_returns_Created_over_the_real_wire() {
   }
 }
 
-async function test_the_size_read_is_Ok_over_the_wire() {
+async function test_an_empty_sku_is_rejected_at_the_boundary_before_the_handler() {
   try {
     const deps = makeHarness();
-    const n = await __sysdrive_api_http_GET_cart_size("bob");
-    if (!(n.tag === "Ok")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:8:12", 297, 307, "expect n is Ok(_)"); }
+    const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"\"}", "alice");
+    if (!(r.tag === "Rejected")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:8:12", 352, 368, "expect r is Rejected(_)"); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function test_malformed_json_is_rejected_at_the_boundary() {
+  try {
+    const deps = makeHarness();
+    const r = await __sysdrive_raw_api_http_POST_cart("{not json", "alice");
+    if (!(r.tag === "Rejected")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:12:12", 505, 521, "expect r is Rejected(_)"); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function test_valid_raw_input_passes_the_boundary_to_the_handler() {
+  try {
+    const deps = makeHarness();
+    const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"raw-ok\"}", "alice");
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:16:12", 678, 693, "expect r is Handled(_)"); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+async function test_a_handler_returned_400_is_Handled__not_a_boundary_rejection() {
+  try {
+    const deps = makeHarness();
+    const r = await __sysdrive_raw_api_http_POST_reject("{\"sku\": \"ok\"}", "alice");
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:20:12", 857, 872, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -98,7 +147,10 @@ async function test_the_size_read_is_Ok_over_the_wire() {
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
-  if (want("a create returns Created over the real wire")) results.push({ name: "a create returns Created over the real wire", ...(await test_a_create_returns_Created_over_the_real_wire()) });
-  if (want("the size read is Ok over the wire")) results.push({ name: "the size read is Ok over the wire", ...(await test_the_size_read_is_Ok_over_the_wire()) });
+  if (want("a typed create returns Created over the real wire")) results.push({ name: "a typed create returns Created over the real wire", ...(await test_a_typed_create_returns_Created_over_the_real_wire()) });
+  if (want("an empty sku is rejected at the boundary before the handler")) results.push({ name: "an empty sku is rejected at the boundary before the handler", ...(await test_an_empty_sku_is_rejected_at_the_boundary_before_the_handler()) });
+  if (want("malformed json is rejected at the boundary")) results.push({ name: "malformed json is rejected at the boundary", ...(await test_malformed_json_is_rejected_at_the_boundary()) });
+  if (want("valid raw input passes the boundary to the handler")) results.push({ name: "valid raw input passes the boundary to the handler", ...(await test_valid_raw_input_passes_the_boundary_to_the_handler()) });
+  if (want("a handler-returned 400 is Handled, not a boundary rejection")) results.push({ name: "a handler-returned 400 is Handled, not a boundary rejection", ...(await test_a_handler_returned_400_is_Handled__not_a_boundary_rejection()) });
   return results;
 }

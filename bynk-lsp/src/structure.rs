@@ -189,6 +189,7 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
         | ExprKind::Err(x)
         | ExprKind::Question(x)
         | ExprKind::Some(x)
+        | ExprKind::Wire(x)
         | ExprKind::EffectPure(x)
         | ExprKind::Expect(x) => walk_expr(x, out),
         ExprKind::Call { args, .. } | ExprKind::ConstructorCall { args, .. } => {

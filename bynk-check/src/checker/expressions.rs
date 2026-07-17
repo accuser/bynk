@@ -1181,6 +1181,8 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
     }
     match &e.kind {
         ExprKind::Lambda(_) => false,
+        // Slice C: `Wire(<String>)` wraps a pure string literal — never effectful.
+        ExprKind::Wire(inner) => body_performs_effects(inner, ctx),
         // v0.43: an interpolated string is effectful iff one of its holes is.
         ExprKind::InterpStr(parts) => parts
             .iter()

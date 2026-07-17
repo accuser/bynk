@@ -64,6 +64,29 @@ end-to-end concern, not the system tier's. A single-context `from http` service
 qualifies for `as system` (it has a real serialisation edge); a `cron`-only target
 does not (`bynk.tier.system_needs_wire`).
 
+### Driving a rejection with `Wire`
+
+A typed argument is valid by construction, so the boundary can never reject it. To
+test the *rejection* path — the part the boundary exists for — a `system`-tier case
+passes a raw `Wire(<String>)` argument: the string reaches the router
+**unvalidated**, exactly as an over-the-wire request would, so a refinement
+violation or malformed JSON is refused *before the handler runs*.
+
+```bynk
+case "an empty sku is rejected at the boundary" as system {
+  let r <- api.POST("/cart", Wire("{\"sku\": \"\"}")) by User("alice")
+  expect r is Rejected(_)
+}
+```
+
+A `Wire`-carrying call yields `Rejected(_) | Handled(_)` instead of an
+`HttpResult`: `Rejected` when the router refused the input before the handler,
+`Handled` when it ran (a valid raw body promotes to the handler, so
+`expect r is Handled(_)`). `Wire` is legal **only** as a service-address argument
+in a `system`-tier case — there is no wire to be raw about at `unit`
+(`bynk.test.wire_needs_system`) — and no refined value is ever built from it: the
+router validates the raw string, which is the whole point.
+
 ## `expect`
 
 `expect <bool-predicate>` checks a predicate. It exists in both statement form (a

@@ -492,6 +492,20 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `Wire '(' expr ')'` — Slice C raw system-tier argument. The leading `Wire`
+    /// identifier and the `(` lookahead have already been confirmed by the caller;
+    /// `kw_span` is the `Wire` span. The inner expression's `String`-ness is a
+    /// checker concern, not the parser's.
+    fn parse_wire_expr(&mut self, kw_span: Span) -> Result<Expr, CompileError> {
+        self.expect(TokenKind::LParen, "after `Wire`")?;
+        let inner = self.parse_expr()?;
+        let close = self.expect(TokenKind::RParen, "to close `Wire(…)`")?;
+        Ok(Expr {
+            kind: ExprKind::Wire(Box::new(inner)),
+            span: kw_span.merge(close.span),
+        })
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, CompileError> {
         let t = self.peek().ok_or_else(|| {
             CompileError::new(
@@ -677,6 +691,14 @@ impl<'a> Parser<'a> {
                 // v0.9.4: `Val[T]` / `Val[T](args)` — test-context construction.
                 if ident.name == "Val" && self.peek_kind() == Some(TokenKind::LBracket) {
                     return self.parse_val_expr(ident.span);
+                }
+                // Slice C: `Wire(<String>)` — a raw, pre-validation argument to a
+                // `system`-tier service address. Recognised by the `Wire (` shape,
+                // like `Val[`, so an ordinary call to a user function named `Wire`
+                // is still possible only if it never sits in argument position at
+                // `system` (the checker restricts `Wire` to that use).
+                if ident.name == "Wire" && self.peek_kind() == Some(TokenKind::LParen) {
+                    return self.parse_wire_expr(ident.span);
                 }
                 // v0.117: `trace(Cap.op)` — the observation escape hatch, a
                 // test-only builtin. Recognised by the `trace ( Ident . Ident )`

@@ -363,6 +363,53 @@ export async function responseToHttpResult<T>(
   }
 }
 
+// Slice C (testing-the-boundary): the outcome of a `system`-tier address driven
+// with a raw `Wire(…)` argument. A boundary rejection never produces an
+// `HttpResult` (the handler never ran), so a `Wire`-carrying call yields this
+// sum instead: `Rejected(detail)` when the router refused the input before the
+// handler, or `Handled(httpResult)` when it ran. The rejection `detail` carries a
+// `tag` mirroring the router's `BoundaryError.kind` (`RefinementViolation`,
+// `MalformedJson`, `StructuralMismatch`), so `expect r is Rejected(
+// RefinementViolation(_))` lowers to a plain `.tag` test — the value is decoded
+// here; the checker keeps the outcome loose (the runner recovers the shape).
+export type HttpOutcome<T> =
+  | { readonly tag: "Rejected"; readonly value: { readonly tag: string; readonly [k: string]: unknown } }
+  | { readonly tag: "Handled"; readonly value: HttpResult<T> };
+
+// The `BoundaryError.kind`s the router emits when it refuses input *before* the
+// handler — the only shapes that make an outcome `Rejected`. Kept in sync with
+// the router's rejection bodies in `workers_entry.rs`.
+const BOUNDARY_REJECTION_KINDS = new Set(["RefinementViolation", "MalformedJson", "StructuralMismatch"]);
+
+export async function responseToHttpOutcome<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpOutcome<T>> {
+  // Classify on the body's *shape*, not its status. A pre-handler rejection is a
+  // `400` whose body is a `BoundaryError` carrying a recognised `kind`. A
+  // handler that *ran* and returned `BadRequest(msg)` also yields a `400`, but
+  // its body is `{ error: msg }` with no `kind` — the handler produced it, so it
+  // is `Handled`, not `Rejected`. Reading `kind` (rather than the status) is what
+  // keeps "the handler never ran" — the whole meaning of `Rejected` — accurate.
+  if (response.status === 400) {
+    let body: { kind?: unknown } | null = null;
+    try {
+      body = (await response.clone().json()) as { kind?: unknown };
+    } catch {
+      body = null;
+    }
+    if (body && typeof body.kind === "string" && BOUNDARY_REJECTION_KINDS.has(body.kind)) {
+      return {
+        tag: "Rejected",
+        value: { ...(body as Record<string, unknown>), tag: body.kind },
+      };
+    }
+    // No boundary `kind` → the handler produced this `400`; fall through.
+  }
+  const handled = await responseToHttpResult(response, deserialiseValue);
+  return { tag: "Handled", value: handled };
+}
+
 // v0.131 (ADR 0159): the cross-origin (CORS) policy a `from http` service carries
 // via its `cors { }` section. The compiler synthesises one of these per
 // CORS-enabled service and threads it into the entry router. `allowMethods` is

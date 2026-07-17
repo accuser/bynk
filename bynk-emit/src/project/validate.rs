@@ -230,6 +230,9 @@ fn walk_expr_for_constraints(
                 walk_expr_for_constraints(el, typed, consumed, local, errors);
             }
         }
+        ExprKind::Wire(inner) => {
+            walk_expr_for_constraints(inner, typed, consumed, local, errors);
+        }
         // v0.43: a hole's expression is checked like any other.
         ExprKind::InterpStr(parts) => {
             for part in parts {

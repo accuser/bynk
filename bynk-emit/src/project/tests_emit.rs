@@ -522,6 +522,26 @@ pub(crate) fn process_integration_tests(
                     &mut body_errs,
                     refs,
                 );
+                // Slice C: `Wire(…)` is a `system`-only raw argument (it drives the
+                // real wire); in a non-`system` case it has no wire to be raw
+                // about, so lowering it would silently pass raw text to a direct
+                // in-process handler call. Reject it at the tier where it is known.
+                if !matches!(
+                    super::discovery::case_effective_tier(case, d),
+                    bynk_syntax::ast::TestTier::System
+                ) && block_uses_wire(&case.body)
+                {
+                    body_errs.push(CompileError::new(
+                        "bynk.test.wire_needs_system",
+                        case.name_span,
+                        format!(
+                            "case `\"{}\"` uses `Wire(...)` but is not a `system`-tier case",
+                            case.name
+                        ),
+                    ).with_note(
+                        "`Wire` hands raw, pre-validation input to the real boundary; promote the case with `as system`, or pass a typed argument",
+                    ));
+                }
             }
         }
         let bodies_failed = !body_errs.is_empty();
@@ -786,7 +806,7 @@ fn emit_integration_module(
         ""
     };
     out.push_str(&format!(
-        "import {{ Ok, Err, Some, None, callService, type Result, type Option, type ValidationError, type JsonError, type JsonValue, type BoundaryError, type ServiceBinding, responseToHttpResult{agent_imports} }} from \"{runtime_import}\";\n"
+        "import {{ Ok, Err, Some, None, callService, type Result, type Option, type ValidationError, type JsonError, type JsonValue, type BoundaryError, type ServiceBinding, responseToHttpResult, responseToHttpOutcome{agent_imports} }} from \"{runtime_import}\";\n"
     ));
 
     // Per-participant: workers handler namespace + Worker entry default export.
@@ -1068,6 +1088,37 @@ fn emit_system_http_support(
                 sep = if driver_params.is_empty() { "" } else { ", " },
                 method = method.as_str(),
             ));
+            // Slice C: the raw driver for a `Wire(…)`-carrying call. Every slot is
+            // a raw `string` (the wire form the boundary receives *unvalidated*):
+            // path params flow into the URL, the body string is sent verbatim (no
+            // `serialise`), and the response decodes to an `HttpOutcome` —
+            // `Rejected(detail)` when the router refused the input before the
+            // handler, `Handled(httpResult)` when it ran. Emitted only for a route
+            // with a `Wire`-eligible slot (a body or a path param); a bodyless,
+            // path-param-less route (e.g. `GET /cart/size`) can carry no `Wire`
+            // argument, so its raw driver would be dead code.
+            if !h.params.is_empty() {
+                let raw_params: Vec<String> = h
+                    .params
+                    .iter()
+                    .map(|p| format!("{}: string", crate::emitter::ts_ident(&p.name.name)))
+                    .collect();
+                let raw_body_init = match body_ps.first() {
+                    Some(p) => format!("body: {}, ", crate::emitter::ts_ident(&p.name.name)),
+                    None => String::new(),
+                };
+                routes.push_str(&format!(
+                "async function __sysdrive_raw_{sname}_{key}({params}{sep}__sub: string) {{\n\
+                 \x20 const __h = makeHarness();\n\
+                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {raw_body_init}}});\n\
+                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+                 \x20 return responseToHttpOutcome(__res, {payload_deser});\n\
+                 }}\n",
+                    params = raw_params.join(", "),
+                    sep = if raw_params.is_empty() { "" } else { ", " },
+                    method = method.as_str(),
+                ));
+            }
         }
     }
 
@@ -1516,6 +1567,31 @@ fn block_uses_observation(block: &Block) -> bool {
     let mut found = false;
     let mut check = |e: &Expr| {
         if matches!(e.kind, ExprKind::Observation(_) | ExprKind::Trace { .. }) {
+            found = true;
+        }
+    };
+    for s in &block.statements {
+        let e = match s {
+            Statement::Let(l) => &l.value,
+            Statement::EffectLet(l) => &l.value,
+            Statement::Expect(x) => &x.value,
+            Statement::Send(x) => &x.value,
+            Statement::Do(d) => &d.value,
+            Statement::Assign(a) => &a.value,
+        };
+        crate::emitter::walk_exprs(e, &mut check);
+    }
+    crate::emitter::walk_exprs(&block.tail, &mut check);
+    found
+}
+
+/// Slice C: whether a `case` body uses a `Wire(…)` raw argument anywhere. A
+/// `Wire` is only meaningful at `system` (it hands pre-validation input to the
+/// real boundary); used at any other tier it is `bynk.test.wire_needs_system`.
+fn block_uses_wire(block: &Block) -> bool {
+    let mut found = false;
+    let mut check = |e: &Expr| {
+        if matches!(e.kind, ExprKind::Wire(_)) {
             found = true;
         }
     };

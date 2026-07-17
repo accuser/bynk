@@ -1,0 +1,22 @@
+suite shop.api as system {
+  case "a typed create returns Created over the real wire" {
+    let item <- api.POST("/cart", Item { sku: "widget" }) by User("alice")
+    expect item is Created(_)
+  }
+  case "an empty sku is rejected at the boundary before the handler" {
+    let r <- api.POST("/cart", Wire("{\"sku\": \"\"}")) by User("alice")
+    expect r is Rejected(_)
+  }
+  case "malformed json is rejected at the boundary" {
+    let r <- api.POST("/cart", Wire("{not json")) by User("alice")
+    expect r is Rejected(_)
+  }
+  case "valid raw input passes the boundary to the handler" {
+    let r <- api.POST("/cart", Wire("{\"sku\": \"raw-ok\"}")) by User("alice")
+    expect r is Handled(_)
+  }
+  case "a handler-returned 400 is Handled, not a boundary rejection" {
+    let r <- api.POST("/reject", Wire("{\"sku\": \"ok\"}")) by User("alice")
+    expect r is Handled(_)
+  }
+}
