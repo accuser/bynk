@@ -1,12 +1,6 @@
----
-level: minor
-changelog: The stamp workflow pushes as a GitHub App with ruleset bypass — `main` is protected, so the direct GITHUB_TOKEN push ADR 0206 assumed cannot work (amends ADR 0206)
----
+# 0208 — The stamp pushes as a GitHub App with ruleset bypass — correcting ADR 0206's "main is unprotected" premise
 
-## ADR: stamp-pushes-as-a-github-app
-title: The stamp pushes as a GitHub App with ruleset bypass — correcting ADR 0206's "main is unprotected" premise
-summary: `main` is ruleset-protected; the stamp mints a GitHub App token (in the ruleset bypass) and pushes as the App, not the GITHUB_TOKEN
-status: Accepted
+- **Status:** Accepted (v0.188)
 
 **Amends [ADR 0206](0206-allocation-on-main.md) Decision 4.** The rest of 0206 stands — the pending-increment format, the `cargo xtask stamp` command, per-merge-not-batched, and delete-what-you-consume idempotency are unchanged. Only *how the stamp commit reaches `main`* is corrected.
 
