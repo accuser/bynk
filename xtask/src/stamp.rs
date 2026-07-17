@@ -148,10 +148,10 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
 /// Apply `plan` to `root`: write ADR files + index rows, insert changelog rows,
 /// run `bump` for the final version, then delete the consumed pending files.
 ///
-/// Order matters twice. `bump` runs *after* the changelog edit — the real caller
-/// passes one that runs `scripts/bump-version.sh`, which regenerates `llms-full`
-/// from the changelog — and the pending-file deletes run *after* `bump` succeeds,
-/// so a failed bump leaves the pending files intact and the run stays retryable.
+/// Order matters twice. `bump` runs *after* the ADR + changelog edits — the real
+/// caller passes one that runs `scripts/bump-version.sh` — and the pending-file
+/// deletes run *after* `bump` succeeds, so a failed bump leaves the pending files
+/// intact and the run stays retryable.
 /// `bump` is injected so tests exercise the whole flow on a fixture tree with a
 /// stub that just rewrites the fixture's `Cargo.toml`.
 pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>) -> io::Result<()> {
@@ -194,7 +194,7 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
         fs::write(&readme_path, readme)?;
     }
 
-    // Bump the manifests (regenerates llms-full from the just-written changelog).
+    // Bump the manifests to the final version.
     bump(plan.final_version())?;
 
     // Consume last: delete each pending file only once the bump has succeeded, so

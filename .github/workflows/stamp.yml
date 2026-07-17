@@ -46,7 +46,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       # bump-version.sh (which the stamp shells out to) runs `npm install
-      # --package-lock-only` and the llms-full generator, so the job needs Node.
+      # --package-lock-only`, so the job needs Node.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "22"
@@ -68,7 +68,6 @@ jobs:
           cargo test --package bynkc --test decisions_index
           cargo build --workspace --locked
           cargo test --package xtask
-          node site/scripts/build-llms-full.mjs --check
 
       # Commit and push the stamp. Stage only the paths the stamp and
       # bump-version.sh touch — never a blanket `git add -A`, which could sweep a

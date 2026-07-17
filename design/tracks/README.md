@@ -68,7 +68,7 @@ each track's spine issue; this table is deliberately just the map.
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`deploy.md`](deploy.md) | [#558](https://github.com/accuser/bynk/issues/558) | Settling — no slice authorised | The `bynk deploy` verb: provisioning + remote deploy, and the load-bearing provisioning-state model |
 | [`testing-the-boundary.md`](testing-the-boundary.md) | [#656](https://github.com/accuser/bynk/issues/656) | Slicing (slice 0 shipped) | Driving a service endpoint from a `case`, and the identity that reaches it: teaching the tier dial the public door it was never taught |
-| [`increment-allocation.md`](increment-allocation.md) | [#685](https://github.com/accuser/bynk/issues/685) | Core complete (Slices 0–2 shipped; Slice 3 deferrable) | Defer the version and ADR-number assignment to a per-merge stamp on `main`, so parallel increments stop conflicting on the two serial counters |
+| [`increment-allocation.md`](increment-allocation.md) | [#685](https://github.com/accuser/bynk/issues/685) | Complete — ready to retire (Slices 0–3 shipped) | Defer the version and ADR-number assignment to a per-merge stamp on `main`, so parallel increments stop conflicting on the two serial counters |
 
 (`documentation.md` and `deploy.md` pre-date the GitHub-native flow, so their
 docs were committed by ordinary PRs rather than settling draft PRs; the spine

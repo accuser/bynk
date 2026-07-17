@@ -75,10 +75,9 @@ sed -i.bak -E "s/^([[:space:]]*bynk[a-z-]* = )\"[0-9]+\.[0-9]+\"/\1\"$mm\"/" \
 	bynk*/README.md
 find . -maxdepth 2 -name 'README.md.bak' -delete
 
-# Regenerate the inlined Book (site/public/llms-full.txt) so its banners track the
-# bump. It reads the version straight from Cargo.toml and the Book markdown, so no
-# site build is needed.
-node "$(dirname "$0")/../site/scripts/build-llms-full.mjs" >/dev/null
+# Note: site/public/llms-full.txt is no longer regenerated here — it is a build
+# artifact, produced by the site's `prebuild` npm hook on every `npm run build`
+# (CI + deploy), never committed.
 
 echo "bumped to $ver:"
 grep -m1 '^version' Cargo.toml
