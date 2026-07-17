@@ -207,3 +207,39 @@ imposed; entries keep the order they were retired in.
   [#258](https://github.com/accuser/bynk/issues/258) (marketplace publishing).
   ([#259](https://github.com/accuser/bynk/issues/259), refinement-families nav,
   shipped v0.129 under the retired `editor-currency.md` track.)
+- **`lsp-foundations.md`** — the foundation *under* the shipped LSP surface. An
+  external review found the feature surface "unusually feature-complete" and then
+  four foundational gaps that shared one shape: every gap was in the
+  transport/lifecycle layer, and every test of that layer asserted on static
+  shape rather than behaviour over time. The LSP analysed a different project than
+  `bynkc`; cached rounds had no freshness gate; workspace folders were advertised
+  but unimplemented; there was no startup analysis or dynamic watcher
+  registration. Seven slices closed them (v0.175–v0.184): **0** — file identity, a
+  project-relative `identity_path` beside the tree-relative `source_path` unit
+  validation needs ([ADR 0198](../decisions/0198-file-identity-is-not-the-unit-validation-path.md));
+  **A** — one project model, `bynk-ide` reading the manifest's `[paths]`
+  `include`/`exclude` exactly as `bynkc` does, so the server analyses the *same*
+  files ([ADR 0201](../decisions/0201-the-lsp-analyses-the-compilers-project-model.md));
+  **B** — the freshness contract, an index-backed request refreshing to the buffer
+  the client holds, never answering stale ([ADR 0202](../decisions/0202-the-freshness-contract.md));
+  **C** — the `[lib]` seam, the server moved to `src/lib.rs` so integration tests
+  name the crate and the `#[path]` hack retired (no ADR — a refactor); **D** —
+  per-workspace state, a project-root-keyed map routing by the file's nearest
+  `bynk.toml`, `did_change_workspace_folders`, the multi-root capability made true
+  ([ADR 0204](../decisions/0204-per-workspace-project-state.md)); **E** — startup
+  analysis + server-registered watchers, a `bynk.toml` tree-walk warming every
+  project on activation and the server registering `didChangeWatchedFiles` itself
+  so any client is notified (no ADR); **F** — one diagnostics scheduler, a single
+  generation-based debounce over both modes at the configured delay (no ADR).
+  Q1–Q6 all settled; the recurring lesson was to trace how each handler *uses* the
+  analysis, not just how it reads it (rename *writes* many files → needs a
+  whole-buffer freshness gate). The decisions live on in ADRs
+  [0198](../decisions/0198-file-identity-is-not-the-unit-validation-path.md)/[0201](../decisions/0201-the-lsp-analyses-the-compilers-project-model.md)/[0202](../decisions/0202-the-freshness-contract.md)/[0204](../decisions/0204-per-workspace-project-state.md)
+  and the spec-in-place ([`../bynk-lsp-spec.md`](../bynk-lsp-spec.md), consolidated
+  in slice G). The **first track to run the [ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)
+  GitHub-native flow from the start** — spine issue first, doc via a settling
+  draft PR. **Deferred follow-ons** (none blocking the theme): a per-URI root cache
+  (routing re-walks the FS per request — a static→stateful change, its own perf
+  increment), and the capability depth the spec's §8 now lists — local-binding
+  rename, match-arm navigation, the consumed-context navigation half, auto-import,
+  a test-run codelens.

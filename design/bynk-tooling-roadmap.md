@@ -37,10 +37,11 @@ being *felt*.
 
 ## 1. LSP — current state
 
-Implemented (`bynk-lsp`, advertised in `main.rs`):
+Implemented (`bynk-lsp`, advertised in `lib.rs`'s `server_capabilities()`):
 
-- **Live diagnostics** — recompiles via `bynkc::diagnose` on change and publishes; these
-  are the compiler's *authoritative* diagnostics, a genuine strength.
+- **Live diagnostics** — a debounced project-wide round (`bynk_ide::diagnose_project_with`,
+  open buffers overlaid on disk) on change, single-file `diagnose` for a rootless buffer;
+  these are the compiler's *authoritative* diagnostics, a genuine strength.
 - **Hover** — signatures.
 - **Go‑to‑definition.**
 - **References, rename/prepareRename** (v0.25); **code actions** from diagnostics (v0.26);
@@ -54,7 +55,13 @@ Implemented (`bynk-lsp`, advertised in `main.rs`):
   ceiling. **The surface contract is ADR 0093 (the ceiling lift, ADR 0094); the
   as-built spec lives at [`bynk-lsp-spec.md`](bynk-lsp-spec.md) §3.15.**
 - **Formatting** — document + range.
-- **Document symbols**; **workspace folders.**
+- **Document symbols.**
+- **Document links** (§3.21); **go-to-type-definition** (v0.35).
+- **The foundation under the surface** (LSP foundations track, ADRs 0198/0201/0202/0204):
+  one project model shared with `bynkc`, a freshness contract, **real multi-root
+  workspace folders** (not just the advertised flag — implemented v0.182), startup
+  analysis + server-registered file watchers (v0.183), and one diagnostics scheduler
+  (v0.184).
 
 ---
 

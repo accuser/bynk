@@ -1,18 +1,23 @@
 //! `bynkc-lsp` — Bynk Language Server.
 //!
 //! Implements the LSP capabilities listed in `design/bynk-lsp-spec.md` §4.3:
-//! synchronisation (Full), diagnostics, hover, go-to-definition, formatting,
-//! range formatting, document symbols, references, rename, code actions,
-//! workspace symbols, document highlights, and file watching. Built on
-//! `tower-lsp`.
+//! synchronisation (Full), diagnostics, hover, go-to-definition and -type/-impl,
+//! formatting, document symbols, completion, signature help, references, rename,
+//! code actions, code lens, call hierarchy, document links, inlay hints,
+//! semantic tokens, workspace symbols, real multi-root workspace folders, and
+//! server-registered file watching. Built on `tower-lsp`.
 //!
 //! Architecture:
-//! - [`Backend`] holds the project state: root path (the directory
-//!   containing `bynk.toml`), parsed configuration, and an in-memory map of
-//!   open files. State is guarded by a `tokio::sync::RwLock`.
+//! - [`Backend`] holds the server state (behind a `tokio::sync::RwLock`): a
+//!   **map of projects** keyed by discovered root — each with its own config,
+//!   analysis round, and published set — plus the workspace-folder discovery
+//!   seeds and the client-global map of open documents. A request routes by URI
+//!   to its project (its nearest enclosing `bynk.toml`); a file under none is
+//!   single-file.
 //! - Document changes trigger `schedule_diagnostics`, one generation-based
-//!   debounce (project or single-file) that re-runs the compiler (via
-//!   [`bynk_ide::diagnose`]) and publishes resulting diagnostics.
+//!   debounce (a project-wide round via [`bynk_ide::diagnose_project_with`], or
+//!   single-file [`bynk_ide::diagnose`]) that publishes the resulting
+//!   diagnostics.
 //! - Hover and definition consult the parsed AST for the file under the
 //!   cursor; both are best-effort (return None for unrecognised positions).
 //! - Formatting delegates to [`bynk_fmt::format_source`].

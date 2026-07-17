@@ -152,7 +152,8 @@ The crate is split into focused modules:
 
 | Module | Role |
 |---|---|
-| `main.rs` | Server entry point, `Backend` state, request dispatch, advertised capabilities. |
+| `lib.rs` | The server: `Backend`, the per-project state map, the `LanguageServer` impl, request dispatch, advertised capabilities, and `run()`. |
+| `main.rs` | Thin binary entry point — `bynk_lsp::run().await`. |
 | `position.rs` | Byte-offset ↔ LSP position conversion. |
 | `symbols.rs` | Symbol lookups for hover and go-to-definition. |
 | `hover.rs` | Hover's resolution ladder — the order the lookups are tried in, as one pure function the handler and its tests share. |

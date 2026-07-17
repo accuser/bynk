@@ -28,14 +28,12 @@ This is the first tooling increment for Bynk — a pause from language developme
 
 ### Out of scope (deferred to later tooling increments)
 
-- General autocomplete at every cursor position (substantial work). *(v0.17 adds a
-  scoped completion for the adapter surface: consumable units after `consumes `,
-  a unit's exported capabilities inside `consumes U { … }`, and in-scope
-  capabilities after `given `. Broader completion remains deferred.)*
-- Inlay hints (showing inferred types inline).
-- Code lenses (e.g., "show service handlers" markers).
+The initial increments deferred several of the items originally listed here;
+they later shipped and moved into the capability set above — general completion
+(§3.15), code lenses (§3.17), inlay hints (§3.13), and semantic tokens (§3.14).
+What remains genuinely deferred:
+
 - Refactorings beyond rename (extract function, inline); non-quick-fix code-action kinds.
-- Semantic tokens (type-aware highlighting beyond tree-sitter's syntactic level).
 - Editor commands beyond what LSP standard provides (no "Bynk: Build" / "Bynk: Run tests" yet — those come later).
 - Marketplace publication.
 - Editor support beyond VS Code.
@@ -59,8 +57,8 @@ name    = "my-bynk-project"     # required
 version = "0.1.0"               # optional, free-form
 
 [paths]
-src = "src"                     # source root (default: "src")
-out = "out"                     # compiled TypeScript output (default: "out")
+include = ["src", "tests"]      # source trees the compiler discovers (default: src/ and tests/ when present, else the project root — ADR 0147)
+exclude = []                    # extra trees to skip; out/ and node_modules are always excluded
 
 [fmt]
 indent             = "tab"      # "tab" (default) or "spaces"
@@ -612,9 +610,10 @@ bynk-tooling/
 ├── tree-sitter-bynk/        -- Tree-sitter grammar (separate sub-project)
 │   ├── grammar.js
 │   └── ...
-├── bynk-lsp/                -- LSP server binary (Rust, in the compiler workspace)
-│   ├── src/main.rs
-│   ├── src/handlers/        -- LSP request handlers
+├── bynk-lsp/                -- LSP server (Rust, in the compiler workspace)
+│   ├── src/lib.rs           -- the server: Backend, the LanguageServer impl, run()
+│   ├── src/main.rs          -- thin binary entry point (bynk_lsp::run())
+│   ├── src/hover.rs, completion.rs, index_queries.rs, …  -- flat handler modules
 │   └── ...
 ├── bynk-fmt/                -- Formatter (Rust, in the compiler workspace; used by both LSP and CLI)
 │   └── src/lib.rs
@@ -659,27 +658,32 @@ textDocument.synchronization: Full
 textDocument.publishDiagnostics
 textDocument.hover
 textDocument.definition
+textDocument.typeDefinition        (v0.35, §3.19)
+textDocument.implementation        (v0.35, §3.19)
 textDocument.formatting
 textDocument.rangeFormatting
 textDocument.documentSymbol
+textDocument.completion            (v0.17 consumes/given; positional v0.30, §3.15; resolveProvider: true)
+textDocument.signatureHelp         (v0.32, §3.16; triggers "(" ",")
 textDocument.references            (v0.25, §3.8)
 textDocument.rename                (v0.25, §3.9; prepareProvider: true)
 textDocument.codeAction            (v0.26, §3.10; kinds: [quickfix])
+textDocument.codeLens              (v0.33, §3.17)
 textDocument.documentHighlight     (v0.26, §3.12)
+textDocument.documentLink          (§3.21)
 textDocument.inlayHint             (v0.27, §3.13)
 textDocument.semanticTokens        (v0.28, §3.14; full + range)
-workspace.symbol                   (v0.26, §3.11)
-workspace.workspaceFolders
-workspace.didChangeWatchedFiles
+textDocument.callHierarchy         (v0.34, §3.18)
+textDocument.foldingRange          (v0.37, §3.20)
+textDocument.selectionRange        (v0.37, §3.20)
+workspace.symbol                   (v0.26, §3.11; aggregated across projects, §2.4)
+workspace.workspaceFolders         (real multi-root, v0.182, §2.4)
+workspace.didChangeWatchedFiles    (registered dynamically by the server, v0.183, §2.3)
 ```
 
-(Completion was added in v0.17 for `consumes`/`given` surfaces.)
-
-Not declared (out of scope so far):
-- completionItem/resolve
-- codeLens, inlayHint/resolve
-- semanticTokens/delta
-- signatureHelp
+Not declared (genuinely out of scope so far):
+- inlayHint/resolve, semanticTokens/delta (throughput, not correctness)
+- pull diagnostics (`textDocument/diagnostic`) — the server pushes
 
 ### 4.4 Error recovery for diagnostics
 
@@ -816,25 +820,19 @@ Updates are manual: rebuild, reinstall. Auto-update via a marketplace is deferre
 
 ## 8. What's deferred (future tooling increments)
 
-After this increment, the language has working tooling for the v0.5 surface. Future tooling work:
+The editor surface is, by this repo's standard, complete: every capability §4.3
+declares is backed by a handler, and the foundation under it — one project model
+shared with `bynkc`, a freshness contract, real multi-root workspaces, startup
+analysis, dynamic watchers, and one diagnostics scheduler — landed across the
+**LSP foundations** track (ADRs 0198, 0201, 0202, 0204). What remains deferred:
 
-**Tooling v2 (probably after v0.6):**
-- Autocomplete (the substantial missing feature).
-- Semantic tokens (semantic highlighting).
-- Editor commands ("Bynk: Build", "Bynk: Run tests").
+**Capability depth** (genuinely unbuilt, not throughput):
+- Rename for local bindings; match-arm and `is`-narrowing navigation; dispatch/method edges in call hierarchy; the consumed-context (`uses B`/`B.Cap`) navigation half; auto-import via `completionItem/resolve`; a test-run ("▶ Run") codelens; `extract`/`inline` refactorings.
 
-Document symbols are shipped in v1.1 (§3.7) — they're cheap to implement
-(AST walk) and unlock VS Code's outline view.
+**Throughput** (correctness is unaffected):
+- Semantic-token delta, `inlayHint/resolve`, pull diagnostics, and an incremental (salsa-style) analysis layer — full re-analysis is acceptable at current scale (§3.2, the named scaling cliff at many-hundred-file projects).
 
-**Tooling v3:**
-- Workspace symbol search.
-- Refactorings (rename, extract).
-- Inlay hints.
-- Code actions / quick fixes.
-
-**Tooling v4:**
-- Marketplace publication.
-- Auto-update infrastructure.
-- Editor support beyond VS Code (Neovim, Helix, etc. — the tree-sitter grammar enables this; the LSP works in any LSP-capable editor; the question is which extensions to package and maintain).
+**Packaging / reach:**
+- Marketplace publication and auto-update; editor support beyond VS Code (the tree-sitter grammar and the stdio LSP already work in any LSP-capable editor — the open question is which extensions to package and maintain).
 
 These come as practice surfaces the need.
