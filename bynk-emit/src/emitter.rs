@@ -2198,6 +2198,12 @@ pub(crate) struct LowerCtx<'a> {
     /// position index the emitted key encodes (`cron_<svc>_<i>` / `queue_…`).
     /// http keys are a pure function of verb + path and need no lookup here.
     pub test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
+    /// v0.182 (Slice B, #667): the target's http service names when lowering a
+    /// `system` case. An http address on one of these lowers to a driver call
+    /// (`__sysdrive_<svc>_<key>(args, sub)`) that drives a real `worker.fetch`
+    /// with a signed credential, instead of the unit-tier direct handler call.
+    /// Empty at the unit tier.
+    pub system_http_services: std::collections::HashSet<String>,
     /// v0.7: when lowering a test case body, the target context's local
     /// agent names. `<Agent>(<key>).method(args)` lowers to
     /// `new Agent(makeTestState(...)).method(args, {})`.
@@ -2318,6 +2324,7 @@ impl<'a> LowerCtx<'a> {
             test_services: HashSet::new(),
             call_site_identity: None,
             test_service_handlers: HashMap::new(),
+            system_http_services: std::collections::HashSet::new(),
             test_agents: HashSet::new(),
             local_agents: HashSet::new(),
             agent_method_givens: HashMap::new(),

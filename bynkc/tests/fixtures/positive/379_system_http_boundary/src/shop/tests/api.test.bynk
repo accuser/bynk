@@ -1,0 +1,10 @@
+suite shop.api as system {
+  case "a create returns Created over the real wire" {
+    let item <- api.POST("/cart", Item { sku: "widget" }) by User("alice")
+    expect item is Created(_)
+  }
+  case "the size read is Ok over the wire" {
+    let n <- api.GET("/cart/size") by User("bob")
+    expect n is Ok(_)
+  }
+}

@@ -54,8 +54,15 @@ case "each owner's list is private" {
 - cron and queue run as their internal actor and need no `by`.
 
 At the `unit` tier the identity is *given*, not verified — the handler runs
-in-process against fresh, per-case agent state. Driving the real verification seam
-with a signed credential is the `system` tier, a later slice.
+in-process against fresh, per-case agent state. **Promote the same case to `as
+system`** and the identical body drives the *deployable* Worker: the address
+becomes a real `fetch` into the public route table, `by User("bob")` is signed
+into a JWT the real auth seam verifies, and the `HttpResult` is decoded from the
+`Response`. The developer writes no auth — the framework signs a valid credential
+from the `by` clause; *proper* auth (real IdPs, expired/forged tokens) is an
+end-to-end concern, not the system tier's. A single-context `from http` service
+qualifies for `as system` (it has a real serialisation edge); a `cron`-only target
+does not (`bynk.tier.system_needs_wire`).
 
 ## `expect`
 
@@ -105,9 +112,13 @@ A case's effective tier is `case.tier ?? suite.tier ?? unit`. Promotion changes
 - **Participants are inferred**, not listed: `integration` / `system` derive their
   real/wired collaborator set from the unit under test's transitive `consumes`
   graph. There is no `wires` clause.
-- **`system` needs a wire**: a `system` case whose inferred set is fewer than two
-  contexts is `bynk.tier.system_needs_wire`. `integration` carries no such rule —
-  it is real collaborators within one context, no wire.
+- **`system` needs a serialisation edge**: a `system` suite must cross a real
+  serialise → JSON → deserialise boundary — either two or more wired contexts, **or**
+  a single target that exposes an `http` service (its public boundary). A target
+  with neither is `bynk.tier.system_needs_wire`. (A `queue` service serialises its
+  message too, but driving a queue over a real wire at `system` is a later slice, so
+  a queue-only target does not yet qualify.) `integration` carries no such rule — it
+  is real collaborators within one context, no wire.
 - Tiers are **`case`-only**: a `property` generates and does not promote, so a
   suite-level `as` binds its `case` members only; an `as` on a `property` header is
   `bynk.tier.property_has_tier`.
