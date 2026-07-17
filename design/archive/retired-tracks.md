@@ -7,6 +7,40 @@ closing summary here — what shipped, which ADRs carry its decisions, and the
 named follow-ons — and closes the track's spine issue. Newest first is not
 imposed; entries keep the order they were retired in.
 
+- **`testing-the-boundary.md`** — the rung the retired `testing.md` subject
+  ladder never had: the **boundary**. Bynk's pitch rests on the edge — types enforced,
+  identity sealed, the author writing neither check — yet *no Bynk test could observe
+  any of it*: across the fixtures, the set of tests that both drove a `from http`
+  service and asserted a boundary claim was empty, and `scheduled`/`queue` had never
+  been executed by anyone, including the compiler. The track taught the existing tier
+  dial ([ADR 0153](../decisions/0153-tier-is-a-dial-on-the-case-header.md)) the entry
+  it was never taught — **no new axis, no new harness**. All four planned slices
+  shipped: **0** (v0.181, [ADR 0203](../decisions/0203-test-body-service-calls-resolved.md),
+  #662) — the checker resolves the addressed handler (closed the #654 crash); **A**
+  (v0.185, [ADR 0205](../decisions/0205-unit-tier-service-address.md), #664) — the
+  unit-tier surface: address `http`/`cron`/`queue` from a `case` with
+  `by <Actor>(<identity>)`, giving `scheduled`/`queue` their first-ever execution
+  coverage; **B** (v0.187, [ADR 0207](../decisions/0207-system-tier-http-boundary.md),
+  #667/#697) — the system-tier boundary: drive an http route over a real `worker.fetch`
+  with a framework-signed credential the real auth seam verifies, `system_needs_wire`
+  relaxed to a serialisation edge; **C** (v0.189,
+  [ADR 0210](../decisions/0210-system-tier-wire-rejection.md), #702/#704) — the
+  rejection paths: `Wire(<String>)` hands the router raw, pre-validation input so a
+  case observes the boundary *reject* it (`Rejected`) or *handle* it (`Handled`),
+  decoded on shape not status. Along the way the track's own thesis-in-miniature
+  surfaced and closed a real defect: boundary-rejection `400`s shipped without
+  `nosniff` ([#659](https://github.com/accuser/bynk/issues/659), v0.188.1,
+  [ADR 0209](../decisions/0209-boundary-rejection-security-headers.md)) — *the
+  router's behaviour is exactly what no Bynk test could observe*. Surface lives in
+  `bynk-emit/src/project/tests_emit.rs` (the test emitter), `bynk-check/src/checker/calls.rs`
+  (address resolution), and the `responseToHttpResult`/`responseToHttpOutcome` runtime
+  decoders. **Deferred follow-ons** (none blocking the theme, all from ADR 0210):
+  rejection-*kind* discrimination ([#705](https://github.com/accuser/bynk/issues/705) —
+  `is` tests one level), the `401` path
+  ([#706](https://github.com/accuser/bynk/issues/706) — needs a credential override),
+  the `405` fall-through ([#707](https://github.com/accuser/bynk/issues/707) — needs
+  wrong-method addressing), and mixed typed+`Wire` arguments
+  ([#708](https://github.com/accuser/bynk/issues/708)).
 - **`editor-currency.md`** — a tooling track closing the drift between what the
   Bynk language *is* and what the editor surface (`bynk-lsp` + `vscode-bynk`)
   shows: hover, completion, scaffolds, menus/keybindings, and codelens brought
