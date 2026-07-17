@@ -1,9 +1,12 @@
 # Increment allocation — the version and the ADR number are stamped at merge, not chosen at authoring
 
-- **Status:** Draft (settling). Direction not yet merged; no slice authorised. The spine is
+- **Status:** **Adopted — slicing; no slice authorised.** The spine is
   [#685](https://github.com/accuser/bynk/issues/685)
-  ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); this doc settles via
-  the draft PR [#684](https://github.com/accuser/bynk/pull/684) (*Part of #685*).
+  ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); direction was settled
+  by the merge of the settling PR [#684](https://github.com/accuser/bynk/pull/684). Adoption
+  is **not** build authorisation — a slice is approved to build only when its own proposal is
+  `accepted`. The §5.1 question (per-merge stamp vs. batched release PR) is **settled**:
+  per-merge. Live slice state is on the spine.
 - **Realises:** [`../README.md` §"Versioning & release"](../README.md) (the single-repo
   version, `scripts/bump-version.sh`, the tag→publish backbone) and
   [`../bynk-release-discipline.md`](../bynk-release-discipline.md) (daily increments each
