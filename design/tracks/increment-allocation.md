@@ -26,8 +26,8 @@
   - **A feature PR declares a pending increment as one uniquely-named file; it writes no
     version and no ADR number into any shared file** (§4 — *proposed*).
   - **The stamp runs per-merge, materialising the pending file into the numbered ADR, the
-    version bump, and the changelog row in a follow-up commit on `main`** (§5 — *proposed;
-    the per-merge-vs-batched question is the track's main open surface, §5.1*).
+    version bump, and the changelog row in a follow-up commit on `main`** (§5 — **settled**:
+    per-merge over a batched release PR, §5.1).
   - **ADR prose is still reviewed in the feature PR — the stamp assigns the number and moves
     the prose, it does not author it** (§4.2 — *proposed*).
   - **Shrinking the surface (derived copies generated in CI, not committed) is a separable
@@ -176,28 +176,28 @@ On merge to `main`, automation:
 Because this runs *on `main`, serialised behind a concurrency group*, the counters are never
 contended: the automation sees the real order and assigns against it.
 
-### 5.1 Open question — per-merge stamp vs. batched release PR
+### 5.1 Decision — per-merge stamp (settled)
 
-Two shapes, and the choice is the track's central unsettled surface:
+The stamp runs **per-merge**: every merge to `main` triggers it, and it commits the bump +
+materialised ADR straight to `main`. The alternative — a batched "Version Packages" PR
+(release-please style) that accumulates pending files and bumps once — is **rejected**, for
+two reasons, the first decisive:
 
-- **Per-merge stamp (recommended).** Every merge triggers the stamp, which commits the bump +
-  materialised ADR straight to `main`. Preserves the current *"each increment cuts a
-  version"* cadence exactly — each increment still gets its own distinct version and ADR,
-  just assigned a beat later. Cost: a second automated commit per merge (serialised, so no
-  contention), and the version/ADR number no longer appear in the feature PR's own diff.
-- **Batched release PR (release-please style).** Merges accumulate pending files untouched;
-  a standing "Version Packages" PR is regenerated to bump once and materialise all pending
-  ADRs together. Fully conflict-free and every stamp is reviewable. Cost: it *changes the
-  cadence* — several increments now share one version bump, which contradicts
-  *"daily increments each cut a version"* unless that rule is revisited too. That makes it
-  the more invasive option, and probably the wrong default here.
+- **The ADR number has no release concept.** An ADR is accepted when its PR merges, so its
+  number must be assigned at *that* merge regardless of the version model. Per-merge
+  automation is therefore needed *anyway* for ADRs. The batched model would need per-merge
+  ADR numbering *and* a separate batched version PR — two mechanisms where the per-merge
+  stamp is one; it does not remove work, it adds a second track.
+- **Batching changes the cadence.** A "Version Packages" PR makes several increments share
+  one version bump, contradicting *"daily increments each cut a version"*
+  ([`../bynk-release-discipline.md`](../bynk-release-discipline.md)) unless that rule is
+  revisited too — an invasive change this track has no reason to force.
 
-A subtlety forces the recommendation: the ADR number has **no release concept**. An ADR is
-accepted when its PR merges, so its number must be assigned at that merge regardless of the
-version model. Per-merge automation is therefore needed *anyway* for ADRs; folding the
-version bump into that same per-merge stamp is the smaller change. The batched model would
-need per-merge ADR numbering *and* a separate batched version PR — two mechanisms where the
-per-merge stamp is one.
+Per-merge preserves the current *"each increment cuts a version"* cadence exactly: each
+increment still gets its own distinct version and ADR, just assigned a beat later. The
+accepted costs are (a) a second automated commit per merge — serialised behind a concurrency
+group (§9), so no contention — and (b) the version and ADR number no longer appear in the
+feature PR's own diff, landing instead in the stamp commit that references it.
 
 ### 5.2 Deterministic ADR numbering
 
@@ -238,7 +238,7 @@ sub-issue before build.
   exercised first. Load-bearing ADR: the pending unit.
 - **Slice 1 — the merge-time stamp (version).** The `main` automation that consumes pending
   files, computes the version, runs `bump-version.sh`, writes the changelog row, and commits
-  per-merge (§5.1's recommended shape). Load-bearing ADR: allocation-on-`main`.
+  per-merge (§5.1, settled). Load-bearing ADR: allocation-on-`main`.
 - **Slice 2 — ADR materialisation.** Extend the stamp to assign numbers, write the numbered
   ADR files, and add index rows, keeping `decisions_index` satisfied at every step. Load-
   bearing ADR: prose-reviewed-in-PR, number-assigned-at-merge.
@@ -259,16 +259,20 @@ per-merge stamp (not the batched PR) is the natural fit.
 
 ## 9. Open questions
 
-1. **Per-merge stamp vs. batched release PR** (§5.1) — the central one; recommendation is
-   per-merge, to preserve the daily-increment cadence and because ADR numbering forces
-   per-merge automation regardless.
-2. **Pending-file format** — Markdown with frontmatter (level + changelog) plus prose ADR
+**Settled.** *Per-merge stamp vs. batched release PR* (§5.1) — **per-merge**, because the ADR
+number must be assigned at every merge regardless, so per-merge automation is needed anyway,
+and because batching would change the daily-increment cadence.
+
+Still open:
+
+1. **Pending-file format** — Markdown with frontmatter (level + changelog) plus prose ADR
    blocks, or a stricter split? What does the validator enforce?
-3. **Where the changeset directory lives** — `design/pending/`, or outside `design/` so it is
+2. **Where the changeset directory lives** — `design/pending/`, or outside `design/` so it is
    never swept into an unrelated PR (cf. the standing "don't `git add -A` untracked track
    docs" hazard).
-4. **The stamp's identity and trigger** — a `push`-to-`main` workflow with a concurrency group,
+3. **The stamp's identity and trigger** — a `push`-to-`main` workflow with a concurrency group,
    committing as a bot; interaction with branch protection and required checks on the stamp
-   commit.
-5. **Whether §6 (surface shrink) is in this track or its own** — it stands alone and could be
+   commit. (The per-merge shape is settled, §5.1; what stays open is the workflow's identity
+   and its composition with branch protection.)
+4. **Whether §6 (surface shrink) is in this track or its own** — it stands alone and could be
    sequenced independently.
