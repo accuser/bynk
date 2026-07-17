@@ -1,17 +1,28 @@
 # Testing the boundary — teaching the tier dial the other door
 
-- **Status:** **Adopted — slicing. Slice 0 shipped (v0.181, ADR 0203, #662/#671).**
+- **Status:** **Adopted — slicing. Slices 0 and A shipped.**
   The spine is [#656](https://github.com/accuser/bynk/issues/656)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); direction
   was settled by the merge of the settling PR (#657). **Every design question is
   settled** — Q1–Q5 and Q7 (§3.4, §4.2.1, §4.1.2, §4.2.0, §4.3.2, §4.1.1), with
   **Q6 (OIDC) scoped out to a follow-on** (§7). Adoption is **not** build
   authorisation — a slice is approved to build only when its own proposal is
-  `accepted`. **Slice 0** landed the checker resolution (§8, ADR 0203) and — the
-  load-bearing correction it forced — established that the `symbols.rs`/`consumes`
-  widening the candidate decomposition once carried **has no consumer** and is
-  dropped, not deferred. **Slices A and B** are unblocked and unstarted. Live slice
-  state is on the spine.
+  `accepted`.
+  - **Slice 0** (v0.181, ADR 0203, #662/#671) landed the checker resolution and —
+    the correction it forced — established that the `symbols.rs`/`consumes`
+    widening the candidate decomposition once carried **has no consumer** and is
+    dropped, not deferred.
+  - **Slice A** (v0.185, ADR 0205, #664/#680) landed the unit-tier surface: an
+    http/cron/queue address (`api.POST("/todos", body)`, `sched.schedule("…")`,
+    `q.message(m)`) plus the call-site `by <Actor>(<identity>)` clause. `scheduled`
+    and `queue` handlers execute under a test for the first time. Two findings
+    corrected the plan: the `deps.env`↔`makeTestState` bridge the proposal called
+    the "load-bearing delta" was **unnecessary** (bundle-mode emission already
+    resolves an http handler's agent via the in-memory registry); and **#655 is
+    not closed** — its root is the cross-context `makeSurface`, a distinct emitter
+    concern (ADR 0205), not the test surface this slice fixed.
+  - **Slices B and C** are unblocked and unstarted. Live slice state is on the
+    spine.
 - **Realises:** the rung the retired testing track's subject ladder
   (`value → domain → call → snapshot → step → history`,
   [`../archive/retired-tracks.md`](../archive/retired-tracks.md)) never had — the
@@ -521,11 +532,14 @@ async http_GET_todos(request: Request) {
 }
 ```
 
-**At `unit`** the wrapper is not in the picture: the case calls the handler, and a
-stubbed actor injects `deps.identity`. `makeTestDeps()`
-(`bynk-emit/src/project/tests_emit.rs:3589-3648`) emits no `identity` field today,
-which is live defect #655 for the one binder shape that is already addressable.
-Fixing it is the foundation for this tier.
+**At `unit`** the wrapper is not in the picture: the case calls the handler, and
+the call-site `by <Actor>(<identity>)` injects `deps.identity` **per call**. Slice A
+(ADR 0205) shipped this as `{ ...deps, identity: (<value> as any) }` at the call
+site — a test-only brand cast, not a widening of `makeTestDeps()`. (An earlier
+draft expected `makeTestDeps()` to grow an `identity` field and tied this to #655;
+that was wrong on both counts — the identity is inherently per-call, and #655's
+root is the cross-context `makeSurface`, not `makeTestDeps` — see §8 Slice A and
+ADR 0205.)
 
 **At `system`** the wrapper *is* the point, and it only reads a header — so an
 injected identity has nothing to attach to and would be inert. The case must
@@ -1048,13 +1062,23 @@ tier at all (§3.4); `unit` is its whole story.
   service binding). The "hard stop is `symbols.rs`" framing conflated the target's
   own services (the `test_services`/checker path this slice fixed) with consumed
   ones. The widening is **dropped**; ADR 0203 records it.
-- **Slice A — the unit-tier surface.** Address `http`/`cron`/`queue` handlers at
-  `unit`, and give `makeTestDeps()` an `identity` (fixing #655). This is where
-  most of the value is: it makes every example's service testable, and gives
-  `scheduled` and `queue` their **first-ever execution coverage** (§1). No
-  signer, no `fetch`, no `system_needs_wire` change. **No open question blocks it:**
-  Q2 settles the actor spelling (§4.2.1) and Q7 the address (§4.1.1), which were its
-  two gates. It needs neither `Wire` (system-only) nor Q1. **Ready to propose.**
+- **Slice A — the unit-tier surface. ✅ Shipped (v0.185, ADR 0205, #664/#680).**
+  Addresses `http`/`cron`/`queue` handlers at `unit` (`api.POST("/todos", body)`,
+  `sched.schedule("…")`, `q.message(m)`), each checked against the declared handler
+  (arity, arg types, `service_unknown_route`), plus the call-site
+  `by <Actor>(<identity>)` clause — validated **against the addressed handler**, so
+  an identity-carrying handler driven with no `by` or a unit-identity actor is
+  caught (the isolation `tsc` cannot see). Makes every example's service testable
+  and gives `scheduled`/`queue` their **first-ever execution coverage** (§1). No
+  signer, no `fetch`, no `system_needs_wire` change. **What changed from the plan:**
+  (1) the identity is supplied *per call* by the `by` clause, not by widening
+  `makeTestDeps()`; (2) the `deps.env`↔`makeTestState` bridge the proposal called
+  the "load-bearing delta" was **unnecessary** — bundle-mode emission (which the
+  unit runner uses) already resolves an http handler's agent via the in-memory
+  `StateRegistry`, `env` unused; (3) **#655 is not closed** — the proposal expected
+  the `by` clause to close it, but its root is the cross-context `makeSurface`
+  (`emit_make_surface`), a distinct deploy-surface concern from the test surface
+  (ADR 0205). The test side is fixed; #655 stays open with that diagnosis.
 - **Slice B — the system-tier boundary.** `as system` on an http suite: a full
   `fetch` request carrying a properly formed identity, asserting on the decoded
   `HttpResult`. Lands the §3.4 amendment (the `system_needs_wire` count becomes the
