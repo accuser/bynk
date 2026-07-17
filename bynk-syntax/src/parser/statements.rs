@@ -213,6 +213,32 @@ impl<'a> Parser<'a> {
             && self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::ColonEq)
     }
 
+    /// v0.182 (#664): parse an optional call-site actor clause after an
+    /// effect-let value — `by <Actor>` (unit identity) or `by <Actor>(<expr>)`.
+    /// Distinct from the handler `by` clause (`parse_by_clause`), which admits a
+    /// binder and an actor *sum* but no identity argument.
+    fn parse_call_site_actor(&mut self) -> Result<Option<CallSiteActor>, CompileError> {
+        if self.peek_kind() != Some(TokenKind::By) {
+            return Ok(None);
+        }
+        let by_kw = self.expect(TokenKind::By, "to start the call-site actor clause")?;
+        let actor = self.expect_ident("as the actor after `by` at a call site")?;
+        let (identity, end) = if self.peek_kind() == Some(TokenKind::LParen) {
+            self.expect(TokenKind::LParen, "after the actor name")?;
+            let id = self.parse_expr()?;
+            let rp = self.expect(TokenKind::RParen, "after the identity value")?;
+            (Some(Box::new(id)), rp.span)
+        } else {
+            (None, actor.span)
+        };
+        let span = by_kw.span.merge(end);
+        Ok(Some(CallSiteActor {
+            actor,
+            identity,
+            span,
+        }))
+    }
+
     fn parse_statement(&mut self) -> Result<Statement, CompileError> {
         if self.assign_ahead() {
             let target = self.expect_ident("as the assignment target")?;
@@ -282,6 +308,7 @@ impl<'a> Parser<'a> {
                     name,
                     type_annot,
                     value,
+                    principal: None,
                     span,
                     trivia: Trivia::default(),
                 }))
@@ -289,11 +316,18 @@ impl<'a> Parser<'a> {
             Some(TokenKind::LArrow) => {
                 self.bump();
                 let value = self.parse_expr()?;
-                let span = kw.span.merge(value.span);
+                // v0.182 (#664): an optional call-site `by <Actor>(<identity>)`
+                // clause — the test-body form that names the actor a case acts as
+                // when it drives a service handler. Distinct from the handler
+                // `by` (no argument); parsed only here, in the effect-let arm.
+                let principal = self.parse_call_site_actor()?;
+                let end = principal.as_ref().map(|p| p.span).unwrap_or(value.span);
+                let span = kw.span.merge(end);
                 Ok(Statement::EffectLet(LetStmt {
                     name,
                     type_annot,
                     value,
+                    principal,
                     span,
                     trivia: Trivia::default(),
                 }))

@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **398** codes in total.
+There are **405** codes in total.
 
 ## Agents
 
@@ -272,8 +272,15 @@ There are **398** codes in total.
 | `bynk.target.browser_bundle_only` | The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
+| `bynk.test.actor_identity_required` | A call-site `by <Actor>` omits the identity an identity-carrying actor requires. | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.actor_no_identity` | A call-site `by <Actor>(x)` supplies an identity to a unit-identity actor (e.g. `Visitor`). | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.principal_identity_mismatch` | A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor. | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.principal_required` | A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`. | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.service_bad_address` | A test body addresses a service the wrong way for its protocol (e.g. an http route without a leading path string). | [`case`](/book/reference/grammar/#rule-case) |
 | `bynk.test.service_call_arity` | A test body's `svc.call(...)` passes the wrong number of arguments for the service's `on call` handler. | [`case`](/book/reference/grammar/#rule-case) |
 | `bynk.test.service_no_call_handler` | A test body invokes `svc.call(...)` on a service with no `on call` handler (a `from http`/`cron`/`queue` service). | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.service_unknown_route` | A test body addresses an http route / cron schedule / queue message the service does not declare. | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.unknown_actor` | A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor. | [`case`](/book/reference/grammar/#rule-case) |
 | `bynk.tier.property_has_tier` | A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance. |  |
 | `bynk.tier.system_needs_wire` | An `as system` test stands up fewer than two contexts; the system tier wires across contexts. |  |
 | `bynk.ws.message_frame_param` | A WebSocket `on message` handler does not have exactly one parameter of the service's inbound (`in:`) frame type — the decoded frame (real-time track slice 3b-iii). |  |

@@ -130,6 +130,7 @@ pub(crate) fn check_fn(
         caps: CapabilityCtx::default(),
         in_test_body: false,
         test_services: HashMap::new(),
+        test_actors: HashMap::new(),
         type_vars: vars.clone(),
         store_cells: HashMap::new(),
         store_maps: HashMap::new(),
@@ -199,6 +200,7 @@ pub fn check_state_initialiser(
             caps: CapabilityCtx::default(),
             in_test_body: false,
             test_services: HashMap::new(),
+            test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -1744,7 +1746,6 @@ pub(crate) fn check_method_call(
     // resolution must not fall through to the receiver walk, which would
     // report the service name as unknown (#504 backstop).
     if let ExprKind::Ident(id) = &receiver.kind
-        && method.name == "call"
         && ctx.lookup(id.name.as_str()).is_none()
         && let Some(sig) = ctx.test_services.get(&id.name).cloned()
     {
@@ -1752,74 +1753,7 @@ pub(crate) fn check_method_call(
             ctx.refs
                 .record_in_unit(id.span, SymbolKind::Service, &id.name, &unit);
         }
-        let Some(handler) = sig.call_handler else {
-            // The service exists but has no `on call` handler — a `from http`
-            // / `cron` / `queue` service, addressable only by its own trigger
-            // surface (a later slice), not by `.call`. A plain `service X`
-            // (protocol `None`) always declares `on call` handlers, so it never
-            // reaches here; the `None` arm below is defensive, phrased without a
-            // `from <protocol>` clause that a plain service does not write.
-            let message = match &sig.protocol {
-                Some(protocol) => format!(
-                    "`{}` is a `from {protocol}` service and has no `on call` handler to invoke",
-                    id.name
-                ),
-                None => format!("service `{}` has no `on call` handler to invoke", id.name),
-            };
-            ctx.errors.push(
-                CompileError::new("bynk.test.service_no_call_handler", method.span, message)
-                .with_note(
-                    "only a service with an `on call` handler is addressable as `svc.call(...)` in a test body today",
-                ),
-            );
-            for a in args {
-                let _ = type_of(a, None, ctx);
-            }
-            return None;
-        };
-        if handler.params.len() != args.len() {
-            ctx.errors.push(
-                CompileError::new(
-                    "bynk.test.service_call_arity",
-                    method.span,
-                    format!(
-                        "service `{}.call` expects {} argument(s), but {} were given",
-                        id.name,
-                        handler.params.len(),
-                        args.len()
-                    ),
-                )
-                .with_label(handler.span, "handler declared here"),
-            );
-            for a in args {
-                let _ = type_of(a, None, ctx);
-            }
-            return None;
-        }
-        // Type each argument against its declared parameter, so a wrong-typed
-        // argument is a `check` diagnostic rather than emitted-TS drift.
-        for (i, (param, arg)) in handler.params.iter().zip(args.iter()).enumerate() {
-            record_param_hint(ctx.hints, &param.name.name, arg);
-            let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
-            let arg_ty = type_of(arg, expected.as_ref(), ctx);
-            if let (Some(a), Some(p)) = (arg_ty.as_ref(), expected.as_ref())
-                && !compatible(a, p)
-            {
-                ctx.errors.push(CompileError::new(
-                    "bynk.types.argument_mismatch",
-                    arg.span,
-                    format!(
-                        "argument {} has type `{}`, but `{}.call` expects `{}` for `{}`",
-                        i + 1,
-                        a.display(),
-                        id.name,
-                        p.display(),
-                        param.name.name
-                    ),
-                ));
-            }
-        }
-        return None;
+        return check_test_service_address(&sig, id, method, args, ctx);
     }
     // v0.6: cross-context service call. Two shapes:
     //   - `Alias.service(args)`           where Alias is from `consumes X as Alias`
@@ -2213,6 +2147,498 @@ pub(crate) fn check_method_call(
         return None;
     }
     resolve_type_ref(&method_decl.return_type, &ctx.input.types)
+}
+
+/// v0.178 (#662) / v0.182 (#664): resolve a test-body service invocation against
+/// the target's declared handlers and check its arity and argument types. The
+/// address form depends on the method name:
+///
+/// - `svc.call(args)` — the `on call` handler (#662);
+/// - `svc.<VERB>("/path", …)` — an http route (`GET`/`POST`/`PUT`/`PATCH`/`DELETE`);
+/// - `svc.schedule("<expr>", …)` — a cron handler by its schedule string;
+/// - `svc.message(msg)` — the queue message handler.
+///
+/// The outcome type stays loose (the runner recovers `Result`/`Effect` at
+/// runtime); the call-site principal (`by <Actor>`) is checked separately at the
+/// statement level. Returns `None` (the loose outcome) in every arm.
+fn check_test_service_address(
+    sig: &TestServiceSig,
+    id: &Ident,
+    method: &Ident,
+    args: &[Expr],
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    use bynk_syntax::ast::{ExprKind as EK, HandlerKind};
+
+    // `svc.call(...)` — the `on call` handler (Slice 0).
+    if method.name == "call" {
+        let Some(handler) = sig.call_handler() else {
+            let message = match &sig.protocol {
+                Some(protocol) => format!(
+                    "`{}` is a `from {protocol}` service and has no `on call` handler to invoke",
+                    id.name
+                ),
+                None => format!("service `{}` has no `on call` handler to invoke", id.name),
+            };
+            ctx.errors.push(
+                CompileError::new("bynk.test.service_no_call_handler", method.span, message)
+                    .with_note(
+                        "call an `on call` service with `svc.call(...)`, an http route with `svc.GET(\"/path\")`, cron with `svc.schedule(\"…\")`, or a queue with `svc.message(m)`",
+                    ),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let params = handler.params.clone();
+        let hspan = handler.span;
+        check_address_args(&id.name, "call", &params, hspan, args, method.span, ctx);
+        return None;
+    }
+
+    // `svc.<VERB>("/path", …)` — an http route. The first argument is the route
+    // *pattern* (a compile-time-resolved name), the rest are positional path
+    // params then the body, matched against the handler's declared params.
+    // `HttpMethod::from_ident` is the single source of truth the emitter shares.
+    if bynk_syntax::ast::HttpMethod::from_ident(&method.name).is_some() {
+        let Some(EK::StrLit(path)) = args.first().map(|a| &a.kind) else {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.service_bad_address",
+                    method.span,
+                    format!(
+                        "`{}.{}` addresses an http route, so its first argument must be the route pattern string (e.g. `\"/todos\"`)",
+                        id.name, method.name
+                    ),
+                ),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let matched = sig.handlers.iter().find(|h| {
+            matches!(&h.kind, HandlerKind::Http { method: m, path: p } if m.as_str() == method.name && p == path)
+        });
+        let Some(handler) = matched else {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.service_unknown_route",
+                    method.span,
+                    format!(
+                        "`{}` declares no `on {} (\"{}\")` route",
+                        id.name, method.name, path
+                    ),
+                )
+                .with_note("the method and path must match a declared route exactly"),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let params = handler.params.clone();
+        let hspan = handler.span;
+        // Type the route-pattern string as an ordinary string; check the rest.
+        let _ = type_of(&args[0], None, ctx);
+        check_address_args(
+            &id.name,
+            &method.name,
+            &params,
+            hspan,
+            &args[1..],
+            method.span,
+            ctx,
+        );
+        return None;
+    }
+
+    // `svc.schedule("<expr>", …)` — a cron handler, matched by its schedule.
+    if method.name == "schedule" {
+        let Some(EK::StrLit(expr)) = args.first().map(|a| &a.kind) else {
+            ctx.errors.push(CompileError::new(
+                "bynk.test.service_bad_address",
+                method.span,
+                format!(
+                    "`{}.schedule` addresses a cron handler, so its first argument must be the schedule string",
+                    id.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let matched = sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Cron { expr: e } if e == expr));
+        let Some(handler) = matched else {
+            ctx.errors.push(CompileError::new(
+                "bynk.test.service_unknown_route",
+                method.span,
+                format!(
+                    "`{}` declares no `on schedule(\"{}\")` handler",
+                    id.name, expr
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let params = handler.params.clone();
+        let hspan = handler.span;
+        let _ = type_of(&args[0], None, ctx);
+        check_address_args(
+            &id.name,
+            "schedule",
+            &params,
+            hspan,
+            &args[1..],
+            method.span,
+            ctx,
+        );
+        return None;
+    }
+
+    // `svc.message(msg)` — the queue message handler.
+    if method.name == "message" {
+        let matched = sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Message));
+        let Some(handler) = matched else {
+            ctx.errors.push(CompileError::new(
+                "bynk.test.service_unknown_route",
+                method.span,
+                format!("`{}` declares no `on message(...)` handler", id.name),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let params = handler.params.clone();
+        let hspan = handler.span;
+        check_address_args(&id.name, "message", &params, hspan, args, method.span, ctx);
+        return None;
+    }
+
+    // Not a recognised address form for this service.
+    let proto = sig.protocol.as_deref().unwrap_or("call");
+    ctx.errors.push(CompileError::new(
+        "bynk.test.service_bad_address",
+        method.span,
+        format!(
+            "`{}.{}` is not a way to address a `from {proto}` service in a test body",
+            id.name, method.name
+        ),
+    ));
+    for a in args {
+        let _ = type_of(a, None, ctx);
+    }
+    None
+}
+
+/// What identity, if any, a resolved actor expects (v0.182).
+enum ActorIdentity {
+    Typed(Ty),
+    CallerString,
+    Unit,
+    Unknown,
+}
+
+/// Resolve an actor name to the identity it carries (v0.182).
+fn resolve_actor_identity(name: &str, ctx: &Ctx) -> ActorIdentity {
+    use crate::actors::{Identity, prelude_actor};
+    if let Some(decl) = ctx.test_actors.get(name) {
+        return match &decl.identity {
+            Some(t) => match resolve_type_ref(t, &ctx.input.types) {
+                Some(ty) => ActorIdentity::Typed(ty),
+                None => ActorIdentity::Unit,
+            },
+            None => ActorIdentity::Unit,
+        };
+    }
+    match prelude_actor(name) {
+        Some(c) => match c.identity {
+            Identity::Unit => ActorIdentity::Unit,
+            Identity::CallerId => ActorIdentity::CallerString,
+            Identity::Declared(_) => ActorIdentity::Unit,
+        },
+        None => ActorIdentity::Unknown,
+    }
+}
+
+/// The actor a handler runs as: its declared `by <Actor>`, or the protocol
+/// default (`Call`->`Caller`, `Cron`->`Scheduler`, `Queue`->`Producer`; http
+/// has no default, so an http handler always declares one) (v0.182).
+fn handler_actor_name(handler: &TestHandler, protocol: Option<&str>) -> Option<String> {
+    if let Some(by) = &handler.by_clause {
+        return Some(by.primary().name.clone());
+    }
+    match protocol {
+        None => Some("Caller".to_string()),
+        Some("cron") => Some("Scheduler".to_string()),
+        Some("queue") => Some("Producer".to_string()),
+        _ => None,
+    }
+}
+
+/// v0.182 (#664): resolve the handler a test-body address invocation targets,
+/// without side effects. Shared by the argument check and the principal check.
+fn resolve_test_address<'a>(
+    sig: &'a TestServiceSig,
+    method: &str,
+    args: &[Expr],
+) -> Option<&'a TestHandler> {
+    use bynk_syntax::ast::{ExprKind as EK, HandlerKind, HttpMethod};
+    if method == "call" {
+        return sig.call_handler();
+    }
+    if HttpMethod::from_ident(method).is_some() {
+        let EK::StrLit(path) = &args.first()?.kind else {
+            return None;
+        };
+        return sig.handlers.iter().find(|h| {
+            matches!(&h.kind, HandlerKind::Http { method: m, path: p } if m.as_str() == method && p == path)
+        });
+    }
+    if method == "schedule" {
+        let EK::StrLit(expr) = &args.first()?.kind else {
+            return None;
+        };
+        return sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Cron { expr: e } if e == expr));
+    }
+    if method == "message" {
+        return sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Message));
+    }
+    None
+}
+
+/// v0.182 (#664): validate the call-site principal of a test `effect_let`
+/// against the ADDRESSED HANDLER. This is where per-case identity isolation is
+/// enforced: an identity-carrying handler driven with a unit principal (`by
+/// Visitor`) or no `by` at all would otherwise emit a call with
+/// `deps.identity === undefined`. The identity value is typed against the
+/// handler's required identity type, not the principal actor's.
+pub(crate) fn check_effect_let_principal(
+    value: &Expr,
+    principal: Option<&bynk_syntax::ast::CallSiteActor>,
+    ctx: &mut Ctx,
+) {
+    let ExprKind::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = &value.kind
+    else {
+        if let Some(p) = principal {
+            report_principal_actor(p, ctx);
+        }
+        return;
+    };
+    let ExprKind::Ident(id) = &receiver.kind else {
+        if let Some(p) = principal {
+            report_principal_actor(p, ctx);
+        }
+        return;
+    };
+    let Some(sig) = ctx.test_services.get(&id.name).cloned() else {
+        if let Some(p) = principal {
+            report_principal_actor(p, ctx);
+        }
+        return;
+    };
+    let Some(handler) = resolve_test_address(&sig, &method.name, args).cloned() else {
+        if let Some(p) = principal {
+            report_principal_actor(p, ctx);
+        }
+        return;
+    };
+
+    let required = handler_actor_name(&handler, sig.protocol.as_deref())
+        .map(|actor| resolve_actor_identity(&actor, ctx));
+
+    match (required, principal) {
+        (Some(ActorIdentity::Typed(ty)), principal) => match principal {
+            Some(p) => match resolve_actor_identity(&p.actor.name, ctx) {
+                ActorIdentity::Unknown => report_principal_actor(p, ctx),
+                ActorIdentity::Unit | ActorIdentity::CallerString => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.test.principal_identity_mismatch",
+                        p.span,
+                        format!(
+                            "this handler runs as an actor carrying `{}`, but `by {}` supplies no matching identity",
+                            ty.display(),
+                            p.actor.name
+                        ),
+                    ));
+                    if let Some(idv) = &p.identity {
+                        let _ = type_of(idv, None, ctx);
+                    }
+                }
+                ActorIdentity::Typed(_) => match &p.identity {
+                    Some(idv) => {
+                        let got = type_of(idv, Some(&ty), ctx);
+                        if let Some(g) = got.as_ref()
+                            && !compatible(g, &ty)
+                        {
+                            ctx.errors.push(CompileError::new(
+                                "bynk.types.argument_mismatch",
+                                idv.span,
+                                format!(
+                                    "identity has type `{}`, but the handler expects `{}`",
+                                    g.display(),
+                                    ty.display()
+                                ),
+                            ));
+                        }
+                    }
+                    None => ctx.errors.push(CompileError::new(
+                        "bynk.test.actor_identity_required",
+                        p.span,
+                        format!(
+                            "actor `{}` carries an identity, so write `by {}(...)`",
+                            p.actor.name, p.actor.name
+                        ),
+                    )),
+                },
+            },
+            None => ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.principal_required",
+                    value.span,
+                    format!(
+                        "this handler runs as a verified actor carrying `{}`; the case must act as it with `by <Actor>(<identity>)`",
+                        ty.display()
+                    ),
+                )
+                .with_note("append a call-site actor, e.g. `... by User(\"alice\")`"),
+            ),
+        },
+        (_, Some(p)) => report_principal_actor(p, ctx),
+        (_, None) => {}
+    }
+}
+
+/// Resolve a call-site principal actor for its own diagnostics (v0.182).
+fn report_principal_actor(p: &bynk_syntax::ast::CallSiteActor, ctx: &mut Ctx) {
+    let name = &p.actor.name;
+    match resolve_actor_identity(name, ctx) {
+        ActorIdentity::Unknown => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.unknown_actor",
+                    p.actor.span,
+                    format!("`{name}` is not an actor of the target context or a prelude actor"),
+                )
+                .with_note("name an `actor` the target declares, or a prelude actor (`Visitor`, `Caller`, …)"),
+            );
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+            }
+        }
+        ActorIdentity::Typed(ty) => match &p.identity {
+            Some(id) => {
+                let got = type_of(id, Some(&ty), ctx);
+                if let Some(g) = got.as_ref()
+                    && !compatible(g, &ty)
+                {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.argument_mismatch",
+                        id.span,
+                        format!(
+                            "identity has type `{}`, but actor `{name}` expects `{}`",
+                            g.display(),
+                            ty.display()
+                        ),
+                    ));
+                }
+            }
+            None => ctx.errors.push(CompileError::new(
+                "bynk.test.actor_identity_required",
+                p.span,
+                format!("actor `{name}` carries an identity, so `by {name}(...)` needs an identity value"),
+            )),
+        },
+        ActorIdentity::CallerString => {
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+            }
+        }
+        ActorIdentity::Unit => {
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+                ctx.errors.push(CompileError::new(
+                    "bynk.test.actor_no_identity",
+                    p.span,
+                    format!("actor `{name}` has no identity, so write `by {name}` with no argument"),
+                ));
+            }
+        }
+    }
+}
+
+/// Shared arity + argument-type check for a resolved test-body service address.
+/// `positional` are the arguments that map to the handler's declared params (for
+/// http/cron the leading pattern string has already been split off).
+fn check_address_args(
+    svc: &str,
+    addr: &str,
+    params: &[bynk_syntax::ast::Param],
+    handler_span: Span,
+    positional: &[Expr],
+    err_span: Span,
+    ctx: &mut Ctx,
+) {
+    if params.len() != positional.len() {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.service_call_arity",
+                err_span,
+                format!(
+                    "`{svc}.{addr}` expects {} argument(s), but {} were given",
+                    params.len(),
+                    positional.len()
+                ),
+            )
+            .with_label(handler_span, "handler declared here"),
+        );
+        for a in positional {
+            let _ = type_of(a, None, ctx);
+        }
+        return;
+    }
+    for (i, (param, arg)) in params.iter().zip(positional.iter()).enumerate() {
+        record_param_hint(ctx.hints, &param.name.name, arg);
+        let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
+        let arg_ty = type_of(arg, expected.as_ref(), ctx);
+        if let (Some(a), Some(p)) = (arg_ty.as_ref(), expected.as_ref())
+            && !compatible(a, p)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "argument {} has type `{}`, but `{svc}.{addr}` expects `{}` for `{}`",
+                    i + 1,
+                    a.display(),
+                    p.display(),
+                    param.name.name
+                ),
+            ));
+        }
+    }
 }
 
 /// If `receiver` resolves to a consumed-context prefix (an alias or a

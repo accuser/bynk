@@ -1,0 +1,43 @@
+context shop.orders
+
+type UserId = String where NonEmpty
+actor Buyer { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+type Item = { sku: String }
+
+agent Cart {
+  key owner: UserId
+  store items: Map[String, Item]
+
+  on call add(sku: String) -> Effect[Item] {
+    let item = Item { sku: sku }
+    let _ <- items.put(sku, item)
+    item
+  }
+  on call size() -> Effect[Int] {
+    items.values.count()
+  }
+}
+
+service api from http {
+  on POST("/cart/:sku") (sku: String) -> Effect[HttpResult[Item]] by u: Buyer {
+    let item <- Cart(u.identity).add(sku)
+    Created(item)
+  }
+  on GET("/cart/size") () -> Effect[HttpResult[Int]] by u: Buyer {
+    let n <- Cart(u.identity).size()
+    Ok(n)
+  }
+}
+
+service sweeper from cron {
+  on schedule("0 0 * * *") () -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}
+
+service intake from queue("orders") {
+  on message(item: Item) -> Effect[QueueResult] {
+    Ack
+  }
+}

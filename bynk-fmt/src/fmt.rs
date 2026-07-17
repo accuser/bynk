@@ -1616,6 +1616,9 @@ impl<'a> Formatter<'a> {
                 }
                 self.push(" <- ");
                 self.format_expr(&l.value);
+                if let Some(p) = &l.principal {
+                    self.push(&format!(" {}", call_site_actor_src(p)));
+                }
             }
             Statement::Expect(a) => {
                 self.push("expect ");
@@ -1702,6 +1705,15 @@ fn by_clause_src(by: &ByClause) -> String {
     match &by.binder {
         Some(b) => format!("by {}: {actors}", b.name),
         None => format!("by {actors}"),
+    }
+}
+
+/// v0.182 (#664): render a call-site actor clause — `by User("bob")` or the
+/// unit-identity `by Visitor`.
+fn call_site_actor_src(p: &CallSiteActor) -> String {
+    match &p.identity {
+        Some(id) => format!("by {}({})", p.actor.name, expr_with_prec(id, 0)),
+        None => format!("by {}", p.actor.name),
     }
 }
 
@@ -2246,6 +2258,9 @@ fn stmt_to_string(s: &Statement) -> String {
                 out.push_str(&format!(": {}", type_ref_to_string(t)));
             }
             out.push_str(&format!(" <- {}", expr_with_prec(&l.value, 0)));
+            if let Some(p) = &l.principal {
+                out.push_str(&format!(" {}", call_site_actor_src(p)));
+            }
             out
         }
         Statement::Expect(a) => format!("expect {}", expr_with_prec(&a.value, 0)),

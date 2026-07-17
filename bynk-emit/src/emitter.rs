@@ -2187,6 +2187,17 @@ pub(crate) struct LowerCtx<'a> {
     /// where `service` is in this set lowers to `<service>.call(args, deps)`
     /// so the test wires its `deps` through.
     pub test_services: HashSet<String>,
+    /// v0.182 (#664): while lowering an `EffectLet` whose value addresses a
+    /// service handler, the call-site principal's identity expression (already
+    /// lowered), if the statement carries `by <Actor>(<identity>)`. The
+    /// address-call lowering reads it to build the handler's `deps.identity`.
+    /// `None` for a unit-identity actor or a non-principal statement.
+    pub call_site_identity: Option<String>,
+    /// v0.182 (#664): the ordered handler kinds of each test service, so a cron
+    /// (`svc.schedule("…")`) or queue (`svc.message(m)`) address can recover the
+    /// position index the emitted key encodes (`cron_<svc>_<i>` / `queue_…`).
+    /// http keys are a pure function of verb + path and need no lookup here.
+    pub test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
     /// v0.7: when lowering a test case body, the target context's local
     /// agent names. `<Agent>(<key>).method(args)` lowers to
     /// `new Agent(makeTestState(...)).method(args, {})`.
@@ -2305,6 +2316,8 @@ impl<'a> LowerCtx<'a> {
             cross_context,
             cross_context_used: false,
             test_services: HashSet::new(),
+            call_site_identity: None,
+            test_service_handlers: HashMap::new(),
             test_agents: HashSet::new(),
             local_agents: HashSet::new(),
             agent_method_givens: HashMap::new(),

@@ -1,0 +1,17 @@
+suite shop.orders {
+  case "a buyer's cart is their own" {
+    let _    <- api.POST("/cart/:sku", "widget") by Buyer("alice")
+    let mine <- api.GET("/cart/size") by Buyer("bob")
+    expect mine is Ok(_)
+  }
+
+  case "the sweeper runs clean" {
+    let r <- sweeper.schedule("0 0 * * *")
+    expect r is Ok(_)
+  }
+
+  case "an intake message is acked" {
+    let r <- intake.message(Item { sku: "x" })
+    expect r is Ack
+  }
+}

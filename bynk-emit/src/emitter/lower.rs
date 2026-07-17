@@ -45,6 +45,7 @@ pub fn lower_test_case_body(
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
     test_services: HashSet<String>,
+    test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
     test_agents: HashSet<String>,
     source: &str,
     rel_path: &str,
@@ -54,6 +55,7 @@ pub fn lower_test_case_body(
     {
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
         cx.test_services = test_services;
+        cx.test_service_handlers = test_service_handlers;
         cx.local_agents = test_agents.clone();
         cx.test_agents = test_agents;
         // v0.117: observations and `trace` in the body read the per-case recorded
@@ -319,7 +321,19 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
         Statement::EffectLet(l) => {
             // `let x <- expr` → `const x = await expr;`
             let mut stmts = Vec::new();
+            // v0.182 (#664): a call-site `by <Actor>(<identity>)` supplies the
+            // identity the addressed handler reads as `deps.identity`. Lower it
+            // (a test-only brand cast, like an agent key) and stash it for the
+            // address-call lowering to fold into that call's deps.
+            let saved_identity = cx.call_site_identity.take();
+            if let Some(principal) = &l.principal {
+                cx.call_site_identity = principal
+                    .identity
+                    .as_ref()
+                    .map(|id| format!("({} as any)", lower_expr(id, &mut stmts, cx)));
+            }
             let value = lower_expr(&l.value, &mut stmts, cx);
+            cx.call_site_identity = saved_identity;
             for s in &stmts {
                 write_line(out, indent, s);
             }
@@ -1409,14 +1423,69 @@ fn lower_method_call(
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         return format!("{}.{}({})", id.name, method.name, args_lowered.join(", "));
     }
-    // v0.7: local service call inside a test case body.
-    // `serviceName.method(args)` → `serviceName.method(args, deps)`.
+    // v0.7 / v0.182: local service call inside a test case body. `svc.call(args)`
+    // lowers to `svc.call(args, deps)`. An http address `svc.<VERB>("/path", …)`
+    // (#664) lowers to the emitted handler key `svc.http_<VERB>_<path>(<rest>,
+    // <deps>)`, where `<deps>` folds in the call-site identity when present.
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.test_services.contains(&id.name)
     {
+        let deps_expr = match cx.call_site_identity.clone() {
+            Some(identity) => format!("{{ ...deps, identity: {identity} }}"),
+            None => "deps".to_string(),
+        };
+        use bynk_syntax::ast::HandlerKind as HK;
+        // http address: the method is an HTTP verb and the first argument is the
+        // route pattern string. The key is a pure function of verb + path; the
+        // remaining args are the handler's positional params.
+        if let Some(verb) = bynk_syntax::ast::HttpMethod::from_ident(&method.name)
+            && let Some(first) = args.first()
+            && let ExprKind::StrLit(path) = &first.kind
+        {
+            let key = crate::emitter::http_handler_method_name(verb, path);
+            let rest: Vec<String> = args[1..].iter().map(|a| lower_expr(a, stmts, cx)).collect();
+            let mut all = rest;
+            all.push(deps_expr);
+            return format!("{}.{}({})", id.name, key, all.join(", "));
+        }
+        // cron/queue address: the emitted key is position-indexed among the
+        // service's same-kind handlers, so recover the index from the handler
+        // list. cron drops the leading schedule string; queue passes the message.
+        if let Some(handlers) = cx.test_service_handlers.get(&id.name) {
+            if method.name == "schedule"
+                && let Some(ExprKind::StrLit(expr)) = args.first().map(|a| &a.kind)
+            {
+                let mut idx = 0usize;
+                for h in handlers {
+                    if let HK::Cron { expr: e } = h {
+                        if e == expr {
+                            break;
+                        }
+                        idx += 1;
+                    }
+                }
+                let key = crate::emitter::cron_handler_method_name(&id.name, idx);
+                let rest: Vec<String> =
+                    args[1..].iter().map(|a| lower_expr(a, stmts, cx)).collect();
+                let mut all = rest;
+                all.push(deps_expr);
+                return format!("{}.{}({})", id.name, key, all.join(", "));
+            }
+            if method.name == "message" && handlers.iter().any(|h| matches!(h, HK::Message)) {
+                // A `from queue` service binds exactly one queue and declares one
+                // `on message` handler, so the position index is 0.
+                let key = crate::emitter::queue_handler_method_name(&id.name, 0);
+                let args_lowered: Vec<String> =
+                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+                let mut all = args_lowered;
+                all.push(deps_expr);
+                return format!("{}.{}({})", id.name, key, all.join(", "));
+            }
+        }
+        // `svc.call(args)` and other (non-http) forms: pass args through with deps.
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         let mut all = args_lowered;
-        all.push("deps".to_string());
+        all.push(deps_expr);
         return format!("{}.{}({})", id.name, method.name, all.join(", "));
     }
     // v0.9.2: inline agent invocation. Source form is

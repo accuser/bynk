@@ -1,0 +1,7 @@
+context demo.api
+type Title = String where NonEmpty
+service api from http {
+  on GET("/items") () -> Effect[HttpResult[Title]] by v: Visitor {
+    Ok("x")
+  }
+}
