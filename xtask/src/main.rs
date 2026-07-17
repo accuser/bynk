@@ -11,7 +11,17 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("check-pending") => check_pending(),
-        Some("stamp") => stamp(args.iter().any(|a| a == "--apply")),
+        Some("stamp") => {
+            // Reject unknown flags rather than silently dry-running — on a
+            // dry-run-by-default command, a typo'd `--aply` must not read as "no
+            // --apply given" when the maintainer meant to write.
+            if let Some(bad) = args[1..].iter().find(|a| *a != "--apply") {
+                eprintln!("xtask stamp: unknown argument {bad:?}");
+                usage();
+                return ExitCode::from(2);
+            }
+            stamp(args.iter().any(|a| a == "--apply"))
+        }
         Some(other) => {
             eprintln!("xtask: unknown command {other:?}");
             usage();

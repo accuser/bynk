@@ -65,6 +65,20 @@ impl fmt::Display for Version {
     }
 }
 
+impl Version {
+    /// The ADR/index version string, following the corpus convention: a MINOR
+    /// increment is `MAJOR.MINOR` (`0.186`), a PATCH increment keeps its patch
+    /// (`0.185.1`, like the existing `v0.29.1`). Since [`next`](Version::next)
+    /// resets PATCH to 0 for a minor bump, `patch == 0` is exactly the minor case.
+    pub fn short(self) -> String {
+        if self.patch == 0 {
+            format!("{}.{}", self.major, self.minor)
+        } else {
+            self.to_string()
+        }
+    }
+}
+
 /// One pending increment stamped with the version it will ship as.
 #[derive(Debug)]
 pub struct Stamped {
@@ -132,12 +146,14 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
 }
 
 /// Apply `plan` to `root`: write ADR files + index rows, insert changelog rows,
-/// delete the consumed pending files, then run `bump` for the final version.
+/// run `bump` for the final version, then delete the consumed pending files.
 ///
-/// `bump` is the version-bump step — the real caller passes one that runs
-/// `scripts/bump-version.sh`; tests pass one that just rewrites the fixture's
-/// `Cargo.toml`. It runs last so the manifests, banners and llms-full reflect
-/// the just-written changelog.
+/// Order matters twice. `bump` runs *after* the changelog edit — the real caller
+/// passes one that runs `scripts/bump-version.sh`, which regenerates `llms-full`
+/// from the changelog — and the pending-file deletes run *after* `bump` succeeds,
+/// so a failed bump leaves the pending files intact and the run stays retryable.
+/// `bump` is injected so tests exercise the whole flow on a fixture tree with a
+/// stub that just rewrites the fixture's `Cargo.toml`.
 pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>) -> io::Result<()> {
     if plan.is_empty() {
         return Ok(());
@@ -166,24 +182,29 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
     index_rows.reverse();
 
     let changelog = fs::read_to_string(&changelog_path)?;
-    let changelog = insert_after_table_separator(&changelog, &changelog_rows)
+    let changelog = insert_after_table_separator(&changelog, "| Version |", &changelog_rows)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     fs::write(&changelog_path, changelog)?;
 
     if !index_rows.is_empty() {
         let readme_path = decisions.join("README.md");
         let readme = fs::read_to_string(&readme_path)?;
-        let readme = insert_after_table_separator(&readme, &index_rows)
+        let readme = insert_after_table_separator(&readme, "| # | Decision |", &index_rows)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         fs::write(&readme_path, readme)?;
     }
 
-    // Consume: delete each pending file so a re-run is a no-op.
+    // Bump the manifests (regenerates llms-full from the just-written changelog).
+    bump(plan.final_version())?;
+
+    // Consume last: delete each pending file only once the bump has succeeded, so
+    // a failed bump leaves the pending files intact and the run is retryable
+    // (after discarding the partial changelog/ADR edits) rather than stranding a
+    // changelog that cites a version the manifests never reached.
     for inc in &plan.increments {
         fs::remove_file(root.join("design/pending").join(&inc.file))?;
     }
-
-    bump(plan.final_version())
+    Ok(())
 }
 
 // --- Pure rendering / parsing helpers (unit-tested without the filesystem) ---
@@ -229,9 +250,10 @@ pub fn changelog_row(version: Version, blurb: &str) -> String {
 /// heading, a status line carrying the version, then the body verbatim.
 pub fn adr_file_contents(number: u32, adr: &Adr, version: Version) -> String {
     format!(
-        "# {number:04} — {title}\n\n- **Status:** {status} (v{version})\n\n{body}\n",
+        "# {number:04} — {title}\n\n- **Status:** {status} (v{ver})\n\n{body}\n",
         title = adr.title,
         status = adr.status(),
+        ver = version.short(),
         body = adr.body,
     )
 }
@@ -239,32 +261,46 @@ pub fn adr_file_contents(number: u32, adr: &Adr, version: Version) -> String {
 /// The `design/decisions/README.md` index row for a materialised ADR.
 pub fn index_row(number: u32, adr: &Adr, version: Version) -> String {
     format!(
-        "| [{number:04}]({number:04}-{slug}.md) | **{title}** (v{version}) — {summary} | {status} (v{version}) |",
+        "| [{number:04}]({number:04}-{slug}.md) | **{title}** (v{ver}) — {summary} | {status} (v{ver}) |",
         slug = adr.slug,
         title = adr.title,
+        ver = version.short(),
         summary = adr.summary(),
         status = adr.status(),
     )
 }
 
-/// Insert `rows` (already newest-first) immediately after the first Markdown
-/// table separator line (`|---|---|…`). Both the changelog and the decisions
-/// index put their newest row at the top of their one table.
-pub fn insert_after_table_separator(md: &str, rows: &[String]) -> Result<String, String> {
+/// Insert `rows` (already newest-first) immediately after the separator line of
+/// the table whose header row contains `header_anchor` (e.g. `"| Version |"`).
+/// Anchoring on the header — rather than the first separator in the file — keeps
+/// the insert correct if another table (a legend, say) is ever added above.
+pub fn insert_after_table_separator(
+    md: &str,
+    header_anchor: &str,
+    rows: &[String],
+) -> Result<String, String> {
     if rows.is_empty() {
         return Ok(md.to_string());
     }
     let mut out = Vec::new();
+    let mut seen_header = false;
     let mut inserted = false;
     for line in md.lines() {
         out.push(line.to_string());
-        if !inserted && is_table_separator(line) {
+        if inserted {
+            continue;
+        }
+        if !seen_header {
+            seen_header = line.contains(header_anchor);
+        } else if is_table_separator(line) {
             out.extend(rows.iter().cloned());
             inserted = true;
         }
     }
     if !inserted {
-        return Err("no Markdown table separator (`|---|…`) found to insert after".into());
+        return Err(format!(
+            "no table with header {header_anchor:?} (and a `|---|` separator) to insert after"
+        ));
     }
     // Preserve a trailing newline if the input had one.
     let mut joined = out.join("\n");
@@ -335,7 +371,30 @@ mod tests {
     }
 
     #[test]
-    fn adr_file_and_index_row() {
+    fn version_short_follows_the_corpus_convention() {
+        // Minor (patch == 0) → MAJOR.MINOR; patch → full.
+        assert_eq!(
+            Version {
+                major: 0,
+                minor: 186,
+                patch: 0
+            }
+            .short(),
+            "0.186"
+        );
+        assert_eq!(
+            Version {
+                major: 0,
+                minor: 185,
+                patch: 1
+            }
+            .short(),
+            "0.185.1"
+        );
+    }
+
+    #[test]
+    fn adr_file_and_index_row_use_the_short_version() {
         let v = Version {
             major: 0,
             minor: 186,
@@ -344,14 +403,26 @@ mod tests {
         let a = adr("a-slug", "The title");
         let file = adr_file_contents(206, &a, v);
         assert!(file.starts_with("# 0206 — The title\n"));
-        assert!(file.contains("- **Status:** Accepted (v0.186.0)"));
+        // MINOR-only, matching every existing ADR — not the full 0.186.0.
+        assert!(file.contains("- **Status:** Accepted (v0.186)"));
         assert!(file.trim_end().ends_with("Do the thing."));
 
         let row = index_row(206, &a, v);
         assert_eq!(
             row,
-            "| [0206](0206-a-slug.md) | **The title** (v0.186.0) — The title | Accepted (v0.186.0) |"
+            "| [0206](0206-a-slug.md) | **The title** (v0.186) — The title | Accepted (v0.186) |"
         );
+    }
+
+    #[test]
+    fn patch_increment_index_row_keeps_the_patch() {
+        let v = Version {
+            major: 0,
+            minor: 185,
+            patch: 1,
+        };
+        let a = adr("s", "T");
+        assert!(index_row(9, &a, v).contains("(v0.185.1)"));
     }
 
     #[test]
@@ -370,16 +441,20 @@ mod tests {
         };
         assert_eq!(
             index_row(7, &a, v),
-            "| [0007](0007-s.md) | **T** (v0.1.0) — the distillation | Proposed (v0.1.0) |"
+            "| [0007](0007-s.md) | **T** (v0.1) — the distillation | Proposed (v0.1) |"
         );
     }
 
     #[test]
-    fn insert_prepends_after_separator_newest_first() {
+    fn insert_prepends_after_the_anchored_table_newest_first() {
         let md =
             "## Recent increments\n\n| Version | Highlights |\n|---|---|\n| **v0.185.0** | Old |\n";
-        let out =
-            insert_after_table_separator(md, &["| NEW1 |".into(), "| NEW2 |".into()]).unwrap();
+        let out = insert_after_table_separator(
+            md,
+            "| Version |",
+            &["| NEW1 |".into(), "| NEW2 |".into()],
+        )
+        .unwrap();
         let lines: Vec<&str> = out.lines().collect();
         let sep = lines.iter().position(|l| *l == "|---|---|").unwrap();
         assert_eq!(lines[sep + 1], "| NEW1 |");
@@ -389,7 +464,29 @@ mod tests {
     }
 
     #[test]
-    fn insert_without_a_table_errors() {
-        assert!(insert_after_table_separator("no table here\n", &["| r |".into()]).is_err());
+    fn insert_skips_an_earlier_unrelated_table() {
+        // A legend table sits above the target; the anchor must route past it.
+        let md = "| Legend | Meaning |\n|---|---|\n| x | y |\n\n\
+                  | Version | Highlights |\n|---|---|\n| **v0.185.0** | Old |\n";
+        let out = insert_after_table_separator(md, "| Version |", &["| NEW |".into()]).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        // Inserted below the *second* separator, not the legend's.
+        let target = lines
+            .iter()
+            .position(|l| *l == "| **v0.185.0** | Old |")
+            .unwrap();
+        assert_eq!(lines[target - 1], "| NEW |");
+        assert!(
+            !out.contains("| x | y |\n| NEW |"),
+            "must not touch the legend table"
+        );
+    }
+
+    #[test]
+    fn insert_without_the_anchored_table_errors() {
+        assert!(
+            insert_after_table_separator("no table here\n", "| Version |", &["| r |".into()])
+                .is_err()
+        );
     }
 }

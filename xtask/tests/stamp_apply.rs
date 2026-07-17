@@ -86,16 +86,16 @@ fn stamp_one_increment_with_an_adr() {
         "new row must sit above the old one"
     );
 
-    // ADR file 0206 written with title/status/body.
+    // ADR file 0206 written with title/status/body (MINOR-only version string).
     let adr = fs::read_to_string(root.join("design/decisions/0206-the-thing.md")).unwrap();
     assert!(adr.starts_with("# 0206 — The thing is added\n"));
-    assert!(adr.contains("- **Status:** Accepted (v0.186.0)"));
+    assert!(adr.contains("- **Status:** Accepted (v0.186)"));
     assert!(adr.contains("**Decision.** Add it."));
 
     // Index row for 0206, using the explicit summary.
     let readme = fs::read_to_string(root.join("design/decisions/README.md")).unwrap();
     assert!(readme.contains(
-        "| [0206](0206-the-thing.md) | **The thing is added** (v0.186.0) — How the thing works | Accepted (v0.186.0) |"
+        "| [0206](0206-the-thing.md) | **The thing is added** (v0.186) — How the thing works | Accepted (v0.186) |"
     ));
 
     // Pending file consumed; manifests bumped.
@@ -156,6 +156,39 @@ fn stamp_two_increments_get_sequential_versions() {
             .unwrap()
             .contains("version = \"0.186.1\"")
     );
+}
+
+#[test]
+fn two_adrs_across_two_increments_number_sequentially() {
+    let root = fixture("twoadr");
+    fs::write(
+        root.join("design/pending/a-first.md"),
+        "---\nlevel: minor\nchangelog: First\n---\n\n## ADR: alpha\ntitle: Alpha\n\nBody a.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("design/pending/b-second.md"),
+        "---\nlevel: patch\nchangelog: Second\n---\n\n## ADR: beta\ntitle: Beta\n\nBody b.\n",
+    )
+    .unwrap();
+
+    let plan = stamp::plan(&root).expect("plan");
+    assert_eq!(plan.first_adr_number, 206);
+    stamp::apply(&root, &plan, bumper(&root)).expect("apply");
+
+    // First increment's ADR is 0206 at its version (0.186); second is 0207 at 0.186.1.
+    let alpha = fs::read_to_string(root.join("design/decisions/0206-alpha.md")).unwrap();
+    assert!(alpha.starts_with("# 0206 — Alpha\n"));
+    assert!(alpha.contains("(v0.186)"));
+    let beta = fs::read_to_string(root.join("design/decisions/0207-beta.md")).unwrap();
+    assert!(beta.starts_with("# 0207 — Beta\n"));
+    assert!(beta.contains("(v0.186.1)"));
+
+    // Both index rows present; newest (0207) above 0206, both above the old 0205.
+    let readme = fs::read_to_string(root.join("design/decisions/README.md")).unwrap();
+    let pos = |s: &str| readme.find(s).unwrap();
+    assert!(pos("0207-beta.md") < pos("0206-alpha.md"));
+    assert!(pos("0206-alpha.md") < pos("0205-old.md"));
 }
 
 #[test]
