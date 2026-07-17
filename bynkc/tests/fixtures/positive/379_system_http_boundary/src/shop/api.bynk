@@ -1,0 +1,31 @@
+context shop.api
+
+type UserId = String where NonEmpty
+actor User { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+type Item = { sku: String }
+
+agent Cart {
+  key owner: UserId
+  store items: Map[String, Item]
+
+  on call add(sku: String) -> Effect[Item] {
+    let item = Item { sku: sku }
+    let _ <- items.put(sku, item)
+    item
+  }
+  on call size() -> Effect[Int] {
+    items.values.count()
+  }
+}
+
+service api from http {
+  on POST("/cart") (body: Item) -> Effect[HttpResult[Item]] by u: User {
+    let item <- Cart(u.identity).add(body.sku)
+    Created(item)
+  }
+  on GET("/cart/size") () -> Effect[HttpResult[Int]] by u: User {
+    let n <- Cart(u.identity).size()
+    Ok(n)
+  }
+}

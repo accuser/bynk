@@ -93,6 +93,7 @@ pub fn lower_integration_case_body(
     block: &Block,
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
+    system_http_services: std::collections::HashSet<String>,
     source: &str,
     rel_path: &str,
 ) -> (String, SourceMapBuilder) {
@@ -101,6 +102,7 @@ pub fn lower_integration_case_body(
     {
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
         cx.target = BuildTarget::Workers;
+        cx.system_http_services = system_http_services;
         cx.assert_loc = Some(crate::emitter::AssertLoc {
             source: source.to_string(),
             rel_path: rel_path.to_string(),
@@ -327,10 +329,13 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             // address-call lowering to fold into that call's deps.
             let saved_identity = cx.call_site_identity.take();
             if let Some(principal) = &l.principal {
+                // Store the *raw* lowered identity (`"bob"`). Unit deps folds it
+                // with an `as any` brand cast; the system driver passes it as the
+                // JWT `sub` verbatim.
                 cx.call_site_identity = principal
                     .identity
                     .as_ref()
-                    .map(|id| format!("({} as any)", lower_expr(id, &mut stmts, cx)));
+                    .map(|id| lower_expr(id, &mut stmts, cx));
             }
             let value = lower_expr(&l.value, &mut stmts, cx);
             cx.call_site_identity = saved_identity;
@@ -1427,11 +1432,29 @@ fn lower_method_call(
     // lowers to `svc.call(args, deps)`. An http address `svc.<VERB>("/path", …)`
     // (#664) lowers to the emitted handler key `svc.http_<VERB>_<path>(<rest>,
     // <deps>)`, where `<deps>` folds in the call-site identity when present.
+    // Slice B: a `system`-tier http address drives a real `worker.fetch` through
+    // a driver (`__sysdrive_<svc>_<key>(rest, sub)`), not a direct handler call.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.system_http_services.contains(&id.name)
+        && let Some(verb) = bynk_syntax::ast::HttpMethod::from_ident(&method.name)
+        && let Some(first) = args.first()
+        && let ExprKind::StrLit(path) = &first.kind
+    {
+        let key = crate::emitter::http_handler_method_name(verb, path);
+        let sub = cx
+            .call_site_identity
+            .clone()
+            .unwrap_or_else(|| "\"\"".to_string());
+        let rest: Vec<String> = args[1..].iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        let mut all = rest;
+        all.push(sub);
+        return format!("__sysdrive_{}_{}({})", id.name, key, all.join(", "));
+    }
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.test_services.contains(&id.name)
     {
         let deps_expr = match cx.call_site_identity.clone() {
-            Some(identity) => format!("{{ ...deps, identity: {identity} }}"),
+            Some(identity) => format!("{{ ...deps, identity: ({identity} as any) }}"),
             None => "deps".to_string(),
         };
         use bynk_syntax::ast::HandlerKind as HK;

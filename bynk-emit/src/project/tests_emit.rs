@@ -410,20 +410,33 @@ pub(crate) fn process_integration_tests(
 
         let mut bad = false;
 
-        // v0.118: a `system`-tier suite needs a real wire — the target plus at
-        // least one consumed context. Fewer than two participants means there is
-        // nothing to serialise across (replaces `too_few_participants`).
-        if participants.len() < 2 {
+        // v0.118 / testing-the-boundary Slice B: a `system` suite needs a real
+        // **serialisation edge** — not merely ≥ 2 participants. The original rule
+        // (`participants.len() < 2`) was a proxy for "nothing to serialise
+        // across", exact only when the sole edge was cross-context. A single
+        // context that exposes an `http` or `queue` service has a real edge (the
+        // public boundary: deserialise → handler → serialise), so it qualifies.
+        // `cron` does not — `scheduled` serialises nothing in either direction.
+        let has_serialisation_edge = unit_tables.get(&suite_target).is_some_and(|t| {
+            t.services.values().any(|s| {
+                matches!(
+                    s.protocol,
+                    bynk_syntax::ast::ServiceProtocol::Http
+                        | bynk_syntax::ast::ServiceProtocol::Queue { .. }
+                )
+            })
+        });
+        if participants.len() < 2 && !has_serialisation_edge {
             errors.push(
                 CompileError::new(
                     "bynk.tier.system_needs_wire",
                     decl.target.span,
                     format!(
-                        "`system`-tier suite for `{suite_target}` has nothing to wire — the target consumes no other context",
+                        "`system`-tier suite for `{suite_target}` has no serialisation edge — the target consumes no other context and exposes no `http` or `queue` service",
                     ),
                 )
                 .with_note(
-                    "a `system` test wires the target across the real serialisation boundary to the contexts it consumes; test a single context with `unit` or `integration`",
+                    "a `system` case crosses a real serialise → JSON → deserialise boundary; this target has none to cross, so `unit` already covers it",
                 ),
             );
             bad = true;
@@ -717,8 +730,11 @@ fn check_integration_case_body(
         commit_seen: false,
         caps: checker::CapabilityCtx::default(),
         in_test_body: true,
-        test_services: HashMap::new(),
-        test_actors: HashMap::new(),
+        // Slice B: a `system` case addresses the target's own service (`api.POST`)
+        // and names a principal (`by User(...)`), so the checker needs the
+        // target's services and actors — the same resolution the unit tier does.
+        test_services: target_test_services(participants.first().and_then(|t| unit_tables.get(t))),
+        test_actors: target_test_actors(participants.first().and_then(|t| unit_tables.get(t))),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -767,7 +783,7 @@ fn emit_integration_module(
         ""
     };
     out.push_str(&format!(
-        "import {{ Ok, Err, Some, None, callService, type Result, type Option, type ValidationError, type JsonError, type JsonValue, type BoundaryError, type ServiceBinding{agent_imports} }} from \"{runtime_import}\";\n"
+        "import {{ Ok, Err, Some, None, callService, type Result, type Option, type ValidationError, type JsonError, type JsonValue, type BoundaryError, type ServiceBinding, responseToHttpResult{agent_imports} }} from \"{runtime_import}\";\n"
     ));
 
     // Per-participant: workers handler namespace + Worker entry default export.
@@ -806,6 +822,14 @@ fn emit_integration_module(
         unit_tables,
     ));
     out.push('\n');
+
+    // Slice B: the test-only signer + per-route drivers for the target's http
+    // service, and the set of http service names so the lowering calls a driver.
+    let (http_support, http_services) = emit_system_http_support(suite, unit_tables);
+    if !http_support.is_empty() {
+        out.push_str(&http_support);
+        out.push('\n');
+    }
 
     // One async function per case.
     let mut typed = integration_typed_commons(uses_targets, participants, unit_tables);
@@ -846,6 +870,7 @@ fn emit_integration_module(
             &case.body,
             &mut typed,
             cross_context,
+            http_services.clone(),
             input.source,
             &input.rel_path,
         );
@@ -903,6 +928,202 @@ fn emit_integration_module(
             cases: discovered,
         },
     ))
+}
+
+/// testing-the-boundary Slice B: for a `system` suite whose target exposes an
+/// `http` service, emit a **test-only** HS256 signer and one **driver** per
+/// route. A driver builds a real `Request` (concrete path, JSON body, a signed
+/// `Authorization: Bearer …`), drives the target Worker's public `fetch`, and
+/// decodes the `Response` back to `HttpResult[T]`. The developer's `by
+/// User("bob")` supplies the `sub`; the framework signs it (the developer never
+/// hand-crafts auth — real-token ceremony is an e2e concern), and the real,
+/// unmodified emitted Worker verifies it. Returns the emitted TS plus the set of
+/// the target's http service names, so the case-body lowering knows to call a
+/// driver (`__sysdrive_<svc>_<key>`) rather than `callService`.
+fn emit_system_http_support(
+    target: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+) -> (String, std::collections::HashSet<String>) {
+    use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
+    let mut http_services: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let Some(table) = unit_tables.get(target) else {
+        return (String::new(), http_services);
+    };
+    let ns = target.replace('.', "_");
+    let binding = crate::emitter::wrangler::consumed_binding_name(target);
+    let type_ns = format!("{ns}.");
+
+    let mut routes = String::new();
+    let mut secrets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    let mut svc_names: Vec<&String> = table.services.keys().collect();
+    svc_names.sort();
+    for sname in svc_names {
+        let decl = &table.services[sname];
+        if !matches!(decl.protocol, ServiceProtocol::Http) {
+            continue;
+        }
+        http_services.insert(sname.clone());
+        for h in &decl.handlers {
+            let HandlerKind::Http { method, path } = &h.kind else {
+                continue;
+            };
+            let key = crate::emitter::http_handler_method_name(*method, path);
+            // Split the handler's params into path params (matching `:name` in
+            // the pattern, in order) and the optional body (the remaining param).
+            let path_params: Vec<&str> = path
+                .split('/')
+                .filter_map(|seg| seg.strip_prefix(':'))
+                .collect();
+            let (_path_ps, body_ps): (Vec<_>, Vec<_>) = h
+                .params
+                .iter()
+                .partition(|p| path_params.contains(&p.name.name.as_str()));
+            // The concrete URL: substitute each `:name` with its param.
+            let concrete_path = {
+                let mut s = String::new();
+                for seg in path.split('/').filter(|x| !x.is_empty()) {
+                    s.push('/');
+                    if let Some(name) = seg.strip_prefix(':') {
+                        s.push_str(&format!("${{{}}}", crate::emitter::ts_ident(name)));
+                    } else {
+                        s.push_str(seg);
+                    }
+                }
+                if s.is_empty() {
+                    s.push('/');
+                }
+                s
+            };
+            // The signed Authorization header, if the handler's `by` is Bearer.
+            let (auth_header, _secret_name) = match bynk_check::actors::bearer_seam_for(
+                h,
+                &table.actors,
+            ) {
+                Some(seam) => {
+                    secrets.insert(seam.secret.clone());
+                    let secret_read =
+                        format!("((globalThis as any).process?.env?.[{:?}] ?? \"\")", seam.secret);
+                    (
+                        format!(
+                            "\"authorization\": `Bearer ${{await __bynkSignHs256({{ sub: __sub, exp: __bynkNow() + 3600 }}, {secret_read})}}`, "
+                        ),
+                        Some(seam.secret),
+                    )
+                }
+                None => (String::new(), None),
+            };
+            // Body param → serialise; path params → the URL.
+            let body_arg = body_ps.first();
+            let (body_line, body_init) = match body_arg {
+                Some(p) => {
+                    let ser = crate::emitter::serialisation::serialise_expr_via(
+                        &p.type_ref,
+                        &crate::emitter::ts_ident(&p.name.name),
+                        &type_ns,
+                    );
+                    (
+                        format!("  const __body = JSON.stringify({ser});\n"),
+                        "body: __body, ",
+                    )
+                }
+                None => (String::new(), ""),
+            };
+            // The response payload deserialiser: the `T` of `Effect[HttpResult[T]]`.
+            let payload_deser = match strip_effect_httpresult(&h.return_type) {
+                Some(inner) => crate::emitter::serialisation::deserialise_ref_via(inner, &type_ns),
+                None => format!("{type_ns}deserialise_unit"),
+            };
+            // Driver params mirror the handler's params (path params, then body).
+            let driver_params: Vec<String> = h
+                .params
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}: {}",
+                        crate::emitter::ts_ident(&p.name.name),
+                        driver_param_ty(&p.type_ref, &ns)
+                    )
+                })
+                .collect();
+            let content_type = if body_arg.is_some() {
+                "\"content-type\": \"application/json\", "
+            } else {
+                ""
+            };
+            routes.push_str(&format!(
+                "async function __sysdrive_{sname}_{key}({params}{sep}__sub: string) {{\n\
+                 {body_line}\
+                 \x20 const __h = makeHarness();\n\
+                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {body_init}}});\n\
+                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+                 \x20 return responseToHttpResult(__res, {payload_deser});\n\
+                 }}\n",
+                params = driver_params.join(", "),
+                sep = if driver_params.is_empty() { "" } else { ", " },
+                method = method.as_str(),
+            ));
+        }
+    }
+
+    if http_services.is_empty() {
+        return (String::new(), http_services);
+    }
+
+    let mut out = String::new();
+    // A monotonic clock the signer's `exp` uses; kept out of `bundle`d runtime.
+    out.push_str("function __bynkNow(): number { return Math.floor(Date.now() / 1000); }\n");
+    // Test-only HS256 signer (never in the deployable app; e2e owns real auth).
+    out.push_str(
+        "function __b64url(s: string): string { return btoa(s).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
+         function __bytesB64url(bytes: Uint8Array): string { let bin = \"\"; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
+         async function __bynkSignHs256(payload: Record<string, unknown>, secret: string): Promise<string> {\n\
+         \x20 const h = __b64url(JSON.stringify({ alg: \"HS256\", typ: \"JWT\" }));\n\
+         \x20 const p = __b64url(JSON.stringify(payload));\n\
+         \x20 const enc = new TextEncoder();\n\
+         \x20 const key = await crypto.subtle.importKey(\"raw\", enc.encode(secret) as BufferSource, { name: \"HMAC\", hash: \"SHA-256\" }, false, [\"sign\"]);\n\
+         \x20 const sig = await crypto.subtle.sign(\"HMAC\", key, enc.encode(`${h}.${p}`) as BufferSource);\n\
+         \x20 return `${h}.${p}.${__bytesB64url(new Uint8Array(sig))}`;\n\
+         }\n",
+    );
+    // Set each secret the target's actors read, so the real Bearer seam verifies.
+    for s in &secrets {
+        out.push_str(&format!(
+            "(globalThis as any).process = (globalThis as any).process ?? {{ env: {{}} }};\n(globalThis as any).process.env[{s:?}] = \"__bynk_test_secret\";\n"
+        ));
+    }
+    out.push_str(&routes);
+    (out, http_services)
+}
+
+/// Type a system-http driver parameter (v0.182): a named type is reached
+/// through the target's handler namespace (`todos.AddRequest`); primitives and
+/// compound shapes fall back to `unknown` — the driver only forwards the value
+/// to the namespace's `serialise_*`, and the Bynk checker already typed the call.
+fn driver_param_ty(t: &bynk_syntax::ast::TypeRef, _ns: &str) -> String {
+    use bynk_syntax::ast::TypeRef;
+    match t {
+        // A named type may embed a branded refined field (`AddRequest.title:
+        // Title`), and the case body passes a plain object literal — the Bynk
+        // checker already type-checked the call's args against the handler
+        // (Slice A), so the driver forwards the value to the namespace's
+        // `serialise_*`. Primitives stay precise.
+        TypeRef::Named(_) => "any".to_string(),
+        other => crate::emitter::ts_type_ref(other),
+    }
+}
+
+/// Extract `T` from a handler return type `Effect[HttpResult[T]]` (v0.182).
+fn strip_effect_httpresult(t: &bynk_syntax::ast::TypeRef) -> Option<&bynk_syntax::ast::TypeRef> {
+    use bynk_syntax::ast::TypeRef;
+    let inner = match t {
+        TypeRef::Effect(b, _) => b.as_ref(),
+        other => other,
+    };
+    match inner {
+        TypeRef::HttpResult(payload, _) => Some(payload.as_ref()),
+        _ => None,
+    }
 }
 
 /// Emit the `makeHarness()` factory: an in-process env per participant whose

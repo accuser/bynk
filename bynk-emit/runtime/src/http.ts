@@ -1,4 +1,5 @@
-import type { JsonValue } from "./boundary.ts";
+import type { JsonValue, BoundaryError } from "./boundary.ts";
+import type { Result } from "./result.ts";
 
 // v0.9: HttpResult — the built-in HTTP-result sum.
 
@@ -272,6 +273,94 @@ export function httpResultToResponse<T>(
 // (the body is never materialised — permitted, §9.3.2 "MAY").
 export function headResponse(response: Response): Response {
   return new Response(null, { status: response.status, headers: response.headers });
+}
+
+// testing-the-boundary Slice B: the inverse of `httpResultToResponse` for a
+// `system`-tier test. A case drives a route with a real `fetch` and asserts on
+// the returned `HttpResult[T]` (`expect item is Created(_)`), so the harness
+// decodes the `Response` back through this. Status is the discriminator: it
+// picks the canonical variant for each code (a 200 body decodes to `Ok`;
+// `Streaming`/`Raw` — both 200 — are not distinguished, since a test asserting
+// on those would use the unit tier). Value-bearing 2xx parse the JSON body
+// through `deserialiseValue`; error variants recover their `{ error }` message;
+// redirects recover the `Location` header; the rest are bodyless.
+const STATUS_TO_TAG: Record<number, HttpResult<unknown>["tag"]> = {
+  200: "Ok",
+  201: "Created",
+  202: "Accepted",
+  204: "NoContent",
+  301: "MovedPermanently",
+  302: "Found",
+  303: "SeeOther",
+  307: "TemporaryRedirect",
+  308: "PermanentRedirect",
+  400: "BadRequest",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "NotFound",
+  405: "MethodNotAllowed",
+  406: "NotAcceptable",
+  408: "RequestTimeout",
+  409: "Conflict",
+  410: "Gone",
+  411: "LengthRequired",
+  413: "PayloadTooLarge",
+  415: "UnsupportedMediaType",
+  422: "UnprocessableEntity",
+  429: "TooManyRequests",
+  451: "UnavailableForLegalReasons",
+  500: "ServerError",
+  501: "NotImplemented",
+  502: "BadGateway",
+  503: "ServiceUnavailable",
+  504: "GatewayTimeout",
+};
+
+export async function responseToHttpResult<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpResult<T>> {
+  const tag = STATUS_TO_TAG[response.status] ?? "ServerError";
+  switch (tag) {
+    case "Ok":
+    case "Created":
+    case "Accepted": {
+      const json = (await response.json()) as JsonValue;
+      const decoded = deserialiseValue(json);
+      const value = (decoded.tag === "Ok" ? decoded.value : (json as unknown)) as T;
+      return { tag, value };
+    }
+    case "MovedPermanently":
+    case "Found":
+    case "SeeOther":
+    case "TemporaryRedirect":
+    case "PermanentRedirect":
+      return { tag, location: response.headers.get("location") ?? "" };
+    case "BadRequest":
+    case "Conflict":
+    case "PayloadTooLarge":
+    case "UnsupportedMediaType":
+    case "UnprocessableEntity":
+    case "TooManyRequests":
+    case "UnavailableForLegalReasons":
+    case "ServerError":
+    case "NotImplemented":
+    case "BadGateway":
+    case "ServiceUnavailable":
+    case "GatewayTimeout": {
+      let message = "";
+      try {
+        const body = (await response.json()) as { error?: string };
+        message = body.error ?? "";
+      } catch {
+        message = "";
+      }
+      return { tag, message } as HttpResult<T>;
+    }
+    default:
+      // NoContent and the self-describing bodyless statuses.
+      return { tag } as HttpResult<T>;
+  }
 }
 
 // v0.131 (ADR 0159): the cross-origin (CORS) policy a `from http` service carries
