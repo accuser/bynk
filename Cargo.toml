@@ -13,6 +13,9 @@ members = [
     "bynk-fmt",
     "bynk-grammar",
     "bynk-lsp",
+    # Repo automation (unpublished). Not a product crate — kept off the release
+    # workflows' hardcoded crate list; `publish = false` in its manifest.
+    "xtask",
 ]
 resolver = "3"
 
