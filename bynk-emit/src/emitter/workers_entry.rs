@@ -1034,20 +1034,6 @@ fn emit_http_route_dispatch(
     let method_key = http_handler_method_name(route.method, &route.path);
     let has_path_params = param_count(&route.path) > 0;
     let path_lit = route.path.replace('"', "\\\"");
-    // v0.188 (#659): the boundary-rejection responses this block emits are stamped
-    // with the service policy (`applySecurityHeaders`/`applyCors`) just like the
-    // handled `200`. Pre-computed for the shapes reused across the body-read paths;
-    // the input-reflecting `400`s (body deser, path-param refinement) stamp inline.
-    let malformed_400 = stamp_rejection(
-        "new Response(JSON.stringify({ kind: \"MalformedJson\", details: \"Invalid request body\" }), { status: 400, headers: { \"content-type\": \"application/json\" } })",
-        cors_const,
-        security_const,
-    );
-    let unauthorized_401 = stamp_rejection(
-        "new Response(null, { status: 401 })",
-        cors_const,
-        security_const,
-    );
     // v0.139 (ADR 0162 D3): a `GET` route also answers `HEAD` — the guard widens
     // so the `GET` handler runs, then the built response's body is stripped
     // below. Other methods match exactly.
@@ -1115,11 +1101,28 @@ fn emit_http_route_dispatch(
     if !route.sum
         && let Some(body_param) = h.params.iter().find(|p| p.name.name == "body")
     {
+        // v0.188 (#659): the body-read rejections are stamped with the service
+        // policy just like the handled `200`. Built here, at their use site, to
+        // match the local style (the `413`, `body_reject`, and path-param
+        // rejections are all built lazily too) — a bodyless `GET` never allocates
+        // them. `malformed_400` is reached from both the signature and plain body
+        // paths; `unauthorized_401` only from the signature seam, so it is built
+        // there; the input-reflecting body-deser `400` stamps inline below.
+        let malformed_400 = stamp_rejection(
+            "new Response(JSON.stringify({ kind: \"MalformedJson\", details: \"Invalid request body\" }), { status: 400, headers: { \"content-type\": \"application/json\" } })",
+            cors_const,
+            security_const,
+        );
         let _ = writeln!(out, "          let __body_json: JsonValue;");
         if let Some(seam) = &route.signature {
             // v0.51: read the raw body once, verify the HMAC fail-closed (401),
             // then parse the body param from the *same* bytes (not a re-read /
             // re-serialisation — the signature is over these exact bytes).
+            let unauthorized_401 = stamp_rejection(
+                "new Response(null, { status: 401 })",
+                cors_const,
+                security_const,
+            );
             let secret = crate::emitter::escape_ts_string(&seam.secret);
             let header = crate::emitter::escape_ts_string(&seam.header);
             let _ = writeln!(out, "          let __raw: string;");
