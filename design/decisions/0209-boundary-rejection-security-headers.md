@@ -1,12 +1,6 @@
----
-level: patch
-changelog: A `from http` route's boundary-rejection responses (`400`/`401`) now carry the service's security headers (`nosniff`/HSTS) and CORS, exactly as its handled `200` does — restoring ADR 0164 D6 on the rejection path (#659)
----
+# 0209 — A `from http` route's rejections carry the service security policy — ADR 0164 D6 on the rejection path
 
-## ADR: boundary-rejection-security-headers
-
-title: A `from http` route's rejections carry the service security policy — ADR 0164 D6 on the rejection path
-summary: A boundary-rejection `400`/`401` a `from http` route emits is stamped with `applySecurityHeaders`/`applyCors` just as its handled `200` is, closing #659; scoped to service-addressed responses, with the service-less terminal `404`/`500`, the internal `/_bynk/call/` door, and websocket deferred as separate concerns.
+- **Status:** Accepted (v0.188.1)
 
 **Context.** ADR 0164 D6 states the security-header rule as a universal: "*every response the service emits* carries the policy" — and the book repeats it ("`nosniff` is stamped by default on every response"). #659 found the rejection path violates it: the boundary-rejection responses a `from http` route emits — a `RefinementViolation`/`BoundaryError`/`MalformedJson` `400`, a `Signature`-seam `401` — were emitted as bare `new Response(…)` in the router (`bynk-emit/src/emitter/workers_entry.rs`), skipping the `applySecurityHeaders`/`applyCors` wrapper that the handled `200`, the `405`, the `304`, and the `413` all pass through. The `400`s are the one response class that **reflects attacker-controlled input** (the offending value is echoed into the JSON body), so the missing `nosniff` sat on exactly the responses where content-sniffing is a concern — the vector #493/ADR 0164 exist to close, still open on rejection. `nosniff` is defence-in-depth, not a turnkey XSS, but the invariant was documented, universal, and violated.
 
