@@ -5,3 +5,7 @@ dist/
 # Generated Rust API docs (built by `cargo doc` in the deploy workflow, then
 # copied here and served at /docs/api/). CI-generated, never committed.
 public/docs/api/
+
+# Inlined Book, regenerated from the Book markdown by the `prebuild` npm hook on
+# every `npm run build` (CI + deploy). A build artifact, never committed.
+public/llms-full.txt

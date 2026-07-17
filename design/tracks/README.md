@@ -85,6 +85,11 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`increment-allocation.md`** — the version and the ADR number, two serial
+  counters that collided across parallel increments, are now assigned by a
+  per-merge stamp on `main` (an `xtask` command + a workflow) from a numberless
+  `design/pending/` file, not chosen in the feature PR; the surface-shrink also
+  made `llms-full.txt` a build artifact. Slices 0–3 shipped (ADR 0206).
 - **`lsp-foundations.md`** — the foundation under the shipped LSP surface: one
   project model shared with `bynkc`, a freshness contract, real multi-root
   workspaces, startup analysis + server-registered watchers, one scheduler, and

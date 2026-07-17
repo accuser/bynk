@@ -61,6 +61,7 @@ jobs:
       extension: ${{ steps.filter.outputs.extension }}
       grammar: ${{ steps.filter.outputs.grammar }}
       decisions: ${{ steps.filter.outputs.decisions }}
+      pending: ${{ steps.filter.outputs.pending }}
       runtime: ${{ steps.filter.outputs.runtime }}
       playground: ${{ steps.filter.outputs.playground }}
       site: ${{ steps.filter.outputs.site }}
@@ -113,6 +114,12 @@ jobs:
             decisions:
               - *global
               - 'design/decisions/**'
+            pending:
+              # Pending-increment files (increment-allocation track). A change
+              # here that touches no Rust would skip the `test` job, so the
+              # `drift` job runs the xtask validator in exactly that case.
+              - *global
+              - 'design/pending/**'
             runtime:
               # The @bynk/runtime sources and the single bundled file bynk-emit
               # embeds via include_str!. The bundled file is a `.ts`, so it is
@@ -423,10 +430,6 @@ jobs:
       # sidebar.json drifts from it.
       - name: Check the generated sidebar is current
         run: node scripts/generate-sidebar.mjs --check
-      # llms-full.txt inlines the Book (directives expanded from the committed
-      # generated JSON); fail if it drifts. No build needed — reads markdown + JSON.
-      - name: Check llms-full.txt is up to date
-        run: node scripts/build-llms-full.mjs --check
       # llms.txt is hand-authored; verify its /book/ links still resolve.
       - name: Check llms.txt links resolve
         run: node scripts/check-llms-links.mjs
@@ -577,6 +580,8 @@ jobs:
     #     `extension` input) and asserts the semantic-token legend names match.
     #   - bynkc/tests/decisions_index.rs reads design/decisions/**.md (a
     #     `decisions` input) and asserts decisions/README.md indexes every ADR.
+    #   - xtask validates design/pending/**.md (a `pending` input) against the
+    #     pending-increment format (increment-allocation track).
     # This job runs them exactly when `test` would NOT but a drift input changed,
     # so a guard can never be skipped — and there is no duplicate run when `test`
     # already executes them (the `if` is the complement of `test`'s gate). The
@@ -585,7 +590,7 @@ jobs:
     needs: changes
     if: >-
       (needs.changes.outputs.grammar == 'true' || needs.changes.outputs.extension == 'true'
-        || needs.changes.outputs.decisions == 'true')
+        || needs.changes.outputs.decisions == 'true' || needs.changes.outputs.pending == 'true')
       && needs.changes.outputs.rust != 'true'
       && needs.changes.outputs.all != 'true'
     runs-on: ubuntu-latest
@@ -603,6 +608,8 @@ jobs:
         run: cargo test -p bynk-lsp --test legend_drift
       - name: Decision-record index ↔ ADR files
         run: cargo test -p bynkc --test decisions_index
+      - name: Pending-increment files ↔ format
+        run: cargo test -p xtask
 
   audit:
     # Scans Cargo.lock against the RustSec advisory database. Only the lockfile

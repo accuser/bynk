@@ -1,0 +1,6 @@
+# `cargo xtask <command>` — the repo-automation crate (unpublished workspace
+# member). Slice 0 ships `check-pending`; later increment-allocation slices add
+# the merge-time stamp here. `--quiet` keeps the command's own output clean of
+# cargo's build chatter.
+[alias]
+xtask = "run --quiet --package xtask --"
