@@ -1,6 +1,9 @@
 # Increment allocation — the version and the ADR number are stamped at merge, not chosen at authoring
 
-- **Status:** Draft (settling). Direction not yet merged; no slice authorised.
+- **Status:** Draft (settling). Direction not yet merged; no slice authorised. The spine is
+  [#685](https://github.com/accuser/bynk/issues/685)
+  ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); this doc settles via
+  the draft PR [#684](https://github.com/accuser/bynk/pull/684) (*Part of #685*).
 - **Realises:** [`../README.md` §"Versioning & release"](../README.md) (the single-repo
   version, `scripts/bump-version.sh`, the tag→publish backbone) and
   [`../bynk-release-discipline.md`](../bynk-release-discipline.md) (daily increments each
