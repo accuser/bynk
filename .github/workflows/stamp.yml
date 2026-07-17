@@ -1,0 +1,82 @@
+name: Stamp increments
+
+# Assign the version and ADR number(s) for a merged increment, on `main`, per the
+# increment-allocation track (design/tracks/increment-allocation.md; ADR 0206). A
+# feature PR lands a `design/pending/<slug>.md` carrying only intent — bump level,
+# changelog blurb, ADR prose — and no numbers; this workflow runs `cargo xtask
+# stamp --apply` on merge so the two serial counters are assigned in merge order
+# on `main`, where they can't collide, instead of being chosen in the PR where
+# parallel increments would conflict.
+#
+# `main` is unprotected, so the default GITHUB_TOKEN pushes the stamp commit
+# directly. A GITHUB_TOKEN push triggers no further workflow run — which is the
+# loop prevention (the stamp commit touches design/pending/**, but does not
+# re-fire this workflow) and also means the stamp commit runs no CI, so the job
+# validates the stamped tree itself before pushing. If `main` is ever branch
+# protected, this must move to a GitHub App with a push-bypass, or a stamp PR
+# (see ADR 0206).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "design/pending/**"
+      # The format doc is not an increment — editing it must not fire a (no-op)
+      # stamp run.
+      - "!design/pending/README.md"
+
+# Serialise stamps so two close merges never race the version counter; never
+# cancel a stamp mid-flight.
+concurrency:
+  group: stamp-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  stamp:
+    name: Stamp pending increments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # bump-version.sh (which the stamp shells out to) runs `npm install
+      # --package-lock-only` and the llms-full generator, so the job needs Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "22"
+
+      # Assign versions + ADR numbers and materialise them: runs bump-version.sh,
+      # prepends the changelog row(s), writes the ADR file(s) + index row(s), and
+      # deletes the consumed pending file(s) — the delete happens only after the
+      # bump succeeds, so a failure in this or the next step leaves nothing to push.
+      - name: Stamp
+        run: cargo run --quiet --package xtask -- stamp --apply
+
+      # The push below is authenticated with GITHUB_TOKEN and so triggers no CI —
+      # validate the stamp's own drift surface here before it lands on `main`. Not
+      # the full suite: the increment's own code was already validated in its PR;
+      # only the mechanical bump's outputs need re-checking.
+      - name: Validate the stamped tree
+        run: |
+          cargo test --package bynkc --test doc_version
+          cargo test --package bynkc --test decisions_index
+          cargo build --workspace --locked
+          cargo test --package xtask
+          node site/scripts/build-llms-full.mjs --check
+
+      # Commit and push the stamp. A non-fast-forward (a PR merged between checkout
+      # and push) fails the job loudly; the pending files were never pushed, so a
+      # re-run stamps cleanly against the newer main.
+      - name: Commit and push
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No pending increments to stamp — nothing to push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(stamp): assign version + ADR number(s) on merge"
+          git push
