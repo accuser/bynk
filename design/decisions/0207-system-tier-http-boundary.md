@@ -1,12 +1,6 @@
----
-level: minor
-changelog: A test case drives an http route at the system tier over a real fetch with a framework-signed credential; `system_needs_wire` relaxes to a serialisation edge
----
+# 0207 — A `system`-tier case drives an http route over a real `fetch` with a framework-signed credential
 
-## ADR: system-tier-http-boundary
-
-title: A `system`-tier case drives an http route over a real `fetch` with a framework-signed credential
-summary: Promote a case to `as system` to enter the target's public route table through the deployable Worker's real `fetch`, verified by the real auth seam; `system_needs_wire` relaxes from a participant count to a serialisation edge
+- **Status:** Accepted (v0.187)
 
 **Context.** Slice A (#664) let a `case` drive an http/cron/queue handler at the `unit` tier — the handler in-process, the identity *given*. The testing-the-boundary track's `system` tier is the next rung: the *whole deployable app*, wired as the TypeScript it ships as. Before this slice, `as system` entered only the **internal** `/_bynk/call/` Service-Binding door (`callService`), never the public route table — so an http route was unreachable at `system`, and a single-context http target was rejected by `system_needs_wire` (the rule counted `< 2` participants, a proxy for "nothing to serialise across" that was exact only when the sole edge was cross-context).
 
