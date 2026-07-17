@@ -13,11 +13,17 @@ export function compose(env: Env) {
     async http_GET_admin_stats() {
       return handlers.admin.http_GET_admin_stats(deps);
     },
+    async http_GET_admin_item_Param_code(code: any) {
+      return handlers.admin.http_GET_admin_item_Param_code(code, deps);
+    },
     async http_GET_health() {
       return handlers.health.http_GET_health(deps);
     },
     async http_GET_products_Param_id(id: any) {
       return handlers.store.http_GET_products_Param_id(id, deps);
+    },
+    async http_GET_store_Param_code(code: any) {
+      return handlers.store.http_GET_store_Param_code(code, deps);
     },
   };
 }

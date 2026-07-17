@@ -3,15 +3,32 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, HttpResult, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "../../runtime.js";
 
+export type ShortCode = string & { readonly __brand: "secured.ShortCode" };
+
+export const ShortCode = {
+  of(value: string): Result<ShortCode, ValidationError> {
+    if (!(value.length >= 3)) {
+      return Err({ field: "ShortCode", message: "length must be at least 3", value });
+    }
+    return Ok(value as ShortCode);
+  },
+};
+
 export const store = {
   async http_GET_products_Param_id(id: string, deps: {}): Promise<HttpResult<string>> {
     return HttpResult.Ok(id);
+  },
+  async http_GET_store_Param_code(code: ShortCode, deps: {}): Promise<HttpResult<string>> {
+    return HttpResult.Ok(code);
   },
 };
 
 export const admin = {
   async http_GET_admin_stats(deps: {}): Promise<HttpResult<string>> {
     return HttpResult.Ok("ok");
+  },
+  async http_GET_admin_item_Param_code(code: ShortCode, deps: {}): Promise<HttpResult<string>> {
+    return HttpResult.Ok(code);
   },
 };
 
@@ -20,4 +37,22 @@ export const health = {
     return HttpResult.Ok("ok");
   },
 };
+
+export function serialise_ShortCode(value: ShortCode): JsonValue {
+  return value as unknown as string;
+}
+
+export function deserialise_ShortCode(json: JsonValue, path: string = "$"): Result<ShortCode, BoundaryError> {
+  if (typeof json !== "string") {
+    return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
+  }
+  const validated = (typeof (ShortCode as any).of === "function")
+    ? (ShortCode as any).of(json)
+    : Ok(json as unknown as ShortCode);
+  if (validated.tag === "Err") {
+    return Err({ kind: "RefinementViolation", path, violation: validated.error });
+  }
+  return Ok(validated.value as ShortCode);
+}
+
 

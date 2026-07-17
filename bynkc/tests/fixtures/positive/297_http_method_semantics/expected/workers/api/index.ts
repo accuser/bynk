@@ -48,10 +48,10 @@ export default {
           try {
             __body_json = (await request.json()) as JsonValue;
           } catch {
-            return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            return applySecurityHeaders(new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } }), __security_routes);
           }
           const __r_body = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(__body_json);
-          if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
+          if (__r_body.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_routes);
           const body = __r_body.value;
           const result = await surface.http_POST_notes(body);
           return applySecurityHeaders(httpResultToResponse(result, (v: any) => v as JsonValue), __security_routes);

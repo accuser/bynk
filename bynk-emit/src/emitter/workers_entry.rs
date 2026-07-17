@@ -1000,6 +1000,26 @@ struct QueueRoute {
     msg_type: Option<TypeRef>,
 }
 
+/// Stamp a rejection response with the service's policy the same way a
+/// handled response is stamped — `applySecurityHeaders(applyCors(…))` — so a
+/// boundary `400`/`401` carries `nosniff` (and CORS, when the service opts in)
+/// exactly as the `200`, the `405`, and the `413` do. `inner` is the finished
+/// `new Response(…)` TS expression; the wrapping mirrors the happy path
+/// (`emit_http_route_dispatch`) and the `413` ceiling above it. ADR 0164 D6:
+/// *every response a `from http` route emits carries the policy* — before this,
+/// the bare-`new Response` rejection sites skipped the wrapper (#659), leaving
+/// `nosniff` off precisely the responses that reflect attacker input.
+fn stamp_rejection(inner: &str, cors_const: Option<&str>, security_const: Option<&str>) -> String {
+    let corsed = match cors_const {
+        Some(c) => format!("applyCors({inner}, {c}, request.headers.get(\"origin\"))"),
+        None => inner.to_string(),
+    };
+    match security_const {
+        Some(s) => format!("applySecurityHeaders({corsed}, {s})"),
+        None => corsed,
+    }
+}
+
 /// Generate the per-route dispatch block for one `on http` handler. The
 /// router has already been entered via `try`; this block extracts path
 /// parameters, deserialises the body (when present), invokes the handler,
@@ -1047,14 +1067,7 @@ fn emit_http_route_dispatch(
         let inner = format!(
             "new Response(JSON.stringify({{ kind: \"PayloadTooLarge\", details: \"request body exceeds {cap} bytes\" }}), {{ status: 413, headers: {{ \"content-type\": \"application/json\" }} }})"
         );
-        let corsed = match cors_const {
-            Some(c) => format!("applyCors({inner}, {c}, request.headers.get(\"origin\"))"),
-            None => inner,
-        };
-        let stamped = match security_const {
-            Some(s) => format!("applySecurityHeaders({corsed}, {s})"),
-            None => corsed,
-        };
+        let stamped = stamp_rejection(&inner, cors_const, security_const);
         let _ = writeln!(
             out,
             "          const __contentLength = request.headers.get(\"content-length\");"
@@ -1079,7 +1092,7 @@ fn emit_http_route_dispatch(
             out,
             "          const __raw_{pname} = __m.params[\"{pname}\"];"
         );
-        emit_path_param_construction(out, pname, &p.type_ref);
+        emit_path_param_construction(out, pname, &p.type_ref, cors_const, security_const);
         call_args.push(pname.clone());
     }
     // Body parameter (POST/PUT/PATCH). A multi-actor sum route's wrapper reads
@@ -1088,21 +1101,35 @@ fn emit_http_route_dispatch(
     if !route.sum
         && let Some(body_param) = h.params.iter().find(|p| p.name.name == "body")
     {
+        // v0.188 (#659): the body-read rejections are stamped with the service
+        // policy just like the handled `200`. Built here, at their use site, to
+        // match the local style (the `413`, `body_reject`, and path-param
+        // rejections are all built lazily too) — a bodyless `GET` never allocates
+        // them. `malformed_400` is reached from both the signature and plain body
+        // paths; `unauthorized_401` only from the signature seam, so it is built
+        // there; the input-reflecting body-deser `400` stamps inline below.
+        let malformed_400 = stamp_rejection(
+            "new Response(JSON.stringify({ kind: \"MalformedJson\", details: \"Invalid request body\" }), { status: 400, headers: { \"content-type\": \"application/json\" } })",
+            cors_const,
+            security_const,
+        );
         let _ = writeln!(out, "          let __body_json: JsonValue;");
         if let Some(seam) = &route.signature {
             // v0.51: read the raw body once, verify the HMAC fail-closed (401),
             // then parse the body param from the *same* bytes (not a re-read /
             // re-serialisation — the signature is over these exact bytes).
+            let unauthorized_401 = stamp_rejection(
+                "new Response(null, { status: 401 })",
+                cors_const,
+                security_const,
+            );
             let secret = crate::emitter::escape_ts_string(&seam.secret);
             let header = crate::emitter::escape_ts_string(&seam.header);
             let _ = writeln!(out, "          let __raw: string;");
             let _ = writeln!(out, "          try {{");
             let _ = writeln!(out, "            __raw = await request.text();");
             let _ = writeln!(out, "          }} catch {{");
-            let _ = writeln!(
-                out,
-                "            return new Response(JSON.stringify({{ kind: \"MalformedJson\", details: \"Invalid request body\" }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-            );
+            let _ = writeln!(out, "            return {malformed_400};");
             let _ = writeln!(out, "          }}");
             let _ = writeln!(
                 out,
@@ -1110,7 +1137,7 @@ fn emit_http_route_dispatch(
             );
             let _ = writeln!(
                 out,
-                "          if (typeof __secret !== \"string\") return new Response(null, {{ status: 401 }});"
+                "          if (typeof __secret !== \"string\") return {unauthorized_401};"
             );
             // Timestamp (when bound): must be present; passed to the verifier.
             let ts_expr = match &seam.timestamp_header {
@@ -1119,7 +1146,7 @@ fn emit_http_route_dispatch(
                     let _ = writeln!(out, "          const __ts = request.headers.get(\"{th}\");");
                     let _ = writeln!(
                         out,
-                        "          if (__ts === null) return new Response(null, {{ status: 401 }});"
+                        "          if (__ts === null) return {unauthorized_401};"
                     );
                     "__ts"
                 }
@@ -1133,20 +1160,14 @@ fn emit_http_route_dispatch(
                 out,
                 "          const __ok = await verifySignatureHmacSha256(__raw, __secret, request.headers.get(\"{header}\"), {ts_expr}, {tol});"
             );
-            let _ = writeln!(
-                out,
-                "          if (!__ok) return new Response(null, {{ status: 401 }});"
-            );
+            let _ = writeln!(out, "          if (!__ok) return {unauthorized_401};");
             let _ = writeln!(out, "          try {{");
             let _ = writeln!(
                 out,
                 "            __body_json = JSON.parse(__raw) as JsonValue;"
             );
             let _ = writeln!(out, "          }} catch {{");
-            let _ = writeln!(
-                out,
-                "            return new Response(JSON.stringify({{ kind: \"MalformedJson\", details: \"Invalid request body\" }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-            );
+            let _ = writeln!(out, "            return {malformed_400};");
             let _ = writeln!(out, "          }}");
         } else {
             let _ = writeln!(out, "          try {{");
@@ -1155,17 +1176,21 @@ fn emit_http_route_dispatch(
                 "            __body_json = (await request.json()) as JsonValue;"
             );
             let _ = writeln!(out, "          }} catch {{");
-            let _ = writeln!(
-                out,
-                "            return new Response(JSON.stringify({{ kind: \"MalformedJson\", details: \"Invalid request body\" }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-            );
+            let _ = writeln!(out, "            return {malformed_400};");
             let _ = writeln!(out, "          }}");
         }
         let dser = deserialise_call(&body_param.type_ref, "__body_json", "$");
         let _ = writeln!(out, "          const __r_body = {dser};");
+        // The body-deser `400` reflects the offending input into its JSON body, so
+        // stamping it (#659) matters most here — `nosniff` on a reflected value.
+        let body_reject = stamp_rejection(
+            "new Response(JSON.stringify(__r_body.error), { status: 400, headers: { \"content-type\": \"application/json\" } })",
+            cors_const,
+            security_const,
+        );
         let _ = writeln!(
             out,
-            "          if (__r_body.tag === \"Err\") return new Response(JSON.stringify(__r_body.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
+            "          if (__r_body.tag === \"Err\") return {body_reject};"
         );
         let _ = writeln!(out, "          const body = __r_body.value;");
         call_args.push("body".to_string());
@@ -1338,7 +1363,13 @@ fn emit_call_handler_dispatch(
 /// declared type. For plain `String`, this is a direct assignment; for
 /// refined or opaque `String`-based types we lower through `T.of(...)`
 /// which performs refinement validation and returns 400 on failure.
-fn emit_path_param_construction(out: &mut String, pname: &str, t: &TypeRef) {
+fn emit_path_param_construction(
+    out: &mut String,
+    pname: &str,
+    t: &TypeRef,
+    cors_const: Option<&str>,
+    security_const: Option<&str>,
+) {
     match t {
         TypeRef::Base(BaseType::String, _) => {
             let _ = writeln!(out, "          const {pname} = __raw_{pname};");
@@ -1349,9 +1380,15 @@ fn emit_path_param_construction(out: &mut String, pname: &str, t: &TypeRef) {
                 "          const __r_{pname} = handlers.{}.of(__raw_{pname});",
                 id.name
             );
+            // The path-param refinement `400` reflects the offending segment into
+            // its JSON body, so it is stamped with the service policy (#659).
+            let inner = format!(
+                "new Response(JSON.stringify({{ kind: \"RefinementViolation\", path: \"path.{pname}\", violation: __r_{pname}.error }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }})"
+            );
+            let reject = stamp_rejection(&inner, cors_const, security_const);
             let _ = writeln!(
                 out,
-                "          if (__r_{pname}.tag === \"Err\") return new Response(JSON.stringify({{ kind: \"RefinementViolation\", path: \"path.{pname}\", violation: __r_{pname}.error }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
+                "          if (__r_{pname}.tag === \"Err\") return {reject};"
             );
             let _ = writeln!(out, "          const {pname} = __r_{pname}.value;");
         }

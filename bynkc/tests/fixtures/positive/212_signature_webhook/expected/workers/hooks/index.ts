@@ -28,21 +28,21 @@ export default {
           try {
             __raw = await request.text();
           } catch {
-            return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            return applySecurityHeaders(new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           }
           const __secret = (env as unknown as Record<string, unknown>)["WEBHOOK_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["WEBHOOK_SECRET"];
-          if (typeof __secret !== "string") return new Response(null, { status: 401 });
+          if (typeof __secret !== "string") return applySecurityHeaders(new Response(null, { status: 401 }), __security_api);
           const __ts = request.headers.get("X-Timestamp");
-          if (__ts === null) return new Response(null, { status: 401 });
+          if (__ts === null) return applySecurityHeaders(new Response(null, { status: 401 }), __security_api);
           const __ok = await verifySignatureHmacSha256(__raw, __secret, request.headers.get("X-Signature"), __ts, 300);
-          if (!__ok) return new Response(null, { status: 401 });
+          if (!__ok) return applySecurityHeaders(new Response(null, { status: 401 }), __security_api);
           try {
             __body_json = JSON.parse(__raw) as JsonValue;
           } catch {
-            return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            return applySecurityHeaders(new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           }
           const __r_body = handlers.deserialise_Event(__body_json, "$");
-          if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
+          if (__r_body.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           const body = __r_body.value;
           const result = await surface.http_POST_hooks_event(body);
           return applySecurityHeaders(httpResultToResponse(result, (v: any) => v as JsonValue), __security_api);
