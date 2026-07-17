@@ -1002,8 +1002,10 @@ fn emit_system_http_support(
             ) {
                 Some(seam) => {
                     secrets.insert(seam.secret.clone());
-                    let secret_read =
-                        format!("((globalThis as any).process?.env?.[{:?}] ?? \"\")", seam.secret);
+                    let secret_read = format!(
+                        "((globalThis as any).process?.env?.[{:?}] ?? \"\")",
+                        seam.secret
+                    );
                     (
                         format!(
                             "\"authorization\": `Bearer ${{await __bynkSignHs256({{ sub: __sub, exp: __bynkNow() + 3600 }}, {secret_read})}}`, "
