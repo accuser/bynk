@@ -4298,8 +4298,23 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
         Pattern::Literal { value, .. } => {
             format!("{v} === {}", literal_case_label(value))
         }
-        Pattern::Variant { variant, .. } => {
-            format!("{v}.tag === \"{}\"", variant.name)
+        // #705: a variant pattern lowers to its full structural test — the outer
+        // tag *and* any nested refutable payload patterns, so
+        // `r is Rejected(RefinementViolation(_))` checks both levels (the same
+        // tests a `match` arm emits, via `pattern_match_tests`). A plain
+        // `is Ok(_)` / `is Rejected(_)` still yields a single `.tag` test (the
+        // `_` payload is irrefutable). For a loose scrutinee — the `Wire`-call
+        // outcome — the single-field `"value"` fallback matches the runtime
+        // `{ tag, value }` shape, so the nested test lands without a static type.
+        Pattern::Variant { .. } => {
+            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let mut tests = Vec::new();
+            pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
+            if tests.is_empty() {
+                "true".to_string()
+            } else {
+                tests.join(" && ")
+            }
         }
     }
 }

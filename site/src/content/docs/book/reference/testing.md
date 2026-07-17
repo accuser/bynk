@@ -79,11 +79,23 @@ case "an empty sku is rejected at the boundary" as system {
 }
 ```
 
-A `Wire`-carrying call yields `Rejected(_) | Handled(_)` instead of an
+A `Wire`-carrying call yields `Rejected(kind) | Handled(_)` instead of an
 `HttpResult`: `Rejected` when the router refused the input before the handler,
 `Handled` when it ran (a valid raw body promotes to the handler, so
-`expect r is Handled(_)`). `Wire` is legal **only** as a service-address argument
-in a `system`-tier case — there is no wire to be raw about at `unit`
+`expect r is Handled(_)`). The rejection's *kind* is discriminable — the nested
+pattern tests it:
+
+```bynk
+expect r is Rejected(_)                       -- any boundary rejection
+expect r is Rejected(RefinementViolation(_))  -- specifically a refinement violation
+expect r is Rejected(MalformedJson(_))        -- specifically malformed JSON
+```
+
+The kinds are `RefinementViolation`, `MalformedJson`, and `StructuralMismatch`.
+The outcome is checked at runtime, not statically typed, so a mistyped kind
+name is a case that *fails* (the pattern never matches) rather than a compile
+error. `Wire` is legal **only** as a service-address argument in a `system`-tier
+case — there is no wire to be raw about at `unit`
 (`bynk.test.wire_needs_system`) — and no refined value is ever built from it: the
 router validates the raw string, which is the whole point.
 
