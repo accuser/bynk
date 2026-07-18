@@ -145,14 +145,20 @@ fn code_only_canonical(source: &str, opts: &FormatOptions) -> Result<String, Vec
 /// are byte-identical. A mismatch means either the output no longer parses (the
 /// data-loss vector) or the printer altered the AST. `None` when the output is
 /// safe to write.
+///
+/// Note: this guard assumes the formatter is idempotent on comment-free code —
+/// i.e. `render(parse(strip(x)))` is a stable canonical form. That invariant is
+/// held by the corpus/property idempotency tests. Were a future formatter
+/// change to break it on some shape, this guard would *refuse* an otherwise
+/// valid file rather than corrupt it — it fails safe (file unchanged + a
+/// diagnostic), but the surprise would be a formatter bug to fix upstream.
 fn roundtrip_divergence(source: &str, output: &str, opts: &FormatOptions) -> Option<CompileError> {
     // The output MUST re-parse to the same structure; a failure here is the
     // core corruption vector this guard exists to stop.
     let canon_out = match code_only_canonical(output, opts) {
         Ok(canon) => canon,
-        Err(errors) => {
+        Err(_) => {
             return Some(roundtrip_error(
-                errors.first().map(|e| e.span).unwrap_or_default(),
                 "the formatter produced output that no longer parses",
             ));
         }
@@ -161,20 +167,24 @@ fn roundtrip_divergence(source: &str, output: &str, opts: &FormatOptions) -> Opt
     // canonical form should always compute. If it unexpectedly does not, do not
     // block a valid format on our own guard failing — leave the file writable.
     let canon_in = code_only_canonical(source, opts).ok()?;
-    (canon_in != canon_out).then(|| {
-        roundtrip_error(
-            Span::default(),
-            "the formatter's output does not round-trip to the same code",
-        )
-    })
+    (canon_in != canon_out)
+        .then(|| roundtrip_error("the formatter's output does not round-trip to the same code"))
 }
 
 /// Build the `bynk.fmt.roundtrip` diagnostic shared by both failure modes of
-/// [`roundtrip_divergence`].
-fn roundtrip_error(span: Span, what: &str) -> CompileError {
+/// [`roundtrip_divergence`]. The span is deliberately `Span::default()` (the
+/// start of the file): the message points at neither the source nor the
+/// output — it is a generic "this is a formatter bug" — and the failing branch
+/// carries an *output*-relative span, which the caller renders against the
+/// *source* string. When the mis-rendered output is longer than the source,
+/// that span is out of range for the buffer ariadne is given (a misplaced
+/// caret, or a byte-index panic in the very formatter-bug path this guard
+/// exists to handle gracefully). A zero span is always in range and buys the
+/// message nothing to lose.
+fn roundtrip_error(what: &str) -> CompileError {
     CompileError {
         category: "bynk.fmt.roundtrip",
-        span,
+        span: Span::default(),
         message: format!("{what} — the file was left unchanged"),
         labels: Vec::new(),
         notes: vec![
@@ -2511,13 +2521,28 @@ mod tests {
     #[test]
     fn roundtrip_guard_rejects_non_parsing_output() {
         // Simulate a printer that emitted garbage: the output no longer parses,
-        // so the guard must fire rather than let it be written.
+        // so the guard must fire rather than let it be written. The output here
+        // is *longer* than the source and its parse error lands near its end —
+        // the error's span must nonetheless stay within the source, because the
+        // caller renders it against `source`, not the output (an out-of-range
+        // primary span misplaces the caret or panics ariadne). See
+        // `roundtrip_error`.
         let opts = FormatOptions::default();
         let src = "commons x { type T = Int where Positive }";
-        let corrupt = "commons x { type T = ";
+        let corrupt = "commons x { type T = Int where Positive } fn f(a: Int) -> Int { a +";
+        assert!(
+            corrupt.len() > src.len(),
+            "output must be the longer buffer"
+        );
         let err =
             roundtrip_divergence(src, corrupt, &opts).expect("must reject non-parsing output");
         assert_eq!(err.category, "bynk.fmt.roundtrip");
+        assert!(
+            err.span.end <= src.len(),
+            "roundtrip error span {:?} escapes the source it is rendered against (len {})",
+            err.span,
+            src.len(),
+        );
     }
 
     #[test]
@@ -2530,6 +2555,24 @@ mod tests {
         let err =
             roundtrip_divergence(src, wrong, &opts).expect("must reject structural divergence");
         assert_eq!(err.category, "bynk.fmt.roundtrip");
+        assert!(err.span.end <= src.len(), "span escapes the source buffer");
+    }
+
+    #[test]
+    fn roundtrip_error_renders_against_source_without_panicking() {
+        // The guard's error is rendered against the *source* (`run_fmt` calls
+        // `print_errors(&e.errors, &source, …)`). ariadne uses a primary span
+        // unconditionally, so a span outside the source buffer misplaces the
+        // caret or panics — exactly in the formatter-bug path this guard must
+        // handle gracefully. Render the real diagnostic against a short source
+        // and assert it produces output without panicking.
+        let err = roundtrip_error("the formatter produced output that no longer parses");
+        let source = "commons x {}";
+        let rendered = bynk_render::render_errors(std::slice::from_ref(&err), source, "<test>");
+        assert!(
+            rendered.contains("bynk.fmt.roundtrip"),
+            "diagnostic did not render: {rendered}"
+        );
     }
 
     #[test]

@@ -263,6 +263,39 @@ fn fmt_write_leaves_no_temp_litter() {
 
 #[cfg(unix)]
 #[test]
+fn fmt_write_through_symlink_replaces_the_link() {
+    // The atomic rename swaps in a fresh inode, so formatting a symlinked source
+    // replaces the *link* with the formatted file rather than writing through to
+    // its target (the old `std::fs::write` wrote through). This documents the
+    // deliberate behaviour change: the formatted content must land, and the
+    // target must be left untouched.
+    let dir = scratch("fmt-symlink");
+    let target = dir.join("target.bynk");
+    let link = dir.join("link.bynk");
+    // Non-canonical, so `fmt` actually rewrites (a canonical source is left
+    // byte-identical and never hits the write path).
+    write(&target, MESSY);
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "link.bynk"]);
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(&link).unwrap(),
+        canonical(MESSY),
+        "the link path must hold the formatted content"
+    );
+    assert!(
+        !std::fs::symlink_metadata(&link).unwrap().is_symlink(),
+        "the symlink must have been replaced by a regular file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        MESSY,
+        "the symlink target must be left untouched"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn fmt_write_preserves_file_permissions() {
     // The atomic rewrite replaces the destination inode, so it must carry the
     // original file's mode across — a plain temp-file + rename would otherwise

@@ -219,8 +219,16 @@ pub fn run_fmt(prog: &str, inputs: &[PathBuf], check: bool) -> ExitCode {
 /// The temp file is a sibling (same directory) so the rename stays within one
 /// filesystem — a cross-device rename would fail with `EXDEV`. Its name carries
 /// the PID and a per-process counter so concurrent `fmt` runs, or two files in
-/// one run, never collide. On any failure the temp file is removed so a botched
-/// write leaves no litter beside the untouched original.
+/// one run, never collide, and it is opened with `create_new` (`O_EXCL`): a
+/// pre-existing path — a stale temp from an earlier crashed run, or a symlink a
+/// local actor pre-planted to redirect the formatted bytes — is refused rather
+/// than opened, and we bump the counter and retry. On any failure the temp file
+/// is removed so a botched write leaves no litter beside the untouched original.
+///
+/// The `rename` swaps in a fresh inode, so if `path` was a symlink or a
+/// hardlink the formatted file replaces the link rather than being written
+/// through it (the old `std::fs::write` wrote through). Uncommon for source
+/// files, and the atomicity is worth it.
 fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write as _;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -232,11 +240,25 @@ fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let tmp_name = format!(".{file_name}.bynk-fmt.{}.{n}.tmp", std::process::id());
-    let tmp = match dir {
-        Some(d) => d.join(tmp_name),
-        None => PathBuf::from(tmp_name),
+
+    // Open a fresh sibling temp file exclusively, bumping the counter past any
+    // name that is already taken (stale temp or planted symlink).
+    let (mut file, tmp) = loop {
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp_name = format!(".{file_name}.bynk-fmt.{}.{n}.tmp", std::process::id());
+        let tmp = match dir {
+            Some(d) => d.join(tmp_name),
+            None => PathBuf::from(tmp_name),
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(f) => break (f, tmp),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
     };
 
     // Scope the write so the handle is flushed and closed before the rename.
@@ -245,12 +267,13 @@ fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
     // silently pick up the process umask's default mode (e.g. an executable or
     // group-restricted source would lose its bits).
     let write_result = (|| {
-        let mut f = std::fs::File::create(&tmp)?;
+        // Best-effort: a filesystem that cannot honour the mode must not fail
+        // the whole write.
         if let Ok(meta) = std::fs::metadata(path) {
-            let _ = f.set_permissions(meta.permissions());
+            let _ = file.set_permissions(meta.permissions());
         }
-        f.write_all(contents.as_bytes())?;
-        f.sync_all()
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()
     })();
     if let Err(e) = write_result {
         let _ = std::fs::remove_file(&tmp);
