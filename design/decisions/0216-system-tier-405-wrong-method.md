@@ -1,12 +1,6 @@
----
-level: minor
-changelog: A `system`-tier test case drives an existing http path with a method it declares no handler for and observes the router's `405` fall-through as `Rejected(MethodNotAllowed)` (#707)
----
+# 0216 — A `system`-tier case addresses a route with the wrong method to test the `405` fall-through
 
-## ADR: system-tier-405-wrong-method
-
-title: A `system`-tier case addresses a route with the wrong method to test the `405` fall-through
-summary: Addressing a declared path with an undeclared method is no longer `service_unknown_route`; it drives the router's method fall-through through a generic no-handler driver and yields `Rejected(MethodNotAllowed)`, completing the boundary-rejection surface (`400`/`401`/`405`). A genuinely unknown *path* is still rejected.
+- **Status:** Accepted (v0.195)
 
 **Context.** ADR 0210 (system-tier-wire-rejection) and its follow-ons gave a `system` case the outcome sum `Rejected(detail) | Handled(HttpResult[T])` and drove the boundary's `400` (raw `Wire`, #704) and `401` (`by Nobody`, #706) rejections. The `405` fall-through — a live path reached under a method it has no handler for — stayed unreachable (#707): the test-body http address required the `(method, path)` to match a declared route **exactly** (`bynk.test.service_unknown_route`), so `api.DELETE("/cart")` on a POST-only route was a compile error. ADR 0210 DECISION C sketched the answer (assert the `405` in the `HttpResult` vocabulary) but deferred it.
 
