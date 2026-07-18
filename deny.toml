@@ -31,10 +31,11 @@ allow = [
 ]
 
 [bans]
-# Duplicate versions and wildcard requirements are warnings, not errors: the
-# workspace deliberately pins some deps and Dependabot grooms duplicates.
+# Duplicate versions stay a warning: the workspace deliberately pins some deps
+# and Dependabot grooms duplicates. Wildcard requirements are denied — none
+# exist today, so this is a free ratchet that keeps unpinned `*` deps out.
 multiple-versions = "warn"
-wildcards = "warn"
+wildcards = "deny"
 
 [sources]
 # Only crates.io (and explicitly-allowed git sources) may be pulled.
