@@ -16,6 +16,16 @@ impl Span {
         self.start..self.end
     }
 
+    /// This span shifted right by `delta` bytes. Used to rebase spans produced
+    /// against a substring (e.g. a re-lexed interpolation hole) into the full
+    /// source. (#716.)
+    pub fn offset(self, delta: usize) -> Span {
+        Span {
+            start: self.start + delta,
+            end: self.end + delta,
+        }
+    }
+
     /// Span covering both `self` and `other` (the smallest enclosing range).
     pub fn merge(self, other: Span) -> Span {
         Span {
