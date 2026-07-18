@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0226](0226-bundle-caller-surface-identity.md) | **The bundle cross-context surface threads the caller name into a `by c: Caller` handler's deps** (v0.205) — How `makeSurface` and the compose root supply the `CallerId` a bundle-mode Caller handler reads, and why the value differs per call site | Accepted (v0.205) |
 | [0225](0225-builtin-type-name-tier.md) | **Built-in type names are a named, reserved tier; redeclaring one is an error** (v0.204) — Name the three identifier-reservation tiers and reject `type <builtin> = …` | Accepted (v0.204) |
 | [0224](0224-service-record-field-validation.md) | **Record field-set validation reaches service/agent handler bodies** (v0.203) — Why the missing/unknown/duplicate-field checks moved into the checker's record-construction path | Accepted (v0.203) |
 | [0223](0223-matches-no-nested-quantifiers.md) | **A `Matches` refinement rejects nested unbounded quantifiers (ReDoS guard)** (v0.202) — Why refined-string patterns forbid star height ≥ 2, and how it is detected | Accepted (v0.202) |

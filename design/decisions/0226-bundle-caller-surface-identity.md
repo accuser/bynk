@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A bundle-mode `on call … by c: Caller` handler reads a live `CallerId` — its emitted `makeSurface` deploy surface threads the calling context's name into `deps.identity`, where it previously emitted `deps` without the field and broke `tsc`
----
+# 0226 — The bundle cross-context surface threads the caller name into a `by c: Caller` handler's deps
 
-## ADR: bundle-caller-surface-identity
-title: The bundle cross-context surface threads the caller name into a `by c: Caller` handler's deps
-summary: How `makeSurface` and the compose root supply the `CallerId` a bundle-mode Caller handler reads, and why the value differs per call site
+- **Status:** Accepted (v0.205)
 
 **Context.** A cross-context `on call … by c: Caller` handler reads a live
 `CallerId` — the calling context's qualified name — threaded through
