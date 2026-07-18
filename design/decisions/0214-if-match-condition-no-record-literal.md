@@ -1,11 +1,6 @@
----
-level: minor
-changelog: An `if`/`match` condition ending in a bare identifier no longer swallows a single-identifier brace body as a record construction
----
+# 0214 — An `if`/`match` condition does not parse a trailing brace body as a record literal
 
-## ADR: if-match-condition-no-record-literal
-title: An `if`/`match` condition does not parse a trailing brace body as a record literal
-summary: A no-record-literal restriction on the condition spine, lifted inside delimiters
+- **Status:** Accepted (v0.193)
 
 **Context.** `if cond { … }` and record construction `TypeName { … }` share the
 surface shape `identifier {`. The parser disambiguated them with a context-free
