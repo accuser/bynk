@@ -180,3 +180,39 @@ fn scaffolded_manifest_paths_are_read_by_the_tools() {
     assert!(paths.exclude.is_empty());
     fs::remove_dir_all(&dir).ok();
 }
+
+/// #737: a hand-written `.gitignore` passes the D5 clobber check (it's in
+/// `SCAFFOLD_IGNORES`), so the scaffold must **not** replace it with the
+/// template — `write_scaffold`'s own doc promises it never overwrites. Scaffold
+/// into a target that holds only `.git/` and a user `.gitignore`, then assert
+/// the user's `.gitignore` survives while the rest of the tree is written.
+#[test]
+fn scaffold_preserves_a_hand_written_gitignore() {
+    use bynk::new::{NewOptions, run};
+
+    let dir = std::env::temp_dir().join(format!("bynk-new-gitignore-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join(".git")).unwrap();
+    let user_gitignore = "# my rules\n/secrets\n";
+    fs::write(dir.join(".gitignore"), user_gitignore).unwrap();
+
+    run(&NewOptions {
+        path: dir.clone(),
+        name: Some("demo".to_string()),
+    });
+
+    // The scaffold ran (didn't trip the clobber check on the tolerated cruft)
+    // — proven by the tree it writes...
+    assert!(
+        dir.join("bynk.toml").exists() && dir.join("src/demo.bynk").exists(),
+        "a `.git`/`.gitignore`-only target should scaffold, not trip the clobber check"
+    );
+    // ...yet the user's hand-written `.gitignore` is preserved, not clobbered.
+    assert_eq!(
+        fs::read_to_string(dir.join(".gitignore")).unwrap(),
+        user_gitignore,
+        "the user's hand-written `.gitignore` must be preserved, not clobbered"
+    );
+
+    fs::remove_dir_all(&dir).ok();
+}
