@@ -1,0 +1,10 @@
+context app.a
+
+consumes app.b as B
+
+service ask {
+  on call(ping: String) -> Effect[Result[String, String]] {
+    let r <- B.whoami(ping)
+    r
+  }
+}
