@@ -1,12 +1,6 @@
----
-level: minor
-changelog: The `is` operator tests nested variant patterns structurally — `r is Rejected(RefinementViolation(_))` checks the inner tag as well as the outer — so a `system`-tier `Wire` test can discriminate *which* boundary rejection occurred (#705)
----
+# 0211 — `is` tests nested variant patterns structurally, not just the outer tag
 
-## ADR: is-nested-variant-tests
-
-title: `is` tests nested variant patterns structurally, not just the outer tag
-summary: A variant pattern's nested refutable payload patterns become part of the `is` test (the same tests a `match` arm applies), so `r is Rejected(RefinementViolation(_))` checks both levels — realising the rejection-kind discrimination ADR 0210 deferred. Name/wildcard payloads still only narrow.
+- **Status:** Accepted (v0.190)
 
 **Context.** ADR 0210 (system-tier-wire-rejection, v0.189) gave a `Wire`-driven `system` case the outcome `Rejected(detail) | Handled(HttpResult[T])`, where `detail` carries the router's `BoundaryError.kind`. But it deferred *kind discrimination* (#705): `expect r is Rejected(RefinementViolation(_))` tested only the outer `Rejected`, because `is` was one-level — a variant pattern lowered to a single `.tag` check and dropped its payload patterns. So a case could prove the boundary rejected, but not *which* rejection it produced — §1's complaint (`expect FlagKey.of("") is Err(_)` asserts the predicate, not the boundary) applied to the rejection kind too.
 

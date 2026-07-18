@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.189**.
+written against **v0.190**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.190.0** | The `is` operator tests nested variant patterns structurally — `r is Rejected(RefinementViolation(_))` checks the inner tag as well as the outer — so a `system`-tier `Wire` test can discriminate *which* boundary rejection occurred (#705) |
 | **v0.189.0** | A `system`-tier test case drives an http route with a raw `Wire(<String>)` argument — pre-validation input the type system forbids — and observes the boundary reject it before the handler (`Rejected`) or handle it (`Handled`), via a raw driver and the `responseToHttpOutcome` decoder |
 | **v0.188.1** | A `from http` route's boundary-rejection responses (`400`/`401`) now carry the service's security headers (`nosniff`/HSTS) and CORS, exactly as its handled `200` does — restoring ADR 0164 D6 on the rejection path (#659) |
 | **v0.188.0** | The stamp workflow pushes as a GitHub App with ruleset bypass — `main` is protected, so the direct GITHUB_TOKEN push ADR 0206 assumed cannot work (amends ADR 0206) |
