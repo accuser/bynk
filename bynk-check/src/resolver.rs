@@ -488,6 +488,27 @@ fn check_duplicate_type_params(params: &[TypeParam], owner: &str, errors: &mut S
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
 fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
+    // A `type` declaration may not reuse a compiler-known built-in type name
+    // (`List`, `Map`, `Query`, …). Those names are dispatched on by the type
+    // parser (`parser/types.rs`), so any *reference* to the alias would be
+    // intercepted as the built-in — the declaration would be silently shadowed
+    // (`QueueResult`) or fail with an incoherent message at the use site. Reject
+    // it here, at the declaration, with a message the user can act on. Base
+    // types and other reserved *keywords* (`Int`, `Result`, …) are already
+    // rejected earlier, by `expect_ident` at parse time.
+    if bynk_syntax::keywords::is_builtin_type_name(&t.name.name) {
+        errors.push(
+            CompileError::new(
+                "bynk.resolve.reserved_builtin_type",
+                t.name.span,
+                format!(
+                    "`{}` is a built-in type name and cannot be redeclared",
+                    t.name.name
+                ),
+            )
+            .with_note("rename the type — built-in type names are reserved in type position"),
+        );
+    }
     // v0.157 (ADR 0183): only a record body may be generic. Type parameters on
     // a refined / opaque / sum body are rejected; a parameter shadowing a
     // declared type is diagnosed (mirrors the function-generics rule).

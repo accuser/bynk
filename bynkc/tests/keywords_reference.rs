@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use bynkc::keywords::{KEYWORDS, render_markdown};
+use bynkc::keywords::{BUILTIN_TYPE_NAMES, KEYWORDS, render_markdown};
 
 /// Alphabetic keyword tokens declared in the lexer via `#[token("…")]`. The
 /// lexer now lives in the `bynk-syntax` leaf (crate-decomposition slice 1), so
@@ -40,6 +40,50 @@ fn registry_is_sorted_with_no_duplicates() {
 
     let unique: BTreeSet<&str> = words.iter().copied().collect();
     assert_eq!(unique.len(), words.len(), "KEYWORDS contains duplicates");
+}
+
+/// The compiler-known built-in type names the type parser dispatches on by
+/// identifier text (`if name == "…"` in `parser/types.rs`). Read from source so
+/// the registry cannot drift from what the parser actually recognises.
+fn builtin_type_names_in_parser() -> BTreeSet<String> {
+    let types_rs =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bynk-syntax/src/parser/types.rs");
+    let text = fs::read_to_string(&types_rs).unwrap();
+    let re = regex::Regex::new(r#"name == "([A-Za-z][A-Za-z0-9_]*)""#).unwrap();
+    re.captures_iter(&text).map(|c| c[1].to_string()).collect()
+}
+
+/// Drift guard (Gap B of #637): the built-in-type-name registry must equal the
+/// set of names the type parser dispatches on. The registry drives both the
+/// keyword reference page and the `bynk.resolve.reserved_builtin_type`
+/// redeclaration diagnostic; if the parser gains or drops a built-in type the
+/// registry (and this guard) must follow. Unlike the reserved keywords, these
+/// names have no lexer token, so no other guard can see them.
+#[test]
+fn builtin_type_names_match_parser_dispatch() {
+    let registered: BTreeSet<String> = BUILTIN_TYPE_NAMES
+        .iter()
+        .map(|k| k.word.to_string())
+        .collect();
+    let dispatched = builtin_type_names_in_parser();
+
+    let missing: Vec<&String> = dispatched.difference(&registered).collect();
+    let extra: Vec<&String> = registered.difference(&dispatched).collect();
+
+    assert!(
+        missing.is_empty(),
+        "built-in type names dispatched in parser/types.rs but missing from \
+         BUILTIN_TYPE_NAMES: {missing:#?}"
+    );
+    assert!(
+        extra.is_empty(),
+        "names in BUILTIN_TYPE_NAMES no longer dispatched in parser/types.rs: {extra:#?}"
+    );
+
+    let words: Vec<&str> = BUILTIN_TYPE_NAMES.iter().map(|k| k.word).collect();
+    let mut sorted = words.clone();
+    sorted.sort_unstable();
+    assert_eq!(words, sorted, "BUILTIN_TYPE_NAMES must be sorted by name");
 }
 
 #[test]

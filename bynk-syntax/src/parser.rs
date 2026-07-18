@@ -1431,6 +1431,29 @@ mod tests {
         assert_eq!(f.body.tail_leading_comments, vec![" result".to_string()],);
     }
 
+    /// #637 Gap A: the contextual keywords `on` / `suite` / `case` are lexer
+    /// tokens but `expect_ident` admits them as identifiers outside their one
+    /// keyword position, so they are valid record-field and parameter names.
+    /// The keyword reference now renders them as a distinct "contextual" tier
+    /// rather than claiming (falsely) that they cannot be used as identifiers.
+    #[test]
+    fn contextual_keywords_are_valid_identifiers() {
+        // Record field names.
+        let c = parse_str("commons demo {\n  type R = { on: Int, suite: String, case: Bool }\n}")
+            .expect("`on`/`suite`/`case` are valid field names");
+        let CommonsItem::Type(_) = &c.items[0] else {
+            panic!("expected a type decl")
+        };
+
+        // Function parameter names (the other `expect_ident` position).
+        parse_str("commons demo {\n  fn f(on: Int, case: Int) -> Int { 0 }\n}")
+            .expect("`on`/`case` are valid parameter names");
+
+        // `suite` too, as a field name.
+        parse_str("commons demo {\n  type R = { suite: Int }\n}")
+            .expect("`suite` is a valid field name");
+    }
+
     /// Drift guard: every alphabetic keyword the lexer declares must be
     /// classified by `is_reserved_keyword`, or be one of the *contextual*
     /// keywords `expect_ident` deliberately admits as identifiers
@@ -1457,13 +1480,14 @@ mod tests {
             "keyword extraction looks broken: only {} words",
             words.len()
         );
-        // Contextual keywords double as identifiers (see `expect_ident`).
-        const CONTEXTUAL: &[&str] = &["on", "suite", "case"];
+        // Contextual keywords double as identifiers (see `expect_ident`); the
+        // tier is single-sourced in `keywords::RESERVED_CONTEXTUAL`.
+        use crate::keywords::RESERVED_CONTEXTUAL;
         let mut unclassified = Vec::new();
         for word in &words {
             let tokens = crate::lexer::tokenize(word).expect("keyword lexes");
             let kind = tokens.first().expect("keyword yields a token").kind;
-            if !is_reserved_keyword(kind) && !CONTEXTUAL.contains(&word.as_str()) {
+            if !is_reserved_keyword(kind) && !RESERVED_CONTEXTUAL.contains(&word.as_str()) {
                 unclassified.push(word.clone());
             }
         }

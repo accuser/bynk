@@ -1198,6 +1198,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["record_type"],
     ),
     dg(
+        "bynk.resolve.reserved_builtin_type",
+        "A type declaration reuses a compiler-known built-in type name.",
+        &["type_decl"],
+    ),
+    dg(
         "bynk.resolve.self_outside_method",
         "`self` referenced outside a method or handler.",
         &["self_expr"],
