@@ -90,7 +90,10 @@ pub fn emit_wrangler_toml(
     crons.sort();
     crons.dedup();
     if !crons.is_empty() {
-        let quoted: Vec<String> = crons.iter().map(|e| format!("\"{e}\"")).collect();
+        let quoted: Vec<String> = crons
+            .iter()
+            .map(|e| format!("\"{}\"", escape_toml_basic_string(e)))
+            .collect();
         let _ = writeln!(out, "[triggers]");
         let _ = writeln!(out, "crons = [{}]", quoted.join(", "));
         writeln!(out).unwrap();
@@ -109,11 +112,38 @@ pub fn emit_wrangler_toml(
     queues.dedup();
     for name in &queues {
         let _ = writeln!(out, "[[queues.consumers]]");
-        let _ = writeln!(out, "queue = \"{name}\"");
+        let _ = writeln!(out, "queue = \"{}\"", escape_toml_basic_string(name));
         let _ = writeln!(out, "max_batch_size = 10");
         writeln!(out).unwrap();
     }
 
+    out
+}
+
+/// Escape a source string literal for interpolation into a TOML *basic* string
+/// (the `"…"` form). Queue names and cron expressions come from user string
+/// literals, which can decode to contain `"`, `\`, newline and tab
+/// (`bynk-syntax/src/lexer.rs`) — all of which would otherwise break out of the
+/// TOML string and inject config keys. Every character we escape maps to a
+/// valid TOML compact escape; remaining control characters fall back to the
+/// `\uXXXX` form so the output is always a well-formed basic string.
+fn escape_toml_basic_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            // Control characters have no compact TOML escape besides the ones
+            // above and must not appear raw in a basic string.
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
+                let _ = write!(out, "\\u{:04X}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
     out
 }
 
@@ -135,4 +165,61 @@ pub fn agent_binding_name(class_name: &str) -> String {
         out.push(ch.to_ascii_uppercase());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_toml_basic_string_neutralises_injection() {
+        // The trigger from the defect report: a queue name whose decoded value
+        // carries a quote + newline would otherwise close the string and inject
+        // a config key.
+        assert_eq!(
+            escape_toml_basic_string("q\nkey = \"injected"),
+            "q\\nkey = \\\"injected"
+        );
+        assert_eq!(escape_toml_basic_string("a\\b"), "a\\\\b");
+        assert_eq!(escape_toml_basic_string("a\tb"), "a\\tb");
+    }
+
+    #[test]
+    fn escape_toml_basic_string_passes_plain_values_through() {
+        // Ordinary cron expressions and queue names are untouched.
+        assert_eq!(escape_toml_basic_string("*/5 * * * *"), "*/5 * * * *");
+        assert_eq!(escape_toml_basic_string("order-events"), "order-events");
+    }
+
+    #[test]
+    fn escape_toml_basic_string_escapes_other_control_chars() {
+        // A NUL has no compact escape and must not appear raw in a basic string.
+        assert_eq!(escape_toml_basic_string("a\u{0}b"), "a\\u0000b");
+        assert_eq!(escape_toml_basic_string("a\u{7f}b"), "a\\u007Fb");
+    }
+
+    #[test]
+    fn escaped_value_is_valid_toml_and_round_trips() {
+        // The security invariant, enforced by a real TOML parser (not a golden
+        // byte-compare): interpolating the escaped value produces a well-formed
+        // single-key table whose decoded value is *exactly* the input — no
+        // injected keys, no broken string. Covers the injection payload from the
+        // defect report plus a control char that takes the `\uXXXX` fallback.
+        for input in ["q\nkey = \"injected", "*/5 * * * *\\\"", "a\u{0}b\ttail"] {
+            let doc = format!("queue = \"{}\"", escape_toml_basic_string(input));
+            let table: toml::Table = doc
+                .parse()
+                .unwrap_or_else(|e| panic!("escaped {input:?} is invalid TOML: {e} ({doc:?})"));
+            assert_eq!(
+                table.len(),
+                1,
+                "escaped {input:?} injected extra keys: {table:?}"
+            );
+            assert_eq!(
+                table["queue"].as_str(),
+                Some(input),
+                "escaped {input:?} did not round-trip"
+            );
+        }
+    }
 }
