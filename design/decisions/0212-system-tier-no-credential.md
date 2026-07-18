@@ -1,12 +1,6 @@
----
-level: minor
-changelog: A `system`-tier test case drives a secured http route with `by Nobody` — the no-credential principal — so the real auth seam rejects the unauthenticated request; the call yields `Rejected(Unauthorized)`, decoded by `responseToUnauthOutcome` (#706)
----
+# 0212 — A `system`-tier case drives a secured route with no credential via `by Nobody`
 
-## ADR: system-tier-no-credential
-
-title: A `system`-tier case drives a secured route with no credential via `by Nobody`
-summary: `by Nobody` is a reserved call-site principal that drives an http route with no `Authorization` header, so the real auth seam rejects it (`401` → `Rejected(Unauthorized)`). It is valid on any http handler regardless of the required identity, presents no identity, and is `system`-only. Scoped to the structural 401 (missing credential); validly-signed-but-expired/forged tokens remain e2e's concern (ADR 0210).
+- **Status:** Accepted (v0.191)
 
 **Context.** ADR 0210 (system-tier-wire-rejection) gave a `system` case the outcome sum `Rejected(detail) | Handled(HttpResult[T])` and drove the boundary with raw `Wire(…)` input to test the `400` rejection. But the `401` path — the auth seam refusing an unauthenticated request — stayed unreachable (#706): Slice B has the framework *always* sign a valid credential from `by User("bob")`, so no case could present a missing or invalid credential. ADR 0210 DECISION B sketched the answer (`Rejected(Unauthorized)` on status) but deferred the spelling.
 
