@@ -16,6 +16,11 @@ name: Stamp increments
 # nothing on failure, so the pending file survives and the increment can be
 # recovered with a local `cargo xtask stamp --apply`.
 #
+# The bypass-actor token is a privilege-escalation prize, so it is minted only
+# *after* every step that runs untrusted transitive-dependency code (stamp,
+# build, test) and is handed to the push step alone via a one-shot URL — never
+# persisted in .git/config where a malicious build.rs could read it (#727).
+#
 # Unlike a GITHUB_TOKEN push, an App push DOES trigger workflows — so the stamp
 # commit runs the normal CI on `main` (a bonus: it is CI-validated, not only
 # self-validated) and re-fires this workflow. The job-level `if:` below skips that
@@ -47,22 +52,16 @@ jobs:
     # Skip the no-op re-run the stamp's own (App-pushed) commit triggers.
     if: ${{ !startsWith(github.event.head_commit.message, 'chore(stamp):') }}
     steps:
-      # Mint a token for the stamp App — it must be installed with `contents:
-      # write` and listed as a bypass actor on the `main protection` ruleset, so
-      # its push bypasses the pull-request + status-check rules.
-      - name: Mint stamp-app token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.STAMP_APP_ID }}
-          private-key: ${{ secrets.STAMP_APP_KEY }}
-
+      # Check out with the default read-only GITHUB_TOKEN and DO NOT persist it
+      # in .git/config. The bypass-actor App token is minted only *after* all the
+      # arbitrary crate code below (stamp, build, test — build.rs, proc macros,
+      # test binaries) has run, so a compromised transitive dependency can never
+      # read a push-to-protected-`main` credential off disk. See #727.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          # Full history for the rebase-retry push; the App token so the push
-          # below authenticates as the App (in the ruleset's bypass list).
+          # Full history for the rebase-retry push.
           fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       # bump-version.sh (which the stamp shells out to) runs `npm install
@@ -89,6 +88,19 @@ jobs:
           cargo build --workspace --locked
           cargo test --package xtask
 
+      # Only now — after every arbitrary-code step above — mint the App token.
+      # It must be installed with `contents: write` and listed as a bypass actor
+      # on the `main protection` ruleset, so its push bypasses the pull-request +
+      # status-check rules. Nothing that runs a transitive dependency's code
+      # executes after this point, so the token never coexists on disk (or in an
+      # env var) with untrusted build/test code.
+      - name: Mint stamp-app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.STAMP_APP_ID }}
+          private-key: ${{ secrets.STAMP_APP_KEY }}
+
       # Commit and push the stamp. Stage only the paths the stamp and
       # bump-version.sh touch — never a blanket `git add -A`, which could sweep a
       # stray file a build step left behind into an unreviewed commit on `main`.
@@ -111,6 +123,11 @@ jobs:
           git config user.email "${uid}+${slug}[bot]@users.noreply.github.com"
           git commit -m "chore(stamp): assign version + ADR number(s) on merge"
 
+          # Checkout persisted no credentials (see above), so authenticate each
+          # remote operation with the App token via a one-shot, in-memory URL —
+          # never written to .git/config. GITHUB_TOKEN masks the token in logs.
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
           # A concurrent merge to main (e.g. a non-increment fix, which fires no
           # stamp run of its own) can land between checkout and push, losing the
           # fast-forward race. Rebase the stamp commit — it only adds numbered
@@ -118,10 +135,10 @@ jobs:
           # An intermediate run losing this race is expected and benign; only a
           # failure after the retries is a real problem to investigate.
           for attempt in 1 2 3; do
-            git push && exit 0
+            git push "$remote" HEAD:main && exit 0
             echo "push rejected (attempt $attempt); rebasing onto origin/main and retrying"
-            git pull --rebase origin main
+            git pull --rebase "$remote" main
           done
-          git push && exit 0
+          git push "$remote" HEAD:main && exit 0
           echo "stamp push still failing after rebase retries — run 'cargo xtask stamp --apply' locally and push" >&2
           exit 1
