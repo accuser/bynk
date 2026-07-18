@@ -2260,7 +2260,9 @@ pub(crate) fn check_json_static(
                 ctx,
             );
             let t = match type_args {
-                [one] => resolve_type_ref(one, &ctx.input.types)?,
+                // #712: report (not silently swallow) an unknown target type —
+                // `Json.decode[Typo]("{}")` previously compiled clean.
+                [one] => resolve_expr_type_ref(one, ctx)?,
                 [] => match expected {
                     Some(Ty::Result(t, e)) if **e == Ty::JsonError => (**t).clone(),
                     _ => {
