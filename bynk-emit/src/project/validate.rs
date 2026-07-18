@@ -122,6 +122,7 @@ pub(crate) fn check_platform_lock(
             groups
                 .get(&ctx)
                 .and_then(|idx| consumes_span_of(parsed, idx, unit))
+                .map(|(_, s)| s)
                 .unwrap_or_default()
         };
         match violation {
@@ -3827,18 +3828,29 @@ fn reject_fn_types(
 /// in v0.20a — see ADR 0030), agent state fields, and agent keys. Free `fn`
 /// signatures are deliberately NOT walked — they are the non-boundary home
 /// of function types.
+///
+/// #696: each diagnostic is paired with the project-relative `identity_path` of
+/// the file whose items produced it, so the CLI renders it against that file's
+/// source.
 pub(crate) fn check_function_type_boundaries(
     parsed: &[ParsedFile],
-    errors: &mut Vec<CompileError>,
-) {
+) -> Vec<(PathBuf, CompileError)> {
     // v0.174 (#592): the boundary check now also rejects a *recursive* generic
     // record (`reject_fn_types`' `App` arm), which needs the type declarations to
     // walk the containment graph. Build the project-wide table once — a generic
     // referenced from one file may be declared in another.
     let types = collect_type_decls(parsed.iter().flat_map(|pf| pf.items()));
+    let mut attributed: Vec<(PathBuf, CompileError)> = Vec::new();
     for pf in parsed {
-        check_function_type_boundary_items(pf.items(), &types, errors);
+        let mut file_errors: Vec<CompileError> = Vec::new();
+        check_function_type_boundary_items(pf.items(), &types, &mut file_errors);
+        attributed.extend(
+            file_errors
+                .into_iter()
+                .map(|e| (pf.identity_path.clone(), e)),
+        );
     }
+    attributed
 }
 
 /// v0.174 (#592): a `name -> TypeDecl` table over a set of items, for the
