@@ -20,7 +20,7 @@
 //! both preserve line structure. A test module aggregates several `.bynk` files,
 //! so the builder carries a list of `sources` and each checkpoint a source id.
 
-use bynk_syntax::span::{Span, line_col};
+use bynk_syntax::span::{LineIndex, Span};
 
 /// Accumulates source-map checkpoints during emission. Lives behind a `RefCell`
 /// on `LowerCtx` so the deep lowering chain and the declaration loop can both
@@ -110,6 +110,11 @@ impl SourceMapBuilder {
             return None;
         }
         let line_starts = generated_line_starts(generated);
+        // One line index per source, built once: a checkpoint resolves per
+        // emitted line, so `line_col`'s scan-from-0 would be O(checkpoints ×
+        // source size) (#732). Binary-search each lookup instead.
+        let source_indexes: Vec<LineIndex> =
+            self.sources.iter().map(|(_, t)| LineIndex::new(t)).collect();
         // Resolve each checkpoint to (generated line, source id, source line, col),
         // all 0-based. Drop any whose span falls outside its source's text (a
         // defensive guard for multi-file aggregation).
@@ -122,7 +127,7 @@ impl SourceMapBuilder {
                 continue;
             }
             let gen_line = line_of_offset(&line_starts, offset);
-            let (sl, sc) = line_col(text, span.start);
+            let (sl, sc) = source_indexes[src].line_col(text, span.start);
             resolved.push((gen_line, src, sl - 1, sc - 1));
         }
         if resolved.is_empty() {
