@@ -388,6 +388,27 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// The bounded-depth diagnostic for the *iteratively*-built spines —
+    /// associative operator chains ([`enter_chain_fold`]) and postfix receiver
+    /// chains ([`deepen_spine`]). Same code as [`nesting_too_deep`] (one budget,
+    /// one diagnostic) but phrased for a flat chain, which is long rather than
+    /// *nested*, and points at the idiomatic fix.
+    fn expression_too_long(&self, span: Span) -> CompileError {
+        CompileError::new(
+            "bynk.parse.nesting_too_deep",
+            span,
+            format!(
+                "this expression is more than {} levels deep",
+                crate::MAX_NESTING_DEPTH
+            ),
+        )
+        .with_note(
+            "a long operator or member chain is rejected to keep the compiler from overflowing \
+             its stack; split it across `let` bindings, or reduce a sequence with \
+             `.sum()`/`.fold(...)`",
+        )
+    }
+
     /// Count one more operand folded onto an associative operator chain against
     /// the same recursion budget as [`enter_recursion`] (#714).
     ///
@@ -413,7 +434,23 @@ impl<'a> Parser<'a> {
         if self.depth > crate::MAX_NESTING_DEPTH {
             self.depth -= *folds;
             *folds = 0;
-            return Err(self.nesting_too_deep(span, "this expression"));
+            return Err(self.expression_too_long(span));
+        }
+        Ok(())
+    }
+
+    /// Count one more level of an iteratively-built postfix receiver spine
+    /// (`a.b.c…`, `f()?.g()…`) against the shared budget (#714). Like
+    /// [`enter_chain_fold`], postfix loops rather than recurses, so a long spine
+    /// escapes [`enter_recursion`] yet grows an arbitrarily deep receiver tree
+    /// that the downstream walks recurse through. `parse_postfix` restores
+    /// `depth` wholesale on the way out (its many error paths make a
+    /// save/restore wrapper cleaner than per-fold unwinding), so this only bumps
+    /// and checks.
+    fn deepen_spine(&mut self, span: Span) -> Result<(), CompileError> {
+        self.depth += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            return Err(self.expression_too_long(span));
         }
         Ok(())
     }

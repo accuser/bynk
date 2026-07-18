@@ -1,6 +1,6 @@
 ---
 level: minor
-changelog: A long binary-operator chain (`1 + 1 + … + 1`) is rejected with `bynk.parse.nesting_too_deep` instead of overflowing the stack on a valid program (#714)
+changelog: A long operator or member chain (`1 + 1 + … + 1`, `a.b.c…`, `!!!…`) is rejected with `bynk.parse.nesting_too_deep` instead of overflowing the stack on a valid program (#714)
 ---
 
 ## ADR: operator-chain-depth-bound
@@ -26,22 +26,45 @@ A 20 000-term chain aborted `bynkc check` and `bynkc fmt` (exit 134) on a
 deep tree still exists, so its `Drop` and the formatter still overflow; the
 tree must never be built.
 
-**Decision.** Reuse #713's mechanism rather than add a parallel one. A new
-`Parser::enter_chain_fold` counts each operator-chain fold against the same
-`depth` budget and reports the same `bynk.parse.nesting_too_deep` diagnostic at
-`MAX_NESTING_DEPTH`. The four associative loops call it once per fold and unwind
-their fold count from `depth` before returning, so the live count behaves like a
-recursive descent. Because it is the *same* budget, a chain composes with the
-ambient nesting depth — `((… 64 parens …))`-plus-a-chain is bounded by the total,
-not by each independently. The right-associative `implies` chain, which recurses
-rather than loops, is folded into `enter_recursion` for the same reason.
+**Decision.** Reuse #713's mechanism rather than add a parallel one. Every
+expression builder that grows a tree *iteratively* — and so escapes
+`enter_recursion` — is counted against the same `depth` budget:
 
-**Consequences.** A binary-operator chain past the bound is now a clean
-`bynk.parse.nesting_too_deep` diagnostic on the CLI and in the LSP, matching the
-nested-source case from #713 — one limit, one diagnostic, one budget. The bound
-is a fixed language constraint (64 total nesting/chain depth); a program that
-genuinely needed a deeper single expression must split it across `let` bindings
-or a reducer (`.sum()`/`.fold(...)`). No checker-side guard is added: bounding at
-the parser keeps every downstream walk safe by construction, exactly as #713
-already relies on. Surfacing a front-end panic as a diagnostic rather than an
-opaque WASM `RuntimeError` on the ~1 MiB playground stack remains #717.
+- The four associative operator loops (`+`, `*`, `&&`, `||`) call a new
+  `enter_chain_fold` once per fold, unwinding their fold count from `depth`
+  before returning so the live count behaves like a recursive descent.
+- The postfix receiver spine (`a.b.c…`, `f()?.g()…`) calls `deepen_spine` per
+  member/`?` fold, with `parse_postfix` restoring `depth` wholesale on the way
+  out (its several error-return paths make a save/restore wrapper cleaner).
+- The two constructs that *do* recurse but bypass `parse_expr` — the
+  right-associative `implies` chain and the `-`/`!` unary run — are routed
+  through `enter_recursion` directly.
+
+Because it is the *same* budget, a chain composes with the ambient nesting depth:
+`((…parens…))`-plus-a-chain is bounded by the total along a root-to-leaf path,
+not by each independently. The bound stays at #713's `MAX_NESTING_DEPTH = 64` so
+there is one limit and one diagnostic code (`bynk.parse.nesting_too_deep`); the
+flat-chain / spine cases carry a chain-appropriate message ("this expression is
+more than 64 levels deep" pointing at `let` bindings and `.sum()`/`.fold(...)`)
+rather than the "nests … deep" wording, which fits parentheses but not a flat
+chain.
+
+**Consequences.** A chain, receiver spine, or unary run past the bound is now a
+clean `bynk.parse.nesting_too_deep` diagnostic on the CLI and in the LSP,
+matching the nested-source case from #713. No checker-side guard is added:
+bounding every iterative/recursive expression builder at the parser means the
+checker, formatter, emitter, and the AST's `Drop` are never handed a tree deeper
+than the bound — the same guarantee #713 already relies on for nested source.
+
+The 64 bound is a deliberate, conservative reuse. It is generous for genuine
+nesting but stingy for a *flat* chain: a 65-term `&&` guard or `+` reduction is
+not pathological, and compiled before this change, yet is now rejected. Keeping
+one shared bound is the tradeoff — it is what makes the composition guarantee
+hold and keeps a single diagnostic — and the message steers such code to the
+idiomatic `.sum()`/`.fold(...)`/`let`-splitting. Raising the flat-chain limit
+above the nesting limit (two budgets) is possible later if real programs hit it.
+Surfacing a front-end panic as a diagnostic rather than an opaque WASM
+`RuntimeError` on the ~1 MiB playground stack remains #717, as does the fact that
+64 levels of *parenthesis* nesting can still overflow a small (≈2 MiB) stack
+before the logical bound is reached — the ladder-per-paren descent cost is a
+separate calibration question for #713/#717, not changed here.
