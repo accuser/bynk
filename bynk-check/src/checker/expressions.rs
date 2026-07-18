@@ -971,7 +971,9 @@ pub(crate) fn check_lambda(
         for (p, ep) in lambda.params.iter().zip(eps) {
             let ty = match &p.type_ref {
                 Some(tr) => {
-                    let annotated = resolve_type_ref(tr, &ctx.input.types)?;
+                    // #712: report an unknown annotation type instead of the
+                    // bare `?` silently dropping the lambda in a handler body.
+                    let annotated = resolve_expr_type_ref(tr, ctx)?;
                     if !compatible(ep, &annotated) {
                         ctx.errors.push(CompileError::new(
                             "bynk.types.lambda_mismatch",
@@ -1003,7 +1005,9 @@ pub(crate) fn check_lambda(
         for p in &lambda.params {
             match &p.type_ref {
                 Some(tr) => {
-                    let ty = resolve_type_ref(tr, &ctx.input.types)?;
+                    // #712: report an unknown annotation type instead of the
+                    // bare `?` silently dropping the lambda in a handler body.
+                    let ty = resolve_expr_type_ref(tr, ctx)?;
                     scope.insert(p.name.name.clone(), ty.clone());
                     param_tys.push(ty);
                 }

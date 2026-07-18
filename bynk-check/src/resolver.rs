@@ -1413,7 +1413,19 @@ fn check_expr_references(
                 );
             }
         }
-        ExprKind::Call { name, args, .. } => {
+        ExprKind::Call {
+            name,
+            type_args,
+            args,
+        } => {
+            // #712: explicit type arguments (`identity[T](…)`) are type
+            // references and must resolve — the checker's `check_generic_call`
+            // otherwise dropped an unknown one silently. Validated here so
+            // `fn`/method bodies are covered; the checker backstops handler
+            // bodies (which never reach this walk).
+            for ta in type_args {
+                check_type_ref_resolves_in(ta, types, type_params, errors);
+            }
             match fns.get(&name.name) {
                 Some(decl) => {
                     errors.refs.record(name.span, SymbolKind::Fn, &name.name);

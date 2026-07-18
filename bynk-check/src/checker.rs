@@ -1809,6 +1809,101 @@ pub fn record_type_refs(
     }
 }
 
+/// #712: resolve a type reference that appears in an *expression* position the
+/// resolver does not walk for handler bodies — explicit call type arguments
+/// (`identity[T](x)`), `Json.decode[T]`, and lambda parameter annotations
+/// (`(x: T) => …`). On failure the reference is silently dropped by the bare
+/// `resolve_type_ref_in`, so an unknown type in a handler body would compile
+/// clean; this reports `bynk.resolve.unknown_type` instead, and records the
+/// resolved type's references for the IDE on success. The resolver still covers
+/// `fn`/method bodies, and the checker runs only after the resolver returns Ok
+/// (`bynk-emit`'s pipeline sequences `resolve(..)?` then `check(..)`), so this
+/// never double-reports.
+pub(crate) fn resolve_expr_type_ref(r: &TypeRef, ctx: &mut Ctx) -> Option<Ty> {
+    match resolve_type_ref_in(r, &ctx.input.types, &ctx.type_vars) {
+        Some(ty) => {
+            record_type_refs(r, &ctx.input.types, &ctx.type_vars, ctx.refs);
+            Some(ty)
+        }
+        None => {
+            ctx.errors.push(unresolved_type_ref_error(
+                r,
+                &ctx.input.types,
+                &ctx.type_vars,
+            ));
+            None
+        }
+    }
+}
+
+/// #712: the diagnostic for a type reference that fails to resolve. Points at
+/// the exact offending name when one can be identified (`identity[Missing](5)`
+/// → the `Missing` span), falling back to the whole reference otherwise.
+fn unresolved_type_ref_error(
+    r: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    vars: &HashSet<String>,
+) -> CompileError {
+    match first_unresolved_type_name(r, types, vars) {
+        Some(id) => CompileError::new(
+            "bynk.resolve.unknown_type",
+            id.span,
+            format!("unknown type `{}`", id.name),
+        )
+        .with_note(
+            "only base types (Int, String, Bool), types declared in this commons, \
+             `Result[T, E]`, `Option[T]`, and `ValidationError` are in scope",
+        ),
+        None => CompileError::new(
+            "bynk.resolve.unknown_type",
+            r.span(),
+            "this type does not resolve",
+        ),
+    }
+}
+
+/// #712: the first type name in `r` that names neither a declared type nor an
+/// in-scope type variable — the reason `resolve_type_ref_in` returned `None`.
+fn first_unresolved_type_name<'a>(
+    r: &'a TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    vars: &HashSet<String>,
+) -> Option<&'a Ident> {
+    match r {
+        TypeRef::Named(id) => {
+            (!types.contains_key(&id.name) && !vars.contains(&id.name)).then_some(id)
+        }
+        TypeRef::App { name, args, .. } => {
+            if !types.contains_key(&name.name) && !vars.contains(&name.name) {
+                return Some(name);
+            }
+            args.iter()
+                .find_map(|a| first_unresolved_type_name(a, types, vars))
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            first_unresolved_type_name(a, types, vars)
+                .or_else(|| first_unresolved_type_name(b, types, vars))
+        }
+        TypeRef::Option(t, _)
+        | TypeRef::Effect(t, _)
+        | TypeRef::HttpResult(t, _)
+        | TypeRef::List(t, _)
+        | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _)
+        | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _) => first_unresolved_type_name(t, types, vars),
+        TypeRef::Fn(params, ret, _) => params
+            .iter()
+            .find_map(|p| first_unresolved_type_name(p, types, vars))
+            .or_else(|| first_unresolved_type_name(ret, types, vars)),
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => None,
+    }
+}
+
 /// v0.154 (ADR 0178): the declared error embedding that converts `source_err`
 /// into `target_err`, if one exists. When `target_err` is a sum declaring
 /// `embeds E as V` with `E` compatible with `source_err`, returns
