@@ -49,7 +49,10 @@ fn builtin_type_names_in_parser() -> BTreeSet<String> {
     let types_rs =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bynk-syntax/src/parser/types.rs");
     let text = fs::read_to_string(&types_rs).unwrap();
-    let re = regex::Regex::new(r#"name == "([A-Za-z][A-Za-z0-9_]*)""#).unwrap();
+    // `\b` anchors the boundary so this matches the bare `name == "…"` dispatch
+    // idiom only — not a suffix like `type_name == "…"` (no word boundary before
+    // `name` when preceded by `_`) nor an occurrence embedded in a longer ident.
+    let re = regex::Regex::new(r#"\bname == "([A-Za-z][A-Za-z0-9_]*)""#).unwrap();
     re.captures_iter(&text).map(|c| c[1].to_string()).collect()
 }
 

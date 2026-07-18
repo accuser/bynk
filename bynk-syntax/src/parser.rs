@@ -646,7 +646,13 @@ impl<'a> Parser<'a> {
             // v0.7 / v0.112: `suite` and `case` are contextual too — they
             // introduce the suite declaration and its cases, but are perfectly
             // valid commons/context/field names otherwise.
-            Some(t) if matches!(t.kind, TokenKind::On | TokenKind::Suite | TokenKind::Case) => {
+            //
+            // The tier is single-sourced in `keywords::RESERVED_CONTEXTUAL`:
+            // this arm defers to it rather than hardcoding the token kinds, so
+            // extending that list is enough to admit a new contextual keyword
+            // here. Each of these words lexes only to its own token, so matching
+            // the source text is equivalent to matching the kind.
+            Some(t) if crate::keywords::is_reserved_contextual(self.slice(t.span)) => {
                 self.bump();
                 Ok(Ident {
                     name: self.slice(t.span).to_string(),

@@ -752,6 +752,15 @@ impl<'a> Parser<'a> {
                 TokenKind::Ident => {
                     self.bump();
                     let name = self.slice(t.span).to_string();
+                    // Built-in type-name dispatch. Each arm below uses the exact
+                    // `name == "<Name>"` idiom: the drift guard
+                    // `builtin_type_names_match_parser_dispatch`
+                    // (`bynkc/tests/keywords_reference.rs`) scans this file for
+                    // that idiom and asserts the set equals `BUILTIN_TYPE_NAMES`,
+                    // which also gates the `bynk.resolve.reserved_builtin_type`
+                    // redeclaration diagnostic. Keep new built-ins in this form,
+                    // and register them there.
+                    //
                     // v0.9: `HttpResult` is a predeclared built-in generic.
                     if name == "HttpResult" {
                         if self.peek_kind() != Some(TokenKind::LBracket) {

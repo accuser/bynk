@@ -217,10 +217,20 @@ pub const CONTEXTUAL_KEYWORDS: &[KeywordInfo] = &[
 /// keyword reference renders them as a distinct tier so the page no longer
 /// claims, falsely, that every listed word is unusable as an identifier.
 ///
-/// Single source of truth: the `expect_ident` exemption arm and the
+/// Single source of truth: the `expect_ident` exemption arm (via
+/// [`is_reserved_contextual`]) and the
 /// `is_reserved_keyword_covers_every_lexer_keyword` drift guard both defer to
-/// this list.
+/// this list, so adding a word here is enough to make the parser admit it.
 pub const RESERVED_CONTEXTUAL: &[&str] = &["case", "on", "suite"];
+
+/// True when `word` is a [reserved contextual keyword](RESERVED_CONTEXTUAL) —
+/// a reserved token `expect_ident` re-admits as an identifier. Because each of
+/// these words lexes only to its own dedicated token, matching on the source
+/// text is equivalent to matching the token kind, but keeps the exemption
+/// single-sourced against [`RESERVED_CONTEXTUAL`].
+pub fn is_reserved_contextual(word: &str) -> bool {
+    RESERVED_CONTEXTUAL.contains(&word)
+}
 
 /// Built-in type names — compiler-known type constructors the parser dispatches
 /// on by identifier text in `parser/types.rs`, *outside* the keyword/token
