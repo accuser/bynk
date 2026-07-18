@@ -13,6 +13,10 @@ members = [
     "bynk-fmt",
     "bynk-grammar",
     "bynk-lsp",
+    # Rust binding for the tree-sitter grammar (unpublished). Exists only so the
+    # cross-parser conformance test can diff tree-sitter against bynk-syntax;
+    # `publish = false`, kept off the release workflows' hardcoded crate list.
+    "tree-sitter-bynk",
     # Repo automation (unpublished). Not a product crate — kept off the release
     # workflows' hardcoded crate list; `publish = false` in its manifest.
     "xtask",

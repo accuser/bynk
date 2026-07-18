@@ -1640,6 +1640,10 @@
         {
           "type": "STRING",
           "value": "Instant"
+        },
+        {
+          "type": "STRING",
+          "value": "Bytes"
         }
       ]
     },
@@ -1852,114 +1856,96 @@
       "value": "ValidationError"
     },
     "generic_type_ref": {
-      "type": "SEQ",
+      "type": "CHOICE",
       "members": [
-        {
-          "type": "FIELD",
-          "name": "name",
-          "content": {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "Result"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "Option"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "Effect"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "HttpResult"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "List"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "Map"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "Stream"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "Query"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "Connection"
-                },
-                "named": true,
-                "value": "builtin_type"
-              },
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "STRING",
-                  "value": "History"
-                },
-                "named": true,
-                "value": "builtin_type"
-              }
-            ]
-          }
-        },
-        {
-          "type": "STRING",
-          "value": "["
-        },
         {
           "type": "SEQ",
           "members": [
+            {
+              "type": "FIELD",
+              "name": "name",
+              "content": {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "Option"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "Effect"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "HttpResult"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "List"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "Stream"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "Query"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "Connection"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "History"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "STRING",
+              "value": "["
+            },
             {
               "type": "FIELD",
               "name": "arg",
@@ -1969,30 +1955,70 @@
               }
             },
             {
-              "type": "REPEAT",
-              "content": {
-                "type": "SEQ",
-                "members": [
-                  {
-                    "type": "STRING",
-                    "value": ","
-                  },
-                  {
-                    "type": "FIELD",
-                    "name": "arg",
-                    "content": {
-                      "type": "SYMBOL",
-                      "name": "_type_ref"
-                    }
-                  }
-                ]
-              }
+              "type": "STRING",
+              "value": "]"
             }
           ]
         },
         {
-          "type": "STRING",
-          "value": "]"
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "name",
+              "content": {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "Result"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  },
+                  {
+                    "type": "ALIAS",
+                    "content": {
+                      "type": "STRING",
+                      "value": "Map"
+                    },
+                    "named": true,
+                    "value": "builtin_type"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "STRING",
+              "value": "["
+            },
+            {
+              "type": "FIELD",
+              "name": "arg",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_type_ref"
+              }
+            },
+            {
+              "type": "STRING",
+              "value": ","
+            },
+            {
+              "type": "FIELD",
+              "name": "arg",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_type_ref"
+              }
+            },
+            {
+              "type": "STRING",
+              "value": "]"
+            }
+          ]
         }
       ]
     },
