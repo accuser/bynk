@@ -9,6 +9,7 @@
 use std::fmt::Write as _;
 
 use crate::emitter::http_handler_method_name;
+use crate::emitter::ts_ident;
 use crate::project::UnitTable;
 use bynk_syntax::ast::*;
 
@@ -1087,13 +1088,16 @@ fn emit_http_route_dispatch(
             // Body deserialisation happens below.
             continue;
         }
-        // It's a path parameter — extract from __m.params and construct.
+        // It's a path parameter — extract from __m.params and construct. The
+        // `__m.params` key is the wire segment name (verbatim); the constructed
+        // binding must dodge JS reserved words for the surface call.
+        let jname = ts_ident(pname);
         let _ = writeln!(
             out,
             "          const __raw_{pname} = __m.params[\"{pname}\"];"
         );
         emit_path_param_construction(out, pname, &p.type_ref, cors_const, security_const);
-        call_args.push(pname.clone());
+        call_args.push(jname);
     }
     // Body parameter (POST/PUT/PATCH). A multi-actor sum route's wrapper reads
     // and parses the body itself (it must verify over the raw bytes first), so
@@ -1294,6 +1298,9 @@ fn emit_call_handler_dispatch(
     if h.params.len() == 1 {
         let p = &h.params[0];
         let pname = &p.name.name;
+        // The binding target must dodge JS reserved words (`class`, `const`, …)
+        // that lex as valid Bynk identifiers; the `__r_` temp is already safe.
+        let jname = ts_ident(pname);
         let dser_call = deserialise_call(&p.type_ref, "args", "$");
         let _ = writeln!(out, "            const __r_{pname} = {dser_call};");
         let _ = writeln!(
@@ -1302,12 +1309,12 @@ fn emit_call_handler_dispatch(
         );
         let _ = writeln!(
             out,
-            "            const {pname} = __r_{pname}.value{};",
+            "            const {jname} = __r_{pname}.value{};",
             brand_assertion(&p.type_ref, local_types)
         );
         let _ = writeln!(
             out,
-            "            const result = await surface.{sname}({caller_args}{pname});"
+            "            const result = await surface.{sname}({caller_args}{jname});"
         );
     } else {
         let _ = writeln!(
@@ -1320,7 +1327,11 @@ fn emit_call_handler_dispatch(
         );
         let mut names = Vec::new();
         for p in &h.params {
+            // `pname` is the wire field name (the `argsObj` key + diagnostic path)
+            // and must stay verbatim; `jname` is the reserved-word-safe binding
+            // the surface call references.
             let pname = &p.name.name;
+            let jname = ts_ident(pname);
             let dser = deserialise_call(
                 &p.type_ref,
                 &format!("argsObj[\"{pname}\"]"),
@@ -1333,10 +1344,10 @@ fn emit_call_handler_dispatch(
             );
             let _ = writeln!(
                 out,
-                "            const {pname} = __r_{pname}.value{};",
+                "            const {jname} = __r_{pname}.value{};",
                 brand_assertion(&p.type_ref, local_types)
             );
-            names.push(pname.clone());
+            names.push(jname);
         }
         // Prepend the caller (when present) without a dangling comma for the
         // zero-param case.
@@ -1370,9 +1381,13 @@ fn emit_path_param_construction(
     cors_const: Option<&str>,
     security_const: Option<&str>,
 ) {
+    // `pname` names the wire segment (the `__raw_`/`__r_` temps and diagnostic
+    // path stay verbatim); `jname` is the reserved-word-safe binding the surface
+    // call references.
+    let jname = ts_ident(pname);
     match t {
         TypeRef::Base(BaseType::String, _) => {
-            let _ = writeln!(out, "          const {pname} = __raw_{pname};");
+            let _ = writeln!(out, "          const {jname} = __raw_{pname};");
         }
         TypeRef::Named(id) => {
             let _ = writeln!(
@@ -1390,11 +1405,11 @@ fn emit_path_param_construction(
                 out,
                 "          if (__r_{pname}.tag === \"Err\") return {reject};"
             );
-            let _ = writeln!(out, "          const {pname} = __r_{pname}.value;");
+            let _ = writeln!(out, "          const {jname} = __r_{pname}.value;");
         }
         _ => {
             // Other shapes are rejected by the static check; emit a fallback.
-            let _ = writeln!(out, "          const {pname} = __raw_{pname} as any;");
+            let _ = writeln!(out, "          const {jname} = __raw_{pname} as any;");
         }
     }
 }
