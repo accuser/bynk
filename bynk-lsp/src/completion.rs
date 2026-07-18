@@ -1858,6 +1858,10 @@ mod tests {
         assert_eq!(member_receiver("€Color."), Some("Color".to_string()));
         assert_eq!(member_receiver("—Bar."), Some("Bar".to_string()));
         assert_eq!(word_before_brace("\"cors {", 6), "cors");
+        assert_eq!(
+            record_construction_receiver("\"€Order {"),
+            Some("Order".to_string())
+        );
         // The reproduction from the issue: a completion request against a buffer
         // where the line prefix opens a string literal must not panic.
         let _ = complete("let x = \"Foo.", "commons m {}\n", None);
