@@ -2234,8 +2234,27 @@ fn check_test_service_address(
                 .any(|h| matches!(&h.kind, HandlerKind::Http { path: p, .. } if p == path));
             if path_declared {
                 let _ = type_of(&args[0], None, ctx);
-                for a in &args[1..] {
-                    let _ = type_of(a, None, ctx);
+                // A wrong-method call has no handler, so it takes only the path;
+                // diagnose extra args rather than silently dropping them (the
+                // lowering forwards only method+path to the generic driver).
+                if args.len() > 1 {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.test.service_call_arity",
+                            method.span,
+                            format!(
+                                "`{}.{}(\"{}\")` is a wrong-method `405` test and takes only the route path, but {} argument(s) were given",
+                                id.name,
+                                method.name,
+                                path,
+                                args.len() - 1
+                            ),
+                        )
+                        .with_note("a wrong-method call reaches no handler, so it passes no body or params"),
+                    );
+                    for a in &args[1..] {
+                        let _ = type_of(a, None, ctx);
+                    }
                 }
                 return None;
             }
@@ -2478,7 +2497,32 @@ pub(crate) fn check_effect_let_principal(
     };
     let Some(handler) = resolve_test_address(&sig, &method.name, args).cloned() else {
         if let Some(p) = principal {
-            report_principal_actor(p, ctx);
+            // #707: a wrong-method `405` test (an http method whose path is
+            // declared for *another* method) reaches no handler, so a `by` clause
+            // is meaningless — reject it clearly. (An unresolvable address of any
+            // other shape already errors in `check_test_service_address`; only the
+            // now-allowed wrong-method call would otherwise drop the `by`.)
+            let wrong_method = bynk_syntax::ast::HttpMethod::from_ident(&method.name).is_some()
+                && matches!(args.first().map(|a| &a.kind), Some(bynk_syntax::ast::ExprKind::StrLit(path))
+                    if sig.handlers.iter().any(|h| matches!(&h.kind, bynk_syntax::ast::HandlerKind::Http { path: p, .. } if p == path)));
+            if wrong_method {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.test.principal_on_wrong_method",
+                        p.span,
+                        format!(
+                            "a wrong-method `405` test reaches no handler, so `by {}` is meaningless",
+                            p.actor.name
+                        ),
+                    )
+                    .with_note("drop the `by` clause on a wrong-method call"),
+                );
+                if let Some(id) = &p.identity {
+                    let _ = type_of(id, None, ctx);
+                }
+            } else {
+                report_principal_actor(p, ctx);
+            }
         }
         return;
     };

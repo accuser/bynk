@@ -406,11 +406,14 @@ export async function responseToHttpOutcome<T>(
     }
     // No boundary `kind` → the handler produced this `400`; fall through.
   }
-  // #707: a `405` is the router's method fall-through — a live path reached under
-  // a method it declares no handler for. The handler never ran and no handler can
-  // return it (the router synthesises the `405` before dispatch), so it is
-  // unambiguously `Rejected(MethodNotAllowed)`.
-  if (response.status === 405) {
+  // #707: a `405` is `Rejected(MethodNotAllowed)` only when it is the router's
+  // *method fall-through* — a live path reached under a method it declares no
+  // handler for. Classify on shape, not status: the router synthesises that 405
+  // with an `Allow` header (`workers_entry.rs`), whereas a handler that ran and
+  // returned `HttpResult.MethodNotAllowed` yields a bodyless 405 with no `Allow`
+  // — the handler produced it, so it stays `Handled`. Same shape-vs-status care
+  // as the `400` (`kind` body) path.
+  if (response.status === 405 && response.headers.has("allow")) {
     return { tag: "Rejected", value: { tag: "MethodNotAllowed" } };
   }
   const handled = await responseToHttpResult(response, deserialiseValue);
