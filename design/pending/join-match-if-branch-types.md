@@ -59,7 +59,14 @@ mixes compile *and* types them soundly.
 
 **Consequences.** Programs that fold a refined type and its base through a
 `match` or `if` — the common `Result`/`Option` unwrap-to-base shape — now
-type-check, at the joined (base) type. Nothing that was accepted changes type:
+type-check, at the joined (base) type. One asymmetry follows from `widen_refined`
+touching only the *top level*: `Result[Email, String]` and
+`Result[String, String]` join (one is `compatible` with the other, covariantly),
+but `Result[Email, String]` and `Result[Username, String]` — two refined
+*siblings* nested inside a covariant constructor — do **not**, because neither is
+`compatible` with the other and the top-level `Result` is not itself refined.
+Those still report a branch mismatch; the annotation to widen the payload is
+explicit. Recursive-widening join is a deliberately deferred follow-up. Nothing that was accepted changes type:
 when all arms are identical the join is that identical type. Nothing that was
 rejected for a real mismatch is now accepted: unrelated types have no join and
 still error. The result is order-independent, so a hand-written multi-arm `match`

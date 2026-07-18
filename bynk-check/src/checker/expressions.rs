@@ -1450,7 +1450,9 @@ pub(crate) fn check_if(
                         else_block.tail.span,
                         format!("else-branch has type `{}`", e.display()),
                     )
-                    .with_note("both branches of an `if` expression must produce the same type"),
+                    .with_note(
+                        "both branches of an `if` must join to a common type — a refined type and its base agree at the base",
+                    ),
                 );
                 None
             }
@@ -2788,7 +2790,9 @@ pub(crate) fn check_match(
                             acc.display()
                         ),
                     )
-                    .with_note("every arm of a `match` must produce the same type"),
+                    .with_note(
+                    "every arm of a `match` must join to a common type — a refined type and its base agree at the base",
+                ),
                 );
                 return None;
             }
