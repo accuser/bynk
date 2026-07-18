@@ -1,0 +1,4 @@
+# #711: record construction in a service handler body must validate the field
+# set (missing required + unknown extra), not just per-field types.
+bynk.resolve.missing_field
+bynk.resolve.unknown_field

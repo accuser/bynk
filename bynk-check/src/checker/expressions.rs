@@ -2130,6 +2130,57 @@ pub(crate) fn check_record_construction(
     let declared: HashMap<&str, &RecordField> =
         r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
 
+    // Field-set validation — missing required, unknown extra, duplicate init.
+    // #711: the resolver runs these (resolver.rs) but skips `service`/`agent`
+    // bodies, and `check` only runs once `resolve` passed clean, so for
+    // `fn`/method bodies this is a no-op (the resolver already gated them) and
+    // for handler bodies the checker is the only backstop — same shape as the
+    // ident-resolution ladder mirrored above. Mirror the resolver's codes so a
+    // service handler and an `fn` reject the identical literal identically.
+    let mut provided: HashMap<&str, Span> = HashMap::new();
+    for f in fields {
+        if !declared.contains_key(f.name.name.as_str()) {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.resolve.unknown_field",
+                    f.name.span,
+                    format!(
+                        "record type `{}` has no field `{}`",
+                        type_name.name, f.name.name
+                    ),
+                )
+                .with_label(decl.name.span, "type declared here"),
+            );
+        }
+        if let Some(prev) = provided.get(f.name.name.as_str()) {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.resolve.duplicate_field_init",
+                    f.name.span,
+                    format!("field `{}` is initialised more than once", f.name.name),
+                )
+                .with_label(*prev, "previously initialised here"),
+            );
+        } else {
+            provided.insert(f.name.name.as_str(), f.name.span);
+        }
+    }
+    for decl_field in &r.fields {
+        if !provided.contains_key(decl_field.name.name.as_str()) {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.resolve.missing_field",
+                    type_name.span,
+                    format!(
+                        "missing required field `{}` for record `{}`",
+                        decl_field.name.name, type_name.name
+                    ),
+                )
+                .with_label(decl_field.name.span, "field declared here"),
+            );
+        }
+    }
+
     // Non-generic records are the common case: resolve each field type directly
     // and compare — no type variables, no substitution churn (ADR 0183 #10).
     if decl.type_params.is_empty() {

@@ -1,0 +1,12 @@
+context demo
+
+type User = { id: Int, name: String }
+
+service api from http {
+  on GET("/u") () -> Effect[HttpResult[User]] by v: Visitor {
+    -- #711: a service handler body is checker-only (the resolver skips
+    -- service/agent items), so the missing/unknown/duplicate field checks
+    -- must fire here too — the identical literal in an `fn` body is rejected.
+    Ok(User { id: 1, bogus: 2 })
+  }
+}
