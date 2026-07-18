@@ -1405,6 +1405,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["case"],
     ),
     dg(
+        "bynk.test.principal_on_wrong_method",
+        "A wrong-method `405` test carries a `by <Actor>` clause; it reaches no handler, so a principal is meaningless.",
+        &["case"],
+    ),
+    dg(
         "bynk.test.principal_required",
         "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`.",
         &["case"],

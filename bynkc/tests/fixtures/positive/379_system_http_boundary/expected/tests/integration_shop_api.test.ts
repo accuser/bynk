@@ -79,6 +79,12 @@ async function __sysdrive_noauth_api_http_GET_cart_size(__sub: string) {
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToUnauthOutcome(__res, (__j: JsonValue) => ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(__j));
 }
+async function __sysdrive_wrongmethod_api(method: string, path: string) {
+  const __h = makeHarness();
+  const __req = new Request(`https://test${path}`, { method });
+  const __res = await __h.env.SHOP_API.fetch(__req);
+  return responseToHttpOutcome(__res, (__j: JsonValue) => Ok(__j as never));
+}
 
 async function test_a_create_returns_Created_over_the_real_wire() {
   try {
