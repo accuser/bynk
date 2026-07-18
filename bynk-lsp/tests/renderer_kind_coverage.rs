@@ -128,8 +128,13 @@ fn analysed(test_name: &str) -> (bynk_ide::ProjectDiagnostics, HashMap<PathBuf, 
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("create test root");
-    fs::write(root.join("every.bynk"), EVERY_KIND).expect("write fixture");
+    // The unit is `context demo.every`, so its file must live at `demo/every.bynk`
+    // for its path to match its declared name — otherwise
+    // `bynk.project.inconsistent_commons_name` fires (now that project-level
+    // diagnostics are attributed to their file and surface here, #696).
+    let unit_dir = root.join("demo");
+    fs::create_dir_all(&unit_dir).expect("create test root");
+    fs::write(unit_dir.join("every.bynk"), EVERY_KIND).expect("write fixture");
     let r = bynk_ide::diagnose_project(&root, &HashMap::new());
     let _ = fs::remove_dir_all(&root);
 

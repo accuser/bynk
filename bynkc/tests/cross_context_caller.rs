@@ -1,10 +1,18 @@
-//! v0.54: behavioral test for the cross-context `CallerId` value (Q7).
+//! v0.54: behavioral tests for the cross-context `CallerId` value (Q7).
 //!
-//! Drives the callee worker's `/_bynk/call/` dispatch with and without the
-//! `X-Bynk-Caller` header: present → the `by c: Caller` handler reads the live
-//! caller name; absent/empty → fail-closed (401, the `Internal`-channel
-//! analogue). Skips loudly without a toolchain; `BYNK_REQUIRE_TSC=1` turns the
-//! skip into a failure.
+//! Workers (`cross_context_caller_reads_live_id_and_fails_closed`): drives the
+//! callee worker's `/_bynk/call/` dispatch with and without the `X-Bynk-Caller`
+//! header: present → the `by c: Caller` handler reads the live caller name;
+//! absent/empty → fail-closed (401, the `Internal`-channel analogue).
+//!
+//! Bundle (`bundle_cross_context_caller_reads_the_consuming_context_name`,
+//! v0.54 / #655): the same handler on the bundle target, where a cross-context
+//! call is a direct `composeApp`-wired invocation. Composes the app and checks
+//! each consumer reads its own name and the top-level entry self-attributes —
+//! the runtime half the `396_…` fixture only tsc-checks.
+//!
+//! Both skip loudly without a toolchain; `BYNK_REQUIRE_TSC=1` turns the skip
+//! into a failure.
 
 use bynkc::{BuildTarget, CompileOptions};
 use std::fs;
@@ -89,6 +97,51 @@ service ask {
     r
   }
 }
+"#;
+
+// A second consumer of the same provider, to prove each consumer's cross-context
+// call reads *its own* qualified name — the per-consumer surface the compose root
+// builds, not one shared instance carrying a single caller.
+const SOURCE_D: &str = r#"context app.d
+
+consumes app.b as B
+
+service probe {
+  on call(ping: String) -> Effect[Result[String, String]] {
+    let r <- B.whoami(ping)
+    r
+  }
+}
+"#;
+
+// v0.54 (#655): the bundle-mode analogue of the workers driver below. There is no
+// `/_bynk/call/` door and no header — cross-context calls are direct invocations
+// wired by `composeApp`, so the driver composes the app and reads the caller each
+// path threads through `makeSurface`.
+const BUNDLE_DRIVER_TS: &str = r#"import { composeApp } from "./compose.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) throw new Error("FAIL: " + msg);
+}
+
+const app: any = composeApp();
+
+// A consumer's cross-context call reads the *consumer's* qualified name.
+let r: any = await app.a.ask("hi");
+assert(r.tag === "Ok" && r.value === "app.a", "app.a reads its own name, got " + JSON.stringify(r));
+
+// A second consumer of the same provider reads *its* name — proving the surface
+// is built per-consumer, not shared with a single baked-in caller.
+r = await app.d.probe("hi");
+assert(r.tag === "Ok" && r.value === "app.d", "app.d reads its own name, got " + JSON.stringify(r));
+
+// The top-level entry addresses the provider directly: no calling context, so it
+// self-attributes with the provider's own qualified name (ADR 0092 note — this is
+// where bundle and workers diverge; workers' internal door fail-closes instead).
+r = await app.b.whoami("hi");
+assert(r.tag === "Ok" && r.value === "app.b", "top-level self-attributes, got " + JSON.stringify(r));
+
+console.log("ALL OK");
 "#;
 
 const DRIVER_TS: &str = r#"import worker from "./workers/app-b/index.js";
@@ -251,6 +304,82 @@ fn cross_context_caller_reads_live_id_and_fails_closed() {
     assert!(
         ok && msg.contains("ALL OK"),
         "cross-context-caller driver did not pass:\n{msg}"
+    );
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+/// v0.54 (#655): the bundle-target twin of the workers test above. A bundle-mode
+/// `by c: Caller` handler could not even compile before this fix (its
+/// `makeSurface` fed `deps` without the `identity` field it typed, TS2345). This
+/// drives the *runtime* value the fixture (`396_service_caller_binder_bundle_surface`)
+/// only tsc-checks: each consumer reads its own qualified name, and the top-level
+/// entry self-attributes — including the multiple-consumer path the compose root's
+/// per-consumer surfaces exist to serve.
+#[test]
+fn bundle_cross_context_caller_reads_the_consuming_context_name() {
+    let runner = match discover_tsc() {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "\n!!! BUNDLE CROSS-CONTEXT CALLER VERIFICATION SKIPPED !!!\nno tsc runner.\n"
+            );
+            if std::env::var(REQUIRE_ENV).is_ok() {
+                panic!("{REQUIRE_ENV} is set but no tsc runner was found");
+            }
+            return;
+        }
+    };
+    if !tool_exists("node") {
+        eprintln!(
+            "\n!!! BUNDLE CROSS-CONTEXT CALLER VERIFICATION SKIPPED !!!\n`node` not on PATH.\n"
+        );
+        if std::env::var(REQUIRE_ENV).is_ok() {
+            panic!("{REQUIRE_ENV} is set but `node` was not found");
+        }
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!("bynk-xctx-caller-bundle-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    let proj = tmp.join("proj/app");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("a.bynk"), SOURCE_A).unwrap();
+    fs::write(proj.join("b.bynk"), SOURCE_B).unwrap();
+    fs::write(proj.join("d.bynk"), SOURCE_D).unwrap();
+
+    let out = match bynkc::compile_project(
+        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Bundle),
+    ) {
+        Ok(o) => o,
+        Err(failure) => panic!(
+            "compile the cross-context project to a bundle:\n{}",
+            bynkc::render_project_errors(&failure.flatten())
+        ),
+    };
+
+    let run_dir = tmp.join("run");
+    for file in &out.files {
+        let target = run_dir.join(&file.output_path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, &file.typescript).unwrap();
+    }
+    fs::write(
+        run_dir.join("runtime.ts"),
+        bynkc::emitter::emit_runtime_module(),
+    )
+    .unwrap();
+    fs::write(run_dir.join("driver.ts"), BUNDLE_DRIVER_TS).unwrap();
+    fs::write(run_dir.join("tsconfig.json"), TSCONFIG_JSON).unwrap();
+    fs::write(run_dir.join("package.json"), "{ \"type\": \"module\" }").unwrap();
+
+    let (program, prefix) = &runner;
+    let (ok, msg) = run(program, prefix, &["-p", "tsconfig.json"], &run_dir);
+    assert!(ok, "tsc failed on the cross-context-caller bundle:\n{msg}");
+
+    let (ok, msg) = run("node", &[], &["js/driver.js"], &run_dir);
+    assert!(
+        ok && msg.contains("ALL OK"),
+        "bundle cross-context-caller driver did not pass:\n{msg}"
     );
     let _ = fs::remove_dir_all(&tmp);
 }

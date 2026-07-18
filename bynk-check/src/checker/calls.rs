@@ -606,8 +606,10 @@ fn check_generic_call(
         for (tp, ta) in fn_decl.type_params.iter().zip(type_args) {
             // Resolve explicit type args with the *enclosing* fn's type
             // params in scope, so `identity[A](x)` inside a generic body
-            // works.
-            let ty = resolve_type_ref_in(ta, &ctx.input.types, &ctx.type_vars)?;
+            // works. #712: report (not silently drop) an unknown type arg —
+            // the resolver never validates `Call::type_args` (it destructures
+            // `Call { name, args, .. }`), so this is the only guard.
+            let ty = resolve_expr_type_ref(ta, ctx)?;
             subst.insert(tp.name.name.clone(), ty);
         }
     }
