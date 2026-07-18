@@ -1,11 +1,6 @@
----
-level: minor
-changelog: HS256 bearer verification requires an `exp` claim (a token with no expiry no longer verifies)
----
+# 0231 — HS256 bearer verification requires `exp`
 
-## ADR: require-exp-hs256-bearer
-title: HS256 bearer verification requires `exp`
-summary: A bearer JWT with no expiry no longer verifies, matching the OIDC seam
+- **Status:** Accepted (v0.208)
 
 **Context.** The HS256 bearer seam (`verifyBearerJwtHs256`) treated `exp` as
 optional: `exp` was checked only `if (payload.exp !== undefined)`. A token minted
