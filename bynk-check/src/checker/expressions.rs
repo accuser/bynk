@@ -673,6 +673,9 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
     // is only reached when the lhs holds — the same binding scope as `&&`.
     if matches!(op, BinOp::And | BinOp::Implies) {
         let lt = type_of(lhs, Some(&Ty::Base(BaseType::Bool)), ctx);
+        // Must run *after* `type_of(lhs)`: `collect_is_bindings` reads (and
+        // memoises by span) the lhs's `expr_types`, so type-checking has to
+        // have populated them first — collecting earlier would cache empties.
         let bindings = collect_is_bindings(lhs, ctx);
         ctx.push_scope();
         for (name, ty) in bindings {
@@ -1383,7 +1386,9 @@ pub(crate) fn check_if(
             ),
         ));
     }
-    // `is` bindings in the condition flow into the then-branch.
+    // `is` bindings in the condition flow into the then-branch. This runs
+    // after `type_of(cond)` above so the memoised collector sees populated
+    // `expr_types`; collecting before type-checking would cache empties.
     let bindings = collect_is_bindings(cond, ctx);
     ctx.push_scope();
     for (name, ty) in bindings {

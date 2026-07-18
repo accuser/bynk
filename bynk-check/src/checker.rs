@@ -2704,6 +2704,10 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                 if http_implied || !owned_elsewhere() {
                     check_http_variant(expr.span, v, args, expected, ctx)
                 } else {
+                    // Falling straight to `check_call` (rather than the
+                    // `queue_variant` else-if below) relies on the http and
+                    // queue variant keyword sets being disjoint, so an http
+                    // name could never have taken the queue branch anyway.
                     check_call(name, type_args, args, expr.span, ctx)
                 }
             } else if let Some(qv) = queue_variant(&name.name)
