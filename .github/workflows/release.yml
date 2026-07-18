@@ -19,12 +19,18 @@ name: Release
 # The registry publishes are irreversible. The `verify` gate (tests + the
 # tag/version match + the tagged commit being on `main`) stands in for an
 # approval gate. Tags are NOT covered by the `main` ruleset, so the on-main
-# ancestry check is what stops a `v*` tag (or a manual dispatch from a branch)
-# from releasing an unreviewed commit — see #730. Once the repo is public, an
-# Environment with required reviewers can add a one-click pause on top without
-# GitHub Enterprise (tracked separately; it needs the crates.io/npm Trusted
-# Publishers re-registered with that environment, since they are wired with "no
-# environment" below — see the publish-jobs notes).
+# ancestry check RAISES THE BAR against a `v*` tag (or a manual dispatch from a
+# branch) releasing an unreviewed commit — see #730. It is a partial mitigation,
+# not the whole fix: a tag-triggered (or branch-dispatched) run executes the
+# workflow definition FROM THE TAGGED COMMIT, so an attacker who authors that
+# commit can strip this check before it runs. What the ancestry gate does stop
+# is tagging an *existing, honest* commit that never reached `main` (e.g. an
+# unmerged PR-branch head that still carries this workflow). Closing the residual
+# needs the deferred `v*` tag ruleset (restrict tag creation to the maintainer)
+# and, once the repo is public, an Environment with required reviewers for a
+# one-click pause — the latter tracked separately because it needs the
+# crates.io/npm Trusted Publishers re-registered with that environment, since
+# they are wired with "no environment" below (see the publish-jobs notes).
 #
 # A manual `workflow_dispatch` (Actions tab "Run workflow", or
 # `gh workflow run release.yml --ref v0.16.0 -f publish_crates=true
@@ -97,12 +103,15 @@ jobs:
         # `v*` tags are NOT covered by the `main` ruleset, so a tag can be pushed
         # at ANY commit on ANY branch, and a manual dispatch can run from a branch
         # ref too. The tag/version match above never checks *which commit* is
-        # being shipped. Without this, a leaked write-scope token (or a
-        # collaborator) could release an unreviewed commit — signed binaries,
-        # SLSA provenance, and irreversible crates.io/npm publishes. Requiring the
-        # released commit ($GITHUB_SHA) to be an ancestor of origin/main forces it
-        # through branch protection first. Every publish job has `needs: verify`,
-        # so failing here blocks the whole release (tag push AND dispatch). #730.
+        # being shipped. Requiring the released commit ($GITHUB_SHA) to be an
+        # ancestor of origin/main means an *existing, honest* off-main commit
+        # (e.g. an unmerged PR-branch head) can't be released without first
+        # reaching main through branch protection. Every publish job has
+        # `needs: verify`, so failing here blocks the release (tag push AND
+        # dispatch). This is a PARTIAL mitigation: a tag-triggered run executes
+        # this workflow from the tagged commit, so an attacker who authors that
+        # commit can strip this check — closing that needs the deferred `v*` tag
+        # ruleset (see the header). #730.
         run: |
           git fetch --no-tags origin main
           if git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
