@@ -482,4 +482,5 @@ match s {
 ```
 
 A `match` must be exhaustive (`bynk.types.non_exhaustive_match`); a `match` is an
-expression whose arms must share a type (`bynk.types.match_arm_mismatch`).
+expression whose arms must join to a common type — their least upper bound, so a
+refined type and its base agree at the base (`bynk.types.match_arm_mismatch`).
