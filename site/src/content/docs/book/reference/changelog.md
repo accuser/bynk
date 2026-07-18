@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.206**.
+written against **v0.207**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.207.0** | A `match` arm or `if` branch may now produce a refined type where a sibling produces its base (or another refined type over the same base) — the branches join to their least upper bound instead of being rejected for not being byte-identical, so `match r { Ok(e: Email) => e, Err(m: String) => m }` type-checks at `String` |
 | **v0.206.1** | The playground wasm installs a panic hook and converts an internal compiler panic to a diagnostic, so adversarial input no longer traps as an opaque RuntimeError (#717) |
 | **v0.206.0** | Unresolvable explicit call type arguments, `Json.decode[T]` targets, and lambda parameter annotations in handler bodies are now reported instead of silently swallowed |
 | **v0.205.1** | Project-level `check`/`compile` diagnostics (consumes cycles, path/name mismatches, the reserved-namespace and adapter-binding checks, `uses`/`consumes`/`exports` validation, provider signature matching, …) now render with ariadne source context in directory mode instead of the plain `[category] message` fallback |

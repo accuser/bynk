@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A `match` arm or `if` branch may now produce a refined type where a sibling produces its base (or another refined type over the same base) — the branches join to their least upper bound instead of being rejected for not being byte-identical, so `match r { Ok(e: Email) => e, Err(m: String) => m }` type-checks at `String`
----
+# 0230 — `match` arms and `if` branches agree up to a least upper bound, not exact type equality
 
-## ADR: join-match-if-branch-types
-title: `match` arms and `if` branches agree up to a least upper bound, not exact type equality
-summary: Why branch agreement widens a refined type to its base (and two refined siblings to their shared base) instead of demanding identical `Ty`, and why the join is the sound result type
+- **Status:** Accepted (v0.207)
 
 **Context.** A `match` expression's arms and an `if`/`else`'s two branches must
 *agree* on a type — the whole expression has one type, threaded on to the

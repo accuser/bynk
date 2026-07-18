@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0230](0230-join-match-if-branch-types.md) | **`match` arms and `if` branches agree up to a least upper bound, not exact type equality** (v0.207) — Why branch agreement widens a refined type to its base (and two refined siblings to their shared base) instead of demanding identical `Ty`, and why the join is the sound result type | Accepted (v0.207) |
 | [0229](0229-wasm-panic-hardening.md) | **Bound the blast radius of an internal compiler panic in the playground wasm** (v0.206.1) — A panic hook for legibility on wasm, plus a catch_unwind boundary that converts panics to diagnostics on the native path | Accepted (v0.206.1) |
 | [0228](0228-report-unresolvable-types-in-expression-positions.md) | **Report unresolvable types at expression-position resolution sites** (v0.206) — Type references in call type args, `Json.decode[T]`, and lambda params report when they fail to resolve | Accepted (v0.206) |
 | [0227](0227-attribute-project-level-diagnostics.md) | **Project-level validation diagnostics are attributed to their owning file** (v0.205.1) — Why directory-mode `check`/`compile` errors rendered without source context, and the site-by-site attribution that restores it | Accepted (v0.205.1) |
