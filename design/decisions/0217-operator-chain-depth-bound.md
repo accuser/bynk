@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A long operator or member chain (`1 + 1 + … + 1`, `a.b.c…`, `!!!…`) is rejected with `bynk.parse.nesting_too_deep` instead of overflowing the stack on a valid program (#714)
----
+# 0217 — Bound operator-chain depth on the shared front-end nesting budget
 
-## ADR: operator-chain-depth-bound
-title: Bound operator-chain depth on the shared front-end nesting budget
-summary: Count iteratively-built operator-chain folds against the #713 depth budget so a long chain can't overflow a downstream recursive walk
+- **Status:** Accepted (v0.196)
 
 **Context.** #713 (ADR for the parser recursion bound) added a single fixed
 limit, `MAX_NESTING_DEPTH = 64`, and a live `Parser::depth` counter incremented

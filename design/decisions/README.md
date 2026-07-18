@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0217](0217-operator-chain-depth-bound.md) | **Bound operator-chain depth on the shared front-end nesting budget** (v0.196) — Count iteratively-built operator-chain folds against the #713 depth budget so a long chain can't overflow a downstream recursive walk | Accepted (v0.196) |
 | [0216](0216-system-tier-405-wrong-method.md) | **A `system`-tier case addresses a route with the wrong method to test the `405` fall-through** (v0.195) — Addressing a declared path with an undeclared method is no longer `service_unknown_route`; it drives the router's method fall-through through a generic no-handler driver and yields `Rejected(MethodNotAllowed)`, completing the boundary-rejection surface (`400`/`401`/`405`). A genuinely unknown *path* is still rejected. | Accepted (v0.195) |
 | [0215](0215-parser-recursion-depth-limit.md) | **The parser and interpolation lexer bound recursion depth** (v0.194) — A fixed nesting limit turns a stack-overflow abort on deeply nested source into a diagnostic | Accepted (v0.194) |
 | [0214](0214-if-match-condition-no-record-literal.md) | **An `if`/`match` condition does not parse a trailing brace body as a record literal** (v0.193) — A no-record-literal restriction on the condition spine, lifted inside delimiters | Accepted (v0.193) |
