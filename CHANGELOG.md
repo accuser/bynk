@@ -8,7 +8,7 @@ The project, its toolchain, and its in-language surface were renamed from
 ### Toolchain
 
 - The compiler binary `karnc` is now **`bynkc`**; the driver `karn` is now
-  **`bynk`** (e.g. `bynk build`, `bynk test`, `bynk doctor`). The language
+  **`bynk`** (e.g. `bynk dev`, `bynk test`, `bynk doctor`). The language
   server `karnc-lsp` is now **`bynkc-lsp`**.
 - The project manifest `karn.toml` is now **`bynk.toml`**.
 - The source file extension `.karn` is now **`.bynk`**.
