@@ -753,20 +753,16 @@ fn normalize_service_defaults(parsed: &mut [ParsedFile]) {
     }
 }
 
-/// v0.54 (#655): whether any of a context's services declares an
-/// `on call … by c: Caller` handler. Such a handler's emitted `deps` carries the
-/// calling context's qualified name as its `CallerId` identity (ADR 0092); in
-/// bundle mode the compose root supplies that name to `makeSurface`, mirroring
-/// the `X-Bynk-Caller` header a Worker reads at its entry. Determined from the
-/// same post-`normalize_service_defaults` handlers the emitter's
-/// [`emit_make_surface`](crate::emitter::emit_make_surface) reads, so the two
-/// sides always agree on which providers take the extra argument.
+/// v0.54 (#655): whether a context's services declare an `on call … by c: Caller`
+/// handler, whose emitted `deps` carries the calling context's qualified name as
+/// its `CallerId` identity (ADR 0092); in bundle mode the compose root supplies
+/// that name to `makeSurface`, mirroring the `X-Bynk-Caller` header a Worker
+/// reads at its entry. Delegates to the *same*
+/// [`any_service_binds_caller`](crate::emitter::any_service_binds_caller) the
+/// emitter's `emit_make_surface` calls, so the compose root and the surface can
+/// never disagree on which providers take the extra `__caller` argument.
 fn context_binds_caller(table: &UnitTable) -> bool {
-    table.services.values().any(|s| {
-        s.handlers
-            .iter()
-            .any(|h| bynk_check::actors::caller_binder_for(h, &table.actors).is_some())
-    })
+    crate::emitter::any_service_binds_caller(table.services.values(), &table.actors)
 }
 
 /// A double-quoted, escaped TypeScript string literal for `s` (a qualified

@@ -1501,6 +1501,24 @@ fn emit_context_deps_interface(
     deps_name
 }
 
+/// v0.54 (#655): whether any of `services` declares an `on call … by c: Caller`
+/// handler, whose emitted `deps` carries the calling context's qualified name as
+/// its `CallerId` identity (ADR 0092). This is the *single* predicate both
+/// bundle caller-identity seams consult — `emit_make_surface` (which adds the
+/// `__caller` parameter) and the compose root (which passes the name) — so the
+/// two can never disagree on which providers thread a caller. `caller_binder_for`
+/// self-guards `HandlerKind::Call`, so no kind filter is needed or wanted here.
+pub(crate) fn any_service_binds_caller<'a>(
+    services: impl IntoIterator<Item = &'a ServiceDecl>,
+    actors: &HashMap<String, ActorDecl>,
+) -> bool {
+    services.into_iter().any(|s| {
+        s.handlers
+            .iter()
+            .any(|h| bynk_check::actors::caller_binder_for(h, actors).is_some())
+    })
+}
+
 /// Emit the `makeSurface(deps)` function for a context that exposes
 /// services to other contexts (v0.6 §6.3 / §6.4).
 pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
@@ -1522,15 +1540,12 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
     // In bundle mode the compose root supplies that name to `makeSurface` as a
     // second `__caller` argument — the analogue of the `X-Bynk-Caller` header a
     // Worker reads at its entry (ADR 0092). Only a context with such a handler
-    // takes the extra parameter, so a caller-free surface is byte-unchanged.
+    // takes the extra parameter, so a caller-free surface is byte-unchanged. The
+    // shared `any_service_binds_caller` predicate is what keeps this seam and the
+    // compose root in lockstep on which providers get the extra argument.
     let binds_caller =
         |h: &Handler| bynk_check::actors::caller_binder_for(h, &ctx.actors).is_some();
-    let any_caller = services.iter().any(|s| {
-        s.handlers
-            .iter()
-            .filter(|h| matches!(h.kind, HandlerKind::Call))
-            .any(&binds_caller)
-    });
+    let any_caller = any_service_binds_caller(services.iter().copied(), &ctx.actors);
     let params = if any_caller {
         format!("deps: {deps_name}, __caller: string")
     } else {

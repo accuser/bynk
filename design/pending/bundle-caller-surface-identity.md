@@ -38,22 +38,37 @@ exactly as Workers supplies it at the entry seam.**
 - The **top-level** entry the compose root returns addresses a context directly,
   with no calling context; it passes the context's *own* qualified name as a
   stable, non-empty `CallerId`. A bundle is a single trust domain (ADR 0092), so
-  a self-attributed direct call mints nothing and crosses no boundary; this path
-  is the bundle's programmatic surface, never the internal `/_bynk/call/` door
-  that fail-closes in Workers.
+  a self-attributed direct call mints nothing and crosses no boundary.
 
-The caller-binding predicate reads the same post-`normalize_service_defaults`
-handlers on both sides (`context_binds_caller` in `project.rs`,
-`caller_binder_for` in `bynk-check`), so the compose root and `emit_make_surface`
-always agree on which providers take the extra argument.
+**A deliberate cross-target divergence.** The top-level seam is where the
+`Caller` value stops being identical across targets, and this ADR owns that. In
+Workers a context is reached only through its internal `/_bynk/call/` door,
+which **fail-closes** an unattributed call (no `X-Bynk-Caller` → the internal-
+channel analogue of 401, ADR 0092). A bundle's top-level entry is a *programmatic*
+surface, not that internal door, and it has no calling context to fail-close on;
+self-attribution is the only stable, non-empty value available there. So a
+`by c: Caller` handler invoked *directly* at the bundle's top-level reads its own
+name where the same handler in Workers would refuse the call. This affects only
+the unattributed top-level path — a genuine cross-context call (consumer → provider)
+reads the consumer's name identically on both targets, which is the path real
+programs take.
+
+The caller-binding predicate is a single `pub(crate) any_service_binds_caller`
+(in `emit.rs`) that both `emit_make_surface` and the compose root's
+`context_binds_caller` (in `project.rs`) call — so the two seams cannot disagree
+on which providers take the extra `__caller` argument, even under a future
+refactor of `caller_binder_for`'s internal `HandlerKind::Call` guard.
 
 **Consequences.** A bundle-mode `by c: Caller` handler now compiles and reads the
 real caller: `bynkc test` over such a service passes, and a cross-context call in
-a bundle reads the consuming context's name (verified end-to-end — `ask` calling
-`B.whoami` reads `"app.a"`). This is a language increment: the value the handler
-observes is now defined on the bundle target where it previously failed to
-compile. The Bearer/Oidc/actor-sum seams are unaffected — their sealed
-identities are minted only at a verification seam (ADR 0081) and are not
-addressable from the bundle surface. A regression fixture drives a
-`by c: Caller` handler through a `suite` on the bundle target, closing the
-coverage gap (no positive fixture did before, which is why #655 shipped).
+a bundle reads the consuming context's name. This is a language increment: the
+value the handler observes is now defined on the bundle target where it
+previously failed to compile. The Bearer/Oidc/actor-sum seams are unaffected —
+their sealed identities are minted only at a verification seam (ADR 0081) and are
+not addressable from the bundle surface. Two coverage additions close the gap
+that let #655 ship: a positive fixture drives a `by c: Caller` handler through a
+`suite` on the bundle target (pinning the `makeSurface`/`compose.ts` output and
+the TS2345 that broke, via `tsc_verify`), and a bundle-mode behavioural test
+(`bynkc/tests/cross_context_caller.rs`, the twin of the existing Workers one)
+composes the app and asserts each consumer reads its own name (`app.a`/`app.d`)
+and the top-level entry self-attributes (`app.b`).
