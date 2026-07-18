@@ -166,6 +166,41 @@ fn fmt_stdin_writes_canonical_to_stdout() {
 }
 
 #[test]
+fn fmt_stdin_check_flags_noncanonical_and_stays_silent() {
+    // `--check` on stdin must behave like `--check` on a file: report a diff on
+    // stderr and exit non-zero, *without* echoing the formatted text to stdout.
+    // A `generator | bynk fmt --check -` CI gate is otherwise dead — it passes
+    // green on non-canonical input and pollutes the log with the reformat.
+    let dir = scratch("fmt-stdin-check-bad");
+    let (code, out, err) = run_in(&bynk(), &dir, &["fmt", "--check", "-"], Some(MESSY));
+    assert_eq!(code, 1, "--check on non-canonical stdin must exit non-zero");
+    assert!(
+        out.is_empty(),
+        "--check must not echo the reformatted text to stdout, got:\n{out}"
+    );
+    assert!(
+        err.contains("not canonically formatted"),
+        "expected a non-canonical notice, got:\n{err}"
+    );
+}
+
+#[test]
+fn fmt_stdin_check_passes_on_canonical() {
+    // Already-canonical stdin exits zero and prints nothing.
+    let dir = scratch("fmt-stdin-check-ok");
+    let want = canonical(MESSY);
+    let (code, out, err) = run_in(&bynk(), &dir, &["fmt", "--check", "-"], Some(&want));
+    assert_eq!(
+        code, 0,
+        "--check on canonical stdin must exit zero; err:\n{err}"
+    );
+    assert!(
+        out.is_empty(),
+        "--check prints nothing on stdout, got:\n{out}"
+    );
+}
+
+#[test]
 fn fmt_check_flags_noncanonical_without_writing() {
     let dir = scratch("fmt-check");
     let file = dir.join("calc.bynk");
@@ -198,6 +233,82 @@ fn fmt_rewrites_in_place() {
         canonical(MESSY),
         "fmt must rewrite the file to its canonical form"
     );
+}
+
+#[test]
+fn fmt_write_leaves_no_temp_litter() {
+    // The in-place rewrite goes through a sibling temp file + atomic rename.
+    // After a successful format the directory holds exactly the source file —
+    // no `.calc.bynk.bynk-fmt.*.tmp` left behind.
+    let dir = scratch("fmt-atomic");
+    let file = dir.join("calc.bynk");
+    write(&file, MESSY);
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "calc.bynk"]);
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        canonical(MESSY),
+        "fmt must rewrite the file to its canonical form"
+    );
+    let entries: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        entries,
+        vec!["calc.bynk".to_string()],
+        "atomic rename must leave no temp file behind, found: {entries:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn fmt_write_through_symlink_replaces_the_link() {
+    // The atomic rename swaps in a fresh inode, so formatting a symlinked source
+    // replaces the *link* with the formatted file rather than writing through to
+    // its target (the old `std::fs::write` wrote through). This documents the
+    // deliberate behaviour change: the formatted content must land, and the
+    // target must be left untouched.
+    let dir = scratch("fmt-symlink");
+    let target = dir.join("target.bynk");
+    let link = dir.join("link.bynk");
+    // Non-canonical, so `fmt` actually rewrites (a canonical source is left
+    // byte-identical and never hits the write path).
+    write(&target, MESSY);
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "link.bynk"]);
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(&link).unwrap(),
+        canonical(MESSY),
+        "the link path must hold the formatted content"
+    );
+    assert!(
+        !std::fs::symlink_metadata(&link).unwrap().is_symlink(),
+        "the symlink must have been replaced by a regular file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        MESSY,
+        "the symlink target must be left untouched"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn fmt_write_preserves_file_permissions() {
+    // The atomic rewrite replaces the destination inode, so it must carry the
+    // original file's mode across — a plain temp-file + rename would otherwise
+    // reset the formatted file to the process umask default.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("fmt-perms");
+    let file = dir.join("calc.bynk");
+    write(&file, MESSY);
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "calc.bynk"]);
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o640, "atomic rewrite must preserve the file mode");
 }
 
 // ---------------------------------------------------------------------------

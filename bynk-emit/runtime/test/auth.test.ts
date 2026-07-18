@@ -73,11 +73,16 @@ test("JWT: expired token rejected", async () => {
 });
 
 test("JWT: nbf in the future rejected", async () => {
-  const token = await signJwt({ sub: "u", nbf: future() }, SECRET);
+  const token = await signJwt({ sub: "u", exp: future(), nbf: future() }, SECRET);
   assert.deepEqual(await verifyBearerJwtHs256(token, SECRET), {
     tag: "Err",
     error: "token not yet valid",
   });
+});
+
+test("JWT: token with no exp rejected (must not never-expire)", async () => {
+  const token = await signJwt({ sub: "u", role: "admin" }, SECRET);
+  assert.deepEqual(await verifyBearerJwtHs256(token, SECRET), { tag: "Err", error: "missing exp" });
 });
 
 test("JWT: non-number exp is malformed (not silently skipped)", async () => {
