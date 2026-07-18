@@ -192,7 +192,13 @@ impl<'a> Parser<'a> {
         let lhs = self.parse_or()?;
         if self.peek_kind() == Some(TokenKind::Implies) {
             self.bump();
-            let rhs = self.parse_implies()?;
+            // `implies` is right-associative, so a chain recurses here rather
+            // than looping — guard it as a self-recursive descent so
+            // `A implies B implies …` cannot overflow the parser (#714).
+            self.enter_recursion("this expression")?;
+            let rhs = self.parse_implies();
+            self.depth -= 1;
+            let rhs = rhs?;
             let span = lhs.span.merge(rhs.span);
             return Ok(Expr {
                 kind: ExprKind::BinOp(BinOp::Implies, Box::new(lhs), Box::new(rhs)),
@@ -204,30 +210,55 @@ impl<'a> Parser<'a> {
 
     fn parse_or(&mut self) -> Result<Expr, CompileError> {
         let mut lhs = self.parse_and()?;
-        while self.peek_kind() == Some(TokenKind::PipePipe) {
+        // Associative chains are built iteratively, so each fold is counted
+        // against the shared nesting budget rather than a recursive descent
+        // (#714); `folds` is unwound from `self.depth` before returning.
+        let mut folds = 0usize;
+        let result = loop {
+            if self.peek_kind() != Some(TokenKind::PipePipe) {
+                break Ok(lhs);
+            }
             self.bump();
-            let rhs = self.parse_and()?;
+            let rhs = match self.parse_and() {
+                Ok(rhs) => rhs,
+                Err(e) => break Err(e),
+            };
             let span = lhs.span.merge(rhs.span);
             lhs = Expr {
                 kind: ExprKind::BinOp(BinOp::Or, Box::new(lhs), Box::new(rhs)),
                 span,
             };
-        }
-        Ok(lhs)
+            if let Err(e) = self.enter_chain_fold(&mut folds, lhs.span) {
+                break Err(e);
+            }
+        };
+        self.depth -= folds;
+        result
     }
 
     fn parse_and(&mut self) -> Result<Expr, CompileError> {
         let mut lhs = self.parse_eq()?;
-        while self.peek_kind() == Some(TokenKind::AmpAmp) {
+        let mut folds = 0usize;
+        let result = loop {
+            if self.peek_kind() != Some(TokenKind::AmpAmp) {
+                break Ok(lhs);
+            }
             self.bump();
-            let rhs = self.parse_eq()?;
+            let rhs = match self.parse_eq() {
+                Ok(rhs) => rhs,
+                Err(e) => break Err(e),
+            };
             let span = lhs.span.merge(rhs.span);
             lhs = Expr {
                 kind: ExprKind::BinOp(BinOp::And, Box::new(lhs), Box::new(rhs)),
                 span,
             };
-        }
-        Ok(lhs)
+            if let Err(e) = self.enter_chain_fold(&mut folds, lhs.span) {
+                break Err(e);
+            }
+        };
+        self.depth -= folds;
+        result
     }
 
     fn parse_eq(&mut self) -> Result<Expr, CompileError> {
@@ -319,11 +350,12 @@ impl<'a> Parser<'a> {
 
     fn parse_add(&mut self) -> Result<Expr, CompileError> {
         let mut lhs = self.parse_mul()?;
-        loop {
+        let mut folds = 0usize;
+        let result = loop {
             let op = match self.peek_kind() {
                 Some(TokenKind::Plus) => BinOp::Add,
                 Some(TokenKind::Minus) => BinOp::Sub,
-                _ => break,
+                _ => break Ok(lhs),
             };
             // v0.130: a `+`/`-` that begins a new line does not continue the
             // expression — it starts a new construct. Without this, a negative
@@ -331,66 +363,95 @@ impl<'a> Parser<'a> {
             // mis-parsed as `10 - 2`. No existing program continues a binary
             // expression with a leading operator on the next line.
             if self.next_token_on_new_line(lhs.span) {
-                break;
+                break Ok(lhs);
             }
             self.bump();
-            let rhs = self.parse_mul()?;
+            let rhs = match self.parse_mul() {
+                Ok(rhs) => rhs,
+                Err(e) => break Err(e),
+            };
             let span = lhs.span.merge(rhs.span);
             lhs = Expr {
                 kind: ExprKind::BinOp(op, Box::new(lhs), Box::new(rhs)),
                 span,
             };
-        }
-        Ok(lhs)
+            if let Err(e) = self.enter_chain_fold(&mut folds, lhs.span) {
+                break Err(e);
+            }
+        };
+        self.depth -= folds;
+        result
     }
 
     fn parse_mul(&mut self) -> Result<Expr, CompileError> {
         let mut lhs = self.parse_unary()?;
-        loop {
+        let mut folds = 0usize;
+        let result = loop {
             let op = match self.peek_kind() {
                 Some(TokenKind::Star) => BinOp::Mul,
                 Some(TokenKind::Slash) => BinOp::Div,
-                _ => break,
+                _ => break Ok(lhs),
             };
             self.bump();
-            let rhs = self.parse_unary()?;
+            let rhs = match self.parse_unary() {
+                Ok(rhs) => rhs,
+                Err(e) => break Err(e),
+            };
             let span = lhs.span.merge(rhs.span);
             lhs = Expr {
                 kind: ExprKind::BinOp(op, Box::new(lhs), Box::new(rhs)),
                 span,
             };
-        }
-        Ok(lhs)
+            if let Err(e) = self.enter_chain_fold(&mut folds, lhs.span) {
+                break Err(e);
+            }
+        };
+        self.depth -= folds;
+        result
     }
 
     fn parse_unary(&mut self) -> Result<Expr, CompileError> {
-        match self.peek_kind() {
-            Some(TokenKind::Minus) => {
-                let t = self.bump().unwrap();
-                let inner = self.parse_unary()?;
-                let span = t.span.merge(inner.span);
-                Ok(Expr {
-                    kind: ExprKind::UnaryOp(UnaryOp::Neg, Box::new(inner)),
-                    span,
-                })
-            }
-            Some(TokenKind::Bang) => {
-                let t = self.bump().unwrap();
-                let inner = self.parse_unary()?;
-                let span = t.span.merge(inner.span);
-                Ok(Expr {
-                    kind: ExprKind::UnaryOp(UnaryOp::Not, Box::new(inner)),
-                    span,
-                })
-            }
-            _ => self.parse_postfix(),
-        }
+        // `-`/`!` self-recurse here (`----1`, `!!!x`), and — like parentheses —
+        // that recursion bypasses `parse_expr`, so guard it directly on the
+        // shared budget or a long run overflows the parser's own stack (#714,
+        // sibling of #713). The pass-through to `parse_postfix` is not a nesting
+        // level and must not be counted.
+        let op = match self.peek_kind() {
+            Some(TokenKind::Minus) => UnaryOp::Neg,
+            Some(TokenKind::Bang) => UnaryOp::Not,
+            _ => return self.parse_postfix(),
+        };
+        let t = self.bump().unwrap();
+        self.enter_recursion("this expression")?;
+        let inner = self.parse_unary();
+        self.depth -= 1;
+        let inner = inner?;
+        let span = t.span.merge(inner.span);
+        Ok(Expr {
+            kind: ExprKind::UnaryOp(op, Box::new(inner)),
+            span,
+        })
     }
 
     /// Parse a primary expression and then apply postfix operators (`?`,
     /// `.identifier` field access, `.identifier(args)` method call —
     /// v0.2 §3.7).
+    ///
+    /// A postfix chain is built iteratively into a left-nested receiver spine
+    /// (`a.b.c…`, `f()?.g()…`), so — like the associative operator chains — it
+    /// can grow an arbitrarily deep tree without recursing `parse_expr` and hit
+    /// the same downstream overflow (#714). The bounded-depth guard
+    /// ([`Parser::deepen_spine`]) runs in [`Parser::parse_postfix_inner`]; the
+    /// wrapper restores the shared `depth` budget wholesale, which — given the
+    /// several error-return paths inside — is cleaner than unwinding per fold.
     fn parse_postfix(&mut self) -> Result<Expr, CompileError> {
+        let saved = self.depth;
+        let result = self.parse_postfix_inner();
+        self.depth = saved;
+        result
+    }
+
+    fn parse_postfix_inner(&mut self) -> Result<Expr, CompileError> {
         let mut e = self.parse_primary()?;
         loop {
             match self.peek_kind() {
@@ -401,6 +462,7 @@ impl<'a> Parser<'a> {
                         kind: ExprKind::Question(Box::new(e)),
                         span,
                     };
+                    self.deepen_spine(e.span)?;
                 }
                 Some(TokenKind::Dot) => {
                     let dot = self.bump().unwrap();
@@ -471,6 +533,7 @@ impl<'a> Parser<'a> {
                             },
                             span,
                         };
+                        self.deepen_spine(e.span)?;
                     } else if let (ExprKind::IntLit { value: v, .. }, Some(unit)) =
                         (&e.kind, DurationUnit::from_name(&member.name))
                     {
@@ -507,6 +570,7 @@ impl<'a> Parser<'a> {
                             },
                             span,
                         };
+                        self.deepen_spine(e.span)?;
                     }
                 }
                 _ => break,
