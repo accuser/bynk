@@ -391,7 +391,7 @@ pub fn emit_worker_entry(
             .paths
             .iter()
             .map(|(path, has_params)| {
-                let lit = path.replace('"', "\\\"");
+                let lit = crate::emitter::escape_ts_string(path);
                 if *has_params {
                     format!("matchPath(\"{lit}\", path) !== null")
                 } else {
@@ -443,10 +443,10 @@ pub fn emit_worker_entry(
     for pm in &path_methods {
         let allow = pm.methods.join(", ");
         let match_cond = if pm.has_params {
-            let lit = pm.path.replace('"', "\\\"");
+            let lit = crate::emitter::escape_ts_string(&pm.path);
             format!("matchPath(\"{lit}\", path) !== null")
         } else {
-            let lit = pm.path.replace('"', "\\\"");
+            let lit = crate::emitter::escape_ts_string(&pm.path);
             format!("path === \"{lit}\"")
         };
         let _ = writeln!(out, "      if ({match_cond}) {{");
@@ -1034,7 +1034,7 @@ fn emit_http_route_dispatch(
     let h = &route.handler;
     let method_key = http_handler_method_name(route.method, &route.path);
     let has_path_params = param_count(&route.path) > 0;
-    let path_lit = route.path.replace('"', "\\\"");
+    let path_lit = crate::emitter::escape_ts_string(&route.path);
     // v0.139 (ADR 0162 D3): a `GET` route also answers `HEAD` — the guard widens
     // so the `GET` handler runs, then the built response's body is stripped
     // below. Other methods match exactly.

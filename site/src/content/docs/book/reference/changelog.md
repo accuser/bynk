@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.199**.
+written against **v0.201**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,8 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.201.0** | A route path containing a backslash, newline, or tab is now escaped through the canonical string escaper at every router emit site — previously only `"` was escaped, so an internal backslash silently drifted the emitted path (`\b` read as backspace) and a trailing backslash escaped the closing quote and failed to compile the Worker (#721) |
+| **v0.200.0** | A queue name (`from queue("…")`) or cron expression (`schedule("…")`/`on cron`) is now TOML-escaped in the generated `wrangler.toml`, so a source literal carrying `"`, `\`, or a newline can no longer break out of the `queue = "…"` / `crons = ["…"]` string and inject deploy-config keys (#722) |
 | **v0.199.0** | "Held-resource linearity (§2.9) is now enforced in `fn` and method bodies, not only handler bodies: a function that receives a held value (`Connection[F]`) owns it and must dispose it, so a leaking `fn swallow(c)` reports `bynk.held.leak` and a double `c.close()` reports `bynk.held.use_after_consume` — previously both compiled silently, leaving held-resource safety unenforced outside handlers (#718)." |
 | **v0.198.0** | A doc block containing `*/` can no longer terminate the emitted JSDoc comment early and inject top-level TypeScript |
 | **v0.197.0** | The held-resource linearity pass now governs `match`-arm pattern bindings — a `Connection` bound out of an `Option`/`Result` in a match arm must be disposed, closing a leak the pass missed (#719) |
