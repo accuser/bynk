@@ -21,14 +21,28 @@
 
 use tree_sitter::Parser;
 
-/// Does the `tree-sitter-bynk` grammar accept `src` with no error nodes?
+/// Does the `tree-sitter-bynk` grammar accept `src` cleanly — no `ERROR` and no
+/// `MISSING` nodes? `has_error()` covers error nodes, but a recovery that
+/// inserts a *missing* node (rather than an error one) is still a reject, and
+/// treating it as such keeps the guard robust across tree-sitter versions as
+/// cases grow.
 fn tree_sitter_accepts(src: &str) -> bool {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_bynk::LANGUAGE.into())
         .expect("load tree-sitter-bynk language");
     let tree = parser.parse(src, None).expect("tree-sitter parse");
-    !tree.root_node().has_error()
+    let root = tree.root_node();
+    !root.has_error() && !has_missing(root)
+}
+
+/// Is `node` — or any node beneath it — a `MISSING` node?
+fn has_missing(node: tree_sitter::Node) -> bool {
+    if node.is_missing() {
+        return true;
+    }
+    let mut cursor = node.walk();
+    node.children(&mut cursor).any(has_missing)
 }
 
 /// Does the compiler's own parser (`bynk-syntax`) accept `src`?
@@ -116,6 +130,18 @@ const CASES: &[Case] = &[
     Case {
         what: "enum tag lowercase",
         body: "type S = enum { active, Inactive }",
+        accept: false,
+    },
+    // The `embeds … as V` target is a `constant_name` too, and is the third
+    // parse-time call-site of the capitalisation rule — cover it directly.
+    Case {
+        what: "embeds target capitalised",
+        body: "type E = | Wrapped(reason: Int) embeds Int as Wrapped",
+        accept: true,
+    },
+    Case {
+        what: "embeds target lowercase",
+        body: "type E = | Wrapped(reason: Int) embeds Int as wrapped",
         accept: false,
     },
     // -- Built-in generic arity (drift C: the grammar over-generated with
