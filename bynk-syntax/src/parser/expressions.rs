@@ -1060,7 +1060,19 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Depth-guarded entry to the pattern grammar. Variant patterns nest
+    /// (`parse_pattern` -> `parse_pattern_binding` -> `parse_pattern`), a third
+    /// self-recursive descent independent of `parse_expr`/`parse_type_ref`, so
+    /// it needs its own guard or a nested `Ok(Ok(…))` still overflows (#713).
+    /// The unguarded body lives in [`Parser::parse_pattern_inner`].
     fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
+        self.enter_recursion("this pattern")?;
+        let result = self.parse_pattern_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern, CompileError> {
         if let Some(t) = self.peek() {
             if t.kind == TokenKind::Underscore {
                 self.bump();

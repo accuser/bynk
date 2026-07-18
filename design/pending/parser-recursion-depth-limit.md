@@ -9,10 +9,12 @@ summary: A fixed nesting limit turns a stack-overflow abort on deeply nested sou
 
 **Context.** The recursive-descent parser and the string-interpolation scanner
 had no depth guard: each nesting level costs one stack frame, so deeply nested
-source overflows the stack and the process aborts with `SIGABRT`. Three verified
-triggers — parenthesised expressions (`parse_primary` → `parse_expr`), generic
-type arguments (`parse_type_ref` → `parse_type_atom` → `parse_type_ref`), and
-mutually recursive interpolation (`scan_str` ↔ `scan_hole`). The overflow is
+source overflows the stack and the process aborts with `SIGABRT`. Four
+self-recursive descents reach it — parenthesised expressions (`parse_primary`
+→ `parse_expr`), generic type arguments (`parse_type_ref` → `parse_type_atom`
+→ `parse_type_ref`), nested variant patterns (`parse_pattern` →
+`parse_pattern_binding` → `parse_pattern`), and mutually recursive interpolation
+(`scan_str` ↔ `scan_hole`). The overflow is
 reachable on the 8 MB main thread (~880 parenthesised levels) and, because the
 LSP and the in-browser playground run on ~1 MB stacks, in the low hundreds
 there. A compiler/LSP must never abort on malformed source: a panic kills an LSP
@@ -21,10 +23,12 @@ front-end as shared by all three surfaces (#713).
 
 **Decision.** Introduce a single fixed nesting bound,
 `MAX_NESTING_DEPTH = 64`, shared by the parser and the interpolation lexer. The
-parser tracks live recursion depth across its two self-recursive entry points
-(`parse_expr`, `parse_type_ref`) — every nested subexpression and type routes
-through one of them — and the lexer threads a depth count through
-`scan_str`/`scan_hole`. Exceeding the bound yields a diagnostic
+parser tracks live recursion depth across its three self-recursive entry points
+(`parse_expr`, `parse_type_ref`, `parse_pattern`) — every nested subexpression,
+type, and pattern routes through one of them, and nested blocks nest only via
+the `if`/`match`/lambda expressions that pass through `parse_expr` — and the
+lexer threads a depth count through `scan_str`/`scan_hole`. Exceeding the bound
+yields a diagnostic
 (`bynk.parse.nesting_too_deep` or `bynk.lex.interpolation_too_deep`) instead of
 another recursion. The value sits well below the ~110 levels a 1 MB stack holds
 in release (~9 KB/level), leaving comfortable headroom, and far above any

@@ -708,7 +708,8 @@ fn has_interp_hole(bytes: &[u8], start: usize) -> bool {
 fn scan_str(bytes: &[u8], source: &str, start: usize, depth: usize) -> Result<usize, CompileError> {
     debug_assert_eq!(bytes[start], b'"');
     if depth > crate::MAX_NESTING_DEPTH {
-        return Err(too_deeply_nested_interpolation(start));
+        // Anchor on the opening `"` of the string that tipped over the limit.
+        return Err(too_deeply_nested_interpolation(Span::new(start, start + 1)));
     }
     let mut i = start + 1;
     loop {
@@ -763,7 +764,13 @@ fn scan_hole(
     nesting: usize,
 ) -> Result<usize, CompileError> {
     if nesting > crate::MAX_NESTING_DEPTH {
-        return Err(too_deeply_nested_interpolation(start));
+        // Anchor on the `\(` opener that tipped over the limit; it sits two
+        // bytes before `start` and is pure ASCII, so the span stays on char
+        // boundaries (a fuzz invariant).
+        return Err(too_deeply_nested_interpolation(Span::new(
+            start.saturating_sub(2),
+            start,
+        )));
     }
     let mut i = start;
     let mut depth = 1usize;
@@ -799,12 +806,12 @@ fn scan_hole(
 /// The bounded-depth diagnostic for interpolation that nests past
 /// [`crate::MAX_NESTING_DEPTH`]. `\("\("\(…` mutually recurses
 /// [`scan_str`] ↔ [`scan_hole`], one stack frame per level, so an unbounded
-/// scanner overflows and aborts `tokenize` (#713). `at` anchors the span at
-/// the point the limit was hit.
-fn too_deeply_nested_interpolation(at: usize) -> CompileError {
+/// scanner overflows and aborts `tokenize` (#713). `span` anchors the report on
+/// the opener that tipped over the limit (the `"` or the `\(`).
+fn too_deeply_nested_interpolation(span: Span) -> CompileError {
     CompileError::new(
         "bynk.lex.interpolation_too_deep",
-        Span::new(at, at),
+        span,
         format!(
             "string interpolation nests more than {} levels deep",
             crate::MAX_NESTING_DEPTH

@@ -1069,6 +1069,24 @@ mod tests {
     }
 
     #[test]
+    fn deeply_nested_patterns_are_bounded_not_overflowed() {
+        // Variant patterns are a third self-recursive descent (`parse_pattern`
+        // -> `parse_pattern_binding` -> `parse_pattern`) that routes through
+        // neither `parse_expr` nor `parse_type_ref`; without its own guard a
+        // nested `Ok(Ok(…))` match arm reproduces the #713 crash.
+        let errs = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH + 8;
+            let src = format!(
+                "commons x {{ fn f(n: Int) -> Int {{ match n {{ {}n{} => 0 }} }} }}",
+                "Ok(".repeat(depth),
+                ")".repeat(depth),
+            );
+            parse_str(&src).unwrap_err()
+        });
+        assert_eq!(errs[0].category, "bynk.parse.nesting_too_deep");
+    }
+
+    #[test]
     fn nesting_below_the_limit_still_parses() {
         // The guard must not reject ordinary well-nested source: a paren-nested
         // expression comfortably under the limit still parses cleanly.
