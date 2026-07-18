@@ -2440,14 +2440,16 @@ mod tests {
 
     #[test]
     fn for_each_unit_yields_embedded_buffer_and_project_files() {
-        let dir = std::env::temp_dir().join(format!(
-            "bynk-lsp-cache-yields-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("bynk-lsp-cache-yields-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let sibling = dir.join("sibling.bynk");
-        std::fs::write(&sibling, "commons proj.sibling {\n  fn s() -> Int { 1 }\n}\n").unwrap();
+        std::fs::write(
+            &sibling,
+            "commons proj.sibling {\n  fn s() -> Int { 1 }\n}\n",
+        )
+        .unwrap();
 
         let names = enumerated_units(
             "commons proj.buffer {\n  fn b() -> Int { 1 }\n}\n",
@@ -2455,23 +2457,30 @@ mod tests {
         );
         // The embedded `bynk` surface, the live buffer, and the disk file all show.
         assert!(names.iter().any(|n| n == "bynk"), "embedded: {names:?}");
-        assert!(names.iter().any(|n| n == "proj.buffer"), "buffer: {names:?}");
-        assert!(names.iter().any(|n| n == "proj.sibling"), "project file: {names:?}");
+        assert!(
+            names.iter().any(|n| n == "proj.buffer"),
+            "buffer: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "proj.sibling"),
+            "project file: {names:?}"
+        );
     }
 
     #[test]
     fn project_unit_cache_invalidates_on_change() {
-        let dir = std::env::temp_dir().join(format!(
-            "bynk-lsp-cache-invalidate-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("bynk-lsp-cache-invalidate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("unit.bynk");
 
         std::fs::write(&file, "commons proj.first {\n  fn a() -> Int { 1 }\n}\n").unwrap();
         let first = enumerated_units("context a.b\n", Some(&[file.clone()]));
-        assert!(first.iter().any(|n| n == "proj.first"), "first read: {first:?}");
+        assert!(
+            first.iter().any(|n| n == "proj.first"),
+            "first read: {first:?}"
+        );
 
         // Rewrite with a different name (and a different length, so the change is
         // seen even where mtime resolution is coarse). The cache must serve the
@@ -2482,8 +2491,14 @@ mod tests {
         )
         .unwrap();
         let second = enumerated_units("context a.b\n", Some(&[file.clone()]));
-        assert!(second.iter().any(|n| n == "proj.second.longer"), "after change: {second:?}");
-        assert!(!second.iter().any(|n| n == "proj.first"), "stale served: {second:?}");
+        assert!(
+            second.iter().any(|n| n == "proj.second.longer"),
+            "after change: {second:?}"
+        );
+        assert!(
+            !second.iter().any(|n| n == "proj.first"),
+            "stale served: {second:?}"
+        );
     }
 
     #[test]
