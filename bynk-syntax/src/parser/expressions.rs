@@ -10,7 +10,14 @@ use super::*;
 impl<'a> Parser<'a> {
     // -- expressions --
 
+    /// Depth-guarded entry to the expression grammar. Parenthesised
+    /// expressions re-enter here from `parse_primary`, and every nested
+    /// subexpression (call arguments, record fields, `if`/`match` operands, …)
+    /// routes through it, so bounding depth here bounds expression recursion as
+    /// a whole (#713). It also resets the no-record-literal restriction (#636);
+    /// the unguarded ladder body lives in [`Parser::parse_expr_inner`].
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, CompileError> {
+        self.enter_recursion("this expression")?;
         // A fresh `parse_expr` is always a new sub-expression — the operands of
         // a delimited form (parentheses, call arguments, list, record field) or
         // a statement expression. The no-record-literal restriction (#636)
@@ -22,6 +29,7 @@ impl<'a> Parser<'a> {
         self.no_record_literal = false;
         let result = self.parse_expr_inner();
         self.no_record_literal = prev;
+        self.depth -= 1;
         result
     }
 
@@ -1101,7 +1109,19 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Depth-guarded entry to the pattern grammar. Variant patterns nest
+    /// (`parse_pattern` -> `parse_pattern_binding` -> `parse_pattern`), a third
+    /// self-recursive descent independent of `parse_expr`/`parse_type_ref`, so
+    /// it needs its own guard or a nested `Ok(Ok(…))` still overflows (#713).
+    /// The unguarded body lives in [`Parser::parse_pattern_inner`].
     fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
+        self.enter_recursion("this pattern")?;
+        let result = self.parse_pattern_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern, CompileError> {
         if let Some(t) = self.peek() {
             if t.kind == TokenKind::Underscore {
                 self.bump();
