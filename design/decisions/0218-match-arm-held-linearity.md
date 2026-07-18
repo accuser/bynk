@@ -1,11 +1,6 @@
----
-level: minor
-changelog: The held-resource linearity pass now governs `match`-arm pattern bindings — a `Connection` bound out of an `Option`/`Result` in a match arm must be disposed, closing a leak the pass missed (#719)
----
+# 0218 — The held-resource linearity pass governs match-arm pattern bindings
 
-## ADR: match-arm-held-linearity
-title: The held-resource linearity pass governs match-arm pattern bindings
-summary: A held value bound out of a `match` arm pattern is registered as owned and must be disposed
+- **Status:** Accepted (v0.197)
 
 **Context.** The held-resource linearity pass ([ADR 0130](../decisions/0130-held-resource-linearity.md))
 seeds owned held bindings from handler/function **parameters** and tracks the
