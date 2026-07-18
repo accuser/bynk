@@ -324,6 +324,12 @@
       "summary": "A `~>` send targets an operation whose reply is not `Effect[()]`."
     }
   ],
+  "enum_type": [
+    {
+      "code": "bynk.parse.variant_name_case",
+      "summary": "A sum-type or enum variant name is not capitalised."
+    }
+  ],
   "err_expr": [
     {
       "code": "bynk.types.err_value_mismatch",
@@ -960,6 +966,12 @@
     {
       "code": "bynk.resolve.duplicate_variant",
       "summary": "A sum type declares a variant twice."
+    }
+  ],
+  "sum_variant": [
+    {
+      "code": "bynk.parse.variant_name_case",
+      "summary": "A sum-type or enum variant name is not capitalised."
     }
   ],
   "type_decl": [

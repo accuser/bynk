@@ -20,7 +20,8 @@ Productions are written in EBNF:
   raw rules and the byte-exact grammar live in the
   [appendix](/book/reference/grammar-appendix/).
 - Every production on this page is **generated** from the `tree-sitter-bynk`
-  grammar, so it cannot drift from the parser.
+  grammar, so it cannot drift from that grammar; a cross-parser conformance test
+  keeps that grammar in agreement with the compiler's own parser.
 - A production says what *parses*. A **Static semantics** block lists the
   `bynk.*` diagnostics that constrain a construct beyond parsing; each links by
   code to the [diagnostic index](/book/reference/diagnostics/). A construct with no such

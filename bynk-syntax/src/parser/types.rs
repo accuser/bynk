@@ -170,6 +170,36 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse a variant / enum-tag name — an identifier that MUST be
+    /// capitalised, matching the grammar's `constant_name`
+    /// (`/[A-Z][A-Za-z0-9_]*/`). The `tree-sitter-bynk` grammar cannot lex a
+    /// lowercase name in variant position (`constant_name` fails and there is no
+    /// `identifier` alternative there), so it rejects `| active` at parse time;
+    /// this keeps the compiler parser in agreement rather than accepting a name
+    /// the editor grammar refuses (see the cross-parser conformance test).
+    fn expect_variant_name(&mut self, ctx: &str) -> Result<Ident, CompileError> {
+        let name = self.expect_ident(ctx)?;
+        if !name
+            .name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_uppercase())
+        {
+            return Err(CompileError::new(
+                "bynk.parse.variant_name_case",
+                name.span,
+                format!(
+                    "variant name `{}` must start with an uppercase letter",
+                    name.name
+                ),
+            )
+            .with_note(
+                "a sum-type or enum variant is a `constant_name` (`/[A-Z][A-Za-z0-9_]*/`)",
+            ));
+        }
+        Ok(name)
+    }
+
     /// Parse a pipe-form sum body: `| Variant | Variant(field, ...)`.
     /// The leading `|` is required (spec v0.2 §3.2).
     fn parse_sum_body_pipe(&mut self) -> Result<SumBody, CompileError> {
@@ -177,7 +207,7 @@ impl<'a> Parser<'a> {
         let mut span: Option<Span> = None;
         while self.peek_kind() == Some(TokenKind::Pipe) {
             let bar = self.bump().unwrap();
-            let name = self.expect_ident("after `|` in a sum variant")?;
+            let name = self.expect_variant_name("after `|` in a sum variant")?;
             let mut payload = Vec::new();
             let mut end_span = name.span;
             if self.peek_kind() == Some(TokenKind::LParen) {
@@ -238,7 +268,8 @@ impl<'a> Parser<'a> {
                 TokenKind::As,
                 "after the embedded type in an `embeds` clause",
             )?;
-            let variant = self.expect_ident("as the target variant of an `embeds` clause")?;
+            let variant =
+                self.expect_variant_name("as the target variant of an `embeds` clause")?;
             let span = source_type.span().merge(variant.span);
             embeds.push(EmbedsClause {
                 source_type,
@@ -258,7 +289,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "after `enum`")?;
         let mut variants = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
-            let name = self.expect_ident("as an enum tag name")?;
+            let name = self.expect_variant_name("as an enum tag name")?;
             let span = name.span;
             variants.push(Variant {
                 name,
@@ -335,7 +366,7 @@ impl<'a> Parser<'a> {
             None => Err(CompileError::new(
                 "bynk.parse.unexpected_eof",
                 self.eof_span(),
-                "expected `Int`, `String`, `Bool`, or `Float`, found end of file",
+                "expected `Int`, `String`, `Bool`, `Float`, `Duration`, `Instant`, or `Bytes`, found end of file",
             )),
         }
     }

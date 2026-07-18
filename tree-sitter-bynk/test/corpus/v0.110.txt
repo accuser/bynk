@@ -1,0 +1,49 @@
+================================================================================
+Bytes primitive as a base type and inside a generic
+================================================================================
+
+commons blobs
+
+type Blob = Bytes
+
+fn size(b: Bytes) -> Int {
+  b.length()
+}
+
+fn decode(s: String) -> Option[Bytes] {
+  Bytes.fromBase64(s)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (type_decl
+      name: (identifier)
+      body: (refined_type
+        base: (base_type)))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (method_call
+          receiver: (identifier)
+          method: (identifier))))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (generic_type_ref
+        name: (builtin_type)
+        arg: (base_type))
+      body: (block
+        tail: (method_call
+          receiver: (identifier)
+          method: (identifier)
+          arg: (identifier))))))

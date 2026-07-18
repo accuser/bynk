@@ -1,0 +1,2 @@
+bynk.parse.variant_name_case
+variant name `active` must start with an uppercase letter
