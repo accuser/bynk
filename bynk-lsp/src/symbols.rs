@@ -282,9 +282,13 @@ fn ident_at<'a>(
 /// definition rather than a copy per call site.
 fn receiver_segment_at(text: &str, member_span: Span) -> Option<(&str, usize)> {
     let before = text.get(..member_span.start)?.strip_suffix('.')?;
+    // Advance past the matched char by its UTF-8 length; a multi-byte
+    // non-identifier char (`"`, `€`, `—`, …) would make `i + 1` land
+    // mid-codepoint and panic the slice.
     let start = before
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     Some((&before[start..], start))
 }
 
@@ -1149,6 +1153,19 @@ mod tests {
             fs::write(&p, contents).expect("write file");
         }
         root
+    }
+
+    #[test]
+    fn receiver_segment_survives_a_multibyte_char_before_the_receiver() {
+        // A multi-byte non-identifier char before the receiver used to make the
+        // `i + 1` byte offset land mid-codepoint → panic on slice (#715),
+        // reached from hover on a `recv.member` access inside a string literal.
+        let text = "\"€p.items"; // member `items` sits after the dot
+        let member_start = text.rfind("items").unwrap();
+        let (recv, start) =
+            receiver_segment_at(text, Span::new(member_start, text.len())).expect("receiver");
+        assert_eq!(recv, "p");
+        assert_eq!(&text[start..start + recv.len()], "p");
     }
 
     #[test]
