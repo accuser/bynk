@@ -1429,10 +1429,9 @@ pub(crate) fn check_if(
     }
     let else_ty = type_of_block(else_block, expected, ctx);
     match (then_ty, else_ty) {
-        (Some(t), Some(e)) => {
-            if t == e {
-                Some(t)
-            } else {
+        (Some(t), Some(e)) => match join_ty(&t, &e) {
+            Some(joined) => Some(joined),
+            None => {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.types.if_branch_mismatch",
@@ -1455,7 +1454,7 @@ pub(crate) fn check_if(
                 );
                 None
             }
-        }
+        },
         _ => None,
     }
 }
@@ -2576,6 +2575,47 @@ fn literal_value_base(value: &LiteralValue) -> BaseType {
     }
 }
 
+/// A refined type widened to its base (`Email` → `String`); any other type is
+/// returned unchanged. Mirrors the ADR 0001 widening used by `literal_base_of`.
+fn widen_refined(t: &Ty) -> Ty {
+    match t {
+        Ty::Named {
+            kind: NamedKind::Refined(base),
+            ..
+        } => Ty::Base(*base),
+        _ => t.clone(),
+    }
+}
+
+/// The join (least upper bound) of two `match`-arm / `if`-branch body types,
+/// along the refined→base widening and structural-covariance lattice that
+/// `compatible` already encodes. `None` when the two have no common supertype.
+///
+/// #726: branches must *agree*, but exact `Ty` equality wrongly rejected valid
+/// mixes such as a refined `Email` in one arm and its base `String` in another
+/// (both usable at `String`). We pick the wider type when one branch is usable
+/// where the other is expected, then fall back to widening both refined types
+/// to their shared base — so the fold is independent of arm order.
+fn join_ty(a: &Ty, b: &Ty) -> Option<Ty> {
+    if a == b {
+        return Some(a.clone());
+    }
+    // One branch is a subtype of the other → the supertype is the join.
+    if compatible(a, b) {
+        return Some(b.clone());
+    }
+    if compatible(b, a) {
+        return Some(a.clone());
+    }
+    // Two distinct refined types over the same base (e.g. `Email` and
+    // `Username`, both `String`): widen each to its base and retry.
+    let (wa, wb) = (widen_refined(a), widen_refined(b));
+    if &wa != a || &wb != b {
+        return join_ty(&wa, &wb);
+    }
+    None
+}
+
 pub(crate) fn check_match(
     discriminant: &Expr,
     arms: &[MatchArm],
@@ -2733,25 +2773,28 @@ pub(crate) fn check_match(
     if arm_types.is_empty() {
         return None;
     }
-    let first = arm_types[0].0.clone();
+    let mut acc = arm_types[0].0.clone();
     for (t, span) in arm_types.iter().skip(1) {
-        if *t != first {
-            ctx.errors.push(
-                CompileError::new(
-                    "bynk.types.match_arm_mismatch",
-                    *span,
-                    format!(
-                        "match-arm body has type `{}`, but earlier arms have type `{}`",
-                        t.display(),
-                        first.display()
-                    ),
-                )
-                .with_note("every arm of a `match` must produce the same type"),
-            );
-            return None;
+        match join_ty(&acc, t) {
+            Some(joined) => acc = joined,
+            None => {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.types.match_arm_mismatch",
+                        *span,
+                        format!(
+                            "match-arm body has type `{}`, but earlier arms have type `{}`",
+                            t.display(),
+                            acc.display()
+                        ),
+                    )
+                    .with_note("every arm of a `match` must produce the same type"),
+                );
+                return None;
+            }
         }
     }
-    Some(first)
+    Some(acc)
 }
 
 /// Validate `pat` against scrutinee type `ty`, binding names into the current
@@ -3373,5 +3416,56 @@ fn gather_pattern_bindings(
                 out.push((name.name.clone(), ty.clone()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod join_ty_tests {
+    use super::{BaseType, NamedKind, Ty, join_ty};
+
+    fn refined(name: &str, base: BaseType) -> Ty {
+        Ty::Named {
+            name: name.to_string(),
+            kind: NamedKind::Refined(base),
+            args: vec![],
+        }
+    }
+    fn base(b: BaseType) -> Ty {
+        Ty::Base(b)
+    }
+
+    /// #726: a refined type and its base join to the base, in either order
+    /// (the reported `match r { Ok(e) => e, Err(m) => m }` shape).
+    #[test]
+    fn refined_and_its_base_widen_to_base() {
+        let email = refined("Email", BaseType::String);
+        let string = base(BaseType::String);
+        assert_eq!(join_ty(&email, &string), Some(string.clone()));
+        assert_eq!(join_ty(&string, &email), Some(string));
+    }
+
+    /// Two distinct refined types over the same base join to that base,
+    /// regardless of fold order.
+    #[test]
+    fn two_refined_over_same_base_join_to_base() {
+        let email = refined("Email", BaseType::String);
+        let user = refined("Username", BaseType::String);
+        assert_eq!(join_ty(&email, &user), Some(base(BaseType::String)));
+        assert_eq!(join_ty(&user, &email), Some(base(BaseType::String)));
+    }
+
+    /// Identical types join to themselves — no widening.
+    #[test]
+    fn identical_refined_types_are_preserved() {
+        let email = refined("Email", BaseType::String);
+        assert_eq!(join_ty(&email, &email), Some(email));
+    }
+
+    /// Genuinely unrelated types have no join (still a branch-mismatch error).
+    #[test]
+    fn unrelated_types_have_no_join() {
+        assert!(join_ty(&base(BaseType::String), &base(BaseType::Int)).is_none());
+        let email = refined("Email", BaseType::String);
+        assert!(join_ty(&email, &base(BaseType::Int)).is_none());
     }
 }
