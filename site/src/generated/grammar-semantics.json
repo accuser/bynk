@@ -926,6 +926,10 @@
       "summary": "An invalid escape sequence in a string literal."
     },
     {
+      "code": "bynk.lex.interpolation_too_deep",
+      "summary": "A string interpolation `\\(…)` nests deeper than the lexer's fixed limit."
+    },
+    {
       "code": "bynk.lex.unterminated_interpolation",
       "summary": "An interpolation hole `\\(…)` is not closed on its line."
     },

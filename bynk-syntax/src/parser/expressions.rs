@@ -10,7 +10,19 @@ use super::*;
 impl<'a> Parser<'a> {
     // -- expressions --
 
+    /// Depth-guarded entry to the expression grammar. Parenthesised
+    /// expressions re-enter here from `parse_primary`, and every nested
+    /// subexpression (call arguments, record fields, `if`/`match` operands, …)
+    /// routes through it, so bounding depth here bounds expression recursion as
+    /// a whole (#713). The unguarded body lives in [`Parser::parse_expr_inner`].
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, CompileError> {
+        self.enter_recursion("this expression")?;
+        let result = self.parse_expr_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_expr_inner(&mut self) -> Result<Expr, CompileError> {
         // v0.9.1: `assert e` is an expression of type `()`. Parsed at the
         // topmost precedence so `assert x == 1` binds as `assert (x == 1)`.
         // In statement position the block parser still consumes `assert` as

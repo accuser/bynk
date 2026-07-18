@@ -1,0 +1,40 @@
+---
+level: minor
+changelog: "The parser and interpolation lexer bound recursion depth, so pathologically nested source reports a diagnostic (`bynk.parse.nesting_too_deep`, `bynk.lex.interpolation_too_deep`) instead of overflowing the stack and aborting the process — the front-end the CLI, LSP, and in-browser playground all share (#713)."
+---
+
+## ADR: parser-recursion-depth-limit
+title: The parser and interpolation lexer bound recursion depth
+summary: A fixed nesting limit turns a stack-overflow abort on deeply nested source into a diagnostic
+
+**Context.** The recursive-descent parser and the string-interpolation scanner
+had no depth guard: each nesting level costs one stack frame, so deeply nested
+source overflows the stack and the process aborts with `SIGABRT`. Three verified
+triggers — parenthesised expressions (`parse_primary` → `parse_expr`), generic
+type arguments (`parse_type_ref` → `parse_type_atom` → `parse_type_ref`), and
+mutually recursive interpolation (`scan_str` ↔ `scan_hole`). The overflow is
+reachable on the 8 MB main thread (~880 parenthesised levels) and, because the
+LSP and the in-browser playground run on ~1 MB stacks, in the low hundreds
+there. A compiler/LSP must never abort on malformed source: a panic kills an LSP
+request and crashes the playground, and the `parse` fuzz target documents this
+front-end as shared by all three surfaces (#713).
+
+**Decision.** Introduce a single fixed nesting bound,
+`MAX_NESTING_DEPTH = 64`, shared by the parser and the interpolation lexer. The
+parser tracks live recursion depth across its two self-recursive entry points
+(`parse_expr`, `parse_type_ref`) — every nested subexpression and type routes
+through one of them — and the lexer threads a depth count through
+`scan_str`/`scan_hole`. Exceeding the bound yields a diagnostic
+(`bynk.parse.nesting_too_deep` or `bynk.lex.interpolation_too_deep`) instead of
+another recursion. The value sits well below the ~110 levels a 1 MB stack holds
+in release (~9 KB/level), leaving comfortable headroom, and far above any
+realistic hand-written or generated source, where expression, type, and
+interpolation nesting past a handful is already exceptional.
+
+**Consequences.** Malformed or adversarial deeply nested source now fails
+cleanly with a spanned diagnostic on every surface, closing a
+denial-of-service/crash class rather than aborting the process. The bound is a
+deliberate, revisable engineering limit, not a language semantic: source nested
+deeper than 64 levels — vanishingly rare outside a fuzzer — is rejected where it
+previously (barely) parsed, hence a language increment. The limit is a single
+named constant so it can be retuned if a surface's stack budget changes.

@@ -542,7 +542,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
         // invalid escape in the logos grammar, so this never re-routes a
         // currently-valid literal.
         if bytes[pos] == b'"' && has_interp_hole(bytes, pos) {
-            let end = scan_str(bytes, source, pos)?;
+            let end = scan_str(bytes, source, pos, 0)?;
             tokens.push(Token {
                 kind: TokenKind::InterpStr,
                 span: Span::new(pos, end),
@@ -705,8 +705,11 @@ fn has_interp_hole(bytes: &[u8], start: usize) -> bool {
 /// the byte offset just past the closing `"`. Recognises the four simple
 /// escapes plus `\(…)` interpolation holes, whose parens are balanced (and
 /// whose nested strings are skipped) by [`scan_hole`]. (v0.43.)
-fn scan_str(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileError> {
+fn scan_str(bytes: &[u8], source: &str, start: usize, depth: usize) -> Result<usize, CompileError> {
     debug_assert_eq!(bytes[start], b'"');
+    if depth > crate::MAX_NESTING_DEPTH {
+        return Err(too_deeply_nested_interpolation(start));
+    }
     let mut i = start + 1;
     loop {
         if i >= bytes.len() || bytes[i] == b'\n' {
@@ -724,7 +727,7 @@ fn scan_str(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileEr
             b'"' => return Ok(i + 1),
             b'\\' => match bytes.get(i + 1) {
                 Some(b'n' | b't' | b'"' | b'\\') => i += 2,
-                Some(b'(') => i = scan_hole(bytes, source, i + 2)?,
+                Some(b'(') => i = scan_hole(bytes, source, i + 2, depth + 1)?,
                 other => {
                     let shown = other.map(|b| (*b as char).to_string()).unwrap_or_default();
                     // Cover `\` plus the whole offending char, advanced to a char
@@ -753,7 +756,15 @@ fn scan_str(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileEr
 /// the offset just past the matching `)`. Tracks paren depth and skips nested
 /// strings (whose own parens must not close the hole), recursing through
 /// [`scan_str`] so nested interpolation nests correctly. (v0.43.)
-fn scan_hole(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileError> {
+fn scan_hole(
+    bytes: &[u8],
+    source: &str,
+    start: usize,
+    nesting: usize,
+) -> Result<usize, CompileError> {
+    if nesting > crate::MAX_NESTING_DEPTH {
+        return Err(too_deeply_nested_interpolation(start));
+    }
     let mut i = start;
     let mut depth = 1usize;
     loop {
@@ -779,10 +790,30 @@ fn scan_hole(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileE
                     return Ok(i);
                 }
             }
-            b'"' => i = scan_str(bytes, source, i)?,
+            b'"' => i = scan_str(bytes, source, i, nesting + 1)?,
             _ => i += 1,
         }
     }
+}
+
+/// The bounded-depth diagnostic for interpolation that nests past
+/// [`crate::MAX_NESTING_DEPTH`]. `\("\("\(…` mutually recurses
+/// [`scan_str`] ↔ [`scan_hole`], one stack frame per level, so an unbounded
+/// scanner overflows and aborts `tokenize` (#713). `at` anchors the span at
+/// the point the limit was hit.
+fn too_deeply_nested_interpolation(at: usize) -> CompileError {
+    CompileError::new(
+        "bynk.lex.interpolation_too_deep",
+        Span::new(at, at),
+        format!(
+            "string interpolation nests more than {} levels deep",
+            crate::MAX_NESTING_DEPTH
+        ),
+    )
+    .with_note(
+        "deeply nested `\\(…)` interpolation is rejected to keep the lexer from \
+         overflowing its stack and aborting; flatten or split the string",
+    )
 }
 
 /// One segment of a split interpolated string (v0.43): literal text (escapes
@@ -828,7 +859,7 @@ pub(crate) fn split_interp(source: &str, span: Span) -> Result<Vec<InterpSegment
                         segments.push(InterpSegment::Chunk(std::mem::take(&mut chunk)));
                     }
                     let hole_start = i + 2;
-                    let after = scan_hole(bytes, source, hole_start)?;
+                    let after = scan_hole(bytes, source, hole_start, 0)?;
                     // `after` is one past the matching `)`; the hole body is
                     // everything up to that `)`.
                     segments.push(InterpSegment::Hole(Span::new(hole_start, after - 1)));
@@ -1050,6 +1081,19 @@ mod tests {
         );
         // #548: `and` is no longer a keyword — it lexes as an ordinary identifier.
         assert_eq!(kinds("and"), vec![Ident]);
+    }
+
+    #[test]
+    fn deeply_nested_interpolation_is_bounded_not_overflowed() {
+        // `"\("\("\(…` mutually recurses scan_str <-> scan_hole, one frame per
+        // level, and an unbounded scanner overflows `tokenize` and aborts the
+        // process (#713). Well past the limit it must return a bounded-depth
+        // diagnostic instead. The holes are left open so the depth guard, not a
+        // later `)`, stops the scan.
+        let depth = crate::MAX_NESTING_DEPTH + 8;
+        let src = format!("\"{}", "\\(\"".repeat(depth));
+        let err = tokenize(&src).unwrap_err();
+        assert_eq!(err.category, "bynk.lex.interpolation_too_deep");
     }
 
     #[test]

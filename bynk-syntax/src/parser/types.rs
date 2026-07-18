@@ -555,6 +555,13 @@ impl<'a> Parser<'a> {
     /// type when empty and arrow-free. The disambiguation is deferred to the
     /// arrow peek, so no extra lookahead is needed.
     pub(crate) fn parse_type_ref(&mut self, ctx: &str) -> Result<TypeRef, CompileError> {
+        self.enter_recursion("this type")?;
+        let result = self.parse_type_ref_inner(ctx);
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_type_ref_inner(&mut self, ctx: &str) -> Result<TypeRef, CompileError> {
         enum Group {
             Unit(Span),
             Single(TypeRef, Span),
