@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.190**.
+written against **v0.192**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,8 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.192.0** | The tree-sitter grammar and the compiler parser are held in agreement by a cross-parser conformance test; `Bytes` joins the grammar's base types, built-in generic arity is expressed in the grammar, and a lowercase sum/enum variant name is rejected (`bynk.parse.variant_name_case`) |
+| **v0.191.0** | A `system`-tier test case drives a secured http route with `by Nobody` — the no-credential principal — so the real auth seam rejects the unauthenticated request; the call yields `Rejected(Unauthorized)`, decoded by `responseToUnauthOutcome` (#706) |
 | **v0.190.2** | "The LSP no longer panics when a multi-byte non-identifier char (`\"`, `€`, `—`, an emoji) precedes the receiver/callee it extracts from the line prefix — receiver and callee extraction now advance past the matched char by its UTF-8 length instead of assuming one byte, so completion, signature help, and hover survive a keystroke inside a string literal (#715)." |
 | **v0.190.1** | "`bynk new` preserves a hand-written `.gitignore` instead of overwriting it — a target holding only `.git/` and a user `.gitignore` scaffolds, and the template `.gitignore` is written only when none is present (#737)." |
 | **v0.190.0** | The `is` operator tests nested variant patterns structurally — `r is Rejected(RefinementViolation(_))` checks the inner tag as well as the outer — so a `system`-tier `Wire` test can discriminate *which* boundary rejection occurred (#705) |

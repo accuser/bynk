@@ -328,17 +328,26 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             // (a test-only brand cast, like an agent key) and stash it for the
             // address-call lowering to fold into that call's deps.
             let saved_identity = cx.call_site_identity.take();
+            let saved_no_credential = cx.call_site_no_credential;
+            cx.call_site_no_credential = false;
             if let Some(principal) = &l.principal {
-                // Store the *raw* lowered identity (`"bob"`). Unit deps folds it
-                // with an `as any` brand cast; the system driver passes it as the
-                // JWT `sub` verbatim.
-                cx.call_site_identity = principal
-                    .identity
-                    .as_ref()
-                    .map(|id| lower_expr(id, &mut stmts, cx));
+                // #706: `by Nobody` drives the route with no credential (the 401
+                // path); it names no identity. Any other principal supplies its
+                // identity — the *raw* lowered value (`"bob"`), which unit deps
+                // folds with an `as any` brand cast and the system driver passes
+                // as the JWT `sub` verbatim.
+                if principal.actor.name == "Nobody" {
+                    cx.call_site_no_credential = true;
+                } else {
+                    cx.call_site_identity = principal
+                        .identity
+                        .as_ref()
+                        .map(|id| lower_expr(id, &mut stmts, cx));
+                }
             }
             let value = lower_expr(&l.value, &mut stmts, cx);
             cx.call_site_identity = saved_identity;
+            cx.call_site_no_credential = saved_no_credential;
             for s in &stmts {
                 write_line(out, indent, s);
             }
@@ -1452,14 +1461,19 @@ fn lower_method_call(
         let rest: Vec<String> = args[1..].iter().map(|a| lower_expr(a, stmts, cx)).collect();
         let mut all = rest;
         all.push(sub);
-        // Slice C: a `Wire(…)` argument drives the *raw* driver (the input is
-        // sent unvalidated and the result decodes to an `HttpOutcome`); a fully
-        // typed call keeps the serialising driver. `lower_expr` already lowers a
-        // `Wire(s)` to its raw inner string.
+        // #706: `by Nobody` drives the *no-auth* driver — no `Authorization`
+        // header, so the real seam rejects it (`401` → `Rejected(Unauthorized)`);
+        // it takes precedence over the body form (the seam rejects before the
+        // body is read). Otherwise — Slice C: a `Wire(…)` argument drives the
+        // *raw* driver (input sent unvalidated, result decodes to an
+        // `HttpOutcome`); a fully typed call keeps the serialising driver.
+        // `lower_expr` already lowers a `Wire(s)` to its raw inner string.
         let has_wire = args[1..]
             .iter()
             .any(|a| matches!(&a.kind, ExprKind::Wire(_)));
-        let driver = if has_wire {
+        let driver = if cx.call_site_no_credential {
+            "__sysdrive_noauth"
+        } else if has_wire {
             "__sysdrive_raw"
         } else {
             "__sysdrive"

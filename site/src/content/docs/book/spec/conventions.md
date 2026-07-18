@@ -17,9 +17,19 @@ Productions are written in EBNF:
 grammar rule: a leading underscore (an internal helper rule) is dropped and
 trivial wrappers are collapsed, so a production reads as a language rule rather
 than a parser internal. Every production shown in this specification is
-**generated** from the `tree-sitter-bynk` grammar, so it cannot drift from the
-parser. The complete, byte-exact grammar — every production in one block — is the
-grammar appendix (§11).
+**generated** from the `tree-sitter-bynk` grammar, so it cannot drift from that
+grammar.
+
+> [!NOTE]
+> The `tree-sitter-bynk` grammar is the parser used by the editor tooling; it is
+> a separate implementation from the recursive-descent parser the compiler runs.
+> A [conformance test](https://github.com/accuser/bynk/blob/main/tree-sitter-bynk/tests/conformance.rs)
+> parses the same sources with both and asserts they accept and reject the same
+> programs, so the generated productions describe what the compiler accepts, not
+> only what the editor grammar does.
+
+The complete, byte-exact grammar — every production in one block — is the grammar
+appendix (§11).
 
 ## §2.2 How syntax is shown
 

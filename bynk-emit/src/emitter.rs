@@ -2195,6 +2195,11 @@ pub(crate) struct LowerCtx<'a> {
     /// address-call lowering reads it to build the handler's `deps.identity`.
     /// `None` for a unit-identity actor or a non-principal statement.
     pub call_site_identity: Option<String>,
+    /// #706: the call-site principal is `by Nobody` — drive the route with no
+    /// `Authorization` header so the real auth seam rejects it (`401` →
+    /// `Rejected(Unauthorized)`). Routes a `system` http address to the no-auth
+    /// driver. `false` for any other (or no) principal.
+    pub call_site_no_credential: bool,
     /// v0.182 (#664): the ordered handler kinds of each test service, so a cron
     /// (`svc.schedule("…")`) or queue (`svc.message(m)`) address can recover the
     /// position index the emitted key encodes (`cron_<svc>_<i>` / `queue_…`).
@@ -2325,6 +2330,7 @@ impl<'a> LowerCtx<'a> {
             cross_context_used: false,
             test_services: HashSet::new(),
             call_site_identity: None,
+            call_site_no_credential: false,
             test_service_handlers: HashMap::new(),
             system_http_services: std::collections::HashSet::new(),
             test_agents: HashSet::new(),

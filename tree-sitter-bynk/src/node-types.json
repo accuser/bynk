@@ -10444,6 +10444,10 @@
     "named": false
   },
   {
+    "type": "Bytes",
+    "named": false
+  },
+  {
     "type": "DELETE",
     "named": false
   },

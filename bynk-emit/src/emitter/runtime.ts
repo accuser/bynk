@@ -731,6 +731,24 @@ export async function responseToHttpOutcome<T>(
   return { tag: "Handled", value: handled };
 }
 
+// #706: the outcome of driving a secured route with *no credential* (`by
+// Nobody`). A `401` here is the auth seam refusing the request before the
+// handler ran — `Rejected(Unauthorized)` — which is unambiguous *because the
+// caller sent no credential* (unlike the shared `responseToHttpOutcome`, where a
+// `401` could be a handler-returned `Unauthorized`, so it stays `Handled`). Any
+// other status is decoded normally: a route that is not actually secured lets
+// the request through, and the case observes `Handled` rather than a false
+// `Rejected`.
+export async function responseToUnauthOutcome<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpOutcome<T>> {
+  if (response.status === 401) {
+    return { tag: "Rejected", value: { tag: "Unauthorized" } };
+  }
+  return responseToHttpOutcome(response, deserialiseValue);
+}
+
 // v0.131 (ADR 0159): the cross-origin (CORS) policy a `from http` service carries
 // via its `cors { }` section. The compiler synthesises one of these per
 // CORS-enabled service and threads it into the entry router. `allowMethods` is
