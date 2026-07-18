@@ -475,7 +475,9 @@ fn contract_skews(
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct DeployLock {
-    #[serde(default = "lock_version")]
+    // No serde `default`: a ledger with no `version` is not a fresh project, it
+    // is corruption (a truncated write), and must fail the read rather than
+    // parse as an empty v1 ledger that re-mints every namespace (#736).
     version: u32,
     #[serde(default)]
     environments: BTreeMap<String, Environment>,
@@ -1158,9 +1160,19 @@ fn read_lock(path: &Path) -> Result<DeployLock, String> {
             ..Default::default()
         });
     }
-    let lock: DeployLock =
-        toml::from_str(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    // A zero-byte or whitespace-only ledger is a truncated write, not an empty
+    // project. Accepting it as an empty v1 ledger would tell the planner that no
+    // namespaces exist and re-mint every one — the exact orphaning the ledger
+    // exists to prevent (#736, ADR 0180). Fail hard so the operator restores it.
+    if text.trim().is_empty() {
+        return Err(format!(
+            "deploy ledger `{}` is empty or truncated (corrupt); refusing to \
+             treat it as a fresh project — restore it from version control",
+            path.display()
+        ));
+    }
+    let lock: DeployLock = toml::from_str(&text).map_err(|e| e.to_string())?;
     if lock.version != lock_version() {
         return Err(format!("unsupported deploy lock version {}", lock.version));
     }
@@ -1168,11 +1180,28 @@ fn read_lock(path: &Path) -> Result<DeployLock, String> {
 }
 
 fn write_lock(path: &Path, lock: &DeployLock) -> Result<(), String> {
-    std::fs::write(
-        path,
-        toml::to_string_pretty(lock).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    let body = toml::to_string_pretty(lock).map_err(|e| e.to_string())?;
+    // Atomic replace: write a sibling temp file, then rename it over the ledger.
+    // A power loss or kill mid-write can then only leave the intact old file or
+    // the intact new one — never a truncated ledger that reads as empty (#736).
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(LOCK_FILE);
+    let tmp = dir
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(".{file_name}.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
+    // Preserve the ledger's existing permissions across the replace.
+    if let Ok(meta) = std::fs::metadata(path) {
+        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    Ok(())
 }
 
 fn materialise_kv_id(path: &Path, id: &str) -> bool {
@@ -2655,6 +2684,74 @@ mod tests {
         std::fs::write(&path, format!("id = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"")).unwrap();
         assert!(materialise_kv_id(&path, "abc"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "id = \"abc\"");
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn scratch_lock_path(label: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "bynk-{label}-{}-{unique}.deploy.lock",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn a_written_ledger_reads_back_identically() {
+        // The floor the atomic write must not disturb: a real ledger survives a
+        // write/read round-trip unchanged.
+        let path = scratch_lock_path("roundtrip");
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.environments
+            .entry("default".into())
+            .or_default()
+            .kv
+            .insert(
+                "api".into(),
+                KvNamespace {
+                    id: "kv-123".into(),
+                },
+            );
+        write_lock(&path, &lock).unwrap();
+        assert_eq!(read_lock(&path).unwrap(), lock);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_empty_ledger_is_corruption_not_a_fresh_project() {
+        // #736: a truncated write leaves a zero-byte file. Reading it as an
+        // empty v1 ledger would re-mint every namespace, so it must fail hard —
+        // whereas a genuinely absent file is a fresh project and reads clean.
+        let path = scratch_lock_path("empty");
+        std::fs::write(&path, "").unwrap();
+        assert!(
+            read_lock(&path).is_err(),
+            "a zero-byte ledger must be rejected, not treated as no environments"
+        );
+        std::fs::write(&path, "   \n\t\n").unwrap();
+        assert!(
+            read_lock(&path).is_err(),
+            "a whitespace-only ledger is just as corrupt"
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            read_lock(&path).is_ok(),
+            "an absent ledger is a fresh project, not corruption"
+        );
+    }
+
+    #[test]
+    fn a_ledger_without_a_version_is_rejected() {
+        // With the serde default gone, a file that parses but carries no
+        // `version` is corruption rather than a silent empty v1 ledger.
+        let path = scratch_lock_path("noversion");
+        std::fs::write(&path, "[environments]\n").unwrap();
+        assert!(read_lock(&path).is_err());
         let _ = std::fs::remove_file(path);
     }
 
