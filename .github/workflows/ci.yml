@@ -466,7 +466,7 @@ jobs:
       - name: Smoke — no unbundled external requires
         run: node scripts/check-bundle.mjs
       - name: Package the VSIX
-        run: npx --yes @vscode/vsce package --no-dependencies --skip-license
+        run: npx --yes @vscode/vsce@3.9.2 package --no-dependencies --skip-license
 
   extension-tests:
     # Launch a real VS Code instance with the extension + a fixture workspace
@@ -647,18 +647,20 @@ jobs:
           command: check
 
   npm-audit:
-    # Audit the two npm packages' dependency trees against the npm advisory DB —
+    # Audit every npm package's dependency tree against the npm advisory DB —
     # the JS-side parallel of `cargo audit`, closing the un-audited dependency
     # surface. Reads the committed lockfiles (no install). A high-severity
-    # advisory gates; low/moderate are signal, not a blocker.
+    # advisory gates; low/moderate are signal, not a blocker. Covers all five
+    # trees with committed lockfiles, including playground/site whose deploy jobs
+    # hold the Cloudflare token.
     name: Security audit (npm)
     needs: changes
-    if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.grammar == 'true' || needs.changes.outputs.all == 'true'
+    if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.grammar == 'true' || needs.changes.outputs.runtime == 'true' || needs.changes.outputs.playground == 'true' || needs.changes.outputs.site == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        package: [vscode-bynk, tree-sitter-bynk]
+        package: [vscode-bynk, tree-sitter-bynk, bynk-emit/runtime, playground, site]
     defaults:
       run:
         working-directory: ${{ matrix.package }}

@@ -37,7 +37,7 @@ jobs:
         with:
           workspaces: fuzz
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Seed corpus from fixtures
         run: ./fuzz/seed-corpus.sh
       - name: Fuzz ${{ matrix.target }} (5 minutes)
