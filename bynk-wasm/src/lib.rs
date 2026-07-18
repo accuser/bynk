@@ -69,6 +69,48 @@ fn severity_str(err: &CompileError) -> &'static str {
     }
 }
 
+/// The human-readable message carried by a caught panic payload, if any.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+/// A synthetic `bynk.wasm.panic` diagnostic standing in for an internal compiler
+/// panic, so an unexpected `panic!`/index-out-of-bounds/`unreachable!` in the
+/// pipeline becomes a structured error rather than propagating past the boundary.
+fn panic_diagnostic(payload: Box<dyn std::any::Any + Send>) -> Diagnostic {
+    Diagnostic {
+        path: None,
+        line: 0,
+        col: 0,
+        from: 0,
+        to: 0,
+        severity: "error".to_string(),
+        category: "bynk.wasm.panic".to_string(),
+        message: format!("internal compiler panic: {}", panic_message(&*payload)),
+    }
+}
+
+/// Run a pipeline entry point, converting an unexpected panic into a diagnostic.
+///
+/// On the native `rlib` path (the tests and any host embedding) this genuinely
+/// unwinds the panic and returns `Err(diagnostic)`, so a reachable-in-principle
+/// `panic!` no longer propagates past the wasm boundary. On the actual
+/// `wasm32-unknown-unknown` target a panic still traps (`RuntimeError:
+/// unreachable`) because the stock target lowers unwinding to a trap — there the
+/// blast radius is bounded instead by the `console_error_panic_hook` (a legible
+/// console error and location) set in the wasm entry points, and this wrapper
+/// becomes effective for free if the playground build ever adopts wasm exception
+/// handling. Fixing the underlying panic sites remains the real fix (#717).
+fn catch_panic<T>(f: impl FnOnce() -> T) -> Result<T, Diagnostic> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(panic_diagnostic)
+}
+
 /// Flatten attributed errors to [`Diagnostic`]s, resolving line/col against the
 /// owning source where known (`sources`), else the user source (`fallback`).
 fn to_diagnostics(
@@ -108,6 +150,14 @@ fn to_diagnostics(
 /// Workers/Cloudflare-only shapes are reported as diagnostics (slice-2 platform
 /// lock), never silently mis-compiled.
 pub fn compile(source: &str, platform: Platform) -> CompileResult {
+    catch_panic(|| compile_inner(source, platform)).unwrap_or_else(|d| CompileResult {
+        ok: false,
+        files: Vec::new(),
+        diagnostics: vec![d],
+    })
+}
+
+fn compile_inner(source: &str, platform: Platform) -> CompileResult {
     match compile_in_memory(source, BuildTarget::Bundle, platform) {
         Ok(out) => match bynk_strip::strip_project_to_js(out) {
             Ok(js) => {
@@ -176,6 +226,12 @@ pub struct AnalyzeResult {
 
 /// Analyse a source for diagnostics only (no compile/emit), for the given platform.
 pub fn analyze(source: &str, platform: Platform) -> AnalyzeResult {
+    catch_panic(|| analyze_inner(source, platform)).unwrap_or_else(|d| AnalyzeResult {
+        diagnostics: vec![d],
+    })
+}
+
+fn analyze_inner(source: &str, platform: Platform) -> AnalyzeResult {
     let errs = analyse_in_memory(source, BuildTarget::Bundle, platform);
     AnalyzeResult {
         diagnostics: to_diagnostics(errs, &HashMap::new(), source),
@@ -192,12 +248,22 @@ pub fn analyze_to_json(source: &str, platform: Platform) -> String {
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
+/// Route panics to `console.error` with a readable message and location. Idempotent
+/// (`set_once` installs the hook exactly once), so every entry point may call it.
+/// Without this a panic on adversarial input surfaces as an opaque `RuntimeError:
+/// unreachable` with no clue to its origin (#717).
+#[cfg(target_arch = "wasm32")]
+fn install_panic_hook() {
+    console_error_panic_hook::set_once();
+}
+
 /// The wasm entry point for live editor diagnostics: analyse an in-memory Bynk
 /// source for the browser and return `{ diagnostics: [...] }` (with byte `from`/`to`
 /// spans for inline marking). Non-bailing — all diagnostics at once.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn bynk_analyze(source: &str) -> String {
+    install_panic_hook();
     analyze_to_json(source, Platform::Browser)
 }
 
@@ -208,6 +274,7 @@ pub fn bynk_analyze(source: &str) -> String {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn bynk_compile(source: &str) -> String {
+    install_panic_hook();
     compile_to_json(source, Platform::Browser)
 }
 
@@ -332,6 +399,30 @@ mod tests {
         );
         // A real diagnostic carries a span for inline marking.
         assert!(r.diagnostics.iter().any(|d| d.to > d.from));
+    }
+
+    #[test]
+    fn catch_panic_converts_panic_to_a_diagnostic() {
+        // Silence the default hook's stderr backtrace for this deliberate panic,
+        // then restore it so no other test is affected.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let caught = catch_panic(|| -> i32 { panic!("boom {}", 42) });
+        std::panic::set_hook(prev);
+
+        let d = caught.expect_err("a panic must become an Err(diagnostic)");
+        assert_eq!(d.severity, "error");
+        assert_eq!(d.category, "bynk.wasm.panic");
+        assert!(
+            d.message.contains("boom 42"),
+            "the panic message is carried through: {}",
+            d.message
+        );
+    }
+
+    #[test]
+    fn catch_panic_passes_a_value_through() {
+        assert_eq!(catch_panic(|| 7).ok(), Some(7));
     }
 
     #[test]

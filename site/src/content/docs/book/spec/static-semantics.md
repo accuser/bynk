@@ -64,7 +64,9 @@ call MUST supply the right number of arguments (`bynk.resolve.arity_mismatch`,
 its type (`bynk.types.field_value_mismatch`), and every required field MUST be
 supplied (`bynk.resolve.missing_field`).
 
-An `if` condition MUST be a `Bool` and both branches MUST share a type
+An `if` condition MUST be a `Bool` and both branches MUST **join** to a common
+type — their least upper bound, so a refined type and its base (or two refined
+types over one base) agree at the base, but unrelated types do not
 (`bynk.types.if_non_bool_cond`, `bynk.types.if_branch_mismatch`). The payloads of
 `Ok`, `Err`, `Some`, and the like MUST match the expected component type (the
 `bynk.types.*_value_mismatch` codes). Where a constructor is ambiguous between
@@ -581,7 +583,9 @@ the same dependency-cycle check.
 A `match` MUST be **exhaustive** — every variant of the scrutinised sum,
 `Result`, or `Option` covered (`bynk.types.non_exhaustive_match`) — and its
 scrutinee MUST be a sum type (`bynk.types.match_non_sum_discriminant`). Its arms
-MUST share a result type (`bynk.types.match_arm_mismatch`), MUST NOT repeat a
+MUST **join** to a common result type — their least upper bound, so a refined
+type and its base agree at the base (`bynk.types.match_arm_mismatch`), MUST NOT
+repeat a
 variant (`bynk.types.duplicate_variant_arm`), and MUST NOT be unreachable
 (`bynk.types.unreachable_arm`).
 
