@@ -206,6 +206,7 @@ dependencies = [
 name = "bynk-fmt"
 version = "0.208.0"
 dependencies = [
+ "bynk-render",
  "bynk-syntax",
  "proptest",
 ]
