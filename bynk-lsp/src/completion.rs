@@ -2453,7 +2453,7 @@ mod tests {
 
         let names = enumerated_units(
             "commons proj.buffer {\n  fn b() -> Int { 1 }\n}\n",
-            Some(&[sibling.clone()]),
+            Some(std::slice::from_ref(&sibling)),
         );
         // The embedded `bynk` surface, the live buffer, and the disk file all show.
         assert!(names.iter().any(|n| n == "bynk"), "embedded: {names:?}");
@@ -2476,7 +2476,7 @@ mod tests {
         let file = dir.join("unit.bynk");
 
         std::fs::write(&file, "commons proj.first {\n  fn a() -> Int { 1 }\n}\n").unwrap();
-        let first = enumerated_units("context a.b\n", Some(&[file.clone()]));
+        let first = enumerated_units("context a.b\n", Some(std::slice::from_ref(&file)));
         assert!(
             first.iter().any(|n| n == "proj.first"),
             "first read: {first:?}"
@@ -2490,7 +2490,7 @@ mod tests {
             "commons proj.second.longer {\n  fn a() -> Int { 1 }\n  fn c() -> Int { 3 }\n}\n",
         )
         .unwrap();
-        let second = enumerated_units("context a.b\n", Some(&[file.clone()]));
+        let second = enumerated_units("context a.b\n", Some(std::slice::from_ref(&file)));
         assert!(
             second.iter().any(|n| n == "proj.second.longer"),
             "after change: {second:?}"
