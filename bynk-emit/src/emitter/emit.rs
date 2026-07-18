@@ -3275,4 +3275,22 @@ mod doc_block_tests {
         );
         assert!(out.trim_end().ends_with("*/"));
     }
+
+    /// Overlapping/adjacent terminators must not survive or re-form a `*/`
+    /// under the non-overlapping left-to-right `str::replace`. Pins the
+    /// behaviour against a future refactor away from `str::replace`.
+    #[test]
+    fn escapes_pathological_terminators() {
+        for body in ["*/*/", "**/", "*/*", "*/ */ */"] {
+            let mut out = String::new();
+            emit_doc_block(&mut out, Some(body), 0);
+            // The only surviving `*/` is the emitter's own trailing closer.
+            assert_eq!(
+                out.matches("*/").count(),
+                1,
+                "input {body:?} left a stray closer: {out}"
+            );
+            assert!(out.trim_end().ends_with("*/"), "input {body:?}: {out}");
+        }
+    }
 }
