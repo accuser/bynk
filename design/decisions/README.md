@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0221](0221-wrangler-toml-string-escape.md) | **Escape queue names and cron expressions in emitted `wrangler.toml`** (v0.200) — TOML-escape the two source-literal values interpolated into a Worker's deploy config | Accepted (v0.200) |
 | [0220](0220-held-linearity-in-fn-bodies.md) | **Enforce held-resource linearity in fn and method bodies** (v0.199) — Run the linearity pass over every body that can bind a held value, not only handlers | Accepted (v0.199) |
 | [0219](0219-doc-block-comment-escape.md) | **Escape `*/` in emitted doc-block comments** (v0.198) — A doc block's `*/` is neutralised so it cannot close the JSDoc comment and inject module-scope code | Accepted (v0.198) |
 | [0218](0218-match-arm-held-linearity.md) | **The held-resource linearity pass governs match-arm pattern bindings** (v0.197) — A held value bound out of a `match` arm pattern is registered as owned and must be disposed | Accepted (v0.197) |
