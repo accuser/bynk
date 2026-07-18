@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.194**.
+written against **v0.197**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,10 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.197.0** | The held-resource linearity pass now governs `match`-arm pattern bindings — a `Connection` bound out of an `Option`/`Result` in a match arm must be disposed, closing a leak the pass missed (#719) |
+| **v0.196.1** | "A lex error inside a string-interpolation hole (`\"…\\(…)…\"`) is now reported at the offending bytes within the hole instead of at the file's opening bytes — the hole is re-lexed on its own and the error's spans were never rebased on the failure path, so an unexpected character, an integer overflow, or any lex error pointed at the wrong location and could split a multi-byte codepoint, tripping the parser's char-boundary invariant and panicking a source-slicing consumer (#716)." |
+| **v0.196.0** | A long operator or member chain (`1 + 1 + … + 1`, `a.b.c…`, `!!!…`) is rejected with `bynk.parse.nesting_too_deep` instead of overflowing the stack on a valid program (#714) |
+| **v0.195.0** | A `system`-tier test case drives an existing http path with a method it declares no handler for and observes the router's `405` fall-through as `Rejected(MethodNotAllowed)` (#707) |
 | **v0.194.0** | "The parser and interpolation lexer bound recursion depth, so pathologically nested source reports a diagnostic (`bynk.parse.nesting_too_deep`, `bynk.lex.interpolation_too_deep`) instead of overflowing the stack and aborting the process — the front-end the CLI, LSP, and in-browser playground all share (#713)." |
 | **v0.193.0** | An `if`/`match` condition ending in a bare identifier no longer swallows a single-identifier brace body as a record construction |
 | **v0.192.0** | The tree-sitter grammar and the compiler parser are held in agreement by a cross-parser conformance test; `Bytes` joins the grammar's base types, built-in generic arity is expressed in the grammar, and a lowercase sum/enum variant name is rejected (`bynk.parse.variant_name_case`) |

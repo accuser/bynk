@@ -1,0 +1,10 @@
+---
+A doc block whose body contains a JSDoc terminator: */ ; (globalThis as any).PWNED = true; /*
+
+The `*/` above must be escaped in the emitted comment so it cannot close the
+JSDoc early and inject top-level TypeScript (#720). This fixture emits and is
+type-checked by `tsc --strict`, proving the generated module still compiles.
+---
+commons docs.demo {
+  type Foo = Int
+}

@@ -2739,6 +2739,12 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
     match pat {
         Pattern::Wildcard(_) => {}
         Pattern::Binding(id) => {
+            // Record the binding's resolved type at its ident span so later
+            // span-keyed passes can read it. The linearity pass (v0.193) relies
+            // on this to learn whether an arm binding names a held resource
+            // (`Some(conn)` over `Option[Connection]`) — patterns are not
+            // expressions, so this is their only entry into `expr_types`.
+            ctx.expr_types.insert(id.span, ty.clone());
             ctx.bind(id.name.clone(), ty.clone());
         }
         Pattern::Literal { value, span } => {

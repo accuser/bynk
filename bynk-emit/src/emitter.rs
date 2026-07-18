@@ -2211,6 +2211,11 @@ pub(crate) struct LowerCtx<'a> {
     /// with a signed credential, instead of the unit-tier direct handler call.
     /// Empty at the unit tier.
     pub system_http_services: std::collections::HashSet<String>,
+    /// #707: the declared `(service, method, path)` http routes of the system
+    /// target. A `(method, path)` call whose method is absent here but whose path
+    /// is present is a **wrong-method** call — it drives the `405` fall-through
+    /// through the generic `__sysdrive_wrongmethod_<svc>` driver.
+    pub system_http_routes: std::collections::HashSet<(String, String, String)>,
     /// v0.7: when lowering a test case body, the target context's local
     /// agent names. `<Agent>(<key>).method(args)` lowers to
     /// `new Agent(makeTestState(...)).method(args, {})`.
@@ -2333,6 +2338,7 @@ impl<'a> LowerCtx<'a> {
             call_site_no_credential: false,
             test_service_handlers: HashMap::new(),
             system_http_services: std::collections::HashSet::new(),
+            system_http_routes: std::collections::HashSet::new(),
             test_agents: HashSet::new(),
             local_agents: HashSet::new(),
             agent_method_givens: HashMap::new(),

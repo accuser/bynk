@@ -366,18 +366,91 @@ impl<'a> Parser<'a> {
                 .peek()
                 .map(|t| t.span)
                 .unwrap_or_else(|| self.eof_span());
-            return Err(CompileError::new(
-                "bynk.parse.nesting_too_deep",
-                span,
-                format!(
-                    "{what} nests more than {} levels deep",
-                    crate::MAX_NESTING_DEPTH
-                ),
-            )
-            .with_note(
-                "deeply nested source is rejected to keep the parser from overflowing its \
-                 stack and aborting; flatten or split the construct",
-            ));
+            return Err(self.nesting_too_deep(span, what));
+        }
+        Ok(())
+    }
+
+    /// The bounded-depth diagnostic shared by [`enter_recursion`] and
+    /// [`enter_chain_fold`].
+    fn nesting_too_deep(&self, span: Span, what: &str) -> CompileError {
+        CompileError::new(
+            "bynk.parse.nesting_too_deep",
+            span,
+            format!(
+                "{what} nests more than {} levels deep",
+                crate::MAX_NESTING_DEPTH
+            ),
+        )
+        .with_note(
+            "deeply nested source is rejected to keep the parser from overflowing its \
+             stack and aborting; flatten or split the construct",
+        )
+    }
+
+    /// The bounded-depth diagnostic for the *iteratively*-built spines —
+    /// associative operator chains ([`enter_chain_fold`]) and postfix receiver
+    /// chains ([`deepen_spine`]). Same code as [`nesting_too_deep`] (one budget,
+    /// one diagnostic) but phrased for a flat chain, which is long rather than
+    /// *nested*, and points at the idiomatic fix.
+    fn expression_too_long(&self, span: Span) -> CompileError {
+        CompileError::new(
+            "bynk.parse.nesting_too_deep",
+            span,
+            format!(
+                "this expression is more than {} levels deep",
+                crate::MAX_NESTING_DEPTH
+            ),
+        )
+        .with_note(
+            "a long operator or member chain is rejected to keep the compiler from overflowing \
+             its stack; split it across `let` bindings, or reduce a sequence with \
+             `.sum()`/`.fold(...)`",
+        )
+    }
+
+    /// Count one more operand folded onto an associative operator chain against
+    /// the same recursion budget as [`enter_recursion`] (#714).
+    ///
+    /// Associative chains (`+`, `*`, `&&`, `||`) are built *iteratively* in the
+    /// precedence ladder, so — unlike parentheses, calls, or `implies` — they
+    /// never re-enter `parse_expr` and thus slip past the `enter_recursion`
+    /// guard. Yet each fold deepens the left-nested `Expr` tree by one level,
+    /// and a long flat chain (`1 + 1 + … + 1`) overflows every *recursive*
+    /// consumer of that tree downstream — the checker's `type_of`, the
+    /// formatter, the emitter, and the AST's own recursive `Drop` — exactly as
+    /// deeply nested source overflows the parser. Counting each fold on the
+    /// shared `depth` budget bounds the whole expression's height, and because
+    /// it is the *same* budget it composes with the ambient nesting depth, so a
+    /// chain buried inside deeply nested source cannot exceed the bound either.
+    ///
+    /// The caller accumulates `folds` and subtracts them from `depth` before it
+    /// returns, so the live count unwinds as a recursive descent would; on the
+    /// overflow path the whole chain's contribution is restored here so a
+    /// recovering caller is not left mis-counted.
+    fn enter_chain_fold(&mut self, folds: &mut usize, span: Span) -> Result<(), CompileError> {
+        self.depth += 1;
+        *folds += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            self.depth -= *folds;
+            *folds = 0;
+            return Err(self.expression_too_long(span));
+        }
+        Ok(())
+    }
+
+    /// Count one more level of an iteratively-built postfix receiver spine
+    /// (`a.b.c…`, `f()?.g()…`) against the shared budget (#714). Like
+    /// [`enter_chain_fold`], postfix loops rather than recurses, so a long spine
+    /// escapes [`enter_recursion`] yet grows an arbitrarily deep receiver tree
+    /// that the downstream walks recurse through. `parse_postfix` restores
+    /// `depth` wholesale on the way out (its many error paths make a
+    /// save/restore wrapper cleaner than per-fold unwinding), so this only bumps
+    /// and checks.
+    fn deepen_spine(&mut self, span: Span) -> Result<(), CompileError> {
+        self.depth += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            return Err(self.expression_too_long(span));
         }
         Ok(())
     }
@@ -912,6 +985,43 @@ mod tests {
                 .any(|e| e.category == "bynk.parse.empty_interpolation"),
             "expected empty_interpolation; got {errs:?}"
         );
+    }
+
+    #[test]
+    fn interpolation_hole_lex_error_span_is_rebased() {
+        // #716: a lex error inside a `\(…)` hole once carried a span relative to
+        // the hole substring — never rebased by `hole.start` — so it pointed at
+        // the file's opening bytes and could split a multibyte char, tripping
+        // the char-boundary invariant. The error must land on the offending
+        // bytes within the hole and stay on char boundaries.
+        let cases = [
+            // `$` is not a valid token; the error should point at it, not byte 0.
+            "commons x\n\nfn f() -> String {\n  \"a \\($)\"\n}\n",
+            // Integer overflow — the reported span must cover the literal itself.
+            "commons x\n\nfn f() -> String {\n  \"n = \\(99999999999999999999)\"\n}\n",
+            // A multibyte char before the hole means an un-rebased span could
+            // land inside the `é`; the rebased span must not.
+            "commons x\n\nfn f() -> String {\n  \"é \\($)\"\n}\n",
+        ];
+        for src in cases {
+            let errs = parse_str(src).unwrap_err();
+            assert!(!errs.is_empty(), "expected a lex error for {src:?}");
+            for e in &errs {
+                assert!(
+                    src.is_char_boundary(e.span.start) && src.is_char_boundary(e.span.end),
+                    "span {:?} splits a codepoint in {src:?}",
+                    e.span,
+                );
+                // The error must point inside the interpolation hole, not at the
+                // header text that precedes it.
+                let hole_start = src.find("\\(").expect("case has a hole") + 2;
+                assert!(
+                    e.span.start >= hole_start,
+                    "span {:?} precedes the hole (starts at {hole_start}) in {src:?}",
+                    e.span,
+                );
+            }
+        }
     }
 
     #[test]
