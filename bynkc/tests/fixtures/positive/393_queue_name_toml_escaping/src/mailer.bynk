@@ -1,0 +1,15 @@
+context mailer
+
+-- #722: a queue name whose decoded string carries a quote + newline must be
+-- TOML-escaped in wrangler.toml, or it breaks out of the `queue = "…"` string
+-- and injects config keys into the generated Worker's deploy config.
+type EmailJob = {
+  to:      String,
+  subject: String,
+}
+
+service outbox from queue("q\nkey = \"injected") {
+  on message(message: EmailJob) -> Effect[QueueResult] {
+    Ack
+  }
+}
