@@ -113,8 +113,11 @@ impl SourceMapBuilder {
         // One line index per source, built once: a checkpoint resolves per
         // emitted line, so `line_col`'s scan-from-0 would be O(checkpoints ×
         // source size) (#732). Binary-search each lookup instead.
-        let source_indexes: Vec<LineIndex> =
-            self.sources.iter().map(|(_, t)| LineIndex::new(t)).collect();
+        let source_indexes: Vec<LineIndex> = self
+            .sources
+            .iter()
+            .map(|(_, t)| LineIndex::new(t))
+            .collect();
         // Resolve each checkpoint to (generated line, source id, source line, col),
         // all 0-based. Drop any whose span falls outside its source's text (a
         // defensive guard for multi-file aggregation).

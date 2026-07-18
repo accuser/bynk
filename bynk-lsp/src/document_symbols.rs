@@ -37,11 +37,7 @@ pub fn outline(source: &str) -> Vec<DocumentSymbol> {
 }
 
 fn adapter_symbol(pm: &PositionMap, a: &AdapterDecl) -> DocumentSymbol {
-    let children: Vec<DocumentSymbol> = a
-        .items
-        .iter()
-        .map(|item| item_symbol(pm, item))
-        .collect();
+    let children: Vec<DocumentSymbol> = a.items.iter().map(|item| item_symbol(pm, item)).collect();
     make_symbol(
         a.name.joined(),
         detail_from_doc(&a.documentation),
@@ -85,11 +81,7 @@ fn test_symbol(pm: &PositionMap, t: &SuiteDecl) -> DocumentSymbol {
 }
 
 fn commons_symbol(pm: &PositionMap, c: &Commons) -> DocumentSymbol {
-    let children: Vec<DocumentSymbol> = c
-        .items
-        .iter()
-        .map(|item| item_symbol(pm, item))
-        .collect();
+    let children: Vec<DocumentSymbol> = c.items.iter().map(|item| item_symbol(pm, item)).collect();
     make_symbol(
         c.name.joined(),
         detail_from_doc(&c.documentation),
@@ -101,11 +93,7 @@ fn commons_symbol(pm: &PositionMap, c: &Commons) -> DocumentSymbol {
 }
 
 fn context_symbol(pm: &PositionMap, c: &Context) -> DocumentSymbol {
-    let children: Vec<DocumentSymbol> = c
-        .items
-        .iter()
-        .map(|item| item_symbol(pm, item))
-        .collect();
+    let children: Vec<DocumentSymbol> = c.items.iter().map(|item| item_symbol(pm, item)).collect();
     make_symbol(
         c.name.joined(),
         detail_from_doc(&c.documentation),
@@ -263,11 +251,7 @@ fn provider_symbol(pm: &PositionMap, p: &ProviderDecl) -> DocumentSymbol {
 }
 
 fn service_symbol(pm: &PositionMap, s: &ServiceDecl) -> DocumentSymbol {
-    let children = s
-        .handlers
-        .iter()
-        .map(|h| handler_symbol(pm, h))
-        .collect();
+    let children = s.handlers.iter().map(|h| handler_symbol(pm, h)).collect();
     make_symbol(
         s.name.name.clone(),
         detail_from_doc(&s.documentation),
