@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.193**.
+written against **v0.194**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.194.0** | "The parser and interpolation lexer bound recursion depth, so pathologically nested source reports a diagnostic (`bynk.parse.nesting_too_deep`, `bynk.lex.interpolation_too_deep`) instead of overflowing the stack and aborting the process — the front-end the CLI, LSP, and in-browser playground all share (#713)." |
 | **v0.193.0** | An `if`/`match` condition ending in a bare identifier no longer swallows a single-identifier brace body as a record construction |
 | **v0.192.0** | The tree-sitter grammar and the compiler parser are held in agreement by a cross-parser conformance test; `Bytes` joins the grammar's base types, built-in generic arity is expressed in the grammar, and a lowercase sum/enum variant name is rejected (`bynk.parse.variant_name_case`) |
 | **v0.191.0** | A `system`-tier test case drives a secured http route with `by Nobody` — the no-credential principal — so the real auth seam rejects the unauthenticated request; the call yields `Rejected(Unauthorized)`, decoded by `responseToUnauthOutcome` (#706) |

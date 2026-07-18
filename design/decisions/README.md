@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0215](0215-parser-recursion-depth-limit.md) | **The parser and interpolation lexer bound recursion depth** (v0.194) — A fixed nesting limit turns a stack-overflow abort on deeply nested source into a diagnostic | Accepted (v0.194) |
 | [0214](0214-if-match-condition-no-record-literal.md) | **An `if`/`match` condition does not parse a trailing brace body as a record literal** (v0.193) — A no-record-literal restriction on the condition spine, lifted inside delimiters | Accepted (v0.193) |
 | [0213](0213-grammar-parser-conformance.md) | **The normative grammar is tied to the compiler parser by a conformance test** (v0.192) — Close the tree-sitter/recursive-descent seam and the three drifts living in it | Accepted (v0.192) |
 | [0212](0212-system-tier-no-credential.md) | **A `system`-tier case drives a secured route with no credential via `by Nobody`** (v0.191) — `by Nobody` is a reserved call-site principal that drives an http route with no `Authorization` header, so the real auth seam rejects it (`401` → `Rejected(Unauthorized)`). It is valid on a Bearer-secured route regardless of the required identity (an unsecured/`Visitor` route has no seam to reject the missing credential), presents no identity, and is `system`-only. Scoped to the structural 401 (missing credential); validly-signed-but-expired/forged tokens remain e2e's concern (ADR 0210). | Accepted (v0.191) |

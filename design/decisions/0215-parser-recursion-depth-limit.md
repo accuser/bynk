@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "The parser and interpolation lexer bound recursion depth, so pathologically nested source reports a diagnostic (`bynk.parse.nesting_too_deep`, `bynk.lex.interpolation_too_deep`) instead of overflowing the stack and aborting the process — the front-end the CLI, LSP, and in-browser playground all share (#713)."
----
+# 0215 — The parser and interpolation lexer bound recursion depth
 
-## ADR: parser-recursion-depth-limit
-title: The parser and interpolation lexer bound recursion depth
-summary: A fixed nesting limit turns a stack-overflow abort on deeply nested source into a diagnostic
+- **Status:** Accepted (v0.194)
 
 **Context.** The recursive-descent parser and the string-interpolation scanner
 had no depth guard: each nesting level costs one stack frame, so deeply nested
