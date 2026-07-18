@@ -14,7 +14,8 @@
 use std::collections::HashMap;
 
 use bynk_syntax::ast::{
-    ActorDecl, BinOp, Expr, ExprKind, Handler, HandlerKind, ServiceProtocol, TypeRef, UnaryOp,
+    ActorDecl, BinOp, ByClause, Expr, ExprKind, Handler, HandlerKind, ServiceProtocol, TypeRef,
+    UnaryOp,
 };
 use bynk_syntax::span::Span;
 
@@ -165,6 +166,29 @@ pub struct BearerSeam {
 /// base for the scheme/secret/identity and carrying the authorisation
 /// predicate. Returns `None` for non-Bearer handlers (prelude actors are never
 /// Bearer) — those emit unchanged.
+/// #706: whether a `by` clause names a **Bearer**-secured actor (following a
+/// refinement to its base). The routes for which `by Nobody` can drive the auth
+/// seam to a `401` — an unsecured (`Visitor`/`None`) or `Signature`/`Oidc` route
+/// has no Bearer seam the test driver knows how to leave unauthenticated, so
+/// `by Nobody` there is rejected (`bynk.test.nobody_needs_secured_route`). The
+/// scheme check mirrors [`bearer_seam_for`].
+pub fn by_clause_is_bearer(by: &ByClause, actors: &HashMap<String, ActorDecl>) -> bool {
+    let Some(named) = actors.get(&by.primary().name) else {
+        return false;
+    };
+    let base = match &named.refinement {
+        Some(r) => match actors.get(&r.base.name) {
+            Some(b) => b,
+            None => return false,
+        },
+        None => named,
+    };
+    base.auth
+        .as_ref()
+        .and_then(|a| Scheme::from_name(a.name.as_str()))
+        == Some(Scheme::Bearer)
+}
+
 pub fn bearer_seam_for(
     handler: &Handler,
     actors: &HashMap<String, ActorDecl>,

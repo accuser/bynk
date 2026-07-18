@@ -2466,6 +2466,49 @@ pub(crate) fn check_effect_let_principal(
         return;
     };
 
+    // #706: `by Nobody` is the reserved "no credential" principal. It drives the
+    // route with no `Authorization` header so the real auth seam rejects it
+    // (`401` → `Rejected(Unauthorized)`), so it is valid on any http handler
+    // regardless of the required identity — the whole point is that *no* valid
+    // credential is presented. It carries no identity (`by Nobody(...)` is
+    // meaningless). The `system`-only tier rule is enforced at emit time, like
+    // `Wire`'s (the checker has no tier).
+    if let Some(p) = principal
+        && p.actor.name == "Nobody"
+    {
+        // #710-style: `by Nobody` is only *implemented* for a Bearer-secured
+        // route — the no-auth driver leaves out the `Authorization` header the
+        // Bearer seam checks. On an unsecured (`Visitor`/`None`) or
+        // `Signature`/`Oidc` route there is no such seam to reject a missing
+        // credential, so reject it here rather than emit a call to a driver that
+        // was never generated.
+        let secured = handler
+            .by_clause
+            .as_ref()
+            .is_some_and(|by| crate::actors::by_clause_is_bearer(by, &ctx.test_actors));
+        if !secured {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.nobody_needs_secured_route",
+                    p.span,
+                    "`by Nobody` drives the Bearer auth seam to a `401`, but this handler's route is not Bearer-secured — there is no credential check to reject",
+                )
+                .with_note(
+                    "use `by Nobody` only on a route guarded by a `Bearer` actor; a public (`Visitor`) route has no seam to test",
+                ),
+            );
+        }
+        if let Some(idv) = &p.identity {
+            ctx.errors.push(CompileError::new(
+                "bynk.test.actor_no_identity",
+                p.span,
+                "`Nobody` presents no credential, so it takes no identity — write `by Nobody`",
+            ));
+            let _ = type_of(idv, None, ctx);
+        }
+        return;
+    }
+
     let required = handler_actor_name(&handler, sig.protocol.as_deref())
         .map(|actor| resolve_actor_identity(&actor, ctx));
 

@@ -1381,7 +1381,17 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.test.actor_no_identity",
-        "A call-site `by <Actor>(x)` supplies an identity to a unit-identity actor (e.g. `Visitor`).",
+        "A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.credential_needs_system",
+        "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.nobody_needs_secured_route",
+        "A case drives `by Nobody` at a route that is not Bearer-secured (e.g. a public `Visitor` route) — there is no auth seam to reject the missing credential.",
         &["case"],
     ),
     dg(

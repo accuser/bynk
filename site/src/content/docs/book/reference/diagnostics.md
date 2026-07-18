@@ -274,7 +274,9 @@ There are **408** codes in total.
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
 | `bynk.test.actor_identity_required` | A call-site `by <Actor>` omits the identity an identity-carrying actor requires. | [`case`](/book/reference/grammar/#rule-case) |
-| `bynk.test.actor_no_identity` | A call-site `by <Actor>(x)` supplies an identity to a unit-identity actor (e.g. `Visitor`). | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.actor_no_identity` | A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`. | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.credential_needs_system` | A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it. | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.test.nobody_needs_secured_route` | A case drives `by Nobody` at a route that is not Bearer-secured (e.g. a public `Visitor` route) — there is no auth seam to reject the missing credential. | [`case`](/book/reference/grammar/#rule-case) |
 | `bynk.test.principal_identity_mismatch` | A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor. | [`case`](/book/reference/grammar/#rule-case) |
 | `bynk.test.principal_required` | A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`. | [`case`](/book/reference/grammar/#rule-case) |
 | `bynk.test.service_bad_address` | A test body addresses a service the wrong way for its protocol (e.g. an http route without a leading path string). | [`case`](/book/reference/grammar/#rule-case) |

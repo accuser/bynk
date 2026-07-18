@@ -542,6 +542,25 @@ pub(crate) fn process_integration_tests(
                         "`Wire` hands raw, pre-validation input to the real boundary; promote the case with `as system`, or pass a typed argument",
                     ));
                 }
+                // #706: `by Nobody` presents no credential to the real auth seam
+                // (the 401 path), which exists only at `system`; at a lower tier
+                // the handler just runs with no identity, silently not a 401.
+                if !matches!(
+                    super::discovery::case_effective_tier(case, d),
+                    bynk_syntax::ast::TestTier::System
+                ) && block_uses_nobody(&case.body)
+                {
+                    body_errs.push(CompileError::new(
+                        "bynk.test.credential_needs_system",
+                        case.name_span,
+                        format!(
+                            "case `\"{}\"` drives `by Nobody` but is not a `system`-tier case",
+                            case.name
+                        ),
+                    ).with_note(
+                        "`by Nobody` presents no credential to the real auth seam (the 401 path), which exists only at `system`; promote the case with `as system`, or supply `by <Actor>(<identity>)`",
+                    ));
+                }
             }
         }
         let bodies_failed = !body_errs.is_empty();
@@ -806,7 +825,7 @@ fn emit_integration_module(
         ""
     };
     out.push_str(&format!(
-        "import {{ Ok, Err, Some, None, callService, type Result, type Option, type ValidationError, type JsonError, type JsonValue, type BoundaryError, type ServiceBinding, responseToHttpResult, responseToHttpOutcome{agent_imports} }} from \"{runtime_import}\";\n"
+        "import {{ Ok, Err, Some, None, callService, type Result, type Option, type ValidationError, type JsonError, type JsonValue, type BoundaryError, type ServiceBinding, responseToHttpResult, responseToHttpOutcome, responseToUnauthOutcome{agent_imports} }} from \"{runtime_import}\";\n"
     ));
 
     // Per-participant: workers handler namespace + Worker entry default export.
@@ -1116,6 +1135,27 @@ fn emit_system_http_support(
                  }}\n",
                     params = raw_params.join(", "),
                     sep = if raw_params.is_empty() { "" } else { ", " },
+                    method = method.as_str(),
+                ));
+            }
+            // #706: the no-auth driver for a `by Nobody` call — the same request
+            // the typed driver builds, minus the `Authorization` header, so the
+            // real auth seam rejects it. A `401` decodes to `Rejected(
+            // Unauthorized)` (`responseToUnauthOutcome`); anything else decodes
+            // normally. Emitted only for a Bearer-secured route (one that carries
+            // an auth header) — an unsecured route has no seam to reject a missing
+            // credential, so a `by Nobody` there is meaningless.
+            if !auth_header.is_empty() {
+                routes.push_str(&format!(
+                "async function __sysdrive_noauth_{sname}_{key}({params}{sep}__sub: string) {{\n\
+                 {body_line}\
+                 \x20 const __h = makeHarness();\n\
+                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}}}, {body_init}}});\n\
+                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+                 \x20 return responseToUnauthOutcome(__res, {payload_deser});\n\
+                 }}\n",
+                    params = driver_params.join(", "),
+                    sep = if driver_params.is_empty() { "" } else { ", " },
                     method = method.as_str(),
                 ));
             }
@@ -1608,6 +1648,17 @@ fn block_uses_wire(block: &Block) -> bool {
     }
     crate::emitter::walk_exprs(&block.tail, &mut check);
     found
+}
+
+/// #706: whether a `case` body drives an effect-let `by Nobody` — the "no
+/// credential" principal. It is only meaningful at `system` (there is no auth
+/// seam to reject a missing credential at `unit`), so a non-`system` case using
+/// it is `bynk.test.credential_needs_system`.
+fn block_uses_nobody(block: &Block) -> bool {
+    block.statements.iter().any(|s| {
+        matches!(s, Statement::EffectLet(l)
+            if l.principal.as_ref().is_some_and(|p| p.actor.name == "Nobody"))
+    })
 }
 
 /// Register a synthetic call-record type per capability operation of the target

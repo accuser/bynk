@@ -157,7 +157,15 @@
     },
     {
       "code": "bynk.test.actor_no_identity",
-      "summary": "A call-site `by <Actor>(x)` supplies an identity to a unit-identity actor (e.g. `Visitor`)."
+      "summary": "A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`."
+    },
+    {
+      "code": "bynk.test.credential_needs_system",
+      "summary": "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it."
+    },
+    {
+      "code": "bynk.test.nobody_needs_secured_route",
+      "summary": "A case drives `by Nobody` at a route that is not Bearer-secured (e.g. a public `Visitor` route) — there is no auth seam to reject the missing credential."
     },
     {
       "code": "bynk.test.principal_identity_mismatch",

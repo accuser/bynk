@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.190**.
+written against **v0.191**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,9 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.191.0** | A `system`-tier test case drives a secured http route with `by Nobody` — the no-credential principal — so the real auth seam rejects the unauthenticated request; the call yields `Rejected(Unauthorized)`, decoded by `responseToUnauthOutcome` (#706) |
+| **v0.190.2** | "The LSP no longer panics when a multi-byte non-identifier char (`\"`, `€`, `—`, an emoji) precedes the receiver/callee it extracts from the line prefix — receiver and callee extraction now advance past the matched char by its UTF-8 length instead of assuming one byte, so completion, signature help, and hover survive a keystroke inside a string literal (#715)." |
+| **v0.190.1** | "`bynk new` preserves a hand-written `.gitignore` instead of overwriting it — a target holding only `.git/` and a user `.gitignore` scaffolds, and the template `.gitignore` is written only when none is present (#737)." |
 | **v0.190.0** | The `is` operator tests nested variant patterns structurally — `r is Rejected(RefinementViolation(_))` checks the inner tag as well as the outer — so a `system`-tier `Wire` test can discriminate *which* boundary rejection occurred (#705) |
 | **v0.189.0** | A `system`-tier test case drives an http route with a raw `Wire(<String>)` argument — pre-validation input the type system forbids — and observes the boundary reject it before the handler (`Rejected`) or handle it (`Handled`), via a raw driver and the `responseToHttpOutcome` decoder |
 | **v0.188.1** | A `from http` route's boundary-rejection responses (`400`/`401`) now carry the service's security headers (`nosniff`/HSTS) and CORS, exactly as its handled `200` does — restoring ADR 0164 D6 on the rejection path (#659) |
