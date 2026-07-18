@@ -236,18 +236,24 @@ pub struct UnitTable {
     pub exported_capabilities: std::collections::HashSet<String>,
 }
 
+/// #696: each table-construction diagnostic is attributed to the project-relative
+/// `identity_path` of the file whose item produced it. Every error-producing loop
+/// below iterates `for &i in indices`, so it shadows a local `errors` vec and
+/// drains it into `out`, tagged with `parsed[i].identity_path`, at the end of each
+/// file's pass — leaving the many inner `errors.push(…)` sites untouched.
 pub(crate) fn build_unit_table(
     _name: &str,
     kind: UnitKind,
     indices: &[usize],
     parsed: &[ParsedFile],
-    errors: &mut Vec<CompileError>,
+    out: &mut Vec<(PathBuf, CompileError)>,
 ) -> UnitTable {
     let mut table = UnitTable {
         kind: Some(kind),
         ..UnitTable::default()
     };
     for &i in indices {
+        let mut errors: Vec<CompileError> = Vec::new();
         for item in parsed[i].items() {
             if let CommonsItem::Type(t) = item {
                 if let Some(prev) = table.types.get(&t.name.name) {
@@ -265,6 +271,11 @@ pub(crate) fn build_unit_table(
                 }
             }
         }
+        out.extend(
+            errors
+                .into_iter()
+                .map(|e| (parsed[i].identity_path.clone(), e)),
+        );
     }
     // v0.15: collect the names a context exports as capabilities.
     // v0.17: adapters export capabilities too.
@@ -281,6 +292,7 @@ pub(crate) fn build_unit_table(
     }
     // v0.5: collect capabilities, providers, services, agents.
     for &i in indices {
+        let mut errors: Vec<CompileError> = Vec::new();
         for item in parsed[i].items() {
             match item {
                 CommonsItem::Capability(c) => {
@@ -441,8 +453,14 @@ pub(crate) fn build_unit_table(
                 _ => {}
             }
         }
+        out.extend(
+            errors
+                .into_iter()
+                .map(|e| (parsed[i].identity_path.clone(), e)),
+        );
     }
     for &i in indices {
+        let mut errors: Vec<CompileError> = Vec::new();
         for item in parsed[i].items() {
             let CommonsItem::Fn(f) = item else { continue };
             match &f.name {
@@ -516,6 +534,11 @@ pub(crate) fn build_unit_table(
                 }
             }
         }
+        out.extend(
+            errors
+                .into_iter()
+                .map(|e| (parsed[i].identity_path.clone(), e)),
+        );
     }
     table
 }
@@ -579,11 +602,17 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
     idx
 }
 
-pub(crate) fn uses_span_of(parsed: &[ParsedFile], indices: &[usize], target: &str) -> Option<Span> {
+/// #696: returns the `parsed` index of the owning file alongside the `uses`
+/// clause span, so the caller can attribute the diagnostic to that file.
+pub(crate) fn uses_span_of(
+    parsed: &[ParsedFile],
+    indices: &[usize],
+    target: &str,
+) -> Option<(usize, Span)> {
     for &i in indices {
         for u in parsed[i].uses() {
             if u.target.joined() == target {
-                return Some(u.span);
+                return Some((i, u.span));
             }
         }
     }
@@ -853,32 +882,36 @@ pub(crate) fn combined_types_for(
     out
 }
 
+/// #696: returns the `parsed` index of the owning file alongside the `consumes`
+/// clause span, so the caller can attribute the diagnostic to that file.
 pub(crate) fn consumes_span_of(
     parsed: &[ParsedFile],
     indices: &[usize],
     target: &str,
-) -> Option<Span> {
+) -> Option<(usize, Span)> {
     for &i in indices {
         for c in parsed[i].consumes() {
             if c.target.joined() == target {
-                return Some(c.span);
+                return Some((i, c.span));
             }
         }
     }
     None
 }
 
+/// #696: returns the `parsed` index of the owning file alongside the alias span,
+/// so the caller can attribute the diagnostic to that file.
 pub(crate) fn parsed_alias_span(
     parsed: &[ParsedFile],
     indices: &[usize],
     alias: &str,
-) -> Option<Span> {
+) -> Option<(usize, Span)> {
     for &i in indices {
         for c in parsed[i].consumes() {
             if let Some(a) = &c.alias
                 && a.name == alias
             {
-                return Some(a.span);
+                return Some((i, a.span));
             }
         }
     }

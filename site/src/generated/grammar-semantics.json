@@ -990,6 +990,10 @@
     {
       "code": "bynk.resolve.duplicate_type",
       "summary": "Two types share a name."
+    },
+    {
+      "code": "bynk.resolve.reserved_builtin_type",
+      "summary": "A type declaration reuses a compiler-known built-in type name."
     }
   ],
   "uses_decl": [

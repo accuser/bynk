@@ -27,7 +27,7 @@ pub fn render_errors(errors: &[CompileError], source: &str, filename: &str) -> S
     let mut out = Vec::new();
     let mut cache = (filename, Source::from(source));
     for err in errors {
-        err.report_for(filename, source.len())
+        err.report_for(filename, source)
             .write(&mut cache, &mut out)
             .expect("write to Vec<u8> cannot fail");
     }
@@ -42,7 +42,7 @@ pub fn render_errors_plain(errors: &[CompileError], source: &str, filename: &str
     let mut out = Vec::new();
     let mut cache = (filename, Source::from(source));
     for err in errors {
-        err.report_plain_for(filename, source.len())
+        err.report_plain_for(filename, source)
             .write(&mut cache, &mut out)
             .expect("write to Vec<u8> cannot fail");
     }
@@ -53,7 +53,7 @@ pub fn render_errors_plain(errors: &[CompileError], source: &str, filename: &str
 pub fn print_errors(errors: &[CompileError], source: &str, filename: &str) {
     let mut cache = (filename, Source::from(source));
     for err in errors {
-        let _ = err.report_for(filename, source.len()).eprint(&mut cache);
+        let _ = err.report_for(filename, source).eprint(&mut cache);
     }
 }
 
@@ -181,6 +181,27 @@ mod tests {
         assert!(
             rendered.contains("parameter declared here"),
             "label text survives as a note:\n{rendered}"
+        );
+    }
+
+    /// A cross-file label whose byte span is *in-bounds* but lands mid-codepoint
+    /// (the file it really belongs to has non-ASCII text) must be demoted, not
+    /// fed to ariadne — a byte offset splitting a codepoint panics its byte→char
+    /// mapping (#716). The rendered source here is all multi-byte, so an odd
+    /// offset is never a char boundary.
+    #[test]
+    fn mid_codepoint_label_demotes_to_note() {
+        let source = "café ☕\n"; // `é` and `☕` are multi-byte
+        let err = CompileError::new("bynk.test.example", Span::new(0, 3), "problem here")
+            .with_label(
+                Span::new(4, 5),
+                "declared here (mid-codepoint, another file)",
+            );
+        // Must not panic, and the label survives as a note rather than a caret.
+        let rendered = render_errors_plain(&[err], source, "probe.bynk");
+        assert!(
+            rendered.contains("declared here (mid-codepoint, another file)"),
+            "a mid-codepoint label must survive as a note:\n{rendered}"
         );
     }
 }

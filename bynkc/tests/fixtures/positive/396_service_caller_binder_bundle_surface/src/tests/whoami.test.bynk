@@ -1,0 +1,6 @@
+suite app.b {
+  case "whoami reads a caller identity at the unit tier" {
+    let r <- whoami.call("ping")
+    expect r is Ok(_)
+  }
+}
