@@ -25,7 +25,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "0.205.1"
+version = "0.206.0"
 # Minimum supported Rust version. Edition 2024 floors it at 1.85, but `oxc`
 # (the TS→JS stripper behind `bynk-strip`, in-browser track slice 1) requires
 # rustc 1.94, so the effective floor rose to match it — set to 1.95 (the pinned
@@ -40,16 +40,16 @@ homepage = "https://github.com/accuser/bynk"
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
 # dependency requirement; path is used for in-workspace builds.
-bynk-syntax = { path = "bynk-syntax", version = "0.205.1" }
-bynk-render = { path = "bynk-render", version = "0.205.1" }
-bynk-check = { path = "bynk-check", version = "0.205.1" }
-bynk-emit = { path = "bynk-emit", version = "0.205.1" }
-bynk-driver = { path = "bynk-driver", version = "0.205.1" }
-bynk-strip = { path = "bynk-strip", version = "0.205.1" }
-bynk-ide = { path = "bynk-ide", version = "0.205.1" }
-bynkc = { path = "bynkc", version = "0.205.1" }
-bynk-fmt = { path = "bynk-fmt", version = "0.205.1" }
-bynk-grammar = { path = "bynk-grammar", version = "0.205.1" }
+bynk-syntax = { path = "bynk-syntax", version = "0.206.0" }
+bynk-render = { path = "bynk-render", version = "0.206.0" }
+bynk-check = { path = "bynk-check", version = "0.206.0" }
+bynk-emit = { path = "bynk-emit", version = "0.206.0" }
+bynk-driver = { path = "bynk-driver", version = "0.206.0" }
+bynk-strip = { path = "bynk-strip", version = "0.206.0" }
+bynk-ide = { path = "bynk-ide", version = "0.206.0" }
+bynkc = { path = "bynkc", version = "0.206.0" }
+bynk-fmt = { path = "bynk-fmt", version = "0.206.0" }
+bynk-grammar = { path = "bynk-grammar", version = "0.206.0" }
 ariadne = "0.6"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"
