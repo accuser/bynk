@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The deploy ledger is written atomically and a truncated ledger is rejected rather than re-minting every namespace
----
+# 0233 — The deploy ledger is written atomically and a truncated one is corruption
 
-## ADR: atomic-deploy-ledger-write
-title: The deploy ledger is written atomically and a truncated one is corruption
-summary: Temp-file + rename for the ledger write, and a zero-byte ledger fails the read
+- **Status:** Accepted (v0.208.2)
 
 **Context.** The `bynk.deploy.lock` ledger is the sole record of the persistent
 Cloudflare identity a project has provisioned (KV namespace ids, deployed
