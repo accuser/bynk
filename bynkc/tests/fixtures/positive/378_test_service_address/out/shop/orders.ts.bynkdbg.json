@@ -1,1 +1,0 @@
-{"add":"add(sku)","size":"size()","http_POST_cart_Param_sku":"POST \"/cart/:sku\"","http_GET_cart_size":"GET \"/cart/size\"","cron_sweeper_0":"cron \"0 0 * * *\"","queue_intake_0":"message"}
