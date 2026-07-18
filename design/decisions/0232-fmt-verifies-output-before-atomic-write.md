@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "`fmt` now verifies its output round-trips to the same code before writing (refusing with `bynk.fmt.roundtrip` rather than overwrite a file with mis-rendered or non-parsing output), writes in place atomically via a temp file + rename so an interrupted write can no longer truncate or empty the source, and honours `--check` on stdin (`bynk fmt --check -` reports a diff and exits non-zero instead of echoing the reformat and passing green)"
----
+# 0232 — The formatter verifies its output round-trips before atomically writing it
 
-## ADR: fmt-verifies-output-before-atomic-write
-title: The formatter verifies its output round-trips before atomically writing it
-summary: Why `fmt` re-parses and compares its output against the input, writes via temp-file + rename, and honours `--check` on stdin
+- **Status:** Accepted (v0.208.1)
 
 **Context.** `bynk fmt` / `bynkc fmt` (one body, `bynk_driver::run_fmt`)
 overwrote each input with whatever `bynk_fmt::format_source` returned. Three
