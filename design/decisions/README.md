@@ -17,6 +17,8 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0224](0224-service-record-field-validation.md) | **Record field-set validation reaches service/agent handler bodies** (v0.203) — Why the missing/unknown/duplicate-field checks moved into the checker's record-construction path | Accepted (v0.203) |
+| [0223](0223-matches-no-nested-quantifiers.md) | **A `Matches` refinement rejects nested unbounded quantifiers (ReDoS guard)** (v0.202) — Why refined-string patterns forbid star height ≥ 2, and how it is detected | Accepted (v0.202) |
 | [0222](0222-http-route-path-escape.md) | **Route paths flow through the canonical TypeScript string escaper** (v0.201) — Every router emit site escapes a route path through `escape_ts_string`, not an ad-hoc quote-only replace | Accepted (v0.201) |
 | [0221](0221-wrangler-toml-string-escape.md) | **Escape queue names and cron expressions in emitted `wrangler.toml`** (v0.200) — TOML-escape the two source-literal values interpolated into a Worker's deploy config | Accepted (v0.200) |
 | [0220](0220-held-linearity-in-fn-bodies.md) | **Enforce held-resource linearity in fn and method bodies** (v0.199) — Run the linearity pass over every body that can bind a held value, not only handlers | Accepted (v0.199) |
