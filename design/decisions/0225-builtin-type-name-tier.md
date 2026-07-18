@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Reject redeclaring a built-in type name (`List`, `Query`, `QueueResult`, …) with `bynk.resolve.reserved_builtin_type`; document keywords as three tiers
----
+# 0225 — Built-in type names are a named, reserved tier; redeclaring one is an error
 
-## ADR: builtin-type-name-tier
-title: Built-in type names are a named, reserved tier; redeclaring one is an error
-summary: Name the three identifier-reservation tiers and reject `type <builtin> = …`
+- **Status:** Accepted (v0.204)
 
 **Context.** Bynk's identifier namespace had three de-facto reservation tiers
 with no shared representation and contradictory documentation:
