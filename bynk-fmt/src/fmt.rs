@@ -78,15 +78,7 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
     // with `"\n"` inserts one blank line between units and leaves a single-unit
     // file byte-identical.
     let units = parse_units(&tokens, source).map_err(|errors| FormatError { errors })?;
-    let parts: Vec<String> = units
-        .iter()
-        .map(|unit| {
-            let mut f = Formatter::new(opts);
-            f.format_unit(unit);
-            f.finish()
-        })
-        .collect();
-    let output = parts.join("\n");
+    let output = render_units(&units, opts);
     // #523 guard: trivia is only attached at declaration/statement
     // granularity, so a comment inside an expression subtree can be silently
     // dropped. Losing user text is worse than leaving a file unformatted —
@@ -97,7 +89,101 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
             errors: vec![error],
         });
     }
+    // #735 guard: the printer is hand-written and dodges several parse traps by
+    // convention (a tail `()` re-attaching as a call, a trailing comma making a
+    // param list unparseable). A shape the corpus misses that the printer
+    // mis-renders would otherwise be written straight over the user's file with
+    // exit 0. Before returning, re-parse the output and compare its *code*
+    // structure — every comment stripped from both sides, so trivia re-flow is
+    // ignored — against the input. When the output fails to re-parse, or a
+    // shape round-trips to a different AST, refuse rather than corrupt.
+    if let Some(error) = roundtrip_divergence(source, &output, opts) {
+        return Err(FormatError {
+            errors: vec![error],
+        });
+    }
     Ok(output)
+}
+
+/// Format every top-level unit and join with a blank line. A file may hold more
+/// than one top-level unit (v0.113, an atomic `commons` + `suite` file,
+/// DECISION S). Each unit's output already ends in exactly one newline, so
+/// joining with `"\n"` inserts one blank line between units and leaves a
+/// single-unit file byte-identical.
+fn render_units(units: &[SourceUnit], opts: &FormatOptions) -> String {
+    let parts: Vec<String> = units
+        .iter()
+        .map(|unit| {
+            let mut f = Formatter::new(opts);
+            f.format_unit(unit);
+            f.finish()
+        })
+        .collect();
+    parts.join("\n")
+}
+
+/// #735: the comment-free canonical rendering of `source` — every `Comment`
+/// token dropped before parsing, so the result carries no trivia and reflects
+/// only the code structure. Because the parser strips comments the same way
+/// ([`split_trivia`]), pre-filtering them changes nothing structural; it just
+/// leaves the trivia fields empty so the formatter emits pure code. Returns the
+/// parse errors when `source` does not tokenize or parse.
+fn code_only_canonical(source: &str, opts: &FormatOptions) -> Result<String, Vec<CompileError>> {
+    let tokens = tokenize(source).map_err(|e| vec![e])?;
+    let code: Vec<Token> = tokens
+        .into_iter()
+        .filter(|t| t.kind != TokenKind::Comment)
+        .collect();
+    let units = parse_units(&code, source)?;
+    Ok(render_units(&units, opts))
+}
+
+/// #735: refuse when the formatter's `output` does not round-trip to the same
+/// code as `source`. Both sides are reduced to their comment-free canonical
+/// form ([`code_only_canonical`]) and compared: the formatter only re-flows
+/// whitespace and trivia, so for a faithful render the two canonical strings
+/// are byte-identical. A mismatch means either the output no longer parses (the
+/// data-loss vector) or the printer altered the AST. `None` when the output is
+/// safe to write.
+fn roundtrip_divergence(source: &str, output: &str, opts: &FormatOptions) -> Option<CompileError> {
+    // The output MUST re-parse to the same structure; a failure here is the
+    // core corruption vector this guard exists to stop.
+    let canon_out = match code_only_canonical(output, opts) {
+        Ok(canon) => canon,
+        Err(errors) => {
+            return Some(roundtrip_error(
+                errors.first().map(|e| e.span).unwrap_or_default(),
+                "the formatter produced output that no longer parses",
+            ));
+        }
+    };
+    // The input already tokenized and parsed in `format_source`, so its
+    // canonical form should always compute. If it unexpectedly does not, do not
+    // block a valid format on our own guard failing — leave the file writable.
+    let canon_in = code_only_canonical(source, opts).ok()?;
+    (canon_in != canon_out).then(|| {
+        roundtrip_error(
+            Span::default(),
+            "the formatter's output does not round-trip to the same code",
+        )
+    })
+}
+
+/// Build the `bynk.fmt.roundtrip` diagnostic shared by both failure modes of
+/// [`roundtrip_divergence`].
+fn roundtrip_error(span: Span, what: &str) -> CompileError {
+    CompileError {
+        category: "bynk.fmt.roundtrip",
+        span,
+        message: format!("{what} — the file was left unchanged"),
+        labels: Vec::new(),
+        notes: vec![
+            "this is a formatter bug, not a problem with your source; please report it \
+             with the file that triggered it"
+                .to_string(),
+        ],
+        suggestions: Vec::new(),
+    }
 }
 
 /// #523: compare the comment population of `source` (already tokenized as
@@ -2395,6 +2481,55 @@ mod tests {
         let out = fmt(src);
         assert!(out.contains("-- TODO"));
         assert_eq!(out, fmt(&out));
+    }
+
+    // -- #735 round-trip guard --
+
+    #[test]
+    fn code_only_canonical_ignores_comments() {
+        // Two sources whose only difference is comments must reduce to the same
+        // comment-free canonical form — this is what lets the round-trip guard
+        // compare structure while the formatter re-flows trivia freely.
+        let opts = FormatOptions::default();
+        let bare = "commons x { type T = Int where Positive }";
+        let commented = "commons x {\n-- a note\ntype T = Int where Positive  -- trailing\n}";
+        assert_eq!(
+            code_only_canonical(bare, &opts).unwrap(),
+            code_only_canonical(commented, &opts).unwrap(),
+        );
+    }
+
+    #[test]
+    fn roundtrip_guard_accepts_faithful_output() {
+        // The formatter's own output over a real source must round-trip.
+        let opts = FormatOptions::default();
+        let src = "commons x { fn add(a: Int, b: Int) -> Int { a + b } }";
+        let out = format_source(src, &opts).unwrap();
+        assert!(roundtrip_divergence(src, &out, &opts).is_none());
+    }
+
+    #[test]
+    fn roundtrip_guard_rejects_non_parsing_output() {
+        // Simulate a printer that emitted garbage: the output no longer parses,
+        // so the guard must fire rather than let it be written.
+        let opts = FormatOptions::default();
+        let src = "commons x { type T = Int where Positive }";
+        let corrupt = "commons x { type T = ";
+        let err =
+            roundtrip_divergence(src, corrupt, &opts).expect("must reject non-parsing output");
+        assert_eq!(err.category, "bynk.fmt.roundtrip");
+    }
+
+    #[test]
+    fn roundtrip_guard_rejects_structural_divergence() {
+        // Simulate a printer that emitted parseable-but-wrong code: the output
+        // parses, but to a different AST than the input. The guard must catch it.
+        let opts = FormatOptions::default();
+        let src = "commons x { type T = Int where Positive }";
+        let wrong = "commons x { type T = Bool }";
+        let err =
+            roundtrip_divergence(src, wrong, &opts).expect("must reject structural divergence");
+        assert_eq!(err.category, "bynk.fmt.roundtrip");
     }
 
     #[test]
