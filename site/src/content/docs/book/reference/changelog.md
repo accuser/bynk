@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.206.1** | The playground wasm installs a panic hook and converts an internal compiler panic to a diagnostic, so adversarial input no longer traps as an opaque RuntimeError (#717) |
 | **v0.206.0** | Unresolvable explicit call type arguments, `Json.decode[T]` targets, and lambda parameter annotations in handler bodies are now reported instead of silently swallowed |
 | **v0.205.1** | Project-level `check`/`compile` diagnostics (consumes cycles, path/name mismatches, the reserved-namespace and adapter-binding checks, `uses`/`consumes`/`exports` validation, provider signature matching, …) now render with ariadne source context in directory mode instead of the plain `[category] message` fallback |
 | **v0.205.0** | A bundle-mode `on call … by c: Caller` handler reads a live `CallerId` — its emitted `makeSurface` deploy surface threads the calling context's name into `deps.identity`, where it previously emitted `deps` without the field and broke `tsc` |

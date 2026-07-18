@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The playground wasm installs a panic hook and converts an internal compiler panic to a diagnostic, so adversarial input no longer traps as an opaque RuntimeError (#717)
----
+# 0229 — Bound the blast radius of an internal compiler panic in the playground wasm
 
-## ADR: wasm-panic-hardening
-title: Bound the blast radius of an internal compiler panic in the playground wasm
-summary: A panic hook for legibility on wasm, plus a catch_unwind boundary that converts panics to diagnostics on the native path
+- **Status:** Accepted (v0.206.1)
 
 **Context.** `bynk-wasm` runs the full lexer/parser/checker/emitter pipeline on
 arbitrary playground input. Every non-panic failure is already returned as a
