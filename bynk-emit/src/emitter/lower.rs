@@ -4309,7 +4309,19 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
         Pattern::Variant { .. } => {
             let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
             let mut tests = Vec::new();
+            // For a loose scrutinee, a *multi*-payload nested pattern would map
+            // every positional field to the single-field `"value"` fallback; that
+            // is unreachable today (the only loose variant sums — the `Wire`
+            // outcome's rejection kinds — are single-field) and is shared with
+            // `match`'s lowering. Precise for any typed scrutinee.
             pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
+            // `pattern_match_tests` always pushes the outer `.tag` test for a
+            // variant pattern, so a variant `is` is never vacuously `true` — a
+            // silently-passing `expect` is exactly the failure this reuse removes.
+            debug_assert!(
+                !tests.is_empty(),
+                "a variant `is` pattern must emit at least its outer tag test"
+            );
             if tests.is_empty() {
                 "true".to_string()
             } else {
