@@ -47,7 +47,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # create the GitHub Release and upload assets
+  contents: read # least-privilege default; the github-release job requests contents: write for itself
 
 jobs:
   # Gate every publish on a green test run AND on the tag matching the version
