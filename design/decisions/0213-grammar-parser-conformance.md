@@ -1,11 +1,6 @@
----
-level: minor
-changelog: The tree-sitter grammar and the compiler parser are held in agreement by a cross-parser conformance test; `Bytes` joins the grammar's base types, built-in generic arity is expressed in the grammar, and a lowercase sum/enum variant name is rejected (`bynk.parse.variant_name_case`)
----
+# 0213 — The normative grammar is tied to the compiler parser by a conformance test
 
-## ADR: grammar-parser-conformance
-title: The normative grammar is tied to the compiler parser by a conformance test
-summary: Close the tree-sitter/recursive-descent seam and the three drifts living in it
+- **Status:** Accepted (v0.192)
 
 **Context.** Bynk has two parsers. The compiler parses with the hand-written
 recursive-descent parser in `bynk-syntax`; the editor tooling — and the
