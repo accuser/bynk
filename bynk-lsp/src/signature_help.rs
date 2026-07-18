@@ -125,9 +125,13 @@ fn top_level_commas(s: &str) -> usize {
 /// The callee immediately before the `(` — a bare `name` or `Recv.member`.
 fn callee_before(s: &str) -> Option<String> {
     let s = s.trim_end();
+    // Advance past the matched char by its UTF-8 length; a multi-byte
+    // non-identifier char (`"`, `€`, `—`, …) would make `i + 1` land
+    // mid-codepoint and panic the slice.
     let start = s
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_' || c == '.'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     let callee = &s[start..];
     if callee.is_empty() || callee.starts_with('.') || callee.ends_with('.') {
         return None;
@@ -339,6 +343,18 @@ mod tests {
         assert_eq!(call_context(t, t.len()).unwrap().callee, "Clock.now");
         assert!(call_context("  let x = 1", 11).is_none()); // not in a call
         assert!(call_context("  xs[", 4).is_none()); // a list index, not a call
+    }
+
+    #[test]
+    fn callee_extraction_survives_a_multibyte_char_before_the_callee() {
+        // A multi-byte non-identifier char before the callee used to make the
+        // `i + 1` byte offset land mid-codepoint → panic on slice (#715). `(`
+        // is a trigger char, so this fired on signature help inside a string.
+        assert_eq!(callee_before("\"Foo.bar"), Some("Foo.bar".to_string()));
+        assert_eq!(callee_before("€f"), Some("f".to_string()));
+        // The whole path: a call context whose prefix opens a string literal.
+        let t = "  \"€greet(";
+        let _ = call_context(t, t.len());
     }
 
     #[test]
