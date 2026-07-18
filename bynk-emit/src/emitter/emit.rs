@@ -67,6 +67,11 @@ pub(crate) fn emit_type(
 
 /// Emit a doc block as a JSDoc-style comment at the given indent. Each line
 /// of the doc body is prefixed with ` * `; empty lines become ` *`.
+///
+/// Doc-block bodies are copied verbatim from source, so a stray `*/` would
+/// otherwise close the JSDoc comment early and let the trailing text land as
+/// executable top-level TypeScript (issue #720). Escape it to `*\/`, which
+/// renders identically but can no longer terminate the comment.
 pub(crate) fn emit_doc_block(out: &mut String, doc: Option<&str>, indent: usize) {
     let Some(doc) = doc else { return };
     let indent_str: String = " ".repeat(indent);
@@ -76,7 +81,8 @@ pub(crate) fn emit_doc_block(out: &mut String, doc: Option<&str>, indent: usize)
         if trimmed.is_empty() {
             writeln!(out, "{indent_str} *").unwrap();
         } else {
-            writeln!(out, "{indent_str} * {trimmed}").unwrap();
+            let safe = trimmed.replace("*/", "*\\/");
+            writeln!(out, "{indent_str} * {safe}").unwrap();
         }
     }
     writeln!(out, "{indent_str} */").unwrap();
@@ -3239,5 +3245,52 @@ fn emit_ws_dispatch_handlers(out: &mut String, host: &WsOpenHost<'_>) {
         writeln!(out, "    await this.{method}({});", call_args.join(", ")).unwrap();
         writeln!(out, "  }}").unwrap();
         writeln!(out).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod doc_block_tests {
+    use super::emit_doc_block;
+
+    /// A `*/` in a doc body must not close the JSDoc comment early — otherwise
+    /// the trailing text lands as executable top-level TypeScript (issue #720).
+    #[test]
+    fn escapes_comment_terminator() {
+        let mut out = String::new();
+        emit_doc_block(
+            &mut out,
+            Some("docs */ ; (globalThis as any).PWNED = true; /*"),
+            0,
+        );
+        assert!(
+            !out.contains("*/ ;"),
+            "unescaped comment terminator leaked into output: {out}"
+        );
+        assert!(out.contains("*\\/ ;"), "expected escaped terminator: {out}");
+        // The single legitimate closer is the one we emit last.
+        assert_eq!(
+            out.matches("*/").count(),
+            1,
+            "exactly one real closer: {out}"
+        );
+        assert!(out.trim_end().ends_with("*/"));
+    }
+
+    /// Overlapping/adjacent terminators must not survive or re-form a `*/`
+    /// under the non-overlapping left-to-right `str::replace`. Pins the
+    /// behaviour against a future refactor away from `str::replace`.
+    #[test]
+    fn escapes_pathological_terminators() {
+        for body in ["*/*/", "**/", "*/*", "*/ */ */"] {
+            let mut out = String::new();
+            emit_doc_block(&mut out, Some(body), 0);
+            // The only surviving `*/` is the emitter's own trailing closer.
+            assert_eq!(
+                out.matches("*/").count(),
+                1,
+                "input {body:?} left a stray closer: {out}"
+            );
+            assert!(out.trim_end().ends_with("*/"), "input {body:?}: {out}");
+        }
     }
 }
