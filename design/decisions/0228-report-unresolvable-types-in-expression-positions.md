@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Unresolvable explicit call type arguments, `Json.decode[T]` targets, and lambda parameter annotations in handler bodies are now reported instead of silently swallowed
----
+# 0228 — Report unresolvable types at expression-position resolution sites
 
-## ADR: report-unresolvable-types-in-expression-positions
-title: Report unresolvable types at expression-position resolution sites
-summary: Type references in call type args, `Json.decode[T]`, and lambda params report when they fail to resolve
+- **Status:** Accepted (v0.206)
 
 **Context.** The resolver's reference walk validates every type reference in
 declarations and `fn`/method bodies, but it deliberately does not descend into

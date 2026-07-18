@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.205**.
+written against **v0.206**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.206.0** | Unresolvable explicit call type arguments, `Json.decode[T]` targets, and lambda parameter annotations in handler bodies are now reported instead of silently swallowed |
 | **v0.205.1** | Project-level `check`/`compile` diagnostics (consumes cycles, path/name mismatches, the reserved-namespace and adapter-binding checks, `uses`/`consumes`/`exports` validation, provider signature matching, …) now render with ariadne source context in directory mode instead of the plain `[category] message` fallback |
 | **v0.205.0** | A bundle-mode `on call … by c: Caller` handler reads a live `CallerId` — its emitted `makeSurface` deploy surface threads the calling context's name into `deps.identity`, where it previously emitted `deps` without the field and broke `tsc` |
 | **v0.204.0** | Reject redeclaring a built-in type name (`List`, `Query`, `QueueResult`, …) with `bynk.resolve.reserved_builtin_type`; document keywords as three tiers |
