@@ -1,0 +1,4 @@
+# #711: record construction in an agent handler body must validate the field
+# set (missing required + unknown extra), just as a service handler does.
+bynk.resolve.missing_field
+bynk.resolve.unknown_field

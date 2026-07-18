@@ -1,0 +1,7 @@
+# #711: a service handler body must run the full record field-set validation,
+# not just per-field types — missing required, unknown extra, duplicate init,
+# and shorthand-out-of-scope — across both the non-generic and generic paths.
+bynk.resolve.missing_field
+bynk.resolve.unknown_field
+bynk.resolve.duplicate_field_init
+bynk.resolve.unknown_name
