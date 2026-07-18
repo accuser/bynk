@@ -37,7 +37,11 @@ A predicate must apply to the base type (`bynk.types.predicate_base_mismatch`).
 An `InRange` with `lo > hi` is rejected (`bynk.types.inverted_range`), as is a set
 of predicates that admit no value (`bynk.types.empty_refinement`) or a negative
 length (`bynk.types.negative_length`). An invalid regex is
-`bynk.types.invalid_regex`.
+`bynk.types.invalid_regex`. A `Matches` regex that nests unbounded quantifiers
+(a repeated group that itself contains `*`, `+`, or `{n,}`, such as `(a+)+`) is
+rejected as `bynk.types.catastrophic_regex`: the emitted boundary check runs
+under the platform's backtracking `RegExp`, where that shape takes exponential
+time on crafted input (a denial-of-service risk on an untrusted boundary).
 
 ## `.of` — checked construction
 

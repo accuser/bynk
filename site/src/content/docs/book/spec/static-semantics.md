@@ -326,9 +326,13 @@ an `Int` is rejected (`bynk.types.predicate_base_mismatch`) — and MUST be
 internally consistent: an `InRange` MUST NOT be inverted
 (`bynk.types.inverted_range`), a length MUST NOT be negative
 (`bynk.types.negative_length`), a `Matches` regex MUST be valid
-(`bynk.types.invalid_regex`), and the predicates together MUST admit at least one
-value (`bynk.types.empty_refinement` — on `Float`, `Positive` excludes the
-lower endpoint `0.0`, so `InRange(-1.0, 0.0) && Positive` is empty).
+(`bynk.types.invalid_regex`) and MUST NOT nest unbounded quantifiers — a repeated
+group that itself contains `*`, `+`, or `{n,}`, such as `(a+)+`, is rejected
+(`bynk.types.catastrophic_regex`) because the emitted boundary check runs under a
+backtracking `RegExp` where that shape is exponential on crafted input — and the
+predicates together MUST admit at least one value (`bynk.types.empty_refinement`
+— on `Float`, `Positive` excludes the lower endpoint `0.0`, so
+`InRange(-1.0, 0.0) && Positive` is empty).
 
 `InRange` bounds MUST match the numeric base (v0.21): integer bounds on
 `Int`, float bounds on `Float`. A bound of the other numeric type, or a

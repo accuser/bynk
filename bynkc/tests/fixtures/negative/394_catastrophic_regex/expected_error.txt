@@ -1,0 +1,1 @@
+bynk.types.catastrophic_regex the pattern in `Matches("(a+)+")` nests unbounded quantifiers
