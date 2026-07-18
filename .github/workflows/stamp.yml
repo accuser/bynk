@@ -125,7 +125,8 @@ jobs:
 
           # Checkout persisted no credentials (see above), so authenticate each
           # remote operation with the App token via a one-shot, in-memory URL —
-          # never written to .git/config. GITHUB_TOKEN masks the token in logs.
+          # never written to .git/config. The runner masks the App token (a
+          # registered secret, via create-github-app-token) in logs.
           remote="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
 
           # A concurrent merge to main (e.g. a non-increment fix, which fires no
@@ -136,7 +137,7 @@ jobs:
           # failure after the retries is a real problem to investigate.
           for attempt in 1 2 3; do
             git push "$remote" HEAD:main && exit 0
-            echo "push rejected (attempt $attempt); rebasing onto origin/main and retrying"
+            echo "push rejected (attempt $attempt); rebasing onto main and retrying"
             git pull --rebase "$remote" main
           done
           git push "$remote" HEAD:main && exit 0
