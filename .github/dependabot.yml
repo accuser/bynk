@@ -33,3 +33,21 @@ updates:
     directory: "/vscode-bynk"
     schedule:
       interval: weekly
+
+  # The @bynk/runtime package bundled into the compiler via include_str!.
+  - package-ecosystem: npm
+    directory: "/bynk-emit/runtime"
+    schedule:
+      interval: weekly
+
+  # The in-browser playground (REPL). Its deploy job holds the Cloudflare token.
+  - package-ecosystem: npm
+    directory: "/playground"
+    schedule:
+      interval: weekly
+
+  # The Astro/Starlight docs site. Its deploy job holds the Cloudflare token.
+  - package-ecosystem: npm
+    directory: "/site"
+    schedule:
+      interval: weekly
