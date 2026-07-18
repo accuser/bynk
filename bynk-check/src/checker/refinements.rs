@@ -784,7 +784,7 @@ fn regex_matches_empty(pattern: &str) -> bool {
     }
 }
 
-/// #724 — detect the catastrophic-backtracking (ReDoS) signature: an unbounded
+/// #724 — detect one catastrophic-backtracking (ReDoS) signature: an unbounded
 /// quantifier applied to a group that itself contains an unbounded quantifier
 /// ("star height ≥ 2", e.g. `(a+)+`, `(a*)*b`, `((ab)+)+`). Under the JS
 /// backtracking `RegExp` the emitted boundary check runs, this class takes
@@ -795,13 +795,25 @@ fn regex_matches_empty(pattern: &str) -> bool {
 /// (finite) cannot explode. The scan is purely structural — the pattern is
 /// already known valid (`regress` accepted it) — so it need not model match
 /// semantics, only quantifier nesting through groups. Inner unbounded
-/// quantifiers propagate up through *bounded* quantifiers too, so
-/// `((a+)?)+` is still caught. This is a deliberately conservative
-/// approximation: it can reject some patterns that happen to be safe (a
-/// star-height-2 shape whose sub-expressions can never overlap), but every
-/// exponential-blowup pattern has star height ≥ 2, so none slips through. It
-/// does *not* target the lower-severity polynomial class (star height 1).
+/// quantifiers propagate up through *bounded* quantifiers too, so `((a+)?)+`
+/// is still caught. The check is conservative in the safe direction: it can
+/// reject a star-height-2 pattern whose sub-expressions provably never overlap,
+/// but every *nested-quantifier* blowup is flagged.
+///
+/// This does **not** cover the whole exponential class. Ambiguous alternation
+/// under a single quantifier — `(a|a)+`, `(\d|\d\d)+`, `(foo|foobar)+` — is
+/// exponential too (two distinct paths spell the same string, so a backtracker
+/// explores `2ⁿ` labelings of `aⁿ`), yet it is star height 1 and is *not*
+/// flagged here. Detecting it needs branch-overlap analysis and is a deferred
+/// follow-up (#724). Nor does this target the polynomial class (`\d*\d*`,
+/// quadratic). The guard closes the common nested-quantifier subclass, not
+/// catastrophic backtracking in general.
 fn has_nested_unbounded_quantifier(pat: &str) -> bool {
+    // Precondition: `pat` is a valid regex (`regress` accepted it), so its
+    // parentheses are balanced. The `stack.last_mut().unwrap()` arms below rely
+    // on that — a `)` never pops the root frame — which the sole caller ensures
+    // by running this only after the validity check. The `)` arm keeps a
+    // defensive `unwrap_or` regardless.
     let chars: Vec<char> = pat.chars().collect();
     // One boolean per open group (index 0 = top level): does this group contain
     // an unbounded quantifier anywhere within it?
@@ -1010,8 +1022,21 @@ mod redos_tests {
         assert!(!redos("(ab)+")); // repeated group with no inner quantifier
         assert!(!redos("(a+)?")); // bounded outer quantifier
         assert!(!redos("(a+){2,3}")); // finite outer bound
+        assert!(!redos("(a{2,3})+")); // finite *inner* bound cannot explode
         assert!(!redos("[a-z]+")); // `+` binds the class, not a group
         assert!(!redos("a{2,}b{2,}")); // two unbounded, neither nested
+    }
+
+    #[test]
+    fn does_not_flag_known_deferred_exponential_cases() {
+        // Ambiguous alternation under a single quantifier is exponential (EDA)
+        // but star height 1, so the nested-quantifier detector does *not* flag
+        // it — a knowingly-deferred follow-up (branch-overlap analysis, #724).
+        // Pinned here so the scope boundary is explicit and nobody later assumes
+        // these are covered.
+        assert!(!redos("(a|a)+"));
+        assert!(!redos("(\\d|\\d\\d)+"));
+        assert!(!redos("(foo|foobar)+"));
     }
 
     #[test]

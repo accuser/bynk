@@ -30,20 +30,25 @@ applied to a sub-expression that itself contains an unbounded quantifier. Inner
 unbounded quantifiers propagate up through bounded ones, so `((a+)?)+` is caught
 too. The rule is a deliberately conservative approximation — it can reject a
 star-height-2 pattern whose sub-expressions provably never overlap — but every
-exponential-blowup pattern has star height ≥ 2, so none slips through. The
-diagnostic teaches the author to restructure so no unbounded quantifier nests
-inside another.
+*nested-quantifier* blowup is flagged (see the deferred cases below for what it
+does not cover). The diagnostic teaches the author to restructure so no
+unbounded quantifier nests inside another.
 
 **Consequences.** A refined-string pattern that could hang a Worker on crafted
-input now fails to compile with a spanned diagnostic, closing an
+input now fails to compile with a spanned diagnostic, closing a common
 unauthenticated-DoS class at the source rather than shipping it to the
 boundary. This is a language increment: a `Matches` pattern that nests unbounded
 quantifiers — vanishingly rare in a real validator, which wants a *linear*
-shape anyway — is rejected where it previously compiled. The guard is
-intentionally scoped to the **exponential** (star-height ≥ 2) class; the
-lower-severity **polynomial** class (star height 1, e.g. `(a|a)+`) is out of
-scope, as is bounding validation input length, and both remain available as
-later defense-in-depth. The emitted check still reconstructs its `RegExp` per
-`.of()` call rather than hoisting it to a module constant (an orthogonal
-efficiency nit noted in #724); that is deferred, as it is now the compilation
-of a pattern proven free of catastrophic backtracking.
+shape anyway — is rejected where it previously compiled.
+
+The guard is intentionally scoped to the **nested-quantifier** subclass
+(star height ≥ 2). It does **not** close catastrophic backtracking in general.
+Two families are knowingly deferred: (a) *ambiguous alternation* under a single
+quantifier — `(a|a)+`, `(\d|\d\d)+`, `(foo|foobar)+` — which is also
+**exponential** (EDA: two paths spell the same string, so `2ⁿ` labelings of
+`aⁿ` are explored) yet star height 1, so this structural check cannot see it —
+detecting it needs branch-overlap analysis; and (b) the lower-severity
+**polynomial** class (e.g. `\d*\d*`, quadratic). Both, plus bounding validation
+input length, remain available as later defense-in-depth. The emitted check
+still reconstructs its `RegExp` per `.of()` call rather than hoisting it to a
+module constant (an orthogonal efficiency nit noted in #724); that is deferred.
