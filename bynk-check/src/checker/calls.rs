@@ -141,6 +141,21 @@ pub(crate) fn check_fn(
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
         return;
     };
+    // #718: run the held-resource linearity pass over `fn`/method bodies too, not
+    // just handlers. The caller side treats passing a held value into a function
+    // as a transfer (disposal), so the callee *owns* any held parameter and must
+    // dispose it (close, store, or transfer) before returning — otherwise a
+    // `swallow(c)` leaks and a double `c.close()` goes undiagnosed. No parameter
+    // is borrowed here (the borrowed case is a handler's firing connection), so
+    // the borrowed set is empty; every held param is seeded owned.
+    linearity::check(
+        &f.body,
+        &f.params,
+        &input.types,
+        ctx.expr_types,
+        &HashSet::new(),
+        ctx.errors,
+    );
     if !compatible(&body_ty, &return_ty) {
         ctx.errors.push(
             CompileError::new(

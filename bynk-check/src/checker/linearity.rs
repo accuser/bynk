@@ -105,7 +105,7 @@ impl Lin<'_> {
                 "bynk.held.leak",
                 span,
                 format!(
-                    "held value `{name}` is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns"
+                    "held value `{name}` is still owned at scope exit — it must be disposed (stored, closed, or transferred) before returning"
                 ),
             )
             .with_note("store it (`<map>.put(k, conn)`), close it (`conn.close()`), or pass it to a function that consumes it"),
