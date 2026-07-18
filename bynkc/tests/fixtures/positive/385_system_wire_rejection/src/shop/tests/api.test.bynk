@@ -5,11 +5,11 @@ suite shop.api as system {
   }
   case "an empty sku is rejected at the boundary before the handler" {
     let r <- api.POST("/cart", Wire("{\"sku\": \"\"}")) by User("alice")
-    expect r is Rejected(_)
+    expect r is Rejected(RefinementViolation(_))
   }
   case "malformed json is rejected at the boundary" {
     let r <- api.POST("/cart", Wire("{not json")) by User("alice")
-    expect r is Rejected(_)
+    expect r is Rejected(MalformedJson(_))
   }
   case "valid raw input passes the boundary to the handler" {
     let r <- api.POST("/cart", Wire("{\"sku\": \"raw-ok\"}")) by User("alice")

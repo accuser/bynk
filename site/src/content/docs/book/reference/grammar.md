@@ -1163,7 +1163,10 @@ match s {
 {{#grammar is_expr}}
 
 A refinement/variant check that also narrows the value's type in the `true`
-branch.
+branch. A variant pattern's **nested payload patterns are structural tests too**:
+`r is Rejected(RefinementViolation(_))` tests the outer tag *and* the inner one,
+the same tests a `match` arm applies. A payload bound to a plain name (`is Ok(x)`)
+or a wildcard (`is Ok(_)`) adds no nested test — it only narrows.
 
 **Static semantics.**
 {{#grammar-semantics is_expr}}

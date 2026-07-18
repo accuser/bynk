@@ -92,7 +92,7 @@ async function test_an_empty_sku_is_rejected_at_the_boundary_before_the_handler(
   try {
     const deps = makeHarness();
     const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"\"}", "alice");
-    if (!(r.tag === "Rejected")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:8:12", 352, 368, "expect r is Rejected(_)"); }
+    if (!(r.tag === "Rejected" && r.value.tag === "RefinementViolation")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:8:12", 352, 389, "expect r is Rejected(RefinementViolation(_))"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -106,7 +106,7 @@ async function test_malformed_json_is_rejected_at_the_boundary() {
   try {
     const deps = makeHarness();
     const r = await __sysdrive_raw_api_http_POST_cart("{not json", "alice");
-    if (!(r.tag === "Rejected")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:12:12", 505, 521, "expect r is Rejected(_)"); }
+    if (!(r.tag === "Rejected" && r.value.tag === "MalformedJson")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:12:12", 526, 557, "expect r is Rejected(MalformedJson(_))"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -120,7 +120,7 @@ async function test_valid_raw_input_passes_the_boundary_to_the_handler() {
   try {
     const deps = makeHarness();
     const r = await __sysdrive_raw_api_http_POST_cart("{\"sku\": \"raw-ok\"}", "alice");
-    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:16:12", 678, 693, "expect r is Handled(_)"); }
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:16:12", 714, 729, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -134,7 +134,7 @@ async function test_a_handler_returned_400_is_Handled__not_a_boundary_rejection(
   try {
     const deps = makeHarness();
     const r = await __sysdrive_raw_api_http_POST_reject("{\"sku\": \"ok\"}", "alice");
-    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:20:12", 857, 872, "expect r is Handled(_)"); }
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:20:12", 893, 908, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

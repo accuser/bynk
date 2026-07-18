@@ -3166,9 +3166,85 @@ pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut C
                     ));
                 }
             }
+            // #710 review: `is` now *tests* nested refutable payload patterns
+            // (they lower like a `match` arm), so it must *check* them too — a
+            // mistyped nested variant over a typed scrutinee is a compile error,
+            // not a silently never-matching branch. Bindings/wildcards are inert
+            // (narrowing only). The loose scrutinee has no `variants` and never
+            // reaches here, so this validates exactly the typed path.
+            let payload = info.payload.clone();
+            validate_is_nested_payloads(bindings, &payload, ctx);
         }
     }
     Some(Ty::Base(BaseType::Bool))
+}
+
+/// #710 review: validate a nested (`is`) payload pattern against its statically
+/// known type — variant existence and, recursively, its own payloads. Mirrors
+/// `check_pattern`'s variant checks but **binds nothing** (a nested `is` payload
+/// only tests; depth-1 narrowing names are collected separately). Non-variant
+/// leaves (wildcard / name binding / literal) are inert here.
+fn validate_is_pattern(pattern: &Pattern, ty: &Ty, ctx: &mut Ctx) {
+    let Pattern::Variant {
+        variant, bindings, ..
+    } = pattern
+    else {
+        return;
+    };
+    // `variants_of` returns an owned list, so no borrow of `ctx.input` is held
+    // across the error pushes / recursion below.
+    let payload = match variants_of(ty, &ctx.input.types) {
+        None => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.pattern_type_mismatch",
+                pattern.span(),
+                format!(
+                    "variant pattern `{}` cannot match a value of type `{}`",
+                    variant.name,
+                    ty.display()
+                ),
+            ));
+            return;
+        }
+        Some(vs) => match vs.into_iter().find(|v| v.name == variant.name) {
+            Some(info) => info.payload,
+            None => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.unknown_variant_in_pattern",
+                    pattern.span(),
+                    format!("type `{}` has no variant `{}`", ty.display(), variant.name),
+                ));
+                return;
+            }
+        },
+    };
+    validate_is_nested_payloads(bindings, &payload, ctx);
+}
+
+/// Recurse into a variant pattern's refutable payload bindings, validating each
+/// against the payload field's type (#710 review). Irrefutable bindings
+/// (wildcard / name) add no test and are skipped.
+fn validate_is_nested_payloads(
+    bindings: &[PatternBinding],
+    payload: &[(String, Ty)],
+    ctx: &mut Ctx,
+) {
+    for (i, b) in bindings.iter().enumerate() {
+        let sub = b.pattern();
+        if sub.is_irrefutable() {
+            continue;
+        }
+        let field_ty = match &b.kind {
+            PatternBindingKind::Named { field, .. } => payload
+                .iter()
+                .find(|(n, _)| n == &field.name)
+                .map(|(_, t)| t),
+            PatternBindingKind::Positional { .. } => payload.get(i).map(|(_, t)| t),
+        };
+        if let Some(ty) = field_ty.cloned() {
+            validate_is_pattern(sub, &ty, ctx);
+        }
+    }
 }
 
 /// Collect the bindings introduced by `is` patterns inside a condition
