@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A route path containing a backslash, newline, or tab is now escaped through the canonical string escaper at every router emit site — previously only `"` was escaped, so an internal backslash silently drifted the emitted path (`\b` read as backspace) and a trailing backslash escaped the closing quote and failed to compile the Worker (#721)
----
+# 0222 — Route paths flow through the canonical TypeScript string escaper
 
-## ADR: http-route-path-escape
-title: Route paths flow through the canonical TypeScript string escaper
-summary: Every router emit site escapes a route path through `escape_ts_string`, not an ad-hoc quote-only replace
+- **Status:** Accepted (v0.201)
 
 **Context.** A route path is a `GET("…")` string literal, and the lexer permits
 that literal to contain `\n`, `\t`, `\\`, and `\"`
