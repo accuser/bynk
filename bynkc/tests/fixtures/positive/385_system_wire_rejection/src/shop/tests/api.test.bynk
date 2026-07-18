@@ -19,6 +19,10 @@ suite shop.api as system {
     let r <- api.POST("/cart", Item { sku: "widget" }) by Nobody
     expect r is Rejected(Unauthorized)
   }
+  case "the wrong method is a 405 fall-through" {
+    let r <- api.DELETE("/cart")
+    expect r is Rejected(MethodNotAllowed)
+  }
   case "a handler-returned 400 is Handled, not a boundary rejection" {
     let r <- api.POST("/reject", Wire("{\"sku\": \"ok\"}")) by User("alice")
     expect r is Handled(_)

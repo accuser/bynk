@@ -87,6 +87,12 @@ async function __sysdrive_noauth_api_http_POST_reject(body: any, __sub: string) 
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToUnauthOutcome(__res, shop_api.deserialise_Item);
 }
+async function __sysdrive_wrongmethod_api(method: string, path: string) {
+  const __h = makeHarness();
+  const __req = new Request(`https://test${path}`, { method });
+  const __res = await __h.env.SHOP_API.fetch(__req);
+  return responseToHttpOutcome(__res, (__j: JsonValue) => Ok(__j as never));
+}
 
 async function test_a_typed_create_returns_Created_over_the_real_wire() {
   try {
@@ -158,11 +164,25 @@ async function test_no_credential_is_rejected_at_the_seam() {
   }
 }
 
+async function test_the_wrong_method_is_a_405_fall_through() {
+  try {
+    const deps = makeHarness();
+    const r = await __sysdrive_wrongmethod_api("DELETE", "/cart");
+    if (!(r.tag === "Rejected" && r.value.tag === "MethodNotAllowed")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:24:12", 985, 1016, "expect r is Rejected(MethodNotAllowed)"); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 async function test_a_handler_returned_400_is_Handled__not_a_boundary_rejection() {
   try {
     const deps = makeHarness();
     const r = await __sysdrive_raw_api_http_POST_reject("{\"sku\": \"ok\"}", "alice");
-    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:24:12", 1050, 1065, "expect r is Handled(_)"); }
+    if (!(r.tag === "Handled")) { throw __bynkExpectFailure("shop/tests/api.test.bynk:28:12", 1180, 1195, "expect r is Handled(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -180,6 +200,7 @@ export async function run(only?: string) {
   if (want("malformed json is rejected at the boundary")) results.push({ name: "malformed json is rejected at the boundary", ...(await test_malformed_json_is_rejected_at_the_boundary()) });
   if (want("valid raw input passes the boundary to the handler")) results.push({ name: "valid raw input passes the boundary to the handler", ...(await test_valid_raw_input_passes_the_boundary_to_the_handler()) });
   if (want("no credential is rejected at the seam")) results.push({ name: "no credential is rejected at the seam", ...(await test_no_credential_is_rejected_at_the_seam()) });
+  if (want("the wrong method is a 405 fall-through")) results.push({ name: "the wrong method is a 405 fall-through", ...(await test_the_wrong_method_is_a_405_fall_through()) });
   if (want("a handler-returned 400 is Handled, not a boundary rejection")) results.push({ name: "a handler-returned 400 is Handled, not a boundary rejection", ...(await test_a_handler_returned_400_is_Handled__not_a_boundary_rejection()) });
   return results;
 }

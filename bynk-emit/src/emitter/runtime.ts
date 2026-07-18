@@ -727,6 +727,13 @@ export async function responseToHttpOutcome<T>(
     }
     // No boundary `kind` → the handler produced this `400`; fall through.
   }
+  // #707: a `405` is the router's method fall-through — a live path reached under
+  // a method it declares no handler for. The handler never ran and no handler can
+  // return it (the router synthesises the `405` before dispatch), so it is
+  // unambiguously `Rejected(MethodNotAllowed)`.
+  if (response.status === 405) {
+    return { tag: "Rejected", value: { tag: "MethodNotAllowed" } };
+  }
   const handled = await responseToHttpResult(response, deserialiseValue);
   return { tag: "Handled", value: handled };
 }

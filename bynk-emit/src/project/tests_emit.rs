@@ -867,7 +867,8 @@ fn emit_integration_module(
 
     // Slice B: the test-only signer + per-route drivers for the target's http
     // service, and the set of http service names so the lowering calls a driver.
-    let (http_support, http_services) = emit_system_http_support(suite, unit_tables);
+    let (http_support, http_services, declared_routes) =
+        emit_system_http_support(suite, unit_tables);
     if !http_support.is_empty() {
         out.push_str(&http_support);
         out.push('\n');
@@ -913,6 +914,7 @@ fn emit_integration_module(
             &mut typed,
             cross_context,
             http_services.clone(),
+            declared_routes.clone(),
             input.source,
             &input.rel_path,
         );
@@ -982,14 +984,21 @@ fn emit_integration_module(
 /// unmodified emitted Worker verifies it. Returns the emitted TS plus the set of
 /// the target's http service names, so the case-body lowering knows to call a
 /// driver (`__sysdrive_<svc>_<key>`) rather than `callService`.
+/// The declared `(service, method, path)` http routes of a system target — the
+/// set the lowering checks to tell a normal call from a **wrong-method** call
+/// (#707): a `(method, path)` not in the set, whose *path* is, drives the `405`
+/// fall-through through the generic `__sysdrive_wrongmethod_<svc>` driver.
+type DeclaredRoutes = std::collections::HashSet<(String, String, String)>;
+
 fn emit_system_http_support(
     target: &str,
     unit_tables: &HashMap<String, UnitTable>,
-) -> (String, std::collections::HashSet<String>) {
+) -> (String, std::collections::HashSet<String>, DeclaredRoutes) {
     use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
     let mut http_services: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut declared: DeclaredRoutes = std::collections::HashSet::new();
     let Some(table) = unit_tables.get(target) else {
-        return (String::new(), http_services);
+        return (String::new(), http_services, declared);
     };
     let ns = target.replace('.', "_");
     let binding = crate::emitter::wrangler::consumed_binding_name(target);
@@ -1010,6 +1019,7 @@ fn emit_system_http_support(
             let HandlerKind::Http { method, path } = &h.kind else {
                 continue;
             };
+            declared.insert((sname.clone(), method.as_str().to_string(), path.clone()));
             let key = crate::emitter::http_handler_method_name(*method, path);
             // Split the handler's params into path params (matching `:name` in
             // the pattern, in order) and the optional body (the remaining param).
@@ -1160,10 +1170,23 @@ fn emit_system_http_support(
                 ));
             }
         }
+        // #707: one generic wrong-method driver per service — drives an arbitrary
+        // `(method, path)` (an existing path, an undeclared method) and decodes
+        // the router's `405` fall-through to `Rejected(MethodNotAllowed)`. The
+        // handler never runs, so there is no body to serialise and the payload
+        // deserialiser is unused (the `405` takes the `Rejected` arm).
+        routes.push_str(&format!(
+            "async function __sysdrive_wrongmethod_{sname}(method: string, path: string) {{\n\
+             \x20 const __h = makeHarness();\n\
+             \x20 const __req = new Request(`https://test${{path}}`, {{ method }});\n\
+             \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+             \x20 return responseToHttpOutcome(__res, (__j: JsonValue) => Ok(__j as never));\n\
+             }}\n",
+        ));
     }
 
     if http_services.is_empty() {
-        return (String::new(), http_services);
+        return (String::new(), http_services, declared);
     }
 
     let mut out = String::new();
@@ -1189,7 +1212,7 @@ fn emit_system_http_support(
         ));
     }
     out.push_str(&routes);
-    (out, http_services)
+    (out, http_services, declared)
 }
 
 /// Type a system-http driver parameter (v0.182): a named type is reached

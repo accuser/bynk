@@ -119,6 +119,24 @@ a `401` from the seam is `Rejected(Unauthorized)`. It presents no identity
 real seam exists (`bynk.test.credential_needs_system`). A validly-signed but
 expired or forged credential is an end-to-end concern, not the system tier's.
 
+### Testing the wrong method — the `405` fall-through
+
+Address an **existing path with a method it declares no handler for** to test the
+router's method fall-through. The path must be a declared route (a genuinely
+unknown path is still `bynk.test.service_unknown_route`); the wrong method drives
+the `405`:
+
+```bynk
+case "DELETE is not allowed on /cart" as system {
+  let r <- api.DELETE("/cart")           -- /cart is declared for POST, not DELETE
+  expect r is Rejected(MethodNotAllowed)
+}
+```
+
+No handler runs, so the call takes no arguments and no `by` clause. Like the
+other boundary refusals it yields the `Rejected(_) | Handled(_)` outcome — a
+`405` is `Rejected(MethodNotAllowed)`.
+
 ## `expect`
 
 `expect <bool-predicate>` checks a predicate. It exists in both statement form (a

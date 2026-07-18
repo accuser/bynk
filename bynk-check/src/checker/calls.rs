@@ -2222,16 +2222,33 @@ fn check_test_service_address(
             matches!(&h.kind, HandlerKind::Http { method: m, path: p } if m.as_str() == method.name && p == path)
         });
         let Some(handler) = matched else {
+            // #707: the method has no handler at this path. If the *path* is
+            // declared (for some other method), this is a **wrong-method** call —
+            // the `405` fall-through test. Allow it: it drives the router with a
+            // method the path has no handler for and observes `Rejected(
+            // MethodNotAllowed)`. There is no handler, so no args are matched (a
+            // `405` is synthesised before the body is read); the outcome is loose.
+            let path_declared = sig
+                .handlers
+                .iter()
+                .any(|h| matches!(&h.kind, HandlerKind::Http { path: p, .. } if p == path));
+            if path_declared {
+                let _ = type_of(&args[0], None, ctx);
+                for a in &args[1..] {
+                    let _ = type_of(a, None, ctx);
+                }
+                return None;
+            }
             ctx.errors.push(
                 CompileError::new(
                     "bynk.test.service_unknown_route",
                     method.span,
                     format!(
-                        "`{}` declares no `on {} (\"{}\")` route",
-                        id.name, method.name, path
+                        "`{}` declares no route at `\"{}\"` (no handler for any method)",
+                        id.name, path
                     ),
                 )
-                .with_note("the method and path must match a declared route exactly"),
+                .with_note("the path must match a declared route; drive a wrong method against an existing path to test the `405` fall-through"),
             );
             for a in args {
                 let _ = type_of(a, None, ctx);
