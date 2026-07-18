@@ -104,3 +104,77 @@ fn a_consumes_cycle_renders_with_ariadne_source_context() {
         "the report must locate the diagnostic in its source file, got:\n{rendered}",
     );
 }
+
+/// The common cross-file-label case (#696): `kind_conflict` is *always* between
+/// two files, so its "first declared here" provenance points into a different
+/// file than the one the error is attributed to. It must render as a **note**
+/// carrying the other file's path — never a secondary label that would underline
+/// this file's own text (or panic on a mid-codepoint offset). The `consumes`
+/// cycle above has no secondary label, so it cannot exercise this path.
+#[test]
+fn a_cross_file_kind_conflict_renders_the_other_file_as_a_note() {
+    // Two files of the multi-file unit `shop.orders`, in the same directory,
+    // declaring it as different kinds — a kind conflict with no path/name or
+    // directory violation to muddy the diagnostics.
+    let root = scratch_project(
+        "kindconflict",
+        &[
+            (
+                "src/shop/orders/a.bynk",
+                "commons shop.orders {\n  type T = Int\n}\n",
+            ),
+            ("src/shop/orders/b.bynk", "context shop.orders {\n}\n"),
+        ],
+    );
+
+    let opts = bynk_driver::project_options(&root.0);
+    let failure = match project::compile_project(&opts) {
+        Err(f) => f,
+        Ok(_) => panic!("a kind conflict must fail the build"),
+    };
+
+    let snapshots: HashMap<&Path, &str> = failure
+        .snapshots
+        .iter()
+        .map(|(p, t)| (p.as_path(), t.as_str()))
+        .collect();
+
+    let conflict = failure
+        .errors
+        .iter()
+        .find(|e| e.error.category == "bynk.project.kind_conflict")
+        .expect("the build must report a kind conflict");
+
+    let path = conflict
+        .source_path
+        .as_deref()
+        .expect("the kind conflict must be attributed to a file");
+    let text = snapshots
+        .get(path)
+        .expect("the attributed file must have a snapshot");
+
+    let label = path.to_string_lossy().replace('\\', "/");
+    let rendered =
+        bynk_render::render_errors_plain(std::slice::from_ref(&conflict.error), text, &label);
+
+    // Rich source context for the primary span …
+    assert!(
+        rendered.contains("╭─["),
+        "expected an ariadne source-context report, got:\n{rendered}",
+    );
+    // … and the other file's provenance survives as a note (not a label): the
+    // note names the *other* file, which is never the one we rendered against.
+    assert!(
+        rendered.contains("first declared as a") && rendered.contains(".bynk`"),
+        "the first-declaration site must render as a note naming the other file, got:\n{rendered}",
+    );
+    let other = if label.ends_with("a.bynk") {
+        "b.bynk"
+    } else {
+        "a.bynk"
+    };
+    assert!(
+        rendered.contains(other),
+        "the note must point at the *other* file (`{other}`), got:\n{rendered}",
+    );
+}

@@ -47,10 +47,22 @@ layer. This is done site-by-site, not by a blanket replace, because not every
 - `phase_validate_providers` recovers each provider's declaring file from the
   group's files, since the merged `UnitTable` has flattened them away.
 
-A secondary label may point into a *different* file than the primary span (e.g.
-"first file is here" across directories); the renderer already demotes an
-out-of-bounds label to a note (`CompileError::report_for`), so cross-file labels
-survive as notes without underlining unrelated text.
+Attribution exposes a diagnostic's **secondary** labels, which the plain
+fallback never rendered. Some point into a *different* file than the primary
+span. Two cases are handled distinctly. A diagnostic that is **always**
+cross-file — `kind_conflict` and `inconsistent_commons_name` (both compare two
+files) — carries its "first declared here" provenance as a **note** naming the
+other file, never a label, so it renders correctly regardless of offsets. A
+diagnostic that is **sometimes** cross-file — the `duplicate_*` / `exports`
+labels, whose earlier declaration can sit in a sibling file of a multi-file unit
+— relies on the renderer's demotion: `CompileError::report_for` now demotes a
+label that is out-of-bounds **or** not on a char boundary of the rendered source
+(the latter closes an ariadne byte→char panic on non-ASCII source, the #716
+class). That guard is conservative: it cannot catch a cross-file span that
+happens to be in-bounds *and* boundary-aligned, so such a label can still
+underline the wrong file. Eliminating that residue needs per-label file identity
+in `CompileError` — a follow-up beyond this fix; the always-cross-file cases,
+which are the common ones, are already correct.
 
 **Consequences.** Directory-mode project diagnostics now render with the same
 boxed, source-underlined ariadne report a parse or resolve error already gets,

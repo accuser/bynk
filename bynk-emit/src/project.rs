@@ -3056,19 +3056,20 @@ fn run_checks(
     }
 
     // -- 5c. Detect `consumes` cycles. --
-    // #696: record a representative `consumes`-clause site (file + span) per unit
-    // so a detected cycle anchors on a real clause and renders with source
-    // context. First non-synthetic clause wins; synthetic units are left out so
-    // their (snapshot-less) files never claim a diagnostic.
-    let mut consumes_sites: HashMap<String, (PathBuf, Span)> = HashMap::new();
+    // #696: record each `consumes`-clause site (file + span) keyed by
+    // `(consumer, target)` so a detected cycle anchors on the exact clause that
+    // forms the closing edge — a real span in a real file — and renders with
+    // source context. Synthetic units are left out so their (snapshot-less)
+    // files never claim a diagnostic.
+    let mut consumes_sites: HashMap<(String, String), (PathBuf, Span)> = HashMap::new();
     for (name, indices) in &groups {
         for &i in indices {
             if parsed[i].synthetic {
                 continue;
             }
-            if let Some(c) = parsed[i].consumes().first() {
+            for c in parsed[i].consumes() {
                 consumes_sites
-                    .entry(name.clone())
+                    .entry((name.clone(), c.target.joined()))
                     .or_insert_with(|| (parsed[i].identity_path.clone(), c.span));
             }
         }

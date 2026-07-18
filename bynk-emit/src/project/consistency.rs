@@ -11,9 +11,9 @@ use super::*;
 ///
 /// Each error is paired with the project-relative `identity_path` of the file
 /// its **primary** span belongs to (#696) so the CLI can render it against that
-/// file's source. The secondary `with_label` may point into a *different* file;
-/// the renderer demotes an out-of-bounds label to a note (see
-/// `CompileError::report_for`).
+/// file's source. The "first file" it compares against is a *different* file, so
+/// its location is carried as a note (not a label, which would underline this
+/// file's own text).
 pub(crate) fn check_directory_name_consistency(
     parsed: &[ParsedFile],
 ) -> Result<(), Vec<(PathBuf, CompileError)>> {
@@ -56,7 +56,15 @@ pub(crate) fn check_directory_name_consistency(
                             dir.display(),
                         ),
                     )
-                    .with_label(parsed[indices[0]].unit.span(), "first file is here")
+                    // The first file is a *different* file than the one this error
+                    // is attributed to (`parsed[idx]`), so its span can't be a
+                    // label here — it would underline this file's own text (#696).
+                    // Carry its location as a note instead.
+                    .with_note(format!(
+                        "the first file declaring `{}` is `{}`",
+                        parsed[idx].unit.name().joined(),
+                        parsed[indices[0]].identity_path.to_string_lossy().replace('\\', "/"),
+                    ))
                     .with_note(
                         "all files of a multi-file commons or context must live in the same directory",
                     ),
@@ -146,10 +154,18 @@ pub(crate) fn check_group_kind_consistency(
                             parsed[idx].kind.display(),
                         ),
                     )
-                    .with_label(
-                        parsed[indices[0]].unit.span(),
-                        format!("first declared as a {} here", first_kind.display()),
-                    ),
+                    // A kind conflict is *always* cross-file (two files sharing a
+                    // name), so the "first declared" site lives in another file
+                    // (#696) — carry it as a note, not a label that would
+                    // underline this file's own declaration.
+                    .with_note(format!(
+                        "first declared as a {} in `{}`",
+                        first_kind.display(),
+                        parsed[indices[0]]
+                            .identity_path
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    )),
                 ));
             }
         }

@@ -1,14 +1,14 @@
 use super::*;
 
-/// #696: `sites` maps a consuming unit's name to the project-relative
-/// `identity_path` and `consumes`-clause span of a representative clause. When a
-/// cycle is detected the diagnostic is anchored on the closing unit's clause (a
-/// real span in a real file) so the CLI renders ariadne source context; a unit
-/// absent from `sites` (e.g. a synthetic adapter) yields an unattributed,
+/// #696: `sites` maps a `(consumer, target)` edge to the project-relative
+/// `identity_path` and span of the `consumes` clause that declares it. When a
+/// cycle is detected the diagnostic is anchored on its closing edge's clause (a
+/// real span in a real file) so the CLI renders ariadne source context; an edge
+/// absent from `sites` (e.g. a synthetic adapter's) yields an unattributed,
 /// spanless diagnostic as before.
 pub(crate) fn detect_consumes_cycles(
     consumes: &HashMap<String, Vec<String>>,
-    sites: &HashMap<String, (PathBuf, Span)>,
+    sites: &HashMap<(String, String), (PathBuf, Span)>,
     errors: &mut Vec<(Option<PathBuf>, CompileError)>,
 ) {
     // Tarjan / Kosaraju overkill — a simple DFS with a path stack catches
@@ -38,7 +38,7 @@ pub(crate) fn detect_consumes_cycles(
 fn dfs_consumes(
     node: &str,
     consumes: &HashMap<String, Vec<String>>,
-    sites: &HashMap<String, (PathBuf, Span)>,
+    sites: &HashMap<(String, String), (PathBuf, Span)>,
     visited: &mut HashSet<String>,
     stack: &mut Vec<String>,
     on_stack: &mut HashSet<String>,
@@ -53,10 +53,13 @@ fn dfs_consumes(
         // Canonicalise the cycle for de-dup.
         let canon = canonicalise_cycle(&cycle);
         if reported.insert(canon.clone()) {
-            // Anchor the diagnostic on the closing unit's `consumes` clause when
-            // its site is known (#696); fall back to the spanless, unattributed
-            // form otherwise.
-            let (file, span) = match sites.get(node) {
+            // Anchor the diagnostic on the clause forming the cycle's closing
+            // edge — `node` consuming the next unit on the path (#696) — when its
+            // site is known; fall back to the spanless, unattributed form
+            // otherwise. `cycle` is `[node, …, node]`, so `cycle[1]` is the unit
+            // `node` consumes on the cycle (itself, for a self-loop).
+            let edge = (node.to_string(), cycle[1].clone());
+            let (file, span) = match sites.get(&edge) {
                 Some((path, span)) => (Some(path.clone()), *span),
                 None => (None, Span::default()),
             };
@@ -292,13 +295,15 @@ mod tests {
     // closing unit's clause (real span + owning file) so the CLI can render it
     // with ariadne source context; without one it stays spanless/unattributed.
     #[test]
-    fn detect_consumes_cycles_attributes_to_closing_units_site() {
-        // Self-loops keep the closing node deterministic (a multi-unit cycle
-        // closes on whichever unit the key-ordered DFS reaches first).
-        let sites: HashMap<String, (PathBuf, Span)> =
-            [("a".to_string(), (PathBuf::from("a.bynk"), Span::new(3, 8)))]
-                .into_iter()
-                .collect();
+    fn detect_consumes_cycles_attributes_to_closing_edges_site() {
+        // Self-loops keep the closing edge deterministic (a multi-unit cycle
+        // closes on whichever edge the key-ordered DFS reaches first).
+        let sites: HashMap<(String, String), (PathBuf, Span)> = [(
+            ("a".to_string(), "a".to_string()),
+            (PathBuf::from("a.bynk"), Span::new(3, 8)),
+        )]
+        .into_iter()
+        .collect();
         let mut errors = Vec::new();
         detect_consumes_cycles(&graph(&[("a", &["a"])]), &sites, &mut errors);
         assert_eq!(errors.len(), 1);
@@ -306,7 +311,7 @@ mod tests {
         assert_eq!(file.as_deref(), Some(Path::new("a.bynk")));
         assert_eq!(err.span, Span::new(3, 8));
 
-        // A cycle whose closing unit has no recorded site stays unattributed.
+        // A cycle whose closing edge has no recorded site stays unattributed.
         let mut bare = Vec::new();
         detect_consumes_cycles(&graph(&[("x", &["x"])]), &sites, &mut bare);
         assert_eq!(bare.len(), 1);
@@ -314,7 +319,7 @@ mod tests {
         assert_eq!(bare[0].1.span, Span::default());
     }
 
-    fn no_sites() -> HashMap<String, (PathBuf, Span)> {
+    fn no_sites() -> HashMap<(String, String), (PathBuf, Span)> {
         HashMap::new()
     }
 }
