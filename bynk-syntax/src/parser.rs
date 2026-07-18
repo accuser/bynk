@@ -1416,4 +1416,29 @@ mod tests {
             ExprKind::Match { .. }
         ));
     }
+
+    #[test]
+    fn unparenthesised_record_in_condition_head_now_errors() {
+        // #636 narrowing (matches Rust): a record literal in condition *head*
+        // position must be parenthesised. Unparenthesised, `Point` reads as the
+        // discriminant and `{ x: 1 }` as the arm list, whose first "arm" `x: 1`
+        // is not an arm — so the parse fails. Pinned so the divergence from the
+        // (still-accepting) tree-sitter grammar is deliberate, not a bug.
+        assert!(
+            !body_err("match Point { x: 1 } { p => p }").is_empty(),
+            "unparenthesised record discriminant should not parse",
+        );
+        // Parenthesised, the record is the discriminant and the match parses.
+        let ExprKind::Match { discriminant, .. } = body_tail("match (Point { x: 1 }) { p => p }")
+        else {
+            panic!("expected Match for the parenthesised form");
+        };
+        let ExprKind::Paren(inner) = &discriminant.kind else {
+            panic!(
+                "expected a parenthesised discriminant, got {:?}",
+                discriminant.kind
+            );
+        };
+        assert!(matches!(&inner.kind, ExprKind::RecordConstruction { .. }));
+    }
 }

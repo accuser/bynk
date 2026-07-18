@@ -63,3 +63,15 @@ freshly-constructed record is just binding its fields), appears nowhere in the
 example corpus, and the parenthesised form is unambiguous and consistent with
 the `if` treatment and with Rust. The restriction is spine-local state with an
 explicit save/restore, not a pass over the whole expression.
+
+This narrowing is an intentional, bounded divergence from the tree-sitter
+grammar, which disambiguates `ident {` dynamically via a GLR conflict rather
+than a `no_record_literal` equivalent. On the newly-valid shapes the two parsers
+*agree* — for `if ready { result }` the grammar's record path leaves no block
+and dies, and `match result {}` yields an empty match on both — and tree-sitter
+corpus fixtures now pin that agreement. On the head-position shape they diverge:
+GLR still accepts `match A { x: 1 } { … }` as a record discriminant plus arm
+list, so editor highlighting and the compiler disagree on that one now-erroring
+form. That is acceptable — it is a compile error either way and vanishingly
+rare — and is called out here so a future reader treats it as designed, not as a
+grammar bug.
