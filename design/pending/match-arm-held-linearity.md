@@ -42,7 +42,10 @@ unified independently across arms. The checker records each pattern binding's
 resolved type at its identifier span (patterns are not expressions, so this is
 their only entry into `expr_types`), and the linearity pass reads that to decide
 which arm bindings are held — reusing the checker's own type derivation rather
-than re-deriving payload types.
+than re-deriving payload types. The recording is unconditional — every pattern
+binding, not only held ones — so `check_pattern` stays a single insert; this
+deliberately widens `expr_types` to carry entries at pattern-binding spans that
+were previously absent (no existing span-keyed consumer misreads them).
 
 **Consequences.** A held value reached through a `match` arm is now governed by
 the §2.9 discipline identically to a `let`-bound one — the leak above is
