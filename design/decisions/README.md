@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0232](0232-fmt-verifies-output-before-atomic-write.md) | **The formatter verifies its output round-trips before atomically writing it** (v0.208.1) — Why `fmt` re-parses and compares its output against the input, writes via temp-file + rename, and honours `--check` on stdin | Accepted (v0.208.1) |
 | [0231](0231-require-exp-hs256-bearer.md) | **HS256 bearer verification requires `exp`** (v0.208) — A bearer JWT with no expiry no longer verifies, matching the OIDC seam | Accepted (v0.208) |
 | [0230](0230-join-match-if-branch-types.md) | **`match` arms and `if` branches agree up to a least upper bound, not exact type equality** (v0.207) — Why branch agreement widens a refined type to its base (and two refined siblings to their shared base) instead of demanding identical `Ty`, and why the join is the sound result type | Accepted (v0.207) |
 | [0229](0229-wasm-panic-hardening.md) | **Bound the blast radius of an internal compiler panic in the playground wasm** (v0.206.1) — A panic hook for legibility on wasm, plus a catch_unwind boundary that converts panics to diagnostics on the native path | Accepted (v0.206.1) |

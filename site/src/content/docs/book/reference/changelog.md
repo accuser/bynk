@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.208.1** | "`fmt` now verifies its output round-trips to the same code before writing (refusing with `bynk.fmt.roundtrip` rather than overwrite a file with mis-rendered or non-parsing output), writes in place atomically via a temp file + rename so an interrupted write can no longer truncate or empty the source, and honours `--check` on stdin (`bynk fmt --check -` reports a diff and exits non-zero instead of echoing the reformat and passing green)" |
 | **v0.208.0** | HS256 bearer verification requires an `exp` claim (a token with no expiry no longer verifies) |
 | **v0.207.0** | A `match` arm or `if` branch may now produce a refined type where a sibling produces its base (or another refined type over the same base) — the branches join to their least upper bound instead of being rejected for not being byte-identical, so `match r { Ok(e: Email) => e, Err(m: String) => m }` type-checks at `String` |
 | **v0.206.1** | The playground wasm installs a panic hook and converts an internal compiler panic to a diagnostic, so adversarial input no longer traps as an opaque RuntimeError (#717) |
