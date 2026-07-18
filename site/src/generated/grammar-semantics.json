@@ -160,6 +160,10 @@
       "summary": "A call-site `by <Actor>(x)` supplies an identity to a unit-identity actor (e.g. `Visitor`)."
     },
     {
+      "code": "bynk.test.credential_needs_system",
+      "summary": "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it."
+    },
+    {
       "code": "bynk.test.principal_identity_mismatch",
       "summary": "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor."
     },

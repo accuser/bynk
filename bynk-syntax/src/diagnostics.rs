@@ -1376,6 +1376,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["case"],
     ),
     dg(
+        "bynk.test.credential_needs_system",
+        "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it.",
+        &["case"],
+    ),
+    dg(
         "bynk.test.principal_identity_mismatch",
         "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor.",
         &["case"],

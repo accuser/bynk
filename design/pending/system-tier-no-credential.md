@@ -1,0 +1,24 @@
+---
+level: minor
+changelog: A `system`-tier test case drives a secured http route with `by Nobody` — the no-credential principal — so the real auth seam rejects the unauthenticated request; the call yields `Rejected(Unauthorized)`, decoded by `responseToUnauthOutcome` (#706)
+---
+
+## ADR: system-tier-no-credential
+
+title: A `system`-tier case drives a secured route with no credential via `by Nobody`
+summary: `by Nobody` is a reserved call-site principal that drives an http route with no `Authorization` header, so the real auth seam rejects it (`401` → `Rejected(Unauthorized)`). It is valid on any http handler regardless of the required identity, presents no identity, and is `system`-only. Scoped to the structural 401 (missing credential); validly-signed-but-expired/forged tokens remain e2e's concern (ADR 0210).
+
+**Context.** ADR 0210 (system-tier-wire-rejection) gave a `system` case the outcome sum `Rejected(detail) | Handled(HttpResult[T])` and drove the boundary with raw `Wire(…)` input to test the `400` rejection. But the `401` path — the auth seam refusing an unauthenticated request — stayed unreachable (#706): Slice B has the framework *always* sign a valid credential from `by User("bob")`, so no case could present a missing or invalid credential. ADR 0210 DECISION B sketched the answer (`Rejected(Unauthorized)` on status) but deferred the spelling.
+
+**Decision.**
+
+- **D1 — `by Nobody` is the reserved "no credential" call-site principal.** It drives the route with **no `Authorization` header**, so the real seam (the emitted worker's Bearer wrapper, unmodified) refuses the request before the handler runs. It is valid on **any** http handler regardless of the required identity — the whole point is that *no* valid credential is presented, so `by Nobody` on a `by u: User` route is exactly the 401 test, not a principal mismatch. It presents no identity (`by Nobody(...)` is `bynk.test.actor_no_identity`). No grammar change: `Nobody` is an ordinary `by <Actor>` name the checker and emitter recognise, like the prelude actors.
+
+- **D2 — a `by Nobody` call yields the outcome sum; a `401` is `Rejected(Unauthorized)`.** The result follows the same rule as `Wire`: a boundary rejection is not an `HttpResult`. A per-route **no-auth driver** (`__sysdrive_noauth_…`, test-output only, emitted only for a Bearer-secured route) builds the request the typed driver would, minus the auth header, and decodes through a new `responseToUnauthOutcome` helper: a `401` is `Rejected(Unauthorized)` — unambiguous *because the caller sent no credential* — and any other status decodes normally (a route that is not actually secured lets the request through, so the case observes `Handled`, never a false `Rejected`). The outcome stays loose (ADR 0210), so `expect r is Rejected(Unauthorized)` is a runtime `.tag` test, discriminated to the inner `Unauthorized` by the nested-`is` from ADR 0211 (#705).
+
+**Consequences.**
+
+- A `system` case tests the auth seam: `by Nobody` → `expect r is Rejected(Unauthorized)`. Fixture 385 drives it over the real wire; the golden carries the no-auth driver + the two-level `r.tag === "Rejected" && r.value.tag === "Unauthorized"` test. Behaviourally verified: a `401` decodes to `Rejected(Unauthorized)`, and an unsecured route's `2xx` decodes to `Handled` (not a false `Rejected`).
+- `responseToUnauthOutcome` joins the runtime as the one net-new helper; it delegates to `responseToHttpOutcome` for every non-`401` status, so a handler-returned `Unauthorized` on a *credentialled* (`Wire`/typed) call still decodes as `Handled` (the shared decoder never treats `401` as a rejection). The distinction is drawn by *how the request was driven*, which the driver knows.
+- `by Nobody` is `system`-only (`bynk.test.credential_needs_system`): there is no real seam at `unit`/`integration`. The guard fires for a non-`system` case within a system-testing suite (negative fixture 388, a `by Nobody` case overridden `as unit`); as with `Wire`'s `wire_needs_system`, a single-context bare-lower-tier suite is not caught at the check path and a misuse there fails loudly at runtime instead — tightening both to every check path is a shared follow-on.
+- **Not in scope (ADR 0210's boundary):** a validly-signed but expired/forged/wrong-issuer credential (`401` from real crypto) — that needs a real IdP, so it is e2e's job. `by Nobody` tests only the *structural* rejection: no credential presented. A forged-token variant (`by Wire("<token>")`) remains a possible follow-on.
