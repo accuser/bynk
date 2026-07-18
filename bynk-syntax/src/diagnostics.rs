@@ -948,6 +948,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "`uses` appears after other declarations.",
         &["uses_decl"],
     ),
+    dg(
+        "bynk.parse.variant_name_case",
+        "A sum-type or enum variant name is not capitalised.",
+        &["sum_variant", "enum_type"],
+    ),
     d(
         "bynk.project.file_and_directory",
         "A unit exists as both a file and a directory.",

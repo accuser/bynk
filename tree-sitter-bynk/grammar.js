@@ -412,7 +412,8 @@ module.exports = grammar({
     _pred_arg: ($) => choice($.number_literal, $.float_literal, $.string_literal),
 
     _base_type: ($) => $.base_type,
-    base_type: () => choice("Int", "String", "Bool", "Float", "Duration", "Instant"),
+    base_type: () =>
+      choice("Int", "String", "Bool", "Float", "Duration", "Instant", "Bytes"),
 
     _type_ref: ($) =>
       choice(
@@ -461,31 +462,54 @@ module.exports = grammar({
 
     unit_type: () => seq("(", ")"),
     validation_error_type: () => "ValidationError",
+    // Each built-in generic has a fixed arity, which the compiler parser
+    // (`bynk-syntax`) enforces at parse time with a `bynk.parse.*` diagnostic.
+    // The production therefore states that arity directly — a unary built-in
+    // takes exactly one argument, a binary one exactly two — rather than
+    // over-generating with `sep1` and deferring. This keeps the grammar in
+    // agreement with the parser (see the cross-parser conformance test).
     generic_type_ref: ($) =>
-      seq(
-        field(
-          "name",
-          choice(
-            alias("Result", $.builtin_type),
-            alias("Option", $.builtin_type),
-            alias("Effect", $.builtin_type),
-            // v0.9: HTTP result type.
-            alias("HttpResult", $.builtin_type),
-            // v0.20b: the built-in collection types.
-            alias("List", $.builtin_type),
-            alias("Map", $.builtin_type),
-            // v0.100/v0.92/v0.102: stream, lazy storage query, held connection.
-            alias("Stream", $.builtin_type),
-            alias("Query", $.builtin_type),
-            alias("Connection", $.builtin_type),
-            // v0.119 (testing track slice 7): `History[Agent]` — a generated,
-            // driven call-history (test-only generator).
-            alias("History", $.builtin_type),
+      choice(
+        // Unary built-ins — `Name[T]`.
+        seq(
+          field(
+            "name",
+            choice(
+              alias("Option", $.builtin_type),
+              alias("Effect", $.builtin_type),
+              // v0.9: HTTP result type.
+              alias("HttpResult", $.builtin_type),
+              // v0.20b: the built-in list collection.
+              alias("List", $.builtin_type),
+              // v0.100/v0.92/v0.102: stream, lazy storage query, held connection.
+              alias("Stream", $.builtin_type),
+              alias("Query", $.builtin_type),
+              alias("Connection", $.builtin_type),
+              // v0.119 (testing track slice 7): `History[Agent]` — a generated,
+              // driven call-history (test-only generator).
+              alias("History", $.builtin_type),
+            ),
           ),
+          "[",
+          field("arg", $._type_ref),
+          "]",
         ),
-        "[",
-        sep1(field("arg", $._type_ref), ","),
-        "]",
+        // Binary built-ins — `Name[K, V]`.
+        seq(
+          field(
+            "name",
+            choice(
+              alias("Result", $.builtin_type),
+              // v0.20b: the built-in map collection.
+              alias("Map", $.builtin_type),
+            ),
+          ),
+          "[",
+          field("arg", $._type_ref),
+          ",",
+          field("arg", $._type_ref),
+          "]",
+        ),
       ),
 
     // -- Function declarations --

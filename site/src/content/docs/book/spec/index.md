@@ -26,7 +26,8 @@ facts cannot diverge; only the prose differs (explanatory there, normative here)
 Bynk is **translation-defined**. Its three layers of definition are:
 
 - **Syntax** — the grammar, generated from `tree-sitter-bynk`, so the
-  productions in this spec cannot drift from the parser.
+  productions in this spec cannot drift from that grammar; a cross-parser
+  conformance test keeps it in agreement with the compiler's own parser.
 - **Static semantics** — well-formedness rules. A program is well-formed exactly
   when it provokes no `bynk.*` diagnostic; each rule is tied to its diagnostic
   code(s), so the rule catalogue and the compiler cannot drift.

@@ -1,0 +1,25 @@
+[package]
+name = "tree-sitter-bynk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Rust binding for the tree-sitter-bynk grammar. Not a product crate: it exists so the cross-parser conformance test can parse Bynk with tree-sitter and diff the result against bynk-syntax. Unpublished, kept off the release workflows' crate list."
+build = "bindings/rust/build.rs"
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+tree-sitter = "0.25"
+# The conformance test diffs tree-sitter against the compiler's own parser.
+# `bynk-syntax` does not depend on this crate, so this dev edge is cycle-free.
+bynk-syntax = { workspace = true }

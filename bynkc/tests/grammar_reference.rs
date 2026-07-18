@@ -3,8 +3,13 @@
 //!
 //! `site/src/content/docs/book/reference/grammar-appendix.md` is rendered from
 //! the compiled grammar (via the `bynk-grammar` crate), so it cannot drift from
-//! the parser. The annotated, per-construct reference (`reference/grammar.md`)
-//! embeds the same generated productions via the `{{#grammar}}` remark directive.
+//! the `tree-sitter-bynk` grammar. That grammar is a separate parser from the
+//! compiler's own recursive-descent parser (`bynk-syntax`); the two are held in
+//! agreement by the cross-parser conformance test
+//! (`tree-sitter-bynk/tests/conformance.rs`), so the appendix describes what the
+//! compiler accepts, not only what the editor grammar does. The annotated,
+//! per-construct reference (`reference/grammar.md`) embeds the same generated
+//! productions via the `{{#grammar}}` remark directive.
 //! Regenerate the appendix after a grammar change with:
 //!     BYNK_BLESS=1 cargo test -p bynkc --test grammar_reference
 
