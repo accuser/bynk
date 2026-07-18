@@ -336,10 +336,13 @@ fn member_receiver(line: &str) -> Option<String> {
     let head = line
         .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
         .strip_suffix('.')?;
-    // The receiver is the identifier immediately before that dot.
+    // The receiver is the identifier immediately before that dot. Advance past
+    // the matched char by its UTF-8 length: a multi-byte non-identifier char
+    // (`"`, `€`, `—`, …) would make `i + 1` land mid-codepoint and panic.
     let start = head
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     let recv = &head[start..];
     let first = recv.chars().next()?;
     if !first.is_ascii_uppercase() {
@@ -385,8 +388,9 @@ fn record_construction_receiver(line: &str) -> Option<String> {
     // The receiver is the uppercase-initial identifier immediately before `{`.
     let head = line[..open].trim_end();
     let start = head
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     let recv = &head[start..];
     if recv.chars().next()?.is_ascii_uppercase() {
         Some(recv.to_string())
@@ -488,8 +492,9 @@ fn innermost_open_brace(text: &str, offset: usize) -> Option<usize> {
 fn word_before_brace(text: &str, open: usize) -> &str {
     let head = text[..open].trim_end();
     let start = head
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     &head[start..]
 }
 
@@ -1524,8 +1529,9 @@ pub fn value_receiver_rewrite(text: &str, offset: usize) -> Option<(String, usiz
         .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
         .strip_suffix('.')?;
     let start = head
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     let recv = &head[start..];
     let first = recv.chars().next()?;
     if !(first.is_ascii_lowercase() || first == '_') {
@@ -1841,6 +1847,29 @@ mod tests {
         assert_eq!(member_receiver("  1."), None); // decimal literal, not a member access
         assert_eq!(member_receiver("  a.B."), None); // `.`-qualified segment
         assert_eq!(member_receiver("  Color"), None); // no dot yet
+    }
+
+    #[test]
+    fn receiver_extraction_survives_a_multibyte_char_before_the_receiver() {
+        // A multi-byte non-identifier char immediately before the receiver used
+        // to make the `i + 1` byte offset land mid-codepoint → panic on slice
+        // (#715, hit on every completion/hover keystroke inside a string).
+        assert_eq!(member_receiver("\"Foo."), Some("Foo".to_string()));
+        assert_eq!(member_receiver("€Color."), Some("Color".to_string()));
+        assert_eq!(member_receiver("—Bar."), Some("Bar".to_string()));
+        assert_eq!(word_before_brace("\"cors {", 6), "cors");
+        assert_eq!(
+            record_construction_receiver("\"€Order {"),
+            Some("Order".to_string())
+        );
+        // The reproduction from the issue: a completion request against a buffer
+        // where the line prefix opens a string literal must not panic.
+        let _ = complete("let x = \"Foo.", "commons m {}\n", None);
+        let _ = complete("  \"€42.", "commons m {}\n", None);
+        assert_eq!(
+            value_receiver_rewrite("\"email.", 7).map(|(_, r)| r),
+            Some(5),
+        );
     }
 
     #[test]
