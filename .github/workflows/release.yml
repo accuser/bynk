@@ -17,9 +17,14 @@ name: Release
 # VS Code extension's bynkServerVersion pin points at always exists.
 #
 # The registry publishes are irreversible. The `verify` gate (tests + the
-# tag/version match) stands in for an approval gate; once the repo is public, an
-# Environment with required reviewers can add a one-click pause without GitHub
-# Enterprise (tracked separately).
+# tag/version match + the tagged commit being on `main`) stands in for an
+# approval gate. Tags are NOT covered by the `main` ruleset, so the on-main
+# ancestry check is what stops a `v*` tag (or a manual dispatch from a branch)
+# from releasing an unreviewed commit — see #730. Once the repo is public, an
+# Environment with required reviewers can add a one-click pause on top without
+# GitHub Enterprise (tracked separately; it needs the crates.io/npm Trusted
+# Publishers re-registered with that environment, since they are wired with "no
+# environment" below — see the publish-jobs notes).
 #
 # A manual `workflow_dispatch` (Actions tab "Run workflow", or
 # `gh workflow run release.yml --ref v0.16.0 -f publish_crates=true
@@ -56,10 +61,12 @@ jobs:
   # the repo (single-version posture): the Cargo workspace, both npm packages,
   # and the extension's bynkServerVersion server-download pin.
   verify:
-    name: Verify (tests + tag/version match)
+    name: Verify (tests + tag/version + on-main)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # full history so the on-main ancestry check below can resolve
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -86,6 +93,24 @@ jobs:
             echo "::notice::manual dispatch from $GITHUB_REF_NAME — will publish manifest version $ver"
           fi
           exit "$fail"
+      - name: Commit under release must be on main (reviewed)
+        # `v*` tags are NOT covered by the `main` ruleset, so a tag can be pushed
+        # at ANY commit on ANY branch, and a manual dispatch can run from a branch
+        # ref too. The tag/version match above never checks *which commit* is
+        # being shipped. Without this, a leaked write-scope token (or a
+        # collaborator) could release an unreviewed commit — signed binaries,
+        # SLSA provenance, and irreversible crates.io/npm publishes. Requiring the
+        # released commit ($GITHUB_SHA) to be an ancestor of origin/main forces it
+        # through branch protection first. Every publish job has `needs: verify`,
+        # so failing here blocks the whole release (tag push AND dispatch). #730.
+        run: |
+          git fetch --no-tags origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::notice::$GITHUB_SHA is on origin/main"
+          else
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of origin/main — refusing to release an unreviewed commit"
+            exit 1
+          fi
       - name: Run tests
         run: cargo test --workspace --locked
         env:
