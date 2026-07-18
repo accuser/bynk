@@ -30,14 +30,25 @@ jobs:
   deploy:
     name: Build + deploy to Cloudflare Pages
     runs-on: ubuntu-latest
-    # Secrets flow in as env so the deploy steps can both (a) hand wrangler its
-    # credentials and (b) gate on their presence: before the maintainer adds the
-    # Cloudflare secrets, the build still runs and the upload steps skip, so the
-    # workflow is green rather than red on the first push.
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
+      # Gate on the secrets' presence in one tiny step whose env holds the token,
+      # exposing only a boolean output. The credentials themselves are attached
+      # step-level to the two wrangler steps that need them (below) — never
+      # job-level, so `npm ci` install scripts and the cargo/wasm build never see
+      # the token. Before the maintainer adds the Cloudflare secrets, the build
+      # still runs and the upload steps skip, so the workflow is green rather than
+      # red on the first push.
+      - name: Check for Cloudflare secrets
+        id: gate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
@@ -84,11 +95,17 @@ jobs:
       # only on the opaque sandbox origin and can never reach the app origin's
       # storage. `--branch=main` publishes to the project's production deployment.
       - name: Deploy the app origin (playground.bynk-lang.org)
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        if: steps.gate.outputs.present == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler@4 pages deploy playground/dist --project-name=bynk-playground --branch=main
       - name: Deploy the sandbox origin (sandbox.bynk-lang.org)
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        if: steps.gate.outputs.present == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler@4 pages deploy playground/dist --project-name=bynk-playground-sandbox --branch=main
       - name: Note when deploy was skipped
-        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        if: steps.gate.outputs.present == 'false'
         run: echo "::notice::Cloudflare secrets not set — built dist/ but skipped the upload. See playground/README.md §Deploy."
