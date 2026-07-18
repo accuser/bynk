@@ -172,6 +172,10 @@
       "summary": "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor."
     },
     {
+      "code": "bynk.test.principal_on_wrong_method",
+      "summary": "A wrong-method `405` test carries a `by <Actor>` clause; it reaches no handler, so a principal is meaningless."
+    },
+    {
       "code": "bynk.test.principal_required",
       "summary": "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`."
     },
@@ -938,6 +942,10 @@
     {
       "code": "bynk.lex.bad_escape",
       "summary": "An invalid escape sequence in a string literal."
+    },
+    {
+      "code": "bynk.lex.interpolation_too_deep",
+      "summary": "A string interpolation `\\(…)` nests deeper than the lexer's fixed limit."
     },
     {
       "code": "bynk.lex.unterminated_interpolation",

@@ -104,3 +104,29 @@ commons logic {
             pattern: (variant_pattern
               variant: (identifier))
             body: (boolean_literal)))))))
+
+==========================
+empty match over an identifier discriminant (#636)
+==========================
+
+commons sample {
+	fn choose(result: Status) -> Int {
+		match result {}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (identifier))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier))))))
