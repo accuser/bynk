@@ -706,6 +706,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An integer literal is out of range.",
         &["number_literal"],
     ),
+    dg(
+        "bynk.lex.interpolation_too_deep",
+        "A string interpolation `\\(…)` nests deeper than the lexer's fixed limit.",
+        &["string_literal"],
+    ),
     d(
         "bynk.lex.unclosed_doc_block",
         "A documentation block is not closed.",
@@ -882,6 +887,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.malformed_float_literal",
         "A float literal is missing a digit on one side of the `.` (`1.`, `.5`).",
         &["float_literal"],
+    ),
+    d(
+        "bynk.parse.nesting_too_deep",
+        "An expression or type nests deeper than the parser's fixed limit.",
     ),
     dg(
         "bynk.parse.non_associative",
@@ -1393,6 +1402,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.test.principal_identity_mismatch",
         "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.principal_on_wrong_method",
+        "A wrong-method `405` test carries a `by <Actor>` clause; it reaches no handler, so a principal is meaningless.",
         &["case"],
     ),
     dg(

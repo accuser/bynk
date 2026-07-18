@@ -313,6 +313,13 @@ struct Parser<'a> {
     /// Line-comment trivia separated from the token stream. See
     /// [`TriviaTable`].
     trivia: TriviaTable,
+    /// Live recursion depth of the three self-recursive parse entry points
+    /// (`parse_expr`, `parse_type_ref`, `parse_pattern`). Incremented on entry
+    /// and decremented on exit by [`Parser::enter_recursion`] so it tracks the
+    /// current stack depth; when it exceeds [`crate::MAX_NESTING_DEPTH`] the
+    /// parser reports a bounded-depth diagnostic instead of overflowing its
+    /// stack (#713).
+    depth: usize,
     /// When true, a bare `ident {` on the *spine* of the current expression is
     /// an identifier followed by an unrelated block, never a record
     /// construction — so an `if`/`match` condition that ends in a bare
@@ -339,8 +346,113 @@ impl<'a> Parser<'a> {
             recover_mode: false,
             recovered_errors: Vec::new(),
             trivia,
+            depth: 0,
             no_record_literal: false,
         }
+    }
+
+    /// Enter a self-recursive parse step, bumping the live recursion depth and
+    /// failing with a bounded-depth diagnostic if it would exceed
+    /// [`crate::MAX_NESTING_DEPTH`]. The caller pairs a successful entry with a
+    /// matching `self.depth -= 1` on the way out (see `parse_expr` /
+    /// `parse_type_ref`); on the error path the depth is restored here so a
+    /// recovering caller is not left mis-counted. `what` names the construct
+    /// for the message (e.g. "this expression", "this type"). See #713.
+    fn enter_recursion(&mut self, what: &str) -> Result<(), CompileError> {
+        self.depth += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            self.depth -= 1;
+            let span = self
+                .peek()
+                .map(|t| t.span)
+                .unwrap_or_else(|| self.eof_span());
+            return Err(self.nesting_too_deep(span, what));
+        }
+        Ok(())
+    }
+
+    /// The bounded-depth diagnostic shared by [`enter_recursion`] and
+    /// [`enter_chain_fold`].
+    fn nesting_too_deep(&self, span: Span, what: &str) -> CompileError {
+        CompileError::new(
+            "bynk.parse.nesting_too_deep",
+            span,
+            format!(
+                "{what} nests more than {} levels deep",
+                crate::MAX_NESTING_DEPTH
+            ),
+        )
+        .with_note(
+            "deeply nested source is rejected to keep the parser from overflowing its \
+             stack and aborting; flatten or split the construct",
+        )
+    }
+
+    /// The bounded-depth diagnostic for the *iteratively*-built spines —
+    /// associative operator chains ([`enter_chain_fold`]) and postfix receiver
+    /// chains ([`deepen_spine`]). Same code as [`nesting_too_deep`] (one budget,
+    /// one diagnostic) but phrased for a flat chain, which is long rather than
+    /// *nested*, and points at the idiomatic fix.
+    fn expression_too_long(&self, span: Span) -> CompileError {
+        CompileError::new(
+            "bynk.parse.nesting_too_deep",
+            span,
+            format!(
+                "this expression is more than {} levels deep",
+                crate::MAX_NESTING_DEPTH
+            ),
+        )
+        .with_note(
+            "a long operator or member chain is rejected to keep the compiler from overflowing \
+             its stack; split it across `let` bindings, or reduce a sequence with \
+             `.sum()`/`.fold(...)`",
+        )
+    }
+
+    /// Count one more operand folded onto an associative operator chain against
+    /// the same recursion budget as [`enter_recursion`] (#714).
+    ///
+    /// Associative chains (`+`, `*`, `&&`, `||`) are built *iteratively* in the
+    /// precedence ladder, so — unlike parentheses, calls, or `implies` — they
+    /// never re-enter `parse_expr` and thus slip past the `enter_recursion`
+    /// guard. Yet each fold deepens the left-nested `Expr` tree by one level,
+    /// and a long flat chain (`1 + 1 + … + 1`) overflows every *recursive*
+    /// consumer of that tree downstream — the checker's `type_of`, the
+    /// formatter, the emitter, and the AST's own recursive `Drop` — exactly as
+    /// deeply nested source overflows the parser. Counting each fold on the
+    /// shared `depth` budget bounds the whole expression's height, and because
+    /// it is the *same* budget it composes with the ambient nesting depth, so a
+    /// chain buried inside deeply nested source cannot exceed the bound either.
+    ///
+    /// The caller accumulates `folds` and subtracts them from `depth` before it
+    /// returns, so the live count unwinds as a recursive descent would; on the
+    /// overflow path the whole chain's contribution is restored here so a
+    /// recovering caller is not left mis-counted.
+    fn enter_chain_fold(&mut self, folds: &mut usize, span: Span) -> Result<(), CompileError> {
+        self.depth += 1;
+        *folds += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            self.depth -= *folds;
+            *folds = 0;
+            return Err(self.expression_too_long(span));
+        }
+        Ok(())
+    }
+
+    /// Count one more level of an iteratively-built postfix receiver spine
+    /// (`a.b.c…`, `f()?.g()…`) against the shared budget (#714). Like
+    /// [`enter_chain_fold`], postfix loops rather than recurses, so a long spine
+    /// escapes [`enter_recursion`] yet grows an arbitrarily deep receiver tree
+    /// that the downstream walks recurse through. `parse_postfix` restores
+    /// `depth` wholesale on the way out (its many error paths make a
+    /// save/restore wrapper cleaner than per-fold unwinding), so this only bumps
+    /// and checks.
+    fn deepen_spine(&mut self, span: Span) -> Result<(), CompileError> {
+        self.depth += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            return Err(self.expression_too_long(span));
+        }
+        Ok(())
     }
 
     /// Comments immediately preceding the current peek position. Consumed
@@ -876,6 +988,43 @@ mod tests {
     }
 
     #[test]
+    fn interpolation_hole_lex_error_span_is_rebased() {
+        // #716: a lex error inside a `\(…)` hole once carried a span relative to
+        // the hole substring — never rebased by `hole.start` — so it pointed at
+        // the file's opening bytes and could split a multibyte char, tripping
+        // the char-boundary invariant. The error must land on the offending
+        // bytes within the hole and stay on char boundaries.
+        let cases = [
+            // `$` is not a valid token; the error should point at it, not byte 0.
+            "commons x\n\nfn f() -> String {\n  \"a \\($)\"\n}\n",
+            // Integer overflow — the reported span must cover the literal itself.
+            "commons x\n\nfn f() -> String {\n  \"n = \\(99999999999999999999)\"\n}\n",
+            // A multibyte char before the hole means an un-rebased span could
+            // land inside the `é`; the rebased span must not.
+            "commons x\n\nfn f() -> String {\n  \"é \\($)\"\n}\n",
+        ];
+        for src in cases {
+            let errs = parse_str(src).unwrap_err();
+            assert!(!errs.is_empty(), "expected a lex error for {src:?}");
+            for e in &errs {
+                assert!(
+                    src.is_char_boundary(e.span.start) && src.is_char_boundary(e.span.end),
+                    "span {:?} splits a codepoint in {src:?}",
+                    e.span,
+                );
+                // The error must point inside the interpolation hole, not at the
+                // header text that precedes it.
+                let hole_start = src.find("\\(").expect("case has a hole") + 2;
+                assert!(
+                    e.span.start >= hole_start,
+                    "span {:?} precedes the hole (starts at {hole_start}) in {src:?}",
+                    e.span,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn fragment_form_parses() {
         let c = parse_str("commons x.y\n\ntype T = Int where NonNegative\n").unwrap();
         assert_eq!(c.form, CommonsForm::Fragment);
@@ -984,6 +1133,94 @@ mod tests {
         let errs = parse_str("commons x { fn f(a: Int, b: Int, c: Int) -> Bool { a == b == c } }")
             .unwrap_err();
         assert_eq!(errs[0].category, "bynk.parse.non_associative");
+    }
+
+    /// Run `f` on a thread with a generous stack. The depth-guard tests build
+    /// source that, *without* the guard, overflows — so if the guard ever
+    /// regressed we want a clean assertion failure, not a `SIGABRT` that takes
+    /// the whole test binary down. A large stack also absorbs the fat frames a
+    /// debug build spends per recursion level (production release frames are
+    /// ~9 KB/level, so `MAX_NESTING_DEPTH = 64` sits well inside a 1 MB stack;
+    /// a debug frame is several times larger and would overflow libtest's
+    /// default 2 MB test thread near the limit even though the guard fires).
+    fn on_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn deeply_nested_parens_are_bounded_not_overflowed() {
+        // Without a depth guard the parenthesised-expression recursion
+        // (`parse_primary` -> `parse_expr` -> …) overflows the stack and aborts
+        // the process (#713). Well past the limit it must instead report a
+        // bounded-depth diagnostic. The nesting is left open so the guard, not
+        // a later `)`, is what stops the descent.
+        let errs = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH + 8;
+            let src = format!(
+                "commons x {{ fn f() -> Int {{ {}0{} }} }}",
+                "(".repeat(depth),
+                ")".repeat(depth),
+            );
+            parse_str(&src).unwrap_err()
+        });
+        assert_eq!(errs[0].category, "bynk.parse.nesting_too_deep");
+    }
+
+    #[test]
+    fn deeply_nested_types_are_bounded_not_overflowed() {
+        // The type parser self-recurses through generic type arguments
+        // (`parse_type_ref` -> `parse_type_atom` -> `parse_type_ref`); the same
+        // guard bounds it (#713). A right-nested `Result[Int, …]` in parameter
+        // position drives that recursion.
+        let errs = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH + 8;
+            let src = format!(
+                "commons x {{ fn f(x: {}Int{}) -> Int {{ 0 }} }}",
+                "Result[Int, ".repeat(depth),
+                "]".repeat(depth),
+            );
+            parse_str(&src).unwrap_err()
+        });
+        assert_eq!(errs[0].category, "bynk.parse.nesting_too_deep");
+    }
+
+    #[test]
+    fn deeply_nested_patterns_are_bounded_not_overflowed() {
+        // Variant patterns are a third self-recursive descent (`parse_pattern`
+        // -> `parse_pattern_binding` -> `parse_pattern`) that routes through
+        // neither `parse_expr` nor `parse_type_ref`; without its own guard a
+        // nested `Ok(Ok(…))` match arm reproduces the #713 crash.
+        let errs = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH + 8;
+            let src = format!(
+                "commons x {{ fn f(n: Int) -> Int {{ match n {{ {}n{} => 0 }} }} }}",
+                "Ok(".repeat(depth),
+                ")".repeat(depth),
+            );
+            parse_str(&src).unwrap_err()
+        });
+        assert_eq!(errs[0].category, "bynk.parse.nesting_too_deep");
+    }
+
+    #[test]
+    fn nesting_below_the_limit_still_parses() {
+        // The guard must not reject ordinary well-nested source: a paren-nested
+        // expression comfortably under the limit still parses cleanly.
+        let ok = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH - 8;
+            let src = format!(
+                "commons x {{ fn f() -> Int {{ {}0{} }} }}",
+                "(".repeat(depth),
+                ")".repeat(depth),
+            );
+            parse_str(&src).is_ok()
+        });
+        assert!(ok, "well-nested source under the limit should parse");
     }
 
     #[test]

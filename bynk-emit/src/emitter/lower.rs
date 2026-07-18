@@ -94,6 +94,7 @@ pub fn lower_integration_case_body(
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
     system_http_services: std::collections::HashSet<String>,
+    system_http_routes: std::collections::HashSet<(String, String, String)>,
     source: &str,
     rel_path: &str,
 ) -> (String, SourceMapBuilder) {
@@ -103,6 +104,7 @@ pub fn lower_integration_case_body(
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
         cx.target = BuildTarget::Workers;
         cx.system_http_services = system_http_services;
+        cx.system_http_routes = system_http_routes;
         cx.assert_loc = Some(crate::emitter::AssertLoc {
             source: source.to_string(),
             rel_path: rel_path.to_string(),
@@ -1453,6 +1455,23 @@ fn lower_method_call(
         && let Some(first) = args.first()
         && let ExprKind::StrLit(path) = &first.kind
     {
+        // #707: a `(method, path)` whose path is a declared route but whose
+        // method has no handler is a **wrong-method** call — drive the generic
+        // `405` driver. The checker has already rejected a path that is not
+        // declared for any method, so an absent route here means wrong method.
+        let route_declared = cx.system_http_routes.contains(&(
+            id.name.clone(),
+            verb.as_str().to_string(),
+            path.clone(),
+        ));
+        if !route_declared {
+            return format!(
+                "__sysdrive_wrongmethod_{}({:?}, {:?})",
+                id.name,
+                verb.as_str(),
+                path
+            );
+        }
         let key = crate::emitter::http_handler_method_name(verb, path);
         let sub = cx
             .call_site_identity
