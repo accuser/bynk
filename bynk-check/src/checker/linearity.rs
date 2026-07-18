@@ -87,7 +87,7 @@ pub(crate) fn check(
         }
     }
     // A held parameter is owned for the whole body; it must be disposed before
-    // the handler returns (the body block is its scope).
+    // the handler or function returns (the body block is its scope).
     lin.walk_block(body, &mut state);
     for (name, span) in seeded {
         if state.get(&name) == Some(&Held::Owned) {
@@ -107,7 +107,7 @@ impl Lin<'_> {
                 "bynk.held.leak",
                 span,
                 format!(
-                    "held value `{name}` is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns"
+                    "held value `{name}` is still owned at scope exit — it must be disposed (stored, closed, or transferred) before returning"
                 ),
             )
             .with_note("store it (`<map>.put(k, conn)`), close it (`conn.close()`), or pass it to a function that consumes it"),
