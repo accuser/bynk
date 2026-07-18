@@ -10,7 +10,35 @@ use super::*;
 impl<'a> Parser<'a> {
     // -- expressions --
 
+    /// Depth-guarded entry to the expression grammar. Parenthesised
+    /// expressions re-enter here from `parse_primary`, and every nested
+    /// subexpression (call arguments, record fields, `if`/`match` operands, …)
+    /// routes through it, so bounding depth here bounds expression recursion as
+    /// a whole (#713). It also resets the no-record-literal restriction (#636);
+    /// the unguarded ladder body lives in [`Parser::parse_expr_inner`].
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, CompileError> {
+        self.enter_recursion("this expression")?;
+        // A fresh `parse_expr` is always a new sub-expression — the operands of
+        // a delimited form (parentheses, call arguments, list, record field) or
+        // a statement expression. The no-record-literal restriction (#636)
+        // applies only to the *spine* of an `if`/`match` condition, so clear it
+        // here: a record literal is legal again the moment we descend through a
+        // delimiter, e.g. `if f(A { x: 1 }) { … }`. The condition spine reaches
+        // the precedence ladder via [`parse_cond_expr`], which bypasses this.
+        let prev = self.no_record_literal;
+        self.no_record_literal = false;
+        let result = self.parse_expr_inner();
+        self.no_record_literal = prev;
+        self.depth -= 1;
+        result
+    }
+
+    /// The precedence-ladder entry, shared by [`parse_expr`] (which resets the
+    /// no-record-literal restriction first) and [`parse_cond_expr`] (which sets
+    /// it). Keeping the ladder here — rather than in `parse_expr` — is what lets
+    /// a condition parse its spine under the restriction without also clearing
+    /// it on entry.
+    fn parse_expr_inner(&mut self) -> Result<Expr, CompileError> {
         // v0.9.1: `assert e` is an expression of type `()`. Parsed at the
         // topmost precedence so `assert x == 1` binds as `assert (x == 1)`.
         // In statement position the block parser still consumes `assert` as
@@ -27,6 +55,28 @@ impl<'a> Parser<'a> {
             });
         }
         self.parse_implies()
+    }
+
+    /// Parse an expression in **condition position** — an `if` condition or a
+    /// `match` discriminant — where a trailing `{` opens the branch/arm block,
+    /// not a record literal (#636). `if ready { result } else { … }` must read
+    /// `ready` as the condition and `{ result }` as the then-branch, even
+    /// though `ready { result }` is also the shape of a shorthand-field record
+    /// construction.
+    ///
+    /// The restriction is set for the condition's own spine only, then
+    /// restored. It reaches the precedence ladder through [`parse_expr_inner`],
+    /// bypassing [`parse_expr`]'s reset; any delimited sub-expression within the
+    /// condition still goes through `parse_expr` and so lifts the restriction
+    /// (`if (ready { x }) { … }` constructs a record). Mirrors Rust's
+    /// `NO_STRUCT_LITERAL` restriction; parenthesise to construct a record in
+    /// condition head position, e.g. `match (A { x: 1 }) { … }`.
+    fn parse_cond_expr(&mut self) -> Result<Expr, CompileError> {
+        let prev = self.no_record_literal;
+        self.no_record_literal = true;
+        let result = self.parse_expr_inner();
+        self.no_record_literal = prev;
+        result
     }
 
     /// The subject of an `expect` (v0.117): either an observation over a
@@ -783,9 +833,12 @@ impl<'a> Parser<'a> {
                         span: ident.span.merge(close.span),
                     })
                 } else if self.peek_kind() == Some(TokenKind::LBrace)
+                    && !self.no_record_literal
                     && self.looks_like_record_construction()
                 {
                     // Record construction: `TypeName { field: value, ... }`.
+                    // Suppressed on an `if`/`match` condition spine, where a
+                    // trailing `ident {` opens the branch/arm block (#636).
                     self.parse_record_construction(ident)
                 } else {
                     Ok(Expr {
@@ -876,6 +929,14 @@ impl<'a> Parser<'a> {
     /// after the opening brace, or `}` immediately for the empty case.
     /// A function body or match body never starts with `Ident :` or `Ident ,`
     /// at this position because a `let` would come first as a statement.
+    ///
+    /// The `Ident }` arm (a single shorthand field, `T { field }`) and the
+    /// empty `}` arm are genuinely ambiguous with a block whose whole tail is a
+    /// bare identifier and with an empty block — the shapes are identical to a
+    /// 2-token lookahead. That ambiguity is resolved by *context*, not here: an
+    /// `if`/`match` condition sets `no_record_literal` so the caller never
+    /// consults this helper on the condition spine (#636). This predicate is a
+    /// pure token-shape test and deliberately stays context-free.
     fn looks_like_record_construction(&self) -> bool {
         debug_assert_eq!(self.peek_kind(), Some(TokenKind::LBrace));
         let a = self.tokens.get(self.pos + 1).map(|t| t.kind);
@@ -996,7 +1057,7 @@ impl<'a> Parser<'a> {
     /// Parse a `match` expression: `match expr { pat => body, ... }`.
     fn parse_match_expr(&mut self) -> Result<Expr, CompileError> {
         let kw = self.expect(TokenKind::Match, "to start a match expression")?;
-        let discriminant = self.parse_expr()?;
+        let discriminant = self.parse_cond_expr()?;
         self.expect(TokenKind::LBrace, "to open the match-arm list")?;
         let mut arms = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
@@ -1048,7 +1109,19 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Depth-guarded entry to the pattern grammar. Variant patterns nest
+    /// (`parse_pattern` -> `parse_pattern_binding` -> `parse_pattern`), a third
+    /// self-recursive descent independent of `parse_expr`/`parse_type_ref`, so
+    /// it needs its own guard or a nested `Ok(Ok(…))` still overflows (#713).
+    /// The unguarded body lives in [`Parser::parse_pattern_inner`].
     fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
+        self.enter_recursion("this pattern")?;
+        let result = self.parse_pattern_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern, CompileError> {
         if let Some(t) = self.peek() {
             if t.kind == TokenKind::Underscore {
                 self.bump();
@@ -1229,7 +1302,7 @@ impl<'a> Parser<'a> {
     /// Block whose tail is another If expression.
     fn parse_if_expr(&mut self) -> Result<Expr, CompileError> {
         let kw = self.expect(TokenKind::If, "to start an if expression")?;
-        let cond = self.parse_expr()?;
+        let cond = self.parse_cond_expr()?;
         let then_block = self.parse_block("to open the `if` branch")?;
         // v0.146 (ADR 0170): `else` is optional. A missing `else` defaults to a
         // synthesised `{ () }` (unit) else-branch — legal only when the

@@ -68,3 +68,39 @@ commons demo {
               (identifier))))
         tail: (ok_expr
           (identifier))))))
+
+==========================
+if condition ending in an identifier keeps a single-identifier branch (#636)
+==========================
+
+commons sample {
+	fn pick(ready: Bool, result: String, fallback: String) -> String {
+		if ready { result } else { fallback }
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      (param
+        name: (identifier)
+        type: (base_type))
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (if_expr
+          cond: (identifier)
+          then: (block
+            tail: (identifier))
+          else: (block
+            tail: (identifier)))))))
