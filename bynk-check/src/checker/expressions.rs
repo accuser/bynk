@@ -2130,6 +2130,25 @@ pub(crate) fn check_record_construction(
     let declared: HashMap<&str, &RecordField> =
         r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
 
+    // Field-set validation — missing required, unknown extra, duplicate init,
+    // and shorthand-in-scope. Shared verbatim with the resolver's reference
+    // walk (#711): the resolver runs it for `fn`/method bodies but skips
+    // `service`/`agent`/`actor` items, and `check` only runs once `resolve`
+    // passed clean, so for `fn`/method bodies this is a no-op (already gated,
+    // no double-report) and for handler bodies the checker is the only
+    // backstop. A single implementation keeps a service handler and an `fn`
+    // rejecting the identical literal identically. The shorthand predicate is
+    // the checker's lexical scope (mirrors the resolver's `name_in_scope`).
+    let scopes = &ctx.scopes;
+    crate::resolver::check_record_field_set(
+        type_name,
+        fields,
+        r,
+        decl.name.span,
+        |n| scopes.iter().rev().any(|s| s.contains_key(n)),
+        ctx.errors,
+    );
+
     // Non-generic records are the common case: resolve each field type directly
     // and compare — no type variables, no substitution churn (ADR 0183 #10).
     if decl.type_params.is_empty() {

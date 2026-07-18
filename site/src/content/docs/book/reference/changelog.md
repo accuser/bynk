@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.201**.
+written against **v0.205**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,10 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.205.0** | A bundle-mode `on call … by c: Caller` handler reads a live `CallerId` — its emitted `makeSurface` deploy surface threads the calling context's name into `deps.identity`, where it previously emitted `deps` without the field and broke `tsc` |
+| **v0.204.0** | Reject redeclaring a built-in type name (`List`, `Query`, `QueueResult`, …) with `bynk.resolve.reserved_builtin_type`; document keywords as three tiers |
+| **v0.203.0** | "Record construction in a `service`/`agent` handler body now validates the whole field set — a missing required field, an undeclared extra field, a duplicate initialiser, or a shorthand `{ name }` with no binding in scope is rejected (`bynk.resolve.missing_field` / `unknown_field` / `duplicate_field_init` / `unknown_name`), closing a soundness hole where such a record could cross the HTTP boundary; the checks already governed `fn`/method bodies (#711)." |
+| **v0.202.0** | A `Matches` refinement that nests unbounded quantifiers is rejected (`bynk.types.catastrophic_regex`) to close a ReDoS hole on the request boundary |
 | **v0.201.1** | "A boundary handler parameter whose name is a JavaScript reserved word (`class`, `void`, `public`, `static`, `delete`, …) no longer emits an invalid `const class = …` binder that breaks the Worker build — the entry-point and compose wrappers now route every such binder through `ts_ident`, exactly as the surface already did (#723)." |
 | **v0.201.0** | A route path containing a backslash, newline, or tab is now escaped through the canonical string escaper at every router emit site — previously only `"` was escaped, so an internal backslash silently drifted the emitted path (`\b` read as backspace) and a trailing backslash escaped the closing quote and failed to compile the Worker (#721) |
 | **v0.200.0** | A queue name (`from queue("…")`) or cron expression (`schedule("…")`/`on cron`) is now TOML-escaped in the generated `wrangler.toml`, so a source literal carrying `"`, `\`, or a newline can no longer break out of the `queue = "…"` / `crons = ["…"]` string and inject deploy-config keys (#722) |

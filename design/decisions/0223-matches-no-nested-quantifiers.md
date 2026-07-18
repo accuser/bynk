@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A `Matches` refinement that nests unbounded quantifiers is rejected (`bynk.types.catastrophic_regex`) to close a ReDoS hole on the request boundary
----
+# 0223 — A `Matches` refinement rejects nested unbounded quantifiers (ReDoS guard)
 
-## ADR: matches-no-nested-quantifiers
-title: A `Matches` refinement rejects nested unbounded quantifiers (ReDoS guard)
-summary: Why refined-string patterns forbid star height ≥ 2, and how it is detected
+- **Status:** Accepted (v0.202)
 
 **Context.** A refined `String where Matches(p)` compiles to a boundary check
 that runs `new RegExp("^(?:" + p + ")$").test(value)` in the emitted Worker
