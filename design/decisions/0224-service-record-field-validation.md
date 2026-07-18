@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "Record construction in a `service`/`agent` handler body now validates the whole field set — a missing required field, an undeclared extra field, a duplicate initialiser, or a shorthand `{ name }` with no binding in scope is rejected (`bynk.resolve.missing_field` / `unknown_field` / `duplicate_field_init` / `unknown_name`), closing a soundness hole where such a record could cross the HTTP boundary; the checks already governed `fn`/method bodies (#711)."
----
+# 0224 — Record field-set validation reaches service/agent handler bodies
 
-## ADR: service-record-field-validation
-title: Record field-set validation reaches service/agent handler bodies
-summary: Why the missing/unknown/duplicate-field checks moved into the checker's record-construction path
+- **Status:** Accepted (v0.203)
 
 **Context.** A record literal's *field set* — every declared field present, no
 undeclared extra field, no field initialised twice, and every shorthand
