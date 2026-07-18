@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.190.2** | "The LSP no longer panics when a multi-byte non-identifier char (`\"`, `€`, `—`, an emoji) precedes the receiver/callee it extracts from the line prefix — receiver and callee extraction now advance past the matched char by its UTF-8 length instead of assuming one byte, so completion, signature help, and hover survive a keystroke inside a string literal (#715)." |
 | **v0.190.1** | "`bynk new` preserves a hand-written `.gitignore` instead of overwriting it — a target holding only `.git/` and a user `.gitignore` scaffolds, and the template `.gitignore` is written only when none is present (#737)." |
 | **v0.190.0** | The `is` operator tests nested variant patterns structurally — `r is Rejected(RefinementViolation(_))` checks the inner tag as well as the outer — so a `system`-tier `Wire` test can discriminate *which* boundary rejection occurred (#705) |
 | **v0.189.0** | A `system`-tier test case drives an http route with a raw `Wire(<String>)` argument — pre-validation input the type system forbids — and observes the boundary reject it before the handler (`Rejected`) or handle it (`Handled`), via a raw driver and the `responseToHttpOutcome` decoder |
