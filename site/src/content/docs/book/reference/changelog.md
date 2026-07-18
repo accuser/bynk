@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.190.1** | "`bynk new` preserves a hand-written `.gitignore` instead of overwriting it — a target holding only `.git/` and a user `.gitignore` scaffolds, and the template `.gitignore` is written only when none is present (#737)." |
 | **v0.190.0** | The `is` operator tests nested variant patterns structurally — `r is Rejected(RefinementViolation(_))` checks the inner tag as well as the outer — so a `system`-tier `Wire` test can discriminate *which* boundary rejection occurred (#705) |
 | **v0.189.0** | A `system`-tier test case drives an http route with a raw `Wire(<String>)` argument — pre-validation input the type system forbids — and observes the boundary reject it before the handler (`Rejected`) or handle it (`Handled`), via a raw driver and the `responseToHttpOutcome` decoder |
 | **v0.188.1** | A `from http` route's boundary-rejection responses (`400`/`401`) now carry the service's security headers (`nosniff`/HSTS) and CORS, exactly as its handled `200` does — restoring ADR 0164 D6 on the rejection path (#659) |
