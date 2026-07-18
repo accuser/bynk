@@ -846,6 +846,10 @@
       "summary": "Expected a refinement predicate."
     },
     {
+      "code": "bynk.types.catastrophic_regex",
+      "summary": "A `Matches` predicate nests unbounded quantifiers, risking catastrophic backtracking (ReDoS)."
+    },
+    {
       "code": "bynk.types.empty_refinement",
       "summary": "A refinement admits no values (contradictory predicates)."
     },

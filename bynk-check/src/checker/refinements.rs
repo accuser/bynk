@@ -365,6 +365,30 @@ fn check_refinement(
                         )
                         .with_note(format!("regex parse error (JS `RegExp` semantics): {e}")),
                     );
+                } else if has_nested_unbounded_quantifier(pat) {
+                    // The emitted boundary check runs this pattern under JS
+                    // `RegExp`, a backtracking engine. A repeated group that
+                    // itself contains an unbounded quantifier (`(a+)+`) makes
+                    // matching take exponential time on a crafted near-miss
+                    // input — a refined `String` on an HTTP boundary would let
+                    // an unauthenticated client stall the Worker (ReDoS, #724).
+                    // Reject the pattern at compile time rather than ship the
+                    // hazard.
+                    errors.push(
+                        CompileError::new(
+                            "bynk.types.catastrophic_regex",
+                            pred.span,
+                            format!(
+                                "the pattern in `Matches(\"{pat}\")` nests unbounded quantifiers, \
+                                 which can cause catastrophic backtracking (ReDoS)"
+                            ),
+                        )
+                        .with_note(
+                            "a repeated group that itself contains `*`, `+`, or `{n,}` makes \
+                             matching take exponential time on crafted input; restructure the \
+                             pattern so no unbounded quantifier is nested inside another",
+                        ),
+                    );
                 }
             }
             PredKind::InRange(lo, hi) => {
@@ -757,5 +781,268 @@ fn regex_matches_empty(pattern: &str) -> bool {
     match regress::Regex::new(&format!("^(?:{pattern})$")) {
         Ok(re) => re.find("").is_some(),
         Err(_) => false,
+    }
+}
+
+/// #724 — detect the catastrophic-backtracking (ReDoS) signature: an unbounded
+/// quantifier applied to a group that itself contains an unbounded quantifier
+/// ("star height ≥ 2", e.g. `(a+)+`, `(a*)*b`, `((ab)+)+`). Under the JS
+/// backtracking `RegExp` the emitted boundary check runs, this class takes
+/// exponential time on a crafted near-miss input; the conservative structural
+/// rule rejects it at compile time.
+///
+/// "Unbounded" means `*`, `+`, or `{n,}` (open upper bound); `?` and `{n,m}`
+/// (finite) cannot explode. The scan is purely structural — the pattern is
+/// already known valid (`regress` accepted it) — so it need not model match
+/// semantics, only quantifier nesting through groups. Inner unbounded
+/// quantifiers propagate up through *bounded* quantifiers too, so
+/// `((a+)?)+` is still caught. This is a deliberately conservative
+/// approximation: it can reject some patterns that happen to be safe (a
+/// star-height-2 shape whose sub-expressions can never overlap), but every
+/// exponential-blowup pattern has star height ≥ 2, so none slips through. It
+/// does *not* target the lower-severity polynomial class (star height 1).
+fn has_nested_unbounded_quantifier(pat: &str) -> bool {
+    let chars: Vec<char> = pat.chars().collect();
+    // One boolean per open group (index 0 = top level): does this group contain
+    // an unbounded quantifier anywhere within it?
+    let mut stack: Vec<bool> = vec![false];
+    // The atom a following quantifier would apply to: `None` if none is pending,
+    // else `Some(inner_unbounded)` where `inner_unbounded` is true when that atom
+    // is a group carrying an unbounded quantifier inside it.
+    let mut pending: Option<bool> = None;
+    let mut i = 0;
+
+    // Fold a pending atom that turned out to be unquantified into the current
+    // frame: if it was a group with inner unbounded content, that content still
+    // lives in the enclosing group.
+    fn fold(pending: &mut Option<bool>, stack: &mut [bool]) {
+        if pending.take() == Some(true) {
+            *stack.last_mut().unwrap() = true;
+        }
+    }
+
+    while i < chars.len() {
+        match chars[i] {
+            // An escape is a single atom; skip the escaped char.
+            '\\' => {
+                fold(&mut pending, &mut stack);
+                i += 2;
+                pending = Some(false);
+            }
+            // A character class is one atom; `*`/`+`/`{` inside it are literal.
+            '[' => {
+                fold(&mut pending, &mut stack);
+                i += 1;
+                if i < chars.len() && chars[i] == '^' {
+                    i += 1;
+                }
+                // A leading `]` is a literal member, not the class terminator.
+                if i < chars.len() && chars[i] == ']' {
+                    i += 1;
+                }
+                while i < chars.len() && chars[i] != ']' {
+                    if chars[i] == '\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                i += 1; // consume the closing `]`
+                pending = Some(false);
+            }
+            '(' => {
+                fold(&mut pending, &mut stack);
+                stack.push(false);
+                i += 1;
+                // Skip a group-type prefix so its punctuation is not mistaken for
+                // an atom: `(?:`, `(?=`, `(?!`, `(?<=`, `(?<!`, `(?<name>`.
+                if i < chars.len() && chars[i] == '?' {
+                    i += 1;
+                    if i < chars.len() && matches!(chars[i], ':' | '=' | '!') {
+                        i += 1;
+                    } else if i < chars.len() && chars[i] == '<' {
+                        i += 1;
+                        if i < chars.len() && matches!(chars[i], '=' | '!') {
+                            i += 1;
+                        } else {
+                            while i < chars.len() && chars[i] != '>' {
+                                i += 1;
+                            }
+                            if i < chars.len() {
+                                i += 1; // consume `>`
+                            }
+                        }
+                    }
+                }
+            }
+            ')' => {
+                fold(&mut pending, &mut stack);
+                let closed = stack.pop().unwrap_or(false);
+                i += 1;
+                // The whole group is now an atom in its parent frame.
+                pending = Some(closed);
+            }
+            // Alternation ends the current atom; an unbounded one folds in.
+            '|' => {
+                fold(&mut pending, &mut stack);
+                i += 1;
+            }
+            // Unbounded quantifier.
+            '*' | '+' => {
+                let atom_unbounded = pending.take().unwrap_or(false);
+                if atom_unbounded {
+                    return true; // unbounded nested inside unbounded
+                }
+                *stack.last_mut().unwrap() = true;
+                i += 1;
+                if i < chars.len() && chars[i] == '?' {
+                    i += 1; // lazy marker
+                }
+            }
+            // Optional: bounded, but inner unbounded content still propagates.
+            '?' => {
+                if let Some(atom_unbounded) = pending.take() {
+                    if atom_unbounded {
+                        *stack.last_mut().unwrap() = true;
+                    }
+                    i += 1;
+                    if i < chars.len() && chars[i] == '?' {
+                        i += 1; // lazy marker
+                    }
+                } else {
+                    // Stray `?` (unreachable for a valid pattern) — treat as atom.
+                    i += 1;
+                    pending = Some(false);
+                }
+            }
+            '{' => {
+                if let Some((unbounded_q, next)) = parse_brace_quantifier(&chars, i) {
+                    let atom_unbounded = pending.take().unwrap_or(false);
+                    if unbounded_q && atom_unbounded {
+                        return true;
+                    }
+                    if unbounded_q || atom_unbounded {
+                        *stack.last_mut().unwrap() = true;
+                    }
+                    i = next;
+                    if i < chars.len() && chars[i] == '?' {
+                        i += 1; // lazy marker
+                    }
+                } else {
+                    // A `{` that is not a quantifier is a literal atom.
+                    fold(&mut pending, &mut stack);
+                    i += 1;
+                    pending = Some(false);
+                }
+            }
+            // Any other char (`.`, literal, `^`, `$`) is an ordinary atom.
+            _ => {
+                fold(&mut pending, &mut stack);
+                i += 1;
+                pending = Some(false);
+            }
+        }
+    }
+    false
+}
+
+/// Parse a `{m}`, `{m,}`, or `{m,n}` quantifier starting at `chars[start] == '{'`.
+/// Returns `(is_unbounded, index_after_close)` when it is a well-formed
+/// quantifier — `is_unbounded` is true only for `{m,}` (open upper bound) — or
+/// `None` when the braces are not a quantifier (then they are literal text, as
+/// JS `RegExp` treats them).
+fn parse_brace_quantifier(chars: &[char], start: usize) -> Option<(bool, usize)> {
+    let mut i = start + 1;
+    let lo_start = i;
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == lo_start {
+        return None; // `{m` requires at least one digit
+    }
+    let mut unbounded = false;
+    if i < chars.len() && chars[i] == ',' {
+        i += 1;
+        let hi_start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == hi_start {
+            unbounded = true; // `{m,}` — no upper bound
+        }
+    }
+    if i < chars.len() && chars[i] == '}' {
+        Some((unbounded, i + 1))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod redos_tests {
+    use super::has_nested_unbounded_quantifier as redos;
+
+    #[test]
+    fn flags_nested_unbounded_quantifiers() {
+        // The classic exponential shapes: an unbounded quantifier over a group
+        // that itself repeats unboundedly.
+        assert!(redos("(a+)+"));
+        assert!(redos("(a+)+$"));
+        assert!(redos("(a*)*"));
+        assert!(redos("(a+)*"));
+        assert!(redos("(a*)+"));
+        assert!(redos("((ab)+)+"));
+        assert!(redos("(a{1,})+")); // `{1,}` is unbounded
+        assert!(redos("(a+){2,}")); // outer open bound over inner `+`
+        assert!(redos("x(y(z+)+w)+")); // nested a level deep
+        assert!(redos("(\\d+)+"));
+        assert!(redos("(?:a+)+")); // non-capturing group
+        assert!(redos("([a-z]+)*")); // class inside the repeated group
+        assert!(redos("((a+)?)+")); // inner unbounded propagates through `?`
+        assert!(redos("(a+|b)+")); // alternation does not launder the nesting
+    }
+
+    #[test]
+    fn allows_safe_patterns() {
+        // A single quantifier level is fine, however placed.
+        assert!(!redos("a+"));
+        assert!(!redos("(a+)")); // repeated once, not nested
+        assert!(!redos("(a+)(b+)")); // siblings, not nested
+        assert!(!redos("(ab)+")); // repeated group with no inner quantifier
+        assert!(!redos("(a+)?")); // bounded outer quantifier
+        assert!(!redos("(a+){2,3}")); // finite outer bound
+        assert!(!redos("[a-z]+")); // `+` binds the class, not a group
+        assert!(!redos("a{2,}b{2,}")); // two unbounded, neither nested
+    }
+
+    #[test]
+    fn allows_every_pattern_used_in_the_repo() {
+        // Guard against a false positive on the `Matches` patterns the fixtures,
+        // docs, and examples ship — none nests unbounded quantifiers.
+        for pat in [
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            "[a-z][a-z0-9-]*",
+            "[A-Z]{3}-[0-9]{4}",
+            "[A-Z]{3}",
+            "[a-z]+",
+            "[A-Z]+",
+            "[a-z]+(?<=ing)",
+            "[a-z0-9_]+",
+            "[a-z0-9]{1,16}",
+            "[a-z0-9]{1,8}",
+            "[A-Z0-9]{3,16}",
+            "[a-z0-9]{3,8}",
+            "[a-zA-Z0-9]{6,8}",
+            "ab|cd",
+            "AUTH-[0-9]{8}",
+            "AUTH-[0-9]+",
+            "CUST-[0-9]+",
+            "https?://.+",
+            "ORD-[0-9]{6}",
+            "ORD-[0-9]+",
+            "SHP-[0-9]{8}",
+            "T-[0-9]+",
+        ] {
+            assert!(!redos(pat), "false positive on safe pattern `{pat}`");
+        }
     }
 }

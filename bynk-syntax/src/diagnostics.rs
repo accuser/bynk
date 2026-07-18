@@ -1495,6 +1495,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.types.cannot_infer_result_type_params",
         "The type parameters of a `Result` could not be inferred.",
     ),
+    dg(
+        "bynk.types.catastrophic_regex",
+        "A `Matches` predicate nests unbounded quantifiers, risking catastrophic backtracking (ReDoS).",
+        &["refinement"],
+    ),
     d(
         "bynk.types.constructor_arity",
         "A variant constructor got the wrong number of arguments.",
