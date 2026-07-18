@@ -197,4 +197,29 @@ mod tests {
         assert_eq!(escape_toml_basic_string("a\u{0}b"), "a\\u0000b");
         assert_eq!(escape_toml_basic_string("a\u{7f}b"), "a\\u007Fb");
     }
+
+    #[test]
+    fn escaped_value_is_valid_toml_and_round_trips() {
+        // The security invariant, enforced by a real TOML parser (not a golden
+        // byte-compare): interpolating the escaped value produces a well-formed
+        // single-key table whose decoded value is *exactly* the input — no
+        // injected keys, no broken string. Covers the injection payload from the
+        // defect report plus a control char that takes the `\uXXXX` fallback.
+        for input in ["q\nkey = \"injected", "*/5 * * * *\\\"", "a\u{0}b\ttail"] {
+            let doc = format!("queue = \"{}\"", escape_toml_basic_string(input));
+            let table: toml::Table = doc
+                .parse()
+                .unwrap_or_else(|e| panic!("escaped {input:?} is invalid TOML: {e} ({doc:?})"));
+            assert_eq!(
+                table.len(),
+                1,
+                "escaped {input:?} injected extra keys: {table:?}"
+            );
+            assert_eq!(
+                table["queue"].as_str(),
+                Some(input),
+                "escaped {input:?} did not round-trip"
+            );
+        }
+    }
 }
