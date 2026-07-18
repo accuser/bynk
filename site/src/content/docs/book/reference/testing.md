@@ -99,6 +99,26 @@ case — there is no wire to be raw about at `unit`
 (`bynk.test.wire_needs_system`) — and no refined value is ever built from it: the
 router validates the raw string, which is the whole point.
 
+### Testing the auth seam with `by Nobody`
+
+`by User("bob")` presents a valid, framework-signed credential the real seam
+verifies. To test the *rejection* — an unauthenticated request — a `system`-tier
+case drives the route as **`by Nobody`**: the request carries no `Authorization`
+header, so the seam refuses it before the handler runs.
+
+```bynk
+case "no credential is rejected at the seam" as system {
+  let r <- api.POST("/cart", Item { sku: "widget" }) by Nobody
+  expect r is Rejected(Unauthorized)
+}
+```
+
+`by Nobody` yields the same `Rejected(_) | Handled(_)` outcome as a `Wire` call:
+a `401` from the seam is `Rejected(Unauthorized)`. It presents no identity
+(`by Nobody(...)` is an error), and is meaningful only at `system`, where the
+real seam exists (`bynk.test.credential_needs_system`). A validly-signed but
+expired or forged credential is an end-to-end concern, not the system tier's.
+
 ## `expect`
 
 `expect <bool-predicate>` checks a predicate. It exists in both statement form (a
