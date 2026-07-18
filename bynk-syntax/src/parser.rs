@@ -866,6 +866,43 @@ mod tests {
     }
 
     #[test]
+    fn interpolation_hole_lex_error_span_is_rebased() {
+        // #716: a lex error inside a `\(…)` hole once carried a span relative to
+        // the hole substring — never rebased by `hole.start` — so it pointed at
+        // the file's opening bytes and could split a multibyte char, tripping
+        // the char-boundary invariant. The error must land on the offending
+        // bytes within the hole and stay on char boundaries.
+        let cases = [
+            // `$` is not a valid token; the error should point at it, not byte 0.
+            "commons x\n\nfn f() -> String {\n  \"a \\($)\"\n}\n",
+            // Integer overflow — the reported span must cover the literal itself.
+            "commons x\n\nfn f() -> String {\n  \"n = \\(99999999999999999999)\"\n}\n",
+            // A multibyte char before the hole means an un-rebased span could
+            // land inside the `é`; the rebased span must not.
+            "commons x\n\nfn f() -> String {\n  \"é \\($)\"\n}\n",
+        ];
+        for src in cases {
+            let errs = parse_str(src).unwrap_err();
+            assert!(!errs.is_empty(), "expected a lex error for {src:?}");
+            for e in &errs {
+                assert!(
+                    src.is_char_boundary(e.span.start) && src.is_char_boundary(e.span.end),
+                    "span {:?} splits a codepoint in {src:?}",
+                    e.span,
+                );
+                // The error must point inside the interpolation hole, not at the
+                // header text that precedes it.
+                let hole_start = src.find("\\(").expect("case has a hole") + 2;
+                assert!(
+                    e.span.start >= hole_start,
+                    "span {:?} precedes the hole (starts at {hole_start}) in {src:?}",
+                    e.span,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn fragment_form_parses() {
         let c = parse_str("commons x.y\n\ntype T = Int where NonNegative\n").unwrap();
         assert_eq!(c.form, CommonsForm::Fragment);

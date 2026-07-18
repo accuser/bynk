@@ -103,6 +103,24 @@ impl CompileError {
         }
     }
 
+    /// Shift every span in this diagnostic — the primary span, secondary
+    /// labels, and suggestion edits — right by `delta` bytes. Used to rebase a
+    /// diagnostic produced against a substring (e.g. an interpolation hole
+    /// re-lexed on its own) into the full source, so the location is correct
+    /// and every span stays a valid char boundary. (#716.)
+    pub fn offset_spans(mut self, delta: usize) -> Self {
+        self.span = self.span.offset(delta);
+        for (span, _) in &mut self.labels {
+            *span = span.offset(delta);
+        }
+        for suggestion in &mut self.suggestions {
+            for (span, _) in &mut suggestion.edits {
+                *span = span.offset(delta);
+            }
+        }
+        self
+    }
+
     pub fn with_label(mut self, span: Span, label: impl Into<String>) -> Self {
         self.labels.push((span, label.into()));
         self

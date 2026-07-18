@@ -1334,9 +1334,13 @@ impl<'a> Parser<'a> {
             )
             .with_note("`\\(…)` must contain an expression"));
         }
-        let mut tokens = crate::lexer::tokenize(src)?;
+        // A lex error here carries spans relative to `src` (the hole substring);
+        // rebase them into the full source before propagating, mirroring the
+        // success-path token rebasing below. Otherwise the diagnostic points at
+        // the file's opening bytes and can split a multibyte char. (#716.)
+        let mut tokens = crate::lexer::tokenize(src).map_err(|e| e.offset_spans(hole.start))?;
         for token in &mut tokens {
-            token.span = Span::new(token.span.start + hole.start, token.span.end + hole.start);
+            token.span = token.span.offset(hole.start);
         }
         let (content, trivia) = split_trivia(&tokens, self.source);
         let mut warnings = Vec::new();
