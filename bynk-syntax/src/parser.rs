@@ -366,18 +366,54 @@ impl<'a> Parser<'a> {
                 .peek()
                 .map(|t| t.span)
                 .unwrap_or_else(|| self.eof_span());
-            return Err(CompileError::new(
-                "bynk.parse.nesting_too_deep",
-                span,
-                format!(
-                    "{what} nests more than {} levels deep",
-                    crate::MAX_NESTING_DEPTH
-                ),
-            )
-            .with_note(
-                "deeply nested source is rejected to keep the parser from overflowing its \
-                 stack and aborting; flatten or split the construct",
-            ));
+            return Err(self.nesting_too_deep(span, what));
+        }
+        Ok(())
+    }
+
+    /// The bounded-depth diagnostic shared by [`enter_recursion`] and
+    /// [`enter_chain_fold`].
+    fn nesting_too_deep(&self, span: Span, what: &str) -> CompileError {
+        CompileError::new(
+            "bynk.parse.nesting_too_deep",
+            span,
+            format!(
+                "{what} nests more than {} levels deep",
+                crate::MAX_NESTING_DEPTH
+            ),
+        )
+        .with_note(
+            "deeply nested source is rejected to keep the parser from overflowing its \
+             stack and aborting; flatten or split the construct",
+        )
+    }
+
+    /// Count one more operand folded onto an associative operator chain against
+    /// the same recursion budget as [`enter_recursion`] (#714).
+    ///
+    /// Associative chains (`+`, `*`, `&&`, `||`) are built *iteratively* in the
+    /// precedence ladder, so — unlike parentheses, calls, or `implies` — they
+    /// never re-enter `parse_expr` and thus slip past the `enter_recursion`
+    /// guard. Yet each fold deepens the left-nested `Expr` tree by one level,
+    /// and a long flat chain (`1 + 1 + … + 1`) overflows every *recursive*
+    /// consumer of that tree downstream — the checker's `type_of`, the
+    /// formatter, the emitter, and the AST's own recursive `Drop` — exactly as
+    /// deeply nested source overflows the parser. Counting each fold on the
+    /// shared `depth` budget bounds the whole expression's height, and because
+    /// it is the *same* budget it composes with the ambient nesting depth, so a
+    /// chain buried inside deeply nested source cannot exceed the bound either.
+    ///
+    /// The caller accumulates `folds` and subtracts them from `depth` before it
+    /// returns, so the live count unwinds as a recursive descent would; on the
+    /// overflow path the whole chain's contribution is restored here so a
+    /// recovering caller is not left mis-counted.
+    fn enter_chain_fold(&mut self, folds: &mut usize, span: Span) -> Result<(), CompileError> {
+        self.depth += 1;
+        *folds += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            self.depth -= *folds;
+            *folds = 0;
+            return Err(self.nesting_too_deep(span, "this expression"));
         }
         Ok(())
     }
