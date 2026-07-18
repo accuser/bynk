@@ -1898,11 +1898,21 @@ impl LanguageServer for Backend {
         let candidates = {
             let line_prefix = line_prefix.clone();
             let text = text.clone();
-            tokio::task::spawn_blocking(move || {
+            match tokio::task::spawn_blocking(move || {
                 completion::complete(&line_prefix, &text, files.as_deref())
             })
             .await
-            .unwrap_or_default()
+            {
+                Ok(c) => c,
+                // A panic (or cancellation) inside `complete()` degrades to empty
+                // completions rather than a failed request — but log the
+                // `JoinError` so the underlying bug is not silently swallowed
+                // (#776 review).
+                Err(e) => {
+                    tracing::error!("completion enumeration task failed: {e}");
+                    Vec::new()
+                }
+            }
         };
         let mut items: Vec<CompletionItem> =
             candidates.into_iter().map(to_completion_item).collect();

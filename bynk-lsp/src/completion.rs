@@ -1417,6 +1417,15 @@ struct CachedUnit {
 static PROJECT_UNIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedUnit>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Cap on distinct cached files. Without it, a long-lived server hopping across
+/// many workspaces accumulates one entry per path ever enumerated — and
+/// renamed/deleted files leave dangling `None`s behind (#776 review). Past the
+/// cap the cache is cleared wholesale: crude, but entries repopulate lazily on
+/// the next access, and a project with this many files is already far past where
+/// a per-keystroke parse cache pays off. Generous, so a normal project never
+/// trips it.
+const PROJECT_UNIT_CACHE_CAP: usize = 4096;
+
 /// The parsed unit for a project file, from the cache when its mtime and
 /// length are unchanged since the last read, else read + parse + store. A file
 /// that disappears or fails to read caches a `None` unit under its (now empty)
@@ -1439,6 +1448,11 @@ fn cached_project_unit(path: &Path) -> Option<Arc<SourceUnit>> {
         .and_then(|s| parse_source_unit(&s))
         .map(Arc::new);
     let mut cache = PROJECT_UNIT_CACHE.lock().unwrap();
+    // Bound the cache: a fresh path past the cap clears it rather than growing
+    // without limit (refreshing an existing entry never grows the map).
+    if cache.len() >= PROJECT_UNIT_CACHE_CAP && !cache.contains_key(path) {
+        cache.clear();
+    }
     cache.insert(
         path.to_path_buf(),
         CachedUnit {
