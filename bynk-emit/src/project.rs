@@ -1094,8 +1094,13 @@ fn phase_group(
             kinds.entry(name).or_insert(pf.kind);
         }
     }
+    // #696: the consistency checks pair each error with the project-relative
+    // path of the file its primary span belongs to, so the CLI renders them
+    // with ariadne source context rather than the plain fallback.
     if let Err(e) = check_directory_name_consistency(parsed) {
-        errors.extend_for(None, e);
+        for (path, err) in e {
+            errors.push_for(Some(&path), err);
+        }
     }
     if let Err(e) = check_directory_kind_consistency(parsed) {
         errors.extend_for(None, e);
@@ -1103,19 +1108,23 @@ fn phase_group(
     // A group must agree on kind across all its files (different name but
     // same kind is fine; same name but different kind is an error).
     if let Err(e) = check_group_kind_consistency(parsed, &groups) {
-        errors.extend_for(None, e);
+        for (path, err) in e {
+            errors.push_for(Some(&path), err);
+        }
     }
     // Each *source* unit's file path must match its declared qualified name.
     // v0.113 (DECISION S): a `suite` has no path-identity requirement — it names
     // its target and is legal in any file — so test-ness carries no path check.
     if let Err(e) = check_path_name_alignment(parsed) {
-        errors.extend_for(None, e);
+        for (path, err) in e {
+            errors.push_for(Some(&path), err);
+        }
     }
 
     // v0.20a: function types are confined to non-boundary positions.
-    let mut fn_boundary_errors: Vec<CompileError> = Vec::new();
-    check_function_type_boundaries(parsed, &mut fn_boundary_errors);
-    errors.extend_for(None, fn_boundary_errors);
+    for (path, err) in check_function_type_boundaries(parsed) {
+        errors.push_for(Some(&path), err);
+    }
 
     // v0.17: the `bynk` root namespace is reserved for the toolchain. No user
     // unit of any kind may be named `bynk` or `bynk.*` (§3.4).
@@ -1125,7 +1134,7 @@ fn phase_group(
         }
         let qn = pf.unit.name();
         if qn.parts.first().is_some_and(|p| p.name == "bynk") {
-            errors.push_for(None,
+            errors.push_for(Some(&pf.identity_path),
                 CompileError::new(
                     "bynk.namespace.reserved",
                     qn.span,
@@ -1152,7 +1161,7 @@ fn phase_group(
                 .iter()
                 .any(|it| matches!(it, CommonsItem::Provider(p) if p.external));
             if has_external && a.binding.is_none() {
-                errors.push_for(None,
+                errors.push_for(Some(&pf.identity_path),
                     CompileError::new(
                         "bynk.adapter.no_binding",
                         a.span,
@@ -1211,7 +1220,7 @@ fn phase_group(
                 );
             }
             Err(e) => {
-                errors.push_for(None,
+                errors.push_for(Some(&pf.identity_path),
                     CompileError::new(
                         "bynk.adapter.no_binding",
                         b.module_span,
@@ -1238,7 +1247,7 @@ fn phase_group(
         let Some(b) = &a.binding else { continue };
         for dep in &b.requires {
             if is_unpinned_range(&dep.range) {
-                errors.push_for(None,
+                errors.push_for(Some(&pf.identity_path),
                     CompileError::new(
                         "bynk.requires.unpinned_dependency",
                         dep.span,
@@ -1278,9 +1287,12 @@ fn phase_symbol_tables(
     let mut unit_tables: HashMap<String, UnitTable> = HashMap::new();
     for (name, indices) in groups {
         let kind = *kinds.get(name).expect("every group has a kind");
-        let mut table_errors: Vec<CompileError> = Vec::new();
+        // #696: build_unit_table pairs each diagnostic with its declaring file.
+        let mut table_errors: Vec<(PathBuf, CompileError)> = Vec::new();
         let table = build_unit_table(name, kind, indices, parsed, &mut table_errors);
-        errors.extend_for(None, table_errors);
+        for (path, err) in table_errors {
+            errors.push_for(Some(&path), err);
+        }
         unit_tables.insert(name.clone(), table);
     }
     unit_tables
@@ -1304,7 +1316,7 @@ fn phase_resolve_uses(
                 let target = u.target.joined();
                 if !unit_tables.contains_key(&target) {
                     errors.push_for(
-                        None,
+                        Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.uses.unknown_commons",
                             u.span,
@@ -1318,7 +1330,7 @@ fn phase_resolve_uses(
                 }
                 let target_kind = *kinds.get(&target).unwrap();
                 if target_kind != UnitKind::Commons {
-                    errors.push_for(None,
+                    errors.push_for(Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.uses.target_is_context",
                             u.span,
@@ -1334,7 +1346,7 @@ fn phase_resolve_uses(
                 }
                 if target == *name {
                     errors.push_for(
-                        None,
+                        Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.uses.self_reference",
                             u.span,
@@ -1387,7 +1399,7 @@ fn phase_resolve_consumes(
             for c in parsed[i].consumes() {
                 let target = c.target.joined();
                 if kind != UnitKind::Context && kind != UnitKind::Adapter {
-                    errors.push_for(None,
+                    errors.push_for(Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.consumes.in_commons",
                             c.span,
@@ -1405,7 +1417,7 @@ fn phase_resolve_consumes(
                 // form only — an adapter has no services to RPC-call, so the
                 // whole-unit and `as Alias` forms are meaningless inside one.
                 if kind == UnitKind::Adapter && c.selected.is_none() {
-                    errors.push_for(None,
+                    errors.push_for(Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.adapter.consumes_requires_selection",
                             c.span,
@@ -1421,7 +1433,7 @@ fn phase_resolve_consumes(
                 }
                 if !unit_tables.contains_key(&target) {
                     errors.push_for(
-                        None,
+                        Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.consumes.unknown_context",
                             c.span,
@@ -1437,7 +1449,7 @@ fn phase_resolve_consumes(
                 // v0.17: `consumes` may target a context or an adapter (the host
                 // boundary). It may not target a commons (use `uses` for that).
                 if target_kind != UnitKind::Context && target_kind != UnitKind::Adapter {
-                    errors.push_for(None,
+                    errors.push_for(Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.consumes.target_is_commons",
                             c.span,
@@ -1455,7 +1467,7 @@ fn phase_resolve_consumes(
                 // an adapter consuming a *context* would pull service logic into
                 // the host boundary.
                 if kind == UnitKind::Adapter && target_kind == UnitKind::Context {
-                    errors.push_for(None,
+                    errors.push_for(Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.adapter.consumes_context",
                             c.span,
@@ -1476,7 +1488,7 @@ fn phase_resolve_consumes(
                         "context"
                     };
                     errors.push_for(
-                        None,
+                        Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.consumes.self_reference",
                             c.span,
@@ -1497,7 +1509,7 @@ fn phase_resolve_consumes(
                     for cap in names {
                         if !exported.contains(&cap.name) {
                             errors.push_for(
-                                None,
+                                Some(&parsed[i].identity_path),
                                 CompileError::new(
                                     "bynk.given.cross_context_unknown_capability",
                                     cap.span,
@@ -1510,7 +1522,7 @@ fn phase_resolve_consumes(
                             continue;
                         }
                         if local_caps.contains(&cap.name) {
-                            errors.push_for(None, CompileError::new(
+                            errors.push_for(Some(&parsed[i].identity_path), CompileError::new(
                                 "bynk.consumes.capability_name_clash",
                                 cap.span,
                                 format!(
@@ -1521,7 +1533,7 @@ fn phase_resolve_consumes(
                             continue;
                         }
                         if let Some(prev) = flattened.get(&cap.name) {
-                            errors.push_for(None, CompileError::new(
+                            errors.push_for(Some(&parsed[i].identity_path), CompileError::new(
                                 "bynk.consumes.capability_name_clash",
                                 cap.span,
                                 format!(
@@ -1576,7 +1588,7 @@ fn phase_consumes_aliases(
                     continue;
                 }
                 if let Some(prev_span) = alias_spans.get(&alias.name) {
-                    errors.push_for(None,
+                    errors.push_for(Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.consumes.alias_conflict",
                             alias.span,
@@ -1606,7 +1618,9 @@ fn phase_consumes_aliases(
             continue;
         };
         for alias in aliases.keys() {
-            let alias_span = parsed_alias_span(parsed, &groups[name], alias).unwrap_or_default();
+            let alias_site = parsed_alias_span(parsed, &groups[name], alias);
+            let alias_span = alias_site.map(|(_, s)| s).unwrap_or_default();
+            let alias_file = alias_site.map(|(i, _)| parsed[i].identity_path.clone());
             let conflict_kind = if local.types.contains_key(alias) {
                 Some("type")
             } else if local.fns.contains_key(alias) {
@@ -1621,7 +1635,7 @@ fn phase_consumes_aliases(
                 None
             };
             if let Some(kind) = conflict_kind {
-                errors.push_for(None,
+                errors.push_for(alias_file.as_deref(),
                     CompileError::new(
                         "bynk.consumes.alias_conflict",
                         alias_span,
@@ -1659,8 +1673,10 @@ fn phase_uses_name_conflicts(
                     continue;
                 }
                 if let Some(prev) = imported.get(type_name) {
-                    let span = uses_span_of(parsed, &groups[name], t).unwrap_or_default();
-                    errors.push_for(None,
+                    let site = uses_span_of(parsed, &groups[name], t);
+                    let span = site.map(|(_, s)| s).unwrap_or_default();
+                    let file = site.map(|(i, _)| parsed[i].identity_path.clone());
+                    errors.push_for(file.as_deref(),
                         CompileError::new(
                             "bynk.uses.name_conflict",
                             span,
@@ -1681,8 +1697,10 @@ fn phase_uses_name_conflicts(
                     continue;
                 }
                 if let Some(prev) = imported.get(fn_name) {
-                    let span = uses_span_of(parsed, &groups[name], t).unwrap_or_default();
-                    errors.push_for(None,
+                    let site = uses_span_of(parsed, &groups[name], t);
+                    let span = site.map(|(_, s)| s).unwrap_or_default();
+                    let file = site.map(|(i, _)| parsed[i].identity_path.clone());
+                    errors.push_for(file.as_deref(),
                         CompileError::new(
                             "bynk.uses.name_conflict",
                             span,
@@ -1737,7 +1755,7 @@ fn phase_validate_type_exports(
                 for n in &clause.names {
                     if let Some(prev) = within.get(&n.name) {
                         errors.push_for(
-                            None,
+                            Some(&parsed[i].identity_path),
                             CompileError::new(
                                 "bynk.exports.duplicate_in_clause",
                                 n.span,
@@ -1753,7 +1771,7 @@ fn phase_validate_type_exports(
                     within.insert(n.name.clone(), n.span);
 
                     if !local.types.contains_key(&n.name) {
-                        errors.push_for(None,
+                        errors.push_for(Some(&parsed[i].identity_path),
                             CompileError::new(
                                 "bynk.exports.undeclared_type",
                                 n.span,
@@ -1774,7 +1792,7 @@ fn phase_validate_type_exports(
                     if let Some((prev_vis, prev_span)) = seen.get(&n.name) {
                         if *prev_vis == clause_vis {
                             errors.push_for(
-                                None,
+                                Some(&parsed[i].identity_path),
                                 CompileError::new(
                                     "bynk.exports.duplicate_export",
                                     n.span,
@@ -1783,7 +1801,7 @@ fn phase_validate_type_exports(
                                 .with_label(*prev_span, "previously exported here"),
                             );
                         } else {
-                            errors.push_for(None,
+                            errors.push_for(Some(&parsed[i].identity_path),
                                 CompileError::new(
                                     "bynk.exports.conflicting_visibility",
                                     n.span,
@@ -1839,7 +1857,7 @@ fn phase_validate_capability_exports(
                 for n in &clause.names {
                     if let Some(prev) = seen.get(&n.name) {
                         errors.push_for(
-                            None,
+                            Some(&parsed[i].identity_path),
                             CompileError::new(
                                 "bynk.exports.duplicate_export",
                                 n.span,
@@ -1856,7 +1874,7 @@ fn phase_validate_capability_exports(
                         refs.record(n.span, SymbolKind::Capability, &n.name);
                     }
                     if !local.capabilities.contains_key(&n.name) {
-                        errors.push_for(None,
+                        errors.push_for(Some(&parsed[i].identity_path),
                             CompileError::new(
                                 "bynk.exports.undeclared_capability",
                                 n.span,
@@ -1872,7 +1890,7 @@ fn phase_validate_capability_exports(
                         continue;
                     }
                     if !local.providers.contains_key(&n.name) {
-                        errors.push_for(None,
+                        errors.push_for(Some(&parsed[i].identity_path),
                             CompileError::new(
                                 "bynk.exports.capability_not_provided",
                                 n.span,
@@ -1896,17 +1914,45 @@ fn phase_validate_capability_exports(
 /// exactly — each capability op has a provider op, and every provider op has a
 /// matching capability op with the same parameter and return types. Diagnostics
 /// go into `errors`.
-fn phase_validate_providers(unit_tables: &HashMap<String, UnitTable>, errors: &mut ErrorSink) {
+fn phase_validate_providers(
+    unit_tables: &HashMap<String, UnitTable>,
+    // #696: the merged `UnitTable` has flattened a unit's files away, so provider
+    // diagnostics need the group's files to recover which one declares each
+    // provider and attribute the diagnostic to it.
+    groups: &HashMap<String, Vec<usize>>,
+    parsed: &[ParsedFile],
+    errors: &mut ErrorSink,
+) {
     for (name, table) in unit_tables {
-        let _ = name;
+        // Map each provided capability to the project-relative path of the file
+        // that declares its provider — every diagnostic below carries a span into
+        // that file.
+        let provider_files: HashMap<&str, &Path> = groups
+            .get(name)
+            .map(|indices| {
+                indices
+                    .iter()
+                    .flat_map(|&i| {
+                        parsed[i].items().iter().filter_map(move |item| match item {
+                            CommonsItem::Provider(p) => Some((
+                                p.capability.name.as_str(),
+                                parsed[i].identity_path.as_path(),
+                            )),
+                            _ => None,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         for (cap_name, provider) in &table.providers {
+            let provider_file = provider_files.get(cap_name.as_str()).copied();
             // v0.17: an external provider has no Bynk body to match against the
             // capability — its implementation is the binding, checked by `tsc`.
             if provider.external {
                 continue;
             }
             let Some(cap) = table.capabilities.get(cap_name) else {
-                errors.push_for(None,
+                errors.push_for(provider_file,
                     CompileError::new(
                         "bynk.provider.unknown_capability",
                         provider.capability.span,
@@ -1922,7 +1968,7 @@ fn phase_validate_providers(unit_tables: &HashMap<String, UnitTable>, errors: &m
             for cap_op in &cap.ops {
                 if !provider.ops.iter().any(|o| o.name.name == cap_op.name.name) {
                     errors.push_for(
-                        None,
+                        provider_file,
                         CompileError::new(
                             "bynk.provider.missing_operation",
                             provider.span,
@@ -1938,7 +1984,7 @@ fn phase_validate_providers(unit_tables: &HashMap<String, UnitTable>, errors: &m
             //    same signature (param types and return type).
             for prov_op in &provider.ops {
                 let Some(cap_op) = cap.ops.iter().find(|o| o.name.name == prov_op.name.name) else {
-                    errors.push_for(None, CompileError::new(
+                    errors.push_for(provider_file, CompileError::new(
                         "bynk.provider.extra_operation",
                         prov_op.span,
                         format!(
@@ -1949,7 +1995,7 @@ fn phase_validate_providers(unit_tables: &HashMap<String, UnitTable>, errors: &m
                     continue;
                 };
                 if cap_op.params.len() != prov_op.params.len() {
-                    errors.push_for(None, CompileError::new(
+                    errors.push_for(provider_file, CompileError::new(
                         "bynk.provider.signature_mismatch",
                         prov_op.span,
                         format!(
@@ -1966,7 +2012,7 @@ fn phase_validate_providers(unit_tables: &HashMap<String, UnitTable>, errors: &m
                     cap_op.params.iter().zip(prov_op.params.iter()).enumerate()
                 {
                     if !type_refs_match(&cap_p.type_ref, &prov_p.type_ref) {
-                        errors.push_for(None, CompileError::new(
+                        errors.push_for(provider_file, CompileError::new(
                             "bynk.provider.signature_mismatch",
                             prov_p.span,
                             format!(
@@ -1981,7 +2027,7 @@ fn phase_validate_providers(unit_tables: &HashMap<String, UnitTable>, errors: &m
                     }
                 }
                 if !type_refs_match(&cap_op.return_type, &prov_op.return_type) {
-                    errors.push_for(None, CompileError::new(
+                    errors.push_for(provider_file, CompileError::new(
                         "bynk.provider.signature_mismatch",
                         prov_op.return_type.span(),
                         format!(
@@ -2130,9 +2176,10 @@ fn merge_consumed_exports(
             };
             if combined_types.contains_key(type_name) {
                 // Name conflict between local/uses and consumed export.
-                let consumes_span =
-                    consumes_span_of(parsed, &unit_info[name].files, t).unwrap_or_default();
-                errors.push_for(None,
+                let consumes_site = consumes_span_of(parsed, &unit_info[name].files, t);
+                let consumes_span = consumes_site.map(|(_, s)| s).unwrap_or_default();
+                let consumes_file = consumes_site.map(|(i, _)| parsed[i].identity_path.clone());
+                errors.push_for(consumes_file.as_deref(),
                     CompileError::new(
                         "bynk.consumes.name_conflict",
                         consumes_span,
@@ -3009,9 +3056,28 @@ fn run_checks(
     }
 
     // -- 5c. Detect `consumes` cycles. --
-    let mut cycle_errors: Vec<CompileError> = Vec::new();
-    detect_consumes_cycles(&unit_consumes, &mut cycle_errors);
-    errors.extend_for(None, cycle_errors);
+    // #696: record a representative `consumes`-clause site (file + span) per unit
+    // so a detected cycle anchors on a real clause and renders with source
+    // context. First non-synthetic clause wins; synthetic units are left out so
+    // their (snapshot-less) files never claim a diagnostic.
+    let mut consumes_sites: HashMap<String, (PathBuf, Span)> = HashMap::new();
+    for (name, indices) in &groups {
+        for &i in indices {
+            if parsed[i].synthetic {
+                continue;
+            }
+            if let Some(c) = parsed[i].consumes().first() {
+                consumes_sites
+                    .entry(name.clone())
+                    .or_insert_with(|| (parsed[i].identity_path.clone(), c.span));
+            }
+        }
+    }
+    let mut cycle_errors: Vec<(Option<PathBuf>, CompileError)> = Vec::new();
+    detect_consumes_cycles(&unit_consumes, &consumes_sites, &mut cycle_errors);
+    for (path, err) in cycle_errors {
+        errors.push_for(path.as_deref(), err);
+    }
 
     // -- 6. Name-conflict detection for uses imports (commons-only check). --
     phase_uses_name_conflicts(&unit_uses, &unit_tables, &parsed, &groups, &mut errors);
@@ -3039,7 +3105,7 @@ fn run_checks(
     );
 
     // -- 6c. Validate that providers match their capabilities exactly. --
-    phase_validate_providers(&unit_tables, &mut errors);
+    phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors);
 
     if !errors.is_empty() && mode == Mode::Build {
         return RunChecks::Bailed {
@@ -3186,6 +3252,9 @@ fn run_checks(
         &mut test_errors,
         &mut refs,
     );
+    // #696: test-suite diagnostics do have owning files, but attributing them
+    // means threading a file through `process_tests`'s many internal push sites —
+    // a separable follow-up. They render in the plain `[category]` form for now.
     errors.extend_for(None, test_errors);
 
     compiled.extend(test_outputs);
@@ -3210,6 +3279,8 @@ fn run_checks(
         &mut integration_errors,
         &mut refs,
     );
+    // #696: integration-suite diagnostics, like the unit-test ones above, stay
+    // unattributed pending the same `process_integration_tests` threading.
     errors.extend_for(None, integration_errors);
 
     // v0.19 (decisions 0017/0024): platform-lock enforcement. A deployment

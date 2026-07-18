@@ -8,10 +8,16 @@ use super::*;
 /// last segment of its declared qualified name. Mixed-name files in one
 /// directory are only flagged when they collide on the same name (handled by
 /// [`check_group_kind_consistency`]) or when path/name alignment fails.
+///
+/// Each error is paired with the project-relative `identity_path` of the file
+/// its **primary** span belongs to (#696) so the CLI can render it against that
+/// file's source. The secondary `with_label` may point into a *different* file;
+/// the renderer demotes an out-of-bounds label to a note (see
+/// `CompileError::report_for`).
 pub(crate) fn check_directory_name_consistency(
     parsed: &[ParsedFile],
-) -> Result<(), Vec<CompileError>> {
-    let mut errors: Vec<CompileError> = Vec::new();
+) -> Result<(), Vec<(PathBuf, CompileError)>> {
+    let mut errors: Vec<(PathBuf, CompileError)> = Vec::new();
     // For each unit (group of files sharing the same name), verify they all
     // live in the same directory. Tests are excluded — their files are
     // grouped by target, not by their own physical layout.
@@ -38,7 +44,8 @@ pub(crate) fn check_directory_name_consistency(
                 .unwrap_or(Path::new(""))
                 .to_path_buf();
             if dir != first_dir {
-                errors.push(
+                errors.push((
+                    parsed[idx].identity_path.clone(),
                     CompileError::new(
                         "bynk.project.inconsistent_commons_name",
                         parsed[idx].unit.span(),
@@ -53,7 +60,7 @@ pub(crate) fn check_directory_name_consistency(
                     .with_note(
                         "all files of a multi-file commons or context must live in the same directory",
                     ),
-                );
+                ));
             }
         }
     }
@@ -77,8 +84,10 @@ pub(crate) fn check_directory_kind_consistency(
 /// arrangements are valid:
 /// - **Single-file**: `a/b/c.bynk` declaring `a.b.c`.
 /// - **Multi-file**: `a/b/c/<any>.bynk` declaring `a.b.c`.
-pub(crate) fn check_path_name_alignment(parsed: &[ParsedFile]) -> Result<(), Vec<CompileError>> {
-    let mut errors: Vec<CompileError> = Vec::new();
+pub(crate) fn check_path_name_alignment(
+    parsed: &[ParsedFile],
+) -> Result<(), Vec<(PathBuf, CompileError)>> {
+    let mut errors: Vec<(PathBuf, CompileError)> = Vec::new();
     for pf in parsed {
         if matches!(pf.kind, UnitKind::Test | UnitKind::Integration) {
             // Test files are not required to match their target's path.
@@ -88,7 +97,8 @@ pub(crate) fn check_path_name_alignment(parsed: &[ParsedFile]) -> Result<(), Vec
         let name_parts: Vec<&str> = name.split('.').collect();
         let rel = &pf.source_path;
         if !unit_path_matches(rel, &name) {
-            errors.push(
+            errors.push((
+                pf.identity_path.clone(),
                 CompileError::new(
                     "bynk.project.inconsistent_commons_name",
                     pf.unit.span(),
@@ -102,7 +112,7 @@ pub(crate) fn check_path_name_alignment(parsed: &[ParsedFile]) -> Result<(), Vec
                 .with_note(
                     "the source-tree layout determines a unit's identity: each commons or context's qualified name must match its path",
                 ),
-            );
+            ));
         }
     }
     if errors.is_empty() {
@@ -116,8 +126,8 @@ pub(crate) fn check_path_name_alignment(parsed: &[ParsedFile]) -> Result<(), Vec
 pub(crate) fn check_group_kind_consistency(
     parsed: &[ParsedFile],
     groups: &HashMap<String, Vec<usize>>,
-) -> Result<(), Vec<CompileError>> {
-    let mut errors: Vec<CompileError> = Vec::new();
+) -> Result<(), Vec<(PathBuf, CompileError)>> {
+    let mut errors: Vec<(PathBuf, CompileError)> = Vec::new();
     for (name, indices) in groups {
         if indices.len() < 2 {
             continue;
@@ -125,7 +135,8 @@ pub(crate) fn check_group_kind_consistency(
         let first_kind = parsed[indices[0]].kind;
         for &idx in indices.iter().skip(1) {
             if parsed[idx].kind != first_kind {
-                errors.push(
+                errors.push((
+                    parsed[idx].identity_path.clone(),
                     CompileError::new(
                         "bynk.project.kind_conflict",
                         parsed[idx].unit.span(),
@@ -139,7 +150,7 @@ pub(crate) fn check_group_kind_consistency(
                         parsed[indices[0]].unit.span(),
                         format!("first declared as a {} here", first_kind.display()),
                     ),
-                );
+                ));
             }
         }
     }
