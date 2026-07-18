@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Project-level `check`/`compile` diagnostics (consumes cycles, path/name mismatches, the reserved-namespace and adapter-binding checks, `uses`/`consumes`/`exports` validation, provider signature matching, …) now render with ariadne source context in directory mode instead of the plain `[category] message` fallback
----
+# 0227 — Project-level validation diagnostics are attributed to their owning file
 
-## ADR: attribute-project-level-diagnostics
-title: Project-level validation diagnostics are attributed to their owning file
-summary: Why directory-mode `check`/`compile` errors rendered without source context, and the site-by-site attribution that restores it
+- **Status:** Accepted (v0.205.1)
 
 **Context.** In directory/project mode, `bynkc check` / `bynk check` (and
 `compile`) route through `bynk_emit::project::compile_project`, which returns a
