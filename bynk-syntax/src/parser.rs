@@ -313,6 +313,15 @@ struct Parser<'a> {
     /// Line-comment trivia separated from the token stream. See
     /// [`TriviaTable`].
     trivia: TriviaTable,
+    /// When true, a bare `ident {` on the *spine* of the current expression is
+    /// an identifier followed by an unrelated block, never a record
+    /// construction — so an `if`/`match` condition that ends in a bare
+    /// identifier does not swallow the branch/arm block as `Ident { field }`
+    /// (#636). Set only around the condition parse (see [`parse_cond_expr`]);
+    /// `parse_expr` clears it, so the restriction is lifted inside any
+    /// delimited sub-expression (parentheses, call arguments, list, record
+    /// field). Mirrors Rust's `NO_STRUCT_LITERAL` restriction.
+    no_record_literal: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -330,6 +339,7 @@ impl<'a> Parser<'a> {
             recover_mode: false,
             recovered_errors: Vec::new(),
             trivia,
+            no_record_literal: false,
         }
     }
 
@@ -1256,5 +1266,154 @@ mod tests {
         let src = "commons x\n\ntype T = Int where Positive\n-- afterword\n";
         let c = parse_str(src).unwrap();
         assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
+    }
+
+    // ---- #636: `if`/`match` condition vs record construction ----
+
+    /// Parse `body` as the tail expression of a fn and return its kind.
+    fn body_tail(body: &str) -> ExprKind {
+        let src = format!("commons x\n\nfn f() -> Int {{\n  {body}\n}}\n");
+        let c = parse_str(&src).unwrap_or_else(|e| panic!("parse failed for {body:?}: {e:?}"));
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("expected fn, got {:?}", c.items[0]);
+        };
+        f.body.tail.kind.clone()
+    }
+
+    fn body_err(body: &str) -> Vec<CompileError> {
+        let src = format!("commons x\n\nfn f() -> Int {{\n  {body}\n}}\n");
+        parse_str(&src).expect_err(&format!("expected a parse error for {body:?}"))
+    }
+
+    #[test]
+    fn if_condition_ending_in_ident_does_not_swallow_a_single_ident_branch() {
+        // #636: `ready { result }` shares its shape with a shorthand-field
+        // record construction. In condition position the branch must win.
+        for src in [
+            "if ready { result } else { fallback }",
+            "if ready { fallback } else { result }",
+            "if !ready { result } else { fallback }",
+            "if a == b { result } else { fallback }",
+            "if a && b { result } else { fallback }",
+        ] {
+            let ExprKind::If {
+                then_block,
+                else_block,
+                ..
+            } = body_tail(src)
+            else {
+                panic!("expected If for {src:?}, got {:?}", body_tail(src));
+            };
+            // Both branches carry a bare-identifier tail — proof the `{ … }`
+            // was read as a block, not consumed as a record by the condition.
+            assert!(
+                matches!(&then_block.tail.kind, ExprKind::Ident(_)),
+                "then-branch tail not an ident for {src:?}: {:?}",
+                then_block.tail.kind,
+            );
+            assert!(
+                matches!(&else_block.tail.kind, ExprKind::Ident(_)),
+                "else-branch tail not an ident for {src:?}: {:?}",
+                else_block.tail.kind,
+            );
+        }
+    }
+
+    #[test]
+    fn else_less_if_with_single_ident_branch_parses() {
+        // The no-`else` reproduction: previously errored `found `}``.
+        let ExprKind::If { then_block, .. } = body_tail("if ready { result }") else {
+            panic!("expected If");
+        };
+        assert!(matches!(&then_block.tail.kind, ExprKind::Ident(_)));
+    }
+
+    #[test]
+    fn record_construction_still_parses_in_value_position() {
+        // The restriction is confined to condition spines — an ordinary value
+        // position still constructs records, including the shorthand tail form.
+        assert!(matches!(
+            body_tail("Point { x }"),
+            ExprKind::RecordConstruction { .. }
+        ));
+        assert!(matches!(
+            body_tail("Point { x: 1, y: 2 }"),
+            ExprKind::RecordConstruction { .. }
+        ));
+        assert!(matches!(
+            body_tail("Empty {}"),
+            ExprKind::RecordConstruction { .. }
+        ));
+    }
+
+    #[test]
+    fn parenthesised_record_is_allowed_in_condition_head() {
+        // A delimiter lifts the restriction: `(ready { result })` constructs a
+        // record even in condition position (mirrors Rust's paren escape).
+        let ExprKind::If { cond, .. } =
+            body_tail("if (ready { result }) { branch } else { other }")
+        else {
+            panic!("expected If");
+        };
+        let ExprKind::Paren(inner) = &cond.kind else {
+            panic!("expected a parenthesised condition, got {:?}", cond.kind);
+        };
+        assert!(
+            matches!(&inner.kind, ExprKind::RecordConstruction { .. }),
+            "parenthesised record in condition head should still construct: {:?}",
+            inner.kind,
+        );
+    }
+
+    #[test]
+    fn record_in_call_arg_within_condition_still_constructs() {
+        // The restriction is lifted through a call-argument delimiter, so a
+        // record literal passed to a predicate in the condition still parses.
+        let ExprKind::If { cond, .. } = body_tail("if check(Point { x: 1 }) { a } else { b }")
+        else {
+            panic!("expected If");
+        };
+        let ExprKind::Call { args, .. } = &cond.kind else {
+            panic!("expected Call in condition, got {:?}", cond.kind);
+        };
+        assert!(matches!(&args[0].kind, ExprKind::RecordConstruction { .. }));
+    }
+
+    #[test]
+    fn safe_condition_shapes_are_unaffected() {
+        // Cases the issue lists as already-safe must stay safe.
+        assert!(matches!(
+            body_tail("if ready == true { result } else { fallback }"),
+            ExprKind::If { .. }
+        ));
+        assert!(matches!(
+            body_tail("if (ready) { result } else { fallback }"),
+            ExprKind::If { .. }
+        ));
+        assert!(matches!(
+            body_tail("if ready { \"a\" } else { \"b\" }"),
+            ExprKind::If { .. }
+        ));
+    }
+
+    #[test]
+    fn empty_match_reports_its_own_diagnostic() {
+        // #636: `match result {}` once parsed `result {}` as an empty record,
+        // masking `bynk.parse.empty_match`. The intended diagnostic is now
+        // reachable.
+        let errs = body_err("match result {}");
+        assert!(
+            errs.iter().any(|e| e.category == "bynk.parse.empty_match"),
+            "expected empty_match; got {errs:?}",
+        );
+    }
+
+    #[test]
+    fn match_discriminant_ending_in_ident_parses() {
+        // A `match` over a bare-identifier discriminant reaches its arm list.
+        assert!(matches!(
+            body_tail("match ready { x => x }"),
+            ExprKind::Match { .. }
+        ));
     }
 }
