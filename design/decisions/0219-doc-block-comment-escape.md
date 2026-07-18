@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A doc block containing `*/` can no longer terminate the emitted JSDoc comment early and inject top-level TypeScript
----
+# 0219 — Escape `*/` in emitted doc-block comments
 
-## ADR: doc-block-comment-escape
-title: Escape `*/` in emitted doc-block comments
-summary: A doc block's `*/` is neutralised so it cannot close the JSDoc comment and inject module-scope code
+- **Status:** Accepted (v0.198)
 
 **Context.** Doc-block bodies are lexed verbatim from the source text between
 `---` markers (`bynk-syntax/src/lexer.rs`, `doc_block_content`): the lexer only
