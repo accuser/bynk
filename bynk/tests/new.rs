@@ -216,3 +216,31 @@ fn scaffold_preserves_a_hand_written_gitignore() {
 
     fs::remove_dir_all(&dir).ok();
 }
+
+/// #737 (the other branch): when the target has **no** `.gitignore`, the
+/// scaffold must still write the template one. Paired with
+/// `scaffold_preserves_a_hand_written_gitignore`, this pins both arms of the
+/// `if !gitignore.exists()` guard end-to-end (through `run`, not just the
+/// template-rendering golden) — so an accidental inversion of the condition is
+/// caught by one of the two.
+#[test]
+fn scaffold_writes_the_template_gitignore_when_absent() {
+    use bynk::new::{NewOptions, render, run};
+
+    let dir = std::env::temp_dir().join(format!("bynk-new-gitignore-fresh-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join(".git")).unwrap();
+
+    run(&NewOptions {
+        path: dir.clone(),
+        name: Some("demo".to_string()),
+    });
+
+    assert_eq!(
+        fs::read_to_string(dir.join(".gitignore")).unwrap(),
+        render(include_str!("../src/templates/gitignore"), "demo"),
+        "with no `.gitignore` present, the scaffold must write the template one"
+    );
+
+    fs::remove_dir_all(&dir).ok();
+}
