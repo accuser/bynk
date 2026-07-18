@@ -919,6 +919,93 @@ fn name_in_scope(name: &str, params: &HashMap<String, ()>, scopes: &[HashMap<Str
     scopes.iter().rev().any(|s| s.contains_key(name))
 }
 
+/// Validate a record construction's *field set* — every required field present,
+/// no undeclared extra field, no field initialised twice, and every shorthand
+/// `{ name }` bound in scope. Pure over the declaration and the provided fields;
+/// the caller supplies its own scope predicate (the resolver's lexical scope via
+/// [`name_in_scope`], the checker's binding table via `Ctx::lookup`) and its own
+/// diagnostic sink.
+///
+/// #711: this walk skips `Service`/`Agent`/`Actor` items, so their handler
+/// bodies never pass through it — the checker's `check_record_construction` is
+/// their only backstop and calls this same function. A single implementation is
+/// the point: an earlier fix copied three of these four checks into the checker
+/// and dropped the shorthand one, re-opening the gap for shorthand fields. Both
+/// callers now share this, so the two cannot re-diverge.
+pub(crate) fn check_record_field_set(
+    type_name: &Ident,
+    fields: &[FieldInit],
+    record: &RecordBody,
+    decl_name_span: bynk_syntax::span::Span,
+    in_scope: impl Fn(&str) -> bool,
+    errors: &mut Vec<CompileError>,
+) {
+    let declared: HashMap<&str, &RecordField> = record
+        .fields
+        .iter()
+        .map(|f| (f.name.name.as_str(), f))
+        .collect();
+    let mut provided: HashMap<&str, bynk_syntax::span::Span> = HashMap::new();
+    for f in fields {
+        if !declared.contains_key(f.name.name.as_str()) {
+            errors.push(
+                CompileError::new(
+                    "bynk.resolve.unknown_field",
+                    f.name.span,
+                    format!(
+                        "record type `{}` has no field `{}`",
+                        type_name.name, f.name.name
+                    ),
+                )
+                .with_label(decl_name_span, "type declared here"),
+            );
+        }
+        if let Some(prev) = provided.get(f.name.name.as_str()) {
+            errors.push(
+                CompileError::new(
+                    "bynk.resolve.duplicate_field_init",
+                    f.name.span,
+                    format!("field `{}` is initialised more than once", f.name.name),
+                )
+                .with_label(*prev, "previously initialised here"),
+            );
+        } else {
+            provided.insert(f.name.name.as_str(), f.name.span);
+        }
+        // A shorthand `{ name }` (no `: value`) reads the binding `name` from
+        // scope — it must exist. The full `field: value` form is checked by the
+        // caller (the resolver recurses into the value, the checker types it).
+        if f.value.is_none() && !in_scope(&f.name.name) {
+            errors.push(
+                CompileError::new(
+                    "bynk.resolve.unknown_name",
+                    f.name.span,
+                    format!(
+                        "shorthand field initialiser `{}` requires a binding of that name in scope",
+                        f.name.name
+                    ),
+                )
+                .with_note("either bring `{name}` into scope or use the full `field: value` form"),
+            );
+        }
+    }
+    for decl_field in &record.fields {
+        if !provided.contains_key(decl_field.name.name.as_str()) {
+            errors.push(
+                CompileError::new(
+                    "bynk.resolve.missing_field",
+                    type_name.span,
+                    format!(
+                        "missing required field `{}` for record `{}`",
+                        decl_field.name.name, type_name.name
+                    ),
+                )
+                .with_label(decl_field.name.span, "field declared here"),
+            );
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn check_block_references(
     block: &Block,
@@ -1600,41 +1687,22 @@ fn check_expr_references(
                         .record(type_name.span, SymbolKind::Type, &type_name.name);
                     match &decl.body {
                         TypeBody::Record(r) => {
-                            let declared: HashMap<&str, &RecordField> =
-                                r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
-                            let mut provided: HashMap<&str, &Ident> = HashMap::new();
+                            // Field-set validation (missing / unknown / duplicate
+                            // / shorthand-in-scope) is shared with the checker's
+                            // `check_record_construction` so the two cannot
+                            // re-diverge (#711). The value recursion below stays
+                            // here — it is the resolver's reference walk.
+                            check_record_field_set(
+                                type_name,
+                                fields,
+                                r,
+                                decl.name.span,
+                                |n| name_in_scope(n, params, scopes),
+                                errors.errs,
+                            );
                             for f in fields {
-                                if !declared.contains_key(f.name.name.as_str()) {
-                                    errors.push(
-                                        CompileError::new(
-                                            "bynk.resolve.unknown_field",
-                                            f.name.span,
-                                            format!(
-                                                "record type `{}` has no field `{}`",
-                                                type_name.name, f.name.name
-                                            ),
-                                        )
-                                        .with_label(decl.name.span, "type declared here"),
-                                    );
-                                }
-                                if let Some(prev) = provided.get(f.name.name.as_str()) {
-                                    errors.push(
-                                        CompileError::new(
-                                            "bynk.resolve.duplicate_field_init",
-                                            f.name.span,
-                                            format!(
-                                                "field `{}` is initialised more than once",
-                                                f.name.name
-                                            ),
-                                        )
-                                        .with_label(prev.span, "previously initialised here"),
-                                    );
-                                } else {
-                                    provided.insert(f.name.name.as_str(), &f.name);
-                                }
-                                // Shorthand `name` — must be in scope.
-                                match &f.value {
-                                    Some(v) => check_expr_references(
+                                if let Some(v) = &f.value {
+                                    check_expr_references(
                                         v,
                                         params,
                                         in_method,
@@ -1644,38 +1712,6 @@ fn check_expr_references(
                                         fns,
                                         methods,
                                         errors,
-                                    ),
-                                    None => {
-                                        if !name_in_scope(&f.name.name, params, scopes) {
-                                            errors.push(
-                                            CompileError::new(
-                                                "bynk.resolve.unknown_name",
-                                                f.name.span,
-                                                format!(
-                                                    "shorthand field initialiser `{}` requires a binding of that name in scope",
-                                                    f.name.name
-                                                ),
-                                            )
-                                            .with_note(
-                                                "either bring `{name}` into scope or use the full `field: value` form",
-                                            ),
-                                        );
-                                        }
-                                    }
-                                }
-                            }
-                            for decl_field in &r.fields {
-                                if !provided.contains_key(decl_field.name.name.as_str()) {
-                                    errors.push(
-                                        CompileError::new(
-                                            "bynk.resolve.missing_field",
-                                            type_name.span,
-                                            format!(
-                                                "missing required field `{}` for record `{}`",
-                                                decl_field.name.name, type_name.name
-                                            ),
-                                        )
-                                        .with_label(decl_field.name.span, "field declared here"),
                                     );
                                 }
                             }
