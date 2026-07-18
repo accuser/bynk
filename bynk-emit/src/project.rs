@@ -753,6 +753,24 @@ fn normalize_service_defaults(parsed: &mut [ParsedFile]) {
     }
 }
 
+/// v0.54 (#655): whether a context's services declare an `on call … by c: Caller`
+/// handler, whose emitted `deps` carries the calling context's qualified name as
+/// its `CallerId` identity (ADR 0092); in bundle mode the compose root supplies
+/// that name to `makeSurface`, mirroring the `X-Bynk-Caller` header a Worker
+/// reads at its entry. Delegates to the *same*
+/// [`any_service_binds_caller`](crate::emitter::any_service_binds_caller) the
+/// emitter's `emit_make_surface` calls, so the compose root and the surface can
+/// never disagree on which providers take the extra `__caller` argument.
+fn context_binds_caller(table: &UnitTable) -> bool {
+    crate::emitter::any_service_binds_caller(table.services.values(), &table.actors)
+}
+
+/// A double-quoted, escaped TypeScript string literal for `s` (a qualified
+/// context name at the compose-root caller sites).
+fn ts_string_literal(s: &str) -> String {
+    format!("\"{}\"", crate::emitter::escape_ts_string(s))
+}
+
 /// Inject a single service's `by`/`given` defaults into its handlers. A handler
 /// that names its own `by` (or `given`) overrides the default outright — the
 /// default fills only an *absent* clause, never merges. A service with no default
@@ -4118,7 +4136,23 @@ fn emit_composition_root(
                     .get(t)
                     .cloned()
                     .unwrap_or_else(|| t.rsplit('.').next().unwrap_or(t.as_str()).to_string());
-                surface_entries.push(format!("{surface_key}: {}Surface", t.replace('.', "_")));
+                let t_ns = t.replace('.', "_");
+                // v0.54 (#655): a consumed context with an `on call … by c: Caller`
+                // handler needs the *caller's* qualified name (this context) threaded
+                // into that handler's deps as its `CallerId` identity (ADR 0092). The
+                // shared `{t_ns}Surface` (built for the top-level entry with the
+                // provider's own name) would carry the wrong caller, so build a
+                // per-consumer surface instead. A caller-free provider keeps the
+                // shared instance — byte-unchanged.
+                let entry = if context_binds_caller(other) {
+                    format!(
+                        "{surface_key}: {t_ns}.makeSurface({t_ns}Deps, {})",
+                        ts_string_literal(ctx_name)
+                    )
+                } else {
+                    format!("{surface_key}: {t_ns}Surface")
+                };
+                surface_entries.push(entry);
             }
         }
         if !surface_entries.is_empty() {
@@ -4129,8 +4163,17 @@ fn emit_composition_root(
             deps_entries.join(", ")
         ));
         if !table.services.is_empty() {
+            // The top-level entry addresses the context directly; there is no
+            // calling context, so a `by c: Caller` handler reached this way reads
+            // the context's own qualified name (a stable, non-empty `CallerId`
+            // within the single-trust-domain bundle).
+            let caller_arg = if context_binds_caller(table) {
+                format!(", {}", ts_string_literal(ctx_name))
+            } else {
+                String::new()
+            };
             out.push_str(&format!(
-                "  const {ns}Surface = {ns}.makeSurface({ns}Deps);\n",
+                "  const {ns}Surface = {ns}.makeSurface({ns}Deps{caller_arg});\n",
             ));
         }
     }
