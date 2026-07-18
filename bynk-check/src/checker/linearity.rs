@@ -85,7 +85,7 @@ pub(crate) fn check(
         }
     }
     // A held parameter is owned for the whole body; it must be disposed before
-    // the handler returns (the body block is its scope).
+    // the handler or function returns (the body block is its scope).
     lin.walk_block(body, &mut state);
     for (name, span) in seeded {
         if state.get(&name) == Some(&Held::Owned) {
