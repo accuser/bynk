@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.196.1** | "A lex error inside a string-interpolation hole (`\"…\\(…)…\"`) is now reported at the offending bytes within the hole instead of at the file's opening bytes — the hole is re-lexed on its own and the error's spans were never rebased on the failure path, so an unexpected character, an integer overflow, or any lex error pointed at the wrong location and could split a multi-byte codepoint, tripping the parser's char-boundary invariant and panicking a source-slicing consumer (#716)." |
 | **v0.196.0** | A long operator or member chain (`1 + 1 + … + 1`, `a.b.c…`, `!!!…`) is rejected with `bynk.parse.nesting_too_deep` instead of overflowing the stack on a valid program (#714) |
 | **v0.195.0** | A `system`-tier test case drives an existing http path with a method it declares no handler for and observes the router's `405` fall-through as `Rejected(MethodNotAllowed)` (#707) |
 | **v0.194.0** | "The parser and interpolation lexer bound recursion depth, so pathologically nested source reports a diagnostic (`bynk.parse.nesting_too_deep`, `bynk.lex.interpolation_too_deep`) instead of overflowing the stack and aborting the process — the front-end the CLI, LSP, and in-browser playground all share (#713)." |
