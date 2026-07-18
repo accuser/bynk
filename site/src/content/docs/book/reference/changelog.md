@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.198**.
+written against **v0.199**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.199.0** | "Held-resource linearity (§2.9) is now enforced in `fn` and method bodies, not only handler bodies: a function that receives a held value (`Connection[F]`) owns it and must dispose it, so a leaking `fn swallow(c)` reports `bynk.held.leak` and a double `c.close()` reports `bynk.held.use_after_consume` — previously both compiled silently, leaving held-resource safety unenforced outside handlers (#718)." |
 | **v0.198.0** | A doc block containing `*/` can no longer terminate the emitted JSDoc comment early and inject top-level TypeScript |
 | **v0.197.0** | The held-resource linearity pass now governs `match`-arm pattern bindings — a `Connection` bound out of an `Option`/`Result` in a match arm must be disposed, closing a leak the pass missed (#719) |
 | **v0.196.1** | "A lex error inside a string-interpolation hole (`\"…\\(…)…\"`) is now reported at the offending bytes within the hole instead of at the file's opening bytes — the hole is re-lexed on its own and the error's spans were never rebased on the failure path, so an unexpected character, an integer overflow, or any lex error pointed at the wrong location and could split a multi-byte codepoint, tripping the parser's char-boundary invariant and panicking a source-slicing consumer (#716)." |

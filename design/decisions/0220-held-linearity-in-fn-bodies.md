@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "Held-resource linearity (§2.9) is now enforced in `fn` and method bodies, not only handler bodies: a function that receives a held value (`Connection[F]`) owns it and must dispose it, so a leaking `fn swallow(c)` reports `bynk.held.leak` and a double `c.close()` reports `bynk.held.use_after_consume` — previously both compiled silently, leaving held-resource safety unenforced outside handlers (#718)."
----
+# 0220 — Enforce held-resource linearity in fn and method bodies
 
-## ADR: held-linearity-in-fn-bodies
-title: Enforce held-resource linearity in fn and method bodies
-summary: Run the linearity pass over every body that can bind a held value, not only handlers
+- **Status:** Accepted (v0.199)
 
 **Context.** The held-resource linearity pass (ADR 0130, §2.9) enforces
 single-owner discipline and mandatory disposal for held values like

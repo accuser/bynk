@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0220](0220-held-linearity-in-fn-bodies.md) | **Enforce held-resource linearity in fn and method bodies** (v0.199) — Run the linearity pass over every body that can bind a held value, not only handlers | Accepted (v0.199) |
 | [0219](0219-doc-block-comment-escape.md) | **Escape `*/` in emitted doc-block comments** (v0.198) — A doc block's `*/` is neutralised so it cannot close the JSDoc comment and inject module-scope code | Accepted (v0.198) |
 | [0218](0218-match-arm-held-linearity.md) | **The held-resource linearity pass governs match-arm pattern bindings** (v0.197) — A held value bound out of a `match` arm pattern is registered as owned and must be disposed | Accepted (v0.197) |
 | [0217](0217-operator-chain-depth-bound.md) | **Bound operator-chain depth on the shared front-end nesting budget** (v0.196) — Count iteratively-built operator-chain folds against the #713 depth budget so a long chain can't overflow a downstream recursive walk | Accepted (v0.196) |
