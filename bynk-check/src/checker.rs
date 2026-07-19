@@ -517,6 +517,7 @@ pub fn check_handler_body(
         locals,
         requirements,
         scopes: vec![param_scope],
+        is_binding_cache: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span,
         effectful,
@@ -709,6 +710,7 @@ pub fn check_invariants(
             locals,
             requirements,
             scopes: vec![field_scope.clone()],
+            is_binding_cache: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: inv.predicate.span,
             // A predicate is a pure expression — effectful operations (capability
@@ -850,6 +852,7 @@ pub fn check_contracts(
             locals,
             requirements,
             scopes: vec![scope],
+            is_binding_cache: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: c.predicate.span,
             effectful: false,
@@ -1069,6 +1072,7 @@ pub fn check_transitions(
             locals,
             requirements,
             scopes: vec![scope.clone()],
+            is_binding_cache: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: tr.predicate.span,
             effectful: false,
@@ -1298,6 +1302,14 @@ pub struct Ctx<'a> {
     pub requirements: &'a mut RequirementSink,
     /// Stack of in-scope name → type frames.
     pub scopes: Vec<HashMap<String, Ty>>,
+    /// Memoised `is`-pattern bindings, keyed by the condition sub-expression's
+    /// span. `collect_is_bindings` runs at every `&&`/`implies` node and, for a
+    /// left-nested `&&` chain, would otherwise re-walk each lhs subtree once per
+    /// enclosing node — O(N²) for an N-term chain. Because the collector is a
+    /// pure read over `expr_types` (already populated by the time it runs) and
+    /// spans are unique per body, caching each node's result collapses the walk
+    /// to a single pass.
+    pub is_binding_cache: HashMap<Span, Vec<(String, Ty)>>,
     pub return_ty: Ty,
     pub return_ty_span: Span,
     /// True if the enclosing function/handler returns `Effect[T]` (v0.5).
@@ -2669,24 +2681,35 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // surrounding type implies it; otherwise defer to fn/user-variant
             // resolution and only fall back to HttpResult when nothing else
             // owns the name.
-            let user_owners: usize = ctx
-                .input
-                .types
-                .values()
-                .filter(|t| {
-                    matches!(&t.body, TypeBody::Sum(s)
-                        if s.variants.iter().any(|v| v.name.name == name.name))
-                })
-                .count();
-            let http_implied = expected
-                .map(|t| peel_to_http_result(t).is_some())
-                .unwrap_or(false)
-                || peel_to_http_result(&ctx.return_ty).is_some();
-            let unowned = !ctx.input.fns.contains_key(&name.name) && user_owners == 0;
-            if let Some(v) = http_variant(&name.name)
-                && (http_implied || unowned)
-            {
-                check_http_variant(expr.span, v, args, expected, ctx)
+            //
+            // `http_variant`/`queue_variant` are cheap keyword lookups; gate
+            // the expensive context peel and — above all — the O(types×variants)
+            // scan for user sum-variant owners behind them. The common case is
+            // an ordinary function call whose name is neither keyword, so it
+            // must not pay for either. The owner scan is further deferred behind
+            // `http_implied`, since `unowned` only matters when the surrounding
+            // type does not already imply HttpResult.
+            if let Some(v) = http_variant(&name.name) {
+                let http_implied = expected
+                    .map(|t| peel_to_http_result(t).is_some())
+                    .unwrap_or(false)
+                    || peel_to_http_result(&ctx.return_ty).is_some();
+                let owned_elsewhere = || {
+                    ctx.input.fns.contains_key(&name.name)
+                        || ctx.input.types.values().any(|t| {
+                            matches!(&t.body, TypeBody::Sum(s)
+                                if s.variants.iter().any(|var| var.name.name == name.name))
+                        })
+                };
+                if http_implied || !owned_elsewhere() {
+                    check_http_variant(expr.span, v, args, expected, ctx)
+                } else {
+                    // Falling straight to `check_call` (rather than the
+                    // `queue_variant` else-if below) relies on the http and
+                    // queue variant keyword sets being disjoint, so an http
+                    // name could never have taken the queue branch anyway.
+                    check_call(name, type_args, args, expr.span, ctx)
+                }
             } else if let Some(qv) = queue_variant(&name.name)
                 && (expected.is_some_and(peel_to_queue_result)
                     || peel_to_queue_result(&ctx.return_ty))

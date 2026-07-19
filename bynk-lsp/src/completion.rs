@@ -37,8 +37,10 @@
 //! symbols aren't indexed (the v0.28 finding); the project parse supplies only
 //! *project* symbols.
 
-use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::SystemTime;
 
 use bynk_check::checker::{NamedKind, Ty};
 use bynk_check::firstparty::{
@@ -1370,45 +1372,128 @@ fn keyword_and_snippet_candidates() -> Vec<Completion> {
 
 // -- Enumeration (parse project sources + the embedded `bynk` surface) --
 
+/// Lex + recovery-parse one source, yielding its primary [`SourceUnit`]
+/// (`None` when nothing parses — an empty or header-broken file).
+fn parse_source_unit(src: &str) -> Option<SourceUnit> {
+    let tokens = lexer::tokenize(src).ok()?;
+    parser::parse_unit_with_recovery(&tokens, src).0
+}
+
+/// The embedded first-party surface, parsed **once** for the whole process.
+/// These are compile-time `include_str!` constants, so their parse is fixed;
+/// re-lexing and re-parsing all five on every keystroke-driven request was
+/// pure waste (#733). The `bynk` surface, the `bynk.cloudflare` platform
+/// adapter, and the stdlib commons (`bynk.list`/`bynk.map`/`bynk.string`) whose
+/// free fns are enumerable for `uses`-imported completion (G5) and signature
+/// help. Harmless to the other contexts — the commons declare only `fn`s (no
+/// types/capabilities) and are never a `consumes` target.
+static EMBEDDED_UNITS: LazyLock<Vec<Arc<SourceUnit>>> = LazyLock::new(|| {
+    [
+        BYNK_ADAPTER_SRC,
+        CLOUDFLARE_ADAPTER_SRC,
+        BYNK_LIST_SRC,
+        BYNK_MAP_SRC,
+        BYNK_STRING_SRC,
+    ]
+    .into_iter()
+    .filter_map(|src| parse_source_unit(src).map(Arc::new))
+    .collect()
+});
+
+/// A cached parse of one on-disk project file, tagged with the file identity
+/// (mtime + byte length) it was read at. A keystroke that does not save the
+/// file leaves both unchanged, so the parse is reused rather than re-read and
+/// re-parsed on every interactive request (#733).
+struct CachedUnit {
+    mtime: Option<SystemTime>,
+    len: u64,
+    unit: Option<Arc<SourceUnit>>,
+}
+
+/// Per-file project-source parse cache, keyed by absolute path. Shared across
+/// requests and worker threads (completion/signature-help/hover all enumerate
+/// the same project sources). Keyed on the path so distinct fixtures/projects
+/// never collide, and invalidated by mtime+len so a saved edit is picked up.
+static PROJECT_UNIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedUnit>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Cap on distinct cached files. Without it, a long-lived server hopping across
+/// many workspaces accumulates one entry per path ever enumerated — and
+/// renamed/deleted files leave dangling `None`s behind (#776 review). Past the
+/// cap the cache is cleared wholesale: crude, but entries repopulate lazily on
+/// the next access, and a project with this many files is already far past where
+/// a per-keystroke parse cache pays off. Generous, so a normal project never
+/// trips it.
+const PROJECT_UNIT_CACHE_CAP: usize = 4096;
+
+/// The parsed unit for a project file, from the cache when its mtime and
+/// length are unchanged since the last read, else read + parse + store. A file
+/// that disappears or fails to read caches a `None` unit under its (now empty)
+/// identity, so a transient miss is not re-read on every request either.
+fn cached_project_unit(path: &Path) -> Option<Arc<SourceUnit>> {
+    let meta = std::fs::metadata(path).ok();
+    let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+    let len = meta.as_ref().map_or(0, std::fs::Metadata::len);
+    {
+        let cache = PROJECT_UNIT_CACHE.lock().unwrap();
+        if let Some(entry) = cache.get(path)
+            && entry.mtime == mtime
+            && entry.len == len
+        {
+            return entry.unit.clone();
+        }
+    }
+    let unit = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| parse_source_unit(&s))
+        .map(Arc::new);
+    let mut cache = PROJECT_UNIT_CACHE.lock().unwrap();
+    // Bound the cache: a fresh path past the cap clears it rather than growing
+    // without limit (refreshing an existing entry never grows the map).
+    if cache.len() >= PROJECT_UNIT_CACHE_CAP && !cache.contains_key(path) {
+        cache.clear();
+    }
+    cache.insert(
+        path.to_path_buf(),
+        CachedUnit {
+            mtime,
+            len,
+            unit: unit.clone(),
+        },
+    );
+    unit
+}
+
 /// Parse every project unit, plus the embedded first-party adapters (the
 /// `bynk` surface and the `bynk.cloudflare` platform adapter), and call `f`
 /// for each. Recovery parsing tolerates the in-progress edit at the cursor.
+///
+/// The embedded surface is parsed once (`EMBEDDED_UNITS`) and the project's
+/// on-disk files are served from a per-file parse cache
+/// ([`cached_project_unit`]); only `doc_text` — the buffer under the cursor,
+/// which changes per keystroke — is parsed fresh each call (#733). Ordering is
+/// preserved (embedded, then the buffer, then the other files) so a callback's
+/// first-name-wins dedup still prefers the live buffer over the disk copy.
 pub(crate) fn for_each_unit(
     doc_text: &str,
     files: Option<&[PathBuf]>,
     mut f: impl FnMut(&SourceUnit),
 ) {
-    let mut sources: Vec<String> = vec![
-        BYNK_ADAPTER_SRC.to_string(),
-        CLOUDFLARE_ADAPTER_SRC.to_string(),
-        // The embedded stdlib commons (`bynk.list`/`bynk.map`/`bynk.string`) so
-        // their free fns are enumerable for `uses`-imported completion (G5) and
-        // signature help. Harmless to the other contexts — these units declare
-        // only `fn`s (no types/capabilities), and they are `commons`, never a
-        // `consumes` target.
-        BYNK_LIST_SRC.to_string(),
-        BYNK_MAP_SRC.to_string(),
-        BYNK_STRING_SRC.to_string(),
-        doc_text.to_string(),
-    ];
+    for unit in EMBEDDED_UNITS.iter() {
+        f(unit);
+    }
+    if let Some(unit) = parse_source_unit(doc_text) {
+        f(&unit);
+    }
     // Slice A: the project's files come from the compiler's own discovery
     // (`bynk_ide::discover_files`) — every `include` root, `exclude` honoured.
     // This used to walk a single directory by hand, so completion could not see
     // a second root and swept `out`/`node_modules` if they sat beneath it.
     if let Some(paths) = files {
         for path in paths {
-            if let Ok(s) = std::fs::read_to_string(path) {
-                sources.push(s);
+            if let Some(unit) = cached_project_unit(path) {
+                f(&unit);
             }
-        }
-    }
-    for src in &sources {
-        let Ok(tokens) = lexer::tokenize(src) else {
-            continue;
-        };
-        let (unit, _errs) = parser::parse_unit_with_recovery(&tokens, src);
-        if let Some(unit) = unit {
-            f(&unit);
         }
     }
 }
@@ -2356,5 +2441,89 @@ mod tests {
         let doc = "commons m {\n  type Quantity = Int where InRange(1, 99)\n}\n";
         assert!(sum_type_variants("Quantity", doc, None).is_empty());
         assert!(sum_type_variants("Int", doc, None).is_empty());
+    }
+
+    // -- parse cache (#733) --
+
+    /// Collect the enumerated unit names for a buffer + project file set.
+    fn enumerated_units(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<String> {
+        let mut names = Vec::new();
+        for_each_unit(doc_text, files, |u| names.push(u.name().joined()));
+        names
+    }
+
+    #[test]
+    fn for_each_unit_yields_embedded_buffer_and_project_files() {
+        let dir =
+            std::env::temp_dir().join(format!("bynk-lsp-cache-yields-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sibling = dir.join("sibling.bynk");
+        std::fs::write(
+            &sibling,
+            "commons proj.sibling {\n  fn s() -> Int { 1 }\n}\n",
+        )
+        .unwrap();
+
+        let names = enumerated_units(
+            "commons proj.buffer {\n  fn b() -> Int { 1 }\n}\n",
+            Some(std::slice::from_ref(&sibling)),
+        );
+        // The embedded `bynk` surface, the live buffer, and the disk file all show.
+        assert!(names.iter().any(|n| n == "bynk"), "embedded: {names:?}");
+        assert!(
+            names.iter().any(|n| n == "proj.buffer"),
+            "buffer: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "proj.sibling"),
+            "project file: {names:?}"
+        );
+    }
+
+    #[test]
+    fn project_unit_cache_invalidates_on_change() {
+        let dir =
+            std::env::temp_dir().join(format!("bynk-lsp-cache-invalidate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("unit.bynk");
+
+        std::fs::write(&file, "commons proj.first {\n  fn a() -> Int { 1 }\n}\n").unwrap();
+        let first = enumerated_units("context a.b\n", Some(std::slice::from_ref(&file)));
+        assert!(
+            first.iter().any(|n| n == "proj.first"),
+            "first read: {first:?}"
+        );
+
+        // Rewrite with a different name (and a different length, so the change is
+        // seen even where mtime resolution is coarse). The cache must serve the
+        // new parse, not the stale one.
+        std::fs::write(
+            &file,
+            "commons proj.second.longer {\n  fn a() -> Int { 1 }\n  fn c() -> Int { 3 }\n}\n",
+        )
+        .unwrap();
+        let second = enumerated_units("context a.b\n", Some(std::slice::from_ref(&file)));
+        assert!(
+            second.iter().any(|n| n == "proj.second.longer"),
+            "after change: {second:?}"
+        );
+        assert!(
+            !second.iter().any(|n| n == "proj.first"),
+            "stale served: {second:?}"
+        );
+    }
+
+    #[test]
+    fn missing_project_file_is_skipped() {
+        let missing = std::env::temp_dir().join(format!(
+            "bynk-lsp-cache-missing-{}.bynk",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&missing);
+        let names = enumerated_units("context a.b\n", Some(&[missing]));
+        // No panic; the embedded surface is still enumerated.
+        assert!(names.iter().any(|n| n == "bynk"), "{names:?}");
     }
 }
