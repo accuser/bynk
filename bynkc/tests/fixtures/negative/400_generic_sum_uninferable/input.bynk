@@ -1,0 +1,15 @@
+commons bad
+
+-- #593: a payload-less-of-`T` variant cannot infer the type argument, and there
+-- is no binding annotation to ground it.
+type ApiResult[T] =
+  | Loaded(value: T)
+  | Failed(message: String)
+
+fn oops() -> String {
+  let r = Failed("boom")
+  match r {
+    Loaded(v) => v,
+    Failed(m) => m,
+  }
+}

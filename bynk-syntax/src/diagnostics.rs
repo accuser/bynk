@@ -424,13 +424,18 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.generics.generic_non_record",
-        "A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183).",
+        "A `type` declaration carries type parameters on a refined or opaque body; only a record (`type Name[T] = { … }`) or sum (`type Name[T] = | … | …`) body may be generic (v0.157/#593, ADRs 0183/0197).",
         &["type_decl"],
     ),
     dg(
         "bynk.generics.generic_record_at_boundary",
         "A `Val[…]` fabricates a value of a generic type; per-instantiation value fabrication is not yet wired (ADR 0197). Since v0.174 a generic-record instantiation may otherwise cross a boundary through its monomorphised codec.",
         &[],
+    ),
+    dg(
+        "bynk.generics.generic_sum_embeds",
+        "A generic sum type carries an `embeds` clause; embedding into a generic sum is not supported (#593).",
+        &["type_decl"],
     ),
     dg(
         "bynk.generics.method_on_generic_type",

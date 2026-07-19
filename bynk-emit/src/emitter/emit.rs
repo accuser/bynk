@@ -312,7 +312,27 @@ fn emit_record_type(out: &mut String, t: &TypeDecl, r: &RecordBody, commons: &Ty
 }
 
 fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCommons) {
-    writeln!(out, "export type {name} =", name = t.name.name).unwrap();
+    // #593: a generic sum erases to a TypeScript generic discriminated union,
+    // exactly as a generic record erases to `interface Name<T>`. The type
+    // parameters ride the `export type` header and each payload constructor
+    // (`Some: <T>(v: T): Opt<T> => …`); a payload-less constructor stays a
+    // constant, cast to the all-`never` instantiation (`Opt<never>`), which is
+    // assignable to every `Opt<X>` since the nullary arm names no parameter.
+    // Both strings are empty for a non-generic sum, keeping its output identical.
+    let params = ts_type_params(&t.type_params);
+    let never_args = if t.type_params.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<{}>",
+            t.type_params
+                .iter()
+                .map(|_| "never")
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    writeln!(out, "export type {name}{params} =", name = t.name.name).unwrap();
     for (i, v) in s.variants.iter().enumerate() {
         let pipe = if i == 0 { " " } else { "|" };
         if v.payload.is_empty() {
@@ -351,13 +371,13 @@ fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCom
         if v.payload.is_empty() {
             writeln!(
                 out,
-                "  {tag}: {{ tag: \"{tag}\" }} as {name},",
+                "  {tag}: {{ tag: \"{tag}\" }} as {name}{never_args},",
                 tag = v.name.name,
                 name = t.name.name,
             )
             .unwrap();
         } else {
-            let params: Vec<String> = v
+            let ctor_params: Vec<String> = v
                 .payload
                 .iter()
                 .map(|f| {
@@ -371,9 +391,10 @@ fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCom
             let obj_fields: Vec<String> = v.payload.iter().map(|f| f.name.name.clone()).collect();
             writeln!(
                 out,
-                "  {tag}: ({params}): {name} => ({{ tag: \"{tag}\", {fields} }}),",
+                "  {tag}: {params}({ctor_params}): {name}{params} => ({{ tag: \"{tag}\", {fields} }}),",
                 tag = v.name.name,
-                params = params.join(", "),
+                params = params,
+                ctor_params = ctor_params.join(", "),
                 name = t.name.name,
                 fields = obj_fields.join(", "),
             )

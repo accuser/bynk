@@ -124,7 +124,7 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> O
                 );
                 return None;
             }
-            return Some(named_ty(owner));
+            return nullary_variant_ty(owner, id.name.as_str(), id.span, expected, ctx);
         }
     }
     // Nothing owns the name. The resolver's reference walk reports these in
@@ -1304,11 +1304,48 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
     }
 }
 
+/// #593: the type of a payload-less variant (`Nil`, or `Opt.Nil`). For a
+/// non-generic sum this is just the named type. For a generic sum the variant
+/// carries no arguments to infer from, so the binding's expected type is the
+/// only ground — `let o: Opt[Int] = Nil`. With no such expectation the type
+/// arguments are uninferable.
+pub(crate) fn nullary_variant_ty(
+    owner: &TypeDecl,
+    variant_name: &str,
+    span: Span,
+    expected: Option<&Ty>,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    if owner.type_params.is_empty() {
+        return Some(named_ty(owner));
+    }
+    if let Some(Ty::Named { name, args, .. }) = expected
+        && *name == owner.name.name
+        && args.len() == owner.type_params.len()
+        && !args.iter().any(contains_var)
+    {
+        return Some(named_ty_with_args(owner, args.clone()));
+    }
+    ctx.errors.push(
+        CompileError::new(
+            "bynk.generics.uninferable_type_arg",
+            span,
+            format!(
+                "cannot infer the type argument(s) of generic type `{}` from payload-less variant `{}`",
+                owner.name.name, variant_name
+            ),
+        )
+        .with_note("annotate the binding so the type argument is known — `let x: Name[T] = …`"),
+    );
+    None
+}
+
 pub(crate) fn check_variant_construction(
     owner: &TypeDecl,
     variant_name: &str,
     args: &[Expr],
     span: Span,
+    expected: Option<&Ty>,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     let TypeBody::Sum(s) = &owner.body else {
@@ -1335,6 +1372,111 @@ pub(crate) fn check_variant_construction(
         }
         return None;
     }
+
+    // #593: a generic sum infers its type arguments from the variant's payload
+    // arguments, argument-directed exactly as a generic record infers from its
+    // field values (`check_record_construction`). A payload-less or otherwise
+    // under-determined variant leans on the binding's expected type — the same
+    // pressure valve records use. Non-generic sums take the simple path below.
+    if !owner.type_params.is_empty() {
+        let vars: HashSet<String> = owner
+            .type_params
+            .iter()
+            .map(|p| p.name.name.clone())
+            .collect();
+        let mut subst: HashMap<String, Ty> = HashMap::new();
+        // Seed from an expected `Name[…]` of this same sum, so `let o: Opt[Int]
+        // = Nil` (or an under-determined variant) grounds the arguments.
+        if let Some(Ty::Named {
+            name, args: eargs, ..
+        }) = expected
+            && *name == owner.name.name
+            && eargs.len() == owner.type_params.len()
+        {
+            subst = type_param_subst(owner, eargs);
+        }
+        // Pass 1: type each argument once, binding parameters only from fully
+        // ground actuals (a `None`/empty list adopting `Var(T)` from the
+        // expected type carries no information — mirrors the record rule).
+        let mut typed: Vec<(&VariantField, Option<Ty>, Option<Ty>, Span)> = Vec::new();
+        for (field, arg) in variant.payload.iter().zip(args.iter()) {
+            let pattern = resolve_type_ref_in(&field.type_ref, &ctx.input.types, &vars);
+            let expected_now = pattern.as_ref().map(|p| substitute(p, &subst));
+            let actual = type_of(arg, expected_now.as_ref(), ctx);
+            if let (Some(pat), Some(act)) = (pattern.as_ref(), actual.as_ref())
+                && !contains_var(act)
+            {
+                unify(pat, act, &mut subst);
+            }
+            typed.push((field, pattern, actual, arg.span));
+        }
+        // Ground the type arguments; an unbound (or still-var-bearing) parameter
+        // is uninferable — the binding's type is the pressure valve.
+        let mut inferred = Vec::new();
+        let mut uninferable = Vec::new();
+        for p in &owner.type_params {
+            match subst.get(&p.name.name) {
+                Some(t) if !contains_var(t) => inferred.push(t.clone()),
+                _ => uninferable.push(p.name.name.clone()),
+            }
+        }
+        if !uninferable.is_empty() {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.generics.uninferable_type_arg",
+                    span,
+                    format!(
+                        "cannot infer type parameter{} {} of generic type `{}` from variant `{}`",
+                        if uninferable.len() == 1 { "" } else { "s" },
+                        uninferable
+                            .iter()
+                            .map(|n| format!("`{n}`"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        owner.name.name,
+                        variant_name,
+                    ),
+                )
+                .with_note(
+                    "annotate the binding so the type argument is known — `let x: Name[T] = …`",
+                ),
+            );
+            return None;
+        }
+        // Pass 2: compatibility per payload field against the substituted type.
+        let mut ok = true;
+        for (i, (field, pattern, actual, aspan)) in typed.into_iter().enumerate() {
+            if let (Some(pat), Some(act)) = (pattern, actual) {
+                let expected_ty = substitute(&pat, &subst);
+                let actual_ty = substitute(&act, &subst);
+                if !contains_var(&expected_ty)
+                    && !contains_var(&actual_ty)
+                    && !compatible(&actual_ty, &expected_ty)
+                {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.variant_payload_mismatch",
+                        aspan,
+                        format!(
+                            "argument {} to variant `{}` has type `{}`, but field `{}` expects `{}`",
+                            i + 1,
+                            variant_name,
+                            actual_ty.display(),
+                            field.name.name,
+                            expected_ty.display()
+                        ),
+                    ));
+                    ok = false;
+                }
+            } else {
+                ok = false;
+            }
+        }
+        if !ok {
+            return None;
+        }
+        return Some(named_ty_with_args(owner, inferred));
+    }
+
     let mut ok = true;
     for (i, (field, arg)) in variant.payload.iter().zip(args.iter()).enumerate() {
         let expected = resolve_type_ref(&field.type_ref, &ctx.input.types);
@@ -2310,7 +2452,13 @@ pub(crate) fn check_record_construction(
     Some(named_ty_with_args(&decl, args))
 }
 
-pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_field_access(
+    receiver: &Expr,
+    field: &Ident,
+    // #593: grounds a qualified payload-less generic variant (`Opt.Nil`).
+    expected: Option<&Ty>,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
     // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
     // Map[K, V]` field — the key-exposing lazy queries. Dispatched by receiver
     // provenance (a bare ident naming a store map, not shadowed by a local),
@@ -2388,7 +2536,7 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
             );
             return None;
         }
-        return Some(named_ty(decl));
+        return nullary_variant_ty(decl, field.name.as_str(), field.span, expected, ctx);
     }
     let recv_ty = type_of(receiver, None, ctx)?;
     // v0.45: a verified actor binding exposes exactly `.identity` — the sealed,

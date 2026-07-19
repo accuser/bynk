@@ -324,6 +324,9 @@ pub(crate) fn check_call(
     type_args: &[TypeRef],
     args: &[Expr],
     span: Span,
+    // #593: the binding's expected type grounds a generic variant constructor
+    // whose payload cannot determine every parameter (`let o: Opt[Int] = Nil`).
+    expected: Option<&Ty>,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     if let Some(fn_decl) = ctx.input.fns.get(&name.name) {
@@ -356,7 +359,7 @@ pub(crate) fn check_call(
         .filter(|t| matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == name.name)))
         .collect();
     if owners.len() == 1 {
-        return check_variant_construction(owners[0], &name.name, args, span, ctx);
+        return check_variant_construction(owners[0], &name.name, args, span, expected, ctx);
     }
     // Agent instantiation: `AgentName(key)` constructs an instance keyed by
     // `key`. The result type carries the agent's name so subsequent
@@ -882,6 +885,9 @@ pub(crate) fn check_static_call(
     method: &Ident,
     args: &[Expr],
     span: Span,
+    // #593: threaded to `check_variant_construction` so a qualified generic
+    // variant (`Opt.Nil`) can ground its arguments from the binding's type.
+    expected: Option<&Ty>,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     // Capability dispatch (v0.5): if `type_name` names a capability declared
@@ -1134,7 +1140,7 @@ pub(crate) fn check_static_call(
 
     // 3) Qualified variant construction `TypeName.Variant(args)`.
     if let TypeBody::Sum(_) = &decl.body {
-        return check_variant_construction(decl, &method.name, args, span, ctx);
+        return check_variant_construction(decl, &method.name, args, span, expected, ctx);
     }
 
     ctx.errors.push(
@@ -1841,7 +1847,7 @@ pub(crate) fn check_method_call(
         && (ctx.caps.capabilities.contains_key(&id.name)
             || ctx.caps.declared_capabilities.contains_key(&id.name))
     {
-        return check_static_call(id, method, args, span, ctx);
+        return check_static_call(id, method, args, span, expected, ctx);
     }
     // Detect static-call shape: receiver is a bare Ident naming a declared
     // type (not a local/param). Dispatch to check_static_call.
@@ -1849,7 +1855,7 @@ pub(crate) fn check_method_call(
         && ctx.lookup(id.name.as_str()).is_none()
         && ctx.input.types.contains_key(&id.name)
     {
-        return check_static_call(id, method, args, span, ctx);
+        return check_static_call(id, method, args, span, expected, ctx);
     }
     // v0.20b: qualified statics on the built-in collection types —
     // `List.empty()` / `Map.empty()`. Like an empty `[]`, they need an
