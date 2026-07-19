@@ -396,10 +396,17 @@ self-referential and terminates on the data, so it declares and serialises as
 before; only the per-instantiation generic form is deferred.) Use a concrete
 recursive type, or break the cycle.
 
-Methods on a generic type are still not supported
-(`bynk.generics.method_on_generic_type`) — write a free function taking the
-generic value instead — and generic sums remain a later increment (only a record
-body may be generic, `bynk.generics.generic_non_record`).
+A generic type may carry **instance methods**. A method whose receiver is a
+generic type sees the type's own parameters in scope alongside any it declares
+itself, so `fn Box.map[U](self, f: A -> U) -> Box[U]` reads `A` from the receiver
+`Box[A]` and infers `U` from the argument. It erases to a generic
+namespace-object method — `map<A, U>(self: Box<A>, f: (a: A) => U): Box<U>` — the
+type's parameters threaded onto each method (the namespace object itself cannot
+carry them). The type arguments are inferred from the receiver and the argument
+types; the explicit `x.map[U](…)` form is a later increment. **Static** methods
+on a generic type stay deferred (`bynk.generics.method_on_generic_type`) — they
+have no receiver to supply the type's parameters — as do generic sums (only a
+record body may be generic, `bynk.generics.generic_non_record`).
 
 ## Sum types
 
