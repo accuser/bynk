@@ -1891,7 +1891,29 @@ impl LanguageServer for Backend {
         // slicing the line at `pos.character` bytes.
         let line_prefix = text[..offset].rsplit('\n').next().unwrap_or("").to_string();
         let files = self.project_files(&uri).await;
-        let candidates = completion::complete(&line_prefix, &text, files.as_deref());
+        // `complete()` enumerates the project's units — file stats and CPU-bound
+        // recovery parsing (of the buffer, and any project file whose parse cache
+        // missed). Run it on the blocking pool so a keystroke on a large project
+        // never stalls the async runtime (#733).
+        let candidates = {
+            let line_prefix = line_prefix.clone();
+            let text = text.clone();
+            match tokio::task::spawn_blocking(move || {
+                completion::complete(&line_prefix, &text, files.as_deref())
+            })
+            .await
+            {
+                Ok(c) => c,
+                // A panic (or cancellation) inside `complete()` degrades to empty
+                // completions rather than a failed request — but log the
+                // `JoinError` so the underlying bug is not silently swallowed
+                // (#776 review).
+                Err(e) => {
+                    tracing::error!("completion enumeration task failed: {e}");
+                    Vec::new()
+                }
+            }
+        };
         let mut items: Vec<CompletionItem> =
             candidates.into_iter().map(to_completion_item).collect();
         // ADR 0064/0093 D3: offer in-scope locals/params at keyword position
