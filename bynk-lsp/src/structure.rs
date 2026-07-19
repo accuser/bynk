@@ -16,7 +16,7 @@ use bynk_syntax::parser::parse_unit_with_recovery;
 use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::{FoldingRange, FoldingRangeKind, Position, Range, SelectionRange};
 
-use crate::position::{offset_to_position, position_to_offset, span_to_range};
+use crate::position::{PositionMap, position_to_offset};
 
 /// Every AST node's span paired with whether it is a folding candidate (a
 /// multi-line block-like construct). Non-candidate spans are still collected —
@@ -228,26 +228,27 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
 /// one line (LSP folds ≥2 lines); duplicate `(start, end)` line pairs (a decl
 /// and its body sharing both lines) collapse to one.
 pub fn folding_ranges(source: &str) -> Vec<FoldingRange> {
+    let positions = PositionMap::new(source);
     let mut out = Vec::new();
     let mut seen: HashSet<(u32, u32)> = HashSet::new();
     for (span, foldable) in collect(source) {
         if !foldable {
             continue;
         }
-        let start = offset_to_position(source, span.start).line;
-        let end = offset_to_position(source, span.end).line;
+        let start = positions.position(span.start).line;
+        let end = positions.position(span.end).line;
         if end > start && seen.insert((start, end)) {
             out.push(fold(start, end, None));
         }
     }
-    out.extend(comment_folds(source));
+    out.extend(comment_folds(source, &positions));
     out
 }
 
 /// Multi-line runs of consecutive `--` line comments → `Comment` folds. Spans
 /// come from the lexer's `Comment` tokens (the trivia table keeps only bodies),
 /// grouped while each comment sits on the line immediately after the previous.
-fn comment_folds(source: &str) -> Vec<FoldingRange> {
+fn comment_folds(source: &str, positions: &PositionMap) -> Vec<FoldingRange> {
     let Ok(tokens) = tokenize(source) else {
         return Vec::new();
     };
@@ -259,14 +260,14 @@ fn comment_folds(source: &str) -> Vec<FoldingRange> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < comments.len() {
-        let start = offset_to_position(source, comments[i].start).line;
-        let mut end = offset_to_position(source, comments[i].end).line;
+        let start = positions.position(comments[i].start).line;
+        let mut end = positions.position(comments[i].end).line;
         let mut j = i;
         while j + 1 < comments.len() {
-            let next = offset_to_position(source, comments[j + 1].start).line;
+            let next = positions.position(comments[j + 1].start).line;
             if next == end + 1 {
                 j += 1;
-                end = offset_to_position(source, comments[j].end).line;
+                end = positions.position(comments[j].end).line;
             } else {
                 break;
             }
@@ -296,13 +297,19 @@ fn fold(start_line: u32, end_line: u32, kind: Option<FoldingRangeKind>) -> Foldi
 /// (e.g. trailing whitespace) or the file doesn't parse.
 pub fn selection_ranges(source: &str, positions: &[Position]) -> Vec<SelectionRange> {
     let nodes = collect(source);
+    let map = PositionMap::new(source);
     positions
         .iter()
-        .map(|pos| selection_at(source, &nodes, *pos))
+        .map(|pos| selection_at(source, &map, &nodes, *pos))
         .collect()
 }
 
-fn selection_at(source: &str, nodes: &[(Span, bool)], pos: Position) -> SelectionRange {
+fn selection_at(
+    source: &str,
+    map: &PositionMap,
+    nodes: &[(Span, bool)],
+    pos: Position,
+) -> SelectionRange {
     let empty = SelectionRange {
         range: Range::new(pos, pos),
         parent: None,
@@ -323,7 +330,7 @@ fn selection_at(source: &str, nodes: &[(Span, bool)], pos: Position) -> Selectio
     let mut chain: Option<Box<SelectionRange>> = None;
     for span in spans.into_iter().rev() {
         chain = Some(Box::new(SelectionRange {
-            range: span_to_range(source, span),
+            range: map.range(span),
             parent: chain,
         }));
     }
@@ -333,6 +340,7 @@ fn selection_at(source: &str, nodes: &[(Span, bool)], pos: Position) -> Selectio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::position::offset_to_position;
 
     const SRC: &str = concat!(
         "context shop\n",
