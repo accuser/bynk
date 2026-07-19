@@ -1,0 +1,31 @@
+---
+Gate context. Admits a request by minting a grant through the tokens context.
+It consumes `shop.tokens` and calls `issue`, so under `--target workers` it
+generates its **own** codecs for the callee-owned boundary types
+(`Token`, `Score`, `Grant`, `TokenError`) rather than importing the callee's
+module as a value.
+---
+context shop.gate
+
+consumes shop.tokens as Tokens
+
+exports transparent { GateError }
+
+type GateError = enum {
+  Rejected,
+}
+
+service enter {
+  ---
+  Admit a request. Maps every token failure onto the gate's own error, so the
+  callee's `TokenError` never appears in this context's own signature — it is
+  reached only inside the generated `deserialise_Result_Grant_TokenError`.
+  ---
+  on call(seed: String) -> Effect[Result[(), GateError]] {
+    let g <- Tokens.issue(seed)
+    match g {
+      Ok(_) => Ok(())
+      Err(_) => Err(Rejected)
+    }
+  }
+}

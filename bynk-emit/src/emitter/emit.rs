@@ -1637,14 +1637,24 @@ pub(crate) fn lower_workers_cross_context_call(
             )
         });
 
-    // The codecs are still reached through the consumed context's namespace.
-    // Decision B (the caller generating its *own* codecs) is deliberately not
-    // done here: a caller-side codec for a callee-owned type needs the callee's
-    // *type declarations* too — `deserialise_AuthId` must name `AuthId` in its
-    // return type, and `emit_refined` reaches for the type's own `.of`
-    // constructor — so it is a self-contained emitter increment, not a detail of
-    // unifying the dispatch. Tracked separately; see #642.
-    let ns = format!("{}.", qualified_to_ns(consumed));
+    // #661 (ADR 0199 Decision G discharged): a context's own handlers generate
+    // their *own* codecs for the contracts they participate in
+    // (`emit_boundary_helpers`), so the call site reaches them **locally** — no
+    // namespace prefix. The consumed context's module is then imported for types
+    // only (`import type * as <ns>`), which is what makes each Worker
+    // self-contained: `commerce-orders` no longer bundles `commerce-payment`'s
+    // provider implementation.
+    //
+    // The generated **test harness** (`tests/*.test.ts`) is the exception: it
+    // imports every participating Worker's `handlers.js` as a real value module
+    // (it wires the `env` bindings from them) and does *not* generate its own
+    // codecs, so there it still reaches the callee's codecs through that value
+    // namespace. `in_test_scaffold()` is exactly that discriminator.
+    let ns = if cx.in_test_scaffold() {
+        format!("{}.", qualified_to_ns(consumed))
+    } else {
+        String::new()
+    };
 
     // One invariant for arity, asserted once, in both directions. The checker
     // validated it (`bynk.consumes.service_arity`) before emit ran, so a mismatch

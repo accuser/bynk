@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type DurableObjectState, type DurableObjectNamespace, StateRegistry, makeAgent, rehydrationViolation, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "../../runtime.js";
 
-import * as shop_payment from "../shop-payment/handlers.js";
+import type * as shop_payment from "../shop-payment/handlers.js";
 
 export type OrderError =
     { readonly tag: "Rejected" };
@@ -71,7 +71,7 @@ export function __makeLedger(key: string, env?: { LEDGER?: DurableObjectNamespac
 
 export const place = {
   async call(id: string, cents: number, deps: { env: { SHOP_PAYMENT: ServiceBinding; LEDGER: DurableObjectNamespace } }): Promise<Result<number, OrderError>> {
-    const a = await callService(deps.env.SHOP_PAYMENT, "authorise", cents as JsonValue, shop_payment.deserialise_Result_Int_PayError, "shop.orders", "e32eb3baff10120b");
+    const a = await callService(deps.env.SHOP_PAYMENT, "authorise", cents as JsonValue, deserialise_Result_Int_PayError, "shop.orders", "e32eb3baff10120b");
     switch (a.tag) {
       case "Ok": {
         const ledger = __makeLedger(id, deps.env);
@@ -136,6 +136,56 @@ export function deserialise_Result_Int_OrderError(json: JsonValue, path: string 
   if (__r_e.tag === "Err") return __r_e;
   const __e = __r_e.value;
     return Ok(Err(__e) as Result<number, OrderError>);
+  }
+  return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
+}
+
+export function serialise_PayError(value: shop_payment.PayError): JsonValue {
+  switch (value.tag) {
+    case "Declined":
+      return { kind: "Declined" };
+  }
+}
+
+export function deserialise_PayError(json: JsonValue, path: string = "$"): Result<shop_payment.PayError, BoundaryError> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  const kind = obj["kind"];
+  switch (kind) {
+    case "Declined":
+      return Ok({ tag: "Declined" } as shop_payment.PayError);
+    default:
+      return Err({ kind: "StructuralMismatch", path, expected: "sum variant kind", actual: String(kind) });
+  }
+}
+
+
+export function serialise_Result_Int_PayError(value: Result<number, shop_payment.PayError>): JsonValue {
+  if (value.tag === "Ok") return { kind: "Ok", value: value.value as JsonValue };
+  return { kind: "Err", error: serialise_PayError(value.error) };
+}
+
+export function deserialise_Result_Int_PayError(json: JsonValue, path: string = "$"): Result<Result<number, shop_payment.PayError>, BoundaryError> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  if (obj["kind"] === "Ok") {
+  if (typeof obj["value"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
+  }
+  if (!Number.isInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "integer", actual: String(obj["value"]) });
+  }
+  const __v = obj["value"];
+    return Ok(Ok(__v) as Result<number, shop_payment.PayError>);
+  } else if (obj["kind"] === "Err") {
+  const __r_e = deserialise_PayError(obj["error"], `${path}.error`);
+  if (__r_e.tag === "Err") return __r_e;
+  const __e = __r_e.value;
+    return Ok(Err(__e) as Result<number, shop_payment.PayError>);
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }

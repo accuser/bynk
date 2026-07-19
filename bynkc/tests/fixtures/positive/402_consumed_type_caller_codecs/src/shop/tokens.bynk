@@ -1,0 +1,36 @@
+---
+Tokens context. Mints access grants. The callee whose boundary types a
+consumer must generate its own codecs for (#661): an `exports opaque` type
+(the caller casts structurally — Decision C) and an `exports transparent`
+refined type (the caller inlines the predicate — Decision D).
+---
+context shop.tokens
+
+exports opaque      { Token }
+exports transparent { Grant, Score, TokenError }
+
+type Token = opaque String where NonEmpty
+
+type Score = Int where InRange(0, 100)
+
+type Grant = {
+  token: Token,
+  score: Score,
+}
+
+type TokenError = enum {
+  Denied,
+  Expired,
+}
+
+---
+Mint a grant for a seed. The single cross-context entry point.
+---
+service issue {
+  on call(seed: String) -> Effect[Result[Grant, TokenError]] {
+    match Score.of(50) {
+      Ok(s) => Ok(Grant { token: Token.unsafe("tok"), score: s })
+      Err(_) => Err(Denied)
+    }
+  }
+}

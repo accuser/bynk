@@ -1044,10 +1044,31 @@ fn emit_boundary_helpers(
         let insts =
             collect_generic_instantiations(&services, &agents, &boundary_types_all, &commons.types);
         emit_generic_helpers(out, &insts, &commons.types);
-        (
-            boundary_types_all.into_iter().collect(),
-            insts.iter().map(|i| i.ts_name()).collect(),
-        )
+
+        // #661 (ADR 0199 Decision G discharged): the caller's own view of each
+        // consumed context's boundary codecs, so a cross-context call reaches
+        // `deserialise_Result_AuthId_PaymentError` **locally** instead of through
+        // the callee's module. Workers only — on `bundle` the call is in-process
+        // and needs no wire codec. Everything the caller already emits (its own
+        // boundary types, the commons re-exports above, its own generic
+        // instantiations) is skipped, so only the callee-*owned* types the caller
+        // lacks a local view of are generated.
+        let (consumed_names, consumed_insts) = if workers {
+            let mut emitted_names: HashSet<String> = local_boundary.iter().cloned().collect();
+            for names in by_commons.values() {
+                emitted_names.extend(names.iter().cloned());
+            }
+            let mut emitted_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
+            emit_consumed_context_helpers(out, commons, ctx, &mut emitted_names, &mut emitted_insts)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        let mut ret_names: HashSet<String> = boundary_types_all.into_iter().collect();
+        ret_names.extend(consumed_names);
+        let mut ret_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
+        ret_insts.extend(consumed_insts);
+        (ret_names, ret_insts)
     } else if !workers {
         // Commons/adapters have no agents (no rehydration boundary), and on
         // `bundle` there is no cross-Worker call boundary either — so emit no
@@ -1090,6 +1111,163 @@ fn emit_boundary_helpers(
             insts.iter().map(|i| i.ts_name()).collect(),
         )
     }
+}
+
+/// #661: emit the caller's own `serialise_*`/`deserialise_*` for every
+/// callee-owned boundary type reachable from the services this context
+/// **calls**, so a `workers` cross-context call resolves its codecs locally
+/// rather than importing the callee's module as a value.
+///
+/// The codec function names stay bare and local; only the TS *type* positions
+/// reach through the callee's `import type * as <ns>` alias (via the [`Qual`]
+/// map built here). Refinement validation follows the export visibility: an
+/// opaque type casts structurally (Decision C), a transparent refined type
+/// inlines its predicates (Decision D) — both decided inside the codec emitter
+/// from the type's own body.
+///
+/// Only the callee-*owned* types (its `exports`) are generated. Commons types
+/// reachable through the boundary (`Money`) are already emitted or re-exported
+/// by the caller's own path, so they are left out here and deduped against
+/// `emitted_names` / `emitted_insts`, which the caller seeds with everything it
+/// has already emitted. Returns the names and generic-instantiation names newly
+/// emitted, so the Json-codec pass dedupes against them too.
+fn emit_consumed_context_helpers(
+    out: &mut String,
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+    emitted_names: &mut HashSet<String>,
+    emitted_insts: &mut HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    use serialisation::{
+        collect_codec_closure, emit_generic_helpers_qualified, emit_helpers_for_owner_qualified,
+    };
+    let info = &ctx.cross_context;
+    let mut consumed_names_out: Vec<String> = Vec::new();
+    let mut consumed_insts_out: Vec<String> = Vec::new();
+
+    // Only the services this context actually **calls** — not the callee's whole
+    // provided surface. `consumed_services` carries every service the dependency
+    // provides; generating a codec for one this context never reaches would bloat
+    // the bundle with a contract it does not participate in (and pull in the
+    // uncalled service's own boundary types). Mirrors the `called` narrowing the
+    // contract manifest applies to `expects` (ADR 0200 Decision E, one layer up).
+    let called = called_consumed_services(commons, info);
+
+    let mut consumed_keys: Vec<&String> = info.consumed_services.keys().collect();
+    consumed_keys.sort();
+    for c in consumed_keys {
+        let svcs = &info.consumed_services[c];
+        if svcs.is_empty() {
+            continue;
+        }
+        let Some(called_here) = called.get(c) else {
+            continue;
+        };
+        let Some(types_table) = info.consumed_types.get(c) else {
+            continue;
+        };
+        // The callee's exports — the set of types it *owns* and a consumer may
+        // name. A closure type outside this set (a commons type the callee only
+        // `uses`, e.g. `Money`) is the caller's own already, not the callee's to
+        // hand out, so the caller never regenerates it under the callee's ns.
+        let exports = ctx.exports_for_consumed.get(c);
+        let owned = |n: &str| exports.is_some_and(|e| e.contains_key(n));
+
+        // Roots: every called service's parameter and return types, in a stable
+        // order.
+        let mut svc_names: Vec<&String> =
+            svcs.keys().filter(|s| called_here.contains(*s)).collect();
+        svc_names.sort();
+        let mut roots: Vec<bynk_syntax::ast::TypeRef> = Vec::new();
+        for sn in svc_names {
+            let svc = &svcs[sn];
+            for (_, t) in &svc.params {
+                roots.push(t.clone());
+            }
+            roots.push(svc.return_type.clone());
+        }
+        let (names, cinsts) = collect_codec_closure(&roots, types_table);
+
+        let ns = format!("{}.", qualified_to_ns(c));
+        let mut qual: HashMap<String, String> = HashMap::new();
+        for n in &names {
+            if owned(n) {
+                qual.insert(n.clone(), ns.clone());
+            }
+        }
+
+        let mut to_emit: Vec<String> = names
+            .iter()
+            .filter(|n| owned(n) && emitted_names.insert((*n).clone()))
+            .cloned()
+            .collect();
+        to_emit.sort();
+        emit_helpers_for_owner_qualified(
+            out,
+            &to_emit,
+            types_table,
+            ctx.commons_name.as_str(),
+            &qual,
+        );
+        consumed_names_out.extend(to_emit);
+
+        let to_emit_insts: Vec<serialisation::GenericInst> = cinsts
+            .into_iter()
+            .filter(|i| emitted_insts.insert(i.ts_name()))
+            .collect();
+        for i in &to_emit_insts {
+            consumed_insts_out.push(i.ts_name());
+        }
+        emit_generic_helpers_qualified(out, &to_emit_insts, types_table, &qual);
+    }
+
+    (consumed_names_out, consumed_insts_out)
+}
+
+/// #661: the cross-context services this unit actually **calls**, as `consumed
+/// context → service names`. A copy of `project::called_cross_context_services`
+/// over the emitter's AST view (`commons`) — the caller-side codec set follows
+/// the *called* subset, not the callee's full provided surface, so it stays in
+/// step with what the contract manifest records under `expects`.
+fn called_consumed_services(
+    commons: &TypedCommons,
+    info: &bynk_check::resolver::CrossContextInfo,
+) -> HashMap<String, HashSet<String>> {
+    let mut out: HashMap<String, HashSet<String>> = HashMap::new();
+    if info.consumed_contexts.is_empty() && info.aliases.is_empty() {
+        return out;
+    }
+    let mut visit = |e: &Expr| {
+        if let ExprKind::MethodCall {
+            receiver, method, ..
+        } = &e.kind
+            && let Some(chain) = flatten_emit_ident_chain(receiver)
+            && let Some(target) = info.resolve_prefix(&chain)
+        {
+            out.entry(target).or_default().insert(method.name.clone());
+        }
+    };
+    for item in &commons.commons.items {
+        match item {
+            CommonsItem::Service(s) => {
+                for h in &s.handlers {
+                    walk_block_exprs(&h.body, &mut visit);
+                }
+            }
+            CommonsItem::Agent(a) => {
+                for h in &a.handlers {
+                    walk_block_exprs(&h.body, &mut visit);
+                }
+            }
+            CommonsItem::Provider(p) => {
+                for op in &p.ops {
+                    walk_block_exprs(&op.body, &mut visit);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// For each type imported via `uses` that's referenced in this file, emit:
@@ -1730,7 +1908,20 @@ fn emit_cross_context_namespace_imports(
         let import =
             cross_commons_import_specifier_for_path(&ctx.source_path, &target, ctx.import_ext);
         let ns = qualified_to_ns(q);
-        writeln!(out, "import * as {ns} from \"{import}\";").unwrap();
+        // #661: under `workers`, a consumed *context*'s module is imported for
+        // its **types only** — the caller now generates its own codecs
+        // (`emit_boundary_helpers`) and reaches the callee's types through this
+        // alias in type position (`deps: { Clock: platform_time.Clock }`,
+        // `Result<commerce_payment.AuthId, …>`). An `import type` is erased
+        // outright, so the callee's *module* — and its provider implementation —
+        // never enters the caller's Worker bundle. This does **not** apply to a
+        // consumed *adapter* (its binding namespace, e.g. `tokens`, is a real
+        // value import used by `compose.ts`) nor on `bundle` (contexts compile
+        // together, and the value uses in `compose.ts` are legitimate).
+        let type_only = matches!(ctx.target, BuildTarget::Workers)
+            && !ctx.consumed_adapters.contains(q.as_str());
+        let kw = if type_only { "import type" } else { "import" };
+        writeln!(out, "{kw} * as {ns} from \"{import}\";").unwrap();
     }
     writeln!(out).unwrap();
 }
