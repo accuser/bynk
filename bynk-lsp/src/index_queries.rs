@@ -570,9 +570,13 @@ pub fn semantic_tokens(
     // sort fully determines the protocol's relative encoding.
     raw.sort_by_key(|(span, _, _)| (span.start, span.end));
     let mut data = Vec::with_capacity(raw.len());
+    // One line index for the whole snapshot: a `semanticTokens/full` request
+    // emits a position per token, so scanning from byte 0 each time is O(n²)
+    // (#732). Build it once and binary-search per token instead.
+    let positions = crate::position::PositionMap::new(text);
     let (mut prev_line, mut prev_start) = (0u32, 0u32);
     for (span, token_type, token_modifiers_bitset) in raw {
-        let pos = crate::position::offset_to_position(text, span.start);
+        let pos = positions.position(span.start);
         let delta_line = pos.line - prev_line;
         let delta_start = if delta_line == 0 {
             pos.character - prev_start
