@@ -12,7 +12,7 @@ import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
-import Parser from "web-tree-sitter";
+import { Parser, Language, Query } from "web-tree-sitter";
 // esbuild loads this as a string (the `.scm: text` loader in build.mjs).
 import highlightsQuery from "./vendor/highlights.scm";
 
@@ -55,13 +55,13 @@ const tsTheme = EditorView.theme({
   ".tok-punct": { color: "#89ddff" },
 });
 
-async function initParser(): Promise<{ parser: Parser; query: Parser.Query } | null> {
+async function initParser(): Promise<{ parser: Parser; query: Query } | null> {
   try {
     await Parser.init({ locateFile: () => new URL("tree-sitter.wasm", location.href).href });
-    const lang = await Parser.Language.load(new URL("tree-sitter-bynk.wasm", location.href).href);
+    const lang = await Language.load(new URL("tree-sitter-bynk.wasm", location.href).href);
     const parser = new Parser();
     parser.setLanguage(lang);
-    return { parser, query: lang.query(highlightsQuery) };
+    return { parser, query: new Query(lang, highlightsQuery) };
   } catch {
     return null;
   }
