@@ -979,9 +979,16 @@ impl Backend {
         // `bynk.toml` for every open buffer — syscalls that must not run while
         // holding `state.write()`. Snapshot the inputs under a short read lock,
         // resolve the open roots off the lock, then take the write lock only to
-        // mutate `projects`. (`open` buffers change on `did_close`, and folders
-        // on `did_change_workspace_folders`; both re-enter here, so a snapshot
-        // that races an interleaving event just prunes on the next call.)
+        // mutate `projects`. This opens a small TOCTOU window: `orphaned` is
+        // computed against live `state.projects` under the write lock but against
+        // the *snapshot's* `folders`/`open_roots`, so a `did_open` that lands in
+        // between — newly covering a root — is not yet in `open_roots` and that
+        // root could be pruned here. It is self-healing: the pruning callers
+        // (`did_close`, `did_change_workspace_folders`) only ever *remove*
+        // coverage, so a racing `did_open` re-creates the entry the moment that
+        // buffer routes/analyses (`schedule_diagnostics` → a lazily-created
+        // `ProjectState`) — its diagnostics clear-then-repopulate, never a
+        // permanently-dropped project.
         let (folders, open_uris) = {
             let state = self.state.read().await;
             (
@@ -4721,6 +4728,42 @@ mod tests {
             backend.state.read().await.supports_dynamic_watchers,
             "the client's dynamic-registration support must be captured for `initialized`",
         );
+    }
+
+    /// #733: `initialize` captures each pull-based decoration's `refresh_support`
+    /// independently — the flag gates whether a committed round nudges the client
+    /// to re-pull that decoration. The three `and_then` chains are easy to
+    /// mis-wire (a swapped field reads the wrong capability), so pin each: two
+    /// advertised, one withheld, one whole family absent.
+    #[tokio::test]
+    async fn initialize_captures_each_decoration_refresh_capability() {
+        let backend = bare_backend().await;
+        let params = InitializeParams {
+            capabilities: ClientCapabilities {
+                workspace: Some(WorkspaceClientCapabilities {
+                    // Semantic tokens: advertised.
+                    semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
+                    }),
+                    // Inlay hints: explicitly withheld.
+                    inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                        refresh_support: Some(false),
+                    }),
+                    // Code lens: the whole family absent (no capability at all).
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        backend.initialize(params).await.expect("initialize");
+        let refresh = backend.state.read().await.supports_refresh;
+        assert!(
+            refresh.semantic_tokens,
+            "semantic tokens: advertised → true"
+        );
+        assert!(!refresh.inlay_hints, "inlay hints: withheld → false");
+        assert!(!refresh.code_lens, "code lens: absent → false");
     }
 
     /// The discovery walk finds every nested `bynk.toml` project under a folder

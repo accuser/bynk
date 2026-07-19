@@ -53,7 +53,14 @@ moves onto the blocking pool (mirroring #776's treatment of `complete()`).
 **Consequences.** Typing stays responsive on large projects — decoration requests
 no longer run analysis. Decorations can lag the buffer by at most one debounce
 cycle and then catch up on the refresh nudge; a client that advertises no
-`refresh_support` re-pulls on its own next request instead. Cursor-position
+`refresh_support` re-pulls on its own next request instead. One user-visible
+trade-off is **accepted**: a request whose *window* is the client's live buffer —
+`codeAction`'s selection range, `semanticTokens/range`'s visible range — now
+converts that range against a snapshot up to one cycle behind, so an edit above
+the window can map it slightly off (a stray or empty result) until the nudge
+re-pulls. It is bounded — a `codeAction` edit is a versioned `TextDocumentEdit`, so
+a drifted buffer *rejects* it rather than mis-applying — and transient, not a
+correctness hole. Cursor-position
 correctness is unchanged: the strict contract still governs every request that
 resolves the live cursor. A client that never re-pulls after a nudge would keep a
 one-cycle-stale decoration until its next request — acceptable, and the standard
