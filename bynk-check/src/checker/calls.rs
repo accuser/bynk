@@ -2158,7 +2158,6 @@ pub(crate) fn check_method_call(
             &method_decl,
             method,
             args,
-            span,
             ctx,
         );
     }
@@ -2224,7 +2223,6 @@ pub(crate) fn check_method_call(
 /// arguments, then drive argument-directed inference over the method's own
 /// parameters. The receiver's parameters are already ground (from the receiver
 /// type), so only the method's own parameters need inferring.
-#[allow(clippy::too_many_arguments)]
 fn check_generic_method_call(
     type_name: &str,
     recv_type_params: &[String],
@@ -2232,7 +2230,6 @@ fn check_generic_method_call(
     method_decl: &FnDecl,
     method: &Ident,
     args: &[Expr],
-    span: Span,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     // Rigid vars: the receiver type's parameters plus the method's own.
@@ -2418,7 +2415,6 @@ fn check_generic_method_call(
                 .record(method.span, format!("[{}]", parts.join(", ")));
         }
     }
-    let _ = span;
     Some(substitute(&ret_pattern, &subst))
 }
 
