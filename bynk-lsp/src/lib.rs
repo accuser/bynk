@@ -156,6 +156,16 @@ struct ProjectState {
     analysis_round_committed: u64,
 }
 
+/// #733: the client's `workspace/*/refresh` support, per pull-based decoration,
+/// captured at `initialize`. Each flag gates the corresponding round-commit
+/// nudge in [`Backend::run_project_diagnostics`].
+#[derive(Debug, Clone, Copy, Default)]
+struct RefreshSupport {
+    semantic_tokens: bool,
+    inlay_hints: bool,
+    code_lens: bool,
+}
+
 /// Mutable server state. Slice D: a map of projects (was one flat project),
 /// plus the open buffers (client-global) and the workspace-folder seeds.
 #[derive(Debug, Default)]
@@ -180,6 +190,12 @@ struct State {
     /// when not, the client is expected to supply them itself (as VS Code did
     /// before the extension's client-side watchers were removed).
     supports_dynamic_watchers: bool,
+    /// #733: whether the client advertised `refresh_support` for each pull-based
+    /// decoration at `initialize`. When set, a committed round asks the client to
+    /// re-pull that decoration (`workspace/*/refresh`) — the "revalidate" half of
+    /// serving `committed_analysis` stale while typing. Only sent when advertised,
+    /// so a client that never supported it is never spammed with unknown requests.
+    supports_refresh: RefreshSupport,
     /// Slice F: debounce generation for **single-file** buffers (no project),
     /// keyed by URI. The project path holds its generation in `ProjectState`;
     /// this is the same coalescing for a buffer that has no entry — a burst runs
@@ -617,11 +633,43 @@ impl Backend {
             let version = version_by_uri.get(&uri).copied().flatten();
             self.client.publish_diagnostics(uri, diags, version).await;
         }
-        let mut state = self.state.write().await;
-        if let Some(ps) = state.projects.get_mut(&root)
-            && ps.analysis_round_committed == round
-        {
-            ps.published = dirty;
+        let still_current = {
+            let mut state = self.state.write().await;
+            if let Some(ps) = state.projects.get_mut(&root)
+                && ps.analysis_round_committed == round
+            {
+                ps.published = dirty;
+                true
+            } else {
+                false
+            }
+        };
+        // #733: revalidate. Pull-based decorations are served from the committed
+        // round (`committed_analysis`) without a forced re-analysis, so a fresh
+        // round is invisible to the client until it re-pulls. Nudge it to — but
+        // only for this round if a newer one has not already superseded it (that
+        // one sends its own nudge), and only for decorations the client can
+        // refresh. Fired on a detached task: `run_project_diagnostics` also runs
+        // on the *request* path (a cursor request's forced refresh), and a
+        // `workspace/*/refresh` awaits a client round-trip — spawning keeps that
+        // off the request's critical path. Best-effort: a failed nudge just
+        // leaves the client on the previous pull until its next request.
+        if still_current {
+            let refresh = self.state.read().await.supports_refresh;
+            if refresh.semantic_tokens || refresh.inlay_hints || refresh.code_lens {
+                let client = self.client.clone();
+                tokio::spawn(async move {
+                    if refresh.semantic_tokens {
+                        let _ = client.semantic_tokens_refresh().await;
+                    }
+                    if refresh.inlay_hints {
+                        let _ = client.inlay_hint_refresh().await;
+                    }
+                    if refresh.code_lens {
+                        let _ = client.code_lens_refresh().await;
+                    }
+                });
+            }
         }
     }
 
@@ -927,16 +975,29 @@ impl Backend {
     /// Returns the URIs whose diagnostics were cleared so the caller can publish
     /// the clears (done outside the lock).
     async fn prune_orphaned_projects(&self) -> Vec<Url> {
-        let mut state = self.state.write().await;
-        let folders = state.folders.clone();
+        // #733: `root_for_uri` canonicalises and walks the filesystem up to a
+        // `bynk.toml` for every open buffer — syscalls that must not run while
+        // holding `state.write()`. Snapshot the inputs under a short read lock,
+        // resolve the open roots off the lock, then take the write lock only to
+        // mutate `projects`. (`open` buffers change on `did_close`, and folders
+        // on `did_change_workspace_folders`; both re-enter here, so a snapshot
+        // that races an interleaving event just prunes on the next call.)
+        let (folders, open_uris) = {
+            let state = self.state.read().await;
+            (
+                state.folders.clone(),
+                state.docs.keys().cloned().collect::<Vec<_>>(),
+            )
+        };
         let open_roots: std::collections::HashSet<PathBuf> =
-            state.docs.keys().filter_map(Self::root_for_uri).collect();
+            open_uris.iter().filter_map(Self::root_for_uri).collect();
         let covered = |root: &std::path::Path| {
             folders
                 .iter()
                 .any(|f| f.starts_with(root) || root.starts_with(f))
                 || open_roots.contains(root)
         };
+        let mut state = self.state.write().await;
         let orphaned: Vec<PathBuf> = state
             .projects
             .keys()
@@ -1116,6 +1177,39 @@ impl Backend {
         current(&a).then_some(a)
     }
 
+    /// #733 — the non-refreshing gate for **pull-based decoration requests**
+    /// (`semanticTokens`, `inlayHint`, `codeLens`, `documentLink`, `codeAction`).
+    /// Returns the last committed round for `uri`'s project **as-is**, without
+    /// forcing a synchronous re-analysis on the request path.
+    ///
+    /// Why this is safe where [`Self::analysis_for`] is not: these handlers
+    /// resolve nothing against the client's *live* cursor — every range and span
+    /// they emit converts against the round's own `snapshots` (or, for
+    /// `document_link`, against live text plus the project-level `unit_sources`
+    /// map). So a committed round lagging the buffer by at most one debounce
+    /// cycle is internally consistent; the strict version match `analysis_for`
+    /// demands is stronger than a decoration needs. The editor auto-fires these
+    /// on every `didChange`, so forcing a whole-project round here is exactly
+    /// what defeated the debounce (#733).
+    ///
+    /// This is stale-while-revalidate: serve the committed round now; the
+    /// already-scheduled debounce round is the revalidation, and on its commit
+    /// [`Self::run_project_diagnostics`] nudges the client to re-pull via
+    /// `workspace/*/refresh`. Cursor requests keep the strict gate.
+    ///
+    /// `None` — the handler returns empty — when the file is under no project, is
+    /// outside every `include` root (never a snapshot key), or no round has
+    /// committed yet (cold start; the scheduled round will produce one and the
+    /// client re-pulls on the refresh nudge).
+    async fn committed_analysis(&self, uri: &Url) -> Option<Arc<Analysis>> {
+        let root = Self::root_for_uri(uri)?;
+        let a = self.project_analysis(&root).await?;
+        // Must actually be analysed (a snapshot key), not merely version-tracked
+        // — the handler converts its spans against this snapshot.
+        let rel = Self::uri_to_rel(&a, uri)?;
+        a.snapshots.contains_key(&rel).then_some(a)
+    }
+
     /// Slice B: the analysis for a handler that emits **multi-file versioned
     /// edits** — today, `rename`. Per-URI freshness ([`Self::analysis_for`]) is
     /// not enough here: a rename touches every file that references the symbol,
@@ -1290,7 +1384,10 @@ impl Backend {
     /// analysed snapshot, and run the pure producer. Empty when no round is
     /// cached or the file is outside the project.
     async fn semantic_tokens_for(&self, uri: &Url, range: Option<Range>) -> Vec<SemanticToken> {
-        let analysis = self.analysis_for(uri).await;
+        // #733: serve the last committed round without forcing a re-analysis —
+        // tokens convert against the round's own snapshot, so a one-cycle lag is
+        // consistent, and the client re-pulls on the round-commit refresh nudge.
+        let analysis = self.committed_analysis(uri).await;
         let Some(analysis) = analysis else {
             return Vec::new();
         };
@@ -1401,9 +1498,28 @@ impl LanguageServer for Backend {
             .and_then(|w| w.did_change_watched_files.as_ref())
             .and_then(|d| d.dynamic_registration)
             .unwrap_or(false);
+        // #733: whether the client can be nudged to re-pull each pull-based
+        // decoration after a round commits (the "revalidate" of stale-while-
+        // revalidate). Absent → the flag stays false and no nudge is sent.
+        let ws = params.capabilities.workspace.as_ref();
+        let supports_refresh = RefreshSupport {
+            semantic_tokens: ws
+                .and_then(|w| w.semantic_tokens.as_ref())
+                .and_then(|s| s.refresh_support)
+                .unwrap_or(false),
+            inlay_hints: ws
+                .and_then(|w| w.inlay_hint.as_ref())
+                .and_then(|i| i.refresh_support)
+                .unwrap_or(false),
+            code_lens: ws
+                .and_then(|w| w.code_lens.as_ref())
+                .and_then(|c| c.refresh_support)
+                .unwrap_or(false),
+        };
         {
             let mut state = self.state.write().await;
             state.supports_dynamic_watchers = dynamic_watchers;
+            state.supports_refresh = supports_refresh;
             if let Some(folders) = &params.workspace_folders {
                 state.folders = folders
                     .iter()
@@ -1581,8 +1697,26 @@ impl LanguageServer for Backend {
         };
         let files = self.project_files(&uri).await;
         // Name callees (free fns, statics, capability ops, of/unsafe) — lexical.
-        let label = match crate::signature_help::resolve_label(&ctx.callee, &text, files.as_deref())
-        {
+        // #733: `resolve_label` enumerates the project's units (file stats +
+        // recovery parse of the cache-missed ones), so run it on the blocking
+        // pool — signature help fires on every `(`/`,` while typing a call.
+        let resolved_label = {
+            let callee = ctx.callee.clone();
+            let text = text.clone();
+            let files = files.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::signature_help::resolve_label(&callee, &text, files.as_deref())
+            })
+            .await
+            {
+                Ok(l) => l,
+                Err(e) => {
+                    tracing::error!("signature-help label task failed: {e}");
+                    None
+                }
+            }
+        };
+        let label = match resolved_label {
             Some(l) => Some(l),
             // v0.32 slice 2: a value-receiver method (`xs.fold(`) — type the
             // receiver via the rewrite + re-analyse, then the kernel signature.
@@ -1630,7 +1764,8 @@ impl LanguageServer for Backend {
     /// clickable to peek the references. Served from the cached round.
     async fn code_lens(&self, params: CodeLensParams) -> JsonRpcResult<Option<Vec<CodeLens>>> {
         let uri = params.text_document.uri;
-        let analysis = self.analysis_for(&uri).await;
+        // #733: committed round, no forced re-analysis (see `committed_analysis`).
+        let analysis = self.committed_analysis(&uri).await;
         let Some(analysis) = analysis else {
             return Ok(Some(Vec::new()));
         };
@@ -1849,7 +1984,10 @@ impl LanguageServer for Backend {
         params: DocumentLinkParams,
     ) -> JsonRpcResult<Option<Vec<DocumentLink>>> {
         let uri = params.text_document.uri;
-        let analysis = self.analysis_for(&uri).await;
+        // #733: committed round. Link ranges convert against live `text` here and
+        // the round only supplies the project-level `unit_sources` map (it changes
+        // only on a `uses`/`consumes` edit), so a committed round is safe.
+        let analysis = self.committed_analysis(&uri).await;
         let text = self
             .state
             .read()
@@ -2014,16 +2152,35 @@ impl LanguageServer for Backend {
             .and_then(|t| crate::symbols::describe_symbol(t, &item.label))
         {
             Some(md) => Some(md),
-            None => self
-                .project_files(&uri)
-                .await
-                .and_then(|files| {
-                    crate::symbols::describe_symbol_cross_file(&files, &uri, &item.label)
+            // #733: the cross-file fallback enumerates the project's units (file
+            // stats + recovery parse of the cache-missed ones); the firstparty
+            // fallback parses the embedded surface. Both read/parse off the
+            // blocking pool — completion-item resolve fires as the user arrows
+            // through the completion list.
+            None => {
+                let files = self.project_files(&uri).await;
+                let uri = uri.clone();
+                let label = item.label.clone();
+                match tokio::task::spawn_blocking(move || {
+                    files
+                        .and_then(|files| {
+                            crate::symbols::describe_symbol_cross_file(&files, &uri, &label)
+                        })
+                        .map(|(_uri, md)| md)
+                        // Slice 9: stdlib/surface symbols (e.g. a `uses bynk.list`
+                        // combinator) live in the embedded first-party sources,
+                        // not the project's files.
+                        .or_else(|| crate::symbols::describe_firstparty_symbol(&label))
                 })
-                .map(|(_uri, md)| md)
-                // Slice 9: stdlib/surface symbols (e.g. a `uses bynk.list` combinator)
-                // live in the embedded first-party sources, not the project's files.
-                .or_else(|| crate::symbols::describe_firstparty_symbol(&item.label)),
+                .await
+                {
+                    Ok(md) => md,
+                    Err(e) => {
+                        tracing::error!("completion-resolve describe task failed: {e}");
+                        None
+                    }
+                }
+            }
         };
         if let Some(md) = doc {
             item.documentation = Some(Documentation::MarkupContent(MarkupContent {
@@ -2239,7 +2396,10 @@ impl LanguageServer for Backend {
         params: CodeActionParams,
     ) -> JsonRpcResult<Option<CodeActionResponse>> {
         let uri = params.text_document.uri;
-        let analysis = self.analysis_for(&uri).await;
+        // #733: committed round. The request range and the diagnostics the fixes
+        // ride on both convert against the round's snapshot, and the emitted edits
+        // carry the round's version, so a committed round is self-consistent.
+        let analysis = self.committed_analysis(&uri).await;
         let Some(analysis) = analysis else {
             return Ok(Some(Vec::new()));
         };
@@ -2275,7 +2435,8 @@ impl LanguageServer for Backend {
     /// convert against the analysed snapshot (the v0.24 rule).
     async fn inlay_hint(&self, params: InlayHintParams) -> JsonRpcResult<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
-        let analysis = self.analysis_for(&uri).await;
+        // #733: committed round, no forced re-analysis (see `committed_analysis`).
+        let analysis = self.committed_analysis(&uri).await;
         let Some(analysis) = analysis else {
             return Ok(Some(Vec::new()));
         };
@@ -3777,6 +3938,48 @@ mod tests {
             a.versions.get(&rel),
             Some(&2),
             "analysis_for must refresh past a stale cached round, never serve it",
+        );
+    }
+
+    /// #733: `committed_analysis` is the non-refreshing counterpart of
+    /// `analysis_for`. Where the strict gate refreshes past a stale round (the
+    /// test above), this one **serves the committed round as-is** — even with the
+    /// buffer a version ahead — and never triggers a refresh. That is what lets a
+    /// decoration request answer from the committed round while the user types,
+    /// instead of forcing a whole-project round on every keystroke.
+    #[tokio::test]
+    async fn committed_analysis_serves_the_stale_round_without_refreshing() {
+        let v1 = "commons q.a\n\nfn f(x: Int) -> Int {\n  x\n}\n";
+        let v2 = format!("{v1}\nfn g(y: Int) -> Int {{\n  y\n}}\n");
+        let s = scratch_project(
+            "fresh_committed",
+            &[("bynk.toml", "[project]\nname=\"q\"\n"), ("src/a.bynk", v1)],
+        );
+        let backend = backend_at(&s.0).await;
+        let (uri, rel) = open_round_edit(&backend, &s.0, v1, &v2).await;
+
+        // Precondition: the cached round is still version 1 (buffer is at 2).
+        assert_eq!(
+            backend.test_analysis().await.unwrap().versions.get(&rel),
+            Some(&1),
+            "cached round is stale",
+        );
+
+        // The non-refreshing gate hands back that stale round unchanged...
+        let a = backend
+            .committed_analysis(&uri)
+            .await
+            .expect("committed round");
+        assert_eq!(
+            a.versions.get(&rel),
+            Some(&1),
+            "committed_analysis serves the committed round, stale and all",
+        );
+        // ...and left the cached round untouched (no refresh was triggered).
+        assert_eq!(
+            backend.test_analysis().await.unwrap().versions.get(&rel),
+            Some(&1),
+            "committed_analysis must not trigger a refresh",
         );
     }
 
