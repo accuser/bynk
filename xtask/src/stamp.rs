@@ -15,7 +15,7 @@ use crate::{Adr, Level, validated_pending_in};
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A semantic version `MAJOR.MINOR.PATCH`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,7 +124,12 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
         .ok_or_else(|| vec![format!("no `version = \"X.Y.Z\"` in {}", cargo.display())])?;
 
     let pending = validated_pending_in(&root.join("design/pending"))?;
-    let first_adr_number = next_adr_number(root);
+    let first_adr_number = next_adr_number(root).map_err(|e| {
+        vec![format!(
+            "cannot scan {}: {e}",
+            root.join("design/decisions").display()
+        )]
+    })?;
 
     let mut version = base_version;
     let mut increments = Vec::new();
@@ -148,10 +153,24 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
 /// Apply `plan` to `root`: write ADR files + index rows, insert changelog rows,
 /// run `bump` for the final version, then delete the consumed pending files.
 ///
-/// Order matters twice. `bump` runs *after* the ADR + changelog edits — the real
-/// caller passes one that runs `scripts/bump-version.sh` — and the pending-file
-/// deletes run *after* `bump` succeeds, so a failed bump leaves the pending files
-/// intact and the run stays retryable.
+/// The whole thing is transactional. Every write is *staged* in memory first —
+/// the changelog and index edits are computed, ADR contents rendered, and any
+/// ADR-number collision detected — before a single byte hits disk, so a
+/// malformed table or a stale number fails with nothing written. During the
+/// commit phase the tree is mutated in a fixed order (ADR files, changelog,
+/// index, then the flaky `bump`); if any step fails, the tree is *rolled back*
+/// to its pre-apply state — the edited docs restored and the freshly written
+/// ADR files removed. Only once everything has succeeded are the consumed
+/// pending files deleted.
+///
+/// This is what makes a re-run safe: a failed run (a `bump` that errors, most
+/// likely) leaves the pending files intact *and* no partial changelog/ADR edits
+/// behind, so a retry recomputes the identical plan rather than duplicating rows
+/// or re-numbering ADRs past the files a previous attempt wrote. (`bump`'s own
+/// partial effects on the manifests it rewrites are outside this function's
+/// reach; the CLI additionally refuses to `--apply` on a dirty worktree so that
+/// debris is surfaced too.)
+///
 /// `bump` is injected so tests exercise the whole flow on a fixture tree with a
 /// stub that just rewrites the fixture's `Cargo.toml`.
 pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>) -> io::Result<()> {
@@ -161,15 +180,31 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
 
     let decisions = root.join("design/decisions");
     let changelog_path = root.join("site/src/content/docs/book/reference/changelog.md");
+    let readme_path = decisions.join("README.md");
 
-    // Materialise ADRs (ascending number) and collect the rows to prepend.
+    // --- Stage: compute every write in memory. Nothing is on disk yet, so a
+    // fault here (a missing table anchor, an ADR-number collision) aborts with
+    // the tree untouched. ---
     let mut number = plan.first_adr_number;
+    let mut adr_files: Vec<(PathBuf, String)> = Vec::new();
     let mut changelog_rows = Vec::new();
     let mut index_rows = Vec::new();
     for inc in &plan.increments {
         for adr in &inc.adrs {
             let path = decisions.join(format!("{number:04}-{}.md", adr.slug));
-            fs::write(&path, adr_file_contents(number, adr, inc.version))?;
+            // Refuse to clobber an ADR that already exists: a number that is not
+            // actually free (e.g. debris from a prior partial run) must surface,
+            // not be silently overwritten and the series restarted.
+            if path.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "ADR {} already exists — refusing to overwrite",
+                        path.display()
+                    ),
+                ));
+            }
+            adr_files.push((path, adr_file_contents(number, adr, inc.version)));
             index_rows.push(index_row(number, adr, inc.version));
             number += 1;
         }
@@ -181,26 +216,55 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
     changelog_rows.reverse();
     index_rows.reverse();
 
-    let changelog = fs::read_to_string(&changelog_path)?;
-    let changelog = insert_after_table_separator(&changelog, "| Version |", &changelog_rows)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    fs::write(&changelog_path, changelog)?;
-
-    if !index_rows.is_empty() {
-        let readme_path = decisions.join("README.md");
-        let readme = fs::read_to_string(&readme_path)?;
-        let readme = insert_after_table_separator(&readme, "| # | Decision |", &index_rows)
+    let changelog_before = fs::read_to_string(&changelog_path)?;
+    let changelog_after =
+        insert_after_table_separator(&changelog_before, "| Version |", &changelog_rows)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        fs::write(&readme_path, readme)?;
+
+    // Only touch the index when there are ADRs to add; `None` means "leave it".
+    let readme_edit = if index_rows.is_empty() {
+        None
+    } else {
+        let before = fs::read_to_string(&readme_path)?;
+        let after = insert_after_table_separator(&before, "| # | Decision |", &index_rows)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Some((before, after))
+    };
+
+    // --- Commit: mutate the tree. Track what we write so a mid-flight failure
+    // (the injected `bump` is the likely one) can be unwound. ---
+    let mut written_adrs: Vec<PathBuf> = Vec::new();
+    let commit = (|| -> io::Result<()> {
+        for (path, contents) in &adr_files {
+            fs::write(path, contents)?;
+            written_adrs.push(path.clone());
+        }
+        fs::write(&changelog_path, &changelog_after)?;
+        if let Some((_, after)) = &readme_edit {
+            fs::write(&readme_path, after)?;
+        }
+        // The flaky step, run last so its failure unwinds cleanly here rather
+        // than stranding a changelog that cites a version the manifests never
+        // reached.
+        bump(plan.final_version())
+    })();
+
+    if let Err(e) = commit {
+        // Roll back, best effort: restore the edited docs to their pre-apply
+        // bytes and delete the ADR files we created. The pending files were not
+        // touched (they are consumed only below), so the run is a clean retry.
+        let _ = fs::write(&changelog_path, &changelog_before);
+        if let Some((before, _)) = &readme_edit {
+            let _ = fs::write(&readme_path, before);
+        }
+        for path in &written_adrs {
+            let _ = fs::remove_file(path);
+        }
+        return Err(e);
     }
 
-    // Bump the manifests to the final version.
-    bump(plan.final_version())?;
-
-    // Consume last: delete each pending file only once the bump has succeeded, so
-    // a failed bump leaves the pending files intact and the run is retryable
-    // (after discarding the partial changelog/ADR edits) rather than stranding a
-    // changelog that cites a version the manifests never reached.
+    // Consume last: delete each pending file only once everything else has
+    // succeeded, so a re-run finds nothing to do.
     for inc in &plan.increments {
         fs::remove_file(root.join("design/pending").join(&inc.file))?;
     }
@@ -209,36 +273,49 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
 
 // --- Pure rendering / parsing helpers (unit-tested without the filesystem) ---
 
-/// The `[workspace.package] version = "X.Y.Z"` from a `Cargo.toml`. Matches a
-/// line-anchored `version = "..."` (the workspace version), not the inline
-/// `version = "..."` inside a dependency spec — the same anchor `bump-version.sh`
-/// rewrites.
+/// The `[workspace.package] version = "X.Y.Z"` from a `Cargo.toml`. Scoped to
+/// the `[workspace.package]` section: the first line-anchored `version = "..."`
+/// *within that table*, not a `version` under some other section (e.g. a stray
+/// top-level `[package]`) nor the inline `version = "..."` inside a dependency
+/// spec — the same value `bump-version.sh` rewrites.
 pub fn parse_workspace_version(cargo_toml: &str) -> Option<Version> {
-    cargo_toml.lines().find_map(|line| {
-        let rest = line.strip_prefix("version = \"")?;
-        let value = rest.strip_suffix('"')?;
-        Version::parse(value)
-    })
+    let mut in_section = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        // A `[section]` header ends the previous table and opens a new one.
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_section = trimmed == "[workspace.package]";
+            continue;
+        }
+        if in_section
+            && let Some(value) = line
+                .strip_prefix("version = \"")
+                .and_then(|r| r.strip_suffix('"'))
+        {
+            return Version::parse(value);
+        }
+    }
+    None
 }
 
-/// The next free ADR number: one past the highest `NNNN-*.md` in `design/decisions`.
-pub fn next_adr_number(root: &Path) -> u32 {
+/// The next free ADR number: one past the highest `NNNN-*.md` in
+/// `design/decisions`. Errors if the directory can't be read — a swallowed
+/// failure would silently default to `1` and restart the ADR series.
+pub fn next_adr_number(root: &Path) -> io::Result<u32> {
     let dir = root.join("design/decisions");
-    let max = fs::read_dir(&dir)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let bytes = name.as_bytes();
-            let is_adr = name.ends_with(".md") && bytes.len() > 5 && bytes[4] == b'-';
-            (is_adr && bytes[..4].iter().all(u8::is_ascii_digit))
-                .then(|| name[..4].parse::<u32>().ok())
-                .flatten()
-        })
-        .max()
-        .unwrap_or(0);
-    max + 1
+    let mut max = 0;
+    for entry in fs::read_dir(&dir)? {
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        let bytes = name.as_bytes();
+        let is_adr = name.ends_with(".md")
+            && bytes.len() > 5
+            && bytes[4] == b'-'
+            && bytes[..4].iter().all(u8::is_ascii_digit);
+        if is_adr && let Ok(n) = name[..4].parse::<u32>() {
+            max = max.max(n);
+        }
+    }
+    Ok(max + 1)
 }
 
 /// The changelog table row for a stamped increment.
@@ -355,6 +432,24 @@ mod tests {
             parse_workspace_version(cargo).unwrap().to_string(),
             "0.185.0"
         );
+    }
+
+    #[test]
+    fn parse_workspace_version_is_scoped_to_the_workspace_package_table() {
+        // A line-anchored `version` outside `[workspace.package]` (here a stray
+        // top-level `[package]`) must not be mistaken for the workspace version.
+        let cargo = "[package]\nname = \"root\"\nversion = \"9.9.9\"\n\n[workspace.package]\nversion = \"0.185.0\"\n";
+        assert_eq!(
+            parse_workspace_version(cargo).unwrap().to_string(),
+            "0.185.0"
+        );
+    }
+
+    #[test]
+    fn parse_workspace_version_none_without_the_table() {
+        // A bare top-level `version` with no `[workspace.package]` table is not
+        // the workspace version.
+        assert!(parse_workspace_version("version = \"1.2.3\"\n").is_none());
     }
 
     #[test]
