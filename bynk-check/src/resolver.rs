@@ -279,25 +279,29 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                         );
                         continue;
                     }
-                    // v0.157 (ADR 0183): methods on a generic type would require
-                    // generic methods (out of this increment — ADR 0028 keeps
-                    // generic methods additive). Reject the attachment rather
-                    // than emit an under-applied `self: Box` TypeScript signature.
-                    if types
-                        .get(&type_name.name)
-                        .is_some_and(|d| !d.type_params.is_empty())
+                    // #594: an *instance* method on a generic type is a generic
+                    // method — the receiver's type arguments supply the type's
+                    // parameters (`self: Box[A]`), so it resolves and emits as an
+                    // erased TS generic method. A *static* method has no receiver
+                    // to supply those parameters, so it stays deferred (it would
+                    // need free-function-style inference of the type's params);
+                    // reject it rather than emit an under-applied `Box` signature.
+                    if !f.has_self
+                        && types
+                            .get(&type_name.name)
+                            .is_some_and(|d| !d.type_params.is_empty())
                     {
                         errors.push(
                             CompileError::new(
                                 "bynk.generics.method_on_generic_type",
                                 type_name.span,
                                 format!(
-                                    "method `{}.{}` is attached to generic type `{}` — methods on generic types are not in v0.157",
+                                    "static method `{}.{}` is attached to generic type `{}` — static methods on generic types are deferred (instance methods are supported)",
                                     type_name.name, method_name.name, type_name.name
                                 ),
                             )
                             .with_note(
-                                "use a free function taking the generic value as a parameter instead",
+                                "give the method a `self` receiver, or use a free function taking the generic value as a parameter instead",
                             ),
                         );
                         continue;
@@ -665,7 +669,7 @@ fn check_fn_refs(
     // Parameter types resolve.
     // v0.20a: the fn's type parameters are legal named references in its
     // own signature and body annotations.
-    let type_params: HashSet<String> = f
+    let mut type_params: HashSet<String> = f
         .type_params
         .iter()
         .map(|tp| tp.name.name.clone())
@@ -675,6 +679,34 @@ fn check_fn_refs(
         &format!("function `{}`", f.name.display()),
         errors,
     );
+    // #594: an instance method on a generic type inherits the receiver type's
+    // parameters into scope, so `fn Box.map[U](self, f: A -> U) -> Box[U]` may
+    // name the type's own parameter `A` alongside the method's `U`. A method
+    // parameter that reuses one of the type's parameter names would shadow it
+    // ambiguously in the substitution — diagnose the collision.
+    if let FnName::Method { type_name, .. } = &f.name
+        && let Some(recv) = types.get(&type_name.name)
+    {
+        for tp in &recv.type_params {
+            if type_params.contains(&tp.name.name) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.generics.duplicate_type_param",
+                        f.type_params
+                            .iter()
+                            .find(|mp| mp.name.name == tp.name.name)
+                            .map_or(tp.span, |mp| mp.span),
+                        format!(
+                            "type parameter `{}` is already a parameter of the receiver type `{}`",
+                            tp.name.name, type_name.name
+                        ),
+                    )
+                    .with_label(tp.span, "declared on the type here"),
+                );
+            }
+            type_params.insert(tp.name.name.clone());
+        }
+    }
     let mut seen_params: HashMap<&str, &Ident> = HashMap::new();
     for p in &f.params {
         check_type_ref_resolves_in(&p.type_ref, types, &type_params, errors);
