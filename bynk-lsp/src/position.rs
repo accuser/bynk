@@ -5,8 +5,52 @@
 //! For ASCII-only Bynk sources the two agree, but we go through code points
 //! to handle multi-byte characters correctly in identifiers and strings.
 
-use bynk_syntax::span::Span;
+use bynk_syntax::span::{LineIndex, Span};
 use tower_lsp::lsp_types::{Position, Range};
+
+/// A source snapshot paired with its precomputed [`LineIndex`], so a request
+/// that maps many spans (semantic tokens, folding ranges, diagnostics, inlay
+/// hints, document symbols) pays the O(n) line-scan **once** and then converts
+/// each offset in O(log n) — closing the O(n²) blow-up of #732.
+///
+/// Positions match [`offset_to_position`] exactly (0-based line, UTF-16-code-unit
+/// columns), so callers can swap a free-function call for a `PositionMap` method
+/// without changing observable output.
+pub struct PositionMap<'a> {
+    source: &'a str,
+    index: LineIndex,
+}
+
+impl<'a> PositionMap<'a> {
+    /// Build the index for `source` in one pass. Reuse the returned map for
+    /// every conversion over this snapshot.
+    pub fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            index: LineIndex::new(source),
+        }
+    }
+
+    /// LSP position of a byte offset — the indexed equivalent of
+    /// [`offset_to_position`].
+    pub fn position(&self, offset: usize) -> Position {
+        let (line, character) = self.index.utf16_line_col(self.source, offset);
+        Position { line, character }
+    }
+
+    /// LSP range of a span — the indexed equivalent of [`span_to_range`].
+    pub fn range(&self, span: Span) -> Range {
+        Range {
+            start: self.position(span.start),
+            end: self.position(span.end),
+        }
+    }
+
+    /// Position one past the end of the source (whole-document edits).
+    pub fn end(&self) -> Position {
+        self.position(self.source.len())
+    }
+}
 
 /// Convert a byte offset into the source string into an LSP position.
 pub fn offset_to_position(source: &str, offset: usize) -> Position {
