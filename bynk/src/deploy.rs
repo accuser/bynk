@@ -475,7 +475,9 @@ fn contract_skews(
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct DeployLock {
-    #[serde(default = "lock_version")]
+    // No serde `default`: a ledger with no `version` is not a fresh project, it
+    // is corruption (a truncated write), and must fail the read rather than
+    // parse as an empty v1 ledger that re-mints every namespace (#736).
     version: u32,
     #[serde(default)]
     environments: BTreeMap<String, Environment>,
@@ -1158,21 +1160,98 @@ fn read_lock(path: &Path) -> Result<DeployLock, String> {
             ..Default::default()
         });
     }
-    let lock: DeployLock =
-        toml::from_str(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    // A zero-byte or whitespace-only ledger is a truncated write, not an empty
+    // project. Accepting it as an empty v1 ledger would tell the planner that no
+    // namespaces exist and re-mint every one — the exact orphaning the ledger
+    // exists to prevent (#736, ADR 0180). Fail hard so the operator restores it.
+    if text.trim().is_empty() {
+        return Err(format!(
+            "deploy ledger `{}` is empty or truncated (corrupt); refusing to \
+             treat it as a fresh project — restore it from version control",
+            path.display()
+        ));
+    }
+    // A file that does not parse — including one truncated mid-table or missing
+    // its now-required `version` — is corruption too, and gets the same
+    // restore-it guidance rather than a bare toml diagnostic. A version we simply
+    // do not support is a distinct case (a newer or older format), not corruption.
+    let lock: DeployLock = toml::from_str(&text).map_err(|e| {
+        format!(
+            "deploy ledger `{}` is corrupt ({e}) — restore it from version control",
+            path.display()
+        )
+    })?;
     if lock.version != lock_version() {
         return Err(format!("unsupported deploy lock version {}", lock.version));
     }
     Ok(lock)
 }
 
+/// Distinguishes concurrent temp ledgers written by the same process.
+static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn write_lock(path: &Path, lock: &DeployLock) -> Result<(), String> {
-    std::fs::write(
-        path,
-        toml::to_string_pretty(lock).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    let body = toml::to_string_pretty(lock).map_err(|e| e.to_string())?;
+    // Atomic, durable replace: write a sibling temp file, fsync it, then rename
+    // it over the ledger. A power loss or kill can then only leave the intact old
+    // file or the intact new one — never a truncated ledger that reads as empty
+    // (#736). Atomicity-for-readers (the rename) is not enough on its own: after
+    // a crash the rename can be journaled while the temp's data blocks are still
+    // only in the page cache, so we `sync_all` the data before the rename and
+    // fsync the directory after it to make the new name itself durable.
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(LOCK_FILE);
+
+    // A per-process counter keeps the temp name unique within a process, and
+    // `create_new` makes the create exclusive — a stale temp from a prior crash
+    // or a pre-planted symlink at this path is refused rather than followed.
+    let (tmp, mut file) = loop {
+        let n = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let candidate = dir.join(format!(".{file_name}.{}.{n}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(f) => break (candidate, f),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+
+    // From here on, any failure must remove the temp so a full disk or crash
+    // does not litter the project with `.bynk.deploy.lock.*.tmp` files.
+    let write_then_sync = file
+        .write_all(body.as_bytes())
+        .and_then(|()| file.sync_all());
+    if let Err(e) = write_then_sync {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    drop(file);
+
+    // Preserve the ledger's existing permissions across the replace.
+    if let Ok(meta) = std::fs::metadata(path) {
+        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    }
+
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    // Best-effort: make the rename itself durable. Directory fsync is a no-op or
+    // unsupported on some platforms, so a failure here is not fatal.
+    if let Ok(dir_file) = std::fs::File::open(dir) {
+        let _ = dir_file.sync_all();
+    }
+    Ok(())
 }
 
 fn materialise_kv_id(path: &Path, id: &str) -> bool {
@@ -2656,6 +2735,136 @@ mod tests {
         assert!(materialise_kv_id(&path, "abc"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "id = \"abc\"");
         let _ = std::fs::remove_file(path);
+    }
+
+    fn scratch_lock_path(label: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "bynk-{label}-{}-{unique}.deploy.lock",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn a_written_ledger_reads_back_identically() {
+        // The floor the atomic write must not disturb: a real ledger survives a
+        // write/read round-trip unchanged.
+        let path = scratch_lock_path("roundtrip");
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.environments
+            .entry("default".into())
+            .or_default()
+            .kv
+            .insert(
+                "api".into(),
+                KvNamespace {
+                    id: "kv-123".into(),
+                },
+            );
+        write_lock(&path, &lock).unwrap();
+        assert_eq!(read_lock(&path).unwrap(), lock);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_empty_ledger_is_corruption_not_a_fresh_project() {
+        // #736: a truncated write leaves a zero-byte file. Reading it as an
+        // empty v1 ledger would re-mint every namespace, so it must fail hard —
+        // whereas a genuinely absent file is a fresh project and reads clean.
+        let path = scratch_lock_path("empty");
+        std::fs::write(&path, "").unwrap();
+        assert!(
+            read_lock(&path).is_err(),
+            "a zero-byte ledger must be rejected, not treated as no environments"
+        );
+        std::fs::write(&path, "   \n\t\n").unwrap();
+        assert!(
+            read_lock(&path).is_err(),
+            "a whitespace-only ledger is just as corrupt"
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            read_lock(&path).is_ok(),
+            "an absent ledger is a fresh project, not corruption"
+        );
+    }
+
+    #[test]
+    fn a_ledger_without_a_version_is_rejected() {
+        // With the serde default gone, a file that parses but carries no
+        // `version` is corruption rather than a silent empty v1 ledger.
+        let path = scratch_lock_path("noversion");
+        std::fs::write(&path, "[environments]\n").unwrap();
+        assert!(read_lock(&path).is_err());
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn scratch_lock_dir(label: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("bynk-{label}-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn temp_litter(dir: &Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "tmp"))
+            .collect()
+    }
+
+    #[test]
+    fn a_successful_write_leaves_no_temp_litter() {
+        // The atomic write renames its temp over the ledger; nothing sibling to
+        // the ledger may survive the write.
+        let dir = scratch_lock_dir("nolitter");
+        let path = dir.join(LOCK_FILE);
+        let lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        write_lock(&path, &lock).unwrap();
+        write_lock(&path, &lock).unwrap(); // over an existing ledger, too
+        assert!(
+            temp_litter(&dir).is_empty(),
+            "no `.tmp` sibling may outlive the rename"
+        );
+        assert_eq!(read_lock(&path).unwrap(), lock);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rewrite_preserves_the_ledger_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        // A committed ledger's mode must survive a rewrite, or the atomic replace
+        // would silently loosen or tighten it via the temp file's fresh mode.
+        let dir = scratch_lock_dir("perms");
+        let path = dir.join(LOCK_FILE);
+        let lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        write_lock(&path, &lock).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_lock(&path, &lock).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "the rewrite must carry the ledger's own mode across the rename"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

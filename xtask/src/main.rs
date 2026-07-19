@@ -92,6 +92,17 @@ fn stamp(apply: bool) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // `--apply` edits tracked files in place. Refuse on a dirty worktree so the
+    // debris of an earlier failed run (a half-written changelog, an orphaned ADR,
+    // a partial `bump-version.sh`) is resolved first — otherwise a retry could
+    // compound it. `apply` itself unwinds its own writes on failure, but a bump
+    // script that dies mid-edit is outside its reach; this is the belt to that
+    // rollback's suspenders.
+    if let Err(e) = ensure_clean_worktree(&root) {
+        eprintln!("stamp: {e}");
+        return ExitCode::FAILURE;
+    }
+
     match xtask::stamp::apply(&root, &plan, |v| run_bump_version(&root, v)) {
         Ok(()) => {
             println!("stamp: applied — manifests on v{}", plan.final_version());
@@ -120,6 +131,33 @@ fn run_bump_version(root: &Path, v: xtask::stamp::Version) -> std::io::Result<()
             script.display()
         )))
     }
+}
+
+/// Refuse to `--apply` unless the worktree is clean. Runs `git status
+/// --porcelain` at `root`; empty output means clean (no tracked modifications
+/// and no untracked files — the orphaned ADR a partial run leaves is untracked,
+/// so untracked files must count). A git that fails to run is treated as an
+/// error rather than a pass: the guard exists precisely to be conservative.
+fn ensure_clean_worktree(root: &Path) -> Result<(), String> {
+    let out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("cannot run git to check the worktree: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git status failed ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    if !out.stdout.is_empty() {
+        return Err(format!(
+            "refusing to --apply on a dirty worktree — commit or discard changes first:\n{}",
+            String::from_utf8_lossy(&out.stdout).trim_end()
+        ));
+    }
+    Ok(())
 }
 
 fn usage() {
