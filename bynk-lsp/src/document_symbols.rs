@@ -12,7 +12,7 @@ use bynk_syntax::lexer::tokenize;
 use bynk_syntax::parser::parse_unit_with_recovery;
 use tower_lsp::lsp_types::{DocumentSymbol, Range, SymbolKind};
 
-use crate::position::span_to_range;
+use crate::position::PositionMap;
 
 /// Build the document-symbol tree for the given source text. Returns an
 /// empty vector when the file cannot be parsed at all (no recognisable
@@ -25,39 +25,38 @@ pub fn outline(source: &str) -> Vec<DocumentSymbol> {
     let Some(unit) = unit else {
         return Vec::new();
     };
+    // One line index for the whole file: the walk emits two ranges per symbol,
+    // so scanning from byte 0 each time is O(symbols × file size) (#732).
+    let pm = PositionMap::new(source);
     match unit {
-        SourceUnit::Commons(c) => vec![commons_symbol(source, &c)],
-        SourceUnit::Context(c) => vec![context_symbol(source, &c)],
-        SourceUnit::Suite(t) => vec![test_symbol(source, &t)],
-        SourceUnit::Adapter(a) => vec![adapter_symbol(source, &a)],
+        SourceUnit::Commons(c) => vec![commons_symbol(&pm, &c)],
+        SourceUnit::Context(c) => vec![context_symbol(&pm, &c)],
+        SourceUnit::Suite(t) => vec![test_symbol(&pm, &t)],
+        SourceUnit::Adapter(a) => vec![adapter_symbol(&pm, &a)],
     }
 }
 
-fn adapter_symbol(source: &str, a: &AdapterDecl) -> DocumentSymbol {
-    let children: Vec<DocumentSymbol> = a
-        .items
-        .iter()
-        .map(|item| item_symbol(source, item))
-        .collect();
+fn adapter_symbol(pm: &PositionMap, a: &AdapterDecl) -> DocumentSymbol {
+    let children: Vec<DocumentSymbol> = a.items.iter().map(|item| item_symbol(pm, item)).collect();
     make_symbol(
         a.name.joined(),
         detail_from_doc(&a.documentation),
         SymbolKind::MODULE,
-        span_to_range(source, a.span),
-        span_to_range(source, a.name.span),
+        pm.range(a.span),
+        pm.range(a.name.span),
         children,
     )
 }
 
-fn test_symbol(source: &str, t: &SuiteDecl) -> DocumentSymbol {
+fn test_symbol(pm: &PositionMap, t: &SuiteDecl) -> DocumentSymbol {
     let mut children: Vec<DocumentSymbol> = Vec::new();
     for p in &t.stubs {
         children.push(make_symbol(
             format!("stub {}.{}", p.capability.name, p.method.name),
             None,
             SymbolKind::INTERFACE,
-            span_to_range(source, p.span),
-            span_to_range(source, p.capability.span),
+            pm.range(p.span),
+            pm.range(p.capability.span),
             Vec::new(),
         ));
     }
@@ -66,8 +65,8 @@ fn test_symbol(source: &str, t: &SuiteDecl) -> DocumentSymbol {
             c.name.clone(),
             None,
             SymbolKind::FUNCTION,
-            span_to_range(source, c.span),
-            span_to_range(source, c.name_span),
+            pm.range(c.span),
+            pm.range(c.name_span),
             Vec::new(),
         ));
     }
@@ -75,71 +74,63 @@ fn test_symbol(source: &str, t: &SuiteDecl) -> DocumentSymbol {
         format!("test {}", t.target.joined()),
         detail_from_doc(&t.documentation),
         SymbolKind::MODULE,
-        span_to_range(source, t.span),
-        span_to_range(source, t.target.span),
+        pm.range(t.span),
+        pm.range(t.target.span),
         children,
     )
 }
 
-fn commons_symbol(source: &str, c: &Commons) -> DocumentSymbol {
-    let children: Vec<DocumentSymbol> = c
-        .items
-        .iter()
-        .map(|item| item_symbol(source, item))
-        .collect();
+fn commons_symbol(pm: &PositionMap, c: &Commons) -> DocumentSymbol {
+    let children: Vec<DocumentSymbol> = c.items.iter().map(|item| item_symbol(pm, item)).collect();
     make_symbol(
         c.name.joined(),
         detail_from_doc(&c.documentation),
         SymbolKind::MODULE,
-        span_to_range(source, c.span),
-        span_to_range(source, c.name.span),
+        pm.range(c.span),
+        pm.range(c.name.span),
         children,
     )
 }
 
-fn context_symbol(source: &str, c: &Context) -> DocumentSymbol {
-    let children: Vec<DocumentSymbol> = c
-        .items
-        .iter()
-        .map(|item| item_symbol(source, item))
-        .collect();
+fn context_symbol(pm: &PositionMap, c: &Context) -> DocumentSymbol {
+    let children: Vec<DocumentSymbol> = c.items.iter().map(|item| item_symbol(pm, item)).collect();
     make_symbol(
         c.name.joined(),
         detail_from_doc(&c.documentation),
         SymbolKind::MODULE,
-        span_to_range(source, c.span),
-        span_to_range(source, c.name.span),
+        pm.range(c.span),
+        pm.range(c.name.span),
         children,
     )
 }
 
-fn item_symbol(source: &str, item: &CommonsItem) -> DocumentSymbol {
+fn item_symbol(pm: &PositionMap, item: &CommonsItem) -> DocumentSymbol {
     match item {
-        CommonsItem::Type(t) => type_symbol(source, t),
-        CommonsItem::Fn(f) => fn_symbol(source, f),
-        CommonsItem::Capability(c) => capability_symbol(source, c),
-        CommonsItem::Provider(p) => provider_symbol(source, p),
-        CommonsItem::Service(s) => service_symbol(source, s),
-        CommonsItem::Agent(a) => agent_symbol(source, a),
-        CommonsItem::Actor(a) => actor_symbol(source, a),
+        CommonsItem::Type(t) => type_symbol(pm, t),
+        CommonsItem::Fn(f) => fn_symbol(pm, f),
+        CommonsItem::Capability(c) => capability_symbol(pm, c),
+        CommonsItem::Provider(p) => provider_symbol(pm, p),
+        CommonsItem::Service(s) => service_symbol(pm, s),
+        CommonsItem::Agent(a) => agent_symbol(pm, a),
+        CommonsItem::Actor(a) => actor_symbol(pm, a),
     }
 }
 
-fn actor_symbol(source: &str, a: &ActorDecl) -> DocumentSymbol {
+fn actor_symbol(pm: &PositionMap, a: &ActorDecl) -> DocumentSymbol {
     make_symbol(
         a.name.name.clone(),
         detail_from_doc(&a.documentation),
         SymbolKind::INTERFACE,
-        span_to_range(source, a.span),
-        span_to_range(source, a.name.span),
+        pm.range(a.span),
+        pm.range(a.name.span),
         Vec::new(),
     )
 }
 
-fn type_symbol(source: &str, t: &TypeDecl) -> DocumentSymbol {
+fn type_symbol(pm: &PositionMap, t: &TypeDecl) -> DocumentSymbol {
     let (kind, children) = match &t.body {
-        TypeBody::Record(r) => (SymbolKind::STRUCT, record_field_symbols(source, &r.fields)),
-        TypeBody::Sum(s) => (SymbolKind::ENUM, variant_symbols(source, &s.variants)),
+        TypeBody::Record(r) => (SymbolKind::STRUCT, record_field_symbols(pm, &r.fields)),
+        TypeBody::Sum(s) => (SymbolKind::ENUM, variant_symbols(pm, &s.variants)),
         TypeBody::Opaque { .. } => (SymbolKind::CLASS, Vec::new()),
         TypeBody::Refined { .. } => (SymbolKind::TYPE_PARAMETER, Vec::new()),
     };
@@ -147,13 +138,13 @@ fn type_symbol(source: &str, t: &TypeDecl) -> DocumentSymbol {
         t.name.name.clone(),
         detail_from_doc(&t.documentation),
         kind,
-        span_to_range(source, t.span),
-        span_to_range(source, t.name.span),
+        pm.range(t.span),
+        pm.range(t.name.span),
         children,
     )
 }
 
-fn record_field_symbols(source: &str, fields: &[RecordField]) -> Vec<DocumentSymbol> {
+fn record_field_symbols(pm: &PositionMap, fields: &[RecordField]) -> Vec<DocumentSymbol> {
     fields
         .iter()
         .map(|f| {
@@ -161,15 +152,15 @@ fn record_field_symbols(source: &str, fields: &[RecordField]) -> Vec<DocumentSym
                 f.name.name.clone(),
                 None,
                 SymbolKind::FIELD,
-                span_to_range(source, f.span),
-                span_to_range(source, f.name.span),
+                pm.range(f.span),
+                pm.range(f.name.span),
                 Vec::new(),
             )
         })
         .collect()
 }
 
-fn variant_symbols(source: &str, variants: &[Variant]) -> Vec<DocumentSymbol> {
+fn variant_symbols(pm: &PositionMap, variants: &[Variant]) -> Vec<DocumentSymbol> {
     variants
         .iter()
         .map(|v| {
@@ -177,15 +168,15 @@ fn variant_symbols(source: &str, variants: &[Variant]) -> Vec<DocumentSymbol> {
                 v.name.name.clone(),
                 None,
                 SymbolKind::ENUM_MEMBER,
-                span_to_range(source, v.span),
-                span_to_range(source, v.name.span),
+                pm.range(v.span),
+                pm.range(v.name.span),
                 Vec::new(),
             )
         })
         .collect()
 }
 
-fn fn_symbol(source: &str, f: &FnDecl) -> DocumentSymbol {
+fn fn_symbol(pm: &PositionMap, f: &FnDecl) -> DocumentSymbol {
     // Free functions are top-level Function symbols. Methods (whose
     // owning type lives in the same file) would normally nest under that
     // type, but the type-decl symbol is built independently — see the
@@ -200,13 +191,13 @@ fn fn_symbol(source: &str, f: &FnDecl) -> DocumentSymbol {
         f.name.display(),
         detail_from_doc(&f.documentation),
         kind,
-        span_to_range(source, f.span),
-        span_to_range(source, f.name.ident().span),
+        pm.range(f.span),
+        pm.range(f.name.ident().span),
         Vec::new(),
     )
 }
 
-fn capability_symbol(source: &str, c: &CapabilityDecl) -> DocumentSymbol {
+fn capability_symbol(pm: &PositionMap, c: &CapabilityDecl) -> DocumentSymbol {
     let children = c
         .ops
         .iter()
@@ -215,8 +206,8 @@ fn capability_symbol(source: &str, c: &CapabilityDecl) -> DocumentSymbol {
                 op.name.name.clone(),
                 detail_from_doc(&op.documentation),
                 SymbolKind::METHOD,
-                span_to_range(source, op.span),
-                span_to_range(source, op.name.span),
+                pm.range(op.span),
+                pm.range(op.name.span),
                 Vec::new(),
             )
         })
@@ -225,13 +216,13 @@ fn capability_symbol(source: &str, c: &CapabilityDecl) -> DocumentSymbol {
         c.name.name.clone(),
         detail_from_doc(&c.documentation),
         SymbolKind::INTERFACE,
-        span_to_range(source, c.span),
-        span_to_range(source, c.name.span),
+        pm.range(c.span),
+        pm.range(c.name.span),
         children,
     )
 }
 
-fn provider_symbol(source: &str, p: &ProviderDecl) -> DocumentSymbol {
+fn provider_symbol(pm: &PositionMap, p: &ProviderDecl) -> DocumentSymbol {
     let children = p
         .ops
         .iter()
@@ -240,8 +231,8 @@ fn provider_symbol(source: &str, p: &ProviderDecl) -> DocumentSymbol {
                 op.name.name.clone(),
                 None,
                 SymbolKind::METHOD,
-                span_to_range(source, op.span),
-                span_to_range(source, op.name.span),
+                pm.range(op.span),
+                pm.range(op.name.span),
                 Vec::new(),
             )
         })
@@ -253,37 +244,33 @@ fn provider_symbol(source: &str, p: &ProviderDecl) -> DocumentSymbol {
         name,
         detail_from_doc(&p.documentation),
         SymbolKind::OBJECT,
-        span_to_range(source, p.span),
-        span_to_range(source, p.provider_name.span),
+        pm.range(p.span),
+        pm.range(p.provider_name.span),
         children,
     )
 }
 
-fn service_symbol(source: &str, s: &ServiceDecl) -> DocumentSymbol {
-    let children = s
-        .handlers
-        .iter()
-        .map(|h| handler_symbol(source, h))
-        .collect();
+fn service_symbol(pm: &PositionMap, s: &ServiceDecl) -> DocumentSymbol {
+    let children = s.handlers.iter().map(|h| handler_symbol(pm, h)).collect();
     make_symbol(
         s.name.name.clone(),
         detail_from_doc(&s.documentation),
         SymbolKind::CLASS,
-        span_to_range(source, s.span),
-        span_to_range(source, s.name.span),
+        pm.range(s.span),
+        pm.range(s.name.span),
         children,
     )
 }
 
-fn agent_symbol(source: &str, a: &AgentDecl) -> DocumentSymbol {
+fn agent_symbol(pm: &PositionMap, a: &AgentDecl) -> DocumentSymbol {
     let mut children = Vec::new();
     // Key field — surface as a Property.
     children.push(make_symbol(
         a.key_name.name.clone(),
         Some("key".into()),
         SymbolKind::PROPERTY,
-        span_to_range(source, a.key_name.span),
-        span_to_range(source, a.key_name.span),
+        pm.range(a.key_name.span),
+        pm.range(a.key_name.span),
         Vec::new(),
     ));
     // Store fields.
@@ -292,26 +279,26 @@ fn agent_symbol(source: &str, a: &AgentDecl) -> DocumentSymbol {
             field.name.name.clone(),
             Some("store".into()),
             SymbolKind::PROPERTY,
-            span_to_range(source, field.span),
-            span_to_range(source, field.name.span),
+            pm.range(field.span),
+            pm.range(field.name.span),
             Vec::new(),
         ));
     }
     // Handlers.
     for h in &a.handlers {
-        children.push(handler_symbol(source, h));
+        children.push(handler_symbol(pm, h));
     }
     make_symbol(
         a.name.name.clone(),
         detail_from_doc(&a.documentation),
         SymbolKind::CLASS,
-        span_to_range(source, a.span),
-        span_to_range(source, a.name.span),
+        pm.range(a.span),
+        pm.range(a.name.span),
         children,
     )
 }
 
-fn handler_symbol(source: &str, h: &Handler) -> DocumentSymbol {
+fn handler_symbol(pm: &PositionMap, h: &Handler) -> DocumentSymbol {
     let name = match &h.method_name {
         Some(m) => format!("call {}", m.name),
         None => "call".to_string(),
@@ -321,8 +308,8 @@ fn handler_symbol(source: &str, h: &Handler) -> DocumentSymbol {
         name,
         detail_from_doc(&h.documentation),
         SymbolKind::METHOD,
-        span_to_range(source, h.span),
-        span_to_range(source, selection_span),
+        pm.range(h.span),
+        pm.range(selection_span),
         Vec::new(),
     )
 }

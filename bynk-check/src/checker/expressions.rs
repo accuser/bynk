@@ -673,6 +673,9 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
     // is only reached when the lhs holds — the same binding scope as `&&`.
     if matches!(op, BinOp::And | BinOp::Implies) {
         let lt = type_of(lhs, Some(&Ty::Base(BaseType::Bool)), ctx);
+        // Must run *after* `type_of(lhs)`: `collect_is_bindings` reads (and
+        // memoises by span) the lhs's `expr_types`, so type-checking has to
+        // have populated them first — collecting earlier would cache empties.
         let bindings = collect_is_bindings(lhs, ctx);
         ctx.push_scope();
         for (name, ty) in bindings {
@@ -1383,7 +1386,9 @@ pub(crate) fn check_if(
             ),
         ));
     }
-    // `is` bindings in the condition flow into the then-branch.
+    // `is` bindings in the condition flow into the then-branch. This runs
+    // after `type_of(cond)` above so the memoised collector sees populated
+    // `expr_types`; collecting before type-checking would cache empties.
     let bindings = collect_is_bindings(cond, ctx);
     ctx.push_scope();
     for (name, ty) in bindings {
@@ -3329,8 +3334,19 @@ fn validate_is_nested_payloads(
 ///  - `lhs && rhs`        (recursive into both sides; later wins on collision)
 ///  - `(expr)` parens
 fn collect_is_bindings(expr: &Expr, ctx: &mut Ctx) -> Vec<(String, Ty)> {
+    // Memoised per condition sub-expression span (see `Ctx::is_binding_cache`).
+    // Without this, a left-nested `&&` chain re-walks each lhs subtree once per
+    // enclosing node — O(N²) for an N-term chain. The collector is a pure read
+    // of `expr_types` (populated before it runs) and `ctx.input.types`, so a
+    // per-span cache is sound and collapses the chain to a single pass. The
+    // `&&`/paren recursion below goes through this memoised entry, so inner
+    // nodes are cached as they are visited.
+    if let Some(cached) = ctx.is_binding_cache.get(&expr.span) {
+        return cached.clone();
+    }
     let mut out = Vec::new();
     collect_is_bindings_into(expr, ctx, &mut out);
+    ctx.is_binding_cache.insert(expr.span, out.clone());
     out
 }
 
@@ -3374,10 +3390,10 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
             }
         }
         ExprKind::BinOp(BinOp::And, lhs, rhs) => {
-            collect_is_bindings_into(lhs, ctx, out);
-            collect_is_bindings_into(rhs, ctx, out);
+            out.extend(collect_is_bindings(lhs, ctx));
+            out.extend(collect_is_bindings(rhs, ctx));
         }
-        ExprKind::Paren(inner) => collect_is_bindings_into(inner, ctx, out),
+        ExprKind::Paren(inner) => out.extend(collect_is_bindings(inner, ctx)),
         _ => {}
     }
 }
