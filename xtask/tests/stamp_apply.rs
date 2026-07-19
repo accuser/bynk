@@ -192,6 +192,107 @@ fn two_adrs_across_two_increments_number_sequentially() {
 }
 
 #[test]
+fn a_failed_bump_rolls_back_and_leaves_a_clean_retry() {
+    let root = fixture("rollback");
+    fs::write(
+        root.join("design/pending/feat-thing.md"),
+        "---\nlevel: minor\nchangelog: Add the thing\n---\n\n## ADR: the-thing\ntitle: The thing is added\n\n**Decision.** Add it.\n",
+    )
+    .unwrap();
+
+    let changelog_path = root.join("site/src/content/docs/book/reference/changelog.md");
+    let readme_path = root.join("design/decisions/README.md");
+    let changelog_before = fs::read_to_string(&changelog_path).unwrap();
+    let readme_before = fs::read_to_string(&readme_path).unwrap();
+
+    let plan = stamp::plan(&root).expect("plan");
+    let err = stamp::apply(&root, &plan, |_| {
+        Err(std::io::Error::other("bump exploded"))
+    })
+    .expect_err("apply must surface the bump failure");
+    assert!(err.to_string().contains("bump exploded"));
+
+    // Nothing survived the failure: the docs are byte-identical, the ADR was not
+    // left on disk, and the pending file is intact.
+    assert_eq!(
+        fs::read_to_string(&changelog_path).unwrap(),
+        changelog_before
+    );
+    assert_eq!(fs::read_to_string(&readme_path).unwrap(), readme_before);
+    assert!(!root.join("design/decisions/0206-the-thing.md").exists());
+    assert!(root.join("design/pending/feat-thing.md").exists());
+
+    // The retry recomputes the identical plan and applies cleanly — no
+    // duplicated rows, no re-numbered ADR.
+    let replan = stamp::plan(&root).expect("replan");
+    assert_eq!(replan.first_adr_number, 206);
+    stamp::apply(&root, &replan, bumper(&root)).expect("retry apply");
+
+    let changelog = fs::read_to_string(&changelog_path).unwrap();
+    assert_eq!(
+        changelog
+            .matches("| **v0.186.0** | Add the thing |")
+            .count(),
+        1,
+        "the changelog row must appear exactly once after the retry"
+    );
+    assert!(root.join("design/decisions/0206-the-thing.md").exists());
+    assert!(!root.join("design/pending/feat-thing.md").exists());
+}
+
+#[test]
+fn apply_refuses_to_clobber_an_existing_adr() {
+    let root = fixture("clobber");
+    fs::write(
+        root.join("design/pending/feat-thing.md"),
+        "---\nlevel: minor\nchangelog: Add the thing\n---\n\n## ADR: the-thing\ntitle: The thing is added\n\n**Decision.** Add it.\n",
+    )
+    .unwrap();
+
+    let plan = stamp::plan(&root).expect("plan");
+    assert_eq!(plan.first_adr_number, 206);
+
+    // Pre-place the ADR file the plan would write, simulating stale debris. The
+    // guard must refuse rather than overwrite it and restart the series.
+    let target = root.join("design/decisions/0206-the-thing.md");
+    fs::write(&target, "# 0206 — pre-existing, do not clobber\n").unwrap();
+    let sentinel = fs::read_to_string(&target).unwrap();
+
+    let changelog_path = root.join("site/src/content/docs/book/reference/changelog.md");
+    let changelog_before = fs::read_to_string(&changelog_path).unwrap();
+
+    let err = stamp::apply(&root, &plan, |_| panic!("bump must not run"))
+        .expect_err("apply must refuse the collision");
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+
+    // The collision is detected in the staging pass, before any write: the
+    // existing ADR is untouched, the changelog unchanged, the pending intact.
+    assert_eq!(fs::read_to_string(&target).unwrap(), sentinel);
+    assert_eq!(
+        fs::read_to_string(&changelog_path).unwrap(),
+        changelog_before
+    );
+    assert!(root.join("design/pending/feat-thing.md").exists());
+}
+
+#[test]
+fn plan_errors_when_the_decisions_dir_is_missing() {
+    let root = fixture("nodecisions");
+    fs::write(
+        root.join("design/pending/feat-thing.md"),
+        "---\nlevel: minor\nchangelog: Add the thing\n---\n",
+    )
+    .unwrap();
+    // A missing decisions dir must be an error, not a silent restart from 0001.
+    fs::remove_dir_all(root.join("design/decisions")).unwrap();
+    let err = stamp::plan(&root).expect_err("plan must fail when decisions is unreadable");
+    assert!(
+        err.iter().any(|e| e.contains("design/decisions")),
+        "error should name the unreadable directory: {err:?}"
+    );
+}
+
+#[test]
 fn empty_pending_is_a_noop() {
     let root = fixture("empty");
     fs::create_dir_all(root.join("design/pending")).unwrap();
