@@ -122,6 +122,7 @@ pub(crate) fn check_fn(
         locals,
         requirements,
         scopes: vec![param_scope],
+        is_binding_cache: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span: f.return_type.span(),
         effectful,
@@ -207,6 +208,7 @@ pub fn check_state_initialiser(
             locals,
             requirements: &mut init_requirements,
             scopes: vec![HashMap::new()],
+            is_binding_cache: HashMap::new(),
             return_ty: field_ty.clone(),
             return_ty_span: init.span,
             effectful: false,
@@ -324,10 +326,10 @@ pub(crate) fn check_call(
     span: Span,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
-    if let Some(fn_decl) = ctx.input.fns.get(&name.name).cloned() {
+    if let Some(fn_decl) = ctx.input.fns.get(&name.name) {
         ctx.refs.record(name.span, SymbolKind::Fn, &name.name);
         warn_bynk_list_deprecation(name, args, span, ctx);
-        return check_call_against_fn(name, &fn_decl, type_args, args, ctx);
+        return check_call_against_fn(name, fn_decl, type_args, args, ctx);
     }
     // v0.20a: explicit type arguments only apply to (generic) functions.
     if !type_args.is_empty() {
@@ -344,17 +346,17 @@ pub(crate) fn check_call(
         }
         return None;
     }
-    // Could be a bare variant constructor with payload.
-    let owners: Vec<TypeDecl> = ctx
+    // Could be a bare variant constructor with payload. Borrow the matching
+    // sum decls (references only — no full-body clones); the ambiguity check
+    // below reuses the same list.
+    let owners: Vec<&TypeDecl> = ctx
         .input
         .types
         .values()
         .filter(|t| matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == name.name)))
-        .cloned()
         .collect();
     if owners.len() == 1 {
-        let owner = owners.into_iter().next().unwrap();
-        return check_variant_construction(&owner, &name.name, args, span, ctx);
+        return check_variant_construction(owners[0], &name.name, args, span, ctx);
     }
     // Agent instantiation: `AgentName(key)` constructs an instance keyed by
     // `key`. The result type carries the agent's name so subsequent
@@ -1019,24 +1021,25 @@ pub(crate) fn check_static_call(
         }
         return Some(op_clone.return_ty);
     }
-    let decl = ctx.input.types.get(&type_name.name)?.clone();
+    let decl = ctx.input.types.get(&type_name.name)?;
     ctx.refs
         .record(type_name.span, SymbolKind::Type, &type_name.name);
-    let table = ctx
+
+    // 1) User-declared static method. Borrow the method table and decl
+    // straight out of the (immutable) input rather than cloning the whole
+    // `MethodTable`/`FnDecl` on every static-shaped call.
+    if let Some(method_decl) = ctx
         .input
         .methods
         .get(&type_name.name)
-        .cloned()
-        .unwrap_or_default();
-
-    // 1) User-declared static method.
-    if let Some(method_decl) = table.statics.get(&method.name).cloned() {
-        return check_method_args(&method_decl, args, ctx, type_name, method);
+        .and_then(|table| table.statics.get(&method.name))
+    {
+        return check_method_args(method_decl, args, ctx, type_name, method);
     }
 
     // 2) Built-in `of` constructor on refined or opaque types.
     if method.name == OF
-        && let Some(base) = type_decl_base(&decl)
+        && let Some(base) = type_decl_base(decl)
     {
         if args.len() != 1 {
             ctx.errors.push(CompileError::new(
@@ -1072,7 +1075,7 @@ pub(crate) fn check_static_call(
         // `admit_refined_literal`, used by `type_of` — so `.of`'s type never
         // depends on the form of its argument.
         return Some(Ty::Result(
-            Box::new(named_ty(&decl)),
+            Box::new(named_ty(decl)),
             Box::new(Ty::ValidationError),
         ));
     }
@@ -1126,12 +1129,12 @@ pub(crate) fn check_static_call(
             ));
             return None;
         }
-        return Some(named_ty(&decl));
+        return Some(named_ty(decl));
     }
 
     // 3) Qualified variant construction `TypeName.Variant(args)`.
     if let TypeBody::Sum(_) = &decl.body {
-        return check_variant_construction(&decl, &method.name, args, span, ctx);
+        return check_variant_construction(decl, &method.name, args, span, ctx);
     }
 
     ctx.errors.push(
