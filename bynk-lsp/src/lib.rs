@@ -447,9 +447,10 @@ impl Backend {
                 None => return,
             }
         };
+        let positions = crate::position::PositionMap::new(&text);
         let lsp_diags: Vec<Diagnostic> = bynk_ide::diagnose(&text)
             .into_iter()
-            .map(|d| make_diagnostic(&d, &text, uri))
+            .map(|d| make_diagnostic(&d, &positions, uri))
             .collect();
         self.client
             .publish_diagnostics(uri.clone(), lsp_diags, Some(version))
@@ -532,10 +533,11 @@ impl Backend {
             };
             // Spans convert against the snapshot the analysis saw — never a
             // newer buffer (Settled, v0.24 proposal).
+            let positions = crate::position::PositionMap::new(&file.text);
             let diags: Vec<Diagnostic> = file
                 .diagnostics
                 .iter()
-                .map(|d| make_diagnostic(d, &file.text, &uri))
+                .map(|d| make_diagnostic(d, &positions, &uri))
                 .collect();
             version_by_uri.insert(uri.clone(), versions.get(&file.source_path).copied());
             new_by_uri.insert(uri, diags);
@@ -1891,7 +1893,29 @@ impl LanguageServer for Backend {
         // slicing the line at `pos.character` bytes.
         let line_prefix = text[..offset].rsplit('\n').next().unwrap_or("").to_string();
         let files = self.project_files(&uri).await;
-        let candidates = completion::complete(&line_prefix, &text, files.as_deref());
+        // `complete()` enumerates the project's units — file stats and CPU-bound
+        // recovery parsing (of the buffer, and any project file whose parse cache
+        // missed). Run it on the blocking pool so a keystroke on a large project
+        // never stalls the async runtime (#733).
+        let candidates = {
+            let line_prefix = line_prefix.clone();
+            let text = text.clone();
+            match tokio::task::spawn_blocking(move || {
+                completion::complete(&line_prefix, &text, files.as_deref())
+            })
+            .await
+            {
+                Ok(c) => c,
+                // A panic (or cancellation) inside `complete()` degrades to empty
+                // completions rather than a failed request — but log the
+                // `JoinError` so the underlying bug is not silently swallowed
+                // (#776 review).
+                Err(e) => {
+                    tracing::error!("completion enumeration task failed: {e}");
+                    Vec::new()
+                }
+            }
+        };
         let mut items: Vec<CompletionItem> =
             candidates.into_iter().map(to_completion_item).collect();
         // ADR 0064/0093 D3: offer in-scope locals/params at keyword position
@@ -3274,8 +3298,12 @@ fn is_bynk_toml(uri: &Url) -> bool {
     path.file_name().and_then(|n| n.to_str()) == Some("bynk.toml")
 }
 
-fn make_diagnostic(d: &bynk_ide::Diagnostic, text: &str, uri: &Url) -> Diagnostic {
-    let range = crate::position::span_to_range(text, d.error.span);
+fn make_diagnostic(
+    d: &bynk_ide::Diagnostic,
+    positions: &crate::position::PositionMap,
+    uri: &Url,
+) -> Diagnostic {
+    let range = positions.range(d.error.span);
     let severity = match d.severity {
         bynk_syntax::Severity::Error => DiagnosticSeverity::ERROR,
         bynk_syntax::Severity::Warning => DiagnosticSeverity::WARNING,
@@ -3290,7 +3318,7 @@ fn make_diagnostic(d: &bynk_ide::Diagnostic, text: &str, uri: &Url) -> Diagnosti
                 // `text`, so they belong to the document's own URI — not a
                 // placeholder. (Cross-file related info is not yet modelled.)
                 uri: uri.clone(),
-                range: crate::position::span_to_range(text, *span),
+                range: positions.range(*span),
             },
             message: msg.clone(),
         })
