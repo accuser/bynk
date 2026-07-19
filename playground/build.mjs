@@ -18,13 +18,13 @@ const define = {
   __SANDBOX_ORIGIN__: JSON.stringify(sandboxOrigin),
 };
 
-// web-tree-sitter's wasm glue statically imports Node built-ins (`fs`, `path`) on a
+// web-tree-sitter's wasm glue imports Node built-ins (`fs/promises`, `module`, …) on a
 // branch guarded by `ENVIRONMENT_IS_NODE` — never taken in the browser, but esbuild
 // must still resolve the imports. Stub them to empty modules for the browser bundle.
 const nodeStub = {
   name: "node-builtin-stub",
   setup(build) {
-    const filter = /^(node:)?(fs|path|module|url|crypto|worker_threads)$/;
+    const filter = /^(node:)?(fs(\/promises)?|path|module|url|crypto|worker_threads)$/;
     build.onResolve({ filter }, (args) => ({ path: args.path, namespace: "node-stub" }));
     build.onLoad({ filter: /.*/, namespace: "node-stub" }, () => ({
       contents: "export default {}; export const promises = {};",
