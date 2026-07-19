@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A generic type may carry instance methods — `fn Box.map[U](self, f: A -> U) -> Box[U]` erases to a generic namespace-object method (#594)
----
+# 0234 — Instance methods on generic types
 
-## ADR: generic-instance-methods
-title: Instance methods on generic types
-summary: A generic type carries instance methods; the receiver supplies the type's parameters, erased to a generic namespace-object method
+- **Status:** Accepted (v0.209)
 
 **Context.** The generic-record increment (ADR 0183, #546) let an author name a
 generic data shape (`type Box[A] = { value: A }`) but rejected attaching a method
