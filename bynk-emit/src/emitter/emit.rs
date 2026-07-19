@@ -142,7 +142,7 @@ fn emit_refined_type(
         writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
         writeln!(out, "  }},").unwrap();
     }
-    emit_attached_methods(out, &t.name.name, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
@@ -306,7 +306,7 @@ fn emit_record_type(out: &mut String, t: &TypeDecl, r: &RecordBody, commons: &Ty
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
-    emit_attached_methods(out, &t.name.name, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
@@ -380,12 +380,17 @@ fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCom
             .unwrap();
         }
     }
-    emit_attached_methods(out, &t.name.name, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
 
-fn emit_attached_methods(out: &mut String, type_name: &str, commons: &TypedCommons) {
+fn emit_attached_methods(
+    out: &mut String,
+    type_name: &str,
+    type_params: &[TypeParam],
+    commons: &TypedCommons,
+) {
     for item in &commons.commons.items {
         let CommonsItem::Fn(f) = item else { continue };
         let FnName::Method {
@@ -398,7 +403,7 @@ fn emit_attached_methods(out: &mut String, type_name: &str, commons: &TypedCommo
         if t.name != type_name {
             continue;
         }
-        emit_method(out, f, type_name, method_name, commons);
+        emit_method(out, f, type_name, type_params, method_name, commons);
     }
 }
 
@@ -455,13 +460,22 @@ fn emit_method(
     out: &mut String,
     f: &FnDecl,
     type_name: &str,
+    type_params: &[TypeParam],
     method_name: &Ident,
     commons: &TypedCommons,
 ) {
     emit_doc_block(out, f.documentation.as_deref(), INDENT_STEP);
+    // #594: a method on a generic type erases to a generic namespace-object
+    // member. The namespace `const` cannot itself carry `<T>`, so the type's own
+    // parameters are threaded onto *each* method alongside the method's own
+    // (`map<T, U>(self: Box<T>, …)`). `ts_type_params` is empty for a
+    // non-generic type, keeping the pre-#594 output byte-identical.
+    let self_ty_args = ts_type_params(type_params);
+    let mut method_generics: Vec<TypeParam> = type_params.to_vec();
+    method_generics.extend(f.type_params.iter().cloned());
     let mut params: Vec<String> = Vec::new();
     if f.has_self {
-        params.push(format!("self: {type_name}"));
+        params.push(format!("self: {type_name}{self_ty_args}"));
     }
     for p in &f.params {
         params.push(format!(
@@ -472,8 +486,9 @@ fn emit_method(
     }
     writeln!(
         out,
-        "  {method}({params}): {ret} {{",
+        "  {method}{generics}({params}): {ret} {{",
         method = method_name.name,
+        generics = ts_type_params(&method_generics),
         params = params.join(", "),
         ret = ts_type_ref(&f.return_type),
     )
