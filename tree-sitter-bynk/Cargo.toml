@@ -19,7 +19,7 @@ tree-sitter-language = "0.1"
 cc = "1"
 
 [dev-dependencies]
-tree-sitter = "0.25"
+tree-sitter = "0.26"
 # The conformance test diffs tree-sitter against the compiler's own parser.
 # `bynk-syntax` does not depend on this crate, so this dev edge is cycle-free.
 bynk-syntax = { workspace = true }
