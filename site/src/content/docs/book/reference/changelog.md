@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.216**.
+written against **v0.217**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.217.0** | "`textDocument/codeAction`'s extract-function refactor now also accepts a contiguous run of full statements (optionally including the block's tail), not just one expression, closing #813" |
 | **v0.216.5** | A `system`-tier case can mix a typed argument with `Wire(...)` in the same http address call |
 | **v0.216.4** | bynk-lsp memoises URI to project-root routing, so hover/completion/etc. stop re-walking the filesystem on every request |
 | **v0.216.3** | The playground editor offers context-aware completion (capability methods, types, keywords, in-scope locals, value-receiver members) via a bynk_complete wasm entry (#808, split from #397/#393) |
