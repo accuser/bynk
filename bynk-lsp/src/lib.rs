@@ -2467,6 +2467,9 @@ impl LanguageServer for Backend {
     /// v0.26 (ADR 0054): quick-fixes from structured suggestions. v0.213
     /// (ADR 0239) adds the extract-variable refactor
     /// (`CodeActionKind::REFACTOR_EXTRACT`), computed from the same snapshot.
+    /// Track #800 adds the sibling extract-function refactor, additionally
+    /// fed the round's `requirements`/`locals`/`expr_types` (the
+    /// capability-free-only gate and the parameter/return type synthesis).
     /// Served from the **cached** analysis round only (never a fresh run —
     /// slow, and it could disagree with the squiggles the client is
     /// showing): a request before the first round, or for a file outside
@@ -2504,6 +2507,18 @@ impl LanguageServer for Backend {
         let span = bynk_syntax::span::Span::new(start, end);
         let mut actions = crate::code_actions::quick_fixes(text, diags, span, &uri, version);
         actions.extend(crate::extract::extract_variable(text, span, &uri, version));
+        let empty_reqs = Vec::new();
+        let empty_locals = Vec::new();
+        let empty_types = Vec::new();
+        actions.extend(crate::extract::extract_function(
+            text,
+            span,
+            &uri,
+            version,
+            analysis.requirements.get(&rel).unwrap_or(&empty_reqs),
+            analysis.locals.get(&rel).unwrap_or(&empty_locals),
+            analysis.expr_types.get(&rel).unwrap_or(&empty_types),
+        ));
         // #804: honour the client's requested action kinds, if any.
         let actions = crate::code_actions::filter_by_only(actions, params.context.only.as_deref());
         Ok(Some(actions))
