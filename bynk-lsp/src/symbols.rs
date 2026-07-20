@@ -279,17 +279,11 @@ fn ident_at<'a>(
 /// `member_span`: the identifier run immediately before the dot, and the offset
 /// it starts at. `None` when the member is not dot-preceded. Shared by every
 /// caller that reads a receiver off the line prefix, so the extraction has one
-/// definition rather than a copy per call site.
+/// definition rather than a copy per call site — delegates the actual boundary
+/// scan to `completion::ident_ending_at`.
 fn receiver_segment_at(text: &str, member_span: Span) -> Option<(&str, usize)> {
     let before = text.get(..member_span.start)?.strip_suffix('.')?;
-    // Advance past the matched char by its UTF-8 length; a multi-byte
-    // non-identifier char (`"`, `€`, `—`, …) would make `i + 1` land
-    // mid-codepoint and panic the slice.
-    let start = before
-        .char_indices()
-        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |(i, c)| i + c.len_utf8());
-    Some((&before[start..], start))
+    crate::completion::ident_ending_at(before, before.len())
 }
 
 /// True when the identifier starting at `start` is itself the member of a
@@ -320,7 +314,7 @@ pub(crate) fn store_field_kind_at(
     recv_end: usize,
     locals: &[bynk_check::locals::LocalBinding],
 ) -> Option<(String, bool)> {
-    let (recv, recv_start) = ident_ending_at(source, recv_end)?;
+    let (recv, recv_start) = crate::completion::ident_ending_at(source, recv_end)?;
     if bynk_check::locals::locals_at(locals, recv_start)
         .iter()
         .any(|b| b.name == recv)
@@ -351,19 +345,6 @@ pub(crate) fn store_field_kind_at(
         }
     }
     None
-}
-
-/// The identifier run ending at byte `end` — `(name, start)` — the same
-/// trim-to-a-non-identifier-boundary scan `value_receiver_rewrite` uses to
-/// find its receiver. `None` if nothing identifier-shaped precedes `end`.
-fn ident_ending_at(text: &str, end: usize) -> Option<(&str, usize)> {
-    let before = text.get(..end)?;
-    let start = before
-        .char_indices()
-        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |(i, c)| i + c.len_utf8());
-    let name = &before[start..];
-    (!name.is_empty()).then_some((name, start))
 }
 
 /// v0.140 (ADR 0163): hover for a handler-position annotation (`@cache`). Handler

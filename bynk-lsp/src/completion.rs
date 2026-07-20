@@ -1615,11 +1615,7 @@ pub fn value_receiver_rewrite(text: &str, offset: usize) -> Option<(String, usiz
     let head = prefix
         .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
         .strip_suffix('.')?;
-    let start = head
-        .char_indices()
-        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |(i, c)| i + c.len_utf8());
-    let recv = &head[start..];
+    let (recv, start) = ident_ending_at(head, head.len())?;
     let first = recv.chars().next()?;
     if !(first.is_ascii_lowercase() || first == '_') {
         return None; // uppercase = name receiver (slice 2); a digit = a decimal
@@ -1630,6 +1626,26 @@ pub fn value_receiver_rewrite(text: &str, offset: usize) -> Option<(String, usiz
     let dot = head.len(); // the receiver ends here; the dot was the next byte
     let rewritten = format!("{}{}", &text[..dot], &text[offset..]);
     Some((rewritten, dot.saturating_sub(1)))
+}
+
+/// The identifier run ending at byte `end` in `text` — `(name, start)` — the
+/// trim-back-to-a-non-identifier-boundary scan shared by every receiver/
+/// identifier extraction in the LSP: [`value_receiver_rewrite`] above,
+/// `symbols::receiver_segment_at` (a member's receiver, dot-preceded), and
+/// `symbols::store_field_kind_at` (a bare receiver's own end offset, no dot).
+/// Each has different preconditions on what precedes `end`, but the boundary
+/// scan itself — walk back to the nearest non-identifier char, respecting
+/// UTF-8 boundaries — is one definition, so it can't drift between them (a
+/// review flagged the previous three near-identical copies). `None` if
+/// nothing identifier-shaped precedes `end`.
+pub(crate) fn ident_ending_at(text: &str, end: usize) -> Option<(&str, usize)> {
+    let before = text.get(..end)?;
+    let start = before
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let name = &before[start..];
+    (!name.is_empty()).then_some((name, start))
 }
 
 /// The members of a typed value receiver: the built-in kernel methods of its
