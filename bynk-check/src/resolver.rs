@@ -513,23 +513,41 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
             .with_note("rename the type — built-in type names are reserved in type position"),
         );
     }
-    // v0.157 (ADR 0183): only a record body may be generic. Type parameters on
-    // a refined / opaque / sum body are rejected; a parameter shadowing a
-    // declared type is diagnosed (mirrors the function-generics rule).
+    // v0.157 (ADR 0183): a record body may be generic. #593: a sum body may too
+    // — its variant payloads resolve the parameters as rigid vars, exactly as
+    // record fields do. Type parameters on a refined / opaque body are still
+    // rejected; a parameter shadowing a declared type is diagnosed (mirrors the
+    // function-generics rule).
     let type_params: HashSet<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
     if !t.type_params.is_empty() {
         check_duplicate_type_params(&t.type_params, &format!("type `{}`", t.name.name), errors);
-        if !matches!(t.body, TypeBody::Record(_)) {
+        if !matches!(t.body, TypeBody::Record(_) | TypeBody::Sum(_)) {
             errors.push(
                 CompileError::new(
                     "bynk.generics.generic_non_record",
                     t.type_params[0].span,
                     format!(
-                        "type `{}` declares type parameters, but only a record type (`{{ … }}`) may be generic",
+                        "type `{}` declares type parameters, but only a record (`{{ … }}`) or sum (`| … | …`) type may be generic",
                         t.name.name
                     ),
                 )
-                .with_note("refined, opaque, and sum types cannot yet be generic (ADR 0183)"),
+                .with_note("refined and opaque types cannot be generic — their base is a fixed primitive"),
+            );
+        }
+        // #593: a generic sum may not carry an `embeds` clause. Embedding folds
+        // another sum's variants in by name; composing that with per-parameter
+        // substitution (the embedded source could itself be generic, or mention
+        // the host's parameters) is out of scope for this increment.
+        if let TypeBody::Sum(s) = &t.body
+            && let Some(clause) = s.embeds.first()
+        {
+            errors.push(
+                CompileError::new(
+                    "bynk.generics.generic_sum_embeds",
+                    clause.span,
+                    format!("generic sum `{}` cannot use an `embeds` clause", t.name.name),
+                )
+                .with_note("embedding into a generic sum is not supported — declare the variants directly, or make the sum non-generic"),
             );
         }
         for tp in &t.type_params {
@@ -647,7 +665,10 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
                     } else {
                         payload_seen.insert(f.name.name.clone(), f.name.span);
                     }
-                    check_type_ref_resolves(&f.type_ref, types, errors);
+                    // #593: a generic sum's declared type parameters are in scope
+                    // in its variant payloads, resolving as rigid vars (empty set
+                    // for a non-generic sum — the same reference walk as before).
+                    check_type_ref_resolves_in(&f.type_ref, types, &type_params, errors);
                 }
             }
             // v0.154 (ADR 0178): the `embeds E as V` clauses' source types must

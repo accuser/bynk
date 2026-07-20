@@ -2708,7 +2708,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                     // `queue_variant` else-if below) relies on the http and
                     // queue variant keyword sets being disjoint, so an http
                     // name could never have taken the queue branch anyway.
-                    check_call(name, type_args, args, expr.span, ctx)
+                    check_call(name, type_args, args, expr.span, expected, ctx)
                 }
             } else if let Some(qv) = queue_variant(&name.name)
                 && (expected.is_some_and(peel_to_queue_result)
@@ -2717,7 +2717,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                 // v0.44: a QueueResult variant call (`Retry(reason)`).
                 check_queue_variant(expr.span, qv, args, ctx)
             } else {
-                check_call(name, type_args, args, expr.span, ctx)
+                check_call(name, type_args, args, expr.span, expected, ctx)
             }
         }
         ExprKind::UnaryOp(op, inner) => check_unary(*op, inner, expr.span, ctx),
@@ -2761,7 +2761,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                     None
                 }
             } else {
-                check_static_call(type_name, method, args, expr.span, ctx)
+                check_static_call(type_name, method, args, expr.span, expected, ctx)
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
@@ -2795,7 +2795,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                     None
                 }
             } else {
-                check_field_access(receiver, field, ctx)
+                check_field_access(receiver, field, expected, ctx)
             }
         }
         ExprKind::MethodCall {
@@ -3326,7 +3326,7 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
         Ty::Named {
             kind: NamedKind::Sum,
             name,
-            ..
+            args,
         } => {
             let decl = types.get(name)?;
             if let TypeBody::Sum(s) = &decl.body {
@@ -3339,7 +3339,14 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
                                 .payload
                                 .iter()
                                 .map(|f| {
-                                    let t = resolve_type_ref(&f.type_ref, types)
+                                    // #593: for a generic sum, substitute the
+                                    // instantiation's arguments into each payload
+                                    // type (`Some(v: T)` over `Opt[Int]` ⇒ `Int`),
+                                    // exactly as a generic record's fields are read
+                                    // at an instantiation. `instantiate_field_ty`
+                                    // degrades to a plain resolve for a non-generic
+                                    // sum (empty `args`).
+                                    let t = instantiate_field_ty(decl, args, &f.type_ref, types)
                                         .unwrap_or(Ty::Base(BaseType::Int));
                                     (f.name.name.clone(), t)
                                 })

@@ -405,8 +405,10 @@ type's parameters threaded onto each method (the namespace object itself cannot
 carry them). The type arguments are inferred from the receiver and the argument
 types; the explicit `x.map[U](…)` form is a later increment. **Static** methods
 on a generic type stay deferred (`bynk.generics.method_on_generic_type`) — they
-have no receiver to supply the type's parameters — as do generic sums (only a
-record body may be generic, `bynk.generics.generic_non_record`).
+have no receiver to supply the type's parameters. A refined or opaque body cannot
+be generic (its base is a fixed primitive); only a record or **sum** body may be
+(`bynk.generics.generic_non_record`), and generic sums are described under
+[Sum types](#sum-types).
 
 ## Sum types
 
@@ -457,6 +459,37 @@ variant (so the conversion is unambiguous). The conversion is **one level**: `?`
 converts a `Result[T, E]` into `Result[_, F]` only when `F` declares `E`
 directly. Mapping a domain error to an *HTTP* status stays an explicit `match`
 in the handler — by design, not an embedding.
+
+### Generic sums
+
+A sum body may carry `[A, B]` type parameters, exactly as a record body does. A
+parameter is an unconstrained, bound-free name resolved as a rigid variable
+inside the variant payloads:
+
+```bynk
+type ApiResult[T] =
+  | Loaded(value: T)
+  | Failed(message: String)
+```
+
+A reference applies concrete arguments (`ApiResult[User]`). **Construction**
+infers the arguments argument-directed from the variant's payload
+(`Loaded(user)` is `ApiResult[User]` because `user : User`); a variant whose
+payload cannot determine a parameter — a payload-less variant, or one that does
+not mention it (`Failed`) — leans on the binding's expected type as the pressure
+valve (`let r: ApiResult[User] = Failed("...")`), and reports
+`bynk.generics.uninferable_type_arg` when neither grounds it. **`match`**
+substitutes the arguments into each arm's payload binding (`Loaded(v)` binds `v :
+User`). Emission is **erased** TypeScript generics — one
+`export type ApiResult<T>` discriminated union, with each payload constructor a
+generic arrow (`Loaded: <T>(value: T): ApiResult<T> => …`).
+
+Like a generic record, a generic-sum instantiation is **serialisable** exactly
+when its type arguments are, through a monomorphised codec per instantiation
+(`serialise_ApiResult_User` / `deserialise_ApiResult_User`); a recursive generic
+sum has no finite codec set and is rejected at a boundary with
+`bynk.generics.recursive_generic_at_boundary`. A generic sum may not carry an
+`embeds` clause (`bynk.generics.generic_sum_embeds`).
 
 ## Opaque types
 

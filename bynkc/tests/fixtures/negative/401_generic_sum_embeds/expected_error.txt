@@ -1,0 +1,1 @@
+bynk.generics.generic_sum_embeds

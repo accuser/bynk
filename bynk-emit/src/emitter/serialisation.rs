@@ -146,9 +146,19 @@ fn collect_type_names(
             if recursive.contains(&name.name) {
                 return;
             }
+            // #593: a generic-sum instantiation's codec (`serialise_ApiResult_User`)
+            // likewise calls the named helpers of its *substituted variant
+            // payloads* (`serialise_User` for `Loaded(value: T)` at `T = User`),
+            // so walk those the same way records walk their fields.
             if let Some(fields) = record_inst_fields(&name.name, args, types) {
                 for (_, ft) in &fields {
                     collect_type_names(ft, stack, types, recursive);
+                }
+            } else if let Some(variants) = sum_inst_variants(&name.name, args, types) {
+                for (_, payload) in &variants {
+                    for (_, ft) in payload {
+                        collect_type_names(ft, stack, types, recursive);
+                    }
                 }
             }
         }
@@ -254,9 +264,49 @@ fn record_inst_fields(
     )
 }
 
+/// #593: the concrete `(variant-name, [(field-name, field-type)])` list for a
+/// generic sum instantiation `Name[args…]` — the declared variants with every
+/// type parameter substituted by the matching argument. The sum analogue of
+/// [`record_inst_fields`]; `None` (defensively) if `name` is not a declared
+/// generic sum or the arity does not match.
+#[allow(clippy::type_complexity)]
+fn sum_inst_variants(
+    name: &str,
+    args: &[TypeRef],
+    types: &std::collections::HashMap<String, TypeDecl>,
+) -> Option<Vec<(String, Vec<(String, TypeRef)>)>> {
+    let decl = types.get(name)?;
+    let TypeBody::Sum(s) = &decl.body else {
+        return None;
+    };
+    if decl.type_params.len() != args.len() {
+        return None;
+    }
+    let subst: std::collections::HashMap<String, TypeRef> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .zip(args.iter().cloned())
+        .collect();
+    Some(
+        s.variants
+            .iter()
+            .map(|v| {
+                (
+                    v.name.name.clone(),
+                    v.payload
+                        .iter()
+                        .map(|f| (f.name.name.clone(), subst_type_ref(&f.type_ref, &subst)))
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
 /// v0.174 (#592): the monomorphised codec suffix for a generic-record
 /// instantiation — `Paginated[User]` → `Paginated_User`,
-/// `Pair[User, String]` → `Pair_User_String`.
+/// `Pair[User, String]` → `Pair_User_String`. #593: shared with generic sums.
 fn app_ts_name(name: &str, args: &[TypeRef]) -> String {
     let mut s = name.to_string();
     for a in args {
@@ -638,25 +688,54 @@ fn emit_record_codec(
 
 fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual) {
     // #661: a consumed sum's TS value type is namespace-qualified; the codec
-    // function name and its per-variant codec calls stay bare and local.
+    // function name and its per-variant codec calls stay bare and local. #593:
+    // the codec body is the shared `emit_sum_codec` (also reused, unqualified,
+    // for a generic-sum instantiation), so the qualified value type is threaded
+    // in as its `ts_type`.
     let ty = format!("{}{name}", qual_prefix(qual, name));
+    let variants: Vec<(String, Vec<(String, TypeRef)>)> = body
+        .variants
+        .iter()
+        .map(|v| {
+            (
+                v.name.name.clone(),
+                v.payload
+                    .iter()
+                    .map(|f| (f.name.name.clone(), f.type_ref.clone()))
+                    .collect(),
+            )
+        })
+        .collect();
+    emit_sum_codec(out, name, &ty, &variants);
+}
+
+/// The serialise/deserialise pair for a sum type, over already-resolved variant
+/// payloads. `fn_suffix` names the emitted functions (`Opt` / `Opt_Int`),
+/// `ts_type` is their value type (`Opt` / `Opt<number>` / a namespace-qualified
+/// `shop.Opt`). The wire discriminant is `kind`; the in-memory discriminant is
+/// `tag`. #593: a generic-sum instantiation reuses this with substituted payload
+/// types, exactly as a generic record reuses [`emit_record_codec`].
+fn emit_sum_codec(
+    out: &mut String,
+    fn_suffix: &str,
+    ts_type: &str,
+    variants: &[(String, Vec<(String, TypeRef)>)],
+) {
     writeln!(
         out,
-        "export function serialise_{name}(value: {ty}): JsonValue {{"
+        "export function serialise_{fn_suffix}(value: {ts_type}): JsonValue {{"
     )
     .unwrap();
     writeln!(out, "  switch (value.tag) {{").unwrap();
-    for v in &body.variants {
-        let vname = &v.name.name;
-        if v.payload.is_empty() {
+    for (vname, payload) in variants {
+        if payload.is_empty() {
             writeln!(out, "    case \"{vname}\":").unwrap();
             writeln!(out, "      return {{ kind: \"{vname}\" }};").unwrap();
         } else {
             writeln!(out, "    case \"{vname}\": {{").unwrap();
             write!(out, "      return {{ kind: \"{vname}\"").unwrap();
-            for f in &v.payload {
-                let fname = &f.name.name;
-                let expr = serialise_field_expr(&f.type_ref, &format!("(value as any).{fname}"));
+            for (fname, type_ref) in payload {
+                let expr = serialise_field_expr(type_ref, &format!("(value as any).{fname}"));
                 write!(out, ", {fname}: {expr}").unwrap();
             }
             writeln!(out, " }};").unwrap();
@@ -669,7 +748,7 @@ fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual) {
 
     writeln!(
         out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{ty}, BoundaryError> {{"
+        "export function deserialise_{fn_suffix}(json: JsonValue, path: string = \"$\"): Result<{ts_type}, BoundaryError> {{"
     )
     .unwrap();
     writeln!(
@@ -686,25 +765,22 @@ fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual) {
     writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
     writeln!(out, "  const kind = obj[\"kind\"];").unwrap();
     writeln!(out, "  switch (kind) {{").unwrap();
-    for v in &body.variants {
-        let vname = &v.name.name;
-        if v.payload.is_empty() {
+    for (vname, payload) in variants {
+        if payload.is_empty() {
             writeln!(out, "    case \"{vname}\":").unwrap();
-            writeln!(out, "      return Ok({{ tag: \"{vname}\" }} as {ty});").unwrap();
+            writeln!(out, "      return Ok({{ tag: \"{vname}\" }} as {ts_type});").unwrap();
         } else {
             writeln!(out, "    case \"{vname}\": {{").unwrap();
-            for f in &v.payload {
-                let fname = &f.name.name;
+            for (fname, type_ref) in payload {
                 let access = format!("obj[\"{fname}\"]");
                 let sub_path = format!("`${{path}}.{fname}`");
-                emit_field_deserialise(out, fname, &f.type_ref, &access, &sub_path);
+                emit_field_deserialise(out, fname, type_ref, &access, &sub_path);
             }
             write!(out, "      return Ok({{ tag: \"{vname}\"").unwrap();
-            for f in &v.payload {
-                let fname = &f.name.name;
+            for (fname, _) in payload {
                 write!(out, ", {fname}: __{fname}").unwrap();
             }
-            writeln!(out, " }} as {ty});").unwrap();
+            writeln!(out, " }} as {ts_type});").unwrap();
             writeln!(out, "    }}").unwrap();
         }
     }
@@ -1337,6 +1413,13 @@ pub enum GenericInst {
         name: String,
         args: Vec<TypeRef>,
     },
+    /// #593: a generic user-sum instantiation `Name[args…]` — a monomorphised
+    /// per-instantiation discriminated-union codec (`serialise_ApiResult_User`),
+    /// the sum analogue of [`GenericInst::RecordInst`].
+    SumInst {
+        name: String,
+        args: Vec<TypeRef>,
+    },
 }
 
 impl GenericInst {
@@ -1353,6 +1436,7 @@ impl GenericInst {
                 format!("Map_{}_{}", inner_ts_name(key), inner_ts_name(val))
             }
             GenericInst::RecordInst { name, args } => app_ts_name(name, args),
+            GenericInst::SumInst { name, args } => app_ts_name(name, args),
         }
     }
 }
@@ -1378,9 +1462,24 @@ fn walk_generic_inst(
             if recursive.contains(&name.name) {
                 return;
             }
-            let inst = GenericInst::RecordInst {
-                name: name.name.clone(),
-                args: args.clone(),
+            // #593: an `App` names a generic record OR a generic sum; dispatch on
+            // the declaration's body so the right monomorphised codec is emitted,
+            // and walk the reachable instantiations through its concrete member
+            // types (a sum's variant payloads, a record's fields).
+            let is_sum = matches!(
+                types.get(&name.name).map(|d| &d.body),
+                Some(TypeBody::Sum(_))
+            );
+            let inst = if is_sum {
+                GenericInst::SumInst {
+                    name: name.name.clone(),
+                    args: args.clone(),
+                }
+            } else {
+                GenericInst::RecordInst {
+                    name: name.name.clone(),
+                    args: args.clone(),
+                }
             };
             let key = inst.ts_name();
             if !seen.insert(key) {
@@ -1390,7 +1489,15 @@ fn walk_generic_inst(
             for a in args {
                 walk_generic_inst(a, out, seen, types, recursive);
             }
-            if let Some(fields) = record_inst_fields(&name.name, args, types) {
+            if is_sum {
+                if let Some(variants) = sum_inst_variants(&name.name, args, types) {
+                    for (_, payload) in &variants {
+                        for (_, ft) in payload {
+                            walk_generic_inst(ft, out, seen, types, recursive);
+                        }
+                    }
+                }
+            } else if let Some(fields) = record_inst_fields(&name.name, args, types) {
                 for (_, ft) in &fields {
                     walk_generic_inst(ft, out, seen, types, recursive);
                 }
@@ -1499,6 +1606,25 @@ pub fn emit_generic_helpers_qualified(
                     unreachable!("RecordInst `{name}` is not a resolved generic record")
                 });
                 emit_record_codec(out, &fn_suffix, &ts_type, &fields);
+            }
+            // #593: a generic-sum instantiation `ApiResult[User]` emits
+            // `serialise_ApiResult_User` / `deserialise_ApiResult_User`, its
+            // variant payloads specialised to the concrete arguments. The value
+            // type is the erased generic `ApiResult<User>`. Mirrors `RecordInst`.
+            GenericInst::SumInst { name, args } => {
+                let fn_suffix = app_ts_name(name, args);
+                let ts_type = format!(
+                    "{}<{}>",
+                    name,
+                    args.iter()
+                        .map(|a| ts_inner_type(a, qual))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                let variants = sum_inst_variants(name, args, types).unwrap_or_else(|| {
+                    unreachable!("SumInst `{name}` is not a resolved generic sum")
+                });
+                emit_sum_codec(out, &fn_suffix, &ts_type, &variants);
             }
             GenericInst::ResultInst { ok, err } => {
                 let ok_ts = inner_ts_name(ok);
