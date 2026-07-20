@@ -1,11 +1,6 @@
----
-level: minor
-changelog: LSP decoration requests (semantic tokens, inlay hints, code lenses, document links, code actions) serve the last committed round instead of forcing a whole-project re-analysis on every keystroke, revalidating via workspace/*/refresh
----
+# 0235 — Pull-based decorations serve the committed round and revalidate, not force a refresh
 
-## ADR: lsp-decoration-stale-while-revalidate
-title: Pull-based decorations serve the committed round and revalidate, not force a refresh
-summary: Why the freshness contract's strict refresh is kept for cursor requests but relaxed for the decorations the editor auto-fires on every edit
+- **Status:** Accepted (v0.210)
 
 **Context.** The freshness contract (#665, ADR 0202) routes every index-backed
 request through one strict gate, `analysis_for`: a request for a file whose open

@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0235](0235-lsp-decoration-stale-while-revalidate.md) | **Pull-based decorations serve the committed round and revalidate, not force a refresh** (v0.210) — Why the freshness contract's strict refresh is kept for cursor requests but relaxed for the decorations the editor auto-fires on every edit | Accepted (v0.210) |
 | [0234](0234-generic-instance-methods.md) | **Instance methods on generic types** (v0.209) — A generic type carries instance methods; the receiver supplies the type's parameters, erased to a generic namespace-object method | Accepted (v0.209) |
 | [0233](0233-atomic-deploy-ledger-write.md) | **The deploy ledger is written atomically and a truncated one is corruption** (v0.208.2) — Temp-file + rename for the ledger write, and a zero-byte ledger fails the read | Accepted (v0.208.2) |
 | [0232](0232-fmt-verifies-output-before-atomic-write.md) | **The formatter verifies its output round-trips before atomically writing it** (v0.208.1) — Why `fmt` re-parses and compares its output against the input, writes via temp-file + rename, and honours `--check` on stdin | Accepted (v0.208.1) |
