@@ -1303,6 +1303,30 @@ impl Backend {
             .map(|r| r.to_path_buf())
     }
 
+    /// #302: like [`Self::uri_to_rel`], but for a URI whose file does not
+    /// exist yet — `willRenameFiles`' `new_uri`, named before the physical
+    /// move happens. `Path::canonicalize` requires the path to exist, so
+    /// `uri_to_rel`'s fallback (`unwrap_or(p)`, dead code for every other
+    /// caller, which only ever resolves existing files) would silently keep
+    /// the client's raw, non-canonical path — mismatching `project_root`
+    /// (always canonical) whenever the workspace sits behind a symlink (macOS
+    /// `/tmp` → `/private/tmp` being the common case), and the rename would
+    /// quietly produce no edit. Canonicalizing the *parent* directory
+    /// instead — it does exist — and rejoining the file name sidesteps that.
+    fn uri_to_rel_for_new_path(analysis: &Analysis, uri: &Url) -> Option<PathBuf> {
+        let p = uri.to_file_path().ok()?;
+        let file_name = p.file_name()?;
+        let parent = p.parent()?;
+        let canonical_parent = parent
+            .canonicalize()
+            .unwrap_or_else(|_| parent.to_path_buf());
+        canonical_parent
+            .join(file_name)
+            .strip_prefix(&analysis.project_root)
+            .ok()
+            .map(|r| r.to_path_buf())
+    }
+
     /// Slice 6a follow-up (ADR 0095): if `pos` sits on a `uses`/`consumes` unit
     /// name, the location of that unit's source (its first file, at the top —
     /// units aren't index symbols, so there is no finer def span to land on).
@@ -2768,7 +2792,7 @@ impl LanguageServer for Backend {
 
     /// #302: `workspace/willRenameFiles` — when a `.bynk` file is renamed or
     /// moved, keep `uses`/`consumes` references pointing at its unit in sync.
-    /// Uses [`Self::analysis_covering_open_buffers`], the same gate `rename`
+    /// Uses `analysis_covering_open_buffers`, the same gate `rename`
     /// uses: this handler emits multi-file **versioned** edits too, so a
     /// stale open buffer must be refreshed first or the client rejects the
     /// whole edit — unlike `documentLink`'s read-only decoration, which
@@ -2778,8 +2802,12 @@ impl LanguageServer for Backend {
     /// edit-only hook can block (the response is just an optional edit), so
     /// anything this can't confidently resolve — an unparseable file, a
     /// `suite` (addressed by no one), a rename that preserves the unit's
-    /// arrangement, a cross-project move — is simply skipped rather than
-    /// erroring the whole batch.
+    /// arrangement, a cross-project move, a name collision with an existing
+    /// unit — is simply skipped rather than erroring the whole batch. The
+    /// collision check is a lightweight `unit_sources` lookup, not `rename`'s
+    /// full re-analysis: good enough to avoid handing back an edit that is
+    /// *known in advance* to break the build, without paying for a second
+    /// analysis round on every file move.
     ///
     /// Edits for the moved file's own declaration target `old_uri`, not
     /// `new_uri`: the client applies the returned edit against files at
@@ -2807,7 +2835,15 @@ impl LanguageServer for Backend {
             let Some(old_rel) = Self::uri_to_rel(&analysis, &old_uri) else {
                 continue;
             };
-            let Some(new_rel) = Self::uri_to_rel(&analysis, &new_uri) else {
+            // `new_uri` names a file that doesn't exist yet (`willRenameFiles`
+            // fires before the physical move) — `uri_to_rel`'s canonicalize
+            // would silently fail and fall back to the client's raw,
+            // non-canonical path, which can mismatch `project_root` (always
+            // canonical) whenever the workspace sits behind a symlink (macOS
+            // `/tmp` → `/private/tmp` being the common case). Canonicalize the
+            // *parent* directory instead — it does exist — and rejoin the
+            // file name.
+            let Some(new_rel) = Self::uri_to_rel_for_new_path(&analysis, &new_uri) else {
                 continue;
             };
             let Some(text) = analysis.snapshots.get(&old_rel) else {
@@ -2822,10 +2858,24 @@ impl LanguageServer for Backend {
             if new_name == old_name {
                 continue;
             }
+            // Refuse to hand back an edit that would create a duplicate unit
+            // name — some other file already declares `new_name`.
+            if analysis.unit_sources.contains_key(&new_name) {
+                continue;
+            }
+            // Every file's Url is reconstructed the same way (never the
+            // client's raw `old_uri`/`new_uri` strings) so the moved file's
+            // own edit and a referencer's edit merge into the same
+            // `TextDocumentEdit` when they're the same file — a raw client
+            // string and a `from_file_path` reconstruction aren't guaranteed
+            // byte-identical (percent-encoding, trailing slashes).
+            let Ok(old_file_uri) = Url::from_file_path(analysis.project_root.join(&old_rel)) else {
+                continue;
+            };
             // The moved file's own declaration header — edited at its old
             // (still current) location.
             combined
-                .entry(old_uri.clone())
+                .entry(old_file_uri)
                 .or_insert_with(|| (analysis.versions.get(&old_rel).copied(), Vec::new()))
                 .1
                 .push(TextEdit {
@@ -4410,6 +4460,163 @@ mod tests {
             .await
             .expect("will_rename_files must not error");
         assert!(edit.is_none(), "a suite rename must produce no edits");
+    }
+
+    /// #302 review: a `suite`'s own `target` is a *reference* too
+    /// (`unit_reference_spans`' suite branch) — renaming the unit a suite
+    /// tests must rewrite the suite's `suite <target>` header, not just
+    /// `uses`/`consumes` clauses in ordinary units.
+    #[tokio::test]
+    async fn will_rename_files_updates_a_suite_s_target_reference() {
+        let s = scratch_project(
+            "will_rename_suite_target",
+            &[
+                ("bynk.toml", "[project]\nname=\"demo\"\n"),
+                (
+                    "src/billing/charge.bynk",
+                    "commons billing.charge\n\ntype ChargeId = Int where Positive\n",
+                ),
+                ("tests/billing_charge.bynk", "suite billing.charge\n"),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let root_canon = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let uri = |rel: &str| Url::from_file_path(root_canon.join(rel)).unwrap();
+        let suite_uri = uri("tests/billing_charge.bynk");
+
+        backend.run_round().await;
+
+        let edit = backend
+            .will_rename_files(RenameFilesParams {
+                files: vec![FileRename {
+                    old_uri: uri("src/billing/charge.bynk").to_string(),
+                    new_uri: uri("src/billing/pay.bynk").to_string(),
+                }],
+            })
+            .await
+            .expect("will_rename_files must not error")
+            .expect("must produce edits");
+
+        let DocumentChanges::Edits(edits) = edit.document_changes.unwrap() else {
+            panic!("expected document-change edits");
+        };
+        let suite_edit = edits
+            .iter()
+            .find(|e| e.text_document.uri == suite_uri)
+            .expect("the suite's own `suite <target>` header must be rewritten");
+        assert_eq!(suite_edit.edits.len(), 1);
+        let OneOf::Left(e) = &suite_edit.edits[0] else {
+            panic!("expected a plain TextEdit");
+        };
+        assert_eq!(e.new_text, "billing.pay");
+    }
+
+    /// #302 review: renaming into a path that implies a name some other file
+    /// already declares must not hand back an edit that would create a
+    /// duplicate-name project — a lightweight `unit_sources` check, not
+    /// `rename`'s full re-analysis.
+    #[tokio::test]
+    async fn will_rename_files_refuses_a_rename_that_collides_with_an_existing_unit() {
+        let s = scratch_project(
+            "will_rename_collision",
+            &[
+                ("bynk.toml", "[project]\nname=\"demo\"\n"),
+                (
+                    "src/billing/charge.bynk",
+                    "commons billing.charge\n\ntype ChargeId = Int where Positive\n",
+                ),
+                (
+                    "src/billing/pay.bynk",
+                    "commons billing.pay\n\ntype PaymentId = Int where Positive\n",
+                ),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let root_canon = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let uri = |rel: &str| Url::from_file_path(root_canon.join(rel)).unwrap();
+
+        backend.run_round().await;
+
+        // Renaming `charge.bynk` to `pay.bynk` would imply `billing.pay` —
+        // already declared by the sibling file.
+        let edit = backend
+            .will_rename_files(RenameFilesParams {
+                files: vec![FileRename {
+                    old_uri: uri("src/billing/charge.bynk").to_string(),
+                    new_uri: uri("src/billing/pay.bynk").to_string(),
+                }],
+            })
+            .await
+            .expect("will_rename_files must not error");
+        assert!(
+            edit.is_none(),
+            "a rename that collides with an existing unit name must produce no edits"
+        );
+    }
+
+    /// #302 review: `willRenameFiles`' `new_uri` names a file that doesn't
+    /// exist yet, so `uri_to_rel`'s `canonicalize` fails and previously fell
+    /// back to the client's raw, non-canonical path — which mismatches
+    /// `project_root` (always canonical) whenever the workspace root sits
+    /// behind a symlink, and the handler silently produced no edit.
+    /// `uri_to_rel_for_new_path` canonicalizes the parent directory (which
+    /// does exist) instead, so this must still produce edits.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn will_rename_files_tolerates_a_symlinked_project_root() {
+        let real = scratch_project(
+            "will_rename_symlink_real",
+            &[
+                ("bynk.toml", "[project]\nname=\"demo\"\n"),
+                (
+                    "src/billing/charge.bynk",
+                    "commons billing.charge\n\ntype ChargeId = Int where Positive\n",
+                ),
+            ],
+        );
+        let alias = std::env::temp_dir().join(format!(
+            "bynk_lsp_sliceA_will_rename_symlink_alias_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&alias);
+        std::os::unix::fs::symlink(&real.0, &alias).expect("symlink the scratch root");
+
+        let backend = backend_at(&alias).await;
+        // Built through the symlink, deliberately uncanonicalized — the path
+        // shape a client actually sends (it opened the workspace at `alias`,
+        // not at whatever `alias` resolves to).
+        let uri = |rel: &str| Url::from_file_path(alias.join(rel)).unwrap();
+        let old_uri = uri("src/billing/charge.bynk");
+        let new_uri = uri("src/billing/pay.bynk"); // does not exist on disk
+
+        backend.run_round().await;
+
+        let edit = backend
+            .will_rename_files(RenameFilesParams {
+                files: vec![FileRename {
+                    old_uri: old_uri.to_string(),
+                    new_uri: new_uri.to_string(),
+                }],
+            })
+            .await
+            .expect("will_rename_files must not error")
+            .expect("must produce edits despite the symlinked root");
+
+        let DocumentChanges::Edits(edits) = edit.document_changes.unwrap() else {
+            panic!("expected document-change edits");
+        };
+        assert_eq!(
+            edits.len(),
+            1,
+            "only the moved file's own header changes here"
+        );
+        let OneOf::Left(e) = &edits[0].edits[0] else {
+            panic!("expected a plain TextEdit");
+        };
+        assert_eq!(e.new_text, "billing.pay");
+
+        let _ = std::fs::remove_file(&alias);
     }
 
     /// #485: a rootless multi-file-commons file (a `src/` tree with no
