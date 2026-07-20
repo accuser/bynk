@@ -2407,6 +2407,22 @@ pub(crate) struct LowerCtx<'a> {
     /// is present is a **wrong-method** call — it drives the `405` fall-through
     /// through the generic `__sysdrive_wrongmethod_<svc>` driver.
     pub system_http_routes: std::collections::HashSet<(String, String, String)>,
+    /// #708: for each declared `(service, method, path)` route that has a body
+    /// param, the body's zero-based position among the route's positional call
+    /// args (i.e. within `args[1..]`, matching handler-param declaration order)
+    /// and its declared type. The raw driver (`__sysdrive_raw_*`, Slice C)
+    /// forwards every slot as a `string`; a `Wire(…)` arg already lowers to that
+    /// raw string, but a *typed* arg mixed into the same call must be converted:
+    /// the body slot serialises through the same wire codec the typed driver
+    /// uses (`JSON.stringify(serialise_expr_via(...))`), any other (path) slot
+    /// just coerces via `String(...)`. Absent for a bodyless route.
+    pub system_http_route_body:
+        HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
+    /// #708: the type namespace (`<target>.`) `serialise_expr_via` needs to
+    /// resolve a body param's custom codec when converting a typed arg for the
+    /// raw driver. Mirrors the `type_ns` `emit_system_http_support` computes
+    /// from the same suite target. Empty string outside system http lowering.
+    pub system_http_type_ns: String,
     /// v0.7: when lowering a test case body, the target context's local
     /// agent names. `<Agent>(<key>).method(args)` lowers to
     /// `new Agent(makeTestState(...)).method(args, {})`.
@@ -2530,6 +2546,8 @@ impl<'a> LowerCtx<'a> {
             test_service_handlers: HashMap::new(),
             system_http_services: std::collections::HashSet::new(),
             system_http_routes: std::collections::HashSet::new(),
+            system_http_route_body: HashMap::new(),
+            system_http_type_ns: String::new(),
             test_agents: HashSet::new(),
             local_agents: HashSet::new(),
             agent_method_givens: HashMap::new(),
