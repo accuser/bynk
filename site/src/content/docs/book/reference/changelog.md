@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.216.4** | bynk-lsp memoises URI to project-root routing, so hover/completion/etc. stop re-walking the filesystem on every request |
 | **v0.216.3** | The playground editor offers context-aware completion (capability methods, types, keywords, in-scope locals, value-receiver members) via a bynk_complete wasm entry (#808, split from #397/#393) |
 | **v0.216.2** | Completion, symbols, locals-navigation, and signature-help move from bynk-lsp into bynk-ide, unblocking a future wasm-side completion entry (#808) |
 | **v0.216.1** | Completion, symbols, locals-navigation, and signature-help move from bynk-lsp into bynk-ide, unblocking a future wasm-side completion entry (#808) |
