@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.214.1** | "vscode-bynk: pressing Enter inside a `--` line comment now continues it, and inside/after a `---` doc-comment fence now keeps the same indentation instead of falling back to VS Code's generic behaviour; the two are disambiguated so a `---` fence is never treated as a `--` line comment (closes #306)." |
 | **v0.214.0** | `textDocument/codeAction` offers an extract-variable refactor (`RefactorExtract`) for a selected expression |
 | **v0.213.0** | "`bynk-lsp` implements `workspace/willRenameFiles` — renaming or moving a `.bynk` file rewrites its own declaration and every other file's `uses`/`consumes` reference to it (closes #302). Single-file rename only (the capability filter matches files, not folders); a `suite` file, which addresses no name of its own, produces no edits." |
 | **v0.212.2** | "vscode-bynk: a resolved `bynkc-lsp` older than the extension's pinned server version now gets an actionable warning (\"Download Matching Server\") instead of a passive note, since a stale server (most often one found on PATH) can silently mis-diagnose syntax the checker already accepts (closes #484)." |

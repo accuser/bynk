@@ -2,7 +2,7 @@
   "name": "bynk-vscode",
   "displayName": "Bynk",
   "description": "Language support for Bynk (.bynk) source files.",
-  "version": "0.214.0",
+  "version": "0.214.1",
   "publisher": "bynk",
   "license": "MIT OR Apache-2.0",
   "icon": "assets/bynk-icon.png",
@@ -10,7 +10,7 @@
     "url": "https://github.com/accuser/bynk"
   },
   "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "bynkServerVersion": "v0.214.0",
+  "bynkServerVersion": "v0.214.1",
   "engines": {
     "vscode": "^1.85.0"
   },
