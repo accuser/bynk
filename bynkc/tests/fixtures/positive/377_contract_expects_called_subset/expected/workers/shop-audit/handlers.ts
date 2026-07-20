@@ -3,11 +3,11 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "../../runtime.js";
 
-import * as shop_ledger from "../shop-ledger/handlers.js";
+import type * as shop_ledger from "../shop-ledger/handlers.js";
 
 export const log = {
   async call(amount: number, deps: { env: { SHOP_LEDGER: ServiceBinding } }): Promise<Result<number, string>> {
-    const r = await callService(deps.env.SHOP_LEDGER, "authorise", amount as JsonValue, shop_ledger.deserialise_Result_Int_String, "shop.audit", "3042f1b7519e621d");
+    const r = await callService(deps.env.SHOP_LEDGER, "authorise", amount as JsonValue, deserialise_Result_Int_String, "shop.audit", "3042f1b7519e621d");
     return r;
   },
 };

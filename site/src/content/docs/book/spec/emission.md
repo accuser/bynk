@@ -330,17 +330,32 @@ while decoding it inbound; the resulting mis-encode was diagnosed rather than
 emitted (ADR 0142 D8). With one dispatch, the asymmetry — and so the restriction
 — is gone.
 
-Two positions are deliberately *not* codec-checked, and both are stated here
-rather than left to be discovered:
+Each Worker is **self-contained**: a context generates its *own* codecs for the
+contracts it participates in and imports no sibling context's module as a value
+(#661, discharging ADR 0199 Decision G). A caller reaches its callee's codecs
+through local `serialise_*` / `deserialise_*` helpers it emits itself; the callee
+module is imported for **types only** (`import type * as <ns>`), which is erased
+outright, so the caller's bundle never carries the callee's provider
+implementation. Only the callee's own exported types reachable from the services
+the caller actually *calls* are generated — commons types the caller already holds
+are left alone, and an uncalled service contributes nothing.
 
-- The **runtime-owned error types** (`ValidationError`, `JsonError`, `HttpResult`,
-  `QueueResult`) pass through uncoded. They are declared by the runtime rather
-  than by a type declaration the emitter can walk, so there is no helper to
-  generate; their JSON shape is fixed by the runtime, so the pass-through is
-  unchecked rather than wrong.
-- A **consumed context's codecs** are still reached through that context's module.
-  A context does not yet generate its own view of a callee-owned type's codec, so
-  a `workers` build's caller and callee share one compiled view of the contract.
+A caller-side codec for a callee-owned type cannot route through the owner's `.of`
+constructor (it lives in the owner's module), so validation follows the export
+visibility: an **opaque** type validates its base and casts — its refinement is
+the owner's secret and is not re-checked, which is sound because the value came
+from the owner's typed code and a *skewed* owner is caught by the §7.3.4c contract
+hash — while a **transparent** refined type inlines its predicate, since the
+consumer knows the shape by declaration. This applies to consumed *contexts* under
+`workers` only: a consumed *adapter*'s binding namespace is a real value import
+used by the composition root, and on `bundle` the contexts compile together.
+
+One position remains deliberately *not* codec-checked, stated here rather than
+left to be discovered: the **runtime-owned error types** (`ValidationError`,
+`JsonError`, `HttpResult`, `QueueResult`) pass through uncoded. They are declared
+by the runtime rather than by a type declaration the emitter can walk, so there is
+no helper to generate; their JSON shape is fixed by the runtime, so the
+pass-through is unchecked rather than wrong.
 
 ### §7.3.4c The contract seam (v0.177)
 
