@@ -89,12 +89,15 @@ pub fn lower_test_case_body(
 /// deps.env.<BINDING>, …)` over the real wire. The harness root declares no
 /// local services/agents, so those scoped sets stay empty; `cross_context`
 /// carries every participant's service surface.
+#[allow(clippy::too_many_arguments)]
 pub fn lower_integration_case_body(
     block: &Block,
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
     system_http_services: std::collections::HashSet<String>,
     system_http_routes: std::collections::HashSet<(String, String, String)>,
+    system_http_route_body: HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
+    system_http_type_ns: String,
     source: &str,
     rel_path: &str,
 ) -> (String, SourceMapBuilder) {
@@ -105,6 +108,8 @@ pub fn lower_integration_case_body(
         cx.target = BuildTarget::Workers;
         cx.system_http_services = system_http_services;
         cx.system_http_routes = system_http_routes;
+        cx.system_http_route_body = system_http_route_body;
+        cx.system_http_type_ns = system_http_type_ns;
         cx.assert_loc = Some(crate::emitter::AssertLoc {
             source: source.to_string(),
             rel_path: rel_path.to_string(),
@@ -1477,16 +1482,12 @@ fn lower_method_call(
             .call_site_identity
             .clone()
             .unwrap_or_else(|| "\"\"".to_string());
-        let rest: Vec<String> = args[1..].iter().map(|a| lower_expr(a, stmts, cx)).collect();
-        let mut all = rest;
-        all.push(sub);
         // #706: `by Nobody` drives the *no-auth* driver — no `Authorization`
         // header, so the real seam rejects it (`401` → `Rejected(Unauthorized)`);
         // it takes precedence over the body form (the seam rejects before the
         // body is read). Otherwise — Slice C: a `Wire(…)` argument drives the
         // *raw* driver (input sent unvalidated, result decodes to an
         // `HttpOutcome`); a fully typed call keeps the serialising driver.
-        // `lower_expr` already lowers a `Wire(s)` to its raw inner string.
         let has_wire = args[1..]
             .iter()
             .any(|a| matches!(&a.kind, ExprKind::Wire(_)));
@@ -1497,6 +1498,49 @@ fn lower_method_call(
         } else {
             "__sysdrive"
         };
+        // #708: the raw driver's every slot is a `string`. `lower_expr` already
+        // lowers a `Wire(s)` to its raw inner string, but a *typed* arg mixed
+        // into the same raw call must be converted to that `string` slot: the
+        // body param serialises through the same wire codec the typed driver
+        // uses (so a hand-typed body matches a `Wire`d one byte-for-byte); any
+        // other (path) param just coerces via `String(...)`.
+        let body_info = if driver == "__sysdrive_raw" {
+            cx.system_http_route_body
+                .get(&(id.name.clone(), verb.as_str().to_string(), path.clone()))
+                .cloned()
+        } else {
+            None
+        };
+        let rest: Vec<String> = args[1..]
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let lowered = lower_expr(a, stmts, cx);
+                if driver != "__sysdrive_raw" || matches!(&a.kind, ExprKind::Wire(_)) {
+                    return lowered;
+                }
+                match &body_info {
+                    // A named type's typed literal is unbranded in test-scaffold
+                    // code (the checker already validated it against the
+                    // handler's declared type — Slice A), the same reason
+                    // `driver_param_ty` types a named driver param `any` rather
+                    // than the branded type. Cast through `any` here too, so
+                    // `serialise_<Name>` (which expects the branded shape)
+                    // accepts the plain object literal.
+                    Some((body_idx, ty)) if *body_idx == i => format!(
+                        "JSON.stringify({})",
+                        crate::emitter::serialisation::serialise_expr_via(
+                            ty,
+                            &format!("({lowered} as any)"),
+                            &cx.system_http_type_ns
+                        )
+                    ),
+                    _ => format!("String({lowered})"),
+                }
+            })
+            .collect();
+        let mut all = rest;
+        all.push(sub);
         return format!("{}_{}_{}({})", driver, id.name, key, all.join(", "));
     }
     if let ExprKind::Ident(id) = &receiver.kind

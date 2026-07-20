@@ -202,6 +202,14 @@ struct State {
     /// this is the same coalescing for a buffer that has no entry — a burst runs
     /// one `diagnose`, not one per keystroke. Cleared on `did_close`.
     single_file_generations: std::collections::HashMap<Url, u64>,
+    /// #682: memoised URI → canonical project root routing (`None` for
+    /// single-file mode is itself a cached answer), so the hot request path
+    /// stops re-walking the filesystem and `canonicalize()`ing on every call.
+    /// Routing is a pure function of the filesystem, so this is invalidated
+    /// wholesale only on the two events that can move it: a `bynk.toml`
+    /// create/delete/change and a workspace-folder change. See
+    /// [`Backend::root_for_uri`].
+    root_cache: std::collections::HashMap<Url, Option<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -293,8 +301,31 @@ impl Backend {
     }
 
     /// The canonical project root owning `uri`, or `None` in single-file mode.
-    fn root_for_uri(uri: &Url) -> Option<PathBuf> {
+    /// Uncached — walks the filesystem and `canonicalize()`s on every call.
+    /// Kept for the one caller that must route off the `state` lock
+    /// (`prune_orphaned_projects`, #682 DECISION B) and for tests exercising
+    /// routing directly; every other caller wants the memoised
+    /// [`Self::root_for_uri`].
+    fn root_for_uri_uncached(uri: &Url) -> Option<PathBuf> {
         Self::resolve_canonical(uri).map(|(root, _)| root)
+    }
+
+    /// #682: the cached counterpart of `root_for_uri_uncached` — the canonical
+    /// project root owning `uri`, memoised in `State.root_cache` so a repeated
+    /// request for the same URI does not re-walk the filesystem. A miss runs
+    /// the uncached walk and stores the result (`None` included — a file that
+    /// routes to no project is itself a stable answer worth caching).
+    async fn root_for_uri(&self, uri: &Url) -> Option<PathBuf> {
+        if let Some(cached) = self.state.read().await.root_cache.get(uri) {
+            return cached.clone();
+        }
+        let root = Self::root_for_uri_uncached(uri);
+        self.state
+            .write()
+            .await
+            .root_cache
+            .insert(uri.clone(), root.clone());
+        root
     }
 
     /// Slice E: every project root under `folder` — the folder's own
@@ -371,16 +402,21 @@ impl Backend {
         // Slice D: route by URI to the owning project, creating its entry on
         // first touch (a file opened before any folder scan). Q4: the root is
         // the file's nearest enclosing `bynk.toml`, not its workspace folder.
-        if let Some((root, config)) = Self::resolve_canonical(uri) {
+        // #682: routing goes through the cache; the config is only loaded from
+        // disk when the entry doesn't exist yet, not on every call.
+        if let Some(root) = self.root_for_uri(uri).await {
             {
                 let mut state = self.state.write().await;
-                state
-                    .projects
-                    .entry(root.clone())
-                    .or_insert_with(|| ProjectState {
-                        config,
-                        ..Default::default()
-                    });
+                if !state.projects.contains_key(&root) {
+                    let config = project::load_config(&root).unwrap_or_default();
+                    state.projects.insert(
+                        root.clone(),
+                        ProjectState {
+                            config,
+                            ..Default::default()
+                        },
+                    );
+                }
             }
             self.schedule_project_diagnostics(root).await;
         } else {
@@ -683,15 +719,17 @@ impl Backend {
     /// Replaces `project_src_root`, which returned `root.join(config.src_dir)`:
     /// one tree, chosen by reducing `[paths] include` to its first entry and
     /// ignoring `exclude`. That reduction is the defect slice A removed.
-    fn analysis_roots_for(uri: &Url) -> Option<bynk_ide::AnalysisRoots> {
-        Some(bynk_ide::AnalysisRoots::Project(Self::root_for_uri(uri)?))
+    async fn analysis_roots_for(&self, uri: &Url) -> Option<bynk_ide::AnalysisRoots> {
+        Some(bynk_ide::AnalysisRoots::Project(
+            self.root_for_uri(uri).await?,
+        ))
     }
 
     /// The owning project's `.bynk` files, from the compiler's discovery —
     /// `exclude` and the `out`/`node_modules` caches honoured. Backs the unit
     /// enumeration completion does; `None` in single-file mode.
     async fn project_files(&self, uri: &Url) -> Option<Vec<PathBuf>> {
-        let roots = Self::analysis_roots_for(uri)?;
+        let roots = self.analysis_roots_for(uri).await?;
         tokio::task::spawn_blocking(move || bynk_ide::discover_files(&roots))
             .await
             .ok()
@@ -927,7 +965,7 @@ impl Backend {
         rewritten: String,
         recv_offset: usize,
     ) -> Option<bynk_check::checker::Ty> {
-        let roots = Self::analysis_roots_for(uri)?;
+        let roots = self.analysis_roots_for(uri).await?;
         let project_root = roots.project_root().to_path_buf();
         let canonical_root = project_root
             .canonicalize()
@@ -982,7 +1020,8 @@ impl Backend {
     /// that reuse a round opportunistically (completion's receiver-typing fast
     /// path); the freshness gate is [`Self::analysis_for`].
     async fn project_analysis_for(&self, uri: &Url) -> Option<Arc<Analysis>> {
-        self.project_analysis(&Self::root_for_uri(uri)?).await
+        let root = self.root_for_uri(uri).await?;
+        self.project_analysis(&root).await
     }
 
     /// Ensure `root` has an entry (created with `config` if absent) and a
@@ -1022,11 +1061,19 @@ impl Backend {
     /// Returns the URIs whose diagnostics were cleared so the caller can publish
     /// the clears (done outside the lock).
     async fn prune_orphaned_projects(&self) -> Vec<Url> {
-        // #733: `root_for_uri` canonicalises and walks the filesystem up to a
-        // `bynk.toml` for every open buffer — syscalls that must not run while
-        // holding `state.write()`. Snapshot the inputs under a short read lock,
-        // resolve the open roots off the lock, then take the write lock only to
-        // mutate `projects`. This opens a small TOCTOU window: `orphaned` is
+        // #733: `root_for_uri_uncached` canonicalises and walks the filesystem
+        // up to a `bynk.toml` for every open buffer — syscalls that must not run
+        // while holding `state.write()`. Snapshot the inputs under a short read
+        // lock, resolve the open roots off the lock, then take the write lock
+        // only to mutate `projects`.
+        //
+        // #682 (DECISION B): this stays on the *uncached* router rather than
+        // `root_for_uri` — pruning is not hot (it fires only on folder-removal
+        // or close), and it runs inside a synchronous `filter_map` off the
+        // lock, where an async, cache-consulting router can't be called inline
+        // without either re-locking `state` here (defeating the point of
+        // computing `open_roots` off-lock) or restructuring this into an async
+        // stream. This opens a small TOCTOU window: `orphaned` is
         // computed against live `state.projects` under the write lock but against
         // the *snapshot's* `folders`/`open_roots`, so a `did_open` that lands in
         // between — newly covering a root — is not yet in `open_roots` and that
@@ -1043,8 +1090,10 @@ impl Backend {
                 state.docs.keys().cloned().collect::<Vec<_>>(),
             )
         };
-        let open_roots: std::collections::HashSet<PathBuf> =
-            open_uris.iter().filter_map(Self::root_for_uri).collect();
+        let open_roots: std::collections::HashSet<PathBuf> = open_uris
+            .iter()
+            .filter_map(Self::root_for_uri_uncached)
+            .collect();
         let covered = |root: &std::path::Path| {
             folders
                 .iter()
@@ -1148,7 +1197,7 @@ impl Backend {
     /// (single-file mode). Backs the per-file diagnostics mode/debounce and the
     /// formatting options, which now differ by project.
     async fn config_for(&self, uri: &Url) -> ProjectConfig {
-        let Some(root) = Self::root_for_uri(uri) else {
+        let Some(root) = self.root_for_uri(uri).await else {
             return ProjectConfig::default();
         };
         self.state
@@ -1180,7 +1229,7 @@ impl Backend {
     /// concurrent edit that moved past the refresh (rare; the next request is
     /// current). Never returns an analysis whose snapshot for `uri` is stale.
     async fn analysis_for(&self, uri: &Url) -> Option<Arc<Analysis>> {
-        let root = Self::root_for_uri(uri)?;
+        let root = self.root_for_uri(uri).await?;
         // The version the request's position is stated against. `None` when the
         // file is not an open buffer — then any round is as authoritative as it
         // gets (nothing newer to be stale against), so the freshness gate is a
@@ -1256,7 +1305,7 @@ impl Backend {
     /// committed yet (cold start; the scheduled round will produce one and the
     /// client re-pulls on the refresh nudge).
     async fn committed_analysis(&self, uri: &Url) -> Option<Arc<Analysis>> {
-        let root = Self::root_for_uri(uri)?;
+        let root = self.root_for_uri(uri).await?;
         let a = self.project_analysis(&root).await?;
         // Must actually be analysed (a snapshot key), not merely version-tracked
         // — the handler converts its spans against this snapshot.
@@ -2747,7 +2796,7 @@ impl LanguageServer for Backend {
         // resolve `rel`/`offset` against it here (what `index_position` did).
         // Slice D (Q4): route by the cursor's project — a rename spans one
         // project, so the round need only cover *that* project's buffers.
-        let Some(root) = Self::root_for_uri(&uri) else {
+        let Some(root) = self.root_for_uri(&uri).await else {
             return Err(refused("rename requires a project (bynk.toml)".into()));
         };
         let Some(analysis) = self.analysis_covering_open_buffers(&root).await else {
@@ -2890,7 +2939,7 @@ impl LanguageServer for Backend {
             else {
                 continue;
             };
-            let Some(root) = Self::root_for_uri(&old_uri) else {
+            let Some(root) = self.root_for_uri(&old_uri).await else {
                 continue;
             };
             let Some(analysis) = self.analysis_covering_open_buffers(&root).await else {
@@ -2990,6 +3039,14 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        // #682 (DECISION C): a `bynk.toml` create/delete/change is one of the
+        // two events that can move routing — invalidate the whole cache before
+        // this batch's lookups consult it, so a manifest that just
+        // appeared/vanished is reflected within the same round rather than one
+        // event late.
+        if params.changes.iter().any(|ev| is_bynk_toml(&ev.uri)) {
+            self.state.write().await.root_cache.clear();
+        }
         // For every changed `.bynk` file we have open, refresh diagnostics.
         // Changes to files we do *not* have open (a git checkout, an external
         // edit) still invalidate the project index — schedule a project round
@@ -3006,25 +3063,27 @@ impl LanguageServer for Backend {
         // re-analysing it.
         let mut config_changed_roots: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
-        {
-            let state = self.state.read().await;
-            for ev in &params.changes {
-                if is_bynk_toml(&ev.uri) {
-                    // The manifest's own directory is the project root.
-                    if let Ok(p) = ev.uri.to_file_path()
-                        && let Some(dir) = p.parent()
-                    {
-                        let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-                        config_changed_roots.insert(root.clone());
-                        roots_to_reanalyse.insert(root);
-                    }
-                } else if state.docs.contains_key(&ev.uri) {
-                    uris_to_refresh.push(ev.uri.clone());
-                } else if ev.uri.path().ends_with(".bynk")
-                    && let Some(root) = Self::root_for_uri(&ev.uri)
+        // #682: snapshotted off the lock — the loop below calls the
+        // cache-consulting `root_for_uri`, which itself locks `state`, so it
+        // must not run while a read lock from this function is still held.
+        let open_docs: std::collections::HashSet<Url> =
+            self.state.read().await.docs.keys().cloned().collect();
+        for ev in &params.changes {
+            if is_bynk_toml(&ev.uri) {
+                // The manifest's own directory is the project root.
+                if let Ok(p) = ev.uri.to_file_path()
+                    && let Some(dir) = p.parent()
                 {
+                    let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+                    config_changed_roots.insert(root.clone());
                     roots_to_reanalyse.insert(root);
                 }
+            } else if open_docs.contains(&ev.uri) {
+                uris_to_refresh.push(ev.uri.clone());
+            } else if ev.uri.path().ends_with(".bynk")
+                && let Some(root) = self.root_for_uri(&ev.uri).await
+            {
+                roots_to_reanalyse.insert(root);
             }
         }
         // A `bynk.toml` change reloads its project's config — and, if the
@@ -3078,6 +3137,10 @@ impl LanguageServer for Backend {
                     state.folders.retain(|f| f != &dir);
                 }
             }
+            // #682 (DECISION C): a workspace-folder change is the other event
+            // that can move routing — invalidate alongside the folder-set
+            // mutation, under the same write lock.
+            state.root_cache.clear();
             added
         };
         // Slice E: warm the added folders proactively — the analysis D deferred
@@ -5054,8 +5117,8 @@ mod tests {
         open(&backend, &by, by_src).await;
 
         assert_ne!(
-            Backend::root_for_uri(&ax).unwrap(),
-            Backend::root_for_uri(&by).unwrap(),
+            Backend::root_for_uri_uncached(&ax).unwrap(),
+            Backend::root_for_uri_uncached(&by).unwrap(),
             "the two files resolve to different project roots",
         );
         assert_eq!(
@@ -5470,6 +5533,59 @@ mod tests {
         );
     }
 
+    /// #682: a repeated route for the same URI is served from `root_cache`
+    /// rather than re-walking the filesystem each time — a `None` route
+    /// (single-file mode) is cached too, since it's just as stable an answer.
+    #[tokio::test]
+    async fn root_for_uri_populates_the_cache() {
+        let s = scratch_project("g_cache_hit", &[("a.bynk", "commons demo.a\n")]);
+        let uri = file_uri(&s.0, "a.bynk");
+        let backend = bare_backend().await;
+
+        assert!(
+            backend.root_for_uri(&uri).await.is_none(),
+            "no bynk.toml and no src/ ancestor — routes to no project",
+        );
+        assert_eq!(
+            backend.state.read().await.root_cache.get(&uri),
+            Some(&None),
+            "the miss is cached too",
+        );
+    }
+
+    /// #682 (DECISION C): a `bynk.toml` created after a URI was already routed
+    /// (and cached) re-routes that URI once the watcher event invalidates the
+    /// cache — a stale cached `None` must not survive the manifest's arrival.
+    #[tokio::test]
+    async fn a_created_manifest_invalidates_the_cached_route() {
+        let s = scratch_project("g_cache_invalidate", &[("a.bynk", "commons p.a\n")]);
+        let uri = file_uri(&s.0, "a.bynk");
+        let backend = bare_backend().await;
+
+        assert!(
+            backend.root_for_uri(&uri).await.is_none(),
+            "precondition: cached as routing to no project",
+        );
+
+        std::fs::write(s.0.join("bynk.toml"), "[project]\nname=\"p\"\n").unwrap();
+        let root = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let toml_uri = Url::from_file_path(root.join("bynk.toml")).unwrap();
+        backend
+            .did_change_watched_files(DidChangeWatchedFilesParams {
+                changes: vec![FileEvent {
+                    uri: toml_uri,
+                    typ: FileChangeType::CREATED,
+                }],
+            })
+            .await;
+
+        assert_eq!(
+            backend.root_for_uri(&uri).await,
+            Some(root),
+            "re-routes to the new project now the stale cache entry is gone",
+        );
+    }
+
     /// A folder added at runtime is warmed the same way (the proactive scan
     /// slice D deferred to E), so its projects appear without an open.
     #[tokio::test]
@@ -5533,7 +5649,7 @@ mod tests {
         let s = scratch_project("f_single", &[("a.bynk", "commons demo.a\n")]);
         let uri = file_uri(&s.0, "a.bynk");
         assert!(
-            Backend::root_for_uri(&uri).is_none(),
+            Backend::root_for_uri_uncached(&uri).is_none(),
             "precondition: the file routes to no project",
         );
         let backend = bare_backend().await;
