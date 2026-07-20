@@ -20,6 +20,6 @@ The checker already treats the combination as legal: `by Nobody`'s validation (`
 
 **Consequences.**
 
-- Fixture `385_system_wire_rejection` gains a case, `Wire(...)` body with `by Nobody`, expecting `Rejected(Unauthorized)` — the seam rejects the missing credential regardless of the raw body underneath.
+- Fixture `385_system_wire_rejection` gains two cases: `Wire(...)` body with `by Nobody` (the two-axis combination), and a raw path segment plus a typed body with `by Nobody` (the three-axis combination D2 describes), both expecting `Rejected(Unauthorized)` — the seam rejects the missing credential regardless of the raw or serialised body underneath.
 - The new driver is emitted per Bearer-secured, parameterised route unconditionally (mirroring its two parents), so unrelated fixtures with such routes (e.g. `379_system_http_boundary`) gain the emitted function even without a case exercising it.
 - **Still not in scope:** nothing further — this closes the last of the four `(credential, wire)` combinations named across ADR 0210/0212/0249.
