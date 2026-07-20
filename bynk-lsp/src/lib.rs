@@ -2766,6 +2766,115 @@ impl LanguageServer for Backend {
         }))
     }
 
+    /// #302: `workspace/willRenameFiles` — when a `.bynk` file is renamed or
+    /// moved, keep `uses`/`consumes` references pointing at its unit in sync.
+    /// Uses [`Self::analysis_covering_open_buffers`], the same gate `rename`
+    /// uses: this handler emits multi-file **versioned** edits too, so a
+    /// stale open buffer must be refreshed first or the client rejects the
+    /// whole edit — unlike `documentLink`'s read-only decoration, which
+    /// tolerates a round lagging by one debounce cycle.
+    ///
+    /// Never refuses: a filesystem rename isn't something this soft,
+    /// edit-only hook can block (the response is just an optional edit), so
+    /// anything this can't confidently resolve — an unparseable file, a
+    /// `suite` (addressed by no one), a rename that preserves the unit's
+    /// arrangement, a cross-project move — is simply skipped rather than
+    /// erroring the whole batch.
+    ///
+    /// Edits for the moved file's own declaration target `old_uri`, not
+    /// `new_uri`: the client applies the returned edit against files at
+    /// their current (pre-move) locations, then performs the actual rename,
+    /// so the file lands at its new path already carrying the new name.
+    /// Single-file rename only (the capability filter matches files, not
+    /// folders) — a folder move is a follow-up.
+    async fn will_rename_files(
+        &self,
+        params: RenameFilesParams,
+    ) -> JsonRpcResult<Option<WorkspaceEdit>> {
+        let mut combined: std::collections::HashMap<Url, (Option<i32>, Vec<TextEdit>)> =
+            std::collections::HashMap::new();
+        for fr in &params.files {
+            let (Ok(old_uri), Ok(new_uri)) = (Url::parse(&fr.old_uri), Url::parse(&fr.new_uri))
+            else {
+                continue;
+            };
+            let Some(root) = Self::root_for_uri(&old_uri) else {
+                continue;
+            };
+            let Some(analysis) = self.analysis_covering_open_buffers(&root).await else {
+                continue;
+            };
+            let Some(old_rel) = Self::uri_to_rel(&analysis, &old_uri) else {
+                continue;
+            };
+            let Some(new_rel) = Self::uri_to_rel(&analysis, &new_uri) else {
+                continue;
+            };
+            let Some(text) = analysis.snapshots.get(&old_rel) else {
+                continue;
+            };
+            let Some((old_name, name_span)) = crate::symbols::own_declaration_name(text) else {
+                continue;
+            };
+            let Some(new_name) = bynk_ide::renamed_unit_name(&old_rel, &old_name, &new_rel) else {
+                continue;
+            };
+            if new_name == old_name {
+                continue;
+            }
+            // The moved file's own declaration header — edited at its old
+            // (still current) location.
+            combined
+                .entry(old_uri.clone())
+                .or_insert_with(|| (analysis.versions.get(&old_rel).copied(), Vec::new()))
+                .1
+                .push(TextEdit {
+                    range: crate::position::span_to_range(text, name_span),
+                    new_text: new_name.clone(),
+                });
+            // Every other file's `uses`/`consumes` references to the old name.
+            for (rel, snap_text) in &analysis.snapshots {
+                if *rel == old_rel {
+                    continue;
+                }
+                let edits: Vec<TextEdit> = crate::symbols::unit_reference_spans(snap_text)
+                    .into_iter()
+                    .filter(|(unit, _)| *unit == old_name)
+                    .map(|(_, span)| TextEdit {
+                        range: crate::position::span_to_range(snap_text, span),
+                        new_text: new_name.clone(),
+                    })
+                    .collect();
+                if edits.is_empty() {
+                    continue;
+                }
+                let Ok(file_uri) = Url::from_file_path(analysis.project_root.join(rel)) else {
+                    continue;
+                };
+                combined
+                    .entry(file_uri)
+                    .or_insert_with(|| (analysis.versions.get(rel).copied(), Vec::new()))
+                    .1
+                    .extend(edits);
+            }
+        }
+        if combined.is_empty() {
+            return Ok(None);
+        }
+        let document_edits: Vec<TextDocumentEdit> = combined
+            .into_iter()
+            .map(|(uri, (version, edits))| TextDocumentEdit {
+                text_document: OptionalVersionedTextDocumentIdentifier { uri, version },
+                edits: edits.into_iter().map(OneOf::Left).collect(),
+            })
+            .collect();
+        Ok(Some(WorkspaceEdit {
+            changes: None,
+            document_changes: Some(DocumentChanges::Edits(document_edits)),
+            change_annotations: None,
+        }))
+    }
+
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         // For every changed `.bynk` file we have open, refresh diagnostics.
         // Changes to files we do *not* have open (a git checkout, an external
@@ -2962,7 +3071,22 @@ fn server_capabilities() -> ServerCapabilities {
                 supported: Some(true),
                 change_notifications: Some(OneOf::Left(true)),
             }),
-            file_operations: None,
+            // #302: `willRenameFiles` over `.bynk` files only (not folders) —
+            // keeps `uses`/`consumes` references in sync on a single-file
+            // rename/move; a folder move is a follow-up.
+            file_operations: Some(WorkspaceFileOperationsServerCapabilities {
+                will_rename: Some(FileOperationRegistrationOptions {
+                    filters: vec![FileOperationFilter {
+                        scheme: Some("file".to_string()),
+                        pattern: FileOperationPattern {
+                            glob: "**/*.bynk".to_string(),
+                            matches: Some(FileOperationPatternKind::File),
+                            options: None,
+                        },
+                    }],
+                }),
+                ..Default::default()
+            }),
         }),
         ..Default::default()
     }
@@ -4153,6 +4277,141 @@ mod tests {
         );
     }
 
+    /// #302: renaming a unit's file rewrites its own declaration header
+    /// **and** every other file's `uses`/`consumes` reference — over a split
+    /// `src`/`tests` project, exercising the project-relative (`src/`-prefixed)
+    /// path the `src`/`tests` split leaves on every identity path.
+    #[tokio::test]
+    async fn will_rename_files_updates_the_declaration_and_every_reference() {
+        let charge = "commons billing.charge\n\ntype ChargeId = Int where Positive\n";
+        let main = "context app.main\n\nuses billing.charge\n";
+        let s = scratch_project(
+            "will_rename_basic",
+            &[
+                ("bynk.toml", "[project]\nname=\"demo\"\n"),
+                ("src/billing/charge.bynk", charge),
+                ("src/app/main.bynk", main),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let root_canon = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let uri = |rel: &str| Url::from_file_path(root_canon.join(rel)).unwrap();
+        let old_uri = uri("src/billing/charge.bynk");
+        let new_uri = uri("src/billing/pay.bynk");
+        let main_uri = uri("src/app/main.bynk");
+
+        backend.run_round().await;
+
+        let edit = backend
+            .will_rename_files(RenameFilesParams {
+                files: vec![FileRename {
+                    old_uri: old_uri.to_string(),
+                    new_uri: new_uri.to_string(),
+                }],
+            })
+            .await
+            .expect("will_rename_files must not error")
+            .expect("must produce edits");
+
+        let DocumentChanges::Edits(edits) = edit.document_changes.unwrap() else {
+            panic!("expected document-change edits");
+        };
+
+        let own = edits
+            .iter()
+            .find(|e| e.text_document.uri == old_uri)
+            .expect("the moved file's own declaration must be rewritten");
+        assert_eq!(own.edits.len(), 1);
+        let OneOf::Left(own_edit) = &own.edits[0] else {
+            panic!("expected a plain TextEdit");
+        };
+        assert_eq!(own_edit.new_text, "billing.pay");
+
+        let referencer = edits
+            .iter()
+            .find(|e| e.text_document.uri == main_uri)
+            .expect("the referencing file must be rewritten");
+        assert_eq!(referencer.edits.len(), 1);
+        let OneOf::Left(ref_edit) = &referencer.edits[0] else {
+            panic!("expected a plain TextEdit");
+        };
+        assert_eq!(ref_edit.new_text, "billing.pay");
+    }
+
+    /// #302: renaming one member file within a multi-file unit's directory
+    /// doesn't change the unit's qualified name (it's the directory, not the
+    /// filename) — no edits are needed.
+    #[tokio::test]
+    async fn will_rename_files_is_a_noop_for_a_multi_file_unit_member() {
+        let s = scratch_project(
+            "will_rename_multi_file_noop",
+            &[
+                ("bynk.toml", "[project]\nname=\"demo\"\n"),
+                (
+                    "src/billing/charge/one.bynk",
+                    "context billing.charge\n\ntype ChargeId = Int where Positive\n",
+                ),
+                (
+                    "src/billing/charge/two.bynk",
+                    "context billing.charge\n\ntype PaymentId = Int where Positive\n",
+                ),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let root_canon = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let uri = |rel: &str| Url::from_file_path(root_canon.join(rel)).unwrap();
+
+        backend.run_round().await;
+
+        let edit = backend
+            .will_rename_files(RenameFilesParams {
+                files: vec![FileRename {
+                    old_uri: uri("src/billing/charge/one.bynk").to_string(),
+                    new_uri: uri("src/billing/charge/renamed.bynk").to_string(),
+                }],
+            })
+            .await
+            .expect("will_rename_files must not error");
+        assert!(
+            edit.is_none(),
+            "renaming a member file within the same directory must not edit anything"
+        );
+    }
+
+    /// #302: a `suite` file has no addressable name of its own
+    /// (`SourceUnit::name()` is its *target*'s name) — renaming it produces
+    /// no edits.
+    #[tokio::test]
+    async fn will_rename_files_is_a_noop_for_a_suite() {
+        let s = scratch_project(
+            "will_rename_suite_noop",
+            &[
+                ("bynk.toml", "[project]\nname=\"demo\"\n"),
+                (
+                    "src/billing/charge.bynk",
+                    "commons billing.charge\n\ntype ChargeId = Int where Positive\n",
+                ),
+                ("tests/billing_charge.bynk", "suite billing.charge\n"),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let root_canon = s.0.canonicalize().unwrap_or_else(|_| s.0.clone());
+        let uri = |rel: &str| Url::from_file_path(root_canon.join(rel)).unwrap();
+
+        backend.run_round().await;
+
+        let edit = backend
+            .will_rename_files(RenameFilesParams {
+                files: vec![FileRename {
+                    old_uri: uri("tests/billing_charge.bynk").to_string(),
+                    new_uri: uri("tests/billing_charge_renamed.bynk").to_string(),
+                }],
+            })
+            .await
+            .expect("will_rename_files must not error");
+        assert!(edit.is_none(), "a suite rename must produce no edits");
+    }
+
     /// #485: a rootless multi-file-commons file (a `src/` tree with no
     /// `bynk.toml`, the layout the compiler fixtures use) resolves its
     /// implicit source root — the nearest ancestor `src/` — so project-mode
@@ -4394,6 +4653,24 @@ mod tests {
     fn advertises_document_links() {
         let caps = server_capabilities();
         assert!(caps.document_link_provider.is_some());
+    }
+
+    /// #302: `willRenameFiles` over `.bynk` files, not folders.
+    #[test]
+    fn advertises_will_rename_files() {
+        let caps = server_capabilities();
+        let file_ops = caps
+            .workspace
+            .as_ref()
+            .and_then(|w| w.file_operations.as_ref())
+            .expect("workspace.fileOperations advertised");
+        let will_rename = file_ops
+            .will_rename
+            .as_ref()
+            .expect("willRename registered");
+        let filter = &will_rename.filters[0];
+        assert_eq!(filter.pattern.glob, "**/*.bynk");
+        assert_eq!(filter.pattern.matches, Some(FileOperationPatternKind::File));
     }
 
     /// Slice 5: completion advertises `.` triggers and lazy doc resolution.
