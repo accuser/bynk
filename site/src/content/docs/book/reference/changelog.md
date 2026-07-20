@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.215.1** | LSP `codeAction` now filters its response against `CodeActionParams.context.only` |
 | **v0.215.0** | Call hierarchy now records capability-op and agent-handler-dispatch call edges, closing the under-reporting gap in #304 |
 | **v0.214.4** | The playground editor shows the inferred type of the expression under the cursor on hover (#397) |
 | **v0.214.3** | The playground's share service expires stored snippets 30 days after creation, via `Kv.putTtl`, instead of retaining them indefinitely. |
