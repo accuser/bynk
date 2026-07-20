@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.217.1** | bynk-lsp's root-cache write-back is guarded against a bynk.toml/workspace-folder invalidation racing an in-flight filesystem walk |
 | **v0.217.0** | "`textDocument/codeAction`'s extract-function refactor now also accepts a contiguous run of full statements (optionally including the block's tail), not just one expression, closing #813" |
 | **v0.216.5** | A `system`-tier case can mix a typed argument with `Wire(...)` in the same http address call |
 | **v0.216.4** | bynk-lsp memoises URI to project-root routing, so hover/completion/etc. stop re-walking the filesystem on every request |
