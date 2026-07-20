@@ -166,6 +166,22 @@ pub(crate) fn assemble_index(
                         site(&a.name),
                         symbol_modifiers(&unit, None),
                     );
+                    // #304: an agent handler is a first-class symbol keyed by
+                    // the compound `"Agent.handler"` name, mirroring the
+                    // v0.36 (ADR 0069) method/field/op convention. Service
+                    // handlers have no per-handler name (`method_name` is
+                    // always `None`), so this is naturally agent-only.
+                    for h in &a.handlers {
+                        if let Some(name) = &h.method_name {
+                            builder.add_def(
+                                &unit,
+                                SymbolKind::Handler,
+                                &format!("{}.{}", a.name.name, name.name),
+                                site(name),
+                                symbol_modifiers(&unit, None),
+                            );
+                        }
+                    }
                 }
                 CommonsItem::Provider(p) => {
                     builder.add_def(

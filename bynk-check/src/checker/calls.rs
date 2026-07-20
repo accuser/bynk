@@ -2054,6 +2054,15 @@ pub(crate) fn check_method_call(
             }
             return None;
         };
+        // #304: the handler is a first-class index symbol, keyed by the
+        // compound `"Agent.handler"` name — same convention and same
+        // recorded-regardless-of-downstream-errors placement as the
+        // ordinary instance-method call below.
+        ctx.refs.record(
+            method.span,
+            SymbolKind::Handler,
+            &format!("{type_name}.{}", method.name),
+        );
         if handler.params.len() != args.len() {
             ctx.errors.push(CompileError::new(
                 "bynk.agent.handler_arity",

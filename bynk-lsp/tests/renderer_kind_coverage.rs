@@ -99,13 +99,15 @@ fn declared_name(kind: SymbolKind) -> &'static str {
         SymbolKind::Field => "Stored.title",
         SymbolKind::CapabilityOp => "Logger.info",
         SymbolKind::Actor => "User",
+        // #304: an agent handler, keyed `"Agent.handler"`.
+        SymbolKind::Handler => "Todos.bump",
     }
 }
 
 /// Every variant, so the fixture's coverage is asserted rather than assumed.
 /// `declared_name`'s exhaustive `match` is what forces this list to be extended
 /// in practice: a new kind fails to compile there first.
-const ALL_KINDS: [SymbolKind; 10] = [
+const ALL_KINDS: [SymbolKind; 11] = [
     SymbolKind::Type,
     SymbolKind::Fn,
     SymbolKind::Capability,
@@ -116,6 +118,7 @@ const ALL_KINDS: [SymbolKind; 10] = [
     SymbolKind::Field,
     SymbolKind::CapabilityOp,
     SymbolKind::Actor,
+    SymbolKind::Handler,
 ];
 
 /// [`EVERY_KIND`] analysed under its own root. `test_name` is what keeps the

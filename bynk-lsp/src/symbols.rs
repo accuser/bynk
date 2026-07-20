@@ -592,6 +592,19 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
                 .find(|o| o.name.name == op)
                 .map(|o| describe_capability_op(c, o))
         }
+        // #304: an agent handler, keyed `"Agent.handler"` — the checker
+        // records a dispatch call (`agentInstance.handler(...)`) as this
+        // compound key, mirroring the method/field/op convention above.
+        CommonsItem::Agent(a) => {
+            let (owner, handler) = name.rsplit_once('.')?;
+            if a.name.name != owner {
+                return None;
+            }
+            a.handlers
+                .iter()
+                .find(|h| h.method_name.as_ref().is_some_and(|n| n.name == handler))
+                .map(|h| describe_agent_handler(a, h, handler))
+        }
         _ => None,
     }
 }
@@ -662,6 +675,29 @@ fn describe_capability_op(c: &CapabilityDecl, op: &CapabilityOp) -> String {
         c.name.name
     );
     if let Some(doc) = &op.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
+}
+
+/// #304: an agent handler as declared, attributed to the agent that owns it —
+/// its dispatch name, params, and return type. Mirrors [`describe_capability_op`].
+fn describe_agent_handler(a: &AgentDecl, h: &Handler, handler_name: &str) -> String {
+    let params: Vec<String> = h
+        .params
+        .iter()
+        .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
+        .collect();
+    let mut out = format!(
+        "```bynk\nfn {}({}) -> {}\n```\n\nA handler of agent `{}`.\n",
+        handler_name,
+        params.join(", "),
+        type_ref_str(&h.return_type),
+        a.name.name
+    );
+    if let Some(doc) = &h.documentation {
         out.push('\n');
         out.push_str(doc);
         out.push('\n');

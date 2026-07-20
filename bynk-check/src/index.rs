@@ -39,6 +39,10 @@ pub enum SymbolKind {
     /// v0.45: an actor declaration — a boundary contract consumed by a
     /// handler's `by` clause.
     Actor,
+    /// (ADR 0069 follow-on, #304): an agent handler, keyed by the compound
+    /// name `"Agent.handler"`. Service handlers have no per-handler name
+    /// (`Handler.method_name` is `None`) so only agent dispatch is covered.
+    Handler,
 }
 
 impl SymbolKind {
@@ -54,6 +58,7 @@ impl SymbolKind {
             SymbolKind::Field => "field",
             SymbolKind::CapabilityOp => "operation",
             SymbolKind::Actor => "actor",
+            SymbolKind::Handler => "handler",
         }
     }
 }
@@ -234,13 +239,15 @@ pub struct SymbolEntry {
     pub modifiers: SymbolModifiers,
 }
 
-/// v0.34 (ADR 0067): one resolved caller→callee call edge — a `Fn` reference
+/// v0.34 (ADR 0067): one resolved caller→callee call edge — a reference
 /// (`callee`) occurring inside a known top-level declaration (`caller`), at
 /// `site` (the callee-name span, in the caller's file). The backing data for
 /// call hierarchy: incoming calls group edges by `callee`, outgoing by
-/// `caller`. v0.36 (ADR 0069): `Fn` and `Method` callees/callers; op-call and
-/// agent-dispatch edges are still absent (those callees aren't index symbols —
-/// the remaining deferred index kinds).
+/// `caller`. v0.36 (ADR 0069): `Fn` and `Method` callees/callers. #304:
+/// `CapabilityOp` and agent `Handler` callees/callers too — every index
+/// symbol capable of holding a call site is now a callee. Service
+/// cross-context dispatch remains the one uncovered relation (no per-handler
+/// index symbol to be its callee).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallEdge {
     pub caller: SymbolKey,
@@ -294,8 +301,9 @@ pub struct ProjectIndex {
     /// (path, span), deduplicated — read only by the semantic-tokens
     /// producer (see [`ForeignRef`]).
     pub foreign_refs: Vec<ForeignRef>,
-    /// v0.34 (ADR 0067): caller→callee call edges (`Fn` callees only), sorted
-    /// by (caller, callee, site). The call-hierarchy graph (see [`CallEdge`]).
+    /// v0.34 (ADR 0067): caller→callee call edges (see [`CallEdge`] for which
+    /// kinds are covered), sorted by (caller, callee, site). The
+    /// call-hierarchy graph.
     pub calls: Vec<CallEdge>,
     /// v0.35 (ADR 0068): capability→provider implementation edges, sorted by
     /// (capability, provider, site). The implementation-nav graph (see
@@ -426,9 +434,10 @@ pub struct IndexBuilder {
     /// Includes methods (`"T.m"`), which are not index symbols.
     owner_files: HashMap<(String, String), PathBuf>,
     /// v0.34 (ADR 0067): (unit, owner display name) → the owner's symbol key,
-    /// for resolving a call edge's caller. Only index symbols (every
-    /// `add_def`); method owners (`add_owner`) are absent, so their call edges
-    /// are not recorded — same boundary as the deferred index kinds.
+    /// for resolving a call edge's caller. Populated by every `add_def`, so
+    /// any index symbol capable of enclosing a call site (`Fn`, `Method`,
+    /// `Service`, `Agent`, `Provider`, …) is a valid caller; an owner
+    /// registered only via `add_owner` (attribution-only, no symbol) is not.
     owner_keys: HashMap<(String, String), SymbolKey>,
     /// unit → `uses` targets, resolution order.
     uses: HashMap<String, Vec<String>>,
@@ -578,12 +587,23 @@ impl IndexBuilder {
                 // v0.36 (ADR 0069): methods are call targets too, now that they
                 // are `add_def`'d index symbols (and callers, since `add_def`
                 // populates `owner_keys` for `"T.m"` owners).
-                if matches!(key.kind, SymbolKind::Fn | SymbolKind::Method)
-                    && let Some(caller) = edge
-                        .owner
-                        .as_ref()
-                        .zip(edge.namespace.as_ref())
-                        .and_then(|(o, ns)| self.owner_keys.get(&(ns.clone(), o.clone())))
+                // #304: `CapabilityOp` (ADR 0069 scoped it out; reversed — the
+                // resulting reference-count/incoming-call mismatch was more
+                // confusing than the edge it withheld) and agent `Handler`
+                // (new this increment) join for the same reason methods did:
+                // both are `add_def`'d index symbols with a ref already
+                // recorded at the correct owner.
+                if matches!(
+                    key.kind,
+                    SymbolKind::Fn
+                        | SymbolKind::Method
+                        | SymbolKind::CapabilityOp
+                        | SymbolKind::Handler
+                ) && let Some(caller) = edge
+                    .owner
+                    .as_ref()
+                    .zip(edge.namespace.as_ref())
+                    .and_then(|(o, ns)| self.owner_keys.get(&(ns.clone(), o.clone())))
                 {
                     calls.push(CallEdge {
                         caller: caller.clone(),
