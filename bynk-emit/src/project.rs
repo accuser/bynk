@@ -622,6 +622,15 @@ pub fn discover_project_files(roots: &Roots) -> Vec<PathBuf> {
     out
 }
 
+/// #302: the qualified name a file moved from `old_rel` to `new_rel` should
+/// now declare, preserving whichever single-file/multi-file arrangement
+/// (`check_path_name_alignment`) `old_rel` used to satisfy against
+/// `old_name`. Exposed so the LSP's `workspace/willRenameFiles` handler
+/// reuses the compiler's own path↔name rules instead of re-deriving them.
+pub fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Option<String> {
+    paths::renamed_unit_name(old_rel, old_name, new_rel)
+}
+
 /// v0.24: analyse a project without building — non-bailing, overlay-aware,
 /// file-attributed (ADR 0052). `overlay` maps canonicalised absolute paths
 /// to buffer text layered over disk reads (unsaved editor buffers).
