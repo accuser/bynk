@@ -125,6 +125,17 @@ closing the block.
 
 Between tokens the lexer discards **trivia**: whitespace (`/\s+/`), line comments
 ([§3.3.1](#331-line_comment)), and doc-blocks ([§3.3.2](#332-doc-blocks)). Trivia
-is insignificant to the syntactic grammar; it does not appear in the productions
-of §4. The complete token-and-trivia summary is part of the grammar appendix
-([§11](/book/spec/grammar-appendix/)).
+does not appear in the productions of §4 — no production has a newline
+terminal — but it is not wholly insignificant: the parser consults whether a
+newline separates two tokens at three sites, each a narrow, documented
+carve-out rather than a general rule. A `+`/`-` beginning a new line does not
+continue an additive chain ([§4.6.6](/book/spec/syntactic-grammar/#467-binary_expr));
+a `[` opening a new line is a list literal rather than explicit type
+application on the preceding name, both for a call
+([§4.6.21a](/book/spec/syntactic-grammar/#4621a-list_literal)) and for a
+method call ([§4.6.8](/book/spec/syntactic-grammar/#468-method_call)). No
+other construct is newline-sensitive — in particular, `match`-arm separation
+([§4.7.1](/book/spec/syntactic-grammar/#471-match_arm)) is not: arms are
+terminated by their own greedy parse and an optional trailing comma, with no
+newline check. The complete token-and-trivia summary is part of the grammar
+appendix ([§11](/book/spec/grammar-appendix/)).
