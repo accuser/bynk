@@ -2237,8 +2237,15 @@ pub(crate) fn check_record_construction(
                 Some(v) => type_of(v, expected_now.as_ref(), ctx),
                 None => ctx.lookup(&f.name.name),
             };
+            // #594: bind type parameters from an actual that is ground *up to the
+            // enclosing generic method's rigid vars* — inside `fn Box.map[U](self,
+            // …) -> Box[U]`, constructing `Box { value: <U> }` legitimately infers
+            // `Box[U]`. A still-*flexible* var (an empty list adopting `List[Var(T)]`
+            // from the expected type, ADR 0183 #5) carries no information and is
+            // still skipped. Outside a generic body `ctx.type_vars` is empty, so this
+            // is exactly `!contains_var(actual)`.
             if let (Some(pat), Some(actual)) = (pattern.as_ref(), value_ty.as_ref())
-                && !contains_var(actual)
+                && !contains_flexible_var(actual, &ctx.type_vars)
             {
                 unify(pat, actual, &mut subst);
             }
@@ -2253,7 +2260,9 @@ pub(crate) fn check_record_construction(
     let mut uninferable = Vec::new();
     for p in &decl.type_params {
         match subst.get(&p.name.name) {
-            Some(t) if !contains_var(t) => args.push(t.clone()),
+            // #594: a rigid var (the enclosing method's own parameter) is a fully
+            // determined argument here — `Box[U]` is ground inside `Box.map[U]`.
+            Some(t) if !contains_flexible_var(t, &ctx.type_vars) => args.push(t.clone()),
             _ => uninferable.push(p.name.name.clone()),
         }
     }

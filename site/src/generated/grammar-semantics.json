@@ -427,7 +427,7 @@
   "fn_decl": [
     {
       "code": "bynk.generics.method_on_generic_type",
-      "summary": "A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183)."
+      "summary": "A *static* method is attached to a generic type; static methods on generic types are deferred (they have no receiver to supply the type's parameters). Instance methods on generic types are supported (#594)."
     },
     {
       "code": "bynk.generics.no_bounds",

@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.208**.
+written against **v0.210**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,8 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.210.0** | LSP decoration requests (semantic tokens, inlay hints, code lenses, document links, code actions) serve the last committed round instead of forcing a whole-project re-analysis on every keystroke, revalidating via workspace/*/refresh |
+| **v0.209.0** | A generic type may carry instance methods — `fn Box.map[U](self, f: A -> U) -> Box[U]` erases to a generic namespace-object method (#594) |
 | **v0.208.2** | The deploy ledger is written atomically and a truncated ledger is rejected rather than re-minting every namespace |
 | **v0.208.1** | "`fmt` now verifies its output round-trips to the same code before writing (refusing with `bynk.fmt.roundtrip` rather than overwrite a file with mis-rendered or non-parsing output), writes in place atomically via a temp file + rename so an interrupted write can no longer truncate or empty the source, and honours `--check` on stdin (`bynk fmt --check -` reports a diff and exits non-zero instead of echoing the reformat and passing green)" |
 | **v0.208.0** | HS256 bearer verification requires an `exp` claim (a token with no expiry no longer verifies) |
