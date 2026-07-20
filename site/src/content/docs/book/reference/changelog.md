@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.214**.
+written against **v0.215**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.215.0** | Call hierarchy now records capability-op and agent-handler-dispatch call edges, closing the under-reporting gap in #304 |
 | **v0.214.4** | The playground editor shows the inferred type of the expression under the cursor on hover (#397) |
 | **v0.214.3** | The playground's share service expires stored snippets 30 days after creation, via `Kv.putTtl`, instead of retaining them indefinitely. |
 | **v0.214.2** | "vscode-bynk: add the missing `match` snippet (variant/binding arms + wildcard fallback), closing out #307" |

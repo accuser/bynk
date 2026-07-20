@@ -17,6 +17,8 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0244](0244-agent-handler-dispatch-index.md) | **Agent handler dispatch calls become index symbols** (v0.215) — New SymbolKind::Handler indexes agentInstance.handler(...) calls, following ADR 0069's compound-name convention | Accepted (v0.215) |
+| [0243](0243-capability-op-call-hierarchy.md) | **Capability-op callees join the call-hierarchy graph** (v0.215) — Reverses ADR 0069's "stays out of scope" call for capability-op call edges | Accepted (v0.215) |
 | [0242](0242-playground-hover-397.md) | **Playground gains a hover tooltip for inferred types; completion split to a new issue** (v0.214.4) — Expose the checker's expr-types sink through a new `bynk_hover` wasm entry; defer completion | Accepted (v0.214.4) |
 | [0241](0241-playground-share-retention.md) | **Playground share links expire 30 days after creation** (v0.214.3) — Bound the share service's KV storage with a fixed-TTL retention policy instead of indefinite retention | Accepted (v0.214.3) |
 | [0240](0240-lsp-extract-variable.md) | **LSP `codeAction` gains extract-variable; extract-function deferred to a track** (v0.214) — Smallest enclosing expression → new `let`; placeholder naming avoids collision by a whole-file scan; extract-function deferred (fn has no capability clause to propagate into) | Accepted (v0.214) |
