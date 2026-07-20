@@ -228,13 +228,24 @@ export function readServerVersion(serverPath: string): string | undefined {
 
 /** Pull a bare `MAJOR.MINOR.PATCH` out of a version string, tolerating a
  *  leading name and/or `v` (`"bynkc-lsp 0.129.0"`, `"v0.132.1"`,
- *  `"0.132.1"`). Undefined if no such pattern is present. */
+ *  `"0.132.1"`). Undefined if no such pattern is present.
+ *
+ * Deliberately not an unanchored `/(\d+)\.(\d+)\.(\d+)/` match: `s` is the
+ * stdout of an external `bynkc-lsp --version` process (untrusted input), and
+ * that shape backtracks polynomially on adversarial input (CodeQL
+ * js/polynomial-redos) — the same hazard `repoSlug` above avoids. Splitting
+ * on a lone `\d+` has no such ambiguity (a digit run matches only one way),
+ * so scanning the alternating non-digit/digit parts it produces stays linear. */
 export function parseVersion(
   s: string,
 ): [number, number, number] | undefined {
-  const m = s.match(/(\d+)\.(\d+)\.(\d+)/);
-  if (!m) return undefined;
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
+  const parts = s.split(/(\d+)/);
+  for (let i = 1; i + 4 < parts.length; i += 2) {
+    if (parts[i + 1] === "." && parts[i + 3] === ".") {
+      return [Number(parts[i]), Number(parts[i + 2]), Number(parts[i + 4])];
+    }
+  }
+  return undefined;
 }
 
 /** -1 / 0 / 1 as `a` is older / equal / newer than `b`. */

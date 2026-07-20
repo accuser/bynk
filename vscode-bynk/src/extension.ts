@@ -298,7 +298,27 @@ function checkVersionMatch(
   const isStale =
     reportedVer && expectedVer && compareVersions(reportedVer, expectedVer) < 0;
 
-  if (isStale) {
+  if (isStale && resolved.source === "setting") {
+    // Forcing a download here would silently paper over the pinned setting
+    // for this session only — it reverts (and re-warns) on the next reload,
+    // without ever telling the user the *setting* is what's stale. Point them
+    // at it instead.
+    void vscode.window
+      .showWarningMessage(
+        `Bynk: the language server pinned by \`bynk.executablePath\` is "${reported}", ` +
+          `older than the ${expected} this extension expects. It may flag valid syntax as errors.`,
+        "Open Settings",
+        "Ignore",
+      )
+      .then((pick) => {
+        if (pick === "Open Settings") {
+          void vscode.commands.executeCommand(
+            "workbench.action.openSettings",
+            "bynk.executablePath",
+          );
+        }
+      });
+  } else if (isStale) {
     void vscode.window
       .showWarningMessage(
         `Bynk: language server is "${reported}" (${resolved.source}), older than the ` +

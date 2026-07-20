@@ -20,6 +20,17 @@ describe("parseVersion", () => {
     assert.strictEqual(parseVersion("not a version"), undefined);
     assert.strictEqual(parseVersion(""), undefined);
   });
+
+  it("extracts the first match and ignores trailing text", () => {
+    assert.deepStrictEqual(parseVersion("0.129.0-dev+adversarial"), [0, 129, 0]);
+  });
+
+  it("stays fast on a long dot-free digit run (no unbounded regex backtracking)", () => {
+    const adversarial = "9".repeat(50_000);
+    const start = Date.now();
+    assert.strictEqual(parseVersion(adversarial), undefined);
+    assert.ok(Date.now() - start < 500, "parseVersion must run in linear time");
+  });
 });
 
 describe("compareVersions", () => {
