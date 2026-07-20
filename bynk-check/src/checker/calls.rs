@@ -35,7 +35,7 @@ pub(crate) fn check_fn(
     // v0.20a: the fn's type parameters are *rigid* type variables while
     // checking its own body. A type param shadowing a declared type is
     // confusing — diagnose the collision.
-    let vars: HashSet<String> = f
+    let mut vars: HashSet<String> = f
         .type_params
         .iter()
         .map(|tp| tp.name.name.clone())
@@ -55,18 +55,38 @@ pub(crate) fn check_fn(
             );
         }
     }
+    // #594: an instance method on a generic type inherits the receiver type's
+    // parameters as additional rigid vars, so its signature and body may name
+    // them (`self: Box[A]`, `f: A -> U`). The receiver's parameters are the
+    // type's own — they never shadow a declared type — so they bypass the guard
+    // above.
+    if let FnName::Method { type_name, .. } = &f.name
+        && let Some(decl) = input.types.get(&type_name.name)
+    {
+        for tp in &decl.type_params {
+            vars.insert(tp.name.name.clone());
+        }
+    }
     let return_ty = match resolve_type_ref_in(&f.return_type, &input.types, &vars) {
         Some(t) => t,
         None => return,
     };
     record_type_refs(&f.return_type, &input.types, &vars, refs);
     let mut param_scope: HashMap<String, Ty> = HashMap::new();
-    // For methods, the implicit `self` parameter has the attached type.
+    // For methods, the implicit `self` parameter has the attached type. #594: on
+    // a generic receiver, `self` is the type applied to its own parameters as
+    // rigid vars (`Box[A]`), so field access substitutes them and the body's
+    // uses of `A` line up with the signature.
     if let FnName::Method { type_name, .. } = &f.name
         && f.has_self
-        && let Some(self_ty) = type_from_decl(type_name, &input.types)
+        && let Some(decl) = input.types.get(&type_name.name)
     {
-        param_scope.insert("self".to_string(), self_ty);
+        let self_args = decl
+            .type_params
+            .iter()
+            .map(|tp| Ty::Var(tp.name.name.clone()))
+            .collect();
+        param_scope.insert("self".to_string(), named_ty_with_args(decl, self_args));
     }
     for p in &f.params {
         if let Some(ty) = resolve_type_ref_in(&p.type_ref, &input.types, &vars) {
@@ -1740,9 +1760,11 @@ pub(crate) fn check_method_call(
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     // v0.22b: explicit type arguments apply only to the `Json.decode[T]`
-    // static — every other method/static takes none (the 0039/0045 rule;
-    // generic *user* methods remain deferred). A user-declared type named
-    // `Json` shadows the codec module and takes no type arguments.
+    // static — every other method/static takes none (the 0039/0045 rule). A
+    // user-declared type named `Json` shadows the codec module and takes no type
+    // arguments. #594: a generic *user* instance method infers its type
+    // arguments from the receiver and the argument types — the explicit
+    // `x.map[U](…)` form is deferred, so explicit type args are rejected here.
     if !type_args.is_empty()
         && !matches!(&receiver.kind, ExprKind::Ident(id) if id.name == JSON
             && !ctx.input.types.contains_key(JSON))
@@ -1751,7 +1773,7 @@ pub(crate) fn check_method_call(
             "bynk.generics.type_arg_mismatch",
             span,
             format!(
-                "`{}` is not a generic method — it takes no type arguments",
+                "`{}` does not take explicit type arguments — a generic method infers them from the receiver and arguments",
                 method.name
             ),
         ));
@@ -2121,6 +2143,30 @@ pub(crate) fn check_method_call(
         SymbolKind::Method,
         &format!("{type_name}.{}", method.name),
     );
+    // #594: a generic instance method — one on a generic receiver, or one
+    // carrying its own type parameters — resolves its parameter and return
+    // types against a substitution seeded from the receiver's type arguments,
+    // then infers the method's own parameters from the argument types
+    // (argument-directed unification, ADR 0029). A method on a non-generic
+    // receiver with no own type parameters takes the plain path below,
+    // byte-identically to before.
+    let recv_type_params: Vec<String> = ctx
+        .input
+        .types
+        .get(&type_name)
+        .map(|d| d.type_params.iter().map(|p| p.name.name.clone()).collect())
+        .unwrap_or_default();
+    if !recv_type_params.is_empty() || !method_decl.type_params.is_empty() {
+        return check_generic_method_call(
+            &type_name,
+            &recv_type_params,
+            &recv_ty,
+            &method_decl,
+            method,
+            args,
+            ctx,
+        );
+    }
     // Param count excludes the implicit `self`.
     if method_decl.params.len() != args.len() {
         ctx.errors.push(
@@ -2173,6 +2219,209 @@ pub(crate) fn check_method_call(
         return None;
     }
     resolve_type_ref(&method_decl.return_type, &ctx.input.types)
+}
+
+/// #594: type-check a call to a generic instance method — one attached to a
+/// generic type (so `self` carries the type's parameters) and/or carrying its
+/// own `[U]` parameters. Mirrors [`check_generic_call`] (the free-function
+/// path, ADR 0029): resolve the method's parameter/return patterns with the
+/// rigid vars in scope, seed the substitution from the receiver's concrete type
+/// arguments, then drive argument-directed inference over the method's own
+/// parameters. The receiver's parameters are already ground (from the receiver
+/// type), so only the method's own parameters need inferring.
+fn check_generic_method_call(
+    type_name: &str,
+    recv_type_params: &[String],
+    recv_ty: &Ty,
+    method_decl: &FnDecl,
+    method: &Ident,
+    args: &[Expr],
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    // Rigid vars: the receiver type's parameters plus the method's own.
+    let mut vars: HashSet<String> = recv_type_params.iter().cloned().collect();
+    for tp in &method_decl.type_params {
+        vars.insert(tp.name.name.clone());
+    }
+    // Param count excludes the implicit `self`.
+    if method_decl.params.len() != args.len() {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.types.method_arity",
+                method.span,
+                format!(
+                    "method `{}.{}` expects {} argument(s), but {} were given",
+                    type_name,
+                    method.name,
+                    method_decl.params.len(),
+                    args.len()
+                ),
+            )
+            .with_label(method_decl.name.ident().span, "method declared here"),
+        );
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    // Seed the substitution from the receiver's concrete type arguments: the
+    // type's parameters are ground the moment the receiver's type is known
+    // (`self.map(g)` on a `Box[User]` binds the type's `A` to `User`; on `self`
+    // it binds `A` to its own rigid var). An arity mismatch here means the
+    // receiver was under-applied — reported where the receiver was typed — so we
+    // leave those parameters unseeded and fail below as uninferable.
+    let mut subst: HashMap<String, Ty> = HashMap::new();
+    if let Ty::Named {
+        args: recv_args, ..
+    } = recv_ty
+        && recv_args.len() == recv_type_params.len()
+    {
+        for (name, arg) in recv_type_params.iter().zip(recv_args.iter()) {
+            subst.insert(name.clone(), arg.clone());
+        }
+    }
+    // Resolve the method's parameter and return patterns with every rigid var in
+    // scope (a name matching one resolves to `Ty::Var`, not an unknown type).
+    let var_params: Vec<Option<Ty>> = method_decl
+        .params
+        .iter()
+        .map(|p| resolve_type_ref_in(&p.type_ref, &ctx.input.types, &vars))
+        .collect();
+    let ret_pattern = resolve_type_ref_in(&method_decl.return_type, &ctx.input.types, &vars)?;
+
+    let mut arg_tys: Vec<Option<Ty>> = vec![None; args.len()];
+    // Pass 1 — non-lambda arguments (mirrors `check_generic_call`).
+    for (i, arg) in args.iter().enumerate() {
+        if matches!(arg.kind, ExprKind::Lambda(_)) {
+            continue;
+        }
+        let expected = var_params[i].as_ref().map(|p| substitute(p, &subst));
+        let ty = type_of(arg, expected.as_ref(), ctx);
+        if let (Some(pattern), Some(actual)) = (var_params[i].as_ref(), ty.as_ref())
+            && !unify(pattern, actual, &mut subst)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.generics.type_arg_mismatch",
+                arg.span,
+                format!(
+                    "argument {} infers a type for `{}.{}`'s type parameter that conflicts with an earlier argument or the receiver",
+                    i + 1,
+                    type_name,
+                    method.name
+                ),
+            ));
+            return None;
+        }
+        arg_tys[i] = ty;
+    }
+    // Pass 2 — lambda arguments, against the now-substituted expecteds.
+    for (i, arg) in args.iter().enumerate() {
+        if !matches!(arg.kind, ExprKind::Lambda(_)) {
+            continue;
+        }
+        let expected = var_params[i].as_ref().map(|p| substitute(p, &subst));
+        let params_unconstrained = matches!(
+            expected.as_ref(),
+            Some(Ty::Fn { params, .. }) if params.iter().any(contains_var)
+        );
+        let fully_annotated = matches!(
+            &arg.kind,
+            ExprKind::Lambda(l) if l.params.iter().all(|p| p.type_ref.is_some())
+        );
+        if params_unconstrained && !fully_annotated {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.generics.uninferable_type_arg",
+                    arg.span,
+                    format!(
+                        "the lambda's parameter types depend on `{}.{}`'s type parameters, which the receiver and other arguments do not determine",
+                        type_name, method.name
+                    ),
+                )
+                .with_note("annotate the lambda's parameters"),
+            );
+            return None;
+        }
+        let ty = if params_unconstrained {
+            type_of(arg, None, ctx)
+        } else {
+            type_of(arg, expected.as_ref(), ctx)
+        };
+        if let (Some(pattern), Some(actual)) = (var_params[i].as_ref(), ty.as_ref())
+            && !unify(pattern, actual, &mut subst)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.generics.type_arg_mismatch",
+                arg.span,
+                format!(
+                    "the lambda's type conflicts with `{}.{}`'s inferred type arguments",
+                    type_name, method.name
+                ),
+            ));
+            return None;
+        }
+        arg_tys[i] = ty;
+    }
+    // Every one of the method's own type parameters must now be determined (the
+    // receiver's parameters were seeded above).
+    for tp in &method_decl.type_params {
+        if !subst.contains_key(&tp.name.name) {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.generics.uninferable_type_arg",
+                    method.span,
+                    format!(
+                        "type parameter `{}` of `{}.{}` is not inferable from the receiver or the arguments",
+                        tp.name.name, type_name, method.name
+                    ),
+                )
+                .with_label(tp.span, "declared here"),
+            );
+            return None;
+        }
+    }
+    // Final compatibility over the fully-ground parameter types.
+    let mut ok = true;
+    for (i, (pattern, arg)) in var_params.iter().zip(args).enumerate() {
+        record_param_hint(ctx.hints, &method_decl.params[i].name.name, arg);
+        let (Some(pattern), Some(arg_ty)) = (pattern.as_ref(), arg_tys[i].as_ref()) else {
+            continue;
+        };
+        let ground = substitute(pattern, &subst);
+        if !compatible(arg_ty, &ground) {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "argument {} to `{}.{}` has type `{}`, but `{}` is expected",
+                    i + 1,
+                    type_name,
+                    method.name,
+                    arg_ty.display(),
+                    ground.display()
+                ),
+            ));
+            ok = false;
+        }
+    }
+    if !ok {
+        return None;
+    }
+    // v0.39 (ADR 0072)-style hint: show the inferred method type arguments after
+    // the method name (`box.map` [Int] `(f)`). Only the method's own
+    // parameters — the receiver's are visible in the receiver's type.
+    if !method_decl.type_params.is_empty() {
+        let rendered: Option<Vec<String>> = method_decl
+            .type_params
+            .iter()
+            .map(|tp| subst.get(&tp.name.name).map(|t| t.display()))
+            .collect();
+        if let Some(parts) = rendered {
+            ctx.hints
+                .record(method.span, format!("[{}]", parts.join(", ")));
+        }
+    }
+    Some(substitute(&ret_pattern, &subst))
 }
 
 /// v0.178 (#662) / v0.182 (#664): resolve a test-body service invocation against

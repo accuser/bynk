@@ -439,7 +439,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.generics.method_on_generic_type",
-        "A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183).",
+        "A *static* method is attached to a generic type; static methods on generic types are deferred (they have no receiver to supply the type's parameters). Instance methods on generic types are supported (#594).",
         &["fn_decl"],
     ),
     dg(

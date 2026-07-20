@@ -56,7 +56,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       # wasm-bindgen-cli must match the wasm-bindgen crate (Cargo.lock: 0.2.126);
       # a version skew between the glue and the module fails at load.
-      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+      - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2
         with:
           tool: wasm-bindgen-cli@0.2.126
       # wasm-opt (binaryen) shrinks the release artefact (-Oz, the size budget).
@@ -65,7 +65,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y binaryen
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: "20"
+          # wrangler@4.112.0 (the deploy steps below) requires Node >=22; the
+          # build steps run fine on it too. Keep in step with deploy-site.yml.
+          node-version: "22"
       # The grammar wasm (web-tree-sitter highlighting) is built by
       # `tree-sitter build --wasm`; the modern CLI downloads its own wasi-sdk
       # toolchain, so no emscripten/Docker setup is needed here. It is required for
