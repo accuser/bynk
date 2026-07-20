@@ -482,6 +482,8 @@ fn token_type_index(kind: SymbolKind) -> u32 {
         SymbolKind::Field => 8,
         // v0.45: actors append `actor` at 9.
         SymbolKind::Actor => 9,
+        // #304: agent handlers reuse `method` (7), same as capability ops.
+        SymbolKind::Handler => 7,
     }
 }
 
