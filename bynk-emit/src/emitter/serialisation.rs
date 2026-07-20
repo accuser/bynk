@@ -280,7 +280,7 @@ pub fn emit_helpers_for_owner(
 }
 
 /// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
-/// [`Qual`]. With an empty qualifier this is the owner's own module (every
+/// `Qual`. With an empty qualifier this is the owner's own module (every
 /// type named bare, refined validation through `.of`). With a non-empty one it
 /// is a *consumer* generating its own view of another context's boundary
 /// types: the qualified names reach through the `import type * as <ns>` alias,
@@ -1460,7 +1460,7 @@ pub fn emit_generic_helpers(
 }
 
 /// #661: as [`emit_generic_helpers`], but the value-type positions of each
-/// specialised helper are named through the type [`Qual`] — so a consumer's
+/// specialised helper are named through the type `Qual` — so a consumer's
 /// `deserialise_Result_AuthId_PaymentError` returns
 /// `Result<commerce_payment.AuthId, commerce_payment.PaymentError>` while its
 /// codec calls stay local. The codec *suffix* (`Result_AuthId_PaymentError`) is

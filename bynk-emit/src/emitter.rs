@@ -1119,7 +1119,7 @@ fn emit_boundary_helpers(
 /// rather than importing the callee's module as a value.
 ///
 /// The codec function names stay bare and local; only the TS *type* positions
-/// reach through the callee's `import type * as <ns>` alias (via the [`Qual`]
+/// reach through the callee's `import type * as <ns>` alias (via the `Qual`
 /// map built here). Refinement validation follows the export visibility: an
 /// opaque type casts structurally (Decision C), a transparent refined type
 /// inlines its predicates (Decision D) — both decided inside the codec emitter
