@@ -24,4 +24,7 @@ service api from http {
   on POST("/reject") (body: Item) -> Effect[HttpResult[Item]] by u: User {
     BadRequest("the handler ran and rejected it")
   }
+  on PUT("/cart/:sku") (sku: Sku, body: Item) -> Effect[HttpResult[Item]] by u: User {
+    Created(body)
+  }
 }

@@ -1399,7 +1399,10 @@ exhaustiveness (its guard may fail at runtime).
 
 {{#grammar _pattern}}
 
-A pattern: a wildcard or a variant pattern.
+A pattern: a wildcard, a literal, a binding, or a variant pattern. A
+lowercase-led identifier is a binding (it matches anything and binds the
+value); an uppercase-led one is a nullary variant — in the concrete grammar
+both parse as `variant_pattern`.
 
 ### variant_pattern {#rule-variant_pattern}
 
