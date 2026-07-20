@@ -30,12 +30,12 @@ The extension activates on any `.bynk` file, or on any workspace containing a
 - **Document & workspace symbols** and **document highlights**.
 - **Test Explorer** — run a project's `test` and `integration` blocks from the
   Testing view (or **Bynk: Run Tests**), with click-through from a failing
-  assertion to its `.bynk` line. Runs `bynkc test --format json`; compile
+  assertion to its `.bynk` line. Runs `bynk test --format json`; compile
   failures land in the Problems panel. A **`▷ Run Test | Debug Test`** CodeLens
   (and native gutter run/debug glyphs) sit at each test in the editor — disable
   the lens with `bynk.testCodeLens`.
 - **Debugging** — set a breakpoint in a `.bynk` file and press **Debug**: in the
-  Test Explorer (Node, `bynkc test --inspect`) or via a `bynk` `launch.json`
+  Test Explorer (Node, `bynk test --inspect`) or via a `bynk` `launch.json`
   config for the dev-server worker (workerd, `bynk dev --inspect`). Delegates to
   VS Code's JavaScript debugger; breakpoints resolve to the exact `.bynk`
   statement through the emitted source maps.
@@ -85,14 +85,15 @@ Available from the Command Palette under **Bynk**:
 | **Bynk: Download Language Server** | Force a fresh download of the pinned server. |
 | **Bynk: Show Language Server Output** | Open the "Bynk LSP" output channel. |
 | **Bynk: Open Project Config (bynk.toml)** | Open the workspace's `bynk.toml`. |
-| **Bynk: Run Tests** | Run the project's tests via `bynkc test --format json` and report them in the Testing view. |
+| **Bynk: Run Tests** | Run the project's tests via `bynk test --format json` and report them in the Testing view. |
 
 ## Settings
 
 | Setting | Default | Purpose |
 | ------- | ------- | ------- |
 | `bynk.executablePath` | `""` (auto-resolve) | Absolute path to a `bynkc-lsp` binary to use. When empty, the extension resolves the server automatically (see above). |
-| `bynk.compilerPath` | `""` (`bynkc` on `PATH`) | Path to the `bynkc` compiler used by the `bynkc: check` task and the Test Explorer. When empty, `bynkc` is taken from `PATH`. |
+| `bynk.bynkPath` | `""` (`bynk` on `PATH`) | Path to the `bynk` driver used by the `bynkc: check` task, the Test Explorer, and debugging. When empty, `bynk` is taken from `PATH`. |
+| `bynk.compilerPath` | `""` (driver resolves `bynkc`) | Pin an exact `bynkc`, passed through as `BYNK_BYNKC` to `bynk`. When empty, `bynk` resolves `bynkc` itself (`PATH`, then a sibling of `bynk`) — richer than a bare `PATH` lookup, so a driver-first install (`bynkc` reachable only via `BYNK_BYNKC` or as a `bynk` sibling) still works. |
 | `bynk.trace.server` | `off` | Trace LSP protocol traffic (`off` / `messages` / `verbose`) in the "Bynk LSP" output channel. |
 | `bynk.inlayHints.enable` | `true` | Show Bynk inferred-type inlay hints. A persistent, Bynk-only preference; takes effect on the next edit or scroll. |
 

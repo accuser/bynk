@@ -1,16 +1,17 @@
 // Slice 4 integration test: the *production* path. Drives the extension's own
 // `bynk` DebugConfigurationProvider end to end — `startDebugging({ type: "bynk",
-// mode: "test" })` shells `bynkc test --inspect`, parses the inspector port,
-// attaches VS Code's JS debugger, and a breakpoint set in a `.bynk` test pauses.
+// mode: "test" })` shells `bynk test --inspect` (#486: through the driver, not
+// `bynkc` directly), parses the inspector port, attaches VS Code's JS debugger,
+// and a breakpoint set in a `.bynk` test pauses.
 //
 // Unlike debug.test.ts (which hand-authors a `.ts`+map to isolate the attach
 // mechanics), this exercises the real compiler output and the real provider, so
 // it also covers the v0.72 emitter fix: the map `sources` are the `.bynk` files'
 // absolute paths, so an editor breakpoint resolves to the loaded source.
 //
-// Guarded on `bynkc` + `node` (DECISION D) — the CI harness provisions them on
-// PATH; elsewhere the test skips. The project is built *inside* the workspace
-// folder, as a real user's is (js-debug anchors source resolution to it).
+// Guarded on `bynk` + `bynkc` + `node` (DECISION D) — the CI harness provisions
+// them on PATH; elsewhere the test skips. The project is built *inside* the
+// workspace folder, as a real user's is (js-debug anchors source resolution to it).
 
 import * as assert from "assert";
 import * as path from "path";
@@ -54,7 +55,7 @@ describe("Bynk debug provider (test mode)", () => {
   });
 
   it("startDebugging({type:'bynk', mode:'test'}) pauses at a .bynk breakpoint", async function () {
-    if (!have("bynkc") || !have("node") || !nodeStripsTypes()) this.skip();
+    if (!have("bynk") || !have("bynkc") || !have("node") || !nodeStripsTypes()) this.skip();
     this.timeout(90_000);
 
     const workspace = path.resolve(__dirname, "../../../test/fixtures/workspace");

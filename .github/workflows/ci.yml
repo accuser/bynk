@@ -492,10 +492,11 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Build the language server + compiler
-        # `bynkc-lsp` for the LSP tests; `bynkc` for the debug provider test
-        # (`bynkc test --inspect`) — both land on PATH via runTest.ts (DECISION D).
-        run: cargo build --release -p bynk-lsp -p bynkc
+      - name: Build the language server + compiler + driver
+        # `bynkc-lsp` for the LSP tests; `bynkc` + `bynk` for the check/test/debug
+        # paths, which now shell `bynk` rather than `bynkc` directly (#486) — all
+        # three land on PATH via runTest.ts (DECISION D).
+        run: cargo build --release -p bynk-lsp -p bynkc -p bynk
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           # ≥ 22.6 for the debug paths — the emitted `.ts` runs under Node's

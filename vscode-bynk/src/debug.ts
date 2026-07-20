@@ -9,15 +9,15 @@
 // to the same path the debugger loads) — do the breakpoint relocation.
 //
 // Two runtimes, one mechanism (both proven by the integration suite):
-//   - test  → `bynkc test --inspect`  (Node `--inspect-brk`, type-stripped `.ts`)
-//   - dev   → `bynk  dev  --inspect`  (workerd via `wrangler dev --inspector-port`)
+//   - test  → `bynk test --inspect`  (Node `--inspect-brk`, type-stripped `.ts`)
+//   - dev   → `bynk dev  --inspect`  (workerd via `wrangler dev --inspector-port`)
 
 import { spawn, ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
-import { compilerPath } from "./tasks";
+import { bynkPath, compilerOverride } from "./tasks";
 import { BYNK_DESCRIPTION_GENERATOR } from "./debugValues";
 import { renderBynkValue, relabelBynkLocals } from "./semanticValues";
 
@@ -83,15 +83,6 @@ function semanticValuesEnabled(): boolean {
   return vscode.workspace
     .getConfiguration("bynk")
     .get<boolean>("debug.semanticValues", true);
-}
-
-/** The `bynk` front-end command — `bynk.bynkPath` setting, else `bynk` on PATH.
- *  Mirrors `compilerPath()` for `bynkc`; the `dev` debug path needs the driver. */
-export function bynkPath(): string {
-  return (
-    vscode.workspace.getConfiguration("bynk").get<string>("bynkPath", "").trim() ||
-    "bynk"
-  );
 }
 
 // Files the debugger should step *over*, not into (ADR 0103 D5): Node internals,
@@ -272,16 +263,17 @@ class BynkDebugProvider implements vscode.DebugConfigurationProvider {
     }
   }
 
-  /** `bynkc test --inspect` launches `node --inspect-brk`, which prints its
+  /** `bynk test --inspect` launches `node --inspect-brk`, which prints its
    *  `ws://host:port/…` inspector URL to stderr and pauses until we attach. We
-   *  read the port from that line. */
+   *  read the port from that line. Goes through `bynk` rather than shelling
+   *  `bynkc` directly (#486), inheriting the driver's richer resolution. */
   private async startTest(
     root: vscode.Uri,
     caseName?: string,
   ): Promise<{ port: number; key: string }> {
     const args = ["test", ".", "--inspect"];
     if (caseName) args.push("--case", caseName);
-    const child = spawnCli(compilerPath(), args, root.fsPath);
+    const child = spawnCli(bynkPath(), args, root.fsPath, compilerOverride());
     const key = trackChild(this.children, child);
     try {
       const port = await waitForInspectorUrl(child, 30_000);
@@ -328,9 +320,16 @@ class BynkDebugProvider implements vscode.DebugConfigurationProvider {
 // ---------------------------------------------------------------------------
 
 /** Spawn a CLI in its own process group (`detached`) so killing it later takes
- *  the whole tree (bynkc→node, bynk→wrangler→workerd) with it. */
-function spawnCli(command: string, args: string[], cwd: string): ChildProcess {
-  return spawn(command, args, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+ *  the whole tree (bynkc→node, bynk→wrangler→workerd) with it. `bynkc` is
+ *  passed through as `BYNK_BYNKC` (the `bynk.compilerPath` setting) so a
+ *  pinned `bynkc` still applies now that `bynk` is what gets spawned. */
+function spawnCli(command: string, args: string[], cwd: string, bynkc?: string): ChildProcess {
+  return spawn(command, args, {
+    cwd,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bynkc ? { ...process.env, BYNK_BYNKC: bynkc } : undefined,
+  });
 }
 
 let childSeq = 0;

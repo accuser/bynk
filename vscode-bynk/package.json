@@ -2,7 +2,7 @@
   "name": "bynk-vscode",
   "displayName": "Bynk",
   "description": "Language support for Bynk (.bynk) source files.",
-  "version": "0.212.0",
+  "version": "0.212.1",
   "publisher": "bynk",
   "license": "MIT OR Apache-2.0",
   "icon": "assets/bynk-icon.png",
@@ -10,7 +10,7 @@
     "url": "https://github.com/accuser/bynk"
   },
   "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "bynkServerVersion": "v0.212.0",
+  "bynkServerVersion": "v0.212.1",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -283,7 +283,7 @@
                   "dev"
                 ],
                 "enumDescriptions": [
-                  "Debug the project's tests (`bynkc test --inspect`).",
+                  "Debug the project's tests (`bynk test --inspect`).",
                   "Debug the dev server worker (`bynk dev --inspect`)."
                 ],
                 "description": "What to debug: the tests, or the running dev server.",
@@ -390,12 +390,12 @@
         "bynk.compilerPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the `bynkc` compiler used by the `bynkc: check` build task and the Test Explorer. When empty, `bynkc` is taken from PATH."
+          "description": "Pin an exact `bynkc` compiler for the `bynkc: check` build task, the Test Explorer, and test debugging — passed through as `BYNK_BYNKC` to the `bynk` driver, which now runs these. When empty, `bynk` resolves `bynkc` itself (PATH, then a sibling of `bynk`)."
         },
         "bynk.bynkPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the `bynk` driver used by the dev debug session (`bynk dev --inspect`). When empty, `bynk` is taken from PATH."
+          "description": "Path to the `bynk` driver used by the `bynkc: check` build task, the Test Explorer, and the debug session (`bynk check`/`bynk test`/`bynk dev`). When empty, `bynk` is taken from PATH."
         },
         "bynk.debug.semanticValues": {
           "type": "boolean",
