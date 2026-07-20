@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "vscode-bynk: the `bynkc: check` build task, the Test Explorer, and test debugging now shell the `bynk` driver instead of `bynkc` directly (closes #486), inheriting its richer compiler resolution (`BYNK_BYNKC` → PATH → sibling-of-`bynk`) in place of a bare-PATH lookup that missed a driver-first install. `bynk.compilerPath` is forwarded as `BYNK_BYNKC` so it keeps pinning an exact `bynkc`; `bynk.bynkPath` (previously only the `bynk dev` debug session's setting) now also governs these three surfaces."
----
+# 0238 — The VS Code extension resolves its compiler through `bynk`, not by reimplementing `bynkc` lookup
 
-## ADR: vscode-check-test-debug-via-driver
-title: The VS Code extension resolves its compiler through `bynk`, not by reimplementing `bynkc` lookup
-summary: `bynkc: check`, the Test Explorer, and test debugging shell `bynk check`/`bynk test`, inheriting the driver's `BYNK_BYNKC` → PATH → sibling resolution
+- **Status:** Accepted (v0.212.1)
 
 **Context.** The extension shelled `bynkc` directly for three surfaces — the
 `bynkc: check` build task, the Test Explorer (`testing.ts`), and test debugging
