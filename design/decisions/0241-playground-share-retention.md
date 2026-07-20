@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The playground's share service expires stored snippets 30 days after creation, via `Kv.putTtl`, instead of retaining them indefinitely.
----
+# 0241 — Playground share links expire 30 days after creation
 
-## ADR: playground-share-retention
-title: Playground share links expire 30 days after creation
-summary: Bound the share service's KV storage with a fixed-TTL retention policy instead of indefinite retention
+- **Status:** Accepted (v0.214.3)
 
 **Context.** The playground's share service (`playground/share/`, in-browser track slice 5c) stores each shared snippet in Cloudflare KV under a random id, with no expiry — `Kv.put`, not `Kv.putTtl`. Issue #398 deferred a richer gist-style upgrade (stable shortlinks, listing, retention, edit history) but flagged retention/abuse bounds specifically as worth addressing on its own: an unbounded namespace is unbounded storage cost and an unbounded abuse surface (anyone can POST arbitrary — if size-bounded — text forever).
 
