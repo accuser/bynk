@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.214.4** | The playground editor shows the inferred type of the expression under the cursor on hover (#397) |
 | **v0.214.3** | The playground's share service expires stored snippets 30 days after creation, via `Kv.putTtl`, instead of retaining them indefinitely. |
 | **v0.214.2** | "vscode-bynk: add the missing `match` snippet (variant/binding arms + wildcard fallback), closing out #307" |
 | **v0.214.1** | "vscode-bynk: pressing Enter inside a `--` line comment now continues it, and inside/after a `---` doc-comment fence now keeps the same indentation instead of falling back to VS Code's generic behaviour; the two are disambiguated so a `---` fence is never treated as a `--` line comment (closes #306)." |

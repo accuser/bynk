@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The playground editor shows the inferred type of the expression under the cursor on hover (#397)
----
+# 0242 — Playground gains a hover tooltip for inferred types; completion split to a new issue
 
-## ADR: playground-hover-397
-title: Playground gains a hover tooltip for inferred types; completion split to a new issue
-summary: Expose the checker's expr-types sink through a new `bynk_hover` wasm entry; defer completion
+- **Status:** Accepted (v0.214.4)
 
 **Context.** Issue #397 was deferred from the in-browser track's slice 5d
 (#393), which shipped live on-type diagnostics via a `bynk_analyze` wasm entry
