@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.216.1** | Completion, symbols, locals-navigation, and signature-help move from bynk-lsp into bynk-ide, unblocking a future wasm-side completion entry (#808) |
 | **v0.216.0** | "`textDocument/codeAction` offers an extract-function refactor (`RefactorExtract`), capability-free-only" |
 | **v0.215.2** | LSP `.`-completion on a `store Map` receiver now offers the query builders/terminals (`filter`/`map`/`sortBy`/`collect`/…), the `.entries`/`.keys`/`.values` accessors, and the entry ops (`put`/`get`/`update`/…), closing the gap ADR 0184 left deferred |
 | **v0.215.1** | LSP `codeAction` now filters its response against `CodeActionParams.context.only` |
