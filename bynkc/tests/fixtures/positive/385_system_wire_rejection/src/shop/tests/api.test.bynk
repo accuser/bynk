@@ -27,4 +27,16 @@ suite shop.api as system {
     let r <- api.POST("/reject", Wire("{\"sku\": \"ok\"}")) by User("alice")
     expect r is Handled(_)
   }
+  case "a raw path segment with a typed body passes both through the boundary" {
+    let r <- api.PUT("/cart/:sku", Wire("widget"), Item { sku: "widget" }) by User("alice")
+    expect r is Handled(_)
+  }
+  case "a raw path segment failing refinement is rejected even with a typed body" {
+    let r <- api.PUT("/cart/:sku", Wire(""), Item { sku: "widget" }) by User("alice")
+    expect r is Rejected(RefinementViolation(_))
+  }
+  case "a typed path segment with a raw body passes both through the boundary" {
+    let r <- api.PUT("/cart/:sku", "widget", Wire("{\"sku\": \"widget\"}")) by User("alice")
+    expect r is Handled(_)
+  }
 }

@@ -97,6 +97,9 @@ export const api = {
   async http_POST_reject(body: Item, deps: { identity: UserId }): Promise<HttpResult<Item>> {
     return HttpResult.BadRequest("the handler ran and rejected it");
   },
+  async http_PUT_cart_Param_sku(sku: Sku, body: Item, deps: { identity: UserId }): Promise<HttpResult<Item>> {
+    return HttpResult.Created(body);
+  },
 };
 
 export function __resetAgents(): void {
