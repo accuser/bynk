@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0236](0236-self-contained-workers-codecs.md) | **Self-contained Workers — a context generates its own cross-context codecs** (v0.211) — A caller generates its own view of a callee-owned type's codec, so a workers build imports no sibling context's module as a value | Accepted (v0.211) |
 | [0235](0235-lsp-decoration-stale-while-revalidate.md) | **Pull-based decorations serve the committed round and revalidate, not force a refresh** (v0.210) — Why the freshness contract's strict refresh is kept for cursor requests but relaxed for the decorations the editor auto-fires on every edit | Accepted (v0.210) |
 | [0234](0234-generic-instance-methods.md) | **Instance methods on generic types** (v0.209) — A generic type carries instance methods; the receiver supplies the type's parameters, erased to a generic namespace-object method | Accepted (v0.209) |
 | [0233](0233-atomic-deploy-ledger-write.md) | **The deploy ledger is written atomically and a truncated one is corruption** (v0.208.2) — Temp-file + rename for the ledger write, and a zero-byte ledger fails the read | Accepted (v0.208.2) |

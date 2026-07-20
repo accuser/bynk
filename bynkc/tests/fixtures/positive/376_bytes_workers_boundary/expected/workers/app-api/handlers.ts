@@ -3,11 +3,11 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError, __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8 } from "../../runtime.js";
 
-import * as app_blobs from "../app-blobs/handlers.js";
+import type * as app_blobs from "../app-blobs/handlers.js";
 
 export const upload = {
   async call(payload: Uint8Array, deps: { env: { APP_BLOBS: ServiceBinding } }): Promise<Result<number, void>> {
-    const n = await callService(deps.env.APP_BLOBS, "objects", __bynkBytesToBase64(payload) as JsonValue, app_blobs.deserialise_Result_Int_Unit, "app.api", "b27f41b7d9f34c77");
+    const n = await callService(deps.env.APP_BLOBS, "objects", __bynkBytesToBase64(payload) as JsonValue, deserialise_Result_Int_Unit, "app.api", "b27f41b7d9f34c77");
     return n;
   },
 };

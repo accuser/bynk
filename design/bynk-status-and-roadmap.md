@@ -159,12 +159,15 @@ increments.
   concrete casualty and is the concrete proof: it mis-round-tripped because the
   boundary cast it outbound while decoding it inbound, so ADR 0142 D8 diagnosed a
   bare `Bytes` rather than corrupt it; with one symmetric dispatch the
-  restriction is retired and the diagnostic withdrawn. Two bounded residues are
+  restriction is retired and the diagnostic withdrawn. One bounded residue is
   named in `emission.md` §7.3.4b: the runtime-owned error types
   (`ValidationError`, `JsonError`, `HttpResult`, `QueueResult`) still pass through
-  uncoded, and a context does not yet generate its own codecs for a callee-owned
-  type (#642's Decision B, deferred — it is the prerequisite for the
-  cross-context contract hash, #643).
+  uncoded. The other — a context reaching a callee-owned type's codec through the
+  callee's *module* rather than generating its own — is **closed in #661**: each
+  Worker now generates its own cross-context codecs and imports no sibling
+  context's module as a value. (ADR 0199 Decision G called that a prerequisite for
+  the cross-context contract hash; ADR 0200 Decision H recorded the correction —
+  the hash shipped in v0.177 without it.)
 - **Brittle cross-context structural matching** — *closed in v0.177 (#643)*.
   Refinement predicates were compared positionally, so two structurally identical
   types whose predicates were written in a different order spuriously failed to

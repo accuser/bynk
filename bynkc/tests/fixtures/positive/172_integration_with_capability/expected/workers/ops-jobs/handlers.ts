@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "../../runtime.js";
 
-import * as platform_time from "../platform-time/handlers.js";
+import type * as platform_time from "../platform-time/handlers.js";
 
 export type TickError =
     { readonly tag: "Unavailable" };
