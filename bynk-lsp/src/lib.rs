@@ -352,10 +352,21 @@ impl Backend {
         };
         let root = Self::root_for_uri_uncached(uri);
         let mut state = self.state.write().await;
-        if state.root_cache_generation == generation {
+        if Self::root_cache_write_is_current(generation, state.root_cache_generation) {
             state.root_cache.insert(uri.clone(), root.clone());
         }
         root
+    }
+
+    /// #682: whether a `root_for_uri` write-back computed while the cache was
+    /// at `read_generation` should still be applied, given the cache is now at
+    /// `current_generation` — `false` once an invalidating clear has bumped it
+    /// past the read, meaning the walk's answer may already be stale. Pulled
+    /// out of `root_for_uri` so the guard itself — the one thing standing
+    /// between the fix and the TOCTOU it closes — is unit-testable without
+    /// needing to actually win the race in real time.
+    fn root_cache_write_is_current(read_generation: u64, current_generation: u64) -> bool {
+        read_generation == current_generation
     }
 
     /// Slice E: every project root under `folder` — the folder's own
@@ -5620,6 +5631,53 @@ mod tests {
             backend.root_for_uri(&uri).await,
             Some(root),
             "re-routes to the new project now the stale cache entry is gone",
+        );
+    }
+
+    /// #822: the guard `root_for_uri` checks before writing back a cache miss
+    /// — an accidental `!=`-for-`==` inversion here would silently reopen the
+    /// TOCTOU the generation counter exists to close, and the real race is too
+    /// timing-dependent to exercise deterministically, so this pins the
+    /// predicate directly.
+    #[test]
+    fn root_cache_write_is_current_rejects_a_generation_that_moved() {
+        assert!(
+            Backend::root_cache_write_is_current(3, 3),
+            "no clear happened since the read — the write-back applies",
+        );
+        assert!(
+            !Backend::root_cache_write_is_current(3, 4),
+            "a clear bumped the generation since the read — the write-back must be dropped",
+        );
+    }
+
+    /// #822: both `root_cache.clear()` sites must bump `root_cache_generation`
+    /// alongside the clear — the guard only closes the TOCTOU if every
+    /// invalidation does both. `did_change_watched_files`'s bump is covered
+    /// indirectly by `a_created_manifest_invalidates_the_cached_route`; this
+    /// covers `did_change_workspace_folders`'s directly, since a regression
+    /// dropping just that one bump would reopen the race there specifically.
+    #[tokio::test]
+    async fn a_workspace_folder_change_bumps_the_root_cache_generation() {
+        let s = scratch_project("g_race_folder", &[("bynk.toml", "[project]\nname=\"p\"\n")]);
+        let backend = bare_backend().await;
+        let before = backend.state.read().await.root_cache_generation;
+
+        backend
+            .did_change_workspace_folders(DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent {
+                    added: vec![WorkspaceFolder {
+                        uri: Url::from_file_path(&s.0).unwrap(),
+                        name: "p".into(),
+                    }],
+                    removed: vec![],
+                },
+            })
+            .await;
+
+        assert!(
+            backend.state.read().await.root_cache_generation > before,
+            "a workspace-folder change must bump the generation, not just clear the cache",
         );
     }
 
