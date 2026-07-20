@@ -117,6 +117,16 @@ nothing rather than a stale answer. A round is fast (single-digit milliseconds
 for a typical project), and concurrent requests after one edit share a single
 refresh.
 
+The requests the editor re-fires on *every* keystroke — semantic tokens, inlay
+hints, code lenses, document links, and code actions — take a lighter path.
+Because they resolve nothing against your live cursor (each decoration's ranges
+are computed against the snapshot the round analysed), they are served from the
+last committed round as-is, without forcing a fresh round on every keystroke.
+The decorations may lag your typing by at most one debounce cycle; when the
+debounced round commits, the server asks the editor to re-pull them, so they
+catch up on their own. This keeps typing responsive on large projects, where
+forcing a whole-project round per keystroke grew slower with project size.
+
 ## Project discovery and performance
 
 The server resolves each file to its project by walking upward from the file to

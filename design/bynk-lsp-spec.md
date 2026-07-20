@@ -171,12 +171,29 @@ whose open buffer has moved past the last round triggers a **refresh** — a rou
 over the current buffers — before the request is answered, so a position is
 never resolved against text the user has already edited past.
 
-- **Uniform.** Every index-backed handler routes through one gate
+- **Uniform for cursor requests.** Every handler that resolves the client's
+  cursor against the analysed snapshot routes through one strict gate
   (`Backend::analysis_for`). The pre-v0.179 split — some handlers on the cached
   round, `rename` alone on a fresh one, several reading `state.analysis` raw —
   is gone; freshness is the contract, not a per-handler choice. `completion` and
   `document_symbol` remain outside it (they resolve against **live** buffer text
-  directly, so there is no snapshot to be stale).
+  directly, so there is no snapshot to be stale). The pull-based *decoration*
+  requests take a distinct, non-refreshing gate (next bullet).
+- **Stale-while-revalidate for pull-based decorations (#733).** The requests the
+  editor auto-fires on every `didChange` — `semanticTokens`, `inlayHint`,
+  `codeLens`, `documentLink`, `codeAction` — go through `committed_analysis`,
+  which serves the **last committed round as-is**, without forcing a refresh.
+  This is safe where the strict gate is required elsewhere because these handlers
+  resolve nothing against the client's live cursor: every range and span they
+  emit converts against the round's own snapshot (or, for `documentLink`, against
+  live text plus the project-level `unit_sources` map). A committed round lagging
+  the buffer by at most one debounce cycle is therefore internally consistent —
+  and forcing a whole-project round on each keystroke was defeating the debounce,
+  the latency growing with project size. The revalidation is the debounce round
+  already scheduled by the edit; when it commits, the server nudges the client to
+  re-pull via `workspace/{semanticTokens,inlayHint,codeLens}/refresh` (each sent
+  only if the client advertised `refresh_support`). Cold start (no round yet)
+  answers empty, and the client re-pulls on the first refresh nudge.
 - **A multi-file edit needs more than the per-file gate.** `rename` emits
   versioned edits across every file referencing the symbol, so it refreshes
   **every open buffer** (`analysis_covering_open_buffers`), not just the
@@ -434,7 +451,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Keying.** A diagnostic's suggestions are offered when the requested range intersects the **diagnostic's span** — never the edits' spans, which can land far from the squiggle (both `given` fixes do: the diagnostic sits on the usage site or the return type; the edit lands in the clause).
 
-**Serving.** Actions are computed from the analysis round, which the freshness contract (§3.2.1, v0.179) keeps **current for the requested file** — a stale round is refreshed before serving, where the pre-v0.179 server served the cached round outright. A request for a file **outside the project**, or one the gate cannot bring to the client's version, returns the empty list. The round retains the per-file diagnostics the suggestions ride on. The request range converts against the analysed snapshot (§3.2's rule); each action's `WorkspaceEdit` is a **versioned** `TextDocumentEdit` against the analysed document version, so a drifted buffer rejects the edit rather than mis-applying it.
+**Serving.** Actions are computed from the **last committed round**, served through the non-refreshing decoration gate (§3.2.1's stale-while-revalidate rule, #733) — `codeAction` fires on selection changes, so it does not force a whole-project round. A request for a file **outside the project**, or one with no committed round yet, returns the empty list. The round retains the per-file diagnostics the suggestions ride on; the request range and those diagnostics both convert against the round's snapshot, and each action's `WorkspaceEdit` is a **versioned** `TextDocumentEdit` against the round's document version, so a drifted buffer rejects the edit rather than mis-applying it. The request range is the client's *live*-buffer selection: converting it against a round up to one debounce cycle behind can momentarily map it to a slightly wrong location (a stray or empty action) until the refresh nudge re-pulls — an **accepted** trade-off, bounded by the versioned edit (never a mis-application), the same as `semanticTokens/range` (§3.14).
 
 **Applicability.** Only `MachineApplicable` suggestions surface as quick-fixes; `HasPlaceholders` exists for a future CLI `--fix` and is never offered as a one-click edit.
 
@@ -462,7 +479,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Harvesting (ADR 0056).** Hints are a curated per-file set recorded by the **checker** at each binding site as it computes the binding's final type — never a tool-side re-inference, and not the raw typed model (which cannot position a hint). The sink is a `&mut` parameter (the `RefSink` shape), so recorded hints **survive a transient type error** at every site the checker still reaches; a fn-body error short-circuits that file's v0.5 declaration pass, so its **handler-body** hints are suppressed until the error clears. Synthetic and test/integration files record nothing.
 
-**Serving.** Hints are served from the analysis round the freshness contract (§3.2.1) keeps current for the requested file, like code actions (§3.10): a request for a file outside the project, or one the gate cannot bring to the client's version, returns the empty list — as does a file whose group's composition failed (no analysed model). The visible range and the hint positions convert against the analysed snapshot (§3.2's rule). The server always produces hints; visibility is the client's (the editor's built-in inlay toggle; a `bynk.inlayHints.enable` extension setting is a B-1 surface item). `inlayHint/resolve` is not declared — labels are computed eagerly.
+**Serving.** Hints are served from the **last committed round** through the non-refreshing decoration gate (§3.2.1's stale-while-revalidate rule, #733), like code actions (§3.10) — the editor re-fires `inlayHint` on every edit, so it does not force a round; the `workspace/inlayHint/refresh` nudge on round-commit re-pulls the fresh hints. A request for a file outside the project, or one with no committed round yet, returns the empty list — as does a file whose group's composition failed (no analysed model). The visible range and the hint positions convert against the analysed snapshot (§3.2's rule). The server always produces hints; visibility is the client's (the editor's built-in inlay toggle; a `bynk.inlayHints.enable` extension setting is a B-1 surface item). `inlayHint/resolve` is not declared — labels are computed eagerly.
 
 ### 3.14 Semantic tokens (v0.28)
 
@@ -481,7 +498,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Sources (ADR 0057).** A pure `index_queries` producer reads **two** sources from the cached round: `ProjectIndex.symbols` (user-defined defs + refs) and **`ProjectIndex.foreign_refs`** — references to first-party (`bynk.*`) symbols, which `symbols` deliberately drops (synthetic defs point at files not on disk; definition/rename/workspace-symbol must never surface them). The side table is tokens-only; the v0.25 navigation invariants on `symbols` are untouched. `test`/`integration` files' references are in the index, so semantic tokens light up test files too.
 
-**Serving & encoding.** Tokens are served from the analysis round the freshness contract (§3.2.1) keeps current for the requested file (non-project file, or a round the gate cannot bring to the client's version → empty); positions and the `range` request convert against that current snapshot. The token array is delta-encoded per the protocol — relative line/char, position-sorted (name segments never overlap), lengths in UTF-16 code units. The **`delta`** request variant is not declared (a later optimisation).
+**Serving & encoding.** Tokens are served from the **last committed round** through the non-refreshing decoration gate (§3.2.1's stale-while-revalidate rule, #733) — the editor re-fires `semanticTokens` on every edit, so it does not force a round; the `workspace/semanticTokens/refresh` nudge on round-commit re-pulls the fresh tokens (non-project file, or no committed round yet → empty). Positions and the `range` request convert against that round's snapshot — the `range` variant's window is the client's live-buffer range, so up to one debounce cycle behind it can momentarily cover slightly-off tokens until the nudge re-pulls (the accepted trade-off noted for code actions, §3.10). The token array is delta-encoded per the protocol — relative line/char, position-sorted (name segments never overlap), lengths in UTF-16 code units. The **`delta`** request variant is not declared (a later optimisation).
 
 **Client theming (v0.29, ADR 0058).** The custom token types (`capability`/`service`/`agent`/`provider`) and modifiers (`refined`/`opaque`/`platformNative`) render with **no colour** under default themes unless the *client* declares them. The VS Code extension therefore declares them in `contributes.semanticTokenTypes` / `semanticTokenModifiers` (each custom type with a standard `superType` — `interface`/`type`/`class`/`function` — so semantic-highlighting themes colour it) and maps fallback TextMate scopes in `contributes.semanticTokenScopes` for theme without semantic rules. The declared **names are a cross-component contract** with the server's frozen legend — they must match exactly, or those tokens silently go unthemed — enforced by a `bynk-lsp` test that parses the extension's `package.json` against `semantic_tokens_legend()` (the single source of truth). Token *visibility* is the client's: the built-in `editor.semanticHighlighting.enabled`, with no Bynk-specific toggle.
 
@@ -565,7 +582,7 @@ Signatures render through the **same `type_ref_str` renderer as hover** (§3.3) 
 
 ### 3.17 CodeLens (v0.33)
 
-`textDocument/codeLens` returns one **reference-count lens** above each top-level **index definition** in the file — types, free fns, capabilities, services, agents, providers (the v0.25 index set; locals/methods/fields aren't indexed and get none). Served from the analysis round the freshness contract (§3.2.1) keeps current for the requested file, positions against that current snapshot. The count is `refs.len()` from the binding index (a pure `code_lenses(index, path)` query returning `(def site, reference sites)`, sorted by definition position). The lens title is `"{n} reference(s)"` with the standard **`editor.action.showReferences`** command (args: the def URI, the def position, the reference `Location`s) — clicking peeks the references, no extension support required; non-VS-Code clients still render the title. **`"0 references"` is shown** (a dead-code signal). Computed eagerly (`resolve_provider: false`) — the count is `O(1)` off the index. The **test-run lens** ("▶ Run") needs test discovery + a run command and is deferred.
+`textDocument/codeLens` returns one **reference-count lens** above each top-level **index definition** in the file — types, free fns, capabilities, services, agents, providers (the v0.25 index set; locals/methods/fields aren't indexed and get none). Served from the **last committed round** through the non-refreshing decoration gate (§3.2.1's stale-while-revalidate rule, #733), positions against that round's snapshot; the `workspace/codeLens/refresh` nudge on round-commit re-pulls the fresh counts. The count is `refs.len()` from the binding index (a pure `code_lenses(index, path)` query returning `(def site, reference sites)`, sorted by definition position). The lens title is `"{n} reference(s)"` with the standard **`editor.action.showReferences`** command (args: the def URI, the def position, the reference `Location`s) — clicking peeks the references, no extension support required; non-VS-Code clients still render the title. **`"0 references"` is shown** (a dead-code signal). Computed eagerly (`resolve_provider: false`) — the count is `O(1)` off the index. The **test-run lens** ("▶ Run") needs test discovery + a run command and is deferred.
 
 ### 3.18 Call hierarchy (v0.34)
 
