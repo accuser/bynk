@@ -1,11 +1,6 @@
----
-level: patch
-changelog: A `system`-tier case can mix a typed argument with `Wire(...)` in the same http address call
----
+# 0249 — A `system`-tier case mixes a typed argument with `Wire(...)` in one http address call
 
-## ADR: system-tier-wire-mixed-args
-title: A `system`-tier case mixes a typed argument with `Wire(...)` in one http address call
-summary: The raw driver serialises a typed slot at the call site instead of forwarding it as-is
+- **Status:** Accepted (v0.216.5)
 
 **Context.** ADR 0210 (system-tier-wire-rejection) gave a `system` case a raw driver (`__sysdrive_raw_…`) for a `Wire(<String>)` call — every slot forwarded as a `string` (path params into the URL, the body sent verbatim). The checker already validates a mixed call arg-by-arg (a `Wire` arg as `String`, a non-`Wire` arg against the handler's declared type — `check_address_args` in `bynk-check/src/checker/calls.rs`), so `api.PUT("/flags/:name", Wire(""), Flag { enabled: true })` compiled, but the emitter did not: `lower_expr` on a non-`Wire` arg produced its native TypeScript value (an object literal, a number, …), which the raw driver's uniformly-`string`-typed slots reject — a `TS2345` for a body, silent wrong-shape data for a path param. Noted as a deferred follow-on (#708).
 
