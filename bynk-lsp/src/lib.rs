@@ -31,6 +31,7 @@
 pub mod code_actions;
 pub mod completion;
 mod document_symbols;
+mod extract;
 pub mod hover;
 pub mod index_queries;
 mod inlay_hints;
@@ -2393,11 +2394,13 @@ impl LanguageServer for Backend {
         Ok(None)
     }
 
-    /// v0.26 (ADR 0054): quick-fixes from structured suggestions. Served
-    /// from the **cached** analysis round only (never a fresh run — slow,
-    /// and it could disagree with the squiggles the client is showing): a
-    /// request before the first round, or for a file outside the project,
-    /// returns the empty list.
+    /// v0.26 (ADR 0054): quick-fixes from structured suggestions. v0.213
+    /// (ADR 0239) adds the extract-variable refactor
+    /// (`CodeActionKind::REFACTOR_EXTRACT`), computed from the same snapshot.
+    /// Served from the **cached** analysis round only (never a fresh run —
+    /// slow, and it could disagree with the squiggles the client is
+    /// showing): a request before the first round, or for a file outside
+    /// the project, returns the empty list.
     async fn code_action(
         &self,
         params: CodeActionParams,
@@ -2426,13 +2429,10 @@ impl LanguageServer for Backend {
         ) else {
             return Ok(Some(Vec::new()));
         };
-        let actions = crate::code_actions::quick_fixes(
-            text,
-            diags,
-            bynk_syntax::span::Span::new(start, end),
-            &uri,
-            analysis.versions.get(&rel).copied(),
-        );
+        let version = analysis.versions.get(&rel).copied();
+        let span = bynk_syntax::span::Span::new(start, end);
+        let mut actions = crate::code_actions::quick_fixes(text, diags, span, &uri, version);
+        actions.extend(crate::extract::extract_variable(text, span, &uri, version));
         Ok(Some(actions))
     }
 
@@ -2935,9 +2935,13 @@ fn server_capabilities() -> ServerCapabilities {
             work_done_progress_options: Default::default(),
         })),
         // v0.26 (ADR 0054): quick-fixes from the diagnostics' structured
-        // suggestions.
+        // suggestions. v0.213 (ADR 0239) adds the extract-variable refactor.
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            code_action_kinds: Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::REFACTOR,
+                CodeActionKind::REFACTOR_EXTRACT,
+            ]),
             ..Default::default()
         })),
         // v0.27 (ADR 0056): inferred-type inlay hints from the retained
@@ -4345,7 +4349,14 @@ mod tests {
         let Some(CodeActionProviderCapability::Options(opts)) = caps.code_action_provider else {
             panic!("codeActionProvider not advertised with options");
         };
-        assert_eq!(opts.code_action_kinds, Some(vec![CodeActionKind::QUICKFIX]));
+        assert_eq!(
+            opts.code_action_kinds,
+            Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::REFACTOR,
+                CodeActionKind::REFACTOR_EXTRACT,
+            ])
+        );
         assert!(matches!(
             caps.workspace_symbol_provider,
             Some(OneOf::Left(true))

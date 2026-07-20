@@ -40,7 +40,7 @@ backed by a request handler.
 | Document highlight | The matching binding's occurrences highlighted across the active file. |
 | Folding ranges | Structural folds and comment runs, driven by the recovered AST (no analysis round needed). |
 | Selection ranges | Expand-selection by syntactic nesting — the enclosing-node chain for each position. |
-| Code actions | Quick-fixes built from the structured suggestions carried on diagnostics, served from the cached round so they agree with the squiggles on screen. |
+| Code actions | Quick-fixes built from the structured suggestions carried on diagnostics, served from the cached round so they agree with the squiggles on screen. Plus an extract-variable refactor: the smallest expression node covering the selection is bound to a fresh `let` and the selection replaced with the new name. |
 | Inlay hints | Inferred-type hints for the visible range, plus materialisable ghost `given` hints for uncovered capability requirements. |
 | Semantic tokens | Resolution-aware highlighting (full document and range), additive over the client's syntactic layer, read from the cached index. |
 | Workspace symbols | Symbol search across the index's definitions, filtered by query — aggregated over **every** open project (the one cross-project query in a multi-root window). |
@@ -172,6 +172,7 @@ The crate is split into focused modules:
 | `signature_help.rs` | Call-context detection and signature labels. |
 | `inlay_hints.rs` | Inferred-type and ghost `given` hint rendering. |
 | `code_actions.rs` | Quick-fixes from diagnostics' structured suggestions. |
+| `extract.rs` | Extract-variable: smallest covering expression node, insertion-point tracking through nested blocks, collision-avoiding placeholder naming. |
 | `locals_nav.rs` | Scope-correct navigation for local bindings. |
 | `structure.rs` | Folding and selection ranges from the recovered AST. |
 | `document_symbols.rs` | The document-symbol outline. |
