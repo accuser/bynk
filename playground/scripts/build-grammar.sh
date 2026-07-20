@@ -14,6 +14,8 @@ cd "$grammar"
 "$ts" build --wasm
 mv -f tree-sitter-bynk.wasm "$here/src/vendor/tree-sitter-bynk.wasm"
 # The web-tree-sitter runtime wasm + the highlight query, shipped alongside.
-cp -f "$here/node_modules/web-tree-sitter/tree-sitter.wasm" "$here/src/vendor/tree-sitter.wasm"
+# (0.26 renamed the runtime wasm file from tree-sitter.wasm to web-tree-sitter.wasm;
+# we keep our own vendored name, referenced by tshighlight.ts's locateFile.)
+cp -f "$here/node_modules/web-tree-sitter/web-tree-sitter.wasm" "$here/src/vendor/tree-sitter.wasm"
 cp -f "$grammar/queries/highlights.scm" "$here/src/vendor/highlights.scm"
 echo "grammar wasm + runtime + highlights.scm staged in playground/src/vendor/"

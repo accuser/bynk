@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0241](0241-playground-share-retention.md) | **Playground share links expire 30 days after creation** (v0.214.3) — Bound the share service's KV storage with a fixed-TTL retention policy instead of indefinite retention | Accepted (v0.214.3) |
 | [0240](0240-lsp-extract-variable.md) | **LSP `codeAction` gains extract-variable; extract-function deferred to a track** (v0.214) — Smallest enclosing expression → new `let`; placeholder naming avoids collision by a whole-file scan; extract-function deferred (fn has no capability clause to propagate into) | Accepted (v0.214) |
 | [0239](0239-lsp-will-rename-files.md) | **LSP file-rename awareness — reusing the compiler's own path↔name rule instead of `unit_sources`** (v0.213) — `willRenameFiles` derives the renamed unit's new name from the compiler's single-file/multi-file path convention, not by reverse-scanning the unit→source map | Accepted (v0.213) |
 | [0238](0238-vscode-check-test-debug-via-driver.md) | **The VS Code extension resolves its compiler through `bynk`, not by reimplementing `bynkc` lookup** (v0.212.1) — `bynkc: check`, the Test Explorer, and test debugging shell `bynk check`/`bynk test`, inheriting the driver's `BYNK_BYNKC` → PATH → sibling resolution | Accepted (v0.212.1) |
