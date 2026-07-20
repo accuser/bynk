@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "`bynk-lsp` implements `workspace/willRenameFiles` — renaming or moving a `.bynk` file rewrites its own declaration and every other file's `uses`/`consumes` reference to it (closes #302). Single-file rename only (the capability filter matches files, not folders); a `suite` file, which addresses no name of its own, produces no edits."
----
+# 0239 — LSP file-rename awareness — reusing the compiler's own path↔name rule instead of `unit_sources`
 
-## ADR: lsp-will-rename-files
-title: LSP file-rename awareness — reusing the compiler's own path↔name rule instead of `unit_sources`
-summary: `willRenameFiles` derives the renamed unit's new name from the compiler's single-file/multi-file path convention, not by reverse-scanning the unit→source map
+- **Status:** Accepted (v0.213)
 
 **Context.** `bynk-lsp` declared `workspace.file_operations: None`, so renaming or
 moving a `.bynk` file in the editor silently broke every `uses`/`consumes`
