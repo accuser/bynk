@@ -22,6 +22,11 @@ use bynk_check::{checker, expr_types, hints, index, locals, requirements, resolv
 use bynk_syntax::error::{CompileError, Severity};
 use bynk_syntax::{ast, lexer, parser};
 
+pub mod completion;
+pub mod locals_nav;
+pub mod signature_help;
+pub mod symbols;
+
 /// One diagnostic produced from a recovery-mode compile of a single file.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {

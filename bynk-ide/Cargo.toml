@@ -19,3 +19,5 @@ bynk-syntax.workspace = true
 bynk-check.workspace = true
 # `analyse_project` (the non-bailing project analysis) lives in the project driver.
 bynk-emit.workspace = true
+# Signature rendering for hover/completion docs (#808).
+bynk-fmt.workspace = true
