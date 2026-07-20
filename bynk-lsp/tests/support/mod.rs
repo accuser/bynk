@@ -103,6 +103,9 @@ enum Wrap {
     /// A unit-header clause (`uses`/`consumes`), placed directly after a
     /// `context` header where those clauses grammatically belong.
     Header,
+    /// An expression (`match`), nested in a minimal function body — it has no
+    /// standalone item form.
+    Expr,
 }
 
 fn classify(name: &str) -> Wrap {
@@ -110,6 +113,7 @@ fn classify(name: &str) -> Wrap {
         "context" | "commons" | "adapter" | "suite" => Wrap::Unit,
         "property" | "case" | "stub" => Wrap::Suite,
         "uses" | "consumes" => Wrap::Header,
+        "match" => Wrap::Expr,
         // Any `on <kind>(…)` handler — `on call`, `on http`, `on cron`, … —
         // parses only inside a `service`/`agent` body.
         other if other.starts_with("on ") => Wrap::Handler,
@@ -127,5 +131,8 @@ pub fn wrap_for_parse(name: &str, stripped_body: &str) -> String {
         Wrap::Handler => format!("context Scaffold\n\nservice Scaffold {{\n{stripped_body}\n}}\n"),
         Wrap::Suite => format!("suite Scaffold {{\n{stripped_body}\n}}\n"),
         Wrap::Header => format!("context Scaffold\n{stripped_body}\n"),
+        Wrap::Expr => {
+            format!("context Scaffold\n\nfn scaffold() -> Unit {{\n{stripped_body}\n}}\n")
+        }
     }
 }
