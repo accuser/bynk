@@ -485,6 +485,28 @@ pub fn analyse_in_memory(
     target: BuildTarget,
     platform: Platform,
 ) -> Vec<AttributedError> {
+    analyse_in_memory_with_types(source, target, platform).errors
+}
+
+/// The outcome of [`analyse_in_memory_with_types`]: diagnostics plus the
+/// analysed file's `(span, type)` entries (span-sorted — see
+/// [`ExprTypeSink::take_files`]), for a position→type query (#397, the
+/// playground's hover).
+pub struct InMemoryAnalysis {
+    pub errors: Vec<AttributedError>,
+    pub expr_types: Vec<(bynk_syntax::span::Span, Ty)>,
+}
+
+/// Like [`analyse_in_memory`], but also exposes the expression-type map the
+/// checker captured (ADR 0063's `expr_types` sink) — the same one
+/// [`analyse_project_with`] drains — instead of discarding it. `expr_types` is
+/// empty when the source doesn't check clean (the sink's "clean-file
+/// ceiling" — a mid-edit buffer with errors records no types for that file).
+pub fn analyse_in_memory_with_types(
+    source: &str,
+    target: BuildTarget,
+    platform: Platform,
+) -> InMemoryAnalysis {
     let root = PathBuf::from(".");
     let path = in_memory_logical_path(source);
     let mut overlay = HashMap::new();
@@ -503,11 +525,19 @@ pub fn analyse_in_memory(
         Mode::Analyse,
         &overlay,
         &[],
-        Some((vec![path], Vec::new())),
+        Some((vec![path.clone()], Vec::new())),
         false,
     );
     match run {
-        RunChecks::Bailed { errors, .. } | RunChecks::Checked { errors, .. } => errors.into_all(),
+        RunChecks::Bailed {
+            errors, mut exprs, ..
+        }
+        | RunChecks::Checked {
+            errors, mut exprs, ..
+        } => InMemoryAnalysis {
+            errors: errors.into_all(),
+            expr_types: exprs.take_files().remove(&path).unwrap_or_default(),
+        },
     }
 }
 
