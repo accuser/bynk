@@ -536,6 +536,22 @@ pub(crate) fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
     out
 }
 
+/// #302: the source's own declared qualified name and its span — the
+/// rewrite target when the file backing this unit is renamed. `None` for a
+/// `suite` (its `SourceUnit::name()` is its *target*'s name, not one of its
+/// own; nothing else addresses a suite by name) or on a parse bail.
+pub(crate) fn own_declaration_name(source: &str) -> Option<(String, Span)> {
+    let tokens = tokenize(source).ok()?;
+    let (Some(unit), _) = parse_unit_with_recovery(&tokens, source) else {
+        return None;
+    };
+    if matches!(unit, SourceUnit::Suite(_)) {
+        return None;
+    }
+    let name = unit.name();
+    Some((name.joined(), name.span))
+}
+
 fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
     match item {
         CommonsItem::Type(t) if t.name.name == name => Some(describe_type(t)),
@@ -1347,6 +1363,28 @@ mod tests {
         // The span covers exactly the target name (so the link underlines it).
         let (_, span) = spans.iter().find(|(n, _)| n == "todos").unwrap();
         assert_eq!(&src[span.start..span.end], "todos");
+    }
+
+    #[test]
+    fn own_declaration_name_finds_context_and_commons_names() {
+        // #302: the rename target when a unit's own file moves.
+        let src = "context app.main\n  uses billing.charge\n";
+        let (name, span) = own_declaration_name(src).expect("context has its own name");
+        assert_eq!(name, "app.main");
+        assert_eq!(&src[span.start..span.end], "app.main");
+
+        let src = "commons app.util\n\ntype Foo = Int where Positive\n";
+        let (name, _) = own_declaration_name(src).expect("commons has its own name");
+        assert_eq!(name, "app.util");
+    }
+
+    #[test]
+    fn own_declaration_name_none_for_suites() {
+        // A suite's `SourceUnit::name()` is its *target*'s name, not its own —
+        // nothing `uses`/`consumes` a suite by name, so renaming its file
+        // needs no declaration rewrite.
+        let src = "suite todos\n";
+        assert!(own_declaration_name(src).is_none());
     }
 
     // v0.123 (slice 2): hover renders the real shape of each declaration —

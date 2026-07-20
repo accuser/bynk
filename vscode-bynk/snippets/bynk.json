@@ -94,6 +94,16 @@
     ],
     "description": "A function with a `requires`/`ensures` contract."
   },
+  "match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:scrutinee} {",
+      "  ${2:Variant}(${3:value}) => ${4:value},",
+      "  _ => ${0:fallback},",
+      "}"
+    ],
+    "description": "A match expression over variant/binding patterns, with a wildcard fallback."
+  },
   "capability": {
     "prefix": "capability",
     "body": [

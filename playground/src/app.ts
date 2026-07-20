@@ -3,7 +3,14 @@
 // dispatches a successful compile to the cross-origin **sandbox** iframe to run.
 
 import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  hoverTooltip,
+} from "@codemirror/view";
+import type { Tooltip } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { linter, lintGutter, forceLinting } from "@codemirror/lint";
 import type { Diagnostic as CmDiagnostic } from "@codemirror/lint";
@@ -13,7 +20,7 @@ import { encodeSnippet, decodeSnippet } from "./deeplink";
 import { SANDBOX_ORIGIN } from "./shared";
 import type { CompileResult, Diagnostic, RunReply } from "./shared";
 import { EXAMPLES } from "./examples";
-import init, { bynk_compile, bynk_analyze } from "./vendor/bynk_wasm.js";
+import init, { bynk_compile, bynk_analyze, bynk_hover } from "./vendor/bynk_wasm.js";
 
 // The default program when there is no shared snippet in the URL: the first gallery
 // example (Hello, world).
@@ -56,6 +63,35 @@ const bynkLinter = linter(
   },
   { delay: 300 },
 );
+
+// A CodeMirror hover tooltip: ask the wasm analyser for the inferred type at
+// the cursor position and show it, if any (#397). `null` — no tooltip — when
+// the wasm compiler isn't loaded yet, the position has no recorded expression,
+// or the buffer doesn't currently check clean (the analyser's "clean-file
+// ceiling", ADR 0063).
+const bynkHover = hoverTooltip((view, pos): Tooltip | null => {
+  if (!wasmReady) return null;
+  let result: { ty: string | null };
+  try {
+    result = JSON.parse(bynk_hover(view.state.doc.toString(), pos)) as { ty: string | null };
+  } catch {
+    return null;
+  }
+  if (!result.ty) return null;
+  const ty = result.ty;
+  return {
+    pos,
+    end: pos,
+    above: true,
+    create: () => {
+      const dom = document.createElement("div");
+      dom.className = "cm-tooltip-bynk-hover";
+      dom.textContent = ty;
+      return { dom };
+    },
+  };
+});
+
 let runSeq = 0;
 const pending = new Map<number, (r: RunReply) => void>();
 
@@ -260,6 +296,7 @@ function makeEditor(doc: string): void {
         highlightCompartment.of(bynkHighlighting()),
         bynkLinter,
         lintGutter(),
+        bynkHover,
         EditorView.theme({ "&": { height: "100%" }, ".cm-scroller": { overflow: "auto" } }, { dark: true }),
       ],
     }),

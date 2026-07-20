@@ -27,6 +27,14 @@
   "wordPattern": "(-?\\d+(?:\\.\\d+)?)|([A-Za-z_][A-Za-z0-9_]*)",
   "onEnterRules": [
     {
+      "beforeText": "^\\s*---+\\s*$",
+      "action": { "indent": "none" }
+    },
+    {
+      "beforeText": "^\\s*--(?!-)|\\s--(?!-)\\s",
+      "action": { "indent": "none", "appendText": "-- " }
+    },
+    {
       "beforeText": "^.*\\{[^}\"']*$",
       "afterText": "^\\s*\\}",
       "action": { "indent": "indentOutdent" }

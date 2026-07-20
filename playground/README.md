@@ -70,6 +70,9 @@ compiled by `bynkc` to a Cloudflare Worker + KV — dogfooding: the playground t
 compiles Bynk has a backend *written* in Bynk. `POST /api/snippets` stores the source
 under a random id; `GET /api/snippets/:id` returns it. The `Source` refined type
 bounds the body, so oversized/empty payloads are rejected at the boundary (`400`).
+Stored snippets expire 30 days after creation (`Kv.putTtl`, issue #398) — a share
+link is for showing someone a program, not permanent hosting, so retention is
+bounded rather than unbounded KV storage/cost.
 
 The browser calls it **same-origin** (`/api/*` on the app origin) — Bynk's `from http`
 emits no CORS headers, so cross-origin would not work; same-origin routing avoids CORS

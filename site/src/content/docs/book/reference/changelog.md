@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.212**.
+written against **v0.214**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,12 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.214.4** | The playground editor shows the inferred type of the expression under the cursor on hover (#397) |
+| **v0.214.3** | The playground's share service expires stored snippets 30 days after creation, via `Kv.putTtl`, instead of retaining them indefinitely. |
+| **v0.214.2** | "vscode-bynk: add the missing `match` snippet (variant/binding arms + wildcard fallback), closing out #307" |
+| **v0.214.1** | "vscode-bynk: pressing Enter inside a `--` line comment now continues it, and inside/after a `---` doc-comment fence now keeps the same indentation instead of falling back to VS Code's generic behaviour; the two are disambiguated so a `---` fence is never treated as a `--` line comment (closes #306)." |
+| **v0.214.0** | `textDocument/codeAction` offers an extract-variable refactor (`RefactorExtract`) for a selected expression |
+| **v0.213.0** | "`bynk-lsp` implements `workspace/willRenameFiles` — renaming or moving a `.bynk` file rewrites its own declaration and every other file's `uses`/`consumes` reference to it (closes #302). Single-file rename only (the capability filter matches files, not folders); a `suite` file, which addresses no name of its own, produces no edits." |
 | **v0.212.2** | "vscode-bynk: a resolved `bynkc-lsp` older than the extension's pinned server version now gets an actionable warning (\"Download Matching Server\") instead of a passive note, since a stale server (most often one found on PATH) can silently mis-diagnose syntax the checker already accepts (closes #484)." |
 | **v0.212.1** | "vscode-bynk: the `bynkc: check` build task, the Test Explorer, and test debugging now shell the `bynk` driver instead of `bynkc` directly (closes #486), inheriting its richer compiler resolution (`BYNK_BYNKC` → PATH → sibling-of-`bynk`) in place of a bare-PATH lookup that missed a driver-first install. `bynk.compilerPath` is forwarded as `BYNK_BYNKC` so it keeps pinning an exact `bynkc`; `bynk.bynkPath` (previously only the `bynk dev` debug session's setting) now also governs these three surfaces." |
 | **v0.212.0** | "Generic sum types — `type ApiResult[T] = | Loaded(value: T) | Failed(message: String)` (checker + emitter + boundary codecs; closes #593). A `type` may now carry `[A, B]` type parameters when its body is a **sum**, not only a record: a parameter is an unconstrained, bound-free name resolved as a rigid variable inside the variant payloads. Construction infers the arguments argument-directed from the variant's payload (`Loaded(user) : ApiResult[User]`), grounded by the binding's expected type when a payload cannot determine them (a payload-less variant, or `Failed` which never mentions `T`); an undetermined parameter is `bynk.generics.uninferable_type_arg`. `match` substitutes the arguments into each arm's payload binding. Emission is **erased** TS generics — one `export type ApiResult<T>` discriminated union with generic-arrow constructors — and, like a generic record, a generic-sum instantiation is boundary-serialisable through a monomorphised codec (`serialise_ApiResult_User`) when its arguments are; a recursive generic sum is rejected at a boundary with `bynk.generics.recursive_generic_at_boundary`. A generic sum may not carry an `embeds` clause (`bynk.generics.generic_sum_embeds`). Methods on generic types remain deferred (`bynk.generics.method_on_generic_type`); the `bynk.generics.generic_non_record` message now names refined/opaque as the only non-generic bodies." |
