@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.215.2** | LSP `.`-completion on a `store Map` receiver now offers the query builders/terminals (`filter`/`map`/`sortBy`/`collect`/…), the `.entries`/`.keys`/`.values` accessors, and the entry ops (`put`/`get`/`update`/…), closing the gap ADR 0184 left deferred |
 | **v0.215.1** | LSP `codeAction` now filters its response against `CodeActionParams.context.only` |
 | **v0.215.0** | Call hierarchy now records capability-op and agent-handler-dispatch call edges, closing the under-reporting gap in #304 |
 | **v0.214.4** | The playground editor shows the inferred type of the expression under the cursor on hover (#397) |
