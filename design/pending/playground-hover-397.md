@@ -46,10 +46,13 @@ ladder's pure logic has the same crate-extraction blocker as completion, and
 the bare inferred type is the value #397 named explicitly. Offsets are byte
 offsets, matching the existing diagnostic `from`/`to` convention CodeMirror
 already treats as its position units — an existing, accepted
-UTF-16-vs-byte approximation this change doesn't newly introduce. Hover finds
-nothing on a buffer that doesn't currently check clean (the `expr_types`
-sink's own "clean-file ceiling", ADR 0063), the same limitation the LSP's
-hover already lives with.
+UTF-16-vs-byte approximation this change doesn't newly introduce. Per ADR
+0094, `expr_types` in `Analyse` mode is a best-effort partial map: a function
+that type-checks cleanly contributes its types even when a *different*
+function in the same file has an error, so hover finds nothing only when the
+expression at hand never typed — at the position itself, or upstream of it
+(an unresolved name) — not merely because the file has some error elsewhere.
+This is the same behaviour the LSP's own hover/completion already rely on.
 
 **Consequences.** The playground editor now shows inferred types on hover.
 Completion remains open, split to a new tracked issue referencing this one

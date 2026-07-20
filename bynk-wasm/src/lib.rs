@@ -251,9 +251,11 @@ pub fn analyze_to_json(source: &str, platform: Platform) -> String {
 }
 
 /// The inferred type at a cursor position in a single in-memory source, or
-/// `None` (no expression there, or the source doesn't currently check clean
-/// — the `expr_types` sink's "clean-file ceiling", ADR 0063). The editor's
-/// hover tooltip (#397).
+/// `None` if the expression at that position never typed at all — per ADR
+/// 0094, a well-typed function still contributes types even when a *different*
+/// function in the same file has an error, so this isn't blanked by every
+/// mid-edit error, only by one at the position itself (or upstream of it, an
+/// unresolved name). The editor's hover tooltip (#397).
 #[derive(serde::Serialize)]
 pub struct HoverResult {
     pub ty: Option<String>,
@@ -465,6 +467,20 @@ mod tests {
         let json = hover_to_json(PROG, offset, Platform::Browser);
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(v["ty"], "Instant");
+    }
+
+    #[test]
+    fn hover_survives_a_sibling_error() {
+        // ADR 0094: hovering a well-typed expression must not go blank just
+        // because a *different* function in the same buffer is mid-edit and
+        // broken — the whole point of exposing the checker's partial
+        // `expr_types` map rather than its old all-or-nothing gate.
+        let prog = "commons app.demo\n\n\
+            fn good() -> Int {\n  42\n}\n\n\
+            fn bad() -> Int {\n  \"oops\"\n}\n";
+        let offset = prog.find("42").expect("prog mentions 42");
+        let r = hover(prog, offset, Platform::Browser);
+        assert_eq!(r.ty.as_deref(), Some("Int"));
     }
 
     #[test]
