@@ -47,6 +47,8 @@ use bynk_check::firstparty::{
     BYNK_ADAPTER_SRC, BYNK_LIST_SRC, BYNK_MAP_SRC, BYNK_STRING_SRC, CLOUDFLARE_ADAPTER_SRC,
 };
 use bynk_check::kernel_methods;
+use bynk_check::locals::LocalBinding;
+use bynk_check::store_ops;
 use bynk_syntax::ast::{CommonsItem, ExportKind, FnName, SourceUnit, TypeBody, TypeRef, UsesDecl};
 use bynk_syntax::{keywords, lexer, parser};
 
@@ -1678,6 +1680,48 @@ pub fn value_member_candidates(
     out
 }
 
+/// #596: the entry ops (and, for a `Map`, the `.entries`/`.keys`/`.values`
+/// query accessors) of a bare `store` field receiver — merged onto
+/// [`value_member_candidates`] so a store field offers its whole vocabulary,
+/// not just the `Query` half `kernel_methods::methods_for` covers. A bare
+/// store `Map` field types (via the checker's ADR 0120 "whole map as a value"
+/// reading) to plain `Ty::Query`, indistinguishable from an ordinary
+/// `Query`-typed local — so this reads the receiver's *provenance* instead,
+/// the same way hover's `describe_store_op_at` does. Empty when the receiver
+/// isn't a store field of an enclosing agent, or is shadowed by a local.
+///
+/// `rewritten`/`recv_offset` are [`value_receiver_rewrite`]'s output; `locals`
+/// is the current round's locals for the file, best-effort (empty when the
+/// analysed round doesn't match `rewritten`, in which case the shadowing
+/// check simply sees no local in scope).
+pub fn store_field_member_candidates(
+    rewritten: &str,
+    recv_offset: usize,
+    locals: &[LocalBinding],
+) -> Vec<Completion> {
+    let Some((kind_head, held)) =
+        crate::symbols::store_field_kind_at(rewritten, recv_offset + 1, locals)
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<Completion> = store_ops::ops_for(&kind_head)
+        .iter()
+        .map(|o| {
+            Completion::item(
+                o.name,
+                CompletionKind::Member,
+                Some(o.signature.to_string()),
+            )
+        })
+        .collect();
+    if kind_head == "Map" && !held {
+        out.extend(store_ops::MAP_QUERY_ACCESSORS.iter().map(|a| {
+            Completion::item(a.name, CompletionKind::Field, Some(a.signature.to_string()))
+        }));
+    }
+    out
+}
+
 static EMPTY_CONSUMES: Vec<bynk_syntax::ast::ConsumesDecl> = Vec::new();
 
 #[cfg(test)]
@@ -2171,6 +2215,65 @@ mod tests {
             items = items.iter().map(|c| &c.label).collect::<Vec<_>>()
         );
         assert!(find(&items, "total", CompletionKind::Field).is_some());
+    }
+
+    #[test]
+    fn store_field_member_candidates_offers_entry_ops_and_query_accessors() {
+        // #596: a bare `store Map` field receiver offers its entry ops
+        // (put/get/…) AND the `.entries`/`.keys`/`.values` accessors — the
+        // vocabulary `value_member_candidates` alone can't see, since the
+        // checker types a bare store map as plain `Ty::Query` (ADR 0120).
+        let doc = "context shop\n\nagent Inventory {\n  key id: String\n  store items: Map[String, Int]\n\n  on call f() -> Effect[()] {\n    items.\n  }\n}\n";
+        let offset = doc.find("items.").unwrap() + "items.".len();
+        let (rewritten, recv_offset) = value_receiver_rewrite(doc, offset).expect("bare receiver");
+        let items = store_field_member_candidates(&rewritten, recv_offset, &[]);
+        assert!(
+            find(&items, "put", CompletionKind::Member).is_some(),
+            "{items:?}",
+            items = items.iter().map(|c| &c.label).collect::<Vec<_>>()
+        );
+        assert!(find(&items, "get", CompletionKind::Member).is_some());
+        assert!(find(&items, "update", CompletionKind::Member).is_some());
+        assert!(find(&items, "entries", CompletionKind::Field).is_some());
+        assert!(find(&items, "keys", CompletionKind::Field).is_some());
+        assert!(find(&items, "values", CompletionKind::Field).is_some());
+    }
+
+    #[test]
+    fn store_field_member_candidates_empty_for_ordinary_local() {
+        // An ordinary local named the same as no store field yields nothing —
+        // the receiver's provenance, not its name alone, drives this path.
+        let doc = "context shop\n\nagent Inventory {\n  key id: String\n\n  on call f() -> Effect[()] {\n    let items = 1\n    items.\n  }\n}\n";
+        let offset = doc.rfind("items.").unwrap() + "items.".len();
+        let (rewritten, recv_offset) = value_receiver_rewrite(doc, offset).expect("bare receiver");
+        let items = store_field_member_candidates(&rewritten, recv_offset, &[]);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn store_field_member_candidates_skips_query_accessors_on_held_map() {
+        // ADR 0184: a held `Map[K, Connection]` never offers the key-query
+        // accessors, only its entry ops (`put`/`get`/…).
+        let doc = "context shop\n\nagent Room {\n  key id: String\n  store conns: Map[String, Connection[String]]\n\n  on call f() -> Effect[()] {\n    conns.\n  }\n}\n";
+        let offset = doc.find("conns.").unwrap() + "conns.".len();
+        let (rewritten, recv_offset) = value_receiver_rewrite(doc, offset).expect("bare receiver");
+        let items = store_field_member_candidates(&rewritten, recv_offset, &[]);
+        assert!(find(&items, "put", CompletionKind::Member).is_some());
+        assert!(find(&items, "entries", CompletionKind::Field).is_none());
+        assert!(find(&items, "keys", CompletionKind::Field).is_none());
+        assert!(find(&items, "values", CompletionKind::Field).is_none());
+    }
+
+    #[test]
+    fn store_field_member_candidates_offers_set_and_cache_vocabularies() {
+        // Not every store kind gets the Map-only accessors, but every kind
+        // gets its own entry ops.
+        let doc = "context shop\n\nagent Inventory {\n  key id: String\n  store tags: Set[String]\n\n  on call f() -> Effect[()] {\n    tags.\n  }\n}\n";
+        let offset = doc.find("tags.").unwrap() + "tags.".len();
+        let (rewritten, recv_offset) = value_receiver_rewrite(doc, offset).expect("bare receiver");
+        let items = store_field_member_candidates(&rewritten, recv_offset, &[]);
+        assert!(find(&items, "add", CompletionKind::Member).is_some());
+        assert!(find(&items, "entries", CompletionKind::Field).is_none());
     }
 
     // -- v0.124 (slice 3): the non-keyword completion contexts --

@@ -771,6 +771,12 @@ impl Backend {
     /// `.partial` dropped), types the receiver via the retained `expr_types`,
     /// and maps its type to kernel methods + record fields. Empty when the
     /// receiver can't be typed (the file has errors — the clean-file ceiling).
+    ///
+    /// #596: additionally merges a bare `store` field receiver's own
+    /// vocabulary (entry ops, and for `Map` the `.entries`/`.keys`/`.values`
+    /// accessors) — dispatched by receiver *provenance* in the checker, which
+    /// the typed `ty` alone can't distinguish from an ordinary `Query`-typed
+    /// local (a bare store `Map` widens to `Ty::Query` too, ADR 0120).
     async fn value_member_completions(
         &self,
         uri: &Url,
@@ -781,14 +787,47 @@ impl Backend {
         else {
             return Vec::new();
         };
-        let Some(ty) = self.type_receiver(uri, rewritten, recv_offset).await else {
+        let Some(ty) = self
+            .type_receiver(uri, rewritten.clone(), recv_offset)
+            .await
+        else {
             return Vec::new();
         };
         let files = self.project_files(uri).await;
-        completion::value_member_candidates(&ty, text, files.as_deref())
-            .into_iter()
-            .map(to_completion_item)
-            .collect()
+        let mut items: Vec<CompletionItem> =
+            completion::value_member_candidates(&ty, text, files.as_deref())
+                .into_iter()
+                .map(to_completion_item)
+                .collect();
+        let locals = self.fast_path_locals(uri, &rewritten).await;
+        items.extend(
+            completion::store_field_member_candidates(&rewritten, recv_offset, &locals)
+                .into_iter()
+                .map(to_completion_item),
+        );
+        items
+    }
+
+    /// #596: the current analysed round's locals for `uri`, only when its
+    /// snapshot exactly matches `rewritten` — the same fast-path match
+    /// [`Self::type_receiver`] uses. Empty (rather than forcing a synchronous
+    /// re-analysis) when the round is stale or absent, so the store-field
+    /// shadowing check degrades to "no local shadows the name".
+    async fn fast_path_locals(
+        &self,
+        uri: &Url,
+        rewritten: &str,
+    ) -> Vec<bynk_check::locals::LocalBinding> {
+        let Some(analysis) = self.project_analysis_for(uri).await else {
+            return Vec::new();
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, uri) else {
+            return Vec::new();
+        };
+        if analysis.snapshots.get(&rel).map(String::as_str) != Some(rewritten) {
+            return Vec::new();
+        }
+        analysis.locals.get(&rel).cloned().unwrap_or_default()
     }
 
     /// v0.124 (slice 3): at `<expr> is <cursor>`, the scrutinee sum type's

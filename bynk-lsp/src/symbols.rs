@@ -298,6 +298,74 @@ fn is_dot_preceded(text: &str, start: usize) -> bool {
     text[..start].ends_with('.')
 }
 
+/// #596: the storage-kind vocabulary a bare receiver is eligible for at
+/// completion's `<recv>.` position — `recv_end` is the offset just past the
+/// receiver identifier (where its dot sat before
+/// `completion::value_receiver_rewrite` dropped it, so `source` here is that
+/// rewritten buffer). Mirrors `describe_store_op_at`'s by-provenance receiver
+/// check (not shadowed by a local, inside the declaring agent's state scope),
+/// but starts from the receiver's own end offset rather than walking back from
+/// an operation token, since completion fires before any member name is
+/// typed — and the rewrite's postcondition already guarantees a bare,
+/// non-dot-qualified name reaches here, so unlike `describe_store_op_at` there
+/// is no further `is_dot_preceded` check to make.
+///
+/// Returns the field's storage-kind head (`"Map"`, `"Cache"`, `"Set"`,
+/// `"Cell"`, `"Log"`) and, for a `Map`, whether its value type is a held
+/// `Connection` (v0.158, ADR 0184: `.entries`/`.keys`/`.values` are refused on
+/// one) — enough for the completion layer to look up each kind's registry
+/// without re-parsing.
+pub(crate) fn store_field_kind_at(
+    source: &str,
+    recv_end: usize,
+    locals: &[bynk_check::locals::LocalBinding],
+) -> Option<(String, bool)> {
+    let (recv, recv_start) = ident_ending_at(source, recv_end)?;
+    if bynk_check::locals::locals_at(locals, recv_start)
+        .iter()
+        .any(|b| b.name == recv)
+    {
+        return None;
+    }
+    let tokens = tokenize(source).ok()?;
+    let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
+    let unit = unit?;
+    let items: &[CommonsItem] = match &unit {
+        SourceUnit::Commons(c) => &c.items,
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(a) => &a.items,
+        SourceUnit::Suite(_) => &[],
+    };
+    for item in items {
+        let CommonsItem::Agent(a) = item else {
+            continue;
+        };
+        if !in_state_scope(a, recv_end) {
+            continue;
+        }
+        if let Some(f) = a.store_fields.iter().find(|f| f.name.name == recv) {
+            let held = f.kind.head.name == "Map"
+                && f.kind.args.len() == 2
+                && matches!(f.kind.args[1], TypeRef::Connection(..));
+            return Some((f.kind.head.name.clone(), held));
+        }
+    }
+    None
+}
+
+/// The identifier run ending at byte `end` — `(name, start)` — the same
+/// trim-to-a-non-identifier-boundary scan `value_receiver_rewrite` uses to
+/// find its receiver. `None` if nothing identifier-shaped precedes `end`.
+fn ident_ending_at(text: &str, end: usize) -> Option<(&str, usize)> {
+    let before = text.get(..end)?;
+    let start = before
+        .char_indices()
+        .rfind(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let name = &before[start..];
+    (!name.is_empty()).then_some((name, start))
+}
+
 /// v0.140 (ADR 0163): hover for a handler-position annotation (`@cache`). Handler
 /// annotations are not symbols and declare no local, so they miss both the
 /// `describe_symbol` and locals paths — this closes the gap. For the cursor
