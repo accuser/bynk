@@ -197,6 +197,14 @@ pub fn discover_files(roots: &AnalysisRoots) -> Vec<PathBuf> {
     bynk_emit::project::discover_project_files(&roots.lower())
 }
 
+/// #302: the qualified name a file moved from `old_rel` to `new_rel` should
+/// now declare, preserving whichever single-file/multi-file arrangement
+/// `old_rel` used to satisfy against `old_name` — for the LSP's
+/// `workspace/willRenameFiles` handler.
+pub fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Option<String> {
+    bynk_emit::project::renamed_unit_name(old_rel, old_name, new_rel)
+}
+
 /// v0.24 (ADR 0052): non-bailing, overlay-aware, file-attributed project
 /// diagnostics — the LSP analysis entry point, distinct from
 /// `compile_project` (which bails and emits). `overlay` maps

@@ -227,6 +227,53 @@ pub(crate) fn is_multi_file_layout(rel_path: &Path, qualified_name: &str) -> boo
     is_multi_file_parts(&stem_parts(rel_path), &name_parts)
 }
 
+/// #302: the qualified name a file moved from `old_rel` to `new_rel` should now
+/// declare, preserving whichever [`unit_path_matches`] arrangement `old_rel`
+/// used to satisfy against `old_name` — the dotted stem for a single-file
+/// unit, or the dotted parent-directory for one file of a multi-file unit.
+/// Returns `None` if `old_rel`/`old_name` don't actually satisfy either
+/// arrangement (a pre-existing inconsistency the caller should not guess at).
+///
+/// `old_name` is matched as a **suffix** of `old_rel`'s stem/parent, not the
+/// whole thing: the LSP's caller passes project-relative paths, which (unlike
+/// the `source_path` `unit_path_matches` itself is checked against) still
+/// carry a leading `include`-root segment (e.g. `src/`) that the qualified
+/// name never mentions. Whatever prefix length that suffix match implies for
+/// `old_rel` is applied unchanged to `new_rel` — correct as long as the file
+/// stays under the same `include` root, which a rename/move normally does.
+pub(crate) fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Option<String> {
+    let name_parts: Vec<&str> = old_name.split('.').collect();
+    let old_stem = stem_parts(old_rel);
+    let new_stem = stem_parts(new_rel);
+
+    let suffix_matches = |haystack: &[String]| {
+        haystack.len() >= name_parts.len() && {
+            let prefix_len = haystack.len() - name_parts.len();
+            haystack[prefix_len..]
+                .iter()
+                .zip(name_parts.iter())
+                .all(|(a, b)| a == b)
+        }
+    };
+
+    if suffix_matches(&old_stem) {
+        let prefix_len = old_stem.len() - name_parts.len();
+        return (new_stem.len() >= prefix_len).then(|| new_stem[prefix_len..].join("."));
+    }
+    if !old_stem.is_empty() {
+        let old_parent = &old_stem[..old_stem.len() - 1];
+        if suffix_matches(old_parent) {
+            let prefix_len = old_parent.len() - name_parts.len();
+            if new_stem.is_empty() {
+                return None;
+            }
+            let new_parent = &new_stem[..new_stem.len() - 1];
+            return (new_parent.len() >= prefix_len).then(|| new_parent[prefix_len..].join("."));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,5 +396,83 @@ mod tests {
         assert!(!is_multi_file_layout(Path::new("a/b.bynk"), "a.b"));
         // Wrong directory — not this unit's file.
         assert!(!is_multi_file_layout(Path::new("other/a.bynk"), "thing"));
+    }
+
+    // -- renamed_unit_name (#302) ----------------------------------------------
+    #[test]
+    fn renamed_unit_name_single_file() {
+        assert_eq!(
+            renamed_unit_name(
+                Path::new("a/b/c.bynk"),
+                "a.b.c",
+                Path::new("a/b/renamed.bynk")
+            ),
+            Some("a.b.renamed".to_string())
+        );
+        assert_eq!(
+            renamed_unit_name(Path::new("foo.bynk"), "foo", Path::new("bar.bynk")),
+            Some("bar".to_string())
+        );
+    }
+
+    #[test]
+    fn renamed_unit_name_multi_file_member_rename_is_a_no_op() {
+        // Renaming one member file within the same directory doesn't change
+        // the unit's name — the qualified name is the directory, not the
+        // filename.
+        assert_eq!(
+            renamed_unit_name(
+                Path::new("a/b/c/old.bynk"),
+                "a.b.c",
+                Path::new("a/b/c/new.bynk")
+            ),
+            Some("a.b.c".to_string())
+        );
+    }
+
+    #[test]
+    fn renamed_unit_name_multi_file_directory_move() {
+        assert_eq!(
+            renamed_unit_name(
+                Path::new("a/b/c/handlers.bynk"),
+                "a.b.c",
+                Path::new("a/b/renamed/handlers.bynk")
+            ),
+            Some("a.b.renamed".to_string())
+        );
+    }
+
+    #[test]
+    fn renamed_unit_name_none_on_preexisting_misalignment() {
+        assert_eq!(
+            renamed_unit_name(Path::new("x/y/z.bynk"), "a.b.c", Path::new("x/y/w.bynk")),
+            None
+        );
+    }
+
+    #[test]
+    fn renamed_unit_name_tolerates_a_shared_include_root_prefix() {
+        // The LSP passes project-relative paths (ADR 0198), which still carry
+        // a split project's `src`/`tests` root segment — `unit_path_matches`
+        // itself is only ever checked against the root-stripped `source_path`.
+        // `old_name` must match as a *suffix*, and the same leading-segment
+        // count is preserved onto `new_rel`.
+        assert_eq!(
+            renamed_unit_name(
+                Path::new("src/billing/charge.bynk"),
+                "billing.charge",
+                Path::new("src/billing/pay.bynk")
+            ),
+            Some("billing.pay".to_string())
+        );
+        // Multi-file arrangement under the same prefix.
+        assert_eq!(
+            renamed_unit_name(
+                Path::new("src/a/b/c/handlers.bynk"),
+                "a.b.c",
+                Path::new("src/a/b/renamed/handlers.bynk")
+            ),
+            Some("a.b.renamed".to_string())
+        );
     }
 }

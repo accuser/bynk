@@ -432,7 +432,7 @@ Positions convert against the **analysed snapshot** (§3.2's rule); `includeDecl
 
 ### 3.9 Rename (v0.25)
 
-`textDocument/rename` renames a symbol project-wide; `textDocument/prepareRename` (declared via `prepareProvider: true`) validates the position first and **refuses** (returns null) on anything the index does not cover — locals and unit/context names (renaming a unit implies a file move; that is the A-3 file-operations increment). Member rename (v0.36): renaming a method, field, or op edits the member segment of the compound key (`"Type.method"`, `"Type.field"`, `"Cap.op"`), never the parent prefix.
+`textDocument/rename` renames a symbol project-wide; `textDocument/prepareRename` (declared via `prepareProvider: true`) validates the position first and **refuses** (returns null) on anything the index does not cover — locals and unit/context names (renaming a unit implies a file move; §3.22 covers that path). Member rename (v0.36): renaming a method, field, or op edits the member segment of the compound key (`"Type.method"`, `"Type.field"`, `"Cap.op"`), never the parent prefix.
 
 **Plan.** The edit set is exactly the index's sites for the symbol — definition plus every reference, name segments only — built against a **fresh analysis** of the current buffers. The new name must lex as a single identifier (keywords refuse).
 
@@ -616,6 +616,14 @@ The edge comes from the `provides Cap = Provider` clause, which records a `Capab
 
 `textDocument/documentLink` underlines each `uses`/`consumes` **unit name** — and the `suite <target>` header's target (#609) — and makes it clickable to that unit's source. It joins two pieces: the clickable **range** comes from parsing the *live buffer* (`symbols::unit_reference_spans` walks the recovered AST's `uses`/`consumes` declarations, plus a suite's `target` and its own `uses`, and returns each target's name span — so links track the document even mid-edit); the link **target** comes from the round's **unit→source map** (`unit_sources`), keyed by qualified unit name, resolving to the unit's first source file (a unit may span files). The map is **new analysis surface** (ADR 0095) — context/unit names aren't index symbols, the gap ADR 0068 flagged — built in one pass over the non-synthetic parsed units, available whenever the project structurally analyses (type errors included; empty only on a parse bail), and threaded `ProjectAnalysis` → `ProjectDiagnostics` → the LSP `Analysis`. A **first-party `uses`** (`bynk.list`, embedded via `include_str!`, no on-disk file) and an unresolved unit yield no link, by design — their *symbols* still surface through hover/completion (slice 9). **Go-to-definition on the same `uses`/`consumes` names** rides the same map: when the cursor sits on a unit-reference span and the index/locals paths don't resolve it, `goto_definition` returns the unit's first source file (at the top — units have no finer def site than their header). This closes the consumed-context half of §3.19's deferral for unit *declarations*; a unit-qualified capability reference (`B.Cap`) inside an expression is not yet a navigation source.
 
+### 3.22 File-rename awareness (#302)
+
+`workspace/willRenameFiles` keeps `uses`/`consumes` references in sync when a `.bynk` file is renamed or moved in the editor — the file-move half of §3.9's deferral for unit names. The capability is registered with a filter matching `.bynk` **files only** (`FileOperationPatternKind::File`), not folders — a directory move is a follow-up.
+
+For each `FileRename`, the handler parses the *old* file's own snapshot to get its declared qualified name and the span of that declaration (`symbols::own_declaration_name` — `None` for a `suite`, whose `SourceUnit::name()` is its *target*'s name, not one of its own, so nothing addresses it by name and a suite rename produces no edits). It then derives the name the *new* path implies, preserving whichever single-file/multi-file arrangement the old path satisfied against the compiler's own path↔name consistency rule (`bynk_ide::renamed_unit_name`, delegating to `bynk-emit`'s `check_path_name_alignment` logic rather than re-deriving it in the LSP). Renaming one member file within a multi-file unit's directory is a no-op by construction — the qualified name is the directory, not the filename.
+
+When the name does change, the edit set is: the moved file's own declaration header (targeting its **old** URI — the client applies the returned edit against pre-move locations, then performs the actual rename, so the file lands at its new path already correct), plus every other project file's matching `uses`/`consumes` reference spans (`symbols::unit_reference_spans`, the same span-finder `documentLink` uses). Edits are versioned `TextDocumentEdit`s, gated by `analysis_covering_open_buffers` (§3.2.1) — the same whole-project freshness `rename` needs, since this handler emits the same kind of multi-file versioned edit and a stale open buffer would otherwise carry a version the client rejects. The handler never refuses: a filesystem rename isn't something this edit-only hook can block, so anything it can't confidently resolve is skipped rather than erroring the batch.
+
 ---
 
 ## 4. Implementation architecture
@@ -698,6 +706,7 @@ textDocument.selectionRange        (v0.37, §3.20)
 workspace.symbol                   (v0.26, §3.11; aggregated across projects, §2.4)
 workspace.workspaceFolders         (real multi-root, v0.182, §2.4)
 workspace.didChangeWatchedFiles    (registered dynamically by the server, v0.183, §2.3)
+workspace.fileOperations.willRename (#302, §3.22; `**/*.bynk` files only, not folders)
 ```
 
 Not declared (genuinely out of scope so far):
