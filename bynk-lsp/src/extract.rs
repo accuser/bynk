@@ -19,6 +19,25 @@
 //! `Handler`/`Provider` (that language-change question is deliberately not
 //! taken on here) — so it declines whenever the selection's site carries any
 //! recorded [`Requirement`], covered or not.
+//!
+//! #813 extends [`extract_function`] to a contiguous run of one or more full
+//! statements (optionally including the block's tail), not just one
+//! expression — offered when the selection's span aligns exactly with
+//! statement boundaries (whitespace-trimmed at either end, so a real
+//! "select these lines" gesture matches); a selection that doesn't align
+//! falls back to the single-expression algorithm above unchanged. A run that
+//! stops before the tail synthesises a `fn … -> ()` — or `-> Effect[()]`
+//! when the run itself performs an effect, so `~>`/`do`/`<-` stay legal in
+//! the lifted body — with no explicit tail, the same implicit-unit-tail
+//! shape the parser already synthesises for any statements-only block
+//! (v0.146, ADR 0170); the call site becomes `let _ = …(…)` (or `do …(…)`
+//! in the effectful case) rather than a bare expression, since Bynk has no
+//! expression-statement form. It declines whenever a `:=` (`Cell` store
+//! write) statement falls inside the run — a lifted top-level `fn` has no
+//! store fields to write, so this always fails to typecheck, not merely a
+//! conservative guess — or whenever a binding the run introduces is still
+//! referenced later in the same block: lifting it away would strand that
+//! reference.
 
 use bynk_check::checker::Ty;
 use bynk_check::locals::{LocalBinding, locals_at};
@@ -110,6 +129,11 @@ pub fn extract_variable(
 /// sits outside the selection; an identifier with no local binding at all
 /// (a top-level `fn`, a capability, a type name) is left alone, already
 /// resolvable at the new `fn`'s own top-level scope.
+///
+/// #813: the selection may also resolve to a contiguous statement run (see
+/// [`FunctionSelection::Stmts`]) rather than one expression — free-variable
+/// synthesis is the same walk, just seeded from every selected statement's
+/// values (via [`statement_exprs`]) instead of a single expression.
 pub fn extract_function(
     text: &str,
     requested: Span,
@@ -128,21 +152,61 @@ pub fn extract_function(
     let (Some(unit), _errs) = parse_unit_with_recovery(&tokens, text) else {
         return Vec::new();
     };
-    let Some(site) = find_function_site(&unit, requested) else {
+    let Some(site) = find_function_site(&unit, requested, text) else {
         return Vec::new();
     };
-    if requirements
-        .iter()
-        .any(|r| contains(site.expr_span, r.site))
-    {
+    if requirements.iter().any(|r| contains(site.span, r.site)) {
         return Vec::new();
     }
-    let Some(ret_ty) = ty_at_span(expr_types, site.expr_span) else {
-        return Vec::new();
+
+    let mut exprs: Vec<&Expr> = Vec::new();
+    let (ret_ty_display, call_site_form): (String, CallSiteForm) = match &site.selection {
+        FunctionSelection::Expr(expr) => {
+            let Some(ret_ty) = ty_at_span(expr_types, site.span) else {
+                return Vec::new();
+            };
+            exprs.push(expr);
+            (ret_ty.display(), CallSiteForm::Bare)
+        }
+        FunctionSelection::Stmts {
+            stmts,
+            tail,
+            remainder,
+        } => {
+            // A lifted top-level `fn` has no `store` fields — a `:=` inside
+            // the run would always fail to resolve its target.
+            if stmts.iter().any(|s| matches!(s, Statement::Assign(_))) {
+                return Vec::new();
+            }
+            for s in *stmts {
+                statement_exprs(s, &mut exprs);
+            }
+            match tail {
+                Some(t) => {
+                    let Some(ret_ty) = ty_at_span(expr_types, t.span) else {
+                        return Vec::new();
+                    };
+                    exprs.push(t);
+                    (ret_ty.display(), CallSiteForm::Bare)
+                }
+                None => {
+                    if leaks_a_binding(stmts, remainder, locals, site.span) {
+                        return Vec::new();
+                    }
+                    if stmts_contain_effect_stmt(stmts) {
+                        ("Effect[()]".to_string(), CallSiteForm::Do)
+                    } else {
+                        ("()".to_string(), CallSiteForm::Discard)
+                    }
+                }
+            }
+        }
     };
 
     let mut idents = Vec::new();
-    collect_idents(site.expr, &mut idents);
+    for e in &exprs {
+        collect_idents(e, &mut idents);
+    }
     let mut free: Vec<(&str, Span, &str)> = Vec::new();
     for id in &idents {
         let Some(binding) = locals_at(locals, id.span.start)
@@ -151,7 +215,7 @@ pub fn extract_function(
         else {
             continue;
         };
-        if contains(site.expr_span, binding.def_span) {
+        if contains(site.span, binding.def_span) {
             continue; // bound inside the selection itself, not free
         }
         free.push((id.name.as_str(), binding.def_span, binding.ty.as_str()));
@@ -183,12 +247,21 @@ pub fn extract_function(
         .map(|(n, _)| n.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let selected = &text[site.expr_span.start..site.expr_span.end];
-    let new_fn = format!(
-        "fn {fn_name}({param_list}) -> {} {{\n  {selected}\n}}\n\n",
-        ret_ty.display()
-    );
+    let selected = &text[site.span.start..site.span.end];
+    let new_fn = format!("fn {fn_name}({param_list}) -> {ret_ty_display} {{\n  {selected}\n}}\n\n");
     let insert_pos = crate::position::offset_to_position(text, site.item_start);
+
+    // Bynk has no expression-statement form, so a tail-excluded statement
+    // run's call can't stand alone as `fn_name(args)` — it needs `let _ =`
+    // (pure) or `do` (effectful) to be a legal statement. A bare expression
+    // (single-expression selection, or a run that includes the tail) needs
+    // neither: it replaces an expression position, not a statement.
+    let call_expr = format!("{fn_name}({arg_list})");
+    let call_site_text = match call_site_form {
+        CallSiteForm::Bare => call_expr,
+        CallSiteForm::Discard => format!("let _ = {call_expr}"),
+        CallSiteForm::Do => format!("do {call_expr}"),
+    };
 
     let edits = vec![
         OneOf::Left(TextEdit {
@@ -196,8 +269,8 @@ pub fn extract_function(
             new_text: new_fn,
         }),
         OneOf::Left(TextEdit {
-            range: crate::position::span_to_range(text, site.expr_span),
-            new_text: format!("{fn_name}({arg_list})"),
+            range: crate::position::span_to_range(text, site.span),
+            new_text: call_site_text,
         }),
     ];
     vec![CodeActionOrCommand::CodeAction(CodeAction {
@@ -429,16 +502,61 @@ fn item_span(item: &CommonsItem) -> Option<Span> {
     }
 }
 
+/// Where a [`FunctionSite`]'s selection resolves to. #813 adds [`Stmts`](Self::Stmts)
+/// alongside the original track #800 single-expression shape.
+enum FunctionSelection<'a> {
+    /// The original shape: one AST expression, exactly as [`Site`] finds.
+    Expr(&'a Expr),
+    /// #813: a contiguous run of one or more full statements from a single
+    /// block, optionally including the block's tail. `remainder` is every
+    /// expression after the run within that same block — the tail plus
+    /// nothing else when `tail` is `Some` (nothing follows it), or the tail
+    /// and every later statement's value when `tail` is `None` — checked by
+    /// [`leaks_a_binding`] so a binding the run introduces can't be lifted
+    /// away out from under a live use.
+    Stmts {
+        stmts: &'a [Statement],
+        tail: Option<&'a Expr>,
+        remainder: Vec<&'a Expr>,
+    },
+}
+
+/// How the call site replaces the selection. A tail-excluded statement run
+/// has no expression position to drop a bare call into — Bynk has no
+/// expression-statement form — so it needs a statement wrapper instead; see
+/// [`extract_function`]'s call-site construction.
+enum CallSiteForm {
+    /// The call stands as a bare expression (a single-expression selection,
+    /// or a statement run that includes the tail).
+    Bare,
+    /// A tail-excluded run whose lifted `fn` is pure (`-> ()`).
+    Discard,
+    /// A tail-excluded run whose lifted `fn` performs an effect
+    /// (`-> Effect[()]`).
+    Do,
+}
+
 /// Like [`find_site`], but only within `Commons`/`Context` files, and
 /// additionally records the start of the enclosing top-level item — where the
 /// new `fn` is inserted, immediately above it.
 struct FunctionSite<'a> {
     item_start: usize,
-    expr_span: Span,
-    expr: &'a Expr,
+    /// The exact selected span — the replacement range, and (for `Stmts`)
+    /// the bound every containment check is stated against.
+    span: Span,
+    selection: FunctionSelection<'a>,
 }
 
-fn find_function_site(unit: &SourceUnit, target: Span) -> Option<FunctionSite<'_>> {
+/// #813 tries a statement-run match first (against a whitespace-trimmed
+/// `target`, since a "select these lines" gesture commonly pads onto
+/// surrounding blank space); falling short of an exact statement-boundary
+/// alignment there, this falls back to the original single-expression
+/// algorithm unchanged.
+fn find_function_site<'a>(
+    unit: &'a SourceUnit,
+    target: Span,
+    text: &str,
+) -> Option<FunctionSite<'a>> {
     let items = match unit {
         SourceUnit::Commons(c) => &c.items,
         SourceUnit::Context(c) => &c.items,
@@ -447,12 +565,253 @@ fn find_function_site(unit: &SourceUnit, target: Span) -> Option<FunctionSite<'_
     let item = items
         .iter()
         .find(|it| item_span(it).is_some_and(|s| contains(s, target)))?;
+    let item_start = item_span(item)?.start;
+
+    let trimmed = trim_span(text, target);
+    if trimmed.start < trimmed.end
+        && let Some((stmts, tail, remainder)) = find_multi_stmt_in_item(item, trimmed)
+    {
+        return Some(FunctionSite {
+            item_start,
+            span: trimmed,
+            selection: FunctionSelection::Stmts {
+                stmts,
+                tail,
+                remainder,
+            },
+        });
+    }
+
     let site = find_in_items(std::slice::from_ref(item), target)?;
     Some(FunctionSite {
-        item_start: item_span(item)?.start,
-        expr_span: site.expr_span,
-        expr: site.expr,
+        item_start,
+        span: site.expr_span,
+        selection: FunctionSelection::Expr(site.expr),
     })
+}
+
+/// Trims leading/trailing whitespace bytes from `span` against `text`: a
+/// real editor selection of "these lines" commonly pads onto the
+/// surrounding blank space, which isn't a partial-statement selection the
+/// way clipping actual statement content would be.
+fn trim_span(text: &str, span: Span) -> Span {
+    let s = &text[span.start..span.end];
+    let start = span.start + (s.len() - s.trim_start().len());
+    let trimmed_len = s.trim().len();
+    Span::new(start, start + trimmed_len)
+}
+
+/// Dispatches to the item's body/op/handler containing `target`, then hands
+/// off to [`find_stmt_run`] — the statement-run counterpart of
+/// [`find_in_items`].
+fn find_multi_stmt_in_item(
+    item: &CommonsItem,
+    target: Span,
+) -> Option<(&[Statement], Option<&Expr>, Vec<&Expr>)> {
+    match item {
+        CommonsItem::Fn(f) if contains(f.body.span, target) => find_stmt_run(&f.body, target),
+        CommonsItem::Provider(p) => p
+            .ops
+            .iter()
+            .find(|op| contains(op.body.span, target))
+            .and_then(|op| find_stmt_run(&op.body, target)),
+        CommonsItem::Service(s) => s
+            .handlers
+            .iter()
+            .find(|h| contains(h.body.span, target))
+            .and_then(|h| find_stmt_run(&h.body, target)),
+        CommonsItem::Agent(a) => a
+            .handlers
+            .iter()
+            .find(|h| contains(h.body.span, target))
+            .and_then(|h| find_stmt_run(&h.body, target)),
+        _ => None,
+    }
+}
+
+/// Descends to the smallest block whose own statement list aligns exactly
+/// with `target` (#813): a nested block fully containing `target` is tried
+/// first via [`find_stmt_run_in_expr`] (mirroring [`locate`]'s
+/// descend-first policy), so a run inside an `if`/`match` branch resolves
+/// there rather than at the outer level; [`align_stmt_run`] does the actual
+/// boundary check once no deeper block matches.
+fn find_stmt_run(block: &Block, target: Span) -> Option<(&[Statement], Option<&Expr>, Vec<&Expr>)> {
+    for stmt in &block.statements {
+        let mut values = Vec::new();
+        statement_exprs(stmt, &mut values);
+        for v in values {
+            if let Some(found) = find_stmt_run_in_expr(v, target) {
+                return Some(found);
+            }
+        }
+    }
+    if let Some(found) = find_stmt_run_in_expr(&block.tail, target) {
+        return Some(found);
+    }
+    align_stmt_run(block, target)
+}
+
+/// Looks for a nested block inside `e` whose statement list aligns with
+/// `target` — `None` unless `e`'s span actually contains `target`. Falls
+/// through to [`expr_children`] for anything other than `Block`/`If`/`Match`,
+/// the same exhaustive walk [`locate`] and [`collect_idents`] use.
+fn find_stmt_run_in_expr(
+    e: &Expr,
+    target: Span,
+) -> Option<(&[Statement], Option<&Expr>, Vec<&Expr>)> {
+    if !contains(e.span, target) {
+        return None;
+    }
+    match &e.kind {
+        ExprKind::Block(b) => find_stmt_run(b, target),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => find_stmt_run_in_expr(cond, target)
+            .or_else(|| find_stmt_run(then_block, target))
+            .or_else(|| find_stmt_run(else_block, target)),
+        ExprKind::Match { discriminant, arms } => find_stmt_run_in_expr(discriminant, target)
+            .or_else(|| {
+                arms.iter().find_map(|arm| match &arm.body {
+                    MatchBody::Expr(e) => find_stmt_run_in_expr(e, target),
+                    MatchBody::Block(b) => find_stmt_run(b, target),
+                })
+            }),
+        _ => expr_children(e)
+            .into_iter()
+            .find_map(|c| find_stmt_run_in_expr(c, target)),
+    }
+}
+
+/// Tries to align `target` exactly against `block`'s own statement list: its
+/// start must equal some statement's start, and its end must equal either
+/// another statement's end (the run stops before the tail) or the tail's own
+/// end (the run includes it). No match — a partial-statement selection, or
+/// one spanning more than this single block — returns `None`.
+fn align_stmt_run(
+    block: &Block,
+    target: Span,
+) -> Option<(&[Statement], Option<&Expr>, Vec<&Expr>)> {
+    let start_idx = block
+        .statements
+        .iter()
+        .position(|s| s.span().start == target.start)?;
+    if target.end == block.tail.span.end {
+        let full = Span::new(
+            block.statements[start_idx].span().start,
+            block.tail.span.end,
+        );
+        if full == target {
+            return Some((
+                &block.statements[start_idx..],
+                Some(block.tail.as_ref()),
+                Vec::new(),
+            ));
+        }
+    }
+    let end_idx = block
+        .statements
+        .iter()
+        .position(|s| s.span().end == target.end)?;
+    if end_idx < start_idx {
+        return None;
+    }
+    let full = Span::new(
+        block.statements[start_idx].span().start,
+        block.statements[end_idx].span().end,
+    );
+    if full != target {
+        return None;
+    }
+    let mut remainder = Vec::new();
+    for s in &block.statements[end_idx + 1..] {
+        statement_exprs(s, &mut remainder);
+    }
+    remainder.push(&block.tail);
+    Some((&block.statements[start_idx..=end_idx], None, remainder))
+}
+
+/// Whether any `let`/`<-` binding introduced by `stmts` (skipping `_`) is
+/// still referenced in `remainder` — the expressions after the run within
+/// the same block. A tail-excluded run whose binding leaks this way can't be
+/// lifted away: the reference downstream would resolve to nothing once the
+/// binding moves into the new `fn`.
+fn leaks_a_binding(
+    stmts: &[Statement],
+    remainder: &[&Expr],
+    locals: &[LocalBinding],
+    run_span: Span,
+) -> bool {
+    let bound_names: Vec<&str> = stmts
+        .iter()
+        .filter_map(|s| match s {
+            Statement::Let(l) | Statement::EffectLet(l) if l.name.name != "_" => {
+                Some(l.name.name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    if bound_names.is_empty() {
+        return false;
+    }
+    let mut used = Vec::new();
+    for e in remainder {
+        collect_idents(e, &mut used);
+    }
+    used.iter().any(|id| {
+        bound_names.contains(&id.name.as_str())
+            && locals_at(locals, id.span.start)
+                .into_iter()
+                .find(|b| b.name == id.name)
+                .is_some_and(|b| contains(run_span, b.def_span))
+    })
+}
+
+/// Whether any of `stmts` is (or contains, arbitrarily nested through
+/// `if`/`match`/block sub-expressions) a `~>`/`do`/`<-` statement — the three
+/// forms legal only in an effectful body (`ctx.effectful`, gated on the
+/// enclosing return type being `Effect[_]`). Decides whether a tail-excluded
+/// run's synthesised `fn` must return `Effect[()]` — so those forms stay
+/// legal in the lifted body — rather than plain `()`.
+fn stmts_contain_effect_stmt(stmts: &[Statement]) -> bool {
+    stmts.iter().any(stmt_contains_effect_stmt)
+}
+
+fn stmt_contains_effect_stmt(s: &Statement) -> bool {
+    match s {
+        Statement::EffectLet(_) | Statement::Send(_) | Statement::Do(_) => true,
+        Statement::Let(l) => expr_contains_effect_stmt(&l.value),
+        Statement::Expect(a) => expr_contains_effect_stmt(&a.value),
+        Statement::Assign(a) => expr_contains_effect_stmt(&a.value),
+    }
+}
+
+fn block_contains_effect_stmt(b: &Block) -> bool {
+    stmts_contain_effect_stmt(&b.statements) || expr_contains_effect_stmt(&b.tail)
+}
+
+fn expr_contains_effect_stmt(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Block(b) => block_contains_effect_stmt(b),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            expr_contains_effect_stmt(cond)
+                || block_contains_effect_stmt(then_block)
+                || block_contains_effect_stmt(else_block)
+        }
+        ExprKind::Match { discriminant, arms } => {
+            expr_contains_effect_stmt(discriminant)
+                || arms.iter().any(|arm| match &arm.body {
+                    MatchBody::Expr(e) => expr_contains_effect_stmt(e),
+                    MatchBody::Block(b) => block_contains_effect_stmt(b),
+                })
+        }
+        _ => expr_children(e).into_iter().any(expr_contains_effect_stmt),
+    }
 }
 
 /// `expr` and every `Ident` reference nested inside it — walked via
@@ -708,6 +1067,19 @@ mod tests {
             )
         }
 
+        /// A `let`-bound local — its def site is `name`'s first occurrence,
+        /// same convention as [`param`].
+        fn let_binding(text: &str, name: &str, ty: &str) -> LocalBinding {
+            let def_start = nth_offset(text, name, 0);
+            LocalBinding {
+                name: name.to_string(),
+                def_span: Span::new(def_start, def_start + name.len()),
+                kind: LocalKind::Let,
+                ty: ty.to_string(),
+                scope: Span::new(0, text.len()),
+            }
+        }
+
         fn capability_use(site_needle_offset: usize, len: usize) -> Requirement {
             Requirement {
                 capability: "Clock".to_string(),
@@ -837,6 +1209,164 @@ mod tests {
             ];
             let actions = function_actions_for(src, "x + x", &[], &locals, &types);
             assert!(actions.is_empty());
+        }
+
+        mod multi_statement_tests {
+            use super::*;
+
+            #[test]
+            fn a_run_including_the_tail_becomes_a_call_expression() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  let a = num + 1\n  let b = a * 2\n  b + num\n}\n";
+                let locals = vec![
+                    param(src, "num", "Int"),
+                    let_binding(src, "a", "Int"),
+                    let_binding(src, "b", "Int"),
+                ];
+                let types = vec![int_type(src, "b + num")];
+                let needle = "let a = num + 1\n  let b = a * 2\n  b + num";
+                let actions = function_actions_for(src, needle, &[], &locals, &types);
+                assert_eq!(actions.len(), 1);
+                let edits = sole_edit(&actions[0]);
+                assert_eq!(
+                    edits[0].new_text,
+                    format!("fn extractedFn(num: Int) -> Int {{\n  {needle}\n}}\n\n")
+                );
+                assert_eq!(edits[1].new_text, "extractedFn(num)");
+            }
+
+            #[test]
+            fn a_run_excluding_the_tail_yields_a_discard_call() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  let a = num + 1\n  let valC = a * 2\n  num\n}\n";
+                let locals = vec![
+                    param(src, "num", "Int"),
+                    let_binding(src, "a", "Int"),
+                    let_binding(src, "valC", "Int"),
+                ];
+                let needle = "let a = num + 1\n  let valC = a * 2";
+                let actions = function_actions_for(src, needle, &[], &locals, &[]);
+                assert_eq!(actions.len(), 1);
+                let edits = sole_edit(&actions[0]);
+                assert_eq!(
+                    edits[0].new_text,
+                    format!("fn extractedFn(num: Int) -> () {{\n  {needle}\n}}\n\n")
+                );
+                assert_eq!(edits[1].new_text, "let _ = extractedFn(num)");
+            }
+
+            #[test]
+            fn an_effectful_run_excluding_the_tail_yields_an_effect_return_and_a_do_call() {
+                // `do` is only legal in an effectful body semantically (a
+                // checker rule), but the parser accepts it regardless of the
+                // enclosing signature — extract_function does no
+                // type-checking of its own, so this exercises the
+                // return-type/call-site choice in isolation.
+                let src = "context c\n\nfn f() -> Effect[()] {\n  do g()\n  do h()\n  ()\n}\n";
+                let needle = "do g()\n  do h()";
+                let actions = function_actions_for(src, needle, &[], &[], &[]);
+                assert_eq!(actions.len(), 1);
+                let edits = sole_edit(&actions[0]);
+                assert_eq!(
+                    edits[0].new_text,
+                    format!("fn extractedFn() -> Effect[()] {{\n  {needle}\n}}\n\n")
+                );
+                assert_eq!(edits[1].new_text, "do extractedFn()");
+            }
+
+            #[test]
+            fn a_binding_the_run_introduces_still_used_in_the_tail_declines() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  let a = num + 1\n  let b = a * 2\n  b\n}\n";
+                let locals = vec![
+                    param(src, "num", "Int"),
+                    let_binding(src, "a", "Int"),
+                    let_binding(src, "b", "Int"),
+                ];
+                // Excludes the tail `b`, which reads the run's own `let b` —
+                // lifting the run away would strand that reference.
+                let needle = "let a = num + 1\n  let b = a * 2";
+                let actions = function_actions_for(src, needle, &[], &locals, &[]);
+                assert!(actions.is_empty());
+            }
+
+            #[test]
+            fn a_run_containing_a_cell_write_declines() {
+                // A lifted top-level `fn` has no `store` fields — a `:=`
+                // inside the run would always fail to resolve its target.
+                let src = "context c\n\nfn f() -> Int {\n  cell := 1\n  x\n}\n";
+                let actions = function_actions_for(src, "cell := 1", &[], &[], &[]);
+                assert!(actions.is_empty());
+            }
+
+            #[test]
+            fn a_run_found_inside_a_nested_if_branch() {
+                let src = concat!(
+                    "context c\n\n",
+                    "fn f(num: Int) -> Int {\n",
+                    "  if num > 0 {\n",
+                    "    let valA = num * 2\n",
+                    "    let valB = valA + 1\n",
+                    "    valB\n",
+                    "  } else {\n",
+                    "    0\n",
+                    "  }\n",
+                    "}\n",
+                );
+                let locals = vec![
+                    param(src, "num", "Int"),
+                    let_binding(src, "valA", "Int"),
+                    let_binding(src, "valB", "Int"),
+                ];
+                let tail_val_b = nth_offset(src, "valB", 1); // skip `let valB`'s own def
+                let types = vec![(
+                    Span::new(tail_val_b, tail_val_b + "valB".len()),
+                    Ty::Base(BaseType::Int),
+                )];
+                let needle = "let valA = num * 2\n    let valB = valA + 1\n    valB";
+                let actions = function_actions_for(src, needle, &[], &locals, &types);
+                assert_eq!(actions.len(), 1);
+                let edits = sole_edit(&actions[0]);
+                assert_eq!(
+                    edits[0].new_text,
+                    format!("fn extractedFn(num: Int) -> Int {{\n  {needle}\n}}\n\n")
+                );
+                // Inserted above the enclosing `fn f`, not inside the `if`.
+                assert_eq!(edits[0].range.start, Position::new(2, 0));
+                assert_eq!(edits[1].new_text, "extractedFn(num)");
+            }
+
+            #[test]
+            fn a_selection_extending_past_a_statement_boundary_declines() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  let a = num + 1\n  let valC = a * 2\n  num\n}\n";
+                let start = src.find("let a = num + 1").unwrap();
+                // One byte short of a full second statement — doesn't align
+                // with any statement/tail boundary in either direction, so
+                // neither the multi-statement nor the single-expression
+                // algorithm matches.
+                let end = start + "let a = num + 1\n  let valC = a * 2".len() - 1;
+                let requested = Span::new(start, end);
+                let uri = Url::parse("file:///a.bynk").unwrap();
+                let actions = extract_function(src, requested, &uri, Some(3), &[], &[], &[]);
+                assert!(actions.is_empty());
+            }
+
+            #[test]
+            fn a_selection_padded_with_surrounding_whitespace_still_aligns() {
+                let src = "context c\n\nfn f(num: Int) -> Int {\n  let a = num + 1\n  let valC = a * 2\n  num\n}\n";
+                let inner = "let a = num + 1\n  let valC = a * 2";
+                let start = src.find(inner).unwrap();
+                // Pads onto the leading two-space indent and the trailing
+                // newline — a common "select whole lines" editor gesture.
+                let requested = Span::new(start - 2, start + inner.len() + 1);
+                let locals = vec![
+                    param(src, "num", "Int"),
+                    let_binding(src, "a", "Int"),
+                    let_binding(src, "valC", "Int"),
+                ];
+                let uri = Url::parse("file:///a.bynk").unwrap();
+                let actions = extract_function(src, requested, &uri, Some(3), &[], &locals, &[]);
+                assert_eq!(actions.len(), 1);
+                let edits = sole_edit(&actions[0]);
+                assert_eq!(edits[1].new_text, "let _ = extractedFn(num)");
+            }
         }
     }
 }
