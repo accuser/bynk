@@ -819,14 +819,19 @@ arm separators are optional. Well-formedness: §5.
 
 {{#grammar _pattern}}
 
-A pattern: a wildcard or a variant pattern.
+A pattern: a wildcard, a literal, a binding, or a variant pattern. A
+lowercase-led identifier is a binding (it matches anything and binds the
+value); an uppercase-led one is a nullary variant — in the concrete grammar
+both parse as `variant_pattern`.
 
 ### §4.7.3 variant_pattern
 
 {{#grammar variant_pattern}}
 
-A constant name, optionally qualified, with an optional parenthesised list of
-bindings. Well-formedness: §5.
+A name, optionally qualified, with an optional parenthesised list of
+bindings. The name is an identifier, not a constant name: a lowercase-led
+identifier binds the value, an uppercase-led one discriminates a variant.
+Well-formedness: §5.
 
 ### §4.7.4 wildcard_pattern
 
