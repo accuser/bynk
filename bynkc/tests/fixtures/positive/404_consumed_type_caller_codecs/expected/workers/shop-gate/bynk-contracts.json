@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "enter": "7006242f5e9d38c0"
+  },
+  "expects": {
+    "shop.tokens": {
+      "issue": "096e27188255617a"
+    }
+  }
+}

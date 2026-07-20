@@ -211,6 +211,84 @@ assert(res.status === 409, "skewed contract outranks a missing caller, got " + r
 console.log("ALL OK");
 "#;
 
+// #661: the caller-side-codec round-trip. `app.b` returns a **user record**
+// across the boundary; `app.a` calls it and reads a field off the decoded
+// value. Under `--target workers` `app.a` generates its *own*
+// `deserialise_Result_Ticket_String` / `deserialise_Ticket` (it imports `app.b`
+// for types only), so driving `app.a.forward` and asserting the field survived
+// exercises exactly the codec this increment moves caller-side — which the
+// existing driver above, hitting the *callee* directly, never runs.
+const SOURCE_CODEC_B: &str = r#"context app.b
+
+exports transparent { Ticket }
+
+type Ticket = {
+  seat:  Int,
+  label: String,
+}
+
+service issue {
+  on call(seat: Int) -> Effect[Result[Ticket, String]] {
+    Ok(Ticket { seat: seat, label: "vip" })
+  }
+}
+"#;
+
+const SOURCE_CODEC_A: &str = r#"context app.a
+
+consumes app.b as B
+
+service forward {
+  on call(seat: Int) -> Effect[Result[Int, String]] {
+    let r <- B.issue(seat)
+    match r {
+      Ok(t)  => Ok(t.seat)
+      Err(e) => Err(e)
+    }
+  }
+}
+"#;
+
+// Drives `app.a.forward`, whose handler decodes `app.b`'s `Ticket` reply through
+// `app.a`'s own generated codec, then returns the record's `seat` field. A
+// caller-side codec that dropped or corrupted the payload would not return the
+// seat that was sent.
+const CODEC_DRIVER_TS: &str = r#"import workerA from "./workers/app-a/index.js";
+import workerB from "./workers/app-b/index.js";
+
+// `forward`'s own contract hash, read out of app-a's entry and injected here so
+// the driver stamps the real constant rather than restating one.
+const CONTRACT = "__CONTRACT_HASH__";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) throw new Error("FAIL: " + msg);
+}
+
+// app.a's Worker reaches app.b through its APP_B service binding.
+const envA: any = { APP_B: { fetch: (req: Request) => workerB.fetch(req, {} as any) } };
+
+const res = await workerA.fetch(
+  new Request("http://internal/_bynk/call/forward", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "X-Bynk-Caller": "driver",
+      "X-Bynk-Contract": CONTRACT,
+    },
+    body: JSON.stringify(42),
+  }),
+  envA,
+);
+assert(res.status === 200, "forward → 200, got " + res.status);
+const body: any = await res.json();
+assert(
+  body.kind === "Ok" && body.value === 42,
+  "caller-side codec round-trips the record's seat field, got " + JSON.stringify(body),
+);
+
+console.log("ALL OK");
+"#;
+
 const TSCONFIG_JSON: &str = r#"{
   "compilerOptions": {
     "target": "ES2022",
@@ -380,6 +458,95 @@ fn bundle_cross_context_caller_reads_the_consuming_context_name() {
     assert!(
         ok && msg.contains("ALL OK"),
         "bundle cross-context-caller driver did not pass:\n{msg}"
+    );
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+/// #661 (ADR 0199 Decision G discharged): a **live** round-trip of a user-typed
+/// payload through the *caller's own* boundary codec. Under `--target workers`
+/// `app.a` no longer imports `app.b`'s module as a value — it generates its own
+/// `deserialise_Result_Ticket_String` and imports `app.b` for types only — so a
+/// codec that silently diverged from the callee's would break the wire. The e2e
+/// goldens and `tsc --strict` prove the emitted shape; only this proves the
+/// decoded *value*. Both sides type-check independently, so a payload assertion
+/// is the guard a status code is not (the increment's stated top risk).
+#[test]
+fn cross_context_caller_side_codec_round_trips_a_user_payload() {
+    let runner = match discover_tsc() {
+        Some(r) => r,
+        None => {
+            eprintln!("\n!!! CALLER-SIDE CODEC VERIFICATION SKIPPED !!!\nno tsc runner.\n");
+            if std::env::var(REQUIRE_ENV).is_ok() {
+                panic!("{REQUIRE_ENV} is set but no tsc runner was found");
+            }
+            return;
+        }
+    };
+    if !tool_exists("node") {
+        eprintln!("\n!!! CALLER-SIDE CODEC VERIFICATION SKIPPED !!!\n`node` not on PATH.\n");
+        if std::env::var(REQUIRE_ENV).is_ok() {
+            panic!("{REQUIRE_ENV} is set but `node` was not found");
+        }
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!("bynk-xctx-codec-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    let proj = tmp.join("proj/app");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("a.bynk"), SOURCE_CODEC_A).unwrap();
+    fs::write(proj.join("b.bynk"), SOURCE_CODEC_B).unwrap();
+
+    let out = match bynkc::compile_project(
+        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+    ) {
+        Ok(o) => o,
+        Err(failure) => panic!(
+            "compile the caller-side-codec project to Workers:\n{}",
+            bynkc::render_project_errors(&failure.flatten())
+        ),
+    };
+
+    let run_dir = tmp.join("run");
+    for file in &out.files {
+        let target = run_dir.join(&file.output_path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, &file.typescript).unwrap();
+    }
+    fs::write(
+        run_dir.join("runtime.ts"),
+        bynkc::emitter::emit_runtime_module(),
+    )
+    .unwrap();
+    // `forward`'s contract hash lives in app-a's own entry (the constant it
+    // compares an incoming `X-Bynk-Contract` against). Extract it so the driver
+    // stamps the real value.
+    let caller = out
+        .files
+        .iter()
+        .find(|f| f.output_path.ends_with("workers/app-a/index.ts"))
+        .expect("app-a entry emitted");
+    let hash = regex::Regex::new(r#"expected: "([0-9a-f]{16})""#)
+        .unwrap()
+        .captures(&caller.typescript)
+        .map(|c| c[1].to_string())
+        .expect("app-a's entry stamps a contract hash");
+    fs::write(
+        run_dir.join("driver.ts"),
+        CODEC_DRIVER_TS.replace("__CONTRACT_HASH__", &hash),
+    )
+    .unwrap();
+    fs::write(run_dir.join("tsconfig.json"), TSCONFIG_JSON).unwrap();
+    fs::write(run_dir.join("package.json"), "{ \"type\": \"module\" }").unwrap();
+
+    let (program, prefix) = &runner;
+    let (ok, msg) = run(program, prefix, &["-p", "tsconfig.json"], &run_dir);
+    assert!(ok, "tsc failed on the caller-side-codec workers:\n{msg}");
+
+    let (ok, msg) = run("node", &[], &["js/driver.js"], &run_dir);
+    assert!(
+        ok && msg.contains("ALL OK"),
+        "caller-side-codec driver did not pass:\n{msg}"
     );
     let _ = fs::remove_dir_all(&tmp);
 }

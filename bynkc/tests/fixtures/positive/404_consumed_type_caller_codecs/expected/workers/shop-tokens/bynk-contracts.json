@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "issue": "096e27188255617a"
+  },
+  "expects": {}
+}

@@ -14,6 +14,25 @@ use std::fmt::Write as _;
 
 use bynk_syntax::ast::*;
 
+/// #661: a *type qualifier* — maps a callee-owned type name to the type-only
+/// namespace prefix (`"commerce_payment."`) the caller must use to *name* it,
+/// while the caller generates that type's codec **locally** under a bare name.
+///
+/// A name absent from the map (or mapped to `""`) is named bare: the owner's
+/// own module, a base/generic type, or a commons type the caller already
+/// declares or imports locally. Only a consumed context's *own* boundary types
+/// (`AuthId`, `PaymentError`) are qualified — the caller has no local
+/// declaration to name, so the codec's type positions reach through the
+/// `import type * as <ns>` alias. Codec *function* names are never qualified:
+/// the caller's `deserialise_AuthId` calls its own local `deserialise_*`, which
+/// is the whole point of the increment.
+type Qual = std::collections::HashMap<String, String>;
+
+/// The namespace prefix for a type name under `qual` (`""` when unqualified).
+fn qual_prefix(qual: &Qual, name: &str) -> String {
+    qual.get(name).cloned().unwrap_or_default()
+}
+
 /// Compute the set of type names (transitively reachable) that need
 /// serialise/deserialise helpers for this context: any type used in the
 /// argument or return position of a service handler exposed by this
@@ -305,7 +324,24 @@ pub fn emit_helpers_for_owner(
     out: &mut String,
     type_names: &[String],
     types: &std::collections::HashMap<String, TypeDecl>,
+    owner_qualified: &str,
+) {
+    emit_helpers_for_owner_qualified(out, type_names, types, owner_qualified, &Qual::new());
+}
+
+/// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
+/// `Qual`. With an empty qualifier this is the owner's own module (every
+/// type named bare, refined validation through `.of`). With a non-empty one it
+/// is a *consumer* generating its own view of another context's boundary
+/// types: the qualified names reach through the `import type * as <ns>` alias,
+/// and refined validation inlines (transparent) or casts structurally (opaque)
+/// because the owner's `.of` is not importable.
+pub fn emit_helpers_for_owner_qualified(
+    out: &mut String,
+    type_names: &[String],
+    types: &std::collections::HashMap<String, TypeDecl>,
     _owner_qualified: &str,
+    qual: &Qual,
 ) {
     // Only emit helpers for *named* types declared by this owner. Skip
     // unknown names — they belong to another module or to the runtime's
@@ -323,19 +359,19 @@ pub fn emit_helpers_for_owner(
             continue;
         }
         emitted_any = true;
-        emit_one(out, name, decl);
+        emit_one(out, name, decl, qual);
     }
     if emitted_any {
         writeln!(out).unwrap();
     }
 }
 
-fn emit_one(out: &mut String, name: &str, decl: &TypeDecl) {
+fn emit_one(out: &mut String, name: &str, decl: &TypeDecl, qual: &Qual) {
     match &decl.body {
-        TypeBody::Refined { base, .. } => emit_refined(out, name, *base, decl),
-        TypeBody::Opaque { base, .. } => emit_refined(out, name, *base, decl),
-        TypeBody::Record(r) => emit_record(out, name, r),
-        TypeBody::Sum(s) => emit_sum(out, name, s),
+        TypeBody::Refined { base, .. } => emit_refined(out, name, *base, decl, qual),
+        TypeBody::Opaque { base, .. } => emit_refined(out, name, *base, decl, qual),
+        TypeBody::Record(r) => emit_record(out, name, r, qual),
+        TypeBody::Sum(s) => emit_sum(out, name, s, qual),
     }
 }
 
@@ -357,10 +393,11 @@ fn ts_base_for_serialisation(b: BaseType) -> &'static str {
 /// and decoded (rejecting a non-string or invalid-base64 wire value) on
 /// deserialise. There are no `Bytes` refinement predicates, so there is no
 /// `.of` re-validation to thread.
-fn emit_bytes_named_codec(out: &mut String, name: &str) {
+fn emit_bytes_named_codec(out: &mut String, name: &str, qual: &Qual) {
+    let ty = format!("{}{name}", qual_prefix(qual, name));
     writeln!(
         out,
-        "export function serialise_{name}(value: {name}): JsonValue {{"
+        "export function serialise_{name}(value: {ty}): JsonValue {{"
     )
     .unwrap();
     writeln!(
@@ -373,7 +410,7 @@ fn emit_bytes_named_codec(out: &mut String, name: &str) {
 
     writeln!(
         out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{name}, BoundaryError> {{"
+        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{ty}, BoundaryError> {{"
     )
     .unwrap();
     writeln!(out, "  if (typeof json !== \"string\") {{").unwrap();
@@ -391,17 +428,30 @@ fn emit_bytes_named_codec(out: &mut String, name: &str) {
     )
     .unwrap();
     writeln!(out, "  }}").unwrap();
-    writeln!(out, "  return Ok(__b.value as unknown as {name});").unwrap();
+    writeln!(out, "  return Ok(__b.value as unknown as {ty});").unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 }
 
-fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) {
+fn emit_refined(out: &mut String, name: &str, base: BaseType, decl: &TypeDecl, qual: &Qual) {
     // v0.110: a `Bytes`-based opaque/refined type has a bespoke base64 codec.
     if base == BaseType::Bytes {
-        emit_bytes_named_codec(out, name);
+        emit_bytes_named_codec(out, name, qual);
         return;
     }
+    // #661: a *consumed* type (one the caller qualifies through the callee's
+    // type-only namespace) has no importable `.of`, so its deserialiser cannot
+    // route validation through the owner's constructor. An **opaque** consumed
+    // type casts structurally after the base check (Decision C — its predicate
+    // is the owner's secret and is not re-checked, which is sound because the
+    // value was produced by the owner's typed code and skew is caught by the
+    // v0.177 contract hash). A **transparent refined** consumed type inlines
+    // its predicate checks (Decision D — the consumer knows the shape by
+    // declaration, so it validates, just not through `.of`).
+    let qprefix = qual_prefix(qual, name);
+    let ty = format!("{qprefix}{name}");
+    let consumed = !qprefix.is_empty();
+    let consumed_opaque = consumed && matches!(decl.body, TypeBody::Opaque { .. });
     let prim = ts_base_for_serialisation(base);
     let typeof_str = match base {
         BaseType::Int => "number",
@@ -414,7 +464,7 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
     };
     writeln!(
         out,
-        "export function serialise_{name}(value: {name}): JsonValue {{"
+        "export function serialise_{name}(value: {ty}): JsonValue {{"
     )
     .unwrap();
     writeln!(out, "  return value as unknown as {prim};").unwrap();
@@ -423,7 +473,7 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
 
     writeln!(
         out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{name}, BoundaryError> {{"
+        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{ty}, BoundaryError> {{"
     )
     .unwrap();
     writeln!(out, "  if (typeof json !== \"{typeof_str}\") {{").unwrap();
@@ -433,35 +483,147 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
     )
     .unwrap();
     writeln!(out, "  }}").unwrap();
-    // Re-validate via the type's own constructor (`.of`), which applies
-    // the refinement. If the type has no refinement, `.of` doesn't exist
-    // for refined-base types; fall back to a direct cast.
-    writeln!(
-        out,
-        "  const validated = (typeof ({name} as any).of === \"function\")"
-    )
-    .unwrap();
-    writeln!(out, "    ? ({name} as any).of(json)").unwrap();
-    writeln!(out, "    : Ok(json as unknown as {name});").unwrap();
-    writeln!(out, "  if (validated.tag === \"Err\") {{").unwrap();
-    writeln!(
-        out,
-        "    return Err({{ kind: \"RefinementViolation\", path, violation: validated.error }});"
-    )
-    .unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "  return Ok(validated.value as {name});").unwrap();
+    if consumed_opaque {
+        // Decision C: structural cast only — never reach for the owner's `.of`,
+        // which would resurrect the value import this increment removes and leak
+        // the opaque predicate into the consumer.
+        writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
+    } else if consumed {
+        // Decision D: a transparent refined consumed type validates inline. The
+        // base-integrality / finiteness guards and the declared predicates, in
+        // the same order the owner's `.of` applies them, but wrapped as this
+        // codec's `BoundaryError` rather than a `ValidationError`.
+        let refinement = match &decl.body {
+            TypeBody::Refined { refinement, .. } => refinement.as_ref(),
+            // A consumed transparent type over a base with no `where` still
+            // reaches here (e.g. a bare alias); no predicates to inline.
+            _ => None,
+        };
+        emit_inline_refinement_checks(out, name, base, refinement);
+        writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
+    } else {
+        // Owner's own module: re-validate via the type's own constructor
+        // (`.of`), which applies the refinement. If the type has no refinement,
+        // `.of` doesn't exist for refined-base types; fall back to a direct cast.
+        writeln!(
+            out,
+            "  const validated = (typeof ({name} as any).of === \"function\")"
+        )
+        .unwrap();
+        writeln!(out, "    ? ({name} as any).of(json)").unwrap();
+        writeln!(out, "    : Ok(json as unknown as {name});").unwrap();
+        writeln!(out, "  if (validated.tag === \"Err\") {{").unwrap();
+        writeln!(
+            out,
+            "    return Err({{ kind: \"RefinementViolation\", path, violation: validated.error }});"
+        )
+        .unwrap();
+        writeln!(out, "  }}").unwrap();
+        writeln!(out, "  return Ok(validated.value as {name});").unwrap();
+    }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 }
 
-fn emit_record(out: &mut String, name: &str, body: &RecordBody) {
+/// #661 (Decision D): inline the base-type and refinement checks a consumed
+/// **transparent** refined type's deserialiser applies, reporting failures as
+/// this codec's `BoundaryError` (`RefinementViolation` wrapping the same
+/// `{ field, message, value }` the owner's `.of` would have produced). The
+/// `typeof` guard is emitted by the caller; these are the checks that run once
+/// the primitive type already matched. `json` is the value being validated.
+fn emit_inline_refinement_checks(
+    out: &mut String,
+    name: &str,
+    base: BaseType,
+    refinement: Option<&Refinement>,
+) {
+    let violation = |msg: &str| {
+        format!(
+            "return Err({{ kind: \"RefinementViolation\", path, violation: {{ field: \"{name}\", message: \"{msg}\", value: json }} }});"
+        )
+    };
+    // Base guards mirror `emit_refined_checks`: an `Int` is whole, a `Float`
+    // finite. (`Duration`/`Instant` are not exposed as named refined bases.)
+    if base == BaseType::Int {
+        writeln!(out, "  if (!Number.isInteger(json)) {{").unwrap();
+        writeln!(out, "    {}", violation("must be an integer")).unwrap();
+        writeln!(out, "  }}").unwrap();
+    }
+    if base == BaseType::Float {
+        writeln!(out, "  if (!Number.isFinite(json)) {{").unwrap();
+        writeln!(out, "    {}", violation("must be a finite number")).unwrap();
+        writeln!(out, "  }}").unwrap();
+    }
+    if let Some(r) = refinement {
+        for pred in &r.predicates {
+            emit_inline_pred_check(out, &pred.kind, &violation);
+        }
+    }
+}
+
+/// #661 (Decision D): one refinement predicate as an inline `if (!…) return
+/// Err(…)`, over the local `json` binding. The messages match
+/// `emit::emit_pred_check` so a consumer-side rejection reads identically to an
+/// owner-side one; only the error envelope differs (`BoundaryError` here,
+/// `ValidationError` there).
+fn emit_inline_pred_check(out: &mut String, pred: &PredKind, violation: &dyn Fn(&str) -> String) {
+    let mut check = |cond: &str, msg: String| {
+        writeln!(out, "  if (!({cond})) {{").unwrap();
+        writeln!(out, "    {}", violation(&msg)).unwrap();
+        writeln!(out, "  }}").unwrap();
+    };
+    match pred {
+        PredKind::NonNegative => check("json >= 0", "must be non-negative".to_string()),
+        PredKind::Positive => check("json > 0", "must be positive".to_string()),
+        PredKind::InRange(a, b) => {
+            let (a, b) = (a.value, b.value);
+            check(
+                &format!("json >= {a} && json <= {b}"),
+                format!("must be in range [{a}, {b}]"),
+            );
+        }
+        PredKind::InRangeF(a, b) => {
+            let (a, b) = (&a.lexeme, &b.lexeme);
+            check(
+                &format!("json >= {a} && json <= {b}"),
+                format!("must be in range [{a}, {b}]"),
+            );
+        }
+        PredKind::NonEmpty => check("json.length > 0", "must be non-empty".to_string()),
+        PredKind::MinLength(n) => check(
+            &format!("json.length >= {n}"),
+            format!("length must be at least {n}"),
+        ),
+        PredKind::MaxLength(n) => check(
+            &format!("json.length <= {n}"),
+            format!("length must be at most {n}"),
+        ),
+        PredKind::Length(n) => check(
+            &format!("json.length === {n}"),
+            format!("length must be exactly {n}"),
+        ),
+        PredKind::Matches(pat) => {
+            let escaped = super::escape_ts_string(pat);
+            check(
+                &format!("new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test(json)"),
+                format!("must match /{}/", super::escape_ts_string(pat)),
+            );
+        }
+    }
+}
+
+fn emit_record(out: &mut String, name: &str, body: &RecordBody, qual: &Qual) {
     let fields: Vec<(String, TypeRef)> = body
         .fields
         .iter()
         .map(|f| (f.name.name.clone(), f.type_ref.clone()))
         .collect();
-    emit_record_codec(out, name, name, &fields);
+    // #661: a consumed record's TS value type reaches through the type-only
+    // namespace (`commerce_payment.Receipt`); the codec function name stays
+    // bare and local. Its field codec calls are unqualified too — they resolve
+    // to the caller's own locally-generated helpers.
+    let ts_type = format!("{}{name}", qual_prefix(qual, name));
+    emit_record_codec(out, name, &ts_type, &fields);
 }
 
 /// v0.174 (#592): the shared record codec body. `fn_suffix` is the codec name
@@ -524,7 +686,13 @@ fn emit_record_codec(
     writeln!(out).unwrap();
 }
 
-fn emit_sum(out: &mut String, name: &str, body: &SumBody) {
+fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual) {
+    // #661: a consumed sum's TS value type is namespace-qualified; the codec
+    // function name and its per-variant codec calls stay bare and local. #593:
+    // the codec body is the shared `emit_sum_codec` (also reused, unqualified,
+    // for a generic-sum instantiation), so the qualified value type is threaded
+    // in as its `ts_type`.
+    let ty = format!("{}{name}", qual_prefix(qual, name));
     let variants: Vec<(String, Vec<(String, TypeRef)>)> = body
         .variants
         .iter()
@@ -538,15 +706,15 @@ fn emit_sum(out: &mut String, name: &str, body: &SumBody) {
             )
         })
         .collect();
-    emit_sum_codec(out, name, name, &variants);
+    emit_sum_codec(out, name, &ty, &variants);
 }
 
 /// The serialise/deserialise pair for a sum type, over already-resolved variant
 /// payloads. `fn_suffix` names the emitted functions (`Opt` / `Opt_Int`),
-/// `ts_type` is their value type (`Opt` / `Opt<number>`). The wire discriminant
-/// is `kind`; the in-memory discriminant is `tag`. #593: a generic-sum
-/// instantiation reuses this with substituted payload types, exactly as a
-/// generic record reuses [`emit_record_codec`].
+/// `ts_type` is their value type (`Opt` / `Opt<number>` / a namespace-qualified
+/// `shop.Opt`). The wire discriminant is `kind`; the in-memory discriminant is
+/// `tag`. #593: a generic-sum instantiation reuses this with substituted payload
+/// types, exactly as a generic record reuses [`emit_record_codec`].
 fn emit_sum_codec(
     out: &mut String,
     fn_suffix: &str,
@@ -1395,6 +1563,22 @@ pub fn emit_generic_helpers(
     insts: &[GenericInst],
     types: &std::collections::HashMap<String, TypeDecl>,
 ) {
+    emit_generic_helpers_qualified(out, insts, types, &Qual::new());
+}
+
+/// #661: as [`emit_generic_helpers`], but the value-type positions of each
+/// specialised helper are named through the type `Qual` — so a consumer's
+/// `deserialise_Result_AuthId_PaymentError` returns
+/// `Result<commerce_payment.AuthId, commerce_payment.PaymentError>` while its
+/// codec calls stay local. The codec *suffix* (`Result_AuthId_PaymentError`) is
+/// namespace-independent by construction, which is exactly what keeps the
+/// caller's and callee's names in agreement across the wire.
+pub fn emit_generic_helpers_qualified(
+    out: &mut String,
+    insts: &[GenericInst],
+    types: &std::collections::HashMap<String, TypeDecl>,
+    qual: &Qual,
+) {
     for inst in insts {
         match inst {
             // v0.174 (#592): a generic-record instantiation `Paginated[User]`
@@ -1404,10 +1588,11 @@ pub fn emit_generic_helpers(
             GenericInst::RecordInst { name, args } => {
                 let fn_suffix = app_ts_name(name, args);
                 let ts_type = format!(
-                    "{}<{}>",
+                    "{}{}<{}>",
+                    qual_prefix(qual, name),
                     name,
                     args.iter()
-                        .map(ts_inner_type)
+                        .map(|a| ts_inner_type(a, qual))
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
@@ -1432,7 +1617,7 @@ pub fn emit_generic_helpers(
                     "{}<{}>",
                     name,
                     args.iter()
-                        .map(ts_inner_type)
+                        .map(|a| ts_inner_type(a, qual))
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
@@ -1444,8 +1629,8 @@ pub fn emit_generic_helpers(
             GenericInst::ResultInst { ok, err } => {
                 let ok_ts = inner_ts_name(ok);
                 let err_ts = inner_ts_name(err);
-                let ok_inner = ts_inner_type(ok);
-                let err_inner = ts_inner_type(err);
+                let ok_inner = ts_inner_type(ok, qual);
+                let err_inner = ts_inner_type(err, qual);
                 let serialise_ok = serialise_field_expr(ok, "value.value");
                 let serialise_err = serialise_field_expr(err, "value.error");
                 writeln!(
@@ -1500,7 +1685,7 @@ pub fn emit_generic_helpers(
             }
             GenericInst::OptionInst { inner } => {
                 let inner_ts = inner_ts_name(inner);
-                let inner_ty = ts_inner_type(inner);
+                let inner_ty = ts_inner_type(inner, qual);
                 let serialise_inner = serialise_field_expr(inner, "value.value");
                 writeln!(
                     out,
@@ -1542,7 +1727,7 @@ pub fn emit_generic_helpers(
             // v0.20b: `List[T]` — element-wise wire format (a JSON array).
             GenericInst::ListInst { elem } => {
                 let elem_ts = inner_ts_name(elem);
-                let elem_ty = ts_inner_type(elem);
+                let elem_ty = ts_inner_type(elem, qual);
                 let serialise_elem = serialise_field_expr(elem, "v");
                 writeln!(
                     out,
@@ -1587,8 +1772,8 @@ pub fn emit_generic_helpers(
             GenericInst::MapInst { key, val } => {
                 let key_ts = inner_ts_name(key);
                 let val_ts = inner_ts_name(val);
-                let key_ty = ts_inner_type(key);
-                let val_ty = ts_inner_type(val);
+                let key_ty = ts_inner_type(key, qual);
+                let val_ty = ts_inner_type(val, qual);
                 let serialise_key = serialise_field_expr(key, "k");
                 let serialise_val = serialise_field_expr(val, "v");
                 writeln!(
@@ -1641,7 +1826,7 @@ pub fn emit_generic_helpers(
     }
 }
 
-fn ts_inner_type(t: &TypeRef) -> String {
+fn ts_inner_type(t: &TypeRef, qual: &Qual) -> String {
     match t {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
@@ -1655,11 +1840,14 @@ fn ts_inner_type(t: &TypeRef) -> String {
         }
         // v0.174 (#592): a generic-record instantiation erases to the generic
         // interface applied to its concrete arguments (`Paginated<User>`).
+        // #661: a consumed generic record and its callee-owned arguments are
+        // namespace-qualified.
         TypeRef::App { name, args, .. } => format!(
-            "{}<{}>",
+            "{}{}<{}>",
+            qual_prefix(qual, &name.name),
             name.name,
             args.iter()
-                .map(ts_inner_type)
+                .map(|a| ts_inner_type(a, qual))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -1672,14 +1860,24 @@ fn ts_inner_type(t: &TypeRef) -> String {
             // v0.110 (ADR 0142): `Bytes` erases to `Uint8Array`.
             BaseType::Bytes => "Uint8Array".to_string(),
         },
-        TypeRef::Named(id) => id.name.clone(),
-        TypeRef::Result(a, b, _) => format!("Result<{}, {}>", ts_inner_type(a), ts_inner_type(b)),
-        TypeRef::Option(a, _) => format!("Option<{}>", ts_inner_type(a)),
-        TypeRef::Effect(a, _) => format!("Promise<{}>", ts_inner_type(a)),
-        TypeRef::HttpResult(a, _) => format!("HttpResult<{}>", ts_inner_type(a)),
-        TypeRef::List(a, _) => format!("readonly {}[]", ts_inner_type(a)),
+        // #661: a callee-owned named type reaches through the type-only
+        // namespace; everything the caller already declares maps to `""`.
+        TypeRef::Named(id) => format!("{}{}", qual_prefix(qual, &id.name), id.name),
+        TypeRef::Result(a, b, _) => format!(
+            "Result<{}, {}>",
+            ts_inner_type(a, qual),
+            ts_inner_type(b, qual)
+        ),
+        TypeRef::Option(a, _) => format!("Option<{}>", ts_inner_type(a, qual)),
+        TypeRef::Effect(a, _) => format!("Promise<{}>", ts_inner_type(a, qual)),
+        TypeRef::HttpResult(a, _) => format!("HttpResult<{}>", ts_inner_type(a, qual)),
+        TypeRef::List(a, _) => format!("readonly {}[]", ts_inner_type(a, qual)),
         TypeRef::Map(k, v, _) => {
-            format!("ReadonlyMap<{}, {}>", ts_inner_type(k), ts_inner_type(v))
+            format!(
+                "ReadonlyMap<{}, {}>",
+                ts_inner_type(k, qual),
+                ts_inner_type(v, qual)
+            )
         }
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
