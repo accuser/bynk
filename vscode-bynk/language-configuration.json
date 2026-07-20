@@ -32,7 +32,6 @@
     },
     {
       "beforeText": "^\\s*--(?!-)|\\s--(?!-)\\s",
-      "afterText": "^(?!\\s*$)",
       "action": { "indent": "none", "appendText": "-- " }
     },
     {
