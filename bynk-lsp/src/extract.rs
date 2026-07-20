@@ -10,11 +10,24 @@
 //! Like [`crate::structure`], this reparses that snapshot fresh each call — no
 //! cached AST is retained in `Analysis`, and extraction is selection-driven
 //! the same way folding/selection ranges are.
+//!
+//! Track #800 settles as: [`extract_function`] reuses the exact same
+//! smallest-containing-expression selection algorithm, but lifts the
+//! expression into a new top-level `fn` (threading its free identifiers as
+//! parameters) rather than a local `let`. It is capability-free-only — `fn`
+//! has no `given` clause to propagate a capability-using body into, unlike
+//! `Handler`/`Provider` (that language-change question is deliberately not
+//! taken on here) — so it declines whenever the selection's site carries any
+//! recorded [`Requirement`], covered or not.
 
+use bynk_check::checker::Ty;
+use bynk_check::locals::{LocalBinding, locals_at};
+use bynk_check::requirements::Requirement;
 use bynk_syntax::ast::*;
 use bynk_syntax::lexer::tokenize;
 use bynk_syntax::parser::parse_unit_with_recovery;
 use bynk_syntax::span::Span;
+use std::collections::HashMap;
 use tower_lsp::lsp_types::*;
 
 /// Extract-variable actions for the requested range. Only offered for a
@@ -72,12 +85,148 @@ pub fn extract_variable(
     })]
 }
 
-/// The smallest expression node's span, and the byte offset immediately
-/// before its enclosing statement (or block tail) — where the new `let`
-/// line is inserted.
-struct Site {
+/// Extract-function actions for the requested range (track #800). Locates
+/// the same smallest-containing-expression the extract-variable selection
+/// algorithm would, but only within a `Commons`/`Context` file's top-level
+/// `fn`/`Provider`/`Service`/`Agent` items — a new top-level `fn` needs
+/// somewhere top-level to live, so an `Adapter` (no Bynk bodies) or a `Suite`
+/// test case (no enclosing top-level item to insert above) offers nothing.
+///
+/// Declines (offers nothing) rather than guessing whenever:
+/// - the selection's site carries any recorded capability [`Requirement`],
+///   covered or not — the settled capability-free-only surface; a plain `fn`
+///   has no `given` to cover it once lifted.
+/// - the selection's expression type, or any free variable's type, isn't
+///   available — both `expr_types` and the rendered `locals` types are
+///   Ok-path captures (ADR 0063's clean-file ceiling), so a file with an
+///   unrelated error elsewhere yields no action rather than a guessed type.
+/// - two distinct outer-scope bindings share a free variable's name (a rare
+///   nested-shadow collision) — threading either one as the parameter would
+///   silently pick the wrong variable for the other occurrence.
+///
+/// Free variables are the selection's `Ident` references (walked via
+/// [`expr_children`], the same exhaustive child iterator `locate` uses) whose
+/// nearest enclosing binding — [`locals_at`] at the reference's own offset —
+/// sits outside the selection; an identifier with no local binding at all
+/// (a top-level `fn`, a capability, a type name) is left alone, already
+/// resolvable at the new `fn`'s own top-level scope.
+pub fn extract_function(
+    text: &str,
+    requested: Span,
+    uri: &Url,
+    version: Option<i32>,
+    requirements: &[Requirement],
+    locals: &[LocalBinding],
+    expr_types: &[(Span, Ty)],
+) -> Vec<CodeActionOrCommand> {
+    if requested.start == requested.end {
+        return Vec::new();
+    }
+    let Ok(tokens) = tokenize(text) else {
+        return Vec::new();
+    };
+    let (Some(unit), _errs) = parse_unit_with_recovery(&tokens, text) else {
+        return Vec::new();
+    };
+    let Some(site) = find_function_site(&unit, requested) else {
+        return Vec::new();
+    };
+    if requirements
+        .iter()
+        .any(|r| contains(site.expr_span, r.site))
+    {
+        return Vec::new();
+    }
+    let Some(ret_ty) = ty_at_span(expr_types, site.expr_span) else {
+        return Vec::new();
+    };
+
+    let mut idents = Vec::new();
+    collect_idents(site.expr, &mut idents);
+    let mut free: Vec<(&str, Span, &str)> = Vec::new();
+    for id in &idents {
+        let Some(binding) = locals_at(locals, id.span.start)
+            .into_iter()
+            .find(|b| b.name == id.name)
+        else {
+            continue;
+        };
+        if contains(site.expr_span, binding.def_span) {
+            continue; // bound inside the selection itself, not free
+        }
+        free.push((id.name.as_str(), binding.def_span, binding.ty.as_str()));
+    }
+    let mut def_by_name: HashMap<&str, Span> = HashMap::new();
+    for (name, def_span, _) in &free {
+        match def_by_name.get(name) {
+            Some(prev) if *prev != *def_span => return Vec::new(),
+            _ => {
+                def_by_name.insert(name, *def_span);
+            }
+        }
+    }
+    let mut params: Vec<(&str, &str)> = Vec::new();
+    for (name, _, ty) in &free {
+        if !params.iter().any(|(n, _)| n == name) {
+            params.push((name, ty));
+        }
+    }
+
+    let fn_name = fresh_word(text, "extractedFn");
+    let param_list = params
+        .iter()
+        .map(|(n, t)| format!("{n}: {t}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let arg_list = params
+        .iter()
+        .map(|(n, _)| n.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let selected = &text[site.expr_span.start..site.expr_span.end];
+    let new_fn = format!(
+        "fn {fn_name}({param_list}) -> {} {{\n  {selected}\n}}\n\n",
+        ret_ty.display()
+    );
+    let insert_pos = crate::position::offset_to_position(text, site.item_start);
+
+    let edits = vec![
+        OneOf::Left(TextEdit {
+            range: Range::new(insert_pos, insert_pos),
+            new_text: new_fn,
+        }),
+        OneOf::Left(TextEdit {
+            range: crate::position::span_to_range(text, site.expr_span),
+            new_text: format!("{fn_name}({arg_list})"),
+        }),
+    ];
+    vec![CodeActionOrCommand::CodeAction(CodeAction {
+        title: format!("Extract function `{fn_name}`"),
+        kind: Some(CodeActionKind::REFACTOR_EXTRACT),
+        edit: Some(WorkspaceEdit {
+            changes: None,
+            document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+                text_document: OptionalVersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version,
+                },
+                edits,
+            }])),
+            change_annotations: None,
+        }),
+        ..Default::default()
+    })]
+}
+
+/// The smallest expression node fully containing the selection, and the byte
+/// offset immediately before its enclosing statement (or block tail) — where
+/// the new `let` line is inserted. `expr` is retained (not just its span) so
+/// [`extract_function`] can walk it for free identifiers without a second
+/// descent through the tree.
+struct Site<'a> {
     insertion_offset: usize,
     expr_span: Span,
+    expr: &'a Expr,
 }
 
 /// Closed containment over half-open spans: `outer` fully contains `inner`.
@@ -88,7 +237,7 @@ fn contains(outer: Span, inner: Span) -> bool {
 /// Finds the body (fn / handler / provider op / test case) whose span
 /// contains `target`, then hands off to [`find_in_block`]. `None` when the
 /// selection sits outside any body (a header, or a file that doesn't parse).
-fn find_site(unit: &SourceUnit, target: Span) -> Option<Site> {
+fn find_site(unit: &SourceUnit, target: Span) -> Option<Site<'_>> {
     match unit {
         SourceUnit::Commons(c) => find_in_items(&c.items, target),
         SourceUnit::Context(c) => find_in_items(&c.items, target),
@@ -102,7 +251,7 @@ fn find_site(unit: &SourceUnit, target: Span) -> Option<Site> {
     }
 }
 
-fn find_in_items(items: &[CommonsItem], target: Span) -> Option<Site> {
+fn find_in_items(items: &[CommonsItem], target: Span) -> Option<Site<'_>> {
     for item in items {
         match item {
             CommonsItem::Fn(f) if contains(f.body.span, target) => {
@@ -133,7 +282,7 @@ fn find_in_items(items: &[CommonsItem], target: Span) -> Option<Site> {
 /// then narrows within it via [`locate`]. `None` when `target` doesn't sit
 /// fully inside any single statement/tail (e.g. it spans the whole block,
 /// braces included, or crosses a statement boundary).
-fn find_in_block(block: &Block, target: Span) -> Option<Site> {
+fn find_in_block(block: &Block, target: Span) -> Option<Site<'_>> {
     for stmt in &block.statements {
         let mut values = Vec::new();
         statement_exprs(stmt, &mut values);
@@ -158,11 +307,12 @@ fn find_in_block(block: &Block, target: Span) -> Option<Site> {
 /// iterator, reused here rather than a second hand-rolled `ExprKind` match
 /// (an `ExprKind` variant this doesn't handle would otherwise silently fall
 /// through the extraction path instead of failing to compile).
-fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site {
+fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
     match &expr.kind {
         ExprKind::Block(b) => find_in_block(b, target).unwrap_or(Site {
             insertion_offset,
             expr_span: expr.span,
+            expr,
         }),
         ExprKind::If {
             cond,
@@ -185,6 +335,7 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site {
             Site {
                 insertion_offset,
                 expr_span: expr.span,
+                expr,
             }
         }
         ExprKind::Match { discriminant, arms } => {
@@ -200,12 +351,14 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site {
                     MatchBody::Block(b) => find_in_block(b, target).unwrap_or(Site {
                         insertion_offset,
                         expr_span: expr.span,
+                        expr,
                     }),
                 };
             }
             Site {
                 insertion_offset,
                 expr_span: expr.span,
+                expr,
             }
         }
         _ => {
@@ -215,6 +368,7 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site {
                 None => Site {
                     insertion_offset,
                     expr_span: expr.span,
+                    expr,
                 },
             }
         }
@@ -226,6 +380,14 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site {
 /// placeholder, not a scope-aware binder: the client's rename-on-extract is
 /// the expected next step for a better name.
 fn fresh_name(text: &str) -> String {
+    fresh_word(text, "extracted")
+}
+
+/// Like [`fresh_name`], generalised to any base word — extract-function uses
+/// `extractedFn`/`extractedFn2`/… so its generated name reads distinctly from
+/// extract-variable's `extracted` when both actions are offered on the same
+/// selection.
+fn fresh_word(text: &str, base: &str) -> String {
     let is_ident_char = |c: char| c.is_alphanumeric() || c == '_';
     let occurs_as_word = |candidate: &str| {
         text.match_indices(candidate).any(|(i, _)| {
@@ -243,15 +405,74 @@ fn fresh_name(text: &str) -> String {
     let mut n = 1;
     loop {
         let candidate = if n == 1 {
-            "extracted".to_string()
+            base.to_string()
         } else {
-            format!("extracted{n}")
+            format!("{base}{n}")
         };
         if !occurs_as_word(&candidate) {
             return candidate;
         }
         n += 1;
     }
+}
+
+/// The enclosing top-level item's span — where [`find_function_site`] inserts
+/// the new `fn` (immediately above it). `None` for a `CommonsItem` extraction
+/// can never target (a `type`/`context` declaration carries no body).
+fn item_span(item: &CommonsItem) -> Option<Span> {
+    match item {
+        CommonsItem::Fn(f) => Some(f.span),
+        CommonsItem::Provider(p) => Some(p.span),
+        CommonsItem::Service(s) => Some(s.span),
+        CommonsItem::Agent(a) => Some(a.span),
+        _ => None,
+    }
+}
+
+/// Like [`find_site`], but only within `Commons`/`Context` files, and
+/// additionally records the start of the enclosing top-level item — where the
+/// new `fn` is inserted, immediately above it.
+struct FunctionSite<'a> {
+    item_start: usize,
+    expr_span: Span,
+    expr: &'a Expr,
+}
+
+fn find_function_site(unit: &SourceUnit, target: Span) -> Option<FunctionSite<'_>> {
+    let items = match unit {
+        SourceUnit::Commons(c) => &c.items,
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(_) | SourceUnit::Suite(_) => return None,
+    };
+    let item = items
+        .iter()
+        .find(|it| item_span(it).is_some_and(|s| contains(s, target)))?;
+    let site = find_in_items(std::slice::from_ref(item), target)?;
+    Some(FunctionSite {
+        item_start: item_span(item)?.start,
+        expr_span: site.expr_span,
+        expr: site.expr,
+    })
+}
+
+/// `expr` and every `Ident` reference nested inside it — walked via
+/// [`expr_children`], the same exhaustive-by-construction iterator `locate`
+/// uses, so a future `ExprKind` variant can't silently drop out of either
+/// walk without the other noticing.
+fn collect_idents<'a>(expr: &'a Expr, out: &mut Vec<&'a Ident>) {
+    if let ExprKind::Ident(id) = &expr.kind {
+        out.push(id);
+    }
+    for child in expr_children(expr) {
+        collect_idents(child, out);
+    }
+}
+
+/// The recorded type of the expression whose span is exactly `span` — an
+/// exact match, not [`bynk_check::expr_types::type_at_offset`]'s tightest-
+/// containing-offset search, since the caller already knows the precise node.
+fn ty_at_span(entries: &[(Span, Ty)], span: Span) -> Option<&Ty> {
+    entries.iter().find(|(s, _)| *s == span).map(|(_, t)| t)
 }
 
 /// The whitespace-only run from `offset`'s line start up to `offset` — empty
@@ -430,5 +651,171 @@ mod tests {
         let actions = actions_for(src, "a + 2");
         let edits = sole_edit(&actions[0]);
         assert_eq!(edits[0].new_text, "let extracted = a + 2\n    ");
+    }
+
+    mod extract_function_tests {
+        use super::*;
+        use bynk_check::locals::LocalKind;
+        use bynk_check::requirements::RequirementSource;
+
+        fn function_actions_for(
+            text: &str,
+            needle: &str,
+            requirements: &[Requirement],
+            locals: &[LocalBinding],
+            expr_types: &[(Span, Ty)],
+        ) -> Vec<CodeActionOrCommand> {
+            let start = text.find(needle).expect("needle present");
+            let requested = Span::new(start, start + needle.len());
+            let uri = Url::parse("file:///a.bynk").unwrap();
+            extract_function(
+                text,
+                requested,
+                &uri,
+                Some(3),
+                requirements,
+                locals,
+                expr_types,
+            )
+        }
+
+        fn nth_offset(text: &str, needle: &str, n: usize) -> usize {
+            text.match_indices(needle)
+                .nth(n)
+                .expect("occurrence present")
+                .0
+        }
+
+        // Permissive (whole-file) scope: these tests exercise extract_function's
+        // own gating/free-variable logic, not locals_at's scope resolution
+        // (already covered in bynk-check::locals's own tests).
+        fn param(text: &str, name: &str, ty: &str) -> LocalBinding {
+            let def_start = nth_offset(text, name, 0);
+            LocalBinding {
+                name: name.to_string(),
+                def_span: Span::new(def_start, def_start + name.len()),
+                kind: LocalKind::Param,
+                ty: ty.to_string(),
+                scope: Span::new(0, text.len()),
+            }
+        }
+
+        fn int_type(text: &str, needle: &str) -> (Span, Ty) {
+            let start = text.find(needle).expect("needle present");
+            (
+                Span::new(start, start + needle.len()),
+                Ty::Base(BaseType::Int),
+            )
+        }
+
+        fn capability_use(site_needle_offset: usize, len: usize) -> Requirement {
+            Requirement {
+                capability: "Clock".to_string(),
+                site: Span::new(site_needle_offset, site_needle_offset + len),
+                source: RequirementSource::DirectCall {
+                    op: "now".to_string(),
+                },
+                covered: false,
+                materialize: None,
+            }
+        }
+
+        #[test]
+        fn extracts_a_free_variable_as_a_parameter() {
+            let src = "context c\n\nfn f(num: Int) -> Int {\n  num * 2\n}\n";
+            let locals = vec![param(src, "num", "Int")];
+            let types = vec![int_type(src, "num * 2")];
+            let actions = function_actions_for(src, "num * 2", &[], &locals, &types);
+            assert_eq!(actions.len(), 1);
+            let edits = sole_edit(&actions[0]);
+            assert_eq!(
+                edits[0].new_text,
+                "fn extractedFn(num: Int) -> Int {\n  num * 2\n}\n\n"
+            );
+            // Inserted right above the enclosing `fn f`, not at the selection.
+            assert_eq!(edits[0].range.start, Position::new(2, 0));
+            assert_eq!(edits[1].new_text, "extractedFn(num)");
+        }
+
+        #[test]
+        fn no_free_variables_yields_a_nullary_call() {
+            let src = "context c\n\nfn f() -> Int {\n  1 + 2\n}\n";
+            let types = vec![int_type(src, "1 + 2")];
+            let actions = function_actions_for(src, "1 + 2", &[], &[], &types);
+            let edits = sole_edit(&actions[0]);
+            assert_eq!(
+                edits[0].new_text,
+                "fn extractedFn() -> Int {\n  1 + 2\n}\n\n"
+            );
+            assert_eq!(edits[1].new_text, "extractedFn()");
+        }
+
+        #[test]
+        fn capability_using_selection_offers_nothing() {
+            let src = "context c\n\nfn f() -> Int {\n  1 + 2\n}\n";
+            let site = src.find("1 + 2").unwrap();
+            let reqs = vec![capability_use(site, "1 + 2".len())];
+            let types = vec![int_type(src, "1 + 2")];
+            let actions = function_actions_for(src, "1 + 2", &reqs, &[], &types);
+            assert!(actions.is_empty());
+        }
+
+        #[test]
+        fn bumps_the_suffix_on_a_name_collision() {
+            let src =
+                "context c\n\nfn extractedFn() -> Int {\n  0\n}\n\nfn f() -> Int {\n  1 + 2\n}\n";
+            let types = vec![int_type(src, "1 + 2")];
+            let actions = function_actions_for(src, "1 + 2", &[], &[], &types);
+            let edits = sole_edit(&actions[0]);
+            assert!(edits[0].new_text.starts_with("fn extractedFn2("));
+            assert_eq!(edits[1].new_text, "extractedFn2()");
+        }
+
+        #[test]
+        fn selection_outside_any_body_offers_nothing() {
+            let src = "context c\n\nfn f() -> Int {\n  1 + 2\n}\n";
+            let types = vec![int_type(src, "1 + 2")];
+            let actions = function_actions_for(src, "context c", &[], &[], &types);
+            assert!(actions.is_empty());
+        }
+
+        #[test]
+        fn a_dirty_file_with_no_recorded_type_offers_nothing() {
+            let src = "context c\n\nfn f() -> Int {\n  1 + 2\n}\n";
+            // No expr_types entries at all — the clean-file ceiling (ADR 0063):
+            // a file with an unrelated error elsewhere yields none.
+            let actions = function_actions_for(src, "1 + 2", &[], &[], &[]);
+            assert!(actions.is_empty());
+        }
+
+        #[test]
+        fn ambiguous_same_name_shadow_from_two_outer_scopes_declines() {
+            let src = "context c\n\nfn f() -> Int {\n  x + x\n}\n";
+            let types = vec![int_type(src, "x + x")];
+            let first_x = nth_offset(src, "x + x", 0); // the first `x`'s offset
+            let second_x = first_x + "x + ".len(); // the second `x`'s offset
+            // Two distinct external bindings named `x`, each in scope only at
+            // one of the two occurrences — an occurrence-position-dependent
+            // resolution a real program could never actually produce, used
+            // here purely to force the ambiguous-shadow branch.
+            let locals = vec![
+                LocalBinding {
+                    name: "x".to_string(),
+                    def_span: Span::new(0, 1),
+                    kind: LocalKind::Let,
+                    ty: "Int".to_string(),
+                    scope: Span::new(first_x, first_x),
+                },
+                LocalBinding {
+                    name: "x".to_string(),
+                    def_span: Span::new(1, 2),
+                    kind: LocalKind::Let,
+                    ty: "Int".to_string(),
+                    scope: Span::new(second_x, second_x),
+                },
+            ];
+            let actions = function_actions_for(src, "x + x", &[], &locals, &types);
+            assert!(actions.is_empty());
+        }
     }
 }
