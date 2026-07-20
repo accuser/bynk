@@ -4,9 +4,12 @@
 //! inserted immediately above its enclosing statement (or block tail), and
 //! the selection's span is replaced with the new name.
 //!
-//! Like [`crate::structure`], this reparses the live document — no cached AST
-//! is retained in `Analysis`, and extraction is selection-driven the same way
-//! folding/selection ranges are.
+//! `text` is whatever snapshot the caller passes in — for `code_action` that's
+//! the last **committed** analysis round's snapshot (ADR 0235's
+//! stale-while-revalidate posture), not necessarily the very latest keystroke.
+//! Like [`crate::structure`], this reparses that snapshot fresh each call — no
+//! cached AST is retained in `Analysis`, and extraction is selection-driven
+//! the same way folding/selection ranges are.
 
 use bynk_syntax::ast::*;
 use bynk_syntax::lexer::tokenize;
@@ -344,6 +347,47 @@ mod tests {
         let insert_line = edits[0].range.start.line;
         let let_z_line = crate::position::offset_to_position(src, src.find("let z").unwrap()).line;
         assert_eq!(insert_line, let_z_line);
+    }
+
+    #[test]
+    fn resets_the_insertion_point_inside_a_nested_match_arm_block() {
+        let src = concat!(
+            "context c\n\n",
+            "fn f(n: Int) -> Int {\n",
+            "  match n {\n",
+            "    0 => {\n",
+            "      let z = n * 2\n",
+            "      z\n",
+            "    }\n",
+            "    _ => 0\n",
+            "  }\n",
+            "}\n",
+        );
+        let actions = actions_for(src, "n * 2");
+        let edits = sole_edit(&actions[0]);
+        // Inserted right above `let z = …` inside the arm's block, not above
+        // the whole `match`.
+        let insert_line = edits[0].range.start.line;
+        let let_z_line = crate::position::offset_to_position(src, src.find("let z").unwrap()).line;
+        assert_eq!(insert_line, let_z_line);
+    }
+
+    #[test]
+    fn selection_crossing_a_statement_boundary_offers_nothing() {
+        let src = "context c\n\nfn f() -> Int {\n  let a = 1\n  let b = 2\n  a\n}\n";
+        // Spans from inside `let a`'s value into the start of `let b` — no
+        // single statement/tail value fully contains it.
+        let actions = actions_for(src, "1\n  let b");
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn selection_of_the_whole_block_braces_included_offers_nothing() {
+        let src = "context c\n\nfn f() -> Int {\n  let a = 1\n  a\n}\n";
+        // The full body span, braces included — larger than any single
+        // statement/tail value, so no candidate node covers it.
+        let actions = actions_for(src, "{\n  let a = 1\n  a\n}");
+        assert!(actions.is_empty());
     }
 
     #[test]
