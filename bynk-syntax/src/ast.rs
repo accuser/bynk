@@ -2509,6 +2509,16 @@ pub enum Pattern {
         bindings: Vec<PatternBinding>,
         span: Span,
     },
+    /// `p₁ | p₂ | … | pₙ` — an or-pattern (#474 §2.3.4): matches if any
+    /// alternative matches. Left-associative `|`, flattened by the parser's
+    /// chain fold into one `Vec` — an alternative is always a leaf
+    /// (`Wildcard`/`Binding`/`Literal`/`Variant`), never itself an `Or`
+    /// (there is no parenthesized-pattern syntax to nest one inside another).
+    /// Well-typedness (checked, not parsed): every alternative binds the same
+    /// set of names, a name shared across alternatives has the same type
+    /// (including refinement) in each, and every alternative matches the same
+    /// value type.
+    Or(Vec<Pattern>, Span),
 }
 
 /// The value carried by a [`Pattern::Literal`]. A closed set (ADR 0001):
@@ -2540,12 +2550,18 @@ impl Pattern {
             Pattern::Binding(id) => id.span,
             Pattern::Literal { span, .. } => *span,
             Pattern::Variant { span, .. } => *span,
+            Pattern::Or(_, span) => *span,
         }
     }
 
     /// Every identifier this pattern binds into scope, recursively (`_` and
     /// nullary variants bind nothing). Used by the resolver and the checker to
     /// populate an arm's scope, and by the guard to see the arm's bindings.
+    ///
+    /// For [`Pattern::Or`] this returns the *first* alternative's names — the
+    /// checker separately verifies (#474 Rule 1) that every alternative binds
+    /// the same set, so this is a defensive default when that rule is
+    /// violated, not a semantic choice among alternatives.
     pub fn bound_names(&self) -> Vec<&Ident> {
         match self {
             Pattern::Wildcard(_) | Pattern::Literal { .. } => Vec::new(),
@@ -2554,6 +2570,7 @@ impl Pattern {
                 .iter()
                 .flat_map(|b| b.pattern().bound_names())
                 .collect(),
+            Pattern::Or(alts, _) => alts.first().map(Pattern::bound_names).unwrap_or_default(),
         }
     }
 
@@ -2565,9 +2582,15 @@ impl Pattern {
     }
 
     /// True when this pattern matches every value (a `_` or a name binding),
-    /// i.e. it is irrefutable and covers the position for exhaustiveness.
+    /// i.e. it is irrefutable and covers the position for exhaustiveness. An
+    /// [`Pattern::Or`] is irrefutable when any alternative is — `_` in any
+    /// position already makes the whole pattern match everything.
     pub fn is_irrefutable(&self) -> bool {
-        matches!(self, Pattern::Wildcard(_) | Pattern::Binding(_))
+        match self {
+            Pattern::Wildcard(_) | Pattern::Binding(_) => true,
+            Pattern::Or(alts, _) => alts.iter().any(Pattern::is_irrefutable),
+            _ => false,
+        }
     }
 }
 

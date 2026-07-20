@@ -714,8 +714,9 @@ are unbounded, so a literal-only `match` needs a wildcard `_` arm; `Bool` is
 complete once both `true` and `false` appear (or a wildcard does). A repeated
 literal arm is rejected. Literal patterns are `match`-only — a literal on the
 right of `is` is rejected, since `is` tests a value's type/refinement, not
-equality (use `==`). The remaining forms below — record, tuple, `where`-refined,
-and or-patterns — are settled in shape but not yet implemented.
+equality (use `==`). Or-patterns (below) are implemented (#474); the
+remaining forms — record, tuple, and `where`-refined — are settled in shape
+but not yet implemented.
 
 Variant patterns with named fields support both positional and labelled forms:
 

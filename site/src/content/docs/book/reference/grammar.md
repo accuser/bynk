@@ -1399,10 +1399,10 @@ exhaustiveness (its guard may fail at runtime).
 
 {{#grammar _pattern}}
 
-A pattern: a wildcard, a literal, a binding, or a variant pattern. A
-lowercase-led identifier is a binding (it matches anything and binds the
-value); an uppercase-led one is a nullary variant — in the concrete grammar
-both parse as `variant_pattern`.
+A pattern: a wildcard, a literal, a binding, a variant pattern, an
+or-pattern, or a parenthesized pattern. A lowercase-led identifier is a
+binding (it matches anything and binds the value); an uppercase-led one is a
+nullary variant — in the concrete grammar both parse as `variant_pattern`.
 
 ### variant_pattern {#rule-variant_pattern}
 
@@ -1427,6 +1427,30 @@ Matches a primitive scrutinee (`Int`/`String`/`Bool`, or a refinement over one)
 by value equality — an integer (optionally negated), a string, or a boolean.
 A literal-pattern `match` needs a wildcard `_` arm to be exhaustive, except over
 `Bool`, which is complete once both `true` and `false` appear.
+
+### or_pattern {#rule-or_pattern}
+
+{{#grammar or_pattern}}
+
+`p₁ | p₂` — matches if either alternative matches, left-associative
+(`p₁ | p₂ | p₃` is `(p₁ | p₂) | p₃`). Every alternative must bind the same
+set of names, a name shared across alternatives must have the same type
+(including refinement) in each, and every alternative must match the same
+value type. `|` is a pattern-position operator only, distinct from boolean
+`||`.
+
+**Static semantics.**
+{{#grammar-semantics or_pattern}}
+
+**See also.** [Pattern-match with `match`](/book/guides/type-system/match/).
+
+### paren_pattern {#rule-paren_pattern}
+
+{{#grammar paren_pattern}}
+
+Parentheses around a pattern — transparent grouping, most useful around an
+or-pattern for readability (`is (Held(...) | Confirmed(...))`). Optional:
+`is` already parses one whole pattern, `|`-chain included, without them.
 
 ### pattern_binding {#rule-_pattern_binding}
 

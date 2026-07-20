@@ -1,0 +1,16 @@
+commons demo {
+	fn classify(n: Int) -> String {
+		match n {
+			1 | 2 | 3 => "small",
+			_ => "other",
+		}
+	}
+
+	fn describe(o: Option[Int]) -> String {
+		match o {
+			Some(1 | 2) => "small",
+			Some(_) => "other",
+			None => "none",
+		}
+	}
+}
