@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "`textDocument/codeAction`'s extract-function refactor now also accepts a contiguous run of full statements (optionally including the block's tail), not just one expression, closing #813"
----
+# 0250 — LSP extract-function accepts a multi-statement selection
 
-## ADR: lsp-extract-function-multi-statement
-title: LSP extract-function accepts a multi-statement selection
-summary: Statement-boundary alignment, the tail-excluded return-type/call-site choice, and the two new decline cases it needs
+- **Status:** Accepted (v0.217)
 
 **Context.** ADR 0245 shipped extract-function scoped to a single AST
 expression, and named multi-statement block extraction as deferred future
