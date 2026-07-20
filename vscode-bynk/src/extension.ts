@@ -15,7 +15,9 @@ import {
 } from "vscode-languageclient/node";
 
 import {
+  compareVersions,
   downloadServer,
+  parseVersion,
   readServerVersion,
   resolveExistingServer,
   serverVersion,
@@ -197,7 +199,7 @@ async function startServer(
     return;
   }
 
-  checkVersionMatch(context, resolved.path);
+  checkVersionMatch(context, resolved);
   setServerItem("ok", `Bynk LSP (${resolved.source})`);
   updateProjectItem();
 }
@@ -273,18 +275,43 @@ async function reportNoServer(
   }
 }
 
-/** Warn (non-blocking) if the running server's version disagrees with the one
- *  this extension build expects. */
+/** Warn if the running server's version disagrees with the one this extension
+ *  build expects. A server *older* than expected (most likely a stale
+ *  `bynkc-lsp` on PATH — `resolveExistingServer` prefers PATH over the
+ *  pinned/downloaded copy without comparing versions, #484) gets an
+ *  actionable prompt, since it can silently mis-diagnose syntax the checker
+ *  already accepts. A newer or otherwise-differing server just gets a note. */
 function checkVersionMatch(
   context: vscode.ExtensionContext,
-  serverPath: string,
+  resolved: ResolvedServer,
 ): void {
-  const reported = readServerVersion(serverPath); // "bynkc-lsp 0.23.0"
+  const reported = readServerVersion(resolved.path); // "bynkc-lsp 0.23.0"
   const expected = serverVersion(context).replace(/^v/, ""); // "0.23.0"
-  if (reported && !reported.includes(expected)) {
-    output.appendLine(
-      `[server] version note: running "${reported}", extension expects ${expected}`,
-    );
+  if (!reported || reported.includes(expected)) return;
+
+  output.appendLine(
+    `[server] version note: running "${reported}" (${resolved.source}), extension expects ${expected}`,
+  );
+
+  const reportedVer = parseVersion(reported);
+  const expectedVer = parseVersion(expected);
+  const isStale =
+    reportedVer && expectedVer && compareVersions(reportedVer, expectedVer) < 0;
+
+  if (isStale) {
+    void vscode.window
+      .showWarningMessage(
+        `Bynk: language server is "${reported}" (${resolved.source}), older than the ` +
+          `${expected} this extension expects. It may flag valid syntax as errors.`,
+        "Download Matching Server",
+        "Ignore",
+      )
+      .then((pick) => {
+        if (pick === "Download Matching Server") {
+          void startServer(context, { interactive: true, forceDownload: true });
+        }
+      });
+  } else {
     void vscode.window.showWarningMessage(
       `Bynk: language server is "${reported}" but this extension expects ${expected}. ` +
         "Consider running “Bynk: Download Language Server”.",

@@ -225,3 +225,25 @@ export function readServerVersion(serverPath: string): string | undefined {
     return undefined;
   }
 }
+
+/** Pull a bare `MAJOR.MINOR.PATCH` out of a version string, tolerating a
+ *  leading name and/or `v` (`"bynkc-lsp 0.129.0"`, `"v0.132.1"`,
+ *  `"0.132.1"`). Undefined if no such pattern is present. */
+export function parseVersion(
+  s: string,
+): [number, number, number] | undefined {
+  const m = s.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return undefined;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+/** -1 / 0 / 1 as `a` is older / equal / newer than `b`. */
+export function compareVersions(
+  a: [number, number, number],
+  b: [number, number, number],
+): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+  return 0;
+}
