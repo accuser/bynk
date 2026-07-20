@@ -2556,7 +2556,7 @@ impl<'a> LowerCtx<'a> {
             Some(Ty::Named {
                 kind: NamedKind::Sum,
                 name,
-                ..
+                args,
             }) => {
                 let decl = self.commons.types.get(name)?;
                 let TypeBody::Sum(s) = &decl.body else {
@@ -2564,7 +2564,18 @@ impl<'a> LowerCtx<'a> {
                 };
                 let v = s.variants.iter().find(|v| v.name.name == variant)?;
                 let f = v.payload.get(idx)?;
-                bynk_check::checker::resolve_type_ref(&f.type_ref, &self.commons.types)
+                // #593: substitute the instantiation's type arguments into the
+                // payload field type — a bare type parameter (`Loaded(value: T)`)
+                // resolves to its concrete argument, exactly as the checker's
+                // `variants_of` does. Plain resolve for a non-generic sum (empty
+                // `args`), so a nested positional binding recovers the real field
+                // name instead of falling back to the generic `"value"`.
+                bynk_check::checker::instantiate_field_ty(
+                    decl,
+                    args,
+                    &f.type_ref,
+                    &self.commons.types,
+                )
             }
             _ => None,
         }
