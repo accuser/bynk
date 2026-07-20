@@ -1488,23 +1488,28 @@ fn lower_method_call(
         // body is read). Otherwise — Slice C: a `Wire(…)` argument drives the
         // *raw* driver (input sent unvalidated, result decodes to an
         // `HttpOutcome`); a fully typed call keeps the serialising driver.
+        // #821: the two axes are independent — a `Wire(…)` argument combined
+        // with `by Nobody` drives the raw *and* no-auth driver together, so
+        // the missing-credential rejection and the unvalidated body both
+        // apply, rather than one silently discarding the other.
         let has_wire = args[1..]
             .iter()
             .any(|a| matches!(&a.kind, ExprKind::Wire(_)));
-        let driver = if cx.call_site_no_credential {
-            "__sysdrive_noauth"
-        } else if has_wire {
-            "__sysdrive_raw"
-        } else {
-            "__sysdrive"
+        let driver = match (cx.call_site_no_credential, has_wire) {
+            (true, true) => "__sysdrive_rawnoauth",
+            (true, false) => "__sysdrive_noauth",
+            (false, true) => "__sysdrive_raw",
+            (false, false) => "__sysdrive",
         };
-        // #708: the raw driver's every slot is a `string`. `lower_expr` already
-        // lowers a `Wire(s)` to its raw inner string, but a *typed* arg mixed
-        // into the same raw call must be converted to that `string` slot: the
-        // body param serialises through the same wire codec the typed driver
-        // uses (so a hand-typed body matches a `Wire`d one byte-for-byte); any
-        // other (path) param just coerces via `String(...)`.
-        let body_info = if driver == "__sysdrive_raw" {
+        let is_raw = driver == "__sysdrive_raw" || driver == "__sysdrive_rawnoauth";
+        // #708/#821: the raw (and raw+no-auth) driver's every slot is a
+        // `string`. `lower_expr` already lowers a `Wire(s)` to its raw inner
+        // string, but a *typed* arg mixed into the same raw call must be
+        // converted to that `string` slot: the body param serialises through
+        // the same wire codec the typed driver uses (so a hand-typed body
+        // matches a `Wire`d one byte-for-byte); any other (path) param just
+        // coerces via `String(...)`.
+        let body_info = if is_raw {
             cx.system_http_route_body
                 .get(&(id.name.clone(), verb.as_str().to_string(), path.clone()))
                 .cloned()
@@ -1516,7 +1521,7 @@ fn lower_method_call(
             .enumerate()
             .map(|(i, a)| {
                 let lowered = lower_expr(a, stmts, cx);
-                if driver != "__sysdrive_raw" || matches!(&a.kind, ExprKind::Wire(_)) {
+                if !is_raw || matches!(&a.kind, ExprKind::Wire(_)) {
                     return lowered;
                 }
                 match &body_info {

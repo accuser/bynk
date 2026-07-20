@@ -19,6 +19,10 @@ suite shop.api as system {
     let r <- api.POST("/cart", Item { sku: "widget" }) by Nobody
     expect r is Rejected(Unauthorized)
   }
+  case "no credential combined with a raw body is rejected at the seam" {
+    let r <- api.POST("/cart", Wire("{\"sku\": \"widget\"}")) by Nobody
+    expect r is Rejected(Unauthorized)
+  }
   case "the wrong method is a 405 fall-through" {
     let r <- api.DELETE("/cart")
     expect r is Rejected(MethodNotAllowed)
