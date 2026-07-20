@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.213**.
+written against **v0.214**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.214.0** | `textDocument/codeAction` offers an extract-variable refactor (`RefactorExtract`) for a selected expression |
 | **v0.213.0** | "`bynk-lsp` implements `workspace/willRenameFiles` — renaming or moving a `.bynk` file rewrites its own declaration and every other file's `uses`/`consumes` reference to it (closes #302). Single-file rename only (the capability filter matches files, not folders); a `suite` file, which addresses no name of its own, produces no edits." |
 | **v0.212.2** | "vscode-bynk: a resolved `bynkc-lsp` older than the extension's pinned server version now gets an actionable warning (\"Download Matching Server\") instead of a passive note, since a stale server (most often one found on PATH) can silently mis-diagnose syntax the checker already accepts (closes #484)." |
 | **v0.212.1** | "vscode-bynk: the `bynkc: check` build task, the Test Explorer, and test debugging now shell the `bynk` driver instead of `bynkc` directly (closes #486), inheriting its richer compiler resolution (`BYNK_BYNKC` → PATH → sibling-of-`bynk`) in place of a bare-PATH lookup that missed a driver-first install. `bynk.compilerPath` is forwarded as `BYNK_BYNKC` so it keeps pinning an exact `bynkc`; `bynk.bynkPath` (previously only the `bynk dev` debug session's setting) now also governs these three surfaces." |

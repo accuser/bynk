@@ -1,11 +1,6 @@
----
-level: minor
-changelog: `textDocument/codeAction` offers an extract-variable refactor (`RefactorExtract`) for a selected expression
----
+# 0240 — LSP `codeAction` gains extract-variable; extract-function deferred to a track
 
-## ADR: lsp-extract-variable
-title: LSP `codeAction` gains extract-variable; extract-function deferred to a track
-summary: Smallest enclosing expression → new `let`; placeholder naming avoids collision by a whole-file scan; extract-function deferred (fn has no capability clause to propagate into)
+- **Status:** Accepted (v0.214)
 
 **Context.** Issue #303 asked for two `codeAction` refactors — extract-variable
 and extract-function — to fill the gap left by `code_action_provider`
