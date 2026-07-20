@@ -47,6 +47,19 @@ pub const MAP_STORE_OPS: &[StoreOp] = &[
     ),
 ];
 
+/// The `.entries`/`.keys`/`.values` lazy query accessors a `store Map[K, V]`
+/// field exposes (v0.158, ADR 0184) — **fields**, not method calls, so they're
+/// dispatched in `crate::checker::expressions::check_field_access` rather than
+/// a `check_store_*_op` function, and are a separate table from
+/// [`MAP_STORE_OPS`] though they share a receiver. Never offered on a held
+/// `Map[K, Connection]` (`bynk.held.query_accessor_on_held_map`) — this static
+/// table doesn't carry the value type, so callers gate that themselves.
+pub const MAP_QUERY_ACCESSORS: &[StoreOp] = &[
+    op("entries", "entries: Query[MapEntry[K, V]]"),
+    op("keys", "keys: Query[K]"),
+    op("values", "values: Query[V]"),
+];
+
 /// `store Cache[K, V]` (v0.87, ADR 0113) — the storage `Map`'s operation set,
 /// but its own table rather than an alias: every operation **but `remove`**
 /// applies TTL expiry, which reads the clock, so the handler must declare
@@ -165,6 +178,7 @@ mod tests {
             SET_STORE_OPS,
             CELL_STORE_OPS,
             LOG_STORE_OPS,
+            MAP_QUERY_ACCESSORS,
         ] {
             assert!(!ops.is_empty());
             for o in ops {
@@ -177,5 +191,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// #596: names the exact ADR 0184 accessor set — `entries`/`keys`/`values`
+    /// — so a rename/reorder in `check_field_access`'s `map_query` dispatch
+    /// surfaces here too.
+    #[test]
+    fn map_query_accessors_are_entries_keys_values() {
+        let names: Vec<&str> = MAP_QUERY_ACCESSORS.iter().map(|o| o.name).collect();
+        assert_eq!(names, vec!["entries", "keys", "values"]);
     }
 }
