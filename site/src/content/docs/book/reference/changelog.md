@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.211**.
+written against **v0.212**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.212.0** | "Generic sum types — `type ApiResult[T] = | Loaded(value: T) | Failed(message: String)` (checker + emitter + boundary codecs; closes #593). A `type` may now carry `[A, B]` type parameters when its body is a **sum**, not only a record: a parameter is an unconstrained, bound-free name resolved as a rigid variable inside the variant payloads. Construction infers the arguments argument-directed from the variant's payload (`Loaded(user) : ApiResult[User]`), grounded by the binding's expected type when a payload cannot determine them (a payload-less variant, or `Failed` which never mentions `T`); an undetermined parameter is `bynk.generics.uninferable_type_arg`. `match` substitutes the arguments into each arm's payload binding. Emission is **erased** TS generics — one `export type ApiResult<T>` discriminated union with generic-arrow constructors — and, like a generic record, a generic-sum instantiation is boundary-serialisable through a monomorphised codec (`serialise_ApiResult_User`) when its arguments are; a recursive generic sum is rejected at a boundary with `bynk.generics.recursive_generic_at_boundary`. A generic sum may not carry an `embeds` clause (`bynk.generics.generic_sum_embeds`). Methods on generic types remain deferred (`bynk.generics.method_on_generic_type`); the `bynk.generics.generic_non_record` message now names refined/opaque as the only non-generic bodies." |
 | **v0.211.0** | A workers context generates its own cross-context boundary codecs and imports no sibling context's module as a value |
 | **v0.210.0** | LSP decoration requests (semantic tokens, inlay hints, code lenses, document links, code actions) serve the last committed round instead of forcing a whole-project re-analysis on every keystroke, revalidating via workspace/*/refresh |
 | **v0.209.0** | A generic type may carry instance methods — `fn Box.map[U](self, f: A -> U) -> Box[U]` erases to a generic namespace-object method (#594) |

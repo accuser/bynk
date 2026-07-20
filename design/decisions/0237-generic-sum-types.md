@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "Generic sum types — `type ApiResult[T] = | Loaded(value: T) | Failed(message: String)` (checker + emitter + boundary codecs; closes #593). A `type` may now carry `[A, B]` type parameters when its body is a **sum**, not only a record: a parameter is an unconstrained, bound-free name resolved as a rigid variable inside the variant payloads. Construction infers the arguments argument-directed from the variant's payload (`Loaded(user) : ApiResult[User]`), grounded by the binding's expected type when a payload cannot determine them (a payload-less variant, or `Failed` which never mentions `T`); an undetermined parameter is `bynk.generics.uninferable_type_arg`. `match` substitutes the arguments into each arm's payload binding. Emission is **erased** TS generics — one `export type ApiResult<T>` discriminated union with generic-arrow constructors — and, like a generic record, a generic-sum instantiation is boundary-serialisable through a monomorphised codec (`serialise_ApiResult_User`) when its arguments are; a recursive generic sum is rejected at a boundary with `bynk.generics.recursive_generic_at_boundary`. A generic sum may not carry an `embeds` clause (`bynk.generics.generic_sum_embeds`). Methods on generic types remain deferred (`bynk.generics.method_on_generic_type`); the `bynk.generics.generic_non_record` message now names refined/opaque as the only non-generic bodies."
----
+# 0237 — Generic sum types — rigid-var variant payloads, erased to a TS discriminated union, boundary via monomorphised codecs
 
-## ADR: generic-sum-types
-title: Generic sum types — rigid-var variant payloads, erased to a TS discriminated union, boundary via monomorphised codecs
-summary: A sum body may be generic; construction/match substitute, emission erases, the boundary reuses the #592 monomorphised-codec model
+- **Status:** Accepted (v0.212)
 
 **Context.** Generic *record* types shipped in v0.157 (ADR 0183, #546) and became
 boundary-serialisable through monomorphised per-instantiation codecs in v0.174

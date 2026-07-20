@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0237](0237-generic-sum-types.md) | **Generic sum types — rigid-var variant payloads, erased to a TS discriminated union, boundary via monomorphised codecs** (v0.212) — A sum body may be generic; construction/match substitute, emission erases, the boundary reuses the #592 monomorphised-codec model | Accepted (v0.212) |
 | [0236](0236-self-contained-workers-codecs.md) | **Self-contained Workers — a context generates its own cross-context codecs** (v0.211) — A caller generates its own view of a callee-owned type's codec, so a workers build imports no sibling context's module as a value | Accepted (v0.211) |
 | [0235](0235-lsp-decoration-stale-while-revalidate.md) | **Pull-based decorations serve the committed round and revalidate, not force a refresh** (v0.210) — Why the freshness contract's strict refresh is kept for cursor requests but relaxed for the decorations the editor auto-fires on every edit | Accepted (v0.210) |
 | [0234](0234-generic-instance-methods.md) | **Instance methods on generic types** (v0.209) — A generic type carries instance methods; the receiver supplies the type's parameters, erased to a generic namespace-object method | Accepted (v0.209) |
