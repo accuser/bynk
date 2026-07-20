@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A workers context generates its own cross-context boundary codecs and imports no sibling context's module as a value
----
+# 0236 — Self-contained Workers — a context generates its own cross-context codecs
 
-## ADR: self-contained-workers-codecs
-title: Self-contained Workers — a context generates its own cross-context codecs
-summary: A caller generates its own view of a callee-owned type's codec, so a workers build imports no sibling context's module as a value
+- **Status:** Accepted (v0.211)
 
 **Provenance.** Issue #661, discharging ADR 0199 (One codec path at the workers
 boundary) Decision G, which deferred this and — wrongly — called it a
