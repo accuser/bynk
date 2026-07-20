@@ -485,6 +485,32 @@ pub fn analyse_in_memory(
     target: BuildTarget,
     platform: Platform,
 ) -> Vec<AttributedError> {
+    analyse_in_memory_with_types(source, target, platform).errors
+}
+
+/// The outcome of [`analyse_in_memory_with_types`]: diagnostics plus the
+/// analysed file's `(span, type)` entries (span-sorted — see
+/// [`ExprTypeSink::take_files`]), for a position→type query (#397, the
+/// playground's hover).
+pub struct InMemoryAnalysis {
+    pub errors: Vec<AttributedError>,
+    pub expr_types: Vec<(bynk_syntax::span::Span, Ty)>,
+}
+
+/// Like [`analyse_in_memory`], but also exposes the expression-type map the
+/// checker captured (ADR 0063's `expr_types` sink) — the same one
+/// [`analyse_project_with`] drains — instead of discarding it. Per ADR 0094,
+/// this is a best-effort **partial** map in `Analyse` mode: a function that
+/// type-checked cleanly contributes its types even if a *different* function
+/// in the same file has an error, so `expr_types` is empty only when the
+/// expression at hand never typed at all (e.g. it sits in an unresolved
+/// region, ADR 0094's "out of scope — the resolve gate"), not merely because
+/// the file has some error somewhere.
+pub fn analyse_in_memory_with_types(
+    source: &str,
+    target: BuildTarget,
+    platform: Platform,
+) -> InMemoryAnalysis {
     let root = PathBuf::from(".");
     let path = in_memory_logical_path(source);
     let mut overlay = HashMap::new();
@@ -503,11 +529,19 @@ pub fn analyse_in_memory(
         Mode::Analyse,
         &overlay,
         &[],
-        Some((vec![path], Vec::new())),
+        Some((vec![path.clone()], Vec::new())),
         false,
     );
     match run {
-        RunChecks::Bailed { errors, .. } | RunChecks::Checked { errors, .. } => errors.into_all(),
+        RunChecks::Bailed {
+            errors, mut exprs, ..
+        }
+        | RunChecks::Checked {
+            errors, mut exprs, ..
+        } => InMemoryAnalysis {
+            errors: errors.into_all(),
+            expr_types: exprs.take_files().remove(&path).unwrap_or_default(),
+        },
     }
 }
 
@@ -4979,5 +5013,62 @@ mod tests {
         assert!(info["a.context"].file_index.types.is_empty());
         assert!(info["a.context"].file_index.fns.is_empty());
         assert!(info["a.context"].file_index.methods.is_empty());
+    }
+
+    // -- #397: analyse_in_memory_with_types exposes expr_types (ADR 0094) -----
+
+    #[test]
+    fn analyse_in_memory_with_types_reports_expr_types_for_clean_source() {
+        let src = "commons app.demo\n\nfn good() -> Int {\n  42\n}\n";
+        let out = analyse_in_memory_with_types(src, BuildTarget::Bundle, Platform::default());
+        assert!(
+            out.errors.is_empty(),
+            "clean source should have no errors: {:?}",
+            out.errors
+                .iter()
+                .map(|e| &e.error.message)
+                .collect::<Vec<_>>()
+        );
+        let offset = src.find("42").expect("source mentions 42");
+        let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
+        assert_eq!(ty.map(Ty::display), Some("Int".to_string()));
+    }
+
+    #[test]
+    fn analyse_in_memory_with_types_is_partial_under_a_sibling_error() {
+        // ADR 0094: a function that types cleanly still contributes its
+        // `expr_types` even though a *different* function in the same file
+        // has an error — `check_record`'s pre-ADR-0094 all-or-nothing gate
+        // applied per-file, not per-function, and this is the change that
+        // relaxed it. Hover (#397) depends on this: it must not go blank
+        // over a well-typed expression just because some other function in
+        // the buffer is mid-edit and broken.
+        let src = "commons app.demo\n\n\
+            fn good() -> Int {\n  42\n}\n\n\
+            fn bad() -> Int {\n  \"oops\"\n}\n";
+        let out = analyse_in_memory_with_types(src, BuildTarget::Bundle, Platform::default());
+        assert!(
+            !out.errors.is_empty(),
+            "the broken function must still be reported"
+        );
+        let offset = src.find("42").expect("source mentions 42");
+        let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
+        assert_eq!(
+            ty.map(Ty::display),
+            Some("Int".to_string()),
+            "the clean function's types must survive the sibling error"
+        );
+    }
+
+    #[test]
+    fn analyse_in_memory_still_returns_exactly_the_typed_variants_errors() {
+        // Pins the refactor: `analyse_in_memory` must keep delegating to
+        // `analyse_in_memory_with_types` rather than drift into a second,
+        // independently-maintained `run_checks` call.
+        let src = "commons app.demo\n\nfn bad() -> Int {\n  \"oops\"\n}\n";
+        let errs = analyse_in_memory(src, BuildTarget::Bundle, Platform::default());
+        let typed = analyse_in_memory_with_types(src, BuildTarget::Bundle, Platform::default());
+        assert_eq!(errs.len(), typed.errors.len());
+        assert!(!errs.is_empty());
     }
 }
