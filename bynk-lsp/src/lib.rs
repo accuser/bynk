@@ -2424,7 +2424,8 @@ impl LanguageServer for Backend {
     /// Served from the **cached** analysis round only (never a fresh run —
     /// slow, and it could disagree with the squiggles the client is
     /// showing): a request before the first round, or for a file outside
-    /// the project, returns the empty list.
+    /// the project, returns the empty list. #804: the combined list is then
+    /// filtered against `params.context.only`, if the client set it.
     async fn code_action(
         &self,
         params: CodeActionParams,
@@ -2457,6 +2458,8 @@ impl LanguageServer for Backend {
         let span = bynk_syntax::span::Span::new(start, end);
         let mut actions = crate::code_actions::quick_fixes(text, diags, span, &uri, version);
         actions.extend(crate::extract::extract_variable(text, span, &uri, version));
+        // #804: honour the client's requested action kinds, if any.
+        let actions = crate::code_actions::filter_by_only(actions, params.context.only.as_deref());
         Ok(Some(actions))
     }
 

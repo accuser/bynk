@@ -72,6 +72,43 @@ fn intersects(a: Span, b: Span) -> bool {
     a.start <= b.end && b.start <= a.end
 }
 
+/// #804: filters a combined `codeAction` response against
+/// `CodeActionParams.context.only`, the LSP field a client sets to restrict
+/// which action kinds it wants back. `None` (the field unset) returns
+/// `actions` unchanged. A requested kind matches an action's kind if they're
+/// equal or the action's kind is a dotted child of it (LSP prefix-match
+/// semantics: `refactor` matches `refactor.extract`). An action with no kind,
+/// or a bare `Command`, never matches a non-empty `only` — the client can't
+/// have asked for a kind we don't advertise.
+pub fn filter_by_only(
+    actions: Vec<CodeActionOrCommand>,
+    only: Option<&[CodeActionKind]>,
+) -> Vec<CodeActionOrCommand> {
+    let Some(only) = only else {
+        return actions;
+    };
+    actions
+        .into_iter()
+        .filter(|action| {
+            let CodeActionOrCommand::CodeAction(action) = action else {
+                return false;
+            };
+            action
+                .kind
+                .as_ref()
+                .is_some_and(|kind| only.iter().any(|requested| kind_matches(kind, requested)))
+        })
+        .collect()
+}
+
+fn kind_matches(kind: &CodeActionKind, requested: &CodeActionKind) -> bool {
+    let (kind, requested) = (kind.as_str(), requested.as_str());
+    kind == requested
+        || kind
+            .strip_prefix(requested)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,6 +188,78 @@ mod tests {
         // The insertion converts to an empty range at the clause position.
         assert_eq!(edit.range.start, edit.range.end);
         assert_eq!(edit.range.start.character, 14);
+    }
+
+    #[test]
+    fn only_filters_out_non_matching_kinds() {
+        let text = "-> T given Cap { Used.op() }";
+        let uri = Url::parse("file:///a.bynk").unwrap();
+        let actions = quick_fixes(
+            text,
+            &[diag_with_suggestion()],
+            Span::new(18, 18),
+            &uri,
+            Some(7),
+        );
+        assert_eq!(actions.len(), 1);
+
+        // A client asking only for `refactor.extract` gets nothing back —
+        // the quick-fix's kind is `quickfix`, not a dotted child of it.
+        let only = [CodeActionKind::REFACTOR_EXTRACT];
+        assert!(filter_by_only(actions.clone(), Some(&only)).is_empty());
+
+        // Asking for `quickfix` (or leaving `only` unset) keeps it.
+        let only = [CodeActionKind::QUICKFIX];
+        assert_eq!(filter_by_only(actions.clone(), Some(&only)).len(), 1);
+        assert_eq!(filter_by_only(actions, None).len(), 1);
+    }
+
+    #[test]
+    fn only_matches_dotted_children_by_prefix() {
+        let action = CodeActionOrCommand::CodeAction(CodeAction {
+            title: "extract".to_string(),
+            kind: Some(CodeActionKind::REFACTOR_EXTRACT),
+            ..Default::default()
+        });
+        // A parent kind (`refactor`) matches its dotted child
+        // (`refactor.extract`), per the LSP's prefix-match semantics.
+        let only = [CodeActionKind::REFACTOR];
+        assert_eq!(filter_by_only(vec![action.clone()], Some(&only)).len(), 1);
+        // A same-prefix sibling (`refactorx`) must not match.
+        let only = [CodeActionKind::new("refactorx")];
+        assert!(filter_by_only(vec![action], Some(&only)).is_empty());
+    }
+
+    #[test]
+    fn only_quickfix_drops_the_extract_variable_action() {
+        // #804 regression: a selection that legitimately offers both a
+        // quick-fix and an extract-variable action, combined exactly as the
+        // `code_action` handler does — `only: [quickfix]` must drop the
+        // refactor, not just fail to add it.
+        let text = "context c\n\nfn f() -> Int {\n  let y = 1 + 2\n  y\n}\n";
+        let uri = Url::parse("file:///a.bynk").unwrap();
+        let start = text.find("1 + 2").unwrap();
+        let span = Span::new(start, start + "1 + 2".len());
+        let diag = bynk_ide::Diagnostic {
+            severity: bynk_syntax::Severity::Error,
+            error: CompileError::new("bynk.test", span, "msg").with_suggestion(
+                "a fix",
+                vec![(span, "0".to_string())],
+                Applicability::MachineApplicable,
+            ),
+        };
+
+        let mut actions = quick_fixes(text, &[diag], span, &uri, Some(1));
+        actions.extend(crate::extract::extract_variable(text, span, &uri, Some(1)));
+        assert_eq!(actions.len(), 2, "both actions are offered unfiltered");
+
+        let only = [CodeActionKind::QUICKFIX];
+        let filtered = filter_by_only(actions, Some(&only));
+        assert_eq!(filtered.len(), 1);
+        let CodeActionOrCommand::CodeAction(action) = &filtered[0] else {
+            panic!("expected a CodeAction");
+        };
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
     }
 
     #[test]
