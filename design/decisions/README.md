@@ -17,6 +17,8 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0248](0248-wasm-completion-surface.md) | **The playground gains completion via a bynk_complete wasm entry** (v0.216.3) — Folding bynk-lsp's completion contexts into one synchronous wasm call, now that the pure logic lives in bynk-ide | Accepted (v0.216.3) |
+| [0247](0247-completion-logic-to-bynk-ide.md) | **Completion/symbols/locals-nav/signature-help logic moves from bynk-lsp to bynk-ide** (v0.216.2) — A pure-Rust cross-crate move, not a behaviour change, so bynk-wasm can eventually reach this logic too | Accepted (v0.216.2) |
 | [0246](0246-completion-logic-to-bynk-ide.md) | **Completion/symbols/locals-nav/signature-help logic moves from bynk-lsp to bynk-ide** (v0.216.1) — A pure-Rust cross-crate move, not a behaviour change, so bynk-wasm can eventually reach this logic too | Accepted (v0.216.1) |
 | [0245](0245-lsp-extract-function.md) | **Track #800 settles: LSP extract-function ships capability-free-only** (v0.216) — Declines whenever the selection carries a capability requirement, rather than adding `given` to `fn`; free variables come from the existing `locals`/`expr_types` ledgers, not a new binding pass | Accepted (v0.216) |
 | [0244](0244-agent-handler-dispatch-index.md) | **Agent handler dispatch calls become index symbols** (v0.215) — New SymbolKind::Handler indexes agentInstance.handler(...) calls, following ADR 0069's compound-name convention | Accepted (v0.215) |

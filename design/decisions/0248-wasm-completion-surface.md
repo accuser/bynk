@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The playground editor offers context-aware completion (capability methods, types, keywords, in-scope locals, value-receiver members) via a bynk_complete wasm entry (#808, split from #397/#393)
----
+# 0248 — The playground gains completion via a bynk_complete wasm entry
 
-## ADR: wasm-completion-surface
-title: The playground gains completion via a bynk_complete wasm entry
-summary: Folding bynk-lsp's completion contexts into one synchronous wasm call, now that the pure logic lives in bynk-ide
+- **Status:** Accepted (v0.216.3)
 
 **Context.** ADR "completion-logic-to-bynk-ide" moved `bynk-lsp`'s pure
 completion logic into `bynk-ide`, reachable from `wasm32-unknown-unknown`.

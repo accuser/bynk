@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Completion, symbols, locals-navigation, and signature-help move from bynk-lsp into bynk-ide, unblocking a future wasm-side completion entry (#808)
----
+# 0247 — Completion/symbols/locals-nav/signature-help logic moves from bynk-lsp to bynk-ide
 
-## ADR: completion-logic-to-bynk-ide
-title: Completion/symbols/locals-nav/signature-help logic moves from bynk-lsp to bynk-ide
-summary: A pure-Rust cross-crate move, not a behaviour change, so bynk-wasm can eventually reach this logic too
+- **Status:** Accepted (v0.216.2)
 
 **Context.** ADR 0242 shipped the playground's hover via a `bynk_hover` wasm
 entry, and split completion (the other half of #397) into #808: hover only
