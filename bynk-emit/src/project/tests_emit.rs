@@ -868,10 +868,9 @@ fn emit_integration_module(
 
     // Slice B: the test-only signer + per-route drivers for the target's http
     // service, and the set of http service names so the lowering calls a driver.
-    let (http_support, http_services, declared_routes, route_body, http_type_ns) =
-        emit_system_http_support(suite, unit_tables);
-    if !http_support.is_empty() {
-        out.push_str(&http_support);
+    let http_support = emit_system_http_support(suite, unit_tables);
+    if !http_support.code.is_empty() {
+        out.push_str(&http_support.code);
         out.push('\n');
     }
 
@@ -914,10 +913,10 @@ fn emit_integration_module(
             &case.body,
             &mut typed,
             cross_context,
-            http_services.clone(),
-            declared_routes.clone(),
-            route_body.clone(),
-            http_type_ns.clone(),
+            http_support.http_services.clone(),
+            http_support.declared_routes.clone(),
+            http_support.route_body.clone(),
+            http_support.type_ns.clone(),
             input.source,
             &input.rel_path,
         );
@@ -998,28 +997,36 @@ type DeclaredRoutes = std::collections::HashSet<(String, String, String)>;
 /// serialise a typed body into the raw driver's `string` slot.
 type RouteBodyMap = HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>;
 
+/// The emitted `emit_system_http_support` output: the driver/signer TS source
+/// plus the metadata the case-body lowering needs to route and convert calls.
+struct SystemHttpSupport {
+    code: String,
+    http_services: std::collections::HashSet<String>,
+    declared_routes: DeclaredRoutes,
+    /// #708: per-route body-param position/type, for the raw driver's
+    /// mixed typed+`Wire` call-site conversion.
+    route_body: RouteBodyMap,
+    /// The target's type namespace (`<target>.`), `route_body`'s types
+    /// resolve `serialise_*` calls through.
+    type_ns: String,
+}
+
 fn emit_system_http_support(
     target: &str,
     unit_tables: &HashMap<String, UnitTable>,
-) -> (
-    String,
-    std::collections::HashSet<String>,
-    DeclaredRoutes,
-    RouteBodyMap,
-    String,
-) {
+) -> SystemHttpSupport {
     use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
     let mut http_services: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut declared: DeclaredRoutes = std::collections::HashSet::new();
     let mut route_body: RouteBodyMap = HashMap::new();
     let Some(table) = unit_tables.get(target) else {
-        return (
-            String::new(),
+        return SystemHttpSupport {
+            code: String::new(),
             http_services,
-            declared,
+            declared_routes: declared,
             route_body,
-            String::new(),
-        );
+            type_ns: String::new(),
+        };
     };
     let ns = target.replace('.', "_");
     let binding = crate::emitter::wrangler::consumed_binding_name(target);
@@ -1222,13 +1229,13 @@ fn emit_system_http_support(
     }
 
     if http_services.is_empty() {
-        return (
-            String::new(),
+        return SystemHttpSupport {
+            code: String::new(),
             http_services,
-            declared,
+            declared_routes: declared,
             route_body,
-            String::new(),
-        );
+            type_ns: String::new(),
+        };
     }
 
     let mut out = String::new();
@@ -1254,7 +1261,13 @@ fn emit_system_http_support(
         ));
     }
     out.push_str(&routes);
-    (out, http_services, declared, route_body, type_ns)
+    SystemHttpSupport {
+        code: out,
+        http_services,
+        declared_routes: declared,
+        route_body,
+        type_ns,
+    }
 }
 
 /// Type a system-http driver parameter (v0.182): a named type is reached
