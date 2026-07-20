@@ -1458,7 +1458,7 @@ fn cached_project_unit(path: &Path) -> Option<Arc<SourceUnit>> {
 ///
 /// The embedded surface is parsed once (`EMBEDDED_UNITS`) and the project's
 /// on-disk files are served from a per-file parse cache
-/// ([`cached_project_unit`]); only `doc_text` — the buffer under the cursor,
+/// (`cached_project_unit`); only `doc_text` — the buffer under the cursor,
 /// which changes per keystroke — is parsed fresh each call (#733). Ordering is
 /// preserved (embedded, then the buffer, then the other files) so a callback's
 /// first-name-wins dedup still prefers the live buffer over the disk copy.
