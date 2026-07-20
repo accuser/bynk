@@ -14,13 +14,15 @@ import type { Tooltip } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { linter, lintGutter, forceLinting } from "@codemirror/lint";
 import type { Diagnostic as CmDiagnostic } from "@codemirror/lint";
+import { autocompletion } from "@codemirror/autocomplete";
+import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { bynkHighlighting } from "./highlight";
 import { bynkTreeSitterHighlighting } from "./tshighlight";
 import { encodeSnippet, decodeSnippet } from "./deeplink";
 import { SANDBOX_ORIGIN } from "./shared";
 import type { CompileResult, Diagnostic, RunReply } from "./shared";
 import { EXAMPLES } from "./examples";
-import init, { bynk_compile, bynk_analyze, bynk_hover } from "./vendor/bynk_wasm.js";
+import init, { bynk_compile, bynk_analyze, bynk_hover, bynk_complete } from "./vendor/bynk_wasm.js";
 
 // The default program when there is no shared snippet in the URL: the first gallery
 // example (Hello, world).
@@ -91,6 +93,60 @@ const bynkHover = hoverTooltip((view, pos): Tooltip | null => {
     },
   };
 });
+
+interface CompletionCandidate {
+  label: string;
+  kind: string;
+  detail: string | null;
+  insert_text: string | null;
+}
+
+// `bynk_complete`'s `CompletionKind` strings mapped to CodeMirror's own
+// completion `type`, which drives the icon in the completion list. `insert_text`
+// is not used yet — it only carries LSP snippet syntax (`${1:label}`) for
+// `Snippet` items, a different placeholder grammar from CodeMirror's own
+// `snippet()` syntax, so every candidate inserts its bare label for now.
+const KIND_TO_CM_TYPE: Record<string, string> = {
+  unit: "namespace",
+  capability: "interface",
+  type: "type",
+  keyword: "keyword",
+  snippet: "text",
+  variant: "enum",
+  member: "method",
+  field: "property",
+  constructor: "function",
+  function: "function",
+  local: "variable",
+};
+
+// A CodeMirror completion source: ask the wasm analyser for context-aware
+// candidates (capability methods, types, keywords, in-scope locals, value-receiver
+// members) at the cursor position (#808). `null` when the wasm compiler isn't
+// loaded yet or there is nothing to offer.
+const bynkCompletions = (context: CompletionContext): CompletionResult | null => {
+  if (!wasmReady) return null;
+  const word = context.matchBefore(/[\w.]*/);
+  if (!word || (word.from === word.to && !context.explicit)) return null;
+  let items: CompletionCandidate[];
+  try {
+    items = (JSON.parse(bynk_complete(context.state.doc.toString(), context.pos)) as { items: CompletionCandidate[] })
+      .items;
+  } catch {
+    return null;
+  }
+  if (items.length === 0) return null;
+  return {
+    from: word.from,
+    options: items.map((c) => ({
+      label: c.label,
+      type: KIND_TO_CM_TYPE[c.kind] ?? "text",
+      detail: c.detail ?? undefined,
+      apply: c.label,
+    })),
+    validFor: /^[\w.]*$/,
+  };
+};
 
 let runSeq = 0;
 const pending = new Map<number, (r: RunReply) => void>();
@@ -297,6 +353,7 @@ function makeEditor(doc: string): void {
         bynkLinter,
         lintGutter(),
         bynkHover,
+        autocompletion({ override: [bynkCompletions] }),
         EditorView.theme({ "&": { height: "100%" }, ".cm-scroller": { overflow: "auto" } }, { dark: true }),
       ],
     }),

@@ -491,10 +491,13 @@ pub fn analyse_in_memory(
 /// The outcome of [`analyse_in_memory_with_types`]: diagnostics plus the
 /// analysed file's `(span, type)` entries (span-sorted — see
 /// [`ExprTypeSink::take_files`]), for a position→type query (#397, the
-/// playground's hover).
+/// playground's hover), and its local bindings (#808, the playground's
+/// completion — `bynk_check::locals::locals_at` over `locals` answers
+/// "what's in scope at this offset").
 pub struct InMemoryAnalysis {
     pub errors: Vec<AttributedError>,
     pub expr_types: Vec<(bynk_syntax::span::Span, Ty)>,
+    pub locals: Vec<bynk_check::locals::LocalBinding>,
 }
 
 /// Like [`analyse_in_memory`], but also exposes the expression-type map the
@@ -534,13 +537,20 @@ pub fn analyse_in_memory_with_types(
     );
     match run {
         RunChecks::Bailed {
-            errors, mut exprs, ..
+            errors,
+            mut exprs,
+            mut locals,
+            ..
         }
         | RunChecks::Checked {
-            errors, mut exprs, ..
+            errors,
+            mut exprs,
+            mut locals,
+            ..
         } => InMemoryAnalysis {
             errors: errors.into_all(),
             expr_types: exprs.take_files().remove(&path).unwrap_or_default(),
+            locals: locals.take_files().remove(&path).unwrap_or_default(),
         },
     }
 }

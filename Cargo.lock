@@ -277,6 +277,7 @@ version = "0.216.1"
 dependencies = [
  "bynk-check",
  "bynk-emit",
+ "bynk-ide",
  "bynk-strip",
  "bynk-syntax",
  "console_error_panic_hook",
