@@ -780,6 +780,27 @@ mod tests {
         }
 
         #[test]
+        fn adapter_files_offer_nothing() {
+            // An `Adapter` carries no Bynk bodies — `find_function_site` (like
+            // `find_site`) short-circuits to `None` regardless of the selection.
+            let src = "adapter tokens {\n  binding \"./b.ts\"\n}\n";
+            let actions = function_actions_for(src, "binding", &[], &[], &[]);
+            assert!(actions.is_empty());
+        }
+
+        #[test]
+        fn suite_test_cases_offer_nothing() {
+            // Unlike extract-variable (which can extract a `let` inside a test
+            // case), extract-function needs a top-level item to insert the new
+            // `fn` above — a `Suite` case has none, so this declines even where
+            // extract-variable would offer something.
+            let src = "suite thing\n\ncase \"it works\" {\n  1 + 2\n}\n";
+            let types = vec![int_type(src, "1 + 2")];
+            let actions = function_actions_for(src, "1 + 2", &[], &[], &types);
+            assert!(actions.is_empty());
+        }
+
+        #[test]
         fn a_dirty_file_with_no_recorded_type_offers_nothing() {
             let src = "context c\n\nfn f() -> Int {\n  1 + 2\n}\n";
             // No expr_types entries at all — the clean-file ceiling (ADR 0063):
