@@ -174,8 +174,9 @@ pub fn extract_function(
             remainder,
         } => {
             // A lifted top-level `fn` has no `store` fields — a `:=` inside
-            // the run would always fail to resolve its target.
-            if stmts.iter().any(|s| matches!(s, Statement::Assign(_))) {
+            // the run (however deeply nested through `if`/`match`/block
+            // sub-expressions) would always fail to resolve its target.
+            if stmts_contain_assign_stmt(stmts) {
                 return Vec::new();
             }
             for s in *stmts {
@@ -601,13 +602,15 @@ fn trim_span(text: &str, span: Span) -> Span {
     Span::new(start, start + trimmed_len)
 }
 
+/// A found statement run: the contiguous statement slice, the block's tail
+/// when the run includes it, and — only populated by [`align_stmt_run`]'s
+/// tail-excluded branch — the remainder [`leaks_a_binding`] scans.
+type StmtRun<'a> = (&'a [Statement], Option<&'a Expr>, Vec<&'a Expr>);
+
 /// Dispatches to the item's body/op/handler containing `target`, then hands
 /// off to [`find_stmt_run`] — the statement-run counterpart of
 /// [`find_in_items`].
-fn find_multi_stmt_in_item(
-    item: &CommonsItem,
-    target: Span,
-) -> Option<(&[Statement], Option<&Expr>, Vec<&Expr>)> {
+fn find_multi_stmt_in_item(item: &CommonsItem, target: Span) -> Option<StmtRun<'_>> {
     match item {
         CommonsItem::Fn(f) if contains(f.body.span, target) => find_stmt_run(&f.body, target),
         CommonsItem::Provider(p) => p
@@ -635,7 +638,7 @@ fn find_multi_stmt_in_item(
 /// descend-first policy), so a run inside an `if`/`match` branch resolves
 /// there rather than at the outer level; [`align_stmt_run`] does the actual
 /// boundary check once no deeper block matches.
-fn find_stmt_run(block: &Block, target: Span) -> Option<(&[Statement], Option<&Expr>, Vec<&Expr>)> {
+fn find_stmt_run(block: &Block, target: Span) -> Option<StmtRun<'_>> {
     for stmt in &block.statements {
         let mut values = Vec::new();
         statement_exprs(stmt, &mut values);
@@ -655,10 +658,7 @@ fn find_stmt_run(block: &Block, target: Span) -> Option<(&[Statement], Option<&E
 /// `target` — `None` unless `e`'s span actually contains `target`. Falls
 /// through to [`expr_children`] for anything other than `Block`/`If`/`Match`,
 /// the same exhaustive walk [`locate`] and [`collect_idents`] use.
-fn find_stmt_run_in_expr(
-    e: &Expr,
-    target: Span,
-) -> Option<(&[Statement], Option<&Expr>, Vec<&Expr>)> {
+fn find_stmt_run_in_expr(e: &Expr, target: Span) -> Option<StmtRun<'_>> {
     if !contains(e.span, target) {
         return None;
     }
@@ -689,10 +689,7 @@ fn find_stmt_run_in_expr(
 /// another statement's end (the run stops before the tail) or the tail's own
 /// end (the run includes it). No match — a partial-statement selection, or
 /// one spanning more than this single block — returns `None`.
-fn align_stmt_run(
-    block: &Block,
-    target: Span,
-) -> Option<(&[Statement], Option<&Expr>, Vec<&Expr>)> {
+fn align_stmt_run(block: &Block, target: Span) -> Option<StmtRun<'_>> {
     let start_idx = block
         .statements
         .iter()
@@ -768,6 +765,55 @@ fn leaks_a_binding(
     })
 }
 
+/// Whether any of `stmts` matches `pred` — checked on the statement itself
+/// first, then recursively on every nested statement reachable through its
+/// value expression's own `if`/`match`/block sub-expressions (arbitrarily
+/// deep). The shared shape behind [`stmts_contain_effect_stmt`] and
+/// [`stmts_contain_assign_stmt`]: both need "does this run perform/contain
+/// X, however deeply nested" and neither can stop at the run's direct
+/// top-level statements — a `~>`/`do`/`<-` or a `:=` can equally sit inside
+/// an `if`/`match` branch that one of the run's own `let`s evaluates.
+fn stmts_match(stmts: &[Statement], pred: &impl Fn(&Statement) -> bool) -> bool {
+    stmts.iter().any(|s| pred(s) || stmt_value_matches(s, pred))
+}
+
+fn stmt_value_matches(s: &Statement, pred: &impl Fn(&Statement) -> bool) -> bool {
+    match s {
+        Statement::Let(l) | Statement::EffectLet(l) => expr_matches(&l.value, pred),
+        Statement::Expect(a) => expr_matches(&a.value, pred),
+        Statement::Send(snd) => expr_matches(&snd.value, pred),
+        Statement::Do(d) => expr_matches(&d.value, pred),
+        Statement::Assign(a) => expr_matches(&a.value, pred),
+    }
+}
+
+fn block_matches(b: &Block, pred: &impl Fn(&Statement) -> bool) -> bool {
+    stmts_match(&b.statements, pred) || expr_matches(&b.tail, pred)
+}
+
+fn expr_matches(e: &Expr, pred: &impl Fn(&Statement) -> bool) -> bool {
+    match &e.kind {
+        ExprKind::Block(b) => block_matches(b, pred),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            expr_matches(cond, pred)
+                || block_matches(then_block, pred)
+                || block_matches(else_block, pred)
+        }
+        ExprKind::Match { discriminant, arms } => {
+            expr_matches(discriminant, pred)
+                || arms.iter().any(|arm| match &arm.body {
+                    MatchBody::Expr(e) => expr_matches(e, pred),
+                    MatchBody::Block(b) => block_matches(b, pred),
+                })
+        }
+        _ => expr_children(e).into_iter().any(|c| expr_matches(c, pred)),
+    }
+}
+
 /// Whether any of `stmts` is (or contains, arbitrarily nested through
 /// `if`/`match`/block sub-expressions) a `~>`/`do`/`<-` statement — the three
 /// forms legal only in an effectful body (`ctx.effectful`, gated on the
@@ -775,43 +821,21 @@ fn leaks_a_binding(
 /// run's synthesised `fn` must return `Effect[()]` — so those forms stay
 /// legal in the lifted body — rather than plain `()`.
 fn stmts_contain_effect_stmt(stmts: &[Statement]) -> bool {
-    stmts.iter().any(stmt_contains_effect_stmt)
+    stmts_match(stmts, &|s| {
+        matches!(
+            s,
+            Statement::EffectLet(_) | Statement::Send(_) | Statement::Do(_)
+        )
+    })
 }
 
-fn stmt_contains_effect_stmt(s: &Statement) -> bool {
-    match s {
-        Statement::EffectLet(_) | Statement::Send(_) | Statement::Do(_) => true,
-        Statement::Let(l) => expr_contains_effect_stmt(&l.value),
-        Statement::Expect(a) => expr_contains_effect_stmt(&a.value),
-        Statement::Assign(a) => expr_contains_effect_stmt(&a.value),
-    }
-}
-
-fn block_contains_effect_stmt(b: &Block) -> bool {
-    stmts_contain_effect_stmt(&b.statements) || expr_contains_effect_stmt(&b.tail)
-}
-
-fn expr_contains_effect_stmt(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Block(b) => block_contains_effect_stmt(b),
-        ExprKind::If {
-            cond,
-            then_block,
-            else_block,
-        } => {
-            expr_contains_effect_stmt(cond)
-                || block_contains_effect_stmt(then_block)
-                || block_contains_effect_stmt(else_block)
-        }
-        ExprKind::Match { discriminant, arms } => {
-            expr_contains_effect_stmt(discriminant)
-                || arms.iter().any(|arm| match &arm.body {
-                    MatchBody::Expr(e) => expr_contains_effect_stmt(e),
-                    MatchBody::Block(b) => block_contains_effect_stmt(b),
-                })
-        }
-        _ => expr_children(e).into_iter().any(expr_contains_effect_stmt),
-    }
+/// Whether any of `stmts` is (or contains, arbitrarily nested through
+/// `if`/`match`/block sub-expressions) a `:=` (`Cell` store write). A lifted
+/// top-level `fn` has no `store` fields, so a run containing one anywhere —
+/// not just as a direct top-level statement — would always fail to
+/// typecheck once extracted.
+fn stmts_contain_assign_stmt(stmts: &[Statement]) -> bool {
+    stmts_match(stmts, &|s| matches!(s, Statement::Assign(_)))
 }
 
 /// `expr` and every `Ident` reference nested inside it — walked via
@@ -1293,6 +1317,30 @@ mod tests {
                 // inside the run would always fail to resolve its target.
                 let src = "context c\n\nfn f() -> Int {\n  cell := 1\n  x\n}\n";
                 let actions = function_actions_for(src, "cell := 1", &[], &[], &[]);
+                assert!(actions.is_empty());
+            }
+
+            #[test]
+            fn a_run_containing_a_nested_cell_write_declines() {
+                // The `:=` is nested inside an `if`-branch within the run's
+                // own `let`, not a direct top-level statement in the run —
+                // `stmts_contain_assign_stmt` must recurse to catch it, the
+                // same way `stmts_contain_effect_stmt` already does for
+                // `~>`/`do`/`<-`.
+                let src = concat!(
+                    "context c\n\n",
+                    "fn f(cond: Bool) -> Int {\n",
+                    "  let a = if cond {\n",
+                    "    cell := 1\n",
+                    "    0\n",
+                    "  } else {\n",
+                    "    1\n",
+                    "  }\n",
+                    "  a\n",
+                    "}\n",
+                );
+                let needle = "let a = if cond {\n    cell := 1\n    0\n  } else {\n    1\n  }";
+                let actions = function_actions_for(src, needle, &[], &[], &[]);
                 assert!(actions.is_empty());
             }
 
