@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "`textDocument/codeAction` offers an extract-function refactor (`RefactorExtract`), capability-free-only"
----
+# 0245 — Track #800 settles: LSP extract-function ships capability-free-only
 
-## ADR: lsp-extract-function
-title: Track #800 settles: LSP extract-function ships capability-free-only
-summary: Declines whenever the selection carries a capability requirement, rather than adding `given` to `fn`; free variables come from the existing `locals`/`expr_types` ledgers, not a new binding pass
+- **Status:** Accepted (v0.216)
 
 **Context.** Issue #303 asked for two `codeAction` refactors; extract-variable
 shipped in ADR 0240 (v0.214, #802), and extract-function was split to a
