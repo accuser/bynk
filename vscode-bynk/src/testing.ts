@@ -1,11 +1,12 @@
 // Bynk Test Explorer (v0.59).
 //
-// Runs a project's Bynk tests via `bynkc test --format json` and reports
+// Runs a project's Bynk tests via `bynk test --format json` and reports
 // pass/fail through the VS Code Test API, with click-through from a failing
 // assertion to its `.bynk` source. The extension links no Rust — it shells the
-// same `bynkc` the `bynkc: check` task resolves (via `bynk.compilerPath`).
+// `bynk` driver (v0.138+, #487/#486), inheriting its richer `bynkc` resolution
+// (`BYNK_BYNKC` → PATH → sibling-of-`bynk`) instead of reimplementing one here.
 //
-// Discovery (v0.67): `bynkc test --no-run --format json` lists the project's
+// Discovery (v0.67): `bynk test --no-run --format json` lists the project's
 // suites/cases without running them — a pure compile, no `tsc`/`node`. The
 // controller's `resolveHandler` seeds the tree from it when the Testing view
 // opens and `refreshHandler` backs the Refresh control. A discovered case
@@ -19,10 +20,10 @@
 import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 
-import { compilerPath } from "./tasks";
+import { bynkPath, compilerOverride } from "./tasks";
 import { debugBynkTests } from "./debug";
 
-// The `bynkc test --format json` document (mirrors bynkc/src/test_json.rs).
+// The `bynk test --format json` document (mirrors bynkc/src/test_json.rs).
 interface JsonLocation {
   path: string;
   line: number;
@@ -96,7 +97,7 @@ export function registerTesting(context: vscode.ExtensionContext): TestApi {
   context.subscriptions.push(profile);
 
   // v0.72: the headline debug entry (ADR 0104, DECISION C). VS Code renders a
-  // **Debug** action beside Run from this profile; it shells `bynkc test
+  // **Debug** action beside Run from this profile; it shells `bynk test
   // --inspect` and hands off to the JS debugger so a breakpoint in a test body
   // (or the code it exercises) pauses. The whole suite runs under the inspector;
   // the breakpoint decides where it stops.
@@ -279,7 +280,7 @@ async function runHandler(
   run.end();
 }
 
-/** Discover tests without running them: shell `bynkc test --no-run --format
+/** Discover tests without running them: shell `bynk test --no-run --format
  *  json` (a pure compile that lists suites/cases — no `tsc`, no `node`, no test
  *  execution) and (re)build the tree from its document. Backs both the resolve
  *  (view-open) and refresh handlers. Stale suites/cases are pruned so a removed
@@ -441,11 +442,14 @@ function routeCompileDiagnostics(
   }
 }
 
-/** Run `bynkc test . --format json` at `root` and parse its document. With
+/** Run `bynk test . --format json` at `root` and parse its document. With
  *  `{ noRun: true }` it adds `--no-run` — a pure discovery compile that lists
  *  suites/cases without running them. A non-zero exit is normal (test failures),
  *  so we parse stdout regardless and only reject when there is no parseable
- *  document at all. */
+ *  document at all. Goes through `bynk` rather than shelling `bynkc` directly
+ *  (#486): the driver resolves its compiler as `BYNK_BYNKC` → PATH →
+ *  sibling-of-`bynk`, so a driver-first install works here too; `bynk.compilerPath`
+ *  is forwarded as `BYNK_BYNKC` to keep pinning an exact `bynkc` when set. */
 function runBynkcTest(
   root: vscode.Uri,
   token?: vscode.CancellationToken,
@@ -456,21 +460,26 @@ function runBynkcTest(
     : ["test", ".", "--format", "json"];
   // v0.127: the per-case run filter (no effect alongside `--no-run` discovery).
   if (opts?.caseName) args.push("--case", opts.caseName);
+  const override = compilerOverride();
   return new Promise((resolve, reject) => {
     const child = execFile(
-      compilerPath(),
+      bynkPath(),
       args,
-      { cwd: root.fsPath, maxBuffer: 64 * 1024 * 1024 },
+      {
+        cwd: root.fsPath,
+        maxBuffer: 64 * 1024 * 1024,
+        env: override ? { ...process.env, BYNK_BYNKC: override } : undefined,
+      },
       (_err, stdout, stderr) => {
         const text = stdout.trim();
         if (!text) {
-          reject(new Error(stderr.trim() || "no output from `bynkc test`"));
+          reject(new Error(stderr.trim() || "no output from `bynk test`"));
           return;
         }
         try {
           resolve(JSON.parse(text) as TestRun);
         } catch (e) {
-          reject(new Error(`could not parse \`bynkc test\` output: ${String(e)}`));
+          reject(new Error(`could not parse \`bynk test\` output: ${String(e)}`));
         }
       },
     );
