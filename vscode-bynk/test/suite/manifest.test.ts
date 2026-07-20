@@ -126,4 +126,34 @@ describe("Bynk manifest — UI surface (slice 5)", () => {
       "onEnterRules are defined",
     );
   });
+
+  it("disambiguates -- line-comment continuation from a --- block-comment fence", () => {
+    const ext = vscode.extensions.getExtension(EXT_ID);
+    assert.ok(ext, `extension ${EXT_ID} is installed`);
+    const configPath = path.join(ext.extensionPath, "language-configuration.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+    const rules: Array<{
+      beforeText: string;
+      afterText?: string;
+      action: { indent: string; appendText?: string };
+    }> = config.onEnterRules;
+
+    const lineCommentRule = rules.find((r) => r.action.appendText === "-- ");
+    assert.ok(lineCommentRule, "a line-comment continuation rule is defined");
+    const lineRe = new RegExp(lineCommentRule.beforeText);
+    assert.ok(lineRe.test("-- a line comment"), "matches a line-comment-only line");
+    assert.ok(lineRe.test("let x = 1 -- trailing comment"), "matches a trailing comment");
+    assert.ok(!lineRe.test("---"), "does not match a bare block-comment fence");
+    assert.ok(!lineRe.test("--- doc block start"), "does not match an opening fence");
+
+    const fenceRule = rules.find(
+      (r) => !r.action.appendText && /^\^\\s\*---/.test(r.beforeText),
+    );
+    assert.ok(fenceRule, "a block-comment fence rule is defined");
+    const fenceRe = new RegExp(fenceRule.beforeText);
+    assert.ok(fenceRe.test("---"), "matches a bare fence");
+    assert.ok(fenceRe.test("  ----"), "matches an indented longer fence");
+    assert.ok(!fenceRe.test("-- not a fence"), "does not match a line comment");
+  });
 });
