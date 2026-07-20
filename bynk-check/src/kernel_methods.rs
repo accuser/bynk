@@ -93,6 +93,73 @@ pub const MAP_METHODS: &[KernelMethod] = &[
     m("insert", "insert(key: K, value: V) -> Map[K, V]"),
 ];
 
+/// `Query[T]` (v0.91, ADR 0115; joins/grouping v0.94, ADR 0116/0120) — the lazy
+/// storage-query vocabulary a `store` collection lifts into (a `store Map`'s
+/// `.entries`/`.keys`/`.values`, a `store Log`'s time-window roots, or a bare
+/// `store Map` used as a value). Builders stay lazy (`Query[U]`); terminals
+/// fold into the agent's storage capability (`Effect[T]`). Mirrors
+/// [`LIST_METHODS`]'s eager vocabulary; dispatched in
+/// `crate::checker::kernels::check_query_kernel_method`, which this table pins
+/// (`kernel_registry_pins_dispatch`).
+pub const QUERY_METHODS: &[KernelMethod] = &[
+    m("map", "map(f: T -> U) -> Query[U]"),
+    m("filter", "filter(p: T -> Bool) -> Query[T]"),
+    m("flatMap", "flatMap(f: T -> Query[U]) -> Query[U]"),
+    m("sortBy", "sortBy(key: T -> K) -> Query[T]"),
+    m("take", "take(n: Int) -> Query[T]"),
+    m("skip", "skip(n: Int) -> Query[T]"),
+    m("distinct", "distinct() -> Query[T]"),
+    m("distinctBy", "distinctBy(key: T -> K) -> Query[T]"),
+    m(
+        "joinOn",
+        "joinOn(other: Query[U], on: (T, U) -> Bool, into: (T, U) -> V) -> Query[V]",
+    ),
+    m(
+        "leftJoin",
+        "leftJoin(other: Query[U], on: (T, U) -> Bool, into: (T, Option[U]) -> V) -> Query[V]",
+    ),
+    m(
+        "join",
+        "join(other: Query[U], on: (T, U) -> Bool, into: (T, U) -> V) -> Query[V]",
+    ),
+    m(
+        "groupBy",
+        "groupBy(key: T -> K, into: (K, Query[T]) -> V) -> Query[V]",
+    ),
+    m("collect", "collect() -> Effect[List[T]]"),
+    m("first", "first() -> Effect[Option[T]]"),
+    m("firstOrElse", "firstOrElse(default: T) -> Effect[T]"),
+    m("count", "count() -> Effect[Int]"),
+    m("fold", "fold(init: U, step: (U, T) -> U) -> Effect[U]"),
+    m("any", "any(p: T -> Bool) -> Effect[Bool]"),
+    m("all", "all(p: T -> Bool) -> Effect[Bool]"),
+    m("sum", "sum(key: T -> K) -> Effect[K]"),
+    m("min", "min(key: T -> K) -> Effect[Option[K]]"),
+    m("max", "max(key: T -> K) -> Effect[Option[K]]"),
+    m("average", "average(key: T -> K) -> Effect[Option[Float]]"),
+    m("forEach", "forEach(f: T -> Effect[()]) -> Effect[()]"),
+    m(
+        "parTraverse",
+        "parTraverse(f: T -> Effect[()]) -> Effect[()]",
+    ),
+    m(
+        "traverseAll",
+        "traverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]",
+    ),
+    m(
+        "parTraverseAll",
+        "parTraverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]",
+    ),
+    m(
+        "traverseTry",
+        "traverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]",
+    ),
+    m(
+        "parTraverseTry",
+        "parTraverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]",
+    ),
+];
+
 /// `Option[T]` combinators (v0.22a).
 pub const OPTION_METHODS: &[KernelMethod] = &[
     m("map", "map(f: T -> U) -> Option[U]"),
@@ -206,6 +273,7 @@ pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
         Ty::Base(BaseType::String) => STRING_METHODS,
         Ty::List(_) => LIST_METHODS,
         Ty::Map(_, _) => MAP_METHODS,
+        Ty::Query(_) => QUERY_METHODS,
         Ty::Option(_) => OPTION_METHODS,
         Ty::Result(_, _) => RESULT_METHODS,
         // §2.8.3: an `Effect[Result[T, E]]` receiver offers the cross-context
@@ -269,5 +337,17 @@ mod tests {
             })
             .is_empty()
         );
+    }
+
+    /// #596: a `Query[T]` receiver (a `store Map`'s `.entries`/`.keys`/
+    /// `.values`, or a bare store map used as a value, ADR 0120) offers the
+    /// full lazy query vocabulary — previously unmapped, so `.`-member
+    /// completion on any `Query` offered nothing.
+    #[test]
+    fn query_receiver_offers_the_query_vocabulary() {
+        let query = Ty::Query(Box::new(Ty::Base(BaseType::Int)));
+        assert_eq!(methods_for(&query).len(), QUERY_METHODS.len());
+        assert!(methods_for(&query).iter().any(|m| m.name == "filter"));
+        assert!(methods_for(&query).iter().any(|m| m.name == "collect"));
     }
 }

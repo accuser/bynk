@@ -4,10 +4,16 @@
 //! rejected as `method_not_found` (a phantom registry entry). Args are
 //! omitted, so a recognised method surfaces only as an arity error — which is
 //! fine; we assert solely on `method_not_found`.
+//!
+//! `QUERY_METHODS` is well-formedness-checked here but not dispatch-pinned:
+//! a `Query`-typed receiver only ever arises through a `store` field, which
+//! needs a `context` the single-file `diagnose` this file's probe uses can't
+//! accept — its dispatch pin lives in `query_kernel_registry.rs` instead,
+//! compiled as a one-file project (the `store_op_registry.rs` shape).
 
 use bynkc::kernel_methods::{
     EFFECT_RESULT_METHODS, FLOAT_METHODS, INT_METHODS, KernelMethod, LIST_METHODS, MAP_METHODS,
-    OPTION_METHODS, RESULT_METHODS, STRING_METHODS,
+    OPTION_METHODS, QUERY_METHODS, RESULT_METHODS, STRING_METHODS,
 };
 
 /// `(let binding, receiver expr, methods)` — a receiver of each kernel type.
@@ -73,6 +79,7 @@ fn registries_are_well_formed() {
         OPTION_METHODS,
         RESULT_METHODS,
         EFFECT_RESULT_METHODS,
+        QUERY_METHODS,
     ] {
         assert!(!methods.is_empty());
         for meth in methods {

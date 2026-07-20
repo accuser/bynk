@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0245](0245-lsp-extract-function.md) | **Track #800 settles: LSP extract-function ships capability-free-only** (v0.216) — Declines whenever the selection carries a capability requirement, rather than adding `given` to `fn`; free variables come from the existing `locals`/`expr_types` ledgers, not a new binding pass | Accepted (v0.216) |
 | [0244](0244-agent-handler-dispatch-index.md) | **Agent handler dispatch calls become index symbols** (v0.215) — New SymbolKind::Handler indexes agentInstance.handler(...) calls, following ADR 0069's compound-name convention | Accepted (v0.215) |
 | [0243](0243-capability-op-call-hierarchy.md) | **Capability-op callees join the call-hierarchy graph** (v0.215) — Reverses ADR 0069's "stays out of scope" call for capability-op call edges | Accepted (v0.215) |
 | [0242](0242-playground-hover-397.md) | **Playground gains a hover tooltip for inferred types; completion split to a new issue** (v0.214.4) — Expose the checker's expr-types sink through a new `bynk_hover` wasm entry; defer completion | Accepted (v0.214.4) |

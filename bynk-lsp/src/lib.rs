@@ -769,8 +769,21 @@ impl Backend {
     /// Slice 3 (ADR 0063): complete the members of a typed **value** receiver.
     /// Re-analyses the buffer rewritten so the receiver parses (the trailing
     /// `.partial` dropped), types the receiver via the retained `expr_types`,
-    /// and maps its type to kernel methods + record fields. Empty when the
-    /// receiver can't be typed (the file has errors — the clean-file ceiling).
+    /// and maps its type to kernel methods + record fields. Silent (not
+    /// necessarily empty — see below) when the receiver can't be typed (the
+    /// file has errors — the clean-file ceiling).
+    ///
+    /// #596: additionally merges a bare `store` field receiver's own
+    /// vocabulary (entry ops, and for `Map` the `.entries`/`.keys`/`.values`
+    /// accessors) — dispatched by receiver *provenance* in the checker, which
+    /// the typed `ty` alone can't distinguish from an ordinary `Query`-typed
+    /// local (a bare store `Map` widens to `Ty::Query` too, ADR 0120). This
+    /// half runs **independently of whether `type_receiver` succeeded**: it
+    /// re-parses the buffer itself and needs no typed `ty` at all, so a `store`
+    /// field still offers its entry ops/accessors even when an unresolved name
+    /// *elsewhere* in the file bails the checker before it runs (the one
+    /// clean-file-ceiling gap ADR 0094 didn't close) — a review on #812 flagged
+    /// the earlier draft's single early return as undercutting that motivation.
     async fn value_member_completions(
         &self,
         uri: &Url,
@@ -781,14 +794,47 @@ impl Backend {
         else {
             return Vec::new();
         };
-        let Some(ty) = self.type_receiver(uri, rewritten, recv_offset).await else {
+        let mut items: Vec<CompletionItem> = Vec::new();
+        if let Some(ty) = self
+            .type_receiver(uri, rewritten.clone(), recv_offset)
+            .await
+        {
+            let files = self.project_files(uri).await;
+            items.extend(
+                completion::value_member_candidates(&ty, text, files.as_deref())
+                    .into_iter()
+                    .map(to_completion_item),
+            );
+        }
+        let locals = self.fast_path_locals(uri, &rewritten).await;
+        items.extend(
+            completion::store_field_member_candidates(&rewritten, recv_offset, &locals)
+                .into_iter()
+                .map(to_completion_item),
+        );
+        items
+    }
+
+    /// #596: the current analysed round's locals for `uri`, only when its
+    /// snapshot exactly matches `rewritten` — the same fast-path match
+    /// [`Self::type_receiver`] uses. Empty (rather than forcing a synchronous
+    /// re-analysis) when the round is stale or absent, so the store-field
+    /// shadowing check degrades to "no local shadows the name".
+    async fn fast_path_locals(
+        &self,
+        uri: &Url,
+        rewritten: &str,
+    ) -> Vec<bynk_check::locals::LocalBinding> {
+        let Some(analysis) = self.project_analysis_for(uri).await else {
             return Vec::new();
         };
-        let files = self.project_files(uri).await;
-        completion::value_member_candidates(&ty, text, files.as_deref())
-            .into_iter()
-            .map(to_completion_item)
-            .collect()
+        let Some(rel) = Self::uri_to_rel(&analysis, uri) else {
+            return Vec::new();
+        };
+        if analysis.snapshots.get(&rel).map(String::as_str) != Some(rewritten) {
+            return Vec::new();
+        }
+        analysis.locals.get(&rel).cloned().unwrap_or_default()
     }
 
     /// v0.124 (slice 3): at `<expr> is <cursor>`, the scrutinee sum type's
@@ -2421,10 +2467,14 @@ impl LanguageServer for Backend {
     /// v0.26 (ADR 0054): quick-fixes from structured suggestions. v0.213
     /// (ADR 0239) adds the extract-variable refactor
     /// (`CodeActionKind::REFACTOR_EXTRACT`), computed from the same snapshot.
+    /// Track #800 adds the sibling extract-function refactor, additionally
+    /// fed the round's `requirements`/`locals`/`expr_types` (the
+    /// capability-free-only gate and the parameter/return type synthesis).
     /// Served from the **cached** analysis round only (never a fresh run —
     /// slow, and it could disagree with the squiggles the client is
     /// showing): a request before the first round, or for a file outside
-    /// the project, returns the empty list.
+    /// the project, returns the empty list. #804: the combined list is then
+    /// filtered against `params.context.only`, if the client set it.
     async fn code_action(
         &self,
         params: CodeActionParams,
@@ -2457,6 +2507,20 @@ impl LanguageServer for Backend {
         let span = bynk_syntax::span::Span::new(start, end);
         let mut actions = crate::code_actions::quick_fixes(text, diags, span, &uri, version);
         actions.extend(crate::extract::extract_variable(text, span, &uri, version));
+        let empty_reqs = Vec::new();
+        let empty_locals = Vec::new();
+        let empty_types = Vec::new();
+        actions.extend(crate::extract::extract_function(
+            text,
+            span,
+            &uri,
+            version,
+            analysis.requirements.get(&rel).unwrap_or(&empty_reqs),
+            analysis.locals.get(&rel).unwrap_or(&empty_locals),
+            analysis.expr_types.get(&rel).unwrap_or(&empty_types),
+        ));
+        // #804: honour the client's requested action kinds, if any.
+        let actions = crate::code_actions::filter_by_only(actions, params.context.only.as_deref());
         Ok(Some(actions))
     }
 
@@ -5563,6 +5627,142 @@ mod tests {
             4,
             "each of the four changes bumps the generation once — only the last \
              scheduled round runs (no per-change round, no stacked debounce)",
+        );
+    }
+
+    // -- #596: store-map query vocabulary, end to end through `completion` ----
+    //
+    // The unit tests in `completion.rs`/`kernel_methods.rs`/`store_ops.rs`
+    // cover each half in isolation; a #812 review flagged the gap that no test
+    // drove a real `textDocument/completion` request through `Backend` to
+    // check the two halves actually merge (and, separately, that the
+    // provenance-based half survives a project-wide resolve failure that
+    // blanks `type_receiver`). These close both.
+
+    fn completion_labels(response: Option<CompletionResponse>) -> Vec<String> {
+        match response {
+            Some(CompletionResponse::Array(items)) => items.into_iter().map(|i| i.label).collect(),
+            Some(CompletionResponse::List(list)) => {
+                list.items.into_iter().map(|i| i.label).collect()
+            }
+            None => Vec::new(),
+        }
+    }
+
+    async fn complete_at(backend: &Backend, uri: &Url, text: &str, needle: &str) -> Vec<String> {
+        let offset = text.find(needle).expect("needle present") + needle.len();
+        let pos = crate::position::offset_to_position(text, offset);
+        let response = backend
+            .completion(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position: pos,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            })
+            .await
+            .expect("completion must not error");
+        completion_labels(response)
+    }
+
+    /// A `store Map` field's `.` completion merges both halves in one
+    /// response: the `Query` kernel methods (`filter`, `collect`, …) from
+    /// `kernel_methods::methods_for`, and the store-field vocabulary (entry
+    /// ops + accessors) from the provenance-based path — driven through the
+    /// real `Backend::completion`, not the pure helpers directly.
+    #[tokio::test]
+    async fn store_map_receiver_completion_merges_both_vocabularies() {
+        let src = "context shop\n\nagent Inventory {\n  key id: String\n  store items: Map[String, Int]\n\n  on call f() -> Effect[()] {\n    items.\n  }\n}\n";
+        let s = scratch_project(
+            "store_map_merge",
+            &[
+                ("bynk.toml", "[project]\nname=\"shop\"\n"),
+                ("src/a.bynk", src),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let uri = file_uri(&s.0, "src/a.bynk");
+        open(&backend, &uri, src).await;
+        backend.run_round().await;
+
+        let labels = complete_at(&backend, &uri, src, "    items.").await;
+        assert!(
+            labels.contains(&"filter".to_string()),
+            "the Query kernel vocabulary: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"collect".to_string()),
+            "the Query kernel vocabulary: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"put".to_string()),
+            "the store entry ops: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"entries".to_string()),
+            "the Map query accessors: {labels:?}"
+        );
+    }
+
+    /// The provenance-based half does not need `type_receiver` to succeed: an
+    /// unresolved type name elsewhere in the same file — in an unrelated
+    /// `type` declaration, not even the agent using `items` — trips the
+    /// *resolve* gate (`resolve_file`), which runs before `check_record` and
+    /// so blanks `expr_types` for the **whole file** if it fails: the one
+    /// clean-file-ceiling gap ADR 0094 didn't close (that error-tolerance is
+    /// inside the checker; a resolve failure never reaches it). Before the
+    /// #812 review fix, `value_member_completions` returned early on that
+    /// `None` and never reached the store-field path at all; the entry
+    /// ops/accessors must still surface here.
+    #[tokio::test]
+    async fn store_field_vocabulary_survives_an_unrelated_resolve_failure() {
+        let src = "context shop\n\ntype Bad = { x: NoSuchType }\n\nagent Inventory {\n  key id: String\n  store items: Map[String, Int]\n\n  on call f() -> Effect[()] {\n    items.\n  }\n}\n";
+        let s = scratch_project(
+            "store_map_resolve_gap",
+            &[
+                ("bynk.toml", "[project]\nname=\"shop\"\n"),
+                ("src/a.bynk", src),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let uri = file_uri(&s.0, "src/a.bynk");
+        open(&backend, &uri, src).await;
+        backend.run_round().await;
+
+        // Precondition: the round really did fail to type this file (the
+        // fixture actually reaches the ceiling this test is about, rather
+        // than passing vacuously because the file happened to check fine).
+        let analysis = backend.test_analysis().await.expect("a round committed");
+        let rel = Backend::uri_to_rel(&analysis, &uri).expect("uri resolves");
+        assert!(
+            analysis
+                .diagnostics
+                .get(&rel)
+                .is_some_and(|ds| !ds.is_empty()),
+            "the fixture must actually fail to check — an undeclared return \
+             type is the trigger this test exercises",
+        );
+
+        let labels = complete_at(&backend, &uri, src, "    items.").await;
+        // A sharper precondition than "some diagnostic exists": the typed half
+        // (`Query` kernel methods) really did go silent, confirming this
+        // exercises `type_receiver` returning `None` — not a fixture that
+        // merely warns while still typing `items` fine, which would let the
+        // pre-fix code pass here too.
+        assert!(
+            !labels.contains(&"filter".to_string()),
+            "the fixture must blank the typed half too, or this doesn't test \
+             the gap: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"put".to_string()),
+            "store entry ops must survive an unrelated resolve failure: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"entries".to_string()),
+            "Map query accessors must survive an unrelated resolve failure: {labels:?}"
         );
     }
 }
