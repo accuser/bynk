@@ -261,11 +261,57 @@ A half-deployed project is a real state, not a corrupt one, and the next plan
 describes it honestly — contexts already live read `redeploy` rather than
 `deploy`.
 
+## Environments
+
+By default `bynk deploy` ships to a single, unqualified environment. Pass
+`--env` to ship the same project to more than one — `staging` and `production`
+provision, record, and reconcile entirely independently, even on the same
+Cloudflare account:
+
+```sh
+bynk deploy --env staging
+bynk deploy --env production
+```
+
+Omit `--env` and nothing changes from before — it is the same as
+`--env default`.
+
+> **Understand — why `bynk deploy` writes more than `--env` to Wrangler.**
+> Cloudflare does not carry your bindings into a named environment
+> automatically: KV namespaces, queues, and Service Bindings all have to be
+> declared again under that environment, or Wrangler deploys with none of
+> them. `bynk deploy` does this for you — it writes an environment-scoped
+> section into the generated config, alongside the plain one, every time you
+> deploy to something other than the default. You never write it yourself,
+> and it never survives a rebuild you didn't ask `bynk deploy` to make.
+
+Queue names and Service Binding targets pick up a `-<env>` suffix under a
+non-default environment, so `staging` and `production` never collide on the
+same physical queue or bind to each other's Workers:
+
+```
+queue create job-intake-staging
+deploy commerce-orders-staging
+```
+
+KV needs no such suffix — its identity is the namespace id Cloudflare hands
+back, already kept apart per environment in `bynk.deploy.lock`.
+
+`--env` is the driver's own flag; putting `--env` or `--environment` after
+`--` as well is rejected rather than silently resolved one way or the other:
+
+```sh
+bynk deploy --env staging -- --env production
+# bynk: `--env staging` conflicts with `--env` after `--` — pass one or the other, not both
+```
+
 ## Provisioning state
 
 The first deploy writes `bynk.deploy.lock` beside `bynk.toml`. Commit it. It is
 intentionally not written into the generated `wrangler.toml`, because each build
-replaces that file. It holds no secrets. It records three different things, and
+replaces that file. It holds no secrets. Every environment gets its own section
+of the file, so `staging` and `production` never share a KV id, a deployed-state
+flag, or a queue record. Per environment, it records three different things, and
 it trusts them to three different degrees:
 
 - **KV namespace ids** — the real state. Cloudflare generates the id, and this

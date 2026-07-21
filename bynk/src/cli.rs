@@ -104,6 +104,13 @@ pub enum Command {
         /// worker-dir form. Omit to deploy the whole project in order.
         #[arg(long, value_name = "NAME")]
         context: Option<String>,
+        /// Target environment. Selects the `bynk.deploy.lock` section and,
+        /// for any value other than `default`, synthesises an environment-
+        /// scoped Wrangler config section (KV, queues, Service Bindings all
+        /// qualified) since Cloudflare does not inherit bindings into a named
+        /// environment. Omit to deploy today's single, unqualified default.
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        env: String,
         /// Print the provisioning and deploy plan without changing Cloudflare
         /// or writing `bynk.deploy.lock`.
         #[arg(long, visible_alias = "plan")]

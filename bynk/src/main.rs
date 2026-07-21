@@ -49,6 +49,7 @@ fn main() -> ExitCode {
         Command::Deploy {
             path,
             context,
+            env,
             dry_run,
             format,
             yes,
@@ -60,6 +61,7 @@ fn main() -> ExitCode {
             path,
             DeployOptions {
                 context,
+                environment: env,
                 dry_run,
                 format: match format {
                     bynk::cli::DeployFormatArg::Short => DeployFormat::Short,
