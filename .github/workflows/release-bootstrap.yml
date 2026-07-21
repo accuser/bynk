@@ -65,6 +65,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
+      # Global CLI install, not a `uses:` action, so there is no lockfile or
+      # commit-hash to pin against (Scorecard Pinned-Dependencies has no hash
+      # mechanism for `npm install -g`). Range-pinned to major 5. Accepted, #828.
       - name: Install TypeScript
         if: ${{ inputs.run_tests }}
         run: npm install -g typescript@5
