@@ -66,7 +66,7 @@ each track's spine issue; this table is deliberately just the map.
 | Track doc | Spine issue | Phase | Theme |
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
-| [`deploy.md`](deploy.md) | [#558](https://github.com/accuser/bynk/issues/558) | Settling — no slice authorised | The `bynk deploy` verb: provisioning + remote deploy, and the load-bearing provisioning-state model |
+| [`deploy.md`](deploy.md) | [#558](https://github.com/accuser/bynk/issues/558) | Slicing (0–3 shipped; 4–5 remaining) | The `bynk deploy` verb: provisioning + remote deploy, and the load-bearing provisioning-state model |
 
 (`documentation.md` and `deploy.md` pre-date the GitHub-native flow, so their
 docs were committed by ordinary PRs rather than settling draft PRs; the spine
