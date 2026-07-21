@@ -1126,8 +1126,9 @@ impl<'a> Parser<'a> {
         let mut arms = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
             arms.push(self.parse_match_arm()?);
-            // Arms are separated by newlines (significant via the iterator),
-            // optionally by a comma. We just keep parsing arms greedily.
+            // No newline check here: the token stream carries no line info, and
+            // arms are terminated purely by each arm's own greedy parse plus the
+            // final `RBrace`. A trailing comma is optional and otherwise eaten.
             let _ = self.eat(TokenKind::Comma);
         }
         let close = self.expect(TokenKind::RBrace, "to close the match-arm list")?;
