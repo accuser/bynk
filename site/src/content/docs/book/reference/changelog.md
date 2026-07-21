@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.219**.
+written against **v0.220**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.220.0** | Refined patterns (`_ where <predicate>`) in `match` arms |
 | **v0.219.0** | Or-patterns (`p₁ | p₂`) in `match` arms and after `is` |
 | **v0.218.0** | A system-tier case mixing Wire(...) with a by Nobody call now drives a raw no-auth driver, instead of silently reaching the typed no-auth driver unconverted |
 | **v0.217.1** | bynk-lsp's root-cache write-back is guarded against a bynk.toml/workspace-folder invalidation racing an in-flight filesystem walk |

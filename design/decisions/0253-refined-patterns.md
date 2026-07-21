@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Refined patterns (`_ where <predicate>`) in `match` arms
----
+# 0253 — Refined patterns in `match`: guard-only, `_`-inner, extends the ADR 0169 if-chain
 
-## ADR: refined-patterns
-title: Refined patterns in `match`: guard-only, `_`-inner, extends the ADR 0169 if-chain
-summary: `_ where predicate` as a runtime guard over a literal-kind scrutinee
+- **Status:** Accepted (v0.220)
 
 **Context.** `design/bynk-type-system.md` §2.3.4 has listed `p 'where'
 refinement-predicate` in the pattern grammar since the literal-patterns
