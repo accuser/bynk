@@ -476,6 +476,7 @@
     "typescript": "^7.0.2"
   },
   "overrides": {
-    "serialize-javascript": "^7.0.5"
+    "serialize-javascript": "^7.0.5",
+    "diff": "^8.0.3"
   }
 }
