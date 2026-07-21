@@ -383,6 +383,11 @@ removes routes, custom domains, and cron triggers, a larger blast radius than
 a namespace or a queue. Clean one up by hand with `wrangler delete` if you're
 sure it's unused.
 
+Orphans are project-wide, not scoped to `--context`: `bynk deploy --context
+orders --prune` can delete a queue orphaned by a *different*, unrelated
+context — the report (and the confirmation naming exactly what will be
+deleted) is what keeps this visible rather than surprising.
+
 Separately: a KV namespace deleted outside Bynk (in the Cloudflare
 dashboard, say) is noticed the next time you deploy and re-provisioned
 automatically — the same self-healing a deleted queue already had.

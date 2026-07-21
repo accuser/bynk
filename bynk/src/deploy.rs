@@ -630,7 +630,7 @@ impl DeployLock {
 /// independently too — the `kv` line is prunable, the `workers` line is
 /// report-only (a whole-Worker delete is a materially larger blast radius
 /// than a namespace or a queue, and out of this slice's scope).
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
 struct Orphans {
     kv: Vec<String>,
     workers: Vec<String>,
@@ -638,8 +638,14 @@ struct Orphans {
 }
 
 impl Orphans {
-    fn is_empty(&self) -> bool {
-        self.kv.is_empty() && self.workers.is_empty() && self.queues.is_empty()
+    /// Whether `--prune` would actually delete anything. **Not** the same as
+    /// checking whether every field is empty (review, #840): `workers`
+    /// orphans are report-only (DECISION C — never `wrangler delete`), so a
+    /// project whose only orphan is an unprunable Worker must not trigger
+    /// `confirm_prune`'s prompt at all — `Delete 0 resource(s)?` is a bug,
+    /// not a valid state.
+    fn has_prunable(&self) -> bool {
+        !self.kv.is_empty() || !self.queues.is_empty()
     }
 }
 
@@ -1103,7 +1109,7 @@ pub fn run(
     // orphan report already is (DECISION A), so pruning follows it. Runs
     // only after every selected context has pushed cleanly: a failed deploy
     // above already returned, so a mid-flight ledger never reaches this.
-    if opts.prune && !plan.orphans.is_empty() {
+    if opts.prune && plan.orphans.has_prunable() {
         if !confirm_prune(opts.yes, &plan.orphans) {
             return ExitCode::FAILURE;
         }
@@ -1211,11 +1217,7 @@ fn deploy_one(
     let mut kv_id = None;
     if declared.needs_kv {
         let recorded = recorded_kv(lock, worker, environment).map(str::to_owned);
-        let trust_recorded = match (&recorded, live_kv_ids) {
-            (Some(id), Some(live)) => live.contains(id.as_str()),
-            (Some(_), None) => true,
-            (None, _) => false,
-        };
+        let trust_recorded = should_trust_recorded_kv(recorded.as_deref(), live_kv_ids);
         let id = if trust_recorded {
             recorded.expect("trust_recorded is only true when recorded is Some")
         } else {
@@ -1376,6 +1378,28 @@ fn recorded_kv<'a>(lock: &'a DeployLock, worker: &str, environment: &str) -> Opt
         .get(environment)
         .and_then(|env| env.kv.get(worker))
         .map(|kv| kv.id.as_str())
+}
+
+/// Slice 5, DECISION B, extracted for direct testing (review, #840): should
+/// `deploy_one` trust a recorded KV id, or treat it as though nothing were
+/// recorded at all?
+///
+/// - No record at all → never trust (nothing to trust).
+/// - A record, and the live fetch never ran or failed (`None`) → trust it,
+///   unconditionally — exactly pre-slice-5 behaviour, so a fetch outage
+///   never blocks a deploy that would have succeeded before this slice.
+/// - A record, and a live id set — trust it only if the id is actually in
+///   that set. Absent means Cloudflare no longer recognises it: re-provision,
+///   the same as an unrecorded id would.
+fn should_trust_recorded_kv(
+    recorded: Option<&str>,
+    live_kv_ids: Option<&BTreeSet<String>>,
+) -> bool {
+    match (recorded, live_kv_ids) {
+        (Some(id), Some(live)) => live.contains(id),
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
 }
 
 pub fn preflight_failure_message(report: &Report) -> String {
@@ -1720,13 +1744,22 @@ fn parse_kv_id(output: &str) -> Option<String> {
 /// unparseable response) — read the same way [`list_secrets`]'s `None` is:
 /// the caller falls back to trusting whatever the ledger already says, rather
 /// than blocking every deploy on this call succeeding.
+///
+/// **Completeness (review, #840):** Cloudflare's list-namespaces endpoint is
+/// itself paginated, but `wrangler`'s `listKVNamespaces` (`workers-sdk`
+/// `packages/wrangler/src/kv/helpers.ts`) loops `page`/`per_page` until a
+/// short page comes back, aggregating every page before this command prints
+/// — confirmed against wrangler's own source, not assumed. A truncated
+/// response is not a live risk on the CLI path this calls.
 fn live_kv_namespace_ids(provenance: &Provenance, project_root: &Path) -> Option<BTreeSet<String>> {
     let mut command = dev::wrangler_command(provenance, "kv")?;
+    // No `--format json`: unlike `secret list`/`queues`, this command has no
+    // such flag at all — confirmed against wrangler 4.103 (`Unknown argument:
+    // format`, exit 1). Its *default* output is already a raw JSON array, so
+    // this is not a missing-flag gap, just a different default per command.
     let output = command
         .arg("namespace")
         .arg("list")
-        .arg("--format")
-        .arg("json")
         .current_dir(project_root)
         .output()
         .ok()?;
@@ -1736,8 +1769,9 @@ fn live_kv_namespace_ids(provenance: &Provenance, project_root: &Path) -> Option
     parse_kv_namespace_ids(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// The ids in `wrangler kv namespace list --format json`'s output — the same
-/// structural shape [`parse_secret_list`] reads, `"id"` instead of `"name"`.
+/// The ids in `wrangler kv namespace list`'s (default, already-JSON) output —
+/// the same structural shape [`parse_secret_list`] reads, `"id"` instead of
+/// `"name"`.
 fn parse_kv_namespace_ids(stdout: &str) -> Option<BTreeSet<String>> {
     let parsed: serde_json::Value = serde_json::from_str(stdout).ok()?;
     Some(
@@ -3718,7 +3752,55 @@ max_batch_size = 10
     fn an_absent_environment_has_no_orphans() {
         let lock = DeployLock::default();
         let orphans = find_orphans(&lock, "default", &BTreeMap::new());
-        assert!(orphans.is_empty());
+        assert_eq!(orphans, Orphans::default());
+    }
+
+    #[test]
+    fn has_prunable_ignores_worker_only_orphans() {
+        // The bug the review caught: a project whose only orphan is an
+        // unprunable Worker must not trigger confirm_prune's "Delete 0
+        // resource(s)?" prompt at all.
+        let worker_only = Orphans {
+            workers: names(&["gone"]),
+            ..Default::default()
+        };
+        assert!(!worker_only.has_prunable());
+
+        let with_kv = Orphans {
+            kv: names(&["gone"]),
+            ..Default::default()
+        };
+        assert!(with_kv.has_prunable());
+
+        let with_queue = Orphans {
+            queues: names(&["gone"]),
+            ..Default::default()
+        };
+        assert!(with_queue.has_prunable());
+
+        assert!(!Orphans::default().has_prunable());
+    }
+
+    #[test]
+    fn should_trust_recorded_kv_only_when_the_id_is_live_or_unchecked() {
+        let live = BTreeSet::from(["kv-abc".to_string()]);
+        assert!(
+            should_trust_recorded_kv(Some("kv-abc"), Some(&live)),
+            "recorded and present in the live set"
+        );
+        assert!(
+            !should_trust_recorded_kv(Some("kv-deleted"), Some(&live)),
+            "recorded but Cloudflare no longer has it — treat as unrecorded"
+        );
+        assert!(
+            should_trust_recorded_kv(Some("kv-abc"), None),
+            "the fetch never ran or failed — trust the ledger, as pre-slice-5"
+        );
+        assert!(
+            !should_trust_recorded_kv(None, Some(&live)),
+            "nothing recorded at all"
+        );
+        assert!(!should_trust_recorded_kv(None, None));
     }
 
     #[test]
