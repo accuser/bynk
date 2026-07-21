@@ -965,19 +965,17 @@ fn at_line_start(source: &str, pos: usize) -> bool {
     bytes[pos - 1] == b'\n'
 }
 
-/// Extract the body content of a doc-block token from its source span.
-/// Strips the leading and trailing `---` marker lines and returns the body
-/// verbatim. If every non-empty content line begins with the same horizontal
-/// whitespace prefix (e.g., because the doc block sits inside a brace-form
-/// commons body), that common prefix is removed so the body reads naturally
-/// when emitted as JSDoc.
-pub fn doc_block_content(source: &str, span: Span) -> String {
+/// The doc-block body as a byte range into `source` — leading/trailing `---`
+/// marker lines stripped, no further processing (unlike [`doc_block_content`],
+/// which additionally strips a common per-line indent — not offset-preserving).
+/// Callers that need to map a position in the body back to `source` (e.g.
+/// document-link spans) use this instead of re-deriving it from the string
+/// `doc_block_content` returns.
+pub fn doc_block_body_range(source: &str, span: Span) -> Option<std::ops::Range<usize>> {
     let slice = &source[span.range()];
     // Drop the first line (opening marker).
-    let after_open = match slice.find('\n') {
-        Some(i) => &slice[i + 1..],
-        None => return String::new(),
-    };
+    let after_open_rel = slice.find('\n')? + 1;
+    let after_open = &slice[after_open_rel..];
     let bytes = after_open.as_bytes();
     // Trim the trailing closing-marker line.
     let mut i = bytes.len();
@@ -993,7 +991,21 @@ pub fn doc_block_content(source: &str, span: Span) -> String {
     if i > 0 && bytes[i - 1] == b'\n' {
         i -= 1;
     }
-    let body = &after_open[..i];
+    let start = span.range().start + after_open_rel;
+    Some(start..start + i)
+}
+
+/// Extract the body content of a doc-block token from its source span.
+/// Strips the leading and trailing `---` marker lines and returns the body
+/// verbatim. If every non-empty content line begins with the same horizontal
+/// whitespace prefix (e.g., because the doc block sits inside a brace-form
+/// commons body), that common prefix is removed so the body reads naturally
+/// when emitted as JSDoc.
+pub fn doc_block_content(source: &str, span: Span) -> String {
+    let Some(range) = doc_block_body_range(source, span) else {
+        return String::new();
+    };
+    let body = &source[range];
 
     // Compute the common leading-whitespace prefix across all non-empty lines
     // and strip it. This lets writers indent the doc block alongside the
@@ -1347,5 +1359,51 @@ mod tests {
     fn bad_escape_in_interp_string_is_an_error() {
         let err = tokenize(r#""a \q \(x)""#).unwrap_err();
         assert_eq!(err.category, "bynk.lex.bad_escape");
+    }
+
+    fn doc_block_span(source: &str) -> Span {
+        tokenize(source)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.kind == TokenKind::DocBlock)
+            .expect("a DocBlock token")
+            .span
+    }
+
+    #[test]
+    fn doc_block_body_range_slices_to_the_same_bytes_doc_block_content_would_strip() {
+        let src = "---\nHello there.\n---\nfn f() -> Int = 1\n";
+        let span = doc_block_span(src);
+        let range = doc_block_body_range(src, span).unwrap();
+        assert_eq!(&src[range], "Hello there.");
+    }
+
+    #[test]
+    fn doc_block_body_range_is_offset_preserving_unlike_doc_block_content() {
+        // A content line indented relative to its (unindented) markers:
+        // doc_block_content strips the common indent (not offset-preserving),
+        // doc_block_body_range does not — its slice still contains the raw
+        // indentation, so span-based callers can map a position in the raw
+        // body straight back to `src`.
+        let src = "---\n  See [Foo].\n---\nfn f() -> Int = 1\n";
+        let span = doc_block_span(src);
+        let range = doc_block_body_range(src, span).unwrap();
+        assert_eq!(&src[range.clone()], "  See [Foo].");
+        assert_eq!(doc_block_content(src, span), "See [Foo].");
+        // The raw range still locates `[Foo]` correctly within `src`.
+        let bracket_rel = src[range.clone()].find('[').unwrap();
+        assert_eq!(
+            &src[range.start + bracket_rel..range.start + bracket_rel + 5],
+            "[Foo]"
+        );
+    }
+
+    #[test]
+    fn doc_block_content_and_body_range_agree_on_empty_body() {
+        let src = "---\n---\nfn f() -> Int = 1\n";
+        let span = doc_block_span(src);
+        let range = doc_block_body_range(src, span).unwrap();
+        assert_eq!(&src[range], "");
+        assert_eq!(doc_block_content(src, span), "");
     }
 }

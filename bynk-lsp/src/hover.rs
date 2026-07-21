@@ -30,6 +30,12 @@ pub struct HoverAnalysis<'a> {
     /// The cursor's file (project-relative) and its offset **into the snapshot**.
     pub rel: &'a Path,
     pub offset: usize,
+    /// #848: the round's project root — resolves a doc-link's `SiteRef` into
+    /// a `file://` hover-Markdown target.
+    pub project_root: &'a Path,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order, for rung 1's doc-link rewrite.
+    pub doc_scope: &'a HashMap<String, Vec<String>>,
 }
 
 /// Everything the ladder reads.
@@ -67,7 +73,16 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
             && let Some(def_text) = a.snapshots.get(&def.path)
             && let Some(content) = crate::symbols::describe_symbol(def_text, &key.name)
         {
-            return Some(content);
+            // #848: rewrite any resolvable intra-doc link in the rendered
+            // doc comment into a Markdown link, scoped to `key.unit` (the
+            // declaring unit doc-link resolution searches from).
+            return Some(crate::symbols::linkify_doc_links(
+                &content,
+                a.index,
+                a.doc_scope,
+                a.project_root,
+                &key.unit,
+            ));
         }
         // 2. #611 (gap C): a `store` field's operation (`items.put(…)`) — a
         //    structural match on the enclosing agent's declared field, so it

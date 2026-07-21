@@ -126,6 +126,16 @@ pub struct ProjectAnalysis {
     /// links and consumed-context navigation. Excludes synthetic (toolchain-
     /// injected) units; empty when the pipeline bails before the checker.
     pub unit_sources: HashMap<String, Vec<PathBuf>>,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order — itself first, then its `uses` targets, then its `consumes`
+    /// targets, in that order (mirrors `IndexBuilder::qualify_with`'s
+    /// bare-name qualification, `bynk-check/src/index.rs` — the index itself
+    /// retains no scope past assembly, so this is assembled here from the
+    /// same `unit_uses`/`unit_consumes` phase outputs `unit_sources` is built
+    /// alongside). A synthetic unit never owns a doc comment, so it's never a
+    /// key here, though it may still appear as a scope target; empty when the
+    /// pipeline bails before the checker.
+    pub doc_scope: HashMap<String, Vec<String>>,
 }
 
 /// v0.24: a failed build with its attribution and snapshots intact — what
