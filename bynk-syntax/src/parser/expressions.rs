@@ -276,10 +276,14 @@ impl<'a> Parser<'a> {
             // grammar cannot admit `refined_pattern` inside `is_expr` at all
             // (D4 in the refined-patterns ADR) — `refinement`'s own
             // `&&`-joined predicate list is ambiguous with the surrounding
-            // expression grammar there, an ambiguity that exists regardless
-            // of nesting depth. Rejecting it here, not just in the checker,
-            // keeps the two parsers in agreement on every input (ADR 0213),
-            // not only the nested case.
+            // expression grammar there. A plain top-level `matches!` check
+            // suffices even with #474's or-patterns in the mix:
+            // `parse_pattern_top` folds `|` *before* checking for `where`
+            // (`Refined` always wraps the whole pattern, never appearing as
+            // one alternative inside an `Or`), so `Pattern::Refined` can only
+            // ever be this expression's outermost pattern shape, not buried
+            // inside one. Rejecting it here, not just in the checker, keeps
+            // the two parsers in agreement on every input (ADR 0213).
             let pattern = self.parse_pattern_top()?;
             if matches!(pattern, Pattern::Refined { .. }) {
                 return Err(CompileError::new(
@@ -1203,71 +1207,131 @@ impl<'a> Parser<'a> {
     /// a variant payload (`parse_pattern` -> `parse_pattern_binding` ->
     /// `parse_pattern`), a third self-recursive descent independent of
     /// `parse_expr`/`parse_type_ref`, so it needs its own guard or a nested
-    /// `Ok(Ok(…))` still overflows (#713).
-    ///
-    /// Deliberately does **not** check for a trailing `where` (#472) — that
-    /// suffix is admitted only at a pattern's top level (a match arm's
-    /// pattern, or `is`'s right-hand side; see [`Parser::parse_pattern_top`]),
-    /// matching the tree-sitter grammar, where `refined_pattern` is an
-    /// alternative on `match_arm`'s pattern field specifically, not part of
-    /// the shared `_pattern` rule nested payloads recurse through. Folding
-    /// the `where` check into this function too would let it fire from every
-    /// recursive call — `Ok(_ where P)`, `r is Ok(_ where P)` — which the
-    /// grammar (and `check_is`, which only inspects the top-level pattern)
-    /// does not admit.
+    /// `Ok(Ok(…))` still overflows (#713). Folds `|` alternatives (#474), but
+    /// never checks for a trailing `where` (#472) — that suffix is admitted
+    /// only at a pattern's top level; see [`Parser::parse_pattern_top`].
     fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
         self.enter_recursion("this pattern")?;
-        let result = self.parse_pattern_base();
+        let result = self.parse_pattern_or();
         self.depth -= 1;
         result
     }
 
     /// Depth-guarded entry to the pattern grammar for a **top-level**
-    /// position — a match arm's pattern, or `is`'s right-hand side — where a
-    /// trailing `where <refinement>` (#472) is admitted. See
-    /// [`Parser::parse_pattern`] for why nested payload positions must not
-    /// share this entry point.
+    /// position — a match arm's pattern, or `is`'s right-hand side. Folds `|`
+    /// alternatives first (#474, [`Parser::parse_pattern_or`]), then checks
+    /// the *whole* result for a trailing `where <refinement>` (#472) —
+    /// matching the tree-sitter grammar's `refined_pattern: seq(inner:
+    /// $._pattern, "where", refinement)`, where `$._pattern` already folds
+    /// `|` internally. So `(A | B) where P` is syntactically valid (and
+    /// semantically rejected by [`Parser::parse_pattern_where_suffix`]'s
+    /// `_`-only rule, the same as any other non-wildcard inner), but a
+    /// refined pattern can never be *one alternative* among others in an
+    /// outer `|`-chain — `match_arm`'s pattern field is a single
+    /// `choice($._pattern, $.refined_pattern)`, not a repetition, so
+    /// `(_ where P) | Some(x)` has no tree-sitter shape at all. Checking
+    /// `where` per-alternative (inside the fold) rather than once at the end
+    /// would admit exactly that unparseable shape — a real grammar/parser
+    /// conformance gap caught while resolving this merge (#827/#472 met
+    /// #474 for the first time here).
     fn parse_pattern_top(&mut self) -> Result<Pattern, CompileError> {
         self.enter_recursion("this pattern")?;
-        let result = self.parse_pattern_inner();
+        let result = self
+            .parse_pattern_or()
+            .and_then(|base| self.parse_pattern_where_suffix(base));
         self.depth -= 1;
         result
     }
 
-    /// Parse a base pattern, then an optional trailing `where <refinement>`
-    /// (#472) — a guard on the pattern, checked at runtime. v1 admits only a
-    /// wildcard `_` as the refined inner form; any other inner shape is
-    /// rejected (`bynk.parse.refined_pattern_inner`) rather than silently
-    /// accepted, so the AST doesn't need reworking once binding/nested forms
-    /// are designed. Only called from [`Parser::parse_pattern_top`] — never
-    /// recursively — so a `where` cannot appear on a nested payload pattern.
-    fn parse_pattern_inner(&mut self) -> Result<Pattern, CompileError> {
-        let base = self.parse_pattern_base()?;
-        if self.peek_kind() == Some(TokenKind::Where) {
-            self.bump();
-            let predicate = self.parse_refinement()?;
-            if !matches!(base, Pattern::Wildcard(_)) {
-                return Err(CompileError::new(
-                    "bynk.parse.refined_pattern_inner",
-                    base.span(),
-                    "a refined pattern's inner form must be `_` in this version",
-                )
-                .with_note(
-                    "write `_ where <predicate>`; binding a refined value is not yet supported",
-                ));
-            }
-            let span = base.span().merge(predicate.span);
-            return Ok(Pattern::Refined {
-                inner: Box::new(base),
-                predicate,
-                span,
-            });
+    /// #474: `p₁ | p₂ | … | pₙ` — an or-pattern, left-associative over
+    /// [`Parser::parse_pattern_base`] (never a `where`-suffixed alternative —
+    /// see [`Parser::parse_pattern_top`]). Built as an iterative chain fold
+    /// (like `parse_or`'s fold over boolean `||`, lines 211-237) rather than a
+    /// recursive production, so a long chain costs one nesting level total
+    /// against the shared budget (#714) instead of one per alternative. `|`
+    /// is lexically distinct from `||` and not a valid expression operator,
+    /// so there is no ambiguity with the surrounding `is`/match-arm callers.
+    fn parse_pattern_or(&mut self) -> Result<Pattern, CompileError> {
+        let first = self.parse_pattern_base()?;
+        if self.peek_kind() != Some(TokenKind::Pipe) {
+            return Ok(first);
         }
-        Ok(base)
+        // Parenthesized grouping (`(A | B) | C`) is transparent — matching an
+        // or-pattern is associative regardless of how it's grouped — so an
+        // already-`Or` atom (from a parenthesized sub-pattern, see the
+        // `LParen` case in `parse_pattern_base`) splices its alternatives in
+        // rather than nesting, preserving the "an `Or`'s alternatives are
+        // always leaves" invariant every `Pattern::Or` consumer relies on.
+        let mut alts = flatten_or_alt(first);
+        let mut folds = 0usize;
+        let result = loop {
+            if self.peek_kind() != Some(TokenKind::Pipe) {
+                break Ok(());
+            }
+            self.bump();
+            match self.parse_pattern_base() {
+                Ok(p) => alts.extend(flatten_or_alt(p)),
+                Err(e) => break Err(e),
+            }
+            if let Err(e) = self.enter_chain_fold(&mut folds, alts.last().unwrap().span()) {
+                break Err(e);
+            }
+        };
+        self.depth -= folds;
+        result?;
+        let span = alts[0].span().merge(alts.last().unwrap().span());
+        Ok(Pattern::Or(alts, span))
+    }
+
+    /// After a (possibly `|`-chained) top-level pattern, an optional trailing
+    /// `where <refinement>` (#472) wraps the *whole* thing — a guard checked
+    /// at runtime. v1 admits only a wildcard `_` as the refined inner form;
+    /// any other inner shape (including an `Or`) is rejected
+    /// (`bynk.parse.refined_pattern_inner`) rather than silently accepted, so
+    /// the AST doesn't need reworking once binding/nested forms are designed.
+    fn parse_pattern_where_suffix(&mut self, base: Pattern) -> Result<Pattern, CompileError> {
+        if self.peek_kind() != Some(TokenKind::Where) {
+            return Ok(base);
+        }
+        self.bump();
+        let predicate = self.parse_refinement()?;
+        if !matches!(base, Pattern::Wildcard(_)) {
+            return Err(CompileError::new(
+                "bynk.parse.refined_pattern_inner",
+                base.span(),
+                "a refined pattern's inner form must be `_` in this version",
+            )
+            .with_note(
+                "write `_ where <predicate>`; binding a refined value is not yet supported",
+            ));
+        }
+        let span = base.span().merge(predicate.span);
+        Ok(Pattern::Refined {
+            inner: Box::new(base),
+            predicate,
+            span,
+        })
     }
 
     fn parse_pattern_base(&mut self) -> Result<Pattern, CompileError> {
         if let Some(t) = self.peek() {
+            // #474 §2.3.6: parens around a pattern are transparent grouping —
+            // `is (Held(...) | Confirmed(...))` — recommended for readability
+            // around an or-pattern but not otherwise meaningful (the spec calls
+            // them "syntactically optional": `is` already greedily parses one
+            // whole pattern, `|`-chain included, with or without them). Recurse
+            // through the full `parse_pattern` entry (which folds `|` via
+            // `parse_pattern_or`) so a nested `|` chain inside the parens is
+            // grouped as one alternative — but never `parse_pattern_top`, so
+            // a parenthesized pattern never admits a `where` suffix either
+            // (#472; matches tree-sitter's `paren_pattern: seq("(", $._pattern, ")")`,
+            // which likewise excludes `refined_pattern`).
+            if t.kind == TokenKind::LParen {
+                self.bump();
+                let inner = self.parse_pattern()?;
+                self.expect(TokenKind::RParen, "to close a parenthesized pattern")?;
+                return Ok(inner);
+            }
             if t.kind == TokenKind::Underscore {
                 self.bump();
                 return Ok(Pattern::Wildcard(t.span));
@@ -1576,5 +1640,15 @@ impl<'a> Parser<'a> {
             .with_note("an interpolation hole `\\(…)` holds a single expression"));
         }
         Ok(expr)
+    }
+}
+
+/// #474: the alternatives `p` contributes to an enclosing or-pattern — its own
+/// alternatives if it is already `Pattern::Or` (a parenthesized sub-or-pattern
+/// being spliced in), otherwise itself alone. Keeps every `Pattern::Or` flat.
+fn flatten_or_alt(p: Pattern) -> Vec<Pattern> {
+    match p {
+        Pattern::Or(alts, _) => alts,
+        p => vec![p],
     }
 }

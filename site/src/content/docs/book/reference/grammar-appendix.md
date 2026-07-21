@@ -112,7 +112,9 @@ if_expr ::= "if" expression block ("else" (if_expr | block))?
 match_expr ::= "match" expression "{" match_arm* "}"
 match_arm ::= (pattern | refined_pattern) ("if" expression)? "=>" expression ","?
 refined_pattern ::= pattern "where" refinement
-pattern ::= wildcard_pattern | literal_pattern | variant_pattern
+pattern ::= wildcard_pattern | literal_pattern | variant_pattern | or_pattern | paren_pattern
+or_pattern ::= pattern "|" pattern
+paren_pattern ::= "(" pattern ")"
 wildcard_pattern ::= "_"
 literal_pattern ::= "-"? number_literal | string_literal | boolean_literal
 variant_pattern ::= (identifier ".")? identifier ("(" (pattern_binding ("," pattern_binding)*)? ","? ")")?

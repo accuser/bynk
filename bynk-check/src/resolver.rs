@@ -2116,23 +2116,36 @@ fn check_expr_references(
 /// `(expr is Pat)` flow into the surrounding truthy branch.
 fn collect_is_binding_names(expr: &Expr, into: &mut HashMap<String, ()>) {
     match &expr.kind {
-        ExprKind::Is {
-            pattern: Pattern::Variant { bindings, .. },
-            ..
-        } => {
-            // `is` supports only flat, depth-1 name bindings (ADR 0169 keeps
-            // nesting/guards match-only), matching `gather_pattern_bindings`.
+        ExprKind::Is { pattern, .. } => collect_is_pattern_binding_names(pattern, into),
+        ExprKind::BinOp(BinOp::And, l, r) => {
+            collect_is_binding_names(l, into);
+            collect_is_binding_names(r, into);
+        }
+        ExprKind::Paren(inner) => collect_is_binding_names(inner, into),
+        _ => {}
+    }
+}
+
+/// The depth-1 names an `is` pattern introduces — a `Variant`'s own flat
+/// bindings (`is` supports only flat, depth-1 name bindings, ADR 0169 keeps
+/// nesting/guards match-only, matching `gather_pattern_bindings`), or — #474
+/// — for an or-pattern, the first alternative's (Rule 2 guarantees every
+/// alternative gives a shared name the same type, so any one alternative's
+/// names are representative of them all).
+fn collect_is_pattern_binding_names(pattern: &Pattern, into: &mut HashMap<String, ()>) {
+    match pattern {
+        Pattern::Variant { bindings, .. } => {
             for b in bindings {
                 if let Pattern::Binding(name) = b.pattern() {
                     into.insert(name.name.clone(), ());
                 }
             }
         }
-        ExprKind::BinOp(BinOp::And, l, r) => {
-            collect_is_binding_names(l, into);
-            collect_is_binding_names(r, into);
+        Pattern::Or(alts, _) => {
+            if let Some(first) = alts.first() {
+                collect_is_pattern_binding_names(first, into);
+            }
         }
-        ExprKind::Paren(inner) => collect_is_binding_names(inner, into),
         _ => {}
     }
 }

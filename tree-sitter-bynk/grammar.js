@@ -1216,7 +1216,23 @@ module.exports = grammar({
         $.wildcard_pattern,
         $.literal_pattern,
         $.variant_pattern,
+        $.or_pattern,
+        $.paren_pattern,
       ),
+    // #474 §2.3.4: `p₁ | p₂ | … | pₙ` — an or-pattern, left-associative;
+    // matches if any alternative matches. `|` is a pattern-position operator
+    // only — not a valid expression operator, and lexically distinct from
+    // boolean `||` — so there is no ambiguity with the surrounding
+    // `is`/match-arm productions.
+    or_pattern: ($) => prec.left(1, seq($._pattern, "|", $._pattern)),
+    // #474 §2.3.6: parentheses around a pattern are transparent grouping —
+    // `is (Held(...) | Confirmed(...))` — recommended for readability around
+    // an or-pattern but not otherwise meaningful; `is` already greedily
+    // parses one whole pattern, `|`-chain included, with or without them.
+    // #472: also never admits `refined_pattern` inside (mirrors `is_expr` —
+    // a refined pattern can only ever be a match arm's outermost pattern,
+    // never nested, parenthesized, or one alternative of an outer `|`-chain).
+    paren_pattern: ($) => seq("(", $._pattern, ")"),
     wildcard_pattern: () => "_",
     // v0.130 §2.3.4: a literal pattern — an integer (optionally negated), a
     // string, or a boolean. A closed set (ADR 0001); no `Float`, no `()`.

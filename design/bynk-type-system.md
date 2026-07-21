@@ -714,8 +714,9 @@ are unbounded, so a literal-only `match` needs a wildcard `_` arm; `Bool` is
 complete once both `true` and `false` appear (or a wildcard does). A repeated
 literal arm is rejected. Literal patterns are `match`-only — a literal on the
 right of `is` is rejected, since `is` tests a value's type/refinement, not
-equality (use `==`). The remaining forms below — record, tuple, and
-or-patterns — are settled in shape but not yet implemented.
+equality (use `==`). Or-patterns (below) are implemented (#474); the
+remaining forms — record and tuple — are settled in shape but not yet
+implemented.
 
 *Refined patterns* (#472). `p 'where' refinement-predicate` guards a pattern
 with a runtime predicate test, reusing the closed refinement-predicate
@@ -730,7 +731,12 @@ Like an `if` guard, a refined arm is never exhaustive on its own (the
 predicate might fail at runtime), so a refined-only arm set still needs a
 wildcard `_` arm. Refined patterns are `match`-only — one on the right of
 `is` is rejected, the same posture as a literal pattern, since `is` already
-has its own refinement check over a *named* refined type (ADR 0007).
+has its own refinement check over a *named* refined type (ADR 0007). A
+refined pattern composes with or-patterns only as the *whole* pattern's
+outer wrapper — `(A | B) where P` refines the alternation as a unit — never
+as one alternative among others: `A where P | B` has no such reading, since
+a `where` always attaches to the entire preceding pattern, alternation
+included.
 
 Variant patterns with named fields support both positional and labelled forms:
 

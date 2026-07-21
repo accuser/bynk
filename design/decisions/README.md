@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0252](0252-or-patterns.md) | **Or-patterns (`p₁ | p₂`)** (v0.219) — Pattern alternation in `match` and `is`, and its emitter split between a flat switch and an if-chain | Accepted (v0.219) |
 | [0251](0251-system-tier-wire-nocred-mixed-args.md) | **A `system`-tier case combines `Wire(...)` with a `by Nobody` http address call** (v0.218) — The no-auth driver gains a raw-flavoured sibling for a `Wire`-carrying, no-credential call | Accepted (v0.218) |
 | [0250](0250-lsp-extract-function-multi-statement.md) | **LSP extract-function accepts a multi-statement selection** (v0.217) — Statement-boundary alignment, the tail-excluded return-type/call-site choice, and the two new decline cases it needs | Accepted (v0.217) |
 | [0249](0249-system-tier-wire-mixed-args.md) | **A `system`-tier case mixes a typed argument with `Wire(...)` in one http address call** (v0.216.5) — The raw driver serialises a typed slot at the call site instead of forwarding it as-is | Accepted (v0.216.5) |

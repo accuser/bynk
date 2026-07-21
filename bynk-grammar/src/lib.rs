@@ -411,7 +411,9 @@ mod tests {
         // argument). Net +1.
         // #472 added: refined_pattern (`_ where <predicate>` match-arm
         // patterns, admitted only at a match arm's top-level pattern). Net +1.
-        assert_eq!(rules.len(), 141);
+        // #474 added: or_pattern (`p₁ | p₂`) and paren_pattern (transparent
+        // grouping around a pattern, e.g. after `is`). Net +2.
+        assert_eq!(rules.len(), 143);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

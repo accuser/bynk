@@ -1,0 +1,28 @@
+commons demo {
+	fn classify(n: Int) -> String {
+		match n {
+			1 | 2 | 3 => "small",
+			_ => "other",
+		}
+	}
+
+	fn describe(o: Option[Int]) -> String {
+		match o {
+			Some(1 | 2) => "small",
+			Some(_) => "other",
+			None => "none",
+		}
+	}
+
+	type Command = | Login(user: String, pass: String)
+	| Register(user: String, pass: String)
+	| Logout
+
+	fn route(c: Command) -> String {
+		match c {
+			Login(u, _) | Register(u, _) if u == "admin" => "admin",
+			Login(_, _) | Register(_, _) => "user",
+			Logout => "bye",
+		}
+	}
+}

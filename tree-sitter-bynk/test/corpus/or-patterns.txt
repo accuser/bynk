@@ -1,0 +1,174 @@
+==========================
+or-pattern — bindingless literal chain
+==========================
+
+commons d {
+	fn f(x: Int) -> String {
+		match x {
+			1 | 2 | 3 => "small"
+			_ => "other"
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (or_pattern
+              (or_pattern
+                (literal_pattern
+                  (number_literal))
+                (literal_pattern
+                  (number_literal)))
+              (literal_pattern
+                (number_literal)))
+            body: (string_literal))
+          (match_arm
+            pattern: (wildcard_pattern)
+            body: (string_literal)))))))
+
+==========================
+or-pattern — shared bindings with a guard
+==========================
+
+commons d {
+	fn f(s: BookingState) -> Int {
+		match s {
+			Held(_, r, _, rsv, _) | Confirmed(_, r, _, rsv, _) if rsv > 0 => r
+			_ => 0
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (identifier))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (or_pattern
+              (variant_pattern
+                variant: (identifier)
+                (wildcard_pattern)
+                (variant_pattern
+                  variant: (identifier))
+                (wildcard_pattern)
+                (variant_pattern
+                  variant: (identifier))
+                (wildcard_pattern))
+              (variant_pattern
+                variant: (identifier)
+                (wildcard_pattern)
+                (variant_pattern
+                  variant: (identifier))
+                (wildcard_pattern)
+                (variant_pattern
+                  variant: (identifier))
+                (wildcard_pattern)))
+            guard: (binary_expr
+              (identifier)
+              (number_literal))
+            body: (identifier))
+          (match_arm
+            pattern: (wildcard_pattern)
+            body: (number_literal)))))))
+
+==========================
+or-pattern — nested payload position
+==========================
+
+commons d {
+	fn f(o: Option[Int]) -> String {
+		match o {
+			Some(1 | 2) => "small"
+			_ => "other"
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (generic_type_ref
+          name: (builtin_type)
+          arg: (base_type)))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (variant_pattern
+              variant: (identifier)
+              (or_pattern
+                (literal_pattern
+                  (number_literal))
+                (literal_pattern
+                  (number_literal))))
+            body: (string_literal))
+          (match_arm
+            pattern: (wildcard_pattern)
+            body: (string_literal)))))))
+
+==========================
+or-pattern — parenthesized after `is`
+==========================
+
+commons d {
+	fn f(s: BookingState) -> Bool {
+		s is (Held(_) | Confirmed(_))
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (identifier))
+      return_type: (base_type)
+      body: (block
+        tail: (is_expr
+          value: (identifier)
+          pattern: (paren_pattern
+            (or_pattern
+              (variant_pattern
+                variant: (identifier)
+                (wildcard_pattern))
+              (variant_pattern
+                variant: (identifier)
+                (wildcard_pattern)))))))))

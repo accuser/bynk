@@ -1733,6 +1733,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["field_access"],
     ),
     dg(
+        "bynk.types.or_pattern_binding_mismatch",
+        "An or-pattern's alternatives don't all bind the same set of names.",
+        &["match_arm", "is_expr"],
+    ),
+    dg(
+        "bynk.types.or_pattern_type_mismatch",
+        "An or-pattern's alternatives give a shared binding different types (or refinements).",
+        &["match_arm", "is_expr"],
+    ),
+    dg(
         "bynk.types.pattern_arity",
         "A pattern binds the wrong number of payload fields.",
         &["variant_pattern"],
