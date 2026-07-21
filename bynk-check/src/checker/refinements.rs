@@ -251,11 +251,23 @@ pub(crate) fn literal_matches_base(lit: &ConstLit, base: BaseType) -> bool {
 /// runtime values.
 /// Opaque types are intentionally excluded: their representation is hidden, so
 /// they are still built via `T.of(...)`.
+///
+/// Looks through one `Effect[_]` layer first (Locale capability track, slice 1,
+/// #844): a `stub Cap.op() returns <lit>` RHS is checked as a bare tail value
+/// against the op's full `Effect[T]` return type (§tail-position auto-lift
+/// handles the reverse direction, wrapping a matched bare value back up to
+/// `Effect[T]`), so a refined `T` reached only through that wrapper must still
+/// be visible here or the literal falls back to its unrefined base type and the
+/// auto-lift's own `compatible` check then rejects it.
 pub(crate) fn admit_refined_literal(
     expr: &Expr,
     expected: Option<&Ty>,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
+    let expected = match expected {
+        Some(Ty::Effect(inner)) => Some(inner.as_ref()),
+        other => other,
+    };
     let Some(Ty::Named {
         name,
         kind: NamedKind::Refined(base),

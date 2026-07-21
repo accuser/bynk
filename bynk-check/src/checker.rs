@@ -2491,7 +2491,17 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
     }
     let ty = type_of(&block.tail, expected, ctx);
     let ty = maybe_auto_lift(ty, expected);
-    if let Some(ty) = &ty {
+    // A synthetic single-expression block (e.g. a `stub … returns <value>`
+    // rhs) has `block.span == block.tail.span` — recording the auto-lifted
+    // (possibly Effect-wrapped) type there would clobber the tail
+    // expression's own, more specific entry that `type_of` already recorded
+    // (e.g. a bare refined-literal admission the emitter's brand-cast lookup
+    // depends on — Locale capability track, slice 1, #844). A genuine `{ … }`
+    // block's span always strictly contains its tail's, so this only ever
+    // skips the redundant case.
+    if let Some(ty) = &ty
+        && block.span != block.tail.span
+    {
         ctx.expr_types.insert(block.span, ty.clone());
     }
     ctx.pop_scope();

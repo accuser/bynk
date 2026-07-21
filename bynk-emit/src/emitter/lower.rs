@@ -10,7 +10,15 @@ use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use super::*;
 
 /// Lower a block to a sequence of TypeScript statements suitable for use as
-/// an async function body. Used by v0.7 mock-operation emission.
+/// an async function body. Used by v0.7 mock-operation emission — today
+/// exclusively test/property/contract scaffolding (`stub` rhs values, `where`
+/// predicates, contract `requires` guards), never real production provider
+/// bodies, so `test_scaffold` is set unconditionally (nothing here emits an
+/// `assert`, so `assert_loc` stays `None`) purely to mark test-scaffold mode
+/// for `in_test_scaffold()` — otherwise a refined-literal admitted here (e.g.
+/// a `stub Cap.op() returns "lit"` rhs) brands via the production `(v as T)`
+/// cast, which cannot resolve `T` in a stub class's `any`-typed destructure
+/// (Locale capability track, slice 1, #844).
 pub fn lower_block_to_async_body(
     block: &Block,
     return_type: &TypeRef,
@@ -23,6 +31,7 @@ pub fn lower_block_to_async_body(
     let smb = RefCell::new(SourceMapBuilder::new());
     {
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
+        cx.test_scaffold = true;
         let async_tail = is_effectful_return(return_type);
         emit_block_as_function_body_with_return(
             &mut out,
@@ -65,6 +74,7 @@ pub fn lower_test_case_body(
             source: source.to_string(),
             rel_path: rel_path.to_string(),
         });
+        cx.test_scaffold = true;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -114,6 +124,7 @@ pub fn lower_integration_case_body(
             source: source.to_string(),
             rel_path: rel_path.to_string(),
         });
+        cx.test_scaffold = true;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }

@@ -2485,6 +2485,16 @@ pub(crate) struct LowerCtx<'a> {
     /// click-through) rather than a bare byte offset. `None` for non-test
     /// emission, where `assert` doesn't appear.
     pub assert_loc: Option<AssertLoc>,
+    /// True when lowering **any** generated test-scaffold body (a test-case
+    /// body, or a `stub`/`where`/`requires` predicate value lowered via
+    /// `lower_block_to_async_body`) — distinct from `assert_loc`, which is
+    /// only ever `Some` for the first of those and carries an unrelated
+    /// payload (a diagnostic location). Set alongside `assert_loc` at each of
+    /// the lowering entry points below; kept as its own field (Locale
+    /// capability track, slice 1, #844 review) rather than overloading
+    /// `assert_loc.is_some()`, since that conflated "has a location" with
+    /// "is test scaffolding" for a caller that has no location to give.
+    pub test_scaffold: bool,
     /// Slice 1 (ADR 0103): the source-map builder for the file being emitted, if
     /// any. The deep lowering chain records `(generated offset → source span)`
     /// checkpoints here; `emit_project` owns the `RefCell` and threads a shared
@@ -2504,15 +2514,14 @@ pub(crate) struct AssertLoc {
 }
 
 impl<'a> LowerCtx<'a> {
-    /// True when lowering a **generated test-case body** (`tests/*.test.ts`), where
-    /// branded types are destructured into `any`-typed value bindings rather than
-    /// referenced as types. `assert_loc` is set only by the two test-body lowering
-    /// entry points and is `None` for all production emission, so it doubles as the
-    /// test-scaffold discriminator. Callers that emit a branded `as`-cast consult
-    /// this to pick `unchecked_construct_test` (→ `(v as any)`) over the production
+    /// True when lowering **generated test-scaffold** TypeScript (a test-case
+    /// body, or a `stub`/`where`/`requires` predicate value), where branded
+    /// types are destructured into `any`-typed value bindings rather than
+    /// referenced as types. Callers that emit a branded `as`-cast consult this
+    /// to pick `unchecked_construct_test` (→ `(v as any)`) over the production
     /// `(v as T)` form, which cannot resolve `T` in the test module's scope.
     pub(crate) fn in_test_scaffold(&self) -> bool {
-        self.assert_loc.is_some()
+        self.test_scaffold
     }
 
     fn new(
@@ -2562,6 +2571,7 @@ impl<'a> LowerCtx<'a> {
             deps_identity_binder: None,
             actor_sum_binder: None,
             assert_loc: None,
+            test_scaffold: false,
             source_map: None,
         }
     }
@@ -2850,19 +2860,43 @@ pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
 /// referenced fully qualified. Qualification recurses through generic
 /// arguments; base/unit types are unaffected.
 pub(crate) fn ts_type_ref_qualified(r: &TypeRef, scope: &HashSet<String>, ns: &str) -> String {
-    ts_type_ref_with(r, Some((scope, ns)))
+    ts_type_ref_with(
+        r,
+        Some(&|name| scope.contains(name).then(|| ns.to_string())),
+    )
 }
 
-/// Shared renderer behind `ts_type_ref` (`qualify = None`) and
-/// `ts_type_ref_qualified` (`qualify = Some((scope, ns))`). With `None` it is
-/// output-identical to the historic `ts_type_ref`; the only divergence is the
-/// `Named` arm, which qualifies in-scope names when `qualify` is set.
-fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> String {
+/// Like `ts_type_ref_qualified`, but each in-scope name can carry its *own*
+/// namespace rather than one shared `ns` — needed when a signature mixes
+/// names owned by the target unit with names reached only through a `uses`d
+/// commons (e.g. a stub class implementing an adapter-sourced capability
+/// whose return type lives in a commons the capability's own unit `uses`,
+/// never in the target context itself — Locale capability track, slice 1,
+/// #844). Qualifying such a name under the target's own namespace would
+/// reference an export `emit_context_rebrands` never emits (it only rebrands
+/// names the target's *own* lowered body references), so each name is
+/// qualified under the namespace that actually exports it.
+pub(crate) fn ts_type_ref_qualified_multi(
+    r: &TypeRef,
+    type_ns: &HashMap<String, String>,
+) -> String {
+    ts_type_ref_with(r, Some(&|name| type_ns.get(name).cloned()))
+}
+
+/// A name → owning-namespace lookup for `ts_type_ref_with`'s `qualify` arm.
+type QualifyFn<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+/// Shared renderer behind `ts_type_ref` (`qualify = None`) and the two
+/// `ts_type_ref_qualified*` helpers above (`qualify = Some(name -> namespace)`).
+/// With `None` it is output-identical to the historic `ts_type_ref`; the only
+/// divergence is the `Named`/`App` arms, which qualify in-scope names when
+/// `qualify` is set.
+fn ts_type_ref_with(r: &TypeRef, qualify: Option<QualifyFn<'_>>) -> String {
     match r {
         TypeRef::Base(b, _) => ts_base(*b).to_string(),
         TypeRef::Named(id) => {
-            if let Some((scope, ns)) = qualify
-                && scope.contains(&id.name)
+            if let Some(f) = qualify
+                && let Some(ns) = f(&id.name)
             {
                 format!("{ns}.{}", id.name)
             } else {
@@ -2913,8 +2947,8 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         // `Name<Arg, …>` — the generic record's interface is emitted with the
         // same type parameters (like a generic function's erased `<A, B>`).
         TypeRef::App { name, args, .. } => {
-            let head = if let Some((scope, ns)) = qualify
-                && scope.contains(&name.name)
+            let head = if let Some(f) = qualify
+                && let Some(ns) = f(&name.name)
             {
                 format!("{ns}.{}", name.name)
             } else {

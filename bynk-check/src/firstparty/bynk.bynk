@@ -1,5 +1,6 @@
 adapter bynk {
-	exports capability { Clock, Random, Logger, Fetch, Secrets }
+	uses bynk.locale
+	exports capability { Clock, Random, Logger, Fetch, Secrets, Locale }
 	exports transparent { Uuid, Method, FetchError, Request, Response }
 
 	---
@@ -70,6 +71,14 @@ adapter bynk {
 		fn get(name: String) -> Effect[Option[String]]
 	}
 
+	---
+	Reads the current locale for this request/session. Slice 1: always
+	returns a fixed reference tag (`"en"`) on every platform.
+	---
+	capability Locale {
+		fn current() -> Effect[LocaleTag]
+	}
+
 	provides Clock = ClockProvider
 
 	provides Random = RandomProvider
@@ -79,4 +88,6 @@ adapter bynk {
 	provides Fetch = FetchProvider
 
 	provides Secrets = SecretsProvider
+
+	provides Locale = LocaleProvider
 }
