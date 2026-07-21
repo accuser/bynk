@@ -315,3 +315,67 @@ imposed; entries keep the order they were retired in.
   (the default `GITHUB_TOKEN` pushes directly and triggers no CI) — if `main` is
   ever branch-protected, the stamp must move to a GitHub App with a push-bypass or
   a stamp PR, as ADR 0206 records.
+- **`deploy.md`** — the `bynk deploy` verb: provisioning + remote deploy, the
+  capstone of the driver arc `doctor → new → dev → deploy`, realising the
+  tooling roadmap §5.1 and the deferral `bynk dev` (ADR 0096 D4) named by
+  name: "real, provisioned remote support is `deploy`'s defining problem, the
+  next slice." The track's one genuinely new idea — the **provisioning-state
+  model** (`bynk.deploy.lock`, the deploy-time analogue of `bynk.lock`: real
+  Cloudflare resource ids live in persistent driver state, injected into
+  regenerated config just before Wrangler runs, never sourced from it) — and
+  its one genuinely new responsibility: this is the **first driver command
+  with irreversible, outward-facing side effects**, the reason it was a track
+  and not a fourth additive verb. All six slices shipped: **0** — the
+  provisioning-state model + KV-only single-context MVP (v0.154,
+  [ADR 0179](../decisions/0179-deploy-provisioning-state.md)/[0180](../decisions/0180-deploy-orchestration-idempotency.md),
+  [#583](https://github.com/accuser/bynk/issues/583)) → **1** — DO migrations
+  + queue provisioning, queues reconciling by create-every-run-and-treat-
+  already-exists-as-success (v0.171,
+  [ADR 0194](../decisions/0194-deploy-queues-and-delegated-do-migrations.md),
+  [#600](https://github.com/accuser/bynk/issues/600)) → **2** — multi-context
+  topology + Service-Binding deploy ordering, confirming empirically that
+  Cloudflare resolves bindings at upload (a hard barrier, not a soft nicety)
+  (v0.170, [ADR 0193](../decisions/0193-multi-context-deploy-ordering.md),
+  [#601](https://github.com/accuser/bynk/issues/601)) → **3** — secrets at
+  deploy time, the declared/read/supplied floor-not-census contract, values
+  moved to `wrangler secret put` on stdin and never persisted (v0.172,
+  [ADR 0195](../decisions/0195-secrets-at-deploy.md),
+  [#602](https://github.com/accuser/bynk/issues/602); follow-up
+  [#632](https://github.com/accuser/bynk/issues/632) on computed
+  `Secrets.get` names, [ADR 0196](../decisions/0196-secret-reads-and-computed-names.md))
+  → **4** — environments, `--env` threaded through the ledger and a
+  driver-synthesised `[env.<name>]` config section (confirmed against
+  Cloudflare's own docs that bindings are non-inheritable into a named
+  environment, so the emitter — which never sees a deploy-time environment
+  name — could not do this itself), queue/Service-Binding names qualified to
+  avoid cross-environment collision, extended in the same PR to
+  `bynk dev -- --remote` after review caught it reading only the default
+  ledger section (v0.220.1,
+  [ADR 0254](../decisions/0254-deploy-environments.md),
+  [#835](https://github.com/accuser/bynk/issues/835)) → **5** — reconciliation
+  maturity: per-resource-kind orphan reporting (a pure offline ledger-vs-source
+  diff, so `--dry-run` never authenticates), KV drift detection once per
+  deploy run (closing the one asymmetry where queues already self-healed but a
+  deleted-out-of-band KV namespace did not), and `--prune` scoped to KV
+  namespaces and queues alone — never a Worker, whose blast radius (routes,
+  custom domains, cron triggers) is categorically larger — with idempotent
+  deletion confirmed empirically against a real account rather than assumed
+  (v0.220.2, [ADR 0255](../decisions/0255-deploy-reconciliation.md),
+  [#839](https://github.com/accuser/bynk/issues/839)). Spec-in-place in
+  `site/src/content/docs/book/guides/projects-build-and-deployment/deploy-to-cloudflare.md`
+  and `run-locally.md`; surface lives in `bynk/src/deploy.rs`. **Deferred
+  follow-ons** (none blocking the theme): release semantics — rollback,
+  versioned deploys, traffic splitting — stayed an explicit non-goal
+  throughout (§2), noted for a future track; the pre-flight's account
+  selection stays `wrangler`-deferred and account-blind (a user pointed at
+  the wrong Cloudflare account for a given environment still gets a
+  pre-flight pass); pruning an orphaned Worker (`wrangler delete`) and the
+  race window between `--prune`'s report and its delete call are both named,
+  unclosed gaps in [ADR 0255](../decisions/0255-deploy-reconciliation.md).
+  **One unresolved, load-bearing risk, not just a nice-to-have:** the
+  packaging track (still an uncommitted local draft with no spine issue of
+  its own) plans to re-address contexts as `org.package.context`, and
+  `deploy`'s Worker names and ledger keys assume today's flat identity —
+  whoever picks up packaging must sequence its naming cutover against
+  `deploy`'s provisioned state, or a rename orphans already-live resources
+  with no automatic recovery.

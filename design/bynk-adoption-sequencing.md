@@ -25,7 +25,8 @@ ever the deciding factor:
    `deploy`. Taking a project live is back to the manual ritual `dev` retired for
    local — create KV namespaces by hand, paste ids into a regenerated
    `wrangler.toml`, apply DO migrations, set secrets, `wrangler deploy` each
-   context in order (see [`tracks/deploy.md`](tracks/deploy.md) §1).
+   context in order. (Historical framing — the `deploy` track has since shipped
+   and retired; see [`archive/retired-tracks.md`](archive/retired-tracks.md).)
 2. **You cannot evolve stored state safely.** The moment a deployed agent owns
    real state, the next breaking change to that state's shape is unshippable
    without a migration story. Bynk has schema-versioning *in the design notes*
@@ -51,27 +52,28 @@ adoption now, and adoption is the bottleneck.
 
 The order is not arbitrary — each blocker *creates the need* for the next:
 
-- **Deploy first.** Nothing happens in production without shipping, so this gates
-  the other two (you cannot need a migration for state you never deployed, nor an
-  ecosystem for code you cannot run). It is also the **furthest along**: the track
-  doc is written and settling, the spine issue is open
-  ([#558](https://github.com/accuser/bynk/issues/558)), the provisioning-state
-  model is worked out. It is closest to ready and unblocks the most.
+- **Deploy first — shipped.** Nothing happens in production without shipping, so
+  this gated the other two (you cannot need a migration for state you never
+  deployed, nor an ecosystem for code you cannot run). All six slices shipped
+  (v0.154–v0.220.2) and the track retired — see
+  [`archive/retired-tracks.md`](archive/retired-tracks.md). This blocker is
+  **cleared**; migrations is now the front of the line.
 - **Migrations second.** Deploy *manufactures* this need: the first deployed
   stateful agent turns its next breaking state change into an unshippable event
   without migrations. This is Bynk-level **state-schema evolution**, and it is
   distinct from the platform DO-migration application that deploy's slice 1
-  already handles ([`tracks/deploy.md`](tracks/deploy.md) §4.2) — that wires up
-  Cloudflare's own migration mechanism; this is evolving the *Bynk* state schema a
-  regenerated codebase reads. Deploy makes stateful agents *shippable*; migrations
-  make them *evolvable*.
+  already handles ([ADR 0194](decisions/0194-deploy-queues-and-delegated-do-migrations.md))
+  — that wires up Cloudflare's own migration mechanism; this is evolving the
+  *Bynk* state schema a regenerated codebase reads. Deploy makes stateful
+  agents *shippable*; migrations make them *evolvable*.
 - **Ecosystem posture third.** It matters once there are several real projects to
   share between — a slower-burning need than "can I ship at all". It also shares
-  deploy's identity model: deploy already has to assume the packaging naming model
-  ([`tracks/deploy.md`](tracks/deploy.md) Q8 — `org.package.context`, so a rename
-  does not orphan provisioned state), and that is the same identity the ecosystem
-  work builds out. Sequencing it last lets deploy's naming and the packaging
-  identity ADR land in the right order rather than fighting.
+  deploy's identity model: deploy's shipped naming assumed today's flat
+  `context` identity, and the packaging track's `org.package.context` cutover
+  must be sequenced against it (an open risk named in deploy's retirement
+  summary — a rename must not orphan already-provisioned state). Sequencing
+  ecosystem posture last lets that cutover and deploy's naming land in the
+  right order rather than fighting.
 
 ### Freeze tooling depth
 
@@ -106,9 +108,9 @@ Depth is frozen; currency is not.
 
 | Blocker | State today | The move |
 |---|---|---|
-| **1. Deploy** | Track doc thorough and settling; spine [#558](https://github.com/accuser/bynk/issues/558); **no slice authorised** ([`tracks/README.md`](tracks/README.md)). | Promote from *settling* to **slicing**: authorise slice 0 — the provisioning-state ADR + KV-only single-context MVP ([`tracks/deploy.md`](tracks/deploy.md) §8). This is the top priority. |
-| **2. Migrations** | **No track.** State-schema versioning lives only in the design notes as a deferred v1 concept. | Open a **state-migrations track** (spine issue + settling doc, per [ADR 0167](decisions/0167-feature-tracks-run-github-native.md)). Sequenced to begin as deploy's stateful slices land, since deploy creates the need. |
-| **3. Ecosystem posture** | The **`packaging.md` track is referenced but unwritten** ([`tracks/deploy.md`](tracks/deploy.md) Q8; [`tracks/documentation.md`](tracks/documentation.md)). | Write the **packaging track**: the `org.package.context` identity model, a dependency/manifest model, and a registry posture. Deploy's naming must assume this identity (Q8) so the cutover does not orphan provisioned state. |
+| **1. Deploy** | **Shipped and retired.** All six slices landed (v0.154–v0.220.2); closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md). | Done. Gate 2 of the [1.0 definition](bynk-1.0-definition.md) is satisfied. |
+| **2. Migrations** | **No track.** State-schema versioning lives only in the design notes as a deferred v1 concept. | Open a **state-migrations track** (spine issue + settling doc, per [ADR 0167](decisions/0167-feature-tracks-run-github-native.md)). Now the front of the line — deploy has shipped and created the need. |
+| **3. Ecosystem posture** | The **`packaging.md` track is referenced but unwritten** (local draft only, no spine issue; [`tracks/documentation.md`](tracks/documentation.md)). | Write the **packaging track**: the `org.package.context` identity model, a dependency/manifest model, and a registry posture. Must sequence against deploy's shipped naming so the cutover does not orphan already-provisioned state. |
 
 ## Interlock with the 1.0 definition (§7(4))
 

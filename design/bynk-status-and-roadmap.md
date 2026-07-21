@@ -49,7 +49,7 @@ not broken.
 | Area | State | One-line verdict |
 |---|---|---|
 | **Compiler `bynkc`** (~42k LOC) | Feature-complete for v0–v0.54 | Whole language wired end-to-end; ~216 positive + ~40 negative fixtures; `tsc --strict` verifies every project fixture's emitted TypeScript. |
-| **Driver `bynk`** (v0.46–v0.58) | Growing | Thin orchestrator over `bynkc` (override → PATH → sibling resolution). `bynk doctor` — environment check with a pinned output/exit contract (ADRs 0083–0084). `bynk new` (v0.58) — scaffold a complete, runnable project served by `dev` unmodified; offline file-writing, compile-tested template (ADR 0097). `bynk dev` (v0.57) — build + serve locally via `wrangler dev` in local mode; watch/rebuild on save (#524) and **multi-context local dev** (v0.167, ADR 0192) have both landed, so a multi-context project runs locally with live cross-context Service Bindings between its workers. The `doctor → new → dev` on-ramp arc is complete. `bynk deploy` (v0.154, slice 0) provisions KV and publishes; slice 2 (v0.170, ADR 0193) ships **every** context in Service-Binding dependency order, so a multi-context project deploys in one command; slice 1 (v0.171, ADR 0194) completes the per-context resource surface — queues are created by name before the push, and DO migrations ride `wrangler deploy`, whose applied-tag state the ledger deliberately does not mirror. Next intent: `new`'s `init`/`--template` follow-ups, deploy slice 3 (secrets), and the optional first-party `workerd` dev server. |
+| **Driver `bynk`** (v0.46–v0.58) | Growing | Thin orchestrator over `bynkc` (override → PATH → sibling resolution). `bynk doctor` — environment check with a pinned output/exit contract (ADRs 0083–0084). `bynk new` (v0.58) — scaffold a complete, runnable project served by `dev` unmodified; offline file-writing, compile-tested template (ADR 0097). `bynk dev` (v0.57) — build + serve locally via `wrangler dev` in local mode; watch/rebuild on save (#524) and **multi-context local dev** (v0.167, ADR 0192) have both landed, so a multi-context project runs locally with live cross-context Service Bindings between its workers. `bynk deploy` **shipped and retired** (v0.154–v0.220.2, all six slices — provisioning-state model + KV MVP, DO/queue provisioning, multi-context Service-Binding ordering, secrets, environments, and reconciliation maturity + `--prune`; closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). The `doctor → new → dev → deploy` driver arc is complete. Next intent: `new`'s `init`/`--template` follow-ups, the state-migrations track (now the front of the adoption-blocker line — see [`bynk-adoption-sequencing.md`](bynk-adoption-sequencing.md)), and the optional first-party `workerd` dev server. |
 | **Actors track** (v0.45–v0.54) | ✅ Complete & closed | `actor` contracts, the `by` clause, BearerToken (JWT/HS256), Signature (HMAC-SHA256), multi-actor sum dispatch, authorisation invariants, cross-context `CallerId`. Q8 (replay/ordering) deferred to a future Events track. |
 | **`bynk-fmt`** | Strong | Full formatter contract incl. comment preservation; idempotent, round-trip-tested over the corpus. |
 | **`bynk-lsp`** | Rich | Diagnostics, hover, definition, completion, signature help, inlay hints, semantic tokens, codeLens, call hierarchy, implementation nav, folding/selection, workspace symbols, rename/references (v0.24–v0.43). The completion overhaul + editor polish shipped (ADRs 0093–0095, [`bynk-lsp-spec.md`](bynk-lsp-spec.md)); remaining: editor-agnostic setup docs + marketplace publishing ([#257](https://github.com/accuser/bynk/issues/257)/[#258](https://github.com/accuser/bynk/issues/258)). |
@@ -248,12 +248,14 @@ adoption until a team can ship, evolve stored state, and share code.
 
 The forward plan lives in dedicated, domain-scoped docs:
 
-- **Adoption blockers (first)** — **deploy** ([`tracks/deploy.md`](tracks/deploy.md),
-  spine [#558](https://github.com/accuser/bynk/issues/558)); a **state-migrations**
-  track (to be opened); an **ecosystem/packaging** track (to be written). Deploy
-  and migrations gate 1.0 ([`bynk-1.0-definition.md`](bynk-1.0-definition.md),
-  §7(4): 1.0 = Foundations stability + deploy + state migrations; ecosystem is
-  1.0-optional).
+- **Adoption blockers (first)** — **deploy**, shipped and retired (spine
+  [#558](https://github.com/accuser/bynk/issues/558), closing summary in
+  [`archive/retired-tracks.md`](archive/retired-tracks.md)); a
+  **state-migrations** track (to be opened, now the front of the line); an
+  **ecosystem/packaging** track (to be written). Deploy and migrations gate 1.0
+  ([`bynk-1.0-definition.md`](bynk-1.0-definition.md), §7(4): 1.0 = Foundations
+  stability + deploy + state migrations; ecosystem is 1.0-optional) — **Gate 2
+  (`deploy`) is now satisfied.**
 - **Language vision (deferred behind the blockers)** — the next feature tracks,
   in rough order: an **Events** track (pub-sub + the deferred actors Q8
   replay/ordering), then **sagas/compensation**, the **query algebra + rich
