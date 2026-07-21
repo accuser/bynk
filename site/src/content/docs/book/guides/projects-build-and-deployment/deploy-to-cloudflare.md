@@ -336,3 +336,58 @@ After a first deploy, `bynk dev -- --remote` reads the same lock file to fill
 the KV binding — pass the matching `--env` if you deployed to a named one
 (`bynk dev --env staging -- --remote`). Normal local `bynk dev` remains
 entirely local and needs no Cloudflare account.
+
+## Orphans
+
+Delete a context, or the last `on queue` handler that used it, and the ledger
+still remembers what it provisioned — `bynk deploy` says so before doing
+anything else:
+
+```
+orphan kv payment
+orphan worker payment
+orphan queue old-jobs
+deploy commerce-orders
+```
+
+A removed context with a KV namespace shows up as **two** lines — the
+namespace and the Worker are separate resources, tracked separately, and
+reported separately. This is a plain diff against your current source; it
+never calls Cloudflare, so it works under `--dry-run` too.
+
+Pass `--prune` to delete what's reported — KV namespaces and queues only,
+never a Worker:
+
+```sh
+bynk deploy --prune
+```
+
+```
+bynk: will delete KV namespace for `payment`
+bynk: will delete queue `old-jobs`
+Delete 2 resource(s)? [y/N]
+```
+
+That confirmation is separate from the one `--yes` already skips for
+creation — a script that only meant to authorise provisioning must not also,
+silently, authorise deletion. Pass `--yes` **and** `--prune` together to
+prune non-interactively.
+
+`--prune` is safe to re-run: deleting something already gone (a resource
+someone else removed between your plan and your prune) is treated the same
+as deleting it now — the ledger entry is stripped either way, so a
+half-finished prune never gets stuck re-reporting the same orphan forever.
+
+An orphaned Worker is reported but never deleted — `wrangler delete` also
+removes routes, custom domains, and cron triggers, a larger blast radius than
+a namespace or a queue. Clean one up by hand with `wrangler delete` if you're
+sure it's unused.
+
+Orphans are project-wide, not scoped to `--context`: `bynk deploy --context
+orders --prune` can delete a queue orphaned by a *different*, unrelated
+context — the report (and the confirmation naming exactly what will be
+deleted) is what keeps this visible rather than surprising.
+
+Separately: a KV namespace deleted outside Bynk (in the Cloudflare
+dashboard, say) is noticed the next time you deploy and re-provisioned
+automatically — the same self-healing a deleted queue already had.

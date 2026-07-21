@@ -55,6 +55,11 @@ pub struct DeployOptions {
     pub secrets: Vec<String>,
     /// `--force` — overwrite a secret already set, rather than skipping it.
     pub force: bool,
+    /// `--prune` (slice 5) — delete every reported KV/queue orphan, behind
+    /// its own confirmation. Never deletes a Worker (DECISION C). Defaults
+    /// to report-only, matching the track's "report or prevent, never
+    /// silently share/destroy" posture (§6).
+    pub prune: bool,
     pub wrangler_args: Vec<String>,
 }
 
@@ -613,12 +618,94 @@ impl DeployLock {
     }
 }
 
+/// Slice 5: every ledger entry for this environment that the current build no
+/// longer declares. Owned, not borrowed — ledger-derived names don't share
+/// `Plan<'a>`'s lifetime over `order`/`resources` (the `PlanSecret.name:
+/// String` precedent below).
+///
+/// `kv` and `workers` are independent checks, deliberately not merged: both
+/// are keyed by worker name in the ledger (`Environment`, above), so a
+/// context removed from source that had KV is reported as **two** orphans,
+/// one per map, not one combined line. `--prune` (when it lands) treats them
+/// independently too — the `kv` line is prunable, the `workers` line is
+/// report-only (a whole-Worker delete is a materially larger blast radius
+/// than a namespace or a queue, and out of this slice's scope).
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+struct Orphans {
+    kv: Vec<String>,
+    workers: Vec<String>,
+    queues: Vec<String>,
+}
+
+impl Orphans {
+    /// Whether `--prune` would actually delete anything. **Not** the same as
+    /// checking whether every field is empty (review, #840): `workers`
+    /// orphans are report-only (DECISION C — never `wrangler delete`), so a
+    /// project whose only orphan is an unprunable Worker must not trigger
+    /// `confirm_prune`'s prompt at all — `Delete 0 resource(s)?` is a bug,
+    /// not a valid state.
+    fn has_prunable(&self) -> bool {
+        !self.kv.is_empty() || !self.queues.is_empty()
+    }
+}
+
+/// The orphan diff: ledger vs. the current build's full declared resource
+/// set, regardless of `--context` — `resources` already spans the *whole*
+/// project (`project_resources`, called from `run()` over `available` — every
+/// worker `dev::discover_workers` found — not the `--context`-narrowed
+/// `order`/`selected`), so `resources.keys()` alone is the full live-worker
+/// set and this reuses data `run()` already has rather than reading anything
+/// new. No live Cloudflare call: the report half of reconciliation costs
+/// nothing and needs no auth, keeping `--dry-run`'s "never authenticates"
+/// promise intact.
+///
+/// Pure, so the diff — including the shared-queue case (a queue two contexts
+/// still consume must never appear orphaned because a *third* context that
+/// used to consume it was removed) — is tested without a build tree.
+fn find_orphans(
+    lock: &DeployLock,
+    environment: &str,
+    resources: &BTreeMap<String, Resources>,
+) -> Orphans {
+    let Some(env) = lock.environments.get(environment) else {
+        return Orphans::default();
+    };
+    let live_queues: BTreeSet<&str> = resources
+        .values()
+        .flat_map(|r| r.queues.iter().map(String::as_str))
+        .collect();
+    Orphans {
+        kv: env
+            .kv
+            .keys()
+            .filter(|worker| !resources.contains_key(worker.as_str()))
+            .cloned()
+            .collect(),
+        workers: env
+            .workers
+            .keys()
+            .filter(|worker| !resources.contains_key(worker.as_str()))
+            .cloned()
+            .collect(),
+        queues: env
+            .queues
+            .iter()
+            .filter(|queue| !live_queues.contains(queue.as_str()))
+            .cloned()
+            .collect(),
+    }
+}
+
 /// The whole-project plan (slice 2). `order` is the upload order, dependencies
 /// first; `contexts` carries it with each context's own actions. Slice 0's
 /// single-worker `Plan` is the one-element case of this.
 #[derive(Debug, Serialize)]
 struct Plan<'a> {
     environment: &'a str,
+    /// Slice 5: every ledger entry this environment no longer declares —
+    /// printed before the per-context breakdown, so an orphan is seen before
+    /// what's actually being pushed.
+    orphans: Orphans,
     /// The resolved upload order — the plan's headline, since Cloudflare
     /// rejects a Worker uploaded before its binding target.
     order: Vec<&'a str>,
@@ -930,6 +1017,21 @@ pub fn run(
         return ExitCode::FAILURE;
     }
 
+    // Slice 5, DECISION B: once per run, not once per context — an
+    // account-wide list, fetched only when it could actually change an
+    // outcome (a context needs KV and already has a recorded id worth
+    // checking; a first deploy has nothing to check drift against). `None`
+    // (no wrangler, or the call failed) falls back to trusting the ledger
+    // unconditionally, exactly as every deploy before this slice did.
+    let live_kv_ids = if order
+        .iter()
+        .any(|w| resources[w].needs_kv && recorded_kv(&lock, w, &opts.environment).is_some())
+    {
+        live_kv_namespace_ids(&probe.provenance, project_root)
+    } else {
+        None
+    };
+
     // Provision → wire → push, per context, in dependency order. Each context's
     // state is written to the ledger as it lands (ADR 0180's incremental
     // posture), so an interrupted multi-context run is resumable rather than
@@ -961,6 +1063,7 @@ pub fn run(
             },
             &opts.wrangler_args,
             &opts.environment,
+            live_kv_ids.as_ref(),
         ) {
             Ok(Pushed::Ok) => {
                 // v0.177 (#643): record what this Worker now *provides*, so a
@@ -999,6 +1102,27 @@ pub fn run(
                 // Wrangler's own code, not a flat 1 (slice 0's contract).
                 return ExitCode::from(f.code);
             }
+        }
+    }
+
+    // Slice 5: pruning is project-wide, independent of `--context` — the
+    // orphan report already is (DECISION A), so pruning follows it. Runs
+    // only after every selected context has pushed cleanly: a failed deploy
+    // above already returned, so a mid-flight ledger never reaches this.
+    if opts.prune && plan.orphans.has_prunable() {
+        if !confirm_prune(opts.yes, &plan.orphans) {
+            return ExitCode::FAILURE;
+        }
+        if let Err(e) = prune_orphans(
+            &probe.provenance,
+            project_root,
+            &mut lock,
+            &lock_path,
+            &opts.environment,
+            &plan.orphans,
+        ) {
+            eprintln!("bynk: {}", e.message);
+            return ExitCode::from(e.code);
         }
     }
     ExitCode::SUCCESS
@@ -1080,34 +1204,40 @@ fn deploy_one(
     secrets: &mut Secrets<'_>,
     wrangler_args: &[String],
     environment: &str,
+    // Slice 5, DECISION B: `Some` when `run()` fetched the account's live KV
+    // namespace ids once, up front. A recorded id absent from this set is
+    // exactly as untrustworthy as no record at all — re-provision rather than
+    // inject a dead id. `None` means the fetch was skipped or failed; the
+    // recorded id is trusted unconditionally, as it always was pre-slice-5,
+    // rather than blocking a deploy on a fetch that didn't happen.
+    live_kv_ids: Option<&BTreeSet<String>>,
 ) -> Result<Pushed, DeployFailure> {
     let worker_dir = workers_dir.join(worker);
     let config = worker_dir.join("wrangler.toml");
     let mut kv_id = None;
     if declared.needs_kv {
-        let id = match recorded_kv(lock, worker, environment) {
-            Some(id) => id.to_owned(),
-            None => {
-                let id = create_kv(provenance, worker, project_root).map_err(|e| {
-                    DeployFailure::driver(format!(
-                        "could not create KV namespace for `{worker}`: {e}"
-                    ))
-                })?;
-                lock.environments
-                    .entry(environment.to_string())
-                    .or_default()
-                    .kv
-                    .insert(worker.to_string(), KvNamespace { id: id.clone() });
-                // Recorded before the push, so an interrupted run never makes a
-                // second namespace (ADR 0180).
-                write_lock(lock_path, lock).map_err(|e| {
-                    DeployFailure::driver(format!(
-                        "created KV namespace for `{worker}` but could not record it in {}: {e}",
-                        lock_path.display()
-                    ))
-                })?;
-                id
-            }
+        let recorded = recorded_kv(lock, worker, environment).map(str::to_owned);
+        let trust_recorded = should_trust_recorded_kv(recorded.as_deref(), live_kv_ids);
+        let id = if trust_recorded {
+            recorded.expect("trust_recorded is only true when recorded is Some")
+        } else {
+            let id = create_kv(provenance, worker, project_root).map_err(|e| {
+                DeployFailure::driver(format!("could not create KV namespace for `{worker}`: {e}"))
+            })?;
+            lock.environments
+                .entry(environment.to_string())
+                .or_default()
+                .kv
+                .insert(worker.to_string(), KvNamespace { id: id.clone() });
+            // Recorded before the push, so an interrupted run never makes a
+            // second namespace (ADR 0180).
+            write_lock(lock_path, lock).map_err(|e| {
+                DeployFailure::driver(format!(
+                    "created KV namespace for `{worker}` but could not record it in {}: {e}",
+                    lock_path.display()
+                ))
+            })?;
+            id
         };
         if !materialise_kv_id(&config, &id) {
             return Err(DeployFailure::driver(format!(
@@ -1248,6 +1378,28 @@ fn recorded_kv<'a>(lock: &'a DeployLock, worker: &str, environment: &str) -> Opt
         .get(environment)
         .and_then(|env| env.kv.get(worker))
         .map(|kv| kv.id.as_str())
+}
+
+/// Slice 5, DECISION B, extracted for direct testing (review, #840): should
+/// `deploy_one` trust a recorded KV id, or treat it as though nothing were
+/// recorded at all?
+///
+/// - No record at all → never trust (nothing to trust).
+/// - A record, and the live fetch never ran or failed (`None`) → trust it,
+///   unconditionally — exactly pre-slice-5 behaviour, so a fetch outage
+///   never blocks a deploy that would have succeeded before this slice.
+/// - A record, and a live id set — trust it only if the id is actually in
+///   that set. Absent means Cloudflare no longer recognises it: re-provision,
+///   the same as an unrecorded id would.
+fn should_trust_recorded_kv(
+    recorded: Option<&str>,
+    live_kv_ids: Option<&BTreeSet<String>>,
+) -> bool {
+    match (recorded, live_kv_ids) {
+        (Some(id), Some(live)) => live.contains(id),
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
 }
 
 pub fn preflight_failure_message(report: &Report) -> String {
@@ -1580,6 +1732,57 @@ fn parse_kv_id(output: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Every KV namespace id currently on the account — slice 5, DECISION B.
+///
+/// Fetched **once per `bynk deploy` run**, not once per context: this is an
+/// account-wide list, so calling it from inside `deploy_one` would pay one
+/// identical round-trip per KV-bearing context on every redeploy. `run()`
+/// calls this once, before the per-context loop, and threads the result
+/// through — see `deploy_one`'s `live_kv_ids` parameter.
+///
+/// `None` means "could not ask" (no wrangler, network/auth failure, or an
+/// unparseable response) — read the same way [`list_secrets`]'s `None` is:
+/// the caller falls back to trusting whatever the ledger already says, rather
+/// than blocking every deploy on this call succeeding.
+///
+/// **Completeness (review, #840):** Cloudflare's list-namespaces endpoint is
+/// itself paginated, but `wrangler`'s `listKVNamespaces` (`workers-sdk`
+/// `packages/wrangler/src/kv/helpers.ts`) loops `page`/`per_page` until a
+/// short page comes back, aggregating every page before this command prints
+/// — confirmed against wrangler's own source, not assumed. A truncated
+/// response is not a live risk on the CLI path this calls.
+fn live_kv_namespace_ids(provenance: &Provenance, project_root: &Path) -> Option<BTreeSet<String>> {
+    let mut command = dev::wrangler_command(provenance, "kv")?;
+    // No `--format json`: unlike `secret list`/`queues`, this command has no
+    // such flag at all — confirmed against wrangler 4.103 (`Unknown argument:
+    // format`, exit 1). Its *default* output is already a raw JSON array, so
+    // this is not a missing-flag gap, just a different default per command.
+    let output = command
+        .arg("namespace")
+        .arg("list")
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_kv_namespace_ids(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// The ids in `wrangler kv namespace list`'s (default, already-JSON) output —
+/// the same structural shape [`parse_secret_list`] reads, `"id"` instead of
+/// `"name"`.
+fn parse_kv_namespace_ids(stdout: &str) -> Option<BTreeSet<String>> {
+    let parsed: serde_json::Value = serde_json::from_str(stdout).ok()?;
+    Some(
+        parsed
+            .as_array()?
+            .iter()
+            .filter_map(|entry| entry.get("id")?.as_str().map(str::to_owned))
+            .collect(),
+    )
+}
+
 /// Create `name`, or accept that it is already there.
 ///
 /// Unlike KV there is no id to scrape: Cloudflare addresses a queue by the name
@@ -1701,6 +1904,184 @@ fn unattempted_queues(declared: &Resources, attempted: &mut BTreeSet<String>) ->
 /// mis-provision. Pure, so the rule is tested without an account.
 fn queue_already_exists(stderr: &str) -> bool {
     stderr.to_ascii_lowercase().contains("already exists")
+}
+
+// ---------------------------------------------------------------------------
+// Slice 5: reconciliation — orphan pruning
+// ---------------------------------------------------------------------------
+
+/// Delete a KV namespace by id — `--prune`'s one KV-side mutation.
+///
+/// `--skip-confirmation`: wrangler's own prompt is redundant with
+/// [`confirm_prune`], which already named every resource about to go and
+/// asked once for the whole batch: a second, per-resource prompt would be
+/// noise, not safety. Idempotent against a namespace already gone (matched
+/// via [`kv_namespace_already_deleted`]) — confirmed empirically (#839):
+/// Cloudflare answers a not-found delete with an error, never silent success,
+/// so this driver-side match is what makes re-running `--prune` safe.
+fn delete_kv_namespace(
+    provenance: &Provenance,
+    id: &str,
+    project_root: &Path,
+) -> Result<(), String> {
+    let Some(mut command) = dev::wrangler_command(provenance, "kv") else {
+        return Err("wrangler not found".into());
+    };
+    let output = command
+        .arg("namespace")
+        .arg("delete")
+        .arg("--namespace-id")
+        .arg(id)
+        .arg("--skip-confirmation")
+        .current_dir(project_root)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let said = wrangler_said(&output);
+    if kv_namespace_already_deleted(&said) {
+        return Ok(());
+    }
+    Err(said)
+}
+
+/// Does this `wrangler kv namespace delete` failure just mean the namespace
+/// is already gone? Confirmed empirically (#839) against a real account:
+/// `namespace not found [code: 10013]`. Matching the stable error code rather
+/// than the prose, unlike [`queue_already_exists`]'s text match — Cloudflare
+/// structures its API errors with a `code`, and `10013` is the more durable
+/// half of the message if the wording is ever revised. Pure, so the rule is
+/// tested without an account.
+fn kv_namespace_already_deleted(stderr: &str) -> bool {
+    stderr.contains("code: 10013") || stderr.to_ascii_lowercase().contains("namespace not found")
+}
+
+/// Delete a queue by name — `--prune`'s other mutation.
+///
+/// No confirmation flag to pass: confirmed empirically (#839) that
+/// `wrangler queues delete` has no prompt or force flag at all (`--help`
+/// shows only global flags) — it is already non-interactive by default.
+/// Idempotent against a queue already gone, matched the same way
+/// [`queue_already_exists`] matches the create side's inverse case.
+fn delete_queue(provenance: &Provenance, name: &str, project_root: &Path) -> Result<(), String> {
+    let Some(mut command) = dev::wrangler_command(provenance, "queues") else {
+        return Err("wrangler not found".into());
+    };
+    let output = command
+        .arg("delete")
+        .arg(name)
+        .current_dir(project_root)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let said = wrangler_said(&output);
+    if queue_already_deleted(&said) {
+        return Ok(());
+    }
+    Err(said)
+}
+
+/// Does this `wrangler queues delete` failure just mean the queue is already
+/// gone? Confirmed empirically (#839): `Queue "<name>" does not exist. To
+/// create it, run: wrangler queues create <name>`. Pure, so the rule is
+/// tested without an account.
+fn queue_already_deleted(stderr: &str) -> bool {
+    stderr.to_ascii_lowercase().contains("does not exist")
+}
+
+/// Print exactly what `--prune` is about to delete, then ask once for the
+/// whole batch — the "strictly stronger gate" the track doc (§6) calls for on
+/// top of [`confirm`]'s creation gate. `--yes` alone does **not** imply this:
+/// a CI job that wants unattended pruning must pass `--yes` **and**
+/// `--prune` together, the same non-interactive-requires-`--yes` shape
+/// [`confirm`] already uses, just with its own prompt so a script that only
+/// meant to authorise *creation* cannot accidentally also authorise deletion.
+fn confirm_prune(yes: bool, orphans: &Orphans) -> bool {
+    for kv in &orphans.kv {
+        eprintln!("bynk: will delete KV namespace for `{kv}`");
+    }
+    for queue in &orphans.queues {
+        eprintln!("bynk: will delete queue `{queue}`");
+    }
+    if yes {
+        return true;
+    }
+    if !requires_interactive_confirmation(yes, io::stdin().is_terminal()) {
+        eprintln!("bynk: refusing to prune in a non-interactive session without --yes");
+        return false;
+    }
+    let count = orphans.kv.len() + orphans.queues.len();
+    eprint!("Delete {count} resource(s)? [y/N] ");
+    let _ = io::stderr().flush();
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer).is_ok()
+        && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+/// Delete every KV and queue orphan `confirm_prune` just named — never a
+/// worker (DECISION C: `wrangler delete`'s blast radius, routes/domains/crons
+/// along with the script, is categorically larger than a namespace or a
+/// queue, and pruning a whole Worker is explicitly out of this slice).
+///
+/// The ledger entry is stripped whether the delete found something to remove
+/// or found it already gone (DECISION E) — both mean "this resource is not
+/// there", and treating only a clean delete as ledger-worthy would wedge a
+/// half-completed prune: crash between a successful Cloudflare delete and the
+/// ledger write, and the next run would re-report the same orphan and
+/// re-issue a delete Cloudflare now rejects as not-found.
+fn prune_orphans(
+    provenance: &Provenance,
+    project_root: &Path,
+    lock: &mut DeployLock,
+    lock_path: &Path,
+    environment: &str,
+    orphans: &Orphans,
+) -> Result<(), DeployFailure> {
+    for worker in &orphans.kv {
+        let Some(id) = lock
+            .environments
+            .get(environment)
+            .and_then(|env| env.kv.get(worker))
+            .map(|ns| ns.id.clone())
+        else {
+            continue;
+        };
+        delete_kv_namespace(provenance, &id, project_root).map_err(|e| {
+            DeployFailure::driver(format!(
+                "could not delete the orphaned KV namespace for `{worker}`: {e}"
+            ))
+        })?;
+        if let Some(env) = lock.environments.get_mut(environment) {
+            env.kv.remove(worker);
+        }
+        write_lock(lock_path, lock).map_err(|e| {
+            DeployFailure::driver(format!(
+                "deleted the orphaned KV namespace for `{worker}` but could not record it in {}: {e}",
+                lock_path.display()
+            ))
+        })?;
+    }
+    for queue in &orphans.queues {
+        let physical = env_qualify(environment, queue);
+        delete_queue(provenance, &physical, project_root).map_err(|e| {
+            DeployFailure::driver(format!(
+                "could not delete the orphaned queue `{physical}`: {e}"
+            ))
+        })?;
+        if let Some(env) = lock.environments.get_mut(environment) {
+            env.queues.remove(queue);
+        }
+        write_lock(lock_path, lock).map_err(|e| {
+            DeployFailure::driver(format!(
+                "deleted the orphaned queue `{physical}` but could not record it in {}: {e}",
+                lock_path.display()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2244,6 +2625,19 @@ fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
     match format {
         DeployFormat::Short => {
             let mut out = String::new();
+            // Before the per-context section, deliberately: an orphan is a
+            // fact about the account regardless of what this run is about to
+            // do, and a reader should see it before the noise of what's being
+            // pushed (slice 5).
+            for kv in &plan.orphans.kv {
+                out.push_str(&format!("orphan kv {kv}\n"));
+            }
+            for worker in &plan.orphans.workers {
+                out.push_str(&format!("orphan worker {worker}\n"));
+            }
+            for queue in &plan.orphans.queues {
+                out.push_str(&format!("orphan queue {queue}\n"));
+            }
             for context in &plan.contexts {
                 if let Some(kv) = &context.kv {
                     out.push_str(&format!("kv {} {}\n", kv.action, kv.namespace));
@@ -2324,6 +2718,7 @@ fn derive_plan<'a>(
 ) -> Plan<'a> {
     Plan {
         environment,
+        orphans: find_orphans(lock, environment, resources),
         order: order.iter().map(String::as_str).collect(),
         contexts: order
             .iter()
@@ -3255,6 +3650,192 @@ max_batch_size = 10
         );
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // ---- #839 slice 5: reconciliation maturity + orphan reporting -------
+
+    #[test]
+    fn a_removed_context_with_kv_is_two_orphans_not_one() {
+        // `kv` and `workers` are both keyed by worker name — a context that
+        // had KV and was deleted from source shows up in both maps, so the
+        // diff must report both, independently (DECISION A).
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.environments
+            .entry("default".into())
+            .or_default()
+            .kv
+            .insert(
+                "gone".into(),
+                KvNamespace {
+                    id: "kv-gone".into(),
+                },
+            );
+        lock.record_deployed("default", "gone", None);
+        // "still-here" is in the current build, "gone" is not.
+        let resources = BTreeMap::from([("still-here".into(), Resources::default())]);
+
+        let orphans = find_orphans(&lock, "default", &resources);
+        assert_eq!(orphans.kv, names(&["gone"]));
+        assert_eq!(orphans.workers, names(&["gone"]));
+        assert!(orphans.queues.is_empty());
+    }
+
+    #[test]
+    fn a_queue_two_contexts_share_is_never_orphaned_while_either_declares_it() {
+        // The false-positive risk DECISION A's diff exists to avoid: a queue
+        // consumed by two contexts must not be reported orphaned just because
+        // a *third*, now-removed context used to consume it too.
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.record_queue("default", "jobs");
+        let resources = BTreeMap::from([
+            ("orders".into(), Resources::default().consumes(&["jobs"])),
+            ("billing".into(), Resources::default().consumes(&["jobs"])),
+        ]);
+
+        let orphans = find_orphans(&lock, "default", &resources);
+        assert!(
+            orphans.queues.is_empty(),
+            "jobs is still consumed by two live contexts: {orphans:?}"
+        );
+    }
+
+    #[test]
+    fn a_queue_no_context_declares_anymore_is_orphaned() {
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.record_queue("default", "stale-jobs");
+        let resources = BTreeMap::from([("orders".into(), Resources::default())]);
+
+        let orphans = find_orphans(&lock, "default", &resources);
+        assert_eq!(orphans.queues, names(&["stale-jobs"]));
+    }
+
+    #[test]
+    fn find_orphans_is_scoped_to_the_named_environment() {
+        // A "staging" orphan must never leak into "default"'s report, and
+        // vice versa — environments (slice 4) stay fully independent.
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.environments
+            .entry("staging".into())
+            .or_default()
+            .kv
+            .insert(
+                "gone".into(),
+                KvNamespace {
+                    id: "kv-staging-gone".into(),
+                },
+            );
+        let resources = BTreeMap::new();
+
+        assert!(
+            find_orphans(&lock, "default", &resources).kv.is_empty(),
+            "default"
+        );
+        assert_eq!(
+            find_orphans(&lock, "staging", &resources).kv,
+            names(&["gone"])
+        );
+    }
+
+    #[test]
+    fn an_absent_environment_has_no_orphans() {
+        let lock = DeployLock::default();
+        let orphans = find_orphans(&lock, "default", &BTreeMap::new());
+        assert_eq!(orphans, Orphans::default());
+    }
+
+    #[test]
+    fn has_prunable_ignores_worker_only_orphans() {
+        // The bug the review caught: a project whose only orphan is an
+        // unprunable Worker must not trigger confirm_prune's "Delete 0
+        // resource(s)?" prompt at all.
+        let worker_only = Orphans {
+            workers: names(&["gone"]),
+            ..Default::default()
+        };
+        assert!(!worker_only.has_prunable());
+
+        let with_kv = Orphans {
+            kv: names(&["gone"]),
+            ..Default::default()
+        };
+        assert!(with_kv.has_prunable());
+
+        let with_queue = Orphans {
+            queues: names(&["gone"]),
+            ..Default::default()
+        };
+        assert!(with_queue.has_prunable());
+
+        assert!(!Orphans::default().has_prunable());
+    }
+
+    #[test]
+    fn should_trust_recorded_kv_only_when_the_id_is_live_or_unchecked() {
+        let live = BTreeSet::from(["kv-abc".to_string()]);
+        assert!(
+            should_trust_recorded_kv(Some("kv-abc"), Some(&live)),
+            "recorded and present in the live set"
+        );
+        assert!(
+            !should_trust_recorded_kv(Some("kv-deleted"), Some(&live)),
+            "recorded but Cloudflare no longer has it — treat as unrecorded"
+        );
+        assert!(
+            should_trust_recorded_kv(Some("kv-abc"), None),
+            "the fetch never ran or failed — trust the ledger, as pre-slice-5"
+        );
+        assert!(
+            !should_trust_recorded_kv(None, Some(&live)),
+            "nothing recorded at all"
+        );
+        assert!(!should_trust_recorded_kv(None, None));
+    }
+
+    #[test]
+    fn kv_namespace_already_deleted_matches_the_confirmed_error_shape() {
+        // Confirmed empirically against a real account (#839): `namespace not
+        // found [code: 10013]`. The code is matched, not just the prose — the
+        // more durable half if Cloudflare ever reword the message.
+        assert!(kv_namespace_already_deleted(
+            "✘ [ERROR] A request to the Cloudflare API (...) failed.\n  namespace not found [code: 10013]"
+        ));
+        assert!(kv_namespace_already_deleted("code: 10013"));
+        assert!(!kv_namespace_already_deleted(
+            "✘ [ERROR] Authentication error [10000]"
+        ));
+        assert!(!kv_namespace_already_deleted(""));
+    }
+
+    #[test]
+    fn queue_already_deleted_matches_the_confirmed_error_shape() {
+        // Confirmed empirically (#839): `Queue "<name>" does not exist. To
+        // create it, run: wrangler queues create <name>`.
+        assert!(queue_already_deleted(
+            "✘ [ERROR] Queue \"jobs\" does not exist. To create it, run: wrangler queues create jobs"
+        ));
+        assert!(!queue_already_deleted(
+            "✘ [ERROR] A queue with this name already exists"
+        ));
+        assert!(!queue_already_deleted(""));
+    }
+
+    #[test]
+    fn confirm_prune_short_circuits_on_yes_without_touching_stdin() {
+        // The one path of confirm_prune testable without a terminal: --yes
+        // must return true immediately, exactly as `confirm` does.
+        assert!(confirm_prune(true, &Orphans::default()));
     }
 
     fn scratch_lock_path(label: &str) -> std::path::PathBuf {

@@ -1,10 +1,12 @@
 # Deploy — `bynk deploy`: provisioning + remote deploy, the capstone of the driver arc
 
-- **Status:** Slicing. Direction settled; slices 0–4 shipped (state model + KV
-  MVP, DO/queue provisioning, multi-context ordering, secrets — plus the #632
-  follow-up on computed secret names — and environments, #835). Slice 5
-  (reconciliation maturity) remains, and is the track's last. Live state on
-  the track's **spine issue**, [#558](https://github.com/accuser/bynk/issues/558)
+- **Status:** All six slices shipped (state model + KV MVP, DO/queue
+  provisioning, multi-context ordering, secrets — plus the #632 follow-up on
+  computed secret names — environments (#835), and reconciliation maturity
+  (#839)). Ready for retirement per `design/tracks/README.md` §5 — the
+  retirement PR is a separate, deliberate step, not folded into slice 5's.
+  Live state on the track's **spine issue**,
+  [#558](https://github.com/accuser/bynk/issues/558)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** `design/bynk-tooling-roadmap.md` §5.1 (the driver arc `doctor → new → dev → deploy`, closing with "the on-ramp arc is complete; **`deploy` (provisioning + remote) follows**"), and the deferral [ADR 0096](../decisions/0096-bynk-dev.md) named by name — `bynk dev` (D4) "provisions nothing and never edits `wrangler.toml`… Real, provisioned remote support is **`deploy`'s defining problem, the next slice**." It executes the deploy half of the [ADR 0084](../decisions/0084-doctor-output-exit-contract.md) `Deploy` capability (`dev`/`deploy` share the Node + `wrangler` gate) and turns the deploy-time placeholders [ADR 0017](../decisions/0017-platform-lock-per-deployment-unit.md) locks a context to (`id = "<KV_NAMESPACE_ID>"`, DO migrations, queue consumers, Service Bindings) into live resources.
 - **Posture:** Feature track per [ADR 0076](../decisions/0076-feature-track-posture.md). Qualifies on all three axes: **multi-increment** (an MVP single-context deploy, the provisioning-state model, multi-context topology + ordering, secrets/config, environments, reconciliation/drift); **surface not yet settled** (where provisioned resource identity lives given `wrangler.toml` is regenerated every build, the reconciliation model, the environment surface); and a **safety boundary** — this is the **first driver command with irreversible, outward-facing side effects**: it authenticates to a cloud account, *creates* and *mutates* live resources, pushes running code, and handles credentials. `doctor` reports, `new` writes local files, `dev` runs Miniflare locally; none of them touch anything a user cannot delete by hand. `deploy` is categorically different, and that difference is the reason it is a track and not a fourth additive verb alongside #487's `check`/`test`/`fmt`.
@@ -343,8 +345,9 @@ they must never enter the deploy-state file or generated config (§6). The seam:
 
 ### 4.5 Idempotency and reconciliation
 
-The property that makes `deploy` safe to re-run — and the reason the state file
-(§3) is a *ledger*, not a cache:
+**Shipped — slice 5 (#839), the reconciliation-maturity ADR (number assigned at
+merge).** The property that makes `deploy` safe to re-run — and the reason the
+state file (§3) is a *ledger*, not a cache:
 
 - **Recorded ⇒ reuse; absent ⇒ provision — on each resource's own key.** The
   plan (§4.1) is a diff of derived-resources (§4.2) against the ledger, and the
@@ -352,15 +355,34 @@ The property that makes `deploy` safe to re-run — and the reason the state fil
   presence, DO migrations delegated to wrangler's own tracking (not the ledger).
   A second `deploy` with no source change provisions nothing and pushes the
   current code.
-- **Drift detection.** If a recorded resource no longer exists remotely (deleted
-  out-of-band), the plan surfaces it as *re-provision*; if the config changed
-  (a new agent → a new migration), the plan surfaces the delta. `deploy`
-  **never silently destroys** — resource removal (a deleted context's namespace)
-  is *reported*, not auto-deleted, in v1 (Q6; the destructive-op safety line, §6).
+- **Drift detection — KV only, at provision time, once per run.** Resolved
+  narrower than this section originally framed. Queues already self-heal
+  (ADR 0194 D2's create-every-time shape); KV was the one asymmetry — a
+  recorded id was trusted unconditionally, so a namespace deleted out-of-band
+  got injected dead. `deploy` now asks Cloudflare's live namespace-id set
+  once per run, before the per-context loop (not once per context, and not
+  at plan time — `--dry-run` still never authenticates), and a recorded id
+  absent from that set is re-provisioned exactly as an absent record would
+  be.
+- **Orphan reporting — a pure, offline diff, per resource kind.** Resource
+  removal (a deleted context's namespace, a queue nothing declares anymore)
+  is *reported* in the plan before any mutation, computed against the current
+  build's full declared resources regardless of `--context`. `kv` and
+  `workers` are independent checks — a removed context with KV is two
+  reported orphans, not one (they're two resources, tracked separately in
+  the ledger).
+- **`--prune` (Q6, resolved) — KV namespaces and queues, never a Worker.**
+  Opt-in, its own confirmation on top of the creation gate (§6), and
+  idempotent: deleting an already-gone resource is treated as success and
+  still clears the ledger entry, so a half-completed prune never wedges on
+  re-run. `wrangler delete` (a whole Worker) stays out of scope — its blast
+  radius (routes, custom domains, cron triggers) is categorically larger
+  than a namespace or a queue.
 - **`--dry-run` / `--plan`.** The plan is printed (and `--format json` pinned,
   in the ADR 0084 style) before any mutation, so a user sees exactly what will
-  be created/changed/pushed. This is the confirm-before-first-billable-mutation
-  surface (§6).
+  be created/changed/pushed — orphans included. This is the
+  confirm-before-first-billable-mutation surface (§6); `--prune` layers its
+  own, stronger gate on top, as this section originally anticipated.
 
 ### 4.6 Environments
 
@@ -479,8 +501,10 @@ command whose actions are **outward-facing and hard to reverse**.
 - **Q5 — release semantics.** Rollback / versioned deploys / traffic splitting
   are a large follow-on (§2 non-goal). Confirm v1 is deploy-current-source only,
   and that the state schema does not foreclose adding version history later.
-- **Q6 — orphan handling.** Report-only (v1) vs an explicit `--prune`; never an
-  auto-delete default (§4.5, §6). Confirm the report surface.
+- **Q6 — orphan handling. Resolved, slice 5 (§4.5).** Both, not an either/or:
+  report-only is the default, `--prune` is the explicit opt-in, and neither
+  ever auto-deletes. `--prune` itself is scoped narrower than "any orphan" —
+  KV and queues only, never a Worker — a line the original framing left open.
 - **Q7 — environment model. Resolved, slice 4 (§4.6).** Neither of the framed
   options: the driver synthesises `[env.<name>]` at deploy time (confirmed
   necessary — Cloudflare does not inherit bindings into a named environment),
@@ -529,10 +553,12 @@ slices build on the state model.
 - **Slice 4 — environments. Shipped (#835).** `--env` over the already-env-keyed
   state schema (§4.6) — additive, as slice 0's schema anticipated. Resolved
   Q7: the driver, not the emitter, synthesises `[env.<name>]` at deploy time.
-- **Slice 5 — reconciliation maturity + orphan reporting.** Drift detection
-  (§4.5), orphan report and optional `--prune` (Q6, the first deletion gate), the
-  richer `--format json` plan. Hardens the re-run story; the release-semantics
-  follow-ons (Q5) are explicitly *out* and noted for a future track.
+- **Slice 5 — reconciliation maturity + orphan reporting. Shipped (#839).**
+  KV drift detection (§4.5, once-per-run), orphan report and `--prune`
+  scoped to KV/queues (Q6, the track's first deletion gate), the richer
+  `--format json` plan. Hardens the re-run story; the release-semantics
+  follow-ons (Q5) are explicitly *out* and noted for a future track. **This
+  was the track's last slice.**
 
 ## 9. Risks
 

@@ -53,6 +53,11 @@ deploy api
 # --format json
 {
   "environment": "default",
+  "orphans": {
+    "kv": [],
+    "workers": [],
+    "queues": []
+  },
   "order": [
     "commerce-payment",
     "commerce-orders"
@@ -89,6 +94,11 @@ deploy api
 # --format json, a context that computes a secret name
 {
   "environment": "default",
+  "orphans": {
+    "kv": [],
+    "workers": [],
+    "queues": []
+  },
   "order": [
     "api"
   ],
@@ -115,6 +125,11 @@ deploy api
 # --format json, with declared and supplied secrets
 {
   "environment": "default",
+  "orphans": {
+    "kv": [],
+    "workers": [],
+    "queues": []
+  },
   "order": [
     "api"
   ],
@@ -156,6 +171,11 @@ deploy api
 # --format json, with a queue and a migration
 {
   "environment": "default",
+  "orphans": {
+    "kv": [],
+    "workers": [],
+    "queues": []
+  },
   "order": [
     "jobs"
   ],
