@@ -3788,14 +3788,29 @@ fn emit_stub_class(
     // its types, variants and `uses` vocabulary resolve unqualified.
     let owning_unit = target_name.to_string();
     let scope_ns = owning_unit.replace('.', "_");
-    let mut scope_type_names: HashSet<String> = unit_tables
+    // Each in-scope type name's *owning* namespace — the target's own for a
+    // locally-declared type, but the specific `uses`d commons' for one reached
+    // only through it (never the target's), since `emit_context_rebrands`
+    // only re-exports a `uses`-sourced type under the target's namespace when
+    // the target's own lowered body references it by name — a stub class
+    // implementing an adapter-flattened capability (e.g. `Locale`) generally
+    // doesn't (Locale capability track, slice 1, #844).
+    let mut type_ns: HashMap<String, String> = unit_tables
         .get(&owning_unit)
-        .map(|t| t.types.keys().cloned().collect())
+        .map(|t| {
+            t.types
+                .keys()
+                .map(|n| (n.clone(), scope_ns.clone()))
+                .collect()
+        })
         .unwrap_or_default();
     if let Some(used) = unit_uses.get(&owning_unit) {
         for u in used {
             if let Some(table) = unit_tables.get(u) {
-                scope_type_names.extend(table.types.keys().cloned());
+                let uns = u.replace('.', "_");
+                for n in table.types.keys() {
+                    type_ns.entry(n.clone()).or_insert_with(|| uns.clone());
+                }
             }
         }
     }
@@ -3843,13 +3858,12 @@ fn emit_stub_class(
                 format!(
                     "{}: {}",
                     p.name.name,
-                    emitter::ts_type_ref_qualified(&p.type_ref, &scope_type_names, &scope_ns)
+                    emitter::ts_type_ref_qualified_multi(&p.type_ref, &type_ns)
                 )
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let return_ty =
-            emitter::ts_type_ref_qualified(&op.return_type, &scope_type_names, &scope_ns);
+        let return_ty = emitter::ts_type_ref_qualified_multi(&op.return_type, &type_ns);
         out.push_str(&format!("  async {method}({params}): {return_ty} {{\n"));
         if !scope_names.is_empty() {
             out.push_str(&format!(
@@ -4144,7 +4158,22 @@ fn emit_test_deps(
         // Cross-context surface: consumed contexts run with their real surface
         // (v0.118 `stub` is capability-only — a consumed-context capability
         // flattened via `consumes U { Cap }` is a target capability above).
-        let consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
+        // An `adapter` target (e.g. `consumes bynk { Locale }`) has no
+        // `makeSurface` at all — its capabilities are already flattened into
+        // `caps` above — so it must not get a surface entry (Locale
+        // capability track, slice 1, #844).
+        let consumed: Vec<String> = unit_consumes
+            .get(target_name)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|q| {
+                !matches!(
+                    unit_tables.get(q).and_then(|t| t.kind),
+                    Some(UnitKind::Adapter)
+                )
+            })
+            .collect();
         let aliases = unit_consumes_aliases
             .get(target_name)
             .cloned()
@@ -4303,6 +4332,10 @@ fn emit_test_scope_setup(
         }
         for q in consumed {
             let ns = q.replace('.', "_");
+            let is_adapter = matches!(
+                unit_tables.get(q).and_then(|t| t.kind),
+                Some(UnitKind::Adapter)
+            );
             if let Some(table) = unit_tables.get(q) {
                 let mut names: Vec<&String> = table.types.keys().collect();
                 names.sort();
@@ -4313,6 +4346,12 @@ fn emit_test_scope_setup(
                         joined.join(", ")
                     ));
                 }
+            }
+            // An `adapter` target has no `makeSurface`/`deps.surface` entry —
+            // its capabilities are already flattened onto `deps` directly
+            // (Locale capability track, slice 1, #844).
+            if is_adapter {
+                continue;
             }
             let key = alias_for
                 .get(q)

@@ -1,0 +1,18 @@
+---
+Locale capability track, slice 1 (#844): the shipped `stub` test-double
+mechanism already covers overriding `Locale.current()` — no dedicated
+test-provider class is needed.
+---
+suite app.greet as integration {
+  stub Locale.current() returns "fr"
+
+  case "a stubbed locale is what the capability reports" {
+    let tag <- currentTag.call()
+    expect tag == "fr"
+  }
+
+  case "render is unaffected by the stub in slice 1 (tag is unused)" {
+    let g <- greeting.call()
+    expect g == "hello"
+  }
+}

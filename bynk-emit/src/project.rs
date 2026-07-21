@@ -1065,6 +1065,12 @@ fn phase_parse(
             .any(|pf| pf.uses().iter().any(|u| u.target.joined() == unit))
     };
     let uses_map = uses_unit(&parsed, firstparty::MAP_UNIT);
+    // `bynk.locale` itself `uses bynk.list` and `uses bynk.string` (including
+    // transitively via the `bynk` adapter's own `uses bynk.locale`, for
+    // `capability Locale`'s `LocaleTag` — Locale capability track, slice 1,
+    // #844); compute it up front so both injections below can OR it in the
+    // same way `uses_map` is OR'd into the `bynk.list` check.
+    let uses_locale = uses_unit(&parsed, firstparty::LOCALE_UNIT);
     if uses_map {
         match lexer::tokenize(firstparty::BYNK_MAP_SRC)
             .map_err(|e| vec![e])
@@ -1082,7 +1088,7 @@ fn phase_parse(
             Err(errs) => errors.extend_for(None, errs),
         }
     }
-    if uses_map || uses_unit(&parsed, firstparty::LIST_UNIT) {
+    if uses_map || uses_locale || uses_unit(&parsed, firstparty::LIST_UNIT) {
         match lexer::tokenize(firstparty::BYNK_LIST_SRC)
             .map_err(|e| vec![e])
             .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_LIST_SRC))
@@ -1101,7 +1107,7 @@ fn phase_parse(
     }
     // v0.22a: the first-party string commons — derived helpers over the
     // built-in string kernel (ADR 0046).
-    if uses_unit(&parsed, firstparty::STRING_UNIT) {
+    if uses_locale || uses_unit(&parsed, firstparty::STRING_UNIT) {
         match lexer::tokenize(firstparty::BYNK_STRING_SRC)
             .map_err(|e| vec![e])
             .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_STRING_SRC))
@@ -1111,6 +1117,26 @@ fn phase_parse(
                 source_path: PathBuf::from("bynk/string.bynk"),
                 abs_path: None,
                 source: firstparty::BYNK_STRING_SRC.to_string(),
+                unit,
+                kind: UnitKind::Commons,
+                synthetic: true,
+            }),
+            Err(errs) => errors.extend_for(None, errs),
+        }
+    }
+    // Locale capability track, slice 1 (#844): the locale value types
+    // (`LocaleTag`/`MessageArg`/`Message`) and the bundle-free `render`
+    // helper.
+    if uses_locale {
+        match lexer::tokenize(firstparty::BYNK_LOCALE_SRC)
+            .map_err(|e| vec![e])
+            .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_LOCALE_SRC))
+        {
+            Ok(unit) => parsed.push(ParsedFile {
+                identity_path: PathBuf::from("bynk/locale.bynk"),
+                source_path: PathBuf::from("bynk/locale.bynk"),
+                abs_path: None,
+                source: firstparty::BYNK_LOCALE_SRC.to_string(),
                 unit,
                 kind: UnitKind::Commons,
                 synthetic: true,

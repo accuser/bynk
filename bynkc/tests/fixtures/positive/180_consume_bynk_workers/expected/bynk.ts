@@ -3,6 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "./runtime.js";
 
+import { LocaleTag } from "./bynk/locale.js";
+
 /**
  * A UUID in canonical 8-4-4-4-12 lowercase-hex form.
  */
@@ -116,6 +118,16 @@ export interface Secrets {
 }
 
 export const SecretsToken: unique symbol = Symbol("Secrets");
+
+/**
+ * Reads the current locale for this request/session. Slice 1: always
+ * returns a fixed reference tag (`"en"`) on every platform.
+ */
+export interface Locale {
+  current(): Promise<LocaleTag>;
+}
+
+export const LocaleToken: unique symbol = Symbol("Locale");
 
 export function serialise_FetchError(value: FetchError): JsonValue {
   switch (value.tag) {

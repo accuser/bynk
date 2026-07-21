@@ -1,0 +1,22 @@
+---
+Locale capability track, slice 1 (#844): `render` is bundle-free — the
+output is always `code` plus a deterministic, key-sorted rendering of
+`params`. These cases pin that determinism: no params, one param, and
+multiple params (proving sort-by-key, not insertion order).
+---
+suite app.greet as unit {
+  case "no params renders just the code" {
+    let g <- greeting.call()
+    expect g == "hello"
+  }
+
+  case "one param renders code plus the substitution" {
+    let g <- greetingWithName.call("Ada")
+    expect g == "greeting {name=Ada}"
+  }
+
+  case "multiple params render sorted by key, not call order" {
+    let g <- greetingWithCountAndName.call("Ada", 3)
+    expect g == "greeting {count=3, name=Ada}"
+  }
+}
