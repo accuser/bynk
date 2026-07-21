@@ -163,6 +163,16 @@ pub fn complete(line_prefix: &str, doc_text: &str, files: Option<&[PathBuf]>) ->
     if after_clause_keyword(line_prefix, "provides") {
         return in_scope_capabilities(doc_text, files);
     }
+    // 4g. `where <cursor>` — the closed refinement-predicate vocabulary.
+    // Shared by a type declaration's `type X = Base where <cursor>` and
+    // (#472) a match arm's `_ where <cursor>`; both reuse the same closed
+    // predicate catalogue, so one branch serves both surfaces. Excludes a
+    // `for all x: T, … where <cursor>` binder's clause, which takes an
+    // arbitrary `Bool` expression, not the predicate catalogue — that case
+    // falls through to expression-position candidates below.
+    if after_clause_keyword(line_prefix, "where") && !is_for_all_where(line_prefix) {
+        return predicate_name_candidates();
+    }
     // 5. Type position (`: T`, `-> T`, `[ … ]` type args) — built-ins, the
     //    `bynk`-surface transparent types, and project type declarations.
     if is_type_position(line_prefix) {
@@ -670,6 +680,35 @@ fn after_clause_keyword(line: &str, kw: &str) -> bool {
             .all(|c| c.is_alphanumeric() || c == '_')
 }
 
+/// #472 (finding 2, PR #827 review): `for all x: T, y: U where <cursor>` — a
+/// generative-test binder's clause. Unlike a type declaration's or a refined
+/// pattern's `where`, this one takes an arbitrary `Bool` expression over the
+/// bound names, not the closed predicate catalogue; `after_clause_keyword`
+/// only matches the keyword text, so this excludes that one `where` position
+/// from the predicate-vocabulary branch. `line`'s last `where` is checked
+/// against the text immediately before it, ignoring the binding list, since
+/// `for`/`all` are contextual (not lexer) keywords only meaningful in this
+/// exact `for all` sequence.
+fn is_for_all_where(line: &str) -> bool {
+    let Some(idx) = line.rfind("where") else {
+        return false;
+    };
+    let head = line[..idx].trim_start();
+    let Some(after_for) = head.strip_prefix("for") else {
+        return false;
+    };
+    // `for` must be a standalone word (a whitespace boundary), not a prefix
+    // of a longer identifier (`format(...)`).
+    if !after_for.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let Some(after_all) = after_for.trim_start().strip_prefix("all") else {
+        return false;
+    };
+    // Likewise `all` — `allocate` is not the `for all` keyword.
+    after_all.is_empty() || after_all.starts_with(char::is_whitespace)
+}
+
 /// v0.124 (slice 3): the cursor sits in a contract-clause predicate —
 /// `requires <name>: <cursor>` or `ensures <name>: <cursor>` — where the
 /// enclosing function's parameters (and, for an `ensures`, `result`) are in
@@ -889,6 +928,31 @@ fn export_kind_candidates() -> Vec<Completion> {
         .into_iter()
         .map(|k| Completion::item(k, CompletionKind::Keyword, Some("export kind".into())))
         .collect()
+}
+
+/// The closed refinement-predicate vocabulary offerable after `where` —
+/// shared by a type declaration's refinement and (#472) a match arm's
+/// `_ where <predicate>`. Mirrors `PredKind::name()`.
+fn predicate_name_candidates() -> Vec<Completion> {
+    [
+        "Matches",
+        "InRange",
+        "MinLength",
+        "MaxLength",
+        "Length",
+        "NonNegative",
+        "Positive",
+        "NonEmpty",
+    ]
+    .into_iter()
+    .map(|k| {
+        Completion::item(
+            k,
+            CompletionKind::Keyword,
+            Some("refinement predicate".into()),
+        )
+    })
+    .collect()
 }
 
 /// The project's `actor` names, offerable after `by`.
@@ -2326,6 +2390,42 @@ mod tests {
         let doc = "context a.b\n\ncapability Store { fn get() -> Effect[Int] }\n";
         let got = labels("  provides ", doc);
         assert!(got.contains(&"Store".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn where_offers_predicate_names() {
+        // Type-decl refinement.
+        let got = labels("  type Code = Int where ", "context a.b\n");
+        assert!(got.contains(&"InRange".to_string()), "{got:?}");
+        assert!(got.contains(&"NonNegative".to_string()));
+        // #472: a match arm's `_ where <predicate>` shares the same catalogue.
+        let got = labels("      _ where ", "context a.b\n");
+        assert!(got.contains(&"Matches".to_string()), "{got:?}");
+        assert!(got.contains(&"NonEmpty".to_string()));
+    }
+
+    #[test]
+    fn is_for_all_where_matches_only_the_for_all_binder() {
+        assert!(is_for_all_where("\tfor all x: Int, y: Int where "));
+        assert!(is_for_all_where("for all x: Int where "));
+        // `for`/`all` must be standalone words, not prefixes of longer
+        // identifiers.
+        assert!(!is_for_all_where("format(x) where "));
+        assert!(!is_for_all_where("for allocate x where "));
+        // A type-decl or match-arm `where` isn't a `for all` binder.
+        assert!(!is_for_all_where("  type Code = Int where "));
+        assert!(!is_for_all_where("      _ where "));
+        assert!(!is_for_all_where("no where here"));
+    }
+
+    #[test]
+    fn for_all_where_falls_through_to_expression_position_not_predicates() {
+        // #472 (finding 2, PR #827 review): a `for all` binder's `where`
+        // clause takes an arbitrary `Bool`, not the predicate catalogue —
+        // it must not offer `InRange`/`NonNegative`/etc.
+        let got = labels("\tfor all x: Int where ", "context a.b\n");
+        assert!(!got.contains(&"InRange".to_string()), "{got:?}");
+        assert!(!got.contains(&"NonNegative".to_string()), "{got:?}");
     }
 
     #[test]

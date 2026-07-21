@@ -4092,6 +4092,23 @@ fn literal_case_label(value: &LiteralValue) -> String {
     }
 }
 
+/// #472: the `Int`/`String`/`Bool` base of a literal-kind type, or `None` for
+/// anything else. Mirrors the checker's `literal_base_of` (and the
+/// per-variant logic in [`is_literal_match`]) — used to feed
+/// [`refined_check_as_bool`] the base a `_ where predicate` pattern's
+/// scrutinee actually has.
+fn literal_base_of_ty(ty: &Ty) -> Option<BaseType> {
+    let base = match ty {
+        Ty::Base(b) => *b,
+        Ty::Named {
+            kind: NamedKind::Refined(b),
+            ..
+        } => *b,
+        _ => return None,
+    };
+    matches!(base, BaseType::Int | BaseType::String | BaseType::Bool).then_some(base)
+}
+
 /// Whether an expression lowers to a stable reference TypeScript can narrow
 /// across a `switch` (a variable or a property path rooted in one). Calls and
 /// other computed expressions are not narrowable and must be bound to a temp.
@@ -4200,6 +4217,12 @@ fn emit_match_case(
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
+        // #472: a refined arm always trips `match_needs_if_chain`, so the
+        // switch path (this function) never sees one in practice — a
+        // predicate has no `case`-label lowering, unlike a literal or a tag.
+        Pattern::Refined { .. } => {
+            unreachable!("a Pattern::Refined arm always routes through emit_match_if_chain")
+        }
         Pattern::Variant {
             variant, bindings, ..
         } => {
@@ -4256,6 +4279,14 @@ fn emit_match_case(
                         "pattern.is_irrefutable() is false, so no alternative is a wildcard or binding"
                     ),
                     Pattern::Or(..) => unreachable!("an Or's alternatives are always leaves"),
+                    // #472/#474: the parser only ever wraps a *whole*,
+                    // already-folded `|`-chain in `Refined` (never the other
+                    // way — see `parse_pattern_where_suffix`), so an `Or`'s
+                    // alternatives (built from `parse_pattern_base`) can never
+                    // themselves be `Refined`.
+                    Pattern::Refined { .. } => {
+                        unreachable!("an Or's alternatives are never a Refined pattern")
+                    }
                 };
                 if i == last {
                     write_line(out, indent, &format!("case {label}: {{"));
@@ -4294,8 +4325,11 @@ fn emit_match_body(
 /// neither. Flat, unguarded matches keep the `switch` (zero churn to existing
 /// output).
 fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
-    arms.iter()
-        .any(|a| a.guard.is_some() || pattern_has_nested_test(&a.pattern))
+    arms.iter().any(|a| {
+        a.guard.is_some()
+            || pattern_has_nested_test(&a.pattern)
+            || matches!(a.pattern, Pattern::Refined { .. })
+    })
 }
 
 /// True when `pat` carries a payload sub-pattern that is itself refutable (a
@@ -4306,6 +4340,15 @@ fn pattern_has_nested_test(pat: &Pattern) -> bool {
             let sp = b.pattern();
             !sp.is_irrefutable() || pattern_has_nested_test(sp)
         }),
+        // #472: a refined pattern is never a top-level irrefutable/nested
+        // payload today (the parser admits only `_` as `inner`, and only at a
+        // match arm's top level), but keep this exhaustive and correct for
+        // when nesting is admitted. (An `Or`'s alternatives can never
+        // themselves be `Refined` — #472/#474's merged parser design only
+        // ever wraps a *whole*, already-folded `|`-chain in `Refined`, never
+        // the other way around — so this arm only matters nested under a
+        // payload, e.g. a hypothetical `Some(_ where P)`.)
+        Pattern::Refined { inner, .. } => !inner.is_irrefutable() || pattern_has_nested_test(inner),
         // #474: a bindingless, non-nested or-pattern (`1 | 2 | 3`,
         // `Pending | Cancelled(_, _)`) stays on the flat switch — it lowers to
         // fall-through `case` labels sharing one body. One with bindings or a
@@ -4332,6 +4375,28 @@ fn pattern_match_tests(
         Pattern::Wildcard(_) | Pattern::Binding(_) => {}
         Pattern::Literal { value, .. } => {
             tests.push(format!("{path} === {}", literal_case_label(value)));
+        }
+        // #472: `p where predicate` — the inner pattern's own tests, then the
+        // predicate as a boolean guard over the runtime value at `path`,
+        // reusing `refined_check_as_bool` verbatim (the same helper `value is
+        // RefinedType` lowers through).
+        Pattern::Refined {
+            inner, predicate, ..
+        } => {
+            pattern_match_tests(path, path_ty, inner, cx, tests);
+            // The checker (`check_pattern`) already rejected any scrutinee
+            // that isn't literal-kind before this point, so `path_ty` is
+            // always `Int` or `String` here for a well-typed program — a
+            // silent fallback would mask a real bug (wrong predicate codegen
+            // against the wrong base) rather than surfacing it loudly, the
+            // same posture as `emit_match_case`'s `Pattern::Refined` arm.
+            let base = path_ty.and_then(literal_base_of_ty).unwrap_or_else(|| {
+                panic!(
+                    "a refined pattern's scrutinee must be literal-kind (Int/String), got {:?}",
+                    path_ty
+                )
+            });
+            tests.push(refined_check_as_bool(path, base, Some(predicate)));
         }
         Pattern::Variant {
             variant, bindings, ..
@@ -4393,6 +4458,11 @@ fn emit_pattern_bindings(
                 indent,
                 &format!("const {} = {path};", ts_ident(&id.name)),
             );
+        }
+        // #472: a refined pattern binds only what its inner pattern binds
+        // (`_ where P` binds nothing today).
+        Pattern::Refined { inner, .. } => {
+            emit_pattern_bindings(out, indent, path, path_ty, inner, cx);
         }
         Pattern::Variant {
             variant, bindings, ..
@@ -4504,6 +4574,10 @@ fn pattern_binding_paths(
                 pattern_binding_paths(path, path_ty, first, cx, out);
             }
         }
+        // #472: binds only what its inner pattern binds (`_ where P` binds
+        // nothing today) — same recursion as `emit_pattern_bindings`'s
+        // `Refined` arm.
+        Pattern::Refined { inner, .. } => pattern_binding_paths(path, path_ty, inner, cx, out),
     }
 }
 
@@ -4596,6 +4670,21 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
         // value-equality it would mean, defensively.
         Pattern::Literal { value, .. } => {
             format!("{v} === {}", literal_case_label(value))
+        }
+        // #472: the checker rejects a refined pattern on the RHS of `is`
+        // (D5), so this is unreachable for a well-typed program; lower it
+        // defensively via the same `pattern_match_tests` a `match` arm uses
+        // (which already handles `Pattern::Refined` — inner tests plus the
+        // predicate via `refined_check_as_bool`).
+        Pattern::Refined { .. } => {
+            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let mut tests = Vec::new();
+            pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
+            if tests.is_empty() {
+                "true".to_string()
+            } else {
+                tests.join(" && ")
+            }
         }
         // #705: a variant pattern lowers to its full structural test — the outer
         // tag *and* any nested refutable payload patterns, so

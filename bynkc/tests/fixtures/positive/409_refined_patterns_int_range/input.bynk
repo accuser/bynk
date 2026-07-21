@@ -1,0 +1,10 @@
+commons demo.refined_patterns_int_range {
+  fn classify(status: Int) -> String {
+    match status {
+      _ where InRange(200, 299) => "success"
+      _ where InRange(400, 499) => "client error"
+      _ where InRange(500, 599) => "server error"
+      _ => "other"
+    }
+  }
+}

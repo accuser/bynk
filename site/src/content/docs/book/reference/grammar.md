@@ -1388,7 +1388,12 @@ The patterns used in `match` arms and `is` checks.
 
 One arm of a `match`: a pattern, an optional `if` guard over the pattern's
 bindings, `=>`, and a result expression. A guarded arm never satisfies
-exhaustiveness (its guard may fail at runtime).
+exhaustiveness (its guard may fail at runtime). `refined_pattern` (#472) is
+admitted only here — a match arm's top-level pattern — not through `pattern`
+generally, so it is never reachable from `is` or from a nested payload
+position; a match arm's pattern is always followed by a fixed terminator
+(`if`/`=>`), unlike an expression position, where `refinement`'s own
+`&&`-joined predicate list would be ambiguous with the surrounding grammar.
 
 **Static semantics.**
 {{#grammar-semantics match_arm}}
@@ -1451,6 +1456,27 @@ value type. `|` is a pattern-position operator only, distinct from boolean
 Parentheses around a pattern — transparent grouping, most useful around an
 or-pattern for readability (`is (Held(...) | Confirmed(...))`). Optional:
 `is` already parses one whole pattern, `|`-chain included, without them.
+Never admits a `refined_pattern` inside (#472) — see below.
+
+### refined_pattern {#rule-refined_pattern}
+
+{{#grammar refined_pattern}}
+
+`p 'where' predicate` (#472) — a runtime guard on a pattern, reusing the
+closed refinement-predicate catalogue a `type X = Base where P` declaration
+uses ([`refinement`](#rule-refinement)). v1 admits only `_ where predicate` —
+the compiler rejects any other inner form (`bynk.parse.refined_pattern_inner`).
+Admitted only against a literal-kind scrutinee (`Int`/`String`); a guard, not
+a narrowing — matching a refined arm does not change any static type. Like an
+`if` guard, a refined arm alone is never exhaustive, and it is `match`-only —
+one on the right of `is` is rejected (`bynk.types.is_refined_pattern`).
+Composes with an or-pattern only as the whole thing's outer wrapper —
+`(p₁ | p₂) where predicate` refines the alternation as a unit — never as one
+alternative among others (`match_arm`'s pattern field is a single
+`choice($._pattern, $.refined_pattern)`, not a repetition, so a refined
+pattern can never appear as one `|`-separated alternative alongside others).
+
+**See also.** [Pattern-match with `match`](/book/guides/type-system/match/).
 
 ### pattern_binding {#rule-_pattern_binding}
 

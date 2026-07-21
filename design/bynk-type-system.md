@@ -715,8 +715,28 @@ complete once both `true` and `false` appear (or a wildcard does). A repeated
 literal arm is rejected. Literal patterns are `match`-only — a literal on the
 right of `is` is rejected, since `is` tests a value's type/refinement, not
 equality (use `==`). Or-patterns (below) are implemented (#474); the
-remaining forms — record, tuple, and `where`-refined — are settled in shape
-but not yet implemented.
+remaining forms — record and tuple — are settled in shape but not yet
+implemented.
+
+*Refined patterns* (#472). `p 'where' refinement-predicate` guards a pattern
+with a runtime predicate test, reusing the closed refinement-predicate
+catalogue (§2.5.2) verbatim. v1 admits only `_ where predicate` — the inner
+form is always a wildcard; a binding inner (`x where predicate`) is deferred.
+A refined pattern is admitted only against a literal-kind scrutinee (`Int` or
+`String`; `Bool` has no applicable predicate, and `Float` stays rejected like
+any other literal-kind match, deferred). It is a **guard, not a narrowing**:
+matching a refined arm does not change the static type of anything in its
+body — that waits on refinement propagation (§2.5.4), still an open question.
+Like an `if` guard, a refined arm is never exhaustive on its own (the
+predicate might fail at runtime), so a refined-only arm set still needs a
+wildcard `_` arm. Refined patterns are `match`-only — one on the right of
+`is` is rejected, the same posture as a literal pattern, since `is` already
+has its own refinement check over a *named* refined type (ADR 0007). A
+refined pattern composes with or-patterns only as the *whole* pattern's
+outer wrapper — `(A | B) where P` refines the alternation as a unit — never
+as one alternative among others: `A where P | B` has no such reading, since
+a `where` always attaches to the entire preceding pattern, alternation
+included.
 
 Variant patterns with named fields support both positional and labelled forms:
 
@@ -749,8 +769,6 @@ flags.entries.all((e) => e.key == e.value.name)
 
 The lambda parameter `e` is an ordinary `MapEntry[K, V]` binding; the whole
 single-argument query vocabulary applies to `.entries` unchanged.
-
-Refined patterns `p where predicate` are admitted in narrow positions where the value's refinement is being checked or narrowed; the precise interaction with refinement propagation is part of §2.5.
 
 *Or-patterns* (`p₁ | p₂`) match either alternative. The pattern alternation operator `|` is left-associative and distinct from boolean OR `||`. Inside any pattern position, `|` is alternation; outside, it isn't a valid expression operator, so there's no syntactic ambiguity.
 

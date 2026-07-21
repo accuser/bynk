@@ -181,6 +181,34 @@ const CASES: &[Case] = &[
         body: "fn f(x: Map[String]) -> Int { 0 }",
         accept: false,
     },
+    // -- #472 refined patterns: `refined_pattern` is admitted only at a match
+    //    arm's top-level pattern (and, syntactically, `is`'s RHS — rejected by
+    //    the checker, not the grammar), never through a nested payload
+    //    position — see D4 in design/decisions/*-refined-patterns.md. A PR
+    //    review caught a drift here: `where`-suffix parsing had leaked into
+    //    every recursive `parse_pattern` call, so the compiler accepted (and
+    //    correctly compiled) `Ok(_ where P)` / `r is Ok(_ where P)`, which
+    //    tree-sitter rejects. --
+    Case {
+        what: "refined pattern at match-arm top level",
+        body: "fn f(x: Int) -> Int { match x { _ where NonNegative => 1 _ => 0 } }",
+        accept: true,
+    },
+    Case {
+        what: "refined pattern on is's top level rejected",
+        body: "fn f(x: Int) -> Bool { x is _ where NonNegative }",
+        accept: false,
+    },
+    Case {
+        what: "refined pattern nested in a match-arm payload rejected",
+        body: "fn f(r: Result[Int, String]) -> Int { match r { Ok(_ where NonNegative) => 1 Ok(_) => 2 Err(_) => 3 } }",
+        accept: false,
+    },
+    Case {
+        what: "refined pattern nested under is rejected",
+        body: "fn f(r: Result[Int, String]) -> Bool { r is Ok(_ where NonNegative) }",
+        accept: false,
+    },
 ];
 
 #[test]

@@ -2280,6 +2280,15 @@ fn pattern_to_string(p: &Pattern) -> String {
             LiteralValue::Str(s) => format!("\"{}\"", escape_string(s)),
             LiteralValue::Bool(b) => b.to_string(),
         },
+        // #472: `p where predicate` — the inner pattern, then the predicate
+        // list rendered the same way a `type X = Base where P` refinement is.
+        Pattern::Refined {
+            inner, predicate, ..
+        } => format!(
+            "{} where {}",
+            pattern_to_string(inner),
+            refinement_to_string(predicate)
+        ),
         Pattern::Variant {
             type_name,
             variant,

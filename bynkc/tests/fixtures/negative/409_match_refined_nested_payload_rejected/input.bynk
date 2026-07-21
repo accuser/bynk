@@ -1,0 +1,9 @@
+commons demo {
+  fn f(r: Result[Int, String]) -> Int {
+    match r {
+      Ok(_ where NonNegative) => 1
+      Ok(_) => 2
+      Err(_) => 3
+    }
+  }
+}

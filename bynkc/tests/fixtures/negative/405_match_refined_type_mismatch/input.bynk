@@ -1,0 +1,8 @@
+commons demo {
+  fn f(x: Int) -> Int {
+    match x {
+      _ where Matches("^[a-z]+$") => 1
+      _ => 0
+    }
+  }
+}

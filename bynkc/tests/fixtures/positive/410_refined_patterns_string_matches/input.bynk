@@ -1,0 +1,9 @@
+commons demo.refined_patterns_string_matches {
+  fn classify(code: String) -> Int {
+    match code {
+      _ where Matches("^[a-z]+$") => 1
+      _ where NonEmpty => 2
+      _ => 0
+    }
+  }
+}

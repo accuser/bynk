@@ -2509,6 +2509,16 @@ pub enum Pattern {
         bindings: Vec<PatternBinding>,
         span: Span,
     },
+    /// `p 'where' refinement-predicate` — a refinement guard on a pattern
+    /// (#472). Matches when `inner` matches *and* the scrutinee satisfies
+    /// `predicate` at runtime. v1 admits only `Wildcard` as `inner` (no
+    /// binding form yet); refutable — never counts toward exhaustiveness or
+    /// as a catch-all arm, the same treatment as an `if` guard (§2.3.4).
+    Refined {
+        inner: Box<Pattern>,
+        predicate: Refinement,
+        span: Span,
+    },
     /// `p₁ | p₂ | … | pₙ` — an or-pattern (#474 §2.3.4): matches if any
     /// alternative matches. Left-associative `|`, flattened by the parser's
     /// chain fold into one `Vec` — an alternative is always a leaf
@@ -2550,6 +2560,7 @@ impl Pattern {
             Pattern::Binding(id) => id.span,
             Pattern::Literal { span, .. } => *span,
             Pattern::Variant { span, .. } => *span,
+            Pattern::Refined { span, .. } => *span,
             Pattern::Or(_, span) => *span,
         }
     }
@@ -2570,6 +2581,7 @@ impl Pattern {
                 .iter()
                 .flat_map(|b| b.pattern().bound_names())
                 .collect(),
+            Pattern::Refined { inner, .. } => inner.bound_names(),
             Pattern::Or(alts, _) => alts.first().map(Pattern::bound_names).unwrap_or_default(),
         }
     }

@@ -1,0 +1,2 @@
+bynk.types.is_refined_pattern
+does not accept a refined pattern
