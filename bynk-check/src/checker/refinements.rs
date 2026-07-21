@@ -286,7 +286,7 @@ pub(crate) fn admit_refined_literal(
     Some(named_ty(&decl))
 }
 
-fn check_refinement(
+pub(crate) fn check_refinement(
     base: BaseType,
     base_span: Span,
     refinement: Option<&Refinement>,

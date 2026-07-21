@@ -163,6 +163,13 @@ pub fn complete(line_prefix: &str, doc_text: &str, files: Option<&[PathBuf]>) ->
     if after_clause_keyword(line_prefix, "provides") {
         return in_scope_capabilities(doc_text, files);
     }
+    // 4g. `where <cursor>` — the closed refinement-predicate vocabulary.
+    // Shared by a type declaration's `type X = Base where <cursor>` and
+    // (#472) a match arm's `_ where <cursor>`; both reuse the same closed
+    // predicate catalogue, so one branch serves both surfaces.
+    if after_clause_keyword(line_prefix, "where") {
+        return predicate_name_candidates();
+    }
     // 5. Type position (`: T`, `-> T`, `[ … ]` type args) — built-ins, the
     //    `bynk`-surface transparent types, and project type declarations.
     if is_type_position(line_prefix) {
@@ -889,6 +896,31 @@ fn export_kind_candidates() -> Vec<Completion> {
         .into_iter()
         .map(|k| Completion::item(k, CompletionKind::Keyword, Some("export kind".into())))
         .collect()
+}
+
+/// The closed refinement-predicate vocabulary offerable after `where` —
+/// shared by a type declaration's refinement and (#472) a match arm's
+/// `_ where <predicate>`. Mirrors `PredKind::name()`.
+fn predicate_name_candidates() -> Vec<Completion> {
+    [
+        "Matches",
+        "InRange",
+        "MinLength",
+        "MaxLength",
+        "Length",
+        "NonNegative",
+        "Positive",
+        "NonEmpty",
+    ]
+    .into_iter()
+    .map(|k| {
+        Completion::item(
+            k,
+            CompletionKind::Keyword,
+            Some("refinement predicate".into()),
+        )
+    })
+    .collect()
 }
 
 /// The project's `actor` names, offerable after `by`.
@@ -2326,6 +2358,18 @@ mod tests {
         let doc = "context a.b\n\ncapability Store { fn get() -> Effect[Int] }\n";
         let got = labels("  provides ", doc);
         assert!(got.contains(&"Store".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn where_offers_predicate_names() {
+        // Type-decl refinement.
+        let got = labels("  type Code = Int where ", "context a.b\n");
+        assert!(got.contains(&"InRange".to_string()), "{got:?}");
+        assert!(got.contains(&"NonNegative".to_string()));
+        // #472: a match arm's `_ where <predicate>` shares the same catalogue.
+        let got = labels("      _ where ", "context a.b\n");
+        assert!(got.contains(&"Matches".to_string()), "{got:?}");
+        assert!(got.contains(&"NonEmpty".to_string()));
     }
 
     #[test]

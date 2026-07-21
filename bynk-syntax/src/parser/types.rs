@@ -371,7 +371,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_refinement(&mut self) -> Result<Refinement, CompileError> {
+    pub(crate) fn parse_refinement(&mut self) -> Result<Refinement, CompileError> {
         // #548: refinement predicates are joined by `&&`, the one conjunction
         // spelling shared with contracts/`expect` (was the `and` keyword before
         // the keyword-hygiene batch). The catalogue stays conjunction-only — no

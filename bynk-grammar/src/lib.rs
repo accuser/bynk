@@ -350,9 +350,11 @@ mod tests {
     fn render_rule_uses_display_names() {
         let g = grammar_json();
         // `_pattern`/`_expression` render without their leading underscore.
+        // #472: a match arm's pattern is `pattern | refined_pattern` (the
+        // latter admitted only here, not through `_pattern` generally).
         assert_eq!(
             render_rule(&g, "match_arm").unwrap(),
-            "pattern (\"if\" expression)? \"=>\" expression \",\"?"
+            "(pattern | refined_pattern) (\"if\" expression)? \"=>\" expression \",\"?"
         );
         // `http_method` is a plain choice, unchanged.
         assert_eq!(
@@ -407,7 +409,9 @@ mod tests {
         // `by <Actor>(<identity>)` clause). Net +1.
         // Slice C added: wire_expr (the `Wire(<String>)` raw system-tier
         // argument). Net +1.
-        assert_eq!(rules.len(), 140);
+        // #472 added: refined_pattern (`_ where <predicate>` match-arm
+        // patterns, admitted only at a match arm's top-level pattern). Net +1.
+        assert_eq!(rules.len(), 141);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.
@@ -422,7 +426,7 @@ mod tests {
         let g = grammar_json();
         assert_eq!(
             render_production(&g, "match_arm").unwrap(),
-            "match_arm ::= pattern (\"if\" expression)? \"=>\" expression \",\"?"
+            "match_arm ::= (pattern | refined_pattern) (\"if\" expression)? \"=>\" expression \",\"?"
         );
     }
 

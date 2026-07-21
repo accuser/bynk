@@ -907,6 +907,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A documentation block is not attached to a declaration (warning).",
     ),
     dg(
+        "bynk.parse.refined_pattern_inner",
+        "A refined pattern's inner form is something other than `_`.",
+        &["refined_pattern"],
+    ),
+    dg(
         "bynk.parse.reserved_keyword",
         "A reserved keyword was used as an identifier.",
         &["identifier"],
@@ -1625,6 +1630,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.types.is_non_sum",
         "`is` was applied to a value that is not a sum type.",
+        &["is_expr"],
+    ),
+    dg(
+        "bynk.types.is_refined_pattern",
+        "A refined (`where`) pattern was used on the right of `is`; refined patterns are `match`-only.",
         &["is_expr"],
     ),
     dg(

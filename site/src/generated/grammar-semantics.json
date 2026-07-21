@@ -576,6 +576,10 @@
       "summary": "`is` was applied to a value that is not a sum type."
     },
     {
+      "code": "bynk.types.is_refined_pattern",
+      "summary": "A refined (`where`) pattern was used on the right of `is`; refined patterns are `match`-only."
+    },
+    {
       "code": "bynk.types.is_unknown_variant",
       "summary": "`is` names a variant the type does not have."
     }
@@ -832,6 +836,12 @@
     {
       "code": "bynk.resolve.recursive_record_field",
       "summary": "A record directly contains a field of its own type."
+    }
+  ],
+  "refined_pattern": [
+    {
+      "code": "bynk.parse.refined_pattern_inner",
+      "summary": "A refined pattern's inner form is something other than `_`."
     }
   ],
   "refined_type": [

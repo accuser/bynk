@@ -3006,6 +3006,30 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                 ));
             }
         }
+        // #472: `p where predicate` — check the inner pattern as usual, then
+        // type the predicate against the scrutinee's literal-kind base
+        // (reusing `check_refinement`, the same per-predicate
+        // base-compatibility check a `type X = Base where P` declaration
+        // uses). No narrowing: the refinement is a runtime guard only.
+        Pattern::Refined {
+            inner,
+            predicate,
+            span,
+        } => {
+            check_pattern(inner, ty, ctx);
+            if let Some(base) = literal_base_of(ty) {
+                check_refinement(base, *span, Some(predicate), ctx.errors);
+            } else {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.pattern_type_mismatch",
+                    *span,
+                    format!(
+                        "a refined pattern cannot match a value of type `{}` — refined patterns match `Int`/`String` scrutinees",
+                        ty.display()
+                    ),
+                ));
+            }
+        }
         Pattern::Variant {
             type_name,
             variant,
@@ -3170,6 +3194,18 @@ fn describe_pattern(pat: &Pattern) -> String {
     match pat {
         Pattern::Wildcard(_) | Pattern::Binding(_) => "_".to_string(),
         Pattern::Literal { value, .. } => value.describe(),
+        Pattern::Refined {
+            inner, predicate, ..
+        } => format!(
+            "{} where {}",
+            describe_pattern(inner),
+            predicate
+                .predicates
+                .iter()
+                .map(|p| p.kind.name())
+                .collect::<Vec<_>>()
+                .join(" && "),
+        ),
         Pattern::Variant {
             variant, bindings, ..
         } => {
@@ -3307,6 +3343,23 @@ pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut C
                     "to compare by value, use `== {}` instead",
                     value.describe()
                 )),
+            );
+            return Some(Ty::Base(BaseType::Bool));
+        }
+        // #472 (D5, mirrors literal patterns): refined patterns are
+        // `match`-only. `is` already has its own refinement check — a bare
+        // nullary name resolving to a declared refined type (ADR 0007) —
+        // so an inline `_ where P` here would be a confusing near-duplicate.
+        Pattern::Refined { .. } => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.types.is_refined_pattern",
+                    pattern.span(),
+                    "the `is` operator does not accept a refined pattern here",
+                )
+                .with_note(
+                    "declare a named refined type and use `x is TypeName`, or use a `match` arm",
+                ),
             );
             return Some(Ty::Base(BaseType::Bool));
         }

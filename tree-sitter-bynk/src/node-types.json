@@ -5584,6 +5584,10 @@
             "named": true
           },
           {
+            "type": "refined_pattern",
+            "named": true
+          },
+          {
             "type": "variant_pattern",
             "named": true
           },
@@ -7435,6 +7439,40 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "refined_pattern",
+    "named": true,
+    "fields": {
+      "inner": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "literal_pattern",
+            "named": true
+          },
+          {
+            "type": "variant_pattern",
+            "named": true
+          },
+          {
+            "type": "wildcard_pattern",
+            "named": true
+          }
+        ]
+      },
+      "predicate": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "refinement",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {

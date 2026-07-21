@@ -1186,7 +1186,17 @@ module.exports = grammar({
     match_arm: ($) =>
       prec.right(
         seq(
-          field("pattern", $._pattern),
+          // #472: `refined_pattern` is admitted only here — the top-level
+          // pattern of a match arm — not through `_pattern` generally, so it
+          // stays unreachable from `is_expr` and from nested payload
+          // positions (`_pattern_binding`). Both of those sit in
+          // expression-continuable contexts (`&&`, `(`, …) where
+          // `refinement`'s own `&&`-joined predicate list becomes ambiguous
+          // with the surrounding expression grammar; a match arm's pattern is
+          // always followed by a fixed terminator (`if`/`=>`), so no such
+          // ambiguity exists here. This also matches the semantic scope
+          // (v1: no nested/`is`-position refined patterns).
+          field("pattern", choice($._pattern, $.refined_pattern)),
           // v0.145 (ADR 0169): an optional trailing `if <Bool-expr>` guard,
           // between the pattern and `=>`, gating the arm over its bindings. The
           // `if` reuses the existing keyword token (already highlighted).
@@ -1198,9 +1208,15 @@ module.exports = grammar({
           optional(","),
         ),
       ),
+    refined_pattern: ($) =>
+      seq(field("inner", $._pattern), "where", field("predicate", $.refinement)),
 
     _pattern: ($) =>
-      choice($.wildcard_pattern, $.literal_pattern, $.variant_pattern),
+      choice(
+        $.wildcard_pattern,
+        $.literal_pattern,
+        $.variant_pattern,
+      ),
     wildcard_pattern: () => "_",
     // v0.130 §2.3.4: a literal pattern — an integer (optionally negated), a
     // string, or a boolean. A closed set (ADR 0001); no `Float`, no `()`.

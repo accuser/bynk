@@ -1186,7 +1186,38 @@ impl<'a> Parser<'a> {
         result
     }
 
+    /// Parse a base pattern, then an optional trailing `where <refinement>`
+    /// (#472) — a guard on the pattern, checked at runtime. v1 admits only a
+    /// wildcard `_` as the refined inner form; any other inner shape is
+    /// rejected (`bynk.parse.refined_pattern_inner`) rather than silently
+    /// accepted, so the AST doesn't need reworking once binding/nested forms
+    /// are designed.
     fn parse_pattern_inner(&mut self) -> Result<Pattern, CompileError> {
+        let base = self.parse_pattern_base()?;
+        if self.peek_kind() == Some(TokenKind::Where) {
+            self.bump();
+            let predicate = self.parse_refinement()?;
+            if !matches!(base, Pattern::Wildcard(_)) {
+                return Err(CompileError::new(
+                    "bynk.parse.refined_pattern_inner",
+                    base.span(),
+                    "a refined pattern's inner form must be `_` in this version",
+                )
+                .with_note(
+                    "write `_ where <predicate>`; binding a refined value is not yet supported",
+                ));
+            }
+            let span = base.span().merge(predicate.span);
+            return Ok(Pattern::Refined {
+                inner: Box::new(base),
+                predicate,
+                span,
+            });
+        }
+        Ok(base)
+    }
+
+    fn parse_pattern_base(&mut self) -> Result<Pattern, CompileError> {
         if let Some(t) = self.peek() {
             if t.kind == TokenKind::Underscore {
                 self.bump();

@@ -1388,7 +1388,12 @@ The patterns used in `match` arms and `is` checks.
 
 One arm of a `match`: a pattern, an optional `if` guard over the pattern's
 bindings, `=>`, and a result expression. A guarded arm never satisfies
-exhaustiveness (its guard may fail at runtime).
+exhaustiveness (its guard may fail at runtime). `refined_pattern` (#472) is
+admitted only here — a match arm's top-level pattern — not through `pattern`
+generally, so it is never reachable from `is` or from a nested payload
+position; a match arm's pattern is always followed by a fixed terminator
+(`if`/`=>`), unlike an expression position, where `refinement`'s own
+`&&`-joined predicate list would be ambiguous with the surrounding grammar.
 
 **Static semantics.**
 {{#grammar-semantics match_arm}}
@@ -1427,6 +1432,21 @@ Matches a primitive scrutinee (`Int`/`String`/`Bool`, or a refinement over one)
 by value equality — an integer (optionally negated), a string, or a boolean.
 A literal-pattern `match` needs a wildcard `_` arm to be exhaustive, except over
 `Bool`, which is complete once both `true` and `false` appear.
+
+### refined_pattern {#rule-refined_pattern}
+
+{{#grammar refined_pattern}}
+
+`p 'where' predicate` (#472) — a runtime guard on a pattern, reusing the
+closed refinement-predicate catalogue a `type X = Base where P` declaration
+uses ([`refinement`](#rule-refinement)). v1 admits only `_ where predicate` —
+the compiler rejects any other inner form (`bynk.parse.refined_pattern_inner`).
+Admitted only against a literal-kind scrutinee (`Int`/`String`); a guard, not
+a narrowing — matching a refined arm does not change any static type. Like an
+`if` guard, a refined arm alone is never exhaustive, and it is `match`-only —
+one on the right of `is` is rejected (`bynk.types.is_refined_pattern`).
+
+**See also.** [Pattern-match with `match`](/book/guides/type-system/match/).
 
 ### pattern_binding {#rule-_pattern_binding}
 

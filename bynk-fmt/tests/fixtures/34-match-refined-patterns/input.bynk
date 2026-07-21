@@ -1,0 +1,13 @@
+commons demo {
+  fn classify(code: Int) -> String {
+    match code {
+      _ where InRange(200, 299) => "success"
+      _   where   InRange(400, 499)   =>   "client error"
+      _ => "other"
+    }
+  }
+  fn label(s: String)->Int{
+    match s { _ where Matches("^[a-z]+$") && NonEmpty=>1
+      _=>0 }
+  }
+}
