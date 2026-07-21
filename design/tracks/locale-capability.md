@@ -1,4 +1,4 @@
-# Locale — the `Locale` capability: ambient locale reads and a pure render seam for user-facing text
+# The `Locale` capability — ambient locale reads and a pure render seam for user-facing text
 
 - **Status:** Settling. Direction not yet merged; no slice authorised. Live state
   on the track's **spine issue**, [#838](https://github.com/accuser/bynk/issues/838)
@@ -90,8 +90,9 @@ Three forces converge on `Locale` regardless of that gap:
   user in their own language from a queue consumer with no HTTP request in
   scope at all.
 - **The `Message` type**, defined and owned by this track:
-  `{ code: String, params: Map[String, String] }` — a plain record, not
-  contingent on the unbuilt `predicate` declaration feature (§7 Q0).
+  `{ code: String, params: Map[String, MessageArg] }` — a plain record over a
+  small typed-argument sum (`MessageArg`, §4.1), not contingent on the unbuilt
+  `predicate` declaration feature (§7 Q0).
 - **A `FixedLocale` test provider** (`provides Locale = FixedLocale`
   test-tier override), so a `case`/`property` can assert rendered output
   without a real request.
@@ -134,8 +135,8 @@ rather than needing new invention:
 
 **"Ambient" is not a new mechanism — it's `Clock.now()`'s shape, reused.**
 `Clock`, `Random`, and `Logger` are already implemented identically across
-every platform ([research: `bynk-cloudflare.ts`/`bynk-node.ts`/`bynk-browser.ts`
-agree for these three]); `Fetch` and `Secrets` diverge, and where a platform
+every platform (`bynk-cloudflare.ts`/`bynk-node.ts`/`bynk-browser.ts` agree
+for these three); `Fetch` and `Secrets` diverge, and where a platform
 has no sensible implementation, the provider **throws** a descriptive error
 naming the capability and which platforms do provide it, rather than
 fabricating a plausible-looking fallback
@@ -164,7 +165,7 @@ obviously right.)
 ### 4.1 `LocaleTag` and the render seam (slice 1)
 
 ```
-type LocaleTag = String where Matches("^[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?$")
+type LocaleTag = String where Matches("[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?")
 ```
 
 Language subtag (2-3 lowercase letters) + optional script (title-case,
@@ -173,12 +174,14 @@ ISO 3166-1, or 3 digits, UN M49). Covers `en`, `en-US`, `pt-BR`, `zh-Hans`,
 `sr-Latn-RS` — the common real-world shapes — and follows the exact
 `Uuid`-style precedent already in the adapter
 ([`bynk-check/src/firstparty/bynk.bynk:8`](../../bynk-check/src/firstparty/bynk.bynk)).
-`Matches` already supports the alternation this pattern needs (confirmed
-against existing fixtures exercising alternation and lookbehind in the
-refinement engine).
+`Matches` already supports the alternation this pattern needs, and — like
+`Uuid` — the pattern carries no `^…$` anchors of its own, because the
+refinement engine wraps every pattern in `^(?:…)$`.
 
 ```
-type Message = { code: String, params: Map[String, String] }
+type MessageArg = Text(String) | Whole(Int) | Num(Float) | Moment(Instant)
+
+type Message = { code: String, params: Map[String, MessageArg] }
 
 capability Locale {
   fn current() -> Effect[LocaleTag]
@@ -186,6 +189,15 @@ capability Locale {
 
 fn render(tag: LocaleTag, msg: Message) -> String
 ```
+
+`params` are typed (`MessageArg`), not bare strings, because slice 3's ICU
+adoption (§4.5) selects plural, number, and date output from the argument's
+*value* — a stringified `"12"` cannot drive `{n, plural, …}` or a currency
+format. Bynk has no surface `Json`, so the argument set is a small explicit
+sum, finalised in the capability-shape ADR. This is the one deliberate
+widening past "string in, string out", made now so the `Message` shape §3/Q0
+flags as load-bearing is ICU-ready from the start rather than broken open at
+slice 3.
 
 `render` is an ordinary pure function, not a capability method — it needs no
 `given` clause and can be called from a predicate, a pure helper, or a
@@ -253,12 +265,16 @@ specifically because Bynk's own `Money`/`Instant`/`Duration` kernels
 formatting eventually, and a positional-only format would need its own,
 narrower plural/gender handling reinvented later. This is a data-format
 commitment, not new language surface — deferred to its own slice so it
-never blocks slice 1/2 shipping.
+never blocks slice 1/2 shipping. Its plural/number/date selectors read each
+argument's *value*, which is why `Message.params` carries `MessageArg` (§4.1)
+rather than bare `String` — the typed shape is fixed now so slice 3 needs no
+breaking change to `Message`.
 
 ## 5. Tooling delta (the standing rule)
 
 Driver-only impact is minimal (no new CLI verb); the language-surface impact
-is a new capability + refined type + one pure function, so LSP/fmt/tree-sitter
+is a new capability, a refined type (`LocaleTag`), two data types (`Message`,
+`MessageArg`), and one pure function (`render`), so LSP/fmt/tree-sitter
 pick it up through the existing first-party-adapter machinery with no new
 tooling code — `Locale`, `LocaleTag`, and `render` get hover/completion for
 free exactly as `Clock`/`Uuid` do today. Each slice states this explicitly
