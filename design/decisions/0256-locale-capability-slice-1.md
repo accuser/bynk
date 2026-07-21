@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Add the `Locale` capability (fixed `"en"` on every platform) and a `bynk.locale` commons providing `LocaleTag`, `Message`/`MessageArg`, and a bundle-free `render`
----
+# 0256 — The `Locale` capability, slice 1 — fixed locale, bundle-free `render`
 
-## ADR: locale-capability-slice-1
-title: The `Locale` capability, slice 1 — fixed locale, bundle-free `render`
-summary: A `Locale` capability and a pure, bundle-free `render` helper, landing in a new `bynk.locale` commons rather than the `bynk` adapter
+- **Status:** Accepted (v0.221)
 
 **Context.** Slice 1 of the `Locale` capability track ([`design/tracks/locale-capability.md`](../tracks/locale-capability.md), spine #838), per the accepted proposal issue #844. The accepted surface: `LocaleTag = String where Matches(...)`, `MessageArg = Text(value: String) | Whole(value: Int) | Num(value: Float) | Moment(value: Instant)`, `Message = { code: String, params: Map[String, MessageArg] }`, `capability Locale { fn current() -> Effect[LocaleTag] }`, `fn render(tag: LocaleTag, msg: Message) -> String` (slice 1 formats `code` plus a deterministic sorted-by-key rendering of `params` — no bundle, no locale-dependent behaviour; `tag` is accepted but unused). The proposal committed to no grammar change and no new checker rule.
 

@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0256](0256-locale-capability-slice-1.md) | **The `Locale` capability, slice 1 — fixed locale, bundle-free `render`** (v0.221) — A `Locale` capability and a pure, bundle-free `render` helper, landing in a new `bynk.locale` commons rather than the `bynk` adapter | Accepted (v0.221) |
 | [0255](0255-deploy-reconciliation.md) | **Reconciliation maturity — per-kind orphan reporting, once-per-run KV drift, and --prune scoped to KV/queues** (v0.220.2) — The ledger-vs-source diff is reported offline before any mutation; KV drift is checked once per deploy, not once per context; --prune deletes KV namespaces and queues idempotently but never a whole Worker | Accepted (v0.220.2) |
 | [0254](0254-deploy-environments.md) | **Environment selection at deploy time: driver-synthesised per-environment config, not emitter-curated** (v0.220.1) — `--env` threads a real environment through the ledger and provisioning calls; a non-default environment gets a driver-synthesised `[env.<name>]` Wrangler config block, not an emitter change | Accepted (v0.220.1) |
 | [0253](0253-refined-patterns.md) | **Refined patterns in `match`: guard-only, `_`-inner, extends the ADR 0169 if-chain** (v0.220) — `_ where predicate` as a runtime guard over a literal-kind scrutinee | Accepted (v0.220) |
