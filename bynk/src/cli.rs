@@ -144,6 +144,12 @@ pub enum Command {
         /// version for every secret every time.
         #[arg(long)]
         force: bool,
+        /// Delete every reported orphan — a KV namespace or queue the ledger
+        /// remembers that the current build no longer declares. Never
+        /// deletes a Worker. Prompts separately from the creation
+        /// confirmation unless --yes is also given; omit to report only.
+        #[arg(long)]
+        prune: bool,
         /// Arguments after `--`, forwarded to `wrangler deploy` verbatim.
         #[arg(last = true)]
         wrangler_args: Vec<String>,

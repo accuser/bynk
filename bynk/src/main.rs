@@ -58,6 +58,7 @@ fn main() -> ExitCode {
             secrets_file,
             secrets,
             force,
+            prune,
             wrangler_args,
         } => run_deploy(
             path,
@@ -73,6 +74,7 @@ fn main() -> ExitCode {
                 secrets_file,
                 secrets,
                 force,
+                prune,
                 wrangler_args,
             },
         ),
