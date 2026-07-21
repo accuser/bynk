@@ -1,7 +1,10 @@
 # Deploy — `bynk deploy`: provisioning + remote deploy, the capstone of the driver arc
 
-- **Status:** Draft (settling). Direction not yet merged; no slice authorised.
-  Live state on the track's **spine issue**, [#558](https://github.com/accuser/bynk/issues/558)
+- **Status:** Slicing. Direction settled; slices 0–3 shipped (state model + KV
+  MVP, DO/queue provisioning, multi-context ordering, secrets — plus the #632
+  follow-up on computed secret names). Slices 4 (environments) and 5
+  (reconciliation maturity) remain. Live state on the track's **spine issue**,
+  [#558](https://github.com/accuser/bynk/issues/558)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** `design/bynk-tooling-roadmap.md` §5.1 (the driver arc `doctor → new → dev → deploy`, closing with "the on-ramp arc is complete; **`deploy` (provisioning + remote) follows**"), and the deferral [ADR 0096](../decisions/0096-bynk-dev.md) named by name — `bynk dev` (D4) "provisions nothing and never edits `wrangler.toml`… Real, provisioned remote support is **`deploy`'s defining problem, the next slice**." It executes the deploy half of the [ADR 0084](../decisions/0084-doctor-output-exit-contract.md) `Deploy` capability (`dev`/`deploy` share the Node + `wrangler` gate) and turns the deploy-time placeholders [ADR 0017](../decisions/0017-platform-lock-per-deployment-unit.md) locks a context to (`id = "<KV_NAMESPACE_ID>"`, DO migrations, queue consumers, Service Bindings) into live resources.
 - **Posture:** Feature track per [ADR 0076](../decisions/0076-feature-track-posture.md). Qualifies on all three axes: **multi-increment** (an MVP single-context deploy, the provisioning-state model, multi-context topology + ordering, secrets/config, environments, reconciliation/drift); **surface not yet settled** (where provisioned resource identity lives given `wrangler.toml` is regenerated every build, the reconciliation model, the environment surface); and a **safety boundary** — this is the **first driver command with irreversible, outward-facing side effects**: it authenticates to a cloud account, *creates* and *mutates* live resources, pushes running code, and handles credentials. `doctor` reports, `new` writes local files, `dev` runs Miniflare locally; none of them touch anything a user cannot delete by hand. `deploy` is categorically different, and that difference is the reason it is a track and not a fourth additive verb alongside #487's `check`/`test`/`fmt`.
