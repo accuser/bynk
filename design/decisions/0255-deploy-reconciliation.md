@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "`bynk deploy` reports orphaned resources and prunes them with `--prune`; a deleted KV namespace self-heals like a deleted queue already does"
----
+# 0255 — Reconciliation maturity — per-kind orphan reporting, once-per-run KV drift, and --prune scoped to KV/queues
 
-## ADR: deploy-reconciliation
-title: Reconciliation maturity — per-kind orphan reporting, once-per-run KV drift, and --prune scoped to KV/queues
-summary: The ledger-vs-source diff is reported offline before any mutation; KV drift is checked once per deploy, not once per context; --prune deletes KV namespaces and queues idempotently but never a whole Worker
+- **Status:** Accepted (v0.220.2)
 
 **Context.** `bynk deploy` never told a user about a resource the ledger
 remembered that the current source no longer declared — a deleted context, a

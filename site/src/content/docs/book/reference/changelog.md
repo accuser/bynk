@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.220.2** | "`bynk deploy` reports orphaned resources and prunes them with `--prune`; a deleted KV namespace self-heals like a deleted queue already does" |
 | **v0.220.1** | "`bynk deploy --env NAME` for independent multi-environment provisioning and deploy; `bynk dev -- --remote` reads the matching environment" |
 | **v0.220.0** | Refined patterns (`_ where <predicate>`) in `match` arms |
 | **v0.219.0** | Or-patterns (`p₁ | p₂`) in `match` arms and after `is` |
