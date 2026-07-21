@@ -1,10 +1,10 @@
 # Deploy — `bynk deploy`: provisioning + remote deploy, the capstone of the driver arc
 
-- **Status:** Slicing. Direction settled; slices 0–3 shipped (state model + KV
+- **Status:** Slicing. Direction settled; slices 0–4 shipped (state model + KV
   MVP, DO/queue provisioning, multi-context ordering, secrets — plus the #632
-  follow-up on computed secret names). Slices 4 (environments) and 5
-  (reconciliation maturity) remain. Live state on the track's **spine issue**,
-  [#558](https://github.com/accuser/bynk/issues/558)
+  follow-up on computed secret names — and environments, #835). Slice 5
+  (reconciliation maturity) remains, and is the track's last. Live state on
+  the track's **spine issue**, [#558](https://github.com/accuser/bynk/issues/558)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** `design/bynk-tooling-roadmap.md` §5.1 (the driver arc `doctor → new → dev → deploy`, closing with "the on-ramp arc is complete; **`deploy` (provisioning + remote) follows**"), and the deferral [ADR 0096](../decisions/0096-bynk-dev.md) named by name — `bynk dev` (D4) "provisions nothing and never edits `wrangler.toml`… Real, provisioned remote support is **`deploy`'s defining problem, the next slice**." It executes the deploy half of the [ADR 0084](../decisions/0084-doctor-output-exit-contract.md) `Deploy` capability (`dev`/`deploy` share the Node + `wrangler` gate) and turns the deploy-time placeholders [ADR 0017](../decisions/0017-platform-lock-per-deployment-unit.md) locks a context to (`id = "<KV_NAMESPACE_ID>"`, DO migrations, queue consumers, Service Bindings) into live resources.
 - **Posture:** Feature track per [ADR 0076](../decisions/0076-feature-track-posture.md). Qualifies on all three axes: **multi-increment** (an MVP single-context deploy, the provisioning-state model, multi-context topology + ordering, secrets/config, environments, reconciliation/drift); **surface not yet settled** (where provisioned resource identity lives given `wrangler.toml` is regenerated every build, the reconciliation model, the environment surface); and a **safety boundary** — this is the **first driver command with irreversible, outward-facing side effects**: it authenticates to a cloud account, *creates* and *mutates* live resources, pushes running code, and handles credentials. `doctor` reports, `new` writes local files, `dev` runs Miniflare locally; none of them touch anything a user cannot delete by hand. `deploy` is categorically different, and that difference is the reason it is a track and not a fourth additive verb alongside #487's `check`/`test`/`fmt`.
@@ -364,18 +364,29 @@ The property that makes `deploy` safe to re-run — and the reason the state fil
 
 ### 4.6 Environments
 
-A project deploys to more than one place. A named environment
+**Shipped — slice 4 (#835), the environment-selection ADR (number assigned at
+merge).** A project deploys to more than one place. A named environment
 (default / `--env staging` / `--env production`) keys:
 
-- the **deploy-state** section (§3) — distinct namespace/queue ids per env;
-- the **wrangler environment** (`wrangler deploy --env <name>`, `[env.<name>]`
-  in config) — whether `deploy` curates these or rides wrangler's own env model
-  is an open call (Q7);
-- the **account/credential** the pre-flight resolves.
-
-v1 may ship a single default environment with the *state schema* already
-keyed by env (so adding `--env` later is additive, not a migration) — mirroring
-how `new`/`dev` shipped MVPs whose data shapes anticipated the follow-ups.
+- the **deploy-state** section (§3) — distinct namespace/queue ids per env,
+  exactly as anticipated: the schema was env-keyed from slice 0, so this
+  slice was additive, not a migration;
+- the **wrangler environment** — resolved, and not the way this section
+  originally framed the choice. Q7 asked whether `deploy` curates
+  `[env.<name>]` in generated config or rides wrangler's own model via
+  passthrough; **neither, cleanly.** Cloudflare confirmed bindings are
+  non-inheritable into a named environment, so passthrough alone would deploy
+  with zero bindings — but `emit_wrangler_toml` runs at compile time, before
+  any `--env` is known, so the emitter cannot curate them either. The driver
+  synthesises the `[env.<name>]` block itself, at deploy time, generalising
+  the seam that already materialises the KV placeholder (§3). Queue names and
+  Service Binding targets are environment-qualified (`<name>-<env>`) in that
+  synthesised block — a gap this section didn't originally name, since
+  Cloudflare auto-suffixes a deployed Worker's own name the same way and an
+  unqualified binding would resolve to the wrong, or a nonexistent, Worker;
+- the **account/credential** the pre-flight resolves — unchanged (Q2's
+  original leaning held): still "is *some* account authenticated," not "is
+  the *right* account for this environment." Left open.
 
 ## 5. Tooling delta (the standing rule)
 
@@ -470,10 +481,13 @@ command whose actions are **outward-facing and hard to reverse**.
   and that the state schema does not foreclose adding version history later.
 - **Q6 — orphan handling.** Report-only (v1) vs an explicit `--prune`; never an
   auto-delete default (§4.5, §6). Confirm the report surface.
-- **Q7 — environment model.** Does `deploy` curate `--env` and manage
-  `[env.<name>]` in generated config, or ride wrangler's own environment model
-  via passthrough? (§4.6, ADR 0096 D5 posture argues for the smallest curated
-  surface.)
+- **Q7 — environment model. Resolved, slice 4 (§4.6).** Neither of the framed
+  options: the driver synthesises `[env.<name>]` at deploy time (confirmed
+  necessary — Cloudflare does not inherit bindings into a named environment),
+  since the emitter cannot curate it (environment names are unknowable at
+  compile time). The smallest-curated-surface instinct behind the framing
+  still won on where the *decision logic* lives (the driver, not a new
+  emitter concept) — just not on whether curation happens at all.
 - **Q8 — packaging-track naming coupling.** The [packaging track](packaging.md)
   re-addresses contexts as `org.package.context` and says "wrangler/worker naming
   derives from that." `deploy`'s Worker names and deploy-state keys must assume
@@ -512,9 +526,9 @@ slices build on the state model.
   set-if-absent reconciliation (Q4), and the **floor-not-census** contract (§4.4)
   — with the emitted manifest that carries the declared names to the driver.
   Lands the secrets-at-deploy ADR.
-- **Slice 4 — environments.** `--env` over the already-env-keyed state schema
-  (§4.6); the wrangler-env interaction (Q7). Additive if slice 0 keyed the schema
-  by env from the start.
+- **Slice 4 — environments. Shipped (#835).** `--env` over the already-env-keyed
+  state schema (§4.6) — additive, as slice 0's schema anticipated. Resolved
+  Q7: the driver, not the emitter, synthesises `[env.<name>]` at deploy time.
 - **Slice 5 — reconciliation maturity + orphan reporting.** Drift detection
   (§4.5), orphan report and optional `--prune` (Q6, the first deletion gate), the
   richer `--format json` plan. Hardens the re-run story; the release-semantics

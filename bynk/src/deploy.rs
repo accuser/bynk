@@ -37,6 +37,15 @@ pub struct DeployOptions {
     /// consumes are already live (slice 2, D4). Absent deploys the whole
     /// project in dependency order.
     pub context: Option<String>,
+    /// `--env NAME` — slice 4. Selects the `bynk.deploy.lock` section; for any
+    /// value other than `"default"` also drives synthesis of an environment-
+    /// scoped Wrangler config section, since Cloudflare does not inherit
+    /// bindings into a named environment (confirmed against Cloudflare's own
+    /// docs — see #835). `DeployOptions::default()`'s empty string is a
+    /// test-only artefact of `#[derive(Default)]`; every real invocation goes
+    /// through the CLI, whose `default_value = "default"` guarantees this is
+    /// never empty.
+    pub environment: String,
     /// `--secrets-file` — a dotenv-style source of `NAME=value` pairs. Supplies
     /// **names and values** (slice 3, ADR 0195 D3).
     pub secrets_file: Option<std::path::PathBuf>,
@@ -360,12 +369,13 @@ fn absent_dependencies(
     worker: &str,
     graph: &BTreeMap<String, Vec<String>>,
     lock: &DeployLock,
+    environment: &str,
 ) -> Vec<String> {
     graph
         .get(worker)
         .into_iter()
         .flatten()
-        .filter(|target| !lock.is_deployed("default", target))
+        .filter(|target| !lock.is_deployed(environment, target))
         .cloned()
         .collect()
 }
@@ -439,6 +449,7 @@ fn contract_skews(
     expects: &BTreeMap<String, BTreeMap<String, String>>,
     lock: &DeployLock,
     worker_of: impl Fn(&str) -> String,
+    environment: &str,
 ) -> Vec<ContractSkew> {
     let mut out = Vec::new();
     for (dependency, services) in expects {
@@ -447,7 +458,7 @@ fn contract_skews(
         // match: report only what is *known* to be skewed. (An empty-but-present
         // record is different, and is checked: it means the callee is known to
         // provide nothing, so every expected service is absent.)
-        let Some(live) = lock.live_contracts("default", &worker) else {
+        let Some(live) = lock.live_contracts(environment, &worker) else {
             continue;
         };
         for (service, expected) in services {
@@ -607,7 +618,7 @@ impl DeployLock {
 /// single-worker `Plan` is the one-element case of this.
 #[derive(Debug, Serialize)]
 struct Plan<'a> {
-    environment: &'static str,
+    environment: &'a str,
     /// The resolved upload order — the plan's headline, since Cloudflare
     /// rejects a Worker uploaded before its binding target.
     order: Vec<&'a str>,
@@ -687,6 +698,30 @@ struct PlanMigration<'a> {
     applied_by: &'static str,
 }
 
+/// The `--` passthrough argument that conflicts with the driver's own
+/// `--env`, if any (slice 4, DECISION E) — bare or `=`-joined, mirroring
+/// `dev.rs`'s `passthrough_has` matching rule for the same class of clash
+/// (`--port`/`--inspector-port` there). Returns the matched literal, not just
+/// a bool, so the error can name what it conflicts with. Pure, so the rule is
+/// tested without touching `DeployOptions`.
+///
+/// `pub(crate)`: `dev.rs` reuses this for the identical clash between its own
+/// `--env` (which environment's ledger section `--remote` reads) and a
+/// `-- --env`/`-- --environment` passthrough to `wrangler dev` (which
+/// environment Wrangler actually connects to) — the same "two explicit,
+/// conflicting environment selections, one of them silent" shape, just
+/// without a value `dev` forwards to wrangler itself.
+pub(crate) fn conflicting_env_passthrough(wrangler_args: &[String]) -> Option<&str> {
+    wrangler_args
+        .iter()
+        .find(|arg| {
+            ["--env", "--environment"]
+                .iter()
+                .any(|flag| arg.as_str() == *flag || arg.starts_with(&format!("{flag}=")))
+        })
+        .map(String::as_str)
+}
+
 /// Run the slice-0 single-context deployment pipeline.
 pub fn run(
     tb: &dyn Toolbox,
@@ -695,6 +730,21 @@ pub fn run(
     node_floor: u32,
     opts: &DeployOptions,
 ) -> ExitCode {
+    // Slice 4 (DECISION E), and the first check of all: once `--env` is a
+    // real, driver-curated concept, a conflicting `-- --env`/`-- --environment`
+    // would otherwise reach `wrangler deploy` as a second, contradictory flag —
+    // Wrangler's own last-wins parsing deciding silently which one actually
+    // deploys, while the ledger records the driver's choice regardless. Reject
+    // before any other work, rather than pick a winner between two explicit,
+    // conflicting inputs.
+    if let Some(conflict) = conflicting_env_passthrough(&opts.wrangler_args) {
+        eprintln!(
+            "bynk: `--env {}` conflicts with `{conflict}` after `--` — pass one or the other, not both",
+            opts.environment
+        );
+        return ExitCode::FAILURE;
+    }
+
     let preflight_opts = DoctorOptions {
         only: Some(Capability::Deploy),
         strict: false,
@@ -768,7 +818,7 @@ pub fn run(
     if opts.context.is_some()
         && let [worker] = selected.as_slice()
     {
-        let absent = absent_dependencies(worker, &graph, &lock);
+        let absent = absent_dependencies(worker, &graph, &lock, &opts.environment);
         if !absent.is_empty() {
             eprintln!(
                 "bynk: `{worker}` binds to {}, which {} never been deployed — a Service Binding to a Worker that does not exist fails at upload.",
@@ -797,9 +847,12 @@ pub fn run(
                 return ExitCode::FAILURE;
             }
         };
-        let skews = contract_skews(&expects, &lock, |ctx| {
-            bynk_emit::project::worker_dir_name(ctx)
-        });
+        let skews = contract_skews(
+            &expects,
+            &lock,
+            bynk_emit::project::worker_dir_name,
+            &opts.environment,
+        );
         if !skews.is_empty() {
             eprintln!(
                 "bynk: `{worker}` was compiled against a contract its live dependencies no longer provide (bynk.deploy.contract_skew):"
@@ -832,7 +885,14 @@ pub fn run(
         }
     };
 
-    let plan = derive_plan(&order, &resources, &lock, &secret_source, opts.force);
+    let plan = derive_plan(
+        &order,
+        &resources,
+        &lock,
+        &secret_source,
+        opts.force,
+        &opts.environment,
+    );
     print_plan(&plan, opts.format);
     if opts.dry_run {
         return ExitCode::SUCCESS;
@@ -844,7 +904,7 @@ pub fn run(
     // source, so CI creating one loses nothing: the next run derives the same
     // name and finds the same queue (ADR 0194 D2).
     for worker in &order {
-        let recorded = recorded_kv(&lock, worker);
+        let recorded = recorded_kv(&lock, worker, &opts.environment);
         if should_refuse_unrecorded_ci(resources[worker].needs_kv, recorded, is_ci()) {
             eprintln!(
                 "bynk: KV namespace for `{worker}` is unrecorded; provision locally first and commit {LOCK_FILE}"
@@ -900,6 +960,7 @@ pub fn run(
                 resolved: &mut resolved_secrets,
             },
             &opts.wrangler_args,
+            &opts.environment,
         ) {
             Ok(Pushed::Ok) => {
                 // v0.177 (#643): record what this Worker now *provides*, so a
@@ -911,7 +972,7 @@ pub fn run(
                 let provided = read_contracts_manifest(&workers_dir.join(worker))
                     .map(|m| Some(m.provides))
                     .unwrap_or(None);
-                lock.record_deployed("default", worker, provided);
+                lock.record_deployed(&opts.environment, worker, provided);
                 if let Err(e) = write_lock(&lock_path, &lock) {
                     eprintln!(
                         "bynk: deployed `{worker}` but could not record it in {}: {e}",
@@ -1018,11 +1079,13 @@ fn deploy_one(
     attempted_queues: &mut BTreeSet<String>,
     secrets: &mut Secrets<'_>,
     wrangler_args: &[String],
+    environment: &str,
 ) -> Result<Pushed, DeployFailure> {
     let worker_dir = workers_dir.join(worker);
     let config = worker_dir.join("wrangler.toml");
+    let mut kv_id = None;
     if declared.needs_kv {
-        let kv_id = match recorded_kv(lock, worker) {
+        let id = match recorded_kv(lock, worker, environment) {
             Some(id) => id.to_owned(),
             None => {
                 let id = create_kv(provenance, worker, project_root).map_err(|e| {
@@ -1031,7 +1094,7 @@ fn deploy_one(
                     ))
                 })?;
                 lock.environments
-                    .entry("default".into())
+                    .entry(environment.to_string())
                     .or_default()
                     .kv
                     .insert(worker.to_string(), KvNamespace { id: id.clone() });
@@ -1046,11 +1109,12 @@ fn deploy_one(
                 id
             }
         };
-        if !materialise_kv_id(&config, &kv_id) {
+        if !materialise_kv_id(&config, &id) {
             return Err(DeployFailure::driver(format!(
                 "could not materialise the KV namespace id into `{worker}`'s generated configuration"
             )));
         }
+        kv_id = Some(id);
     }
     // Reconciled against the account on every run, never against the ledger:
     // the ledger's queue set is a planning aid, so trusting it to skip would
@@ -1060,24 +1124,57 @@ fn deploy_one(
     // queue. `wrangler deploy` will not create it for us: it checks and fails
     // with "To create it, run: wrangler queues create", so this step is the one
     // that makes such a project deployable at all.
+    //
+    // The account-facing name is environment-qualified (slice 4, DECISION C):
+    // queues reconcile by bare name account-wide, so two environments sharing
+    // an account would otherwise create-or-reuse the same physical queue. The
+    // ledger still keys by the *logical* name — the outer `environments` map
+    // already separates `staging` from `default`, so no schema change is
+    // needed, only the wrangler-facing name changes.
     for queue in unattempted_queues(declared, attempted_queues) {
-        if !queue_exists(provenance, &queue, project_root) {
-            create_queue(provenance, &queue, project_root).map_err(|e| {
-                DeployFailure::driver(format!("could not create the queue `{queue}`: {e}"))
+        let physical = env_qualify(environment, &queue);
+        if !queue_exists(provenance, &physical, project_root) {
+            create_queue(provenance, &physical, project_root).map_err(|e| {
+                DeployFailure::driver(format!("could not create the queue `{physical}`: {e}"))
             })?;
         }
         // Recorded before the push, as KV is: what the ledger claims is only
         // ever what it watched succeed. Recorded for a queue that was already
         // there, too — the set's use is the plan's `create`/`reuse` wording, and
         // "we confirmed this exists" is exactly what makes `reuse` the true word.
-        if lock.record_queue("default", &queue) {
+        if lock.record_queue(environment, &queue) {
             write_lock(lock_path, lock).map_err(|e| {
                 DeployFailure::driver(format!(
-                    "provisioned the queue `{queue}` but could not record it in {}: {e}",
+                    "provisioned the queue `{physical}` but could not record it in {}: {e}",
                     lock_path.display()
                 ))
             })?;
         }
+    }
+    // Slice 4 (DECISION B+C): Cloudflare does not inherit bindings into a named
+    // environment, so a non-default `--env` needs its own `[env.<name>]` table —
+    // synthesised here, not by the emitter, since the environment name is a
+    // deploy-time concept the compiler never sees. The top-level stanza is left
+    // untouched; it continues to serve the plain, no-`--env` `bynk deploy`.
+    if environment != "default" {
+        let config_text = std::fs::read_to_string(&config).map_err(|e| {
+            DeployFailure::driver(format!(
+                "could not read `{worker}`'s generated configuration: {e}"
+            ))
+        })?;
+        let synthesised =
+            synthesise_environment_block(&config_text, environment, kv_id.as_deref()).map_err(
+                |e| {
+                    DeployFailure::driver(format!(
+                        "could not synthesise the `[env.{environment}]` configuration for `{worker}`: {e}"
+                    ))
+                },
+            )?;
+        std::fs::write(&config, synthesised).map_err(|e| {
+            DeployFailure::driver(format!(
+                "could not write `{worker}`'s `[env.{environment}]` configuration: {e}"
+            ))
+        })?;
     }
     // Secrets straddle the push, and which side depends on whether the Worker
     // already exists (ADR 0195 D6).
@@ -1101,7 +1198,7 @@ fn deploy_one(
     // runs before the push on *both* paths. Only the `wrangler secret put` waits.
     // Otherwise the first-deploy path would discover a missing value after making
     // a live Worker — the very outcome the straddle is arranged to avoid.
-    let first_deploy = !lock.is_deployed("default", worker);
+    let first_deploy = !lock.is_deployed(environment, worker);
     let prepared = prepare_secrets(
         provenance,
         &worker_dir,
@@ -1109,28 +1206,35 @@ fn deploy_one(
         declared,
         secrets,
         first_deploy,
+        environment,
     )?;
     if !first_deploy {
-        apply_secrets(provenance, &worker_dir, worker, &prepared)?;
+        apply_secrets(provenance, &worker_dir, worker, &prepared, environment)?;
     }
-    let pushed = push(provenance, &worker_dir, worker, wrangler_args)?;
+    let pushed = push(provenance, &worker_dir, worker, wrangler_args, environment)?;
     if first_deploy && pushed == Pushed::Ok {
-        apply_secrets(provenance, &worker_dir, worker, &prepared)?;
+        apply_secrets(provenance, &worker_dir, worker, &prepared, environment)?;
     }
     Ok(pushed)
 }
 
-/// `wrangler deploy` in one worker directory.
+/// `wrangler deploy` in one worker directory. `--env` is appended for a
+/// non-default environment (slice 4) — the one place Wrangler needs telling
+/// which of the synthesised `[env.<name>]` tables to read.
 fn push(
     provenance: &Provenance,
     worker_dir: &Path,
     worker: &str,
     wrangler_args: &[String],
+    environment: &str,
 ) -> Result<Pushed, DeployFailure> {
     let Some(mut command) = dev::wrangler_command(provenance, "deploy") else {
         return Err(DeployFailure::driver("wrangler not found".into()));
     };
     command.current_dir(worker_dir).args(wrangler_args);
+    if environment != "default" {
+        command.arg("--env").arg(environment);
+    }
     match command.status() {
         Ok(status) => wrangler_outcome(worker, &status),
         Err(e) => Err(DeployFailure::driver(format!(
@@ -1139,9 +1243,9 @@ fn push(
     }
 }
 
-fn recorded_kv<'a>(lock: &'a DeployLock, worker: &str) -> Option<&'a str> {
+fn recorded_kv<'a>(lock: &'a DeployLock, worker: &str, environment: &str) -> Option<&'a str> {
     lock.environments
-        .get("default")
+        .get(environment)
         .and_then(|env| env.kv.get(worker))
         .map(|kv| kv.id.as_str())
 }
@@ -1264,13 +1368,154 @@ fn materialise_kv_id(path: &Path, id: &str) -> bool {
     std::fs::write(path, config.replace(KV_NAMESPACE_ID_PLACEHOLDER, id)).is_ok()
 }
 
+/// The environment-qualified physical name for a resource whose logical
+/// identity is chosen by the source (`on queue "n"`) or the compiler (a
+/// target context's `worker_dir_name`) — slice 4, DECISION C.
+///
+/// `"default"` is unqualified, which is the property that keeps a plain
+/// `bynk deploy` byte-for-byte unchanged from before this slice. Any other
+/// environment gets Cloudflare's own suffix shape (`<name>-<env>`) — not a
+/// free choice for a Service Binding target: Cloudflare auto-suffixes a
+/// Worker's *own* deployed name the same way under `--env`, so a binding must
+/// match it exactly to resolve. Queues are not Cloudflare-mandated to follow
+/// this shape, but using the same one keeps the two resource kinds — and the
+/// mental model — consistent.
+fn env_qualify(environment: &str, name: &str) -> String {
+    if environment == "default" {
+        name.to_string()
+    } else {
+        format!("{name}-{environment}")
+    }
+}
+
+/// Synthesise a `[env.<name>]` table covering every binding Wrangler does not
+/// inherit into a named environment, and append it to the generated config —
+/// slice 4, DECISIONs B and C combined.
+///
+/// **Why this exists at all.** Confirmed against Cloudflare's own docs:
+/// bindings (`kv_namespaces`, `queues.consumers`, `durable_objects`,
+/// `services`) are *non-inheritable* — a bare `--env staging` against the
+/// flat config `emit_wrangler_toml` writes would deploy with **zero**
+/// bindings. `emit_wrangler_toml` cannot fix this itself: it runs at compile
+/// time, before any `--env` is known (there is no `environment` concept
+/// anywhere in `bynk-syntax`/`bynk-check`), so the driver is the only place
+/// this can live.
+///
+/// **Why this appends rather than edits.** The top-level stanza must stay
+/// exactly as emitted — it continues to serve the plain, no-`--env`
+/// `bynk deploy`. So this parses the config only to *read* the values it
+/// needs (via `toml::Table`, not the narrow read-only `WranglerConfig`/
+/// `ServiceBinding`/`QueueConsumer` structs above, which drop fields — e.g.
+/// `ServiceBinding` has no `binding`, `Migration` has no `new_classes` — that
+/// must be copied byte-for-byte), builds a *separate* `{ env: { <name>: … } }`
+/// table, serialises only that fragment (so TOML string-escaping is the
+/// `toml` crate's job, not a hand-rolled duplicate of
+/// `bynk-emit`'s private `escape_toml_basic_string`), and appends the result
+/// as text. The original bytes are never touched.
+///
+/// Queue names and Service Binding targets are environment-qualified
+/// ([`env_qualify`]); KV gets the resolved id for this environment; Durable
+/// Object bindings, migrations, and cron triggers carry no per-environment
+/// identity and are copied verbatim.
+fn synthesise_environment_block(
+    config_text: &str,
+    environment: &str,
+    kv_id: Option<&str>,
+) -> Result<String, String> {
+    let doc: toml::Table = config_text
+        .parse()
+        .map_err(|e| format!("generated configuration is not valid TOML: {e}"))?;
+
+    let mut env_block = toml::Table::new();
+
+    if let Some(id) = kv_id
+        && let Some(toml::Value::Array(namespaces)) = doc.get("kv_namespaces")
+    {
+        let mut namespaces = namespaces.clone();
+        for ns in &mut namespaces {
+            if let toml::Value::Table(t) = ns {
+                t.insert("id".to_string(), toml::Value::String(id.to_string()));
+            }
+        }
+        env_block.insert("kv_namespaces".to_string(), toml::Value::Array(namespaces));
+    }
+
+    if let Some(mut queues) = doc.get("queues").cloned() {
+        if let toml::Value::Table(q) = &mut queues
+            && let Some(toml::Value::Array(consumers)) = q.get_mut("consumers")
+        {
+            for consumer in consumers.iter_mut() {
+                if let toml::Value::Table(t) = consumer
+                    && let Some(name) = t
+                        .get("queue")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_owned)
+                {
+                    t.insert(
+                        "queue".to_string(),
+                        toml::Value::String(env_qualify(environment, &name)),
+                    );
+                }
+            }
+        }
+        env_block.insert("queues".to_string(), queues);
+    }
+
+    if let Some(toml::Value::Array(services)) = doc.get("services") {
+        let mut services = services.clone();
+        for service in &mut services {
+            if let toml::Value::Table(t) = service
+                && let Some(target) = t
+                    .get("service")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_owned)
+            {
+                t.insert(
+                    "service".to_string(),
+                    toml::Value::String(env_qualify(environment, &target)),
+                );
+            }
+        }
+        env_block.insert("services".to_string(), toml::Value::Array(services));
+    }
+
+    for key in ["durable_objects", "migrations", "triggers"] {
+        if let Some(value) = doc.get(key) {
+            env_block.insert(key.to_string(), value.clone());
+        }
+    }
+
+    if env_block.is_empty() {
+        // Nothing this context needs bound under this environment — leave the
+        // config exactly as emitted rather than appending an empty table.
+        return Ok(config_text.to_string());
+    }
+
+    let mut env_table = toml::Table::new();
+    env_table.insert(environment.to_string(), toml::Value::Table(env_block));
+    let mut wrapper = toml::Table::new();
+    wrapper.insert("env".to_string(), toml::Value::Table(env_table));
+
+    let appended = toml::to_string_pretty(&wrapper)
+        .map_err(|e| format!("could not serialise the `[env.{environment}]` block: {e}"))?;
+    Ok(format!("{config_text}\n{appended}"))
+}
+
 /// Fill a generated worker configuration from the committed deploy ledger.
 /// This is shared with `bynk dev -- --remote`; local dev leaves placeholders
 /// alone because Miniflare does not read the Cloudflare namespace id.
+///
+/// `environment` (slice 4, #837 review): before `--env` existed every real
+/// deploy recorded into `"default"` regardless, so hardcoding it here always
+/// matched. A project deployed only under a non-default `--env` now has
+/// nothing under `"default"` — reading the wrong section would misreport a
+/// provisioned project as never deployed, so this reads whichever section
+/// `bynk dev --env NAME -- --remote` names (default `"default"`, unchanged).
 pub fn materialise_deploy_state(
     project_root: &Path,
     worker: &str,
     config: &Path,
+    environment: &str,
 ) -> Result<bool, String> {
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
     if !text.contains(KV_NAMESPACE_ID_PLACEHOLDER) {
@@ -1279,12 +1524,12 @@ pub fn materialise_deploy_state(
     let lock = read_lock(&project_root.join(LOCK_FILE))?;
     let Some(id) = lock
         .environments
-        .get("default")
-        .and_then(|environment| environment.kv.get(worker))
+        .get(environment)
+        .and_then(|env| env.kv.get(worker))
         .map(|namespace| namespace.id.as_str())
     else {
         return Err(format!(
-            "remote KV for `{worker}` has not been provisioned; run `bynk deploy` first"
+            "remote KV for `{worker}` has not been provisioned under environment `{environment}`; run `bynk deploy --env {environment}` first"
         ));
     };
     if materialise_kv_id(config, id) {
@@ -1690,18 +1935,24 @@ fn value_from(name: &str, source: &SecretSource, from_env: Option<String>) -> Op
 /// `None` means "could not ask" — see [`secret_action`]. Unlike `secret put`,
 /// `secret list` has no draft-Worker path: it simply fails for a Worker that
 /// does not exist, which is exactly the answer we want on a first deploy.
-fn list_secrets(provenance: &Provenance, worker_dir: &Path) -> Option<BTreeSet<String>> {
+fn list_secrets(
+    provenance: &Provenance,
+    worker_dir: &Path,
+    environment: &str,
+) -> Option<BTreeSet<String>> {
     let mut command = dev::wrangler_command(provenance, "secret")?;
-    let output = command
+    command
         .arg("list")
         .arg("--format")
         .arg("json")
         // In the worker directory: `secret list` reads the Worker's name from
         // the config beside it, and any KV id is materialised by now, so
         // wrangler can load a complete config.
-        .current_dir(worker_dir)
-        .output()
-        .ok()?;
+        .current_dir(worker_dir);
+    if environment != "default" {
+        command.arg("--env").arg(environment);
+    }
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1745,14 +1996,16 @@ fn set_secret(
     worker_dir: &Path,
     name: &str,
     value: &str,
+    environment: &str,
 ) -> Result<(), String> {
     let Some(mut command) = dev::wrangler_command(provenance, "secret") else {
         return Err("wrangler not found".into());
     };
+    command.arg("put").arg(name).current_dir(worker_dir);
+    if environment != "default" {
+        command.arg("--env").arg(environment);
+    }
     let mut child = command
-        .arg("put")
-        .arg(name)
-        .current_dir(worker_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1801,6 +2054,7 @@ struct Secrets<'a> {
 /// sets, so resolving lazily there would surface a missing value only once a
 /// live Worker existed, 401ing every request. Nothing here touches Cloudflare
 /// except the advisory presence read.
+#[allow(clippy::too_many_arguments)]
 fn prepare_secrets(
     provenance: &Provenance,
     worker_dir: &Path,
@@ -1808,6 +2062,7 @@ fn prepare_secrets(
     declared: &Resources,
     secrets: &mut Secrets<'_>,
     first_deploy: bool,
+    environment: &str,
 ) -> Result<Vec<(String, String)>, DeployFailure> {
     let wanted = wanted_secrets(
         &declared.declared_secrets,
@@ -1831,7 +2086,7 @@ fn prepare_secrets(
     // our own `wrangler deploy` does not change which secrets are set, so one
     // answer serves the whole step, and `secret list` has no draft-Worker path
     // to trip over on a first deploy.
-    let present = list_secrets(provenance, worker_dir);
+    let present = list_secrets(provenance, worker_dir, environment);
     let mut prepared = Vec::new();
     for want in &wanted {
         match secret_action(&want.name, present.as_ref(), secrets.force) {
@@ -1883,9 +2138,10 @@ fn apply_secrets(
     worker_dir: &Path,
     worker: &str,
     prepared: &[(String, String)],
+    environment: &str,
 ) -> Result<(), DeployFailure> {
     for (name, value) in prepared {
-        set_secret(provenance, worker_dir, name, value).map_err(|e| {
+        set_secret(provenance, worker_dir, name, value, environment).map_err(|e| {
             DeployFailure::driver(format!(
                 "could not set the secret `{name}` on `{worker}`: {e}"
             ))
@@ -2064,9 +2320,10 @@ fn derive_plan<'a>(
     // is derived (declared ∪ supplied) rather than taken from either source.
     secrets: &SecretSource,
     force: bool,
+    environment: &'a str,
 ) -> Plan<'a> {
     Plan {
-        environment: "default",
+        environment,
         order: order.iter().map(String::as_str).collect(),
         contexts: order
             .iter()
@@ -2075,7 +2332,7 @@ fn derive_plan<'a>(
                 ContextPlan {
                     worker,
                     kv: declared.needs_kv.then(|| PlanKv {
-                        action: if recorded_kv(lock, worker).is_some() {
+                        action: if recorded_kv(lock, worker, environment).is_some() {
                             "reuse"
                         } else {
                             "create"
@@ -2086,7 +2343,7 @@ fn derive_plan<'a>(
                         .queues
                         .iter()
                         .map(|queue| PlanQueue {
-                            action: if lock.has_queue("default", queue) {
+                            action: if lock.has_queue(environment, queue) {
                                 "reuse"
                             } else {
                                 "create"
@@ -2114,7 +2371,7 @@ fn derive_plan<'a>(
                     })
                     .collect(),
                     secrets_complete: declared.reads_complete,
-                    action: if lock.is_deployed("default", worker) {
+                    action: if lock.is_deployed(environment, worker) {
                         "redeploy"
                     } else {
                         "deploy"
@@ -2176,7 +2433,14 @@ mod tests {
         resources: &'a BTreeMap<String, Resources>,
         lock: &DeployLock,
     ) -> Plan<'a> {
-        derive_plan(order, resources, lock, &SecretSource::default(), false)
+        derive_plan(
+            order,
+            resources,
+            lock,
+            &SecretSource::default(),
+            false,
+            "default",
+        )
     }
 
     fn lock_with_deployed(workers: &[&str]) -> DeployLock {
@@ -2392,6 +2656,7 @@ mod tests {
                 &DeployLock::default(),
                 &source(&[("STRIPE_KEY", "sk_live_x")], &[]),
                 false,
+                "default",
             ),
             DeployFormat::Short,
         ));
@@ -2410,6 +2675,7 @@ mod tests {
                 &lock_with_deployed(&["api"]),
                 &source(&[], &["PROBE_TOKEN"]),
                 true,
+                "default",
             ),
             DeployFormat::Short,
         ));
@@ -2425,6 +2691,7 @@ mod tests {
                 &DeployLock::default(),
                 &source(&[("SHARED_KEY", "v")], &[]),
                 false,
+                "default",
             ),
             DeployFormat::Short,
         ));
@@ -2446,6 +2713,7 @@ mod tests {
                 &DeployLock::default(),
                 &source(&[], &["PROBE_TOKEN"]),
                 false,
+                "default",
             ),
             DeployFormat::Short,
         ));
@@ -2471,6 +2739,7 @@ mod tests {
                 &DeployLock::default(),
                 &SecretSource::default(),
                 false,
+                "default",
             ),
             DeployFormat::Json,
         ));
@@ -2488,6 +2757,7 @@ mod tests {
                 &DeployLock::default(),
                 &source(&[("STRIPE_KEY", "sk_live_x")], &["PROBE_TOKEN"]),
                 false,
+                "default",
             ),
             DeployFormat::Json,
         ));
@@ -2671,7 +2941,7 @@ mod tests {
         "#,
         )
         .expect("a slice-0 ledger must still parse");
-        assert_eq!(recorded_kv(&lock, "api"), Some("abc"));
+        assert_eq!(recorded_kv(&lock, "api", "default"), Some("abc"));
         assert!(!lock.is_deployed("default", "api"));
         assert!(!lock.has_queue("default", "intake"));
     }
@@ -2735,6 +3005,256 @@ mod tests {
         assert!(materialise_kv_id(&path, "abc"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "id = \"abc\"");
         let _ = std::fs::remove_file(path);
+    }
+
+    // ---- #835 slice 4: environments -------------------------------------
+
+    #[test]
+    fn env_qualify_is_a_no_op_for_default_and_suffixes_otherwise() {
+        assert_eq!(env_qualify("default", "jobs"), "jobs");
+        assert_eq!(env_qualify("staging", "jobs"), "jobs-staging");
+        assert_eq!(env_qualify("staging", "payment"), "payment-staging");
+    }
+
+    /// A config carrying every v1 binding kind — mirrors what
+    /// `emit_wrangler_toml` actually writes (`bynk-emit/src/emitter/
+    /// wrangler.rs`), so a gap here is a gap the real emitter output would
+    /// hit too.
+    const FULL_CONFIG: &str = r#"
+# Generated by bynkc — do not edit by hand.
+name = "api"
+main = "index.ts"
+compatibility_date = "2024-11-01"
+
+[[services]]
+binding = "PAYMENT"
+service = "payment"
+
+[[kv_namespaces]]
+binding = "BYNK_KV"
+id = "<KV_NAMESPACE_ID>" # set at deploy time
+
+[[durable_objects.bindings]]
+name = "ORDER_ENTITY"
+class_name = "OrderEntity"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["OrderEntity"]
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[queues.consumers]]
+queue = "jobs"
+max_batch_size = 10
+"#;
+
+    #[test]
+    fn synthesise_environment_block_covers_every_binding_kind() {
+        let out = synthesise_environment_block(FULL_CONFIG, "staging", Some("kv-staging-id"))
+            .expect("valid TOML in, valid TOML out");
+
+        // The top level is untouched — it still serves a plain `bynk deploy`.
+        assert!(
+            out.starts_with(FULL_CONFIG),
+            "the original bytes must survive verbatim: {out}"
+        );
+
+        // Parsed back, not string-matched: proves the appended block is valid
+        // TOML with the right shape, not merely text that looks right.
+        let doc: toml::Table = out.parse().expect("synthesised output is valid TOML");
+        let env = doc["env"]["staging"].as_table().expect("env.staging");
+
+        assert_eq!(env["kv_namespaces"][0]["binding"].as_str(), Some("BYNK_KV"));
+        assert_eq!(
+            env["kv_namespaces"][0]["id"].as_str(),
+            Some("kv-staging-id"),
+            "the KV id is this environment's resolved id, not the placeholder"
+        );
+
+        assert_eq!(
+            env["services"][0]["binding"].as_str(),
+            Some("PAYMENT"),
+            "the binding name carries over unqualified"
+        );
+        assert_eq!(
+            env["services"][0]["service"].as_str(),
+            Some("payment-staging"),
+            "the target is environment-qualified — DECISION C's Service Binding half"
+        );
+
+        assert_eq!(
+            env["queues"]["consumers"][0]["queue"].as_str(),
+            Some("jobs-staging"),
+            "the physical queue name is environment-qualified — DECISION C's queue half"
+        );
+        assert_eq!(
+            env["queues"]["consumers"][0]["max_batch_size"].as_integer(),
+            Some(10)
+        );
+
+        assert_eq!(
+            env["durable_objects"]["bindings"][0]["class_name"].as_str(),
+            Some("OrderEntity"),
+            "DO bindings carry no per-environment identity — copied verbatim"
+        );
+        assert_eq!(env["migrations"][0]["tag"].as_str(), Some("v1"));
+        assert_eq!(
+            env["migrations"][0]["new_classes"][0].as_str(),
+            Some("OrderEntity"),
+            "new_classes is exactly the field the narrow Migration struct drops"
+        );
+        assert_eq!(
+            env["triggers"]["crons"][0].as_str(),
+            Some("*/5 * * * *"),
+            "crons carry no per-environment identity — copied verbatim"
+        );
+    }
+
+    #[test]
+    fn synthesise_environment_block_is_unchanged_for_the_default_environment() {
+        // `deploy_one` only calls this for a non-default environment, but the
+        // function itself staying a faithful no-op at the boundary is worth
+        // pinning: "default" must never gain a synthesised block.
+        let out = synthesise_environment_block(FULL_CONFIG, "default", Some("kv-id")).unwrap();
+        let doc: toml::Table = out.parse().unwrap();
+        assert_eq!(
+            doc["env"]["default"]["queues"]["consumers"][0]["queue"].as_str(),
+            Some("jobs"),
+            "\"default\" qualifies to itself, so this is still a no-op in effect"
+        );
+    }
+
+    #[test]
+    fn synthesise_environment_block_is_a_true_no_op_when_nothing_needs_binding() {
+        let bare = "name = \"api\"\nmain = \"index.ts\"\n";
+        let out = synthesise_environment_block(bare, "staging", None).unwrap();
+        assert_eq!(
+            out, bare,
+            "a context with no bindable resource appends nothing, not an empty [env.staging]"
+        );
+    }
+
+    #[test]
+    fn synthesise_environment_block_rejects_unparseable_config() {
+        assert!(synthesise_environment_block("not = valid = toml = =", "staging", None).is_err());
+    }
+
+    #[test]
+    fn conflicting_env_passthrough_finds_bare_and_equals_forms() {
+        assert_eq!(
+            conflicting_env_passthrough(&names(&["--env", "production"])),
+            Some("--env")
+        );
+        assert_eq!(
+            conflicting_env_passthrough(&names(&["--env=production"])),
+            Some("--env=production")
+        );
+        assert_eq!(
+            conflicting_env_passthrough(&names(&["--environment", "production"])),
+            Some("--environment")
+        );
+        assert_eq!(
+            conflicting_env_passthrough(&names(&["--minify"])),
+            None,
+            "an unrelated flag is not a conflict"
+        );
+        assert_eq!(conflicting_env_passthrough(&[]), None);
+    }
+
+    #[test]
+    fn two_environments_do_not_cross_contaminate_the_ledger() {
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.record_deployed("staging", "api", None);
+        lock.record_queue("staging", "jobs");
+        lock.environments
+            .entry("staging".into())
+            .or_default()
+            .kv
+            .insert(
+                "api".into(),
+                KvNamespace {
+                    id: "kv-staging".into(),
+                },
+            );
+
+        // "default" was never touched — a `--env staging` run must not
+        // fabricate or leak into the section a plain `bynk deploy` reads.
+        assert!(!lock.is_deployed("default", "api"));
+        assert!(!lock.has_queue("default", "jobs"));
+        assert_eq!(recorded_kv(&lock, "api", "default"), None);
+
+        assert!(lock.is_deployed("staging", "api"));
+        assert!(lock.has_queue("staging", "jobs"));
+        assert_eq!(recorded_kv(&lock, "api", "staging"), Some("kv-staging"));
+    }
+
+    /// #837 review: `materialise_deploy_state` (shared with `bynk dev --
+    /// --remote`) hardcoded `"default"` even after `--env` shipped. Before
+    /// `--env` existed every real deploy recorded into `"default"`
+    /// regardless, so that always matched — but a project deployed *only*
+    /// under `bynk deploy --env staging` now has nothing under `"default"`,
+    /// and reading the wrong section misreports a provisioned project as
+    /// never deployed.
+    #[test]
+    fn materialise_deploy_state_reads_the_named_environment_not_default() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bynk-materialise-state-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project_root = dir.clone();
+        let config = dir.join("wrangler.toml");
+        std::fs::write(&config, format!("id = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"")).unwrap();
+
+        // Provisioned under "staging" alone — the scenario the review named:
+        // a project that has never had a plain `bynk deploy` (no "default").
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.environments
+            .entry("staging".into())
+            .or_default()
+            .kv
+            .insert(
+                "api".into(),
+                KvNamespace {
+                    id: "kv-staging".into(),
+                },
+            );
+        std::fs::write(
+            project_root.join(LOCK_FILE),
+            toml::to_string_pretty(&lock).unwrap(),
+        )
+        .unwrap();
+
+        // Reading "default" (what this function did unconditionally before
+        // the fix) must fail helpfully, not silently mis-materialise.
+        let err = materialise_deploy_state(&project_root, "api", &config, "default")
+            .expect_err("nothing is recorded under \"default\" — this must not silently pass");
+        assert!(
+            err.contains("environment `default`"),
+            "the error should name which environment it looked under: {err}"
+        );
+
+        // Reading "staging" — the environment it was actually deployed under
+        // — must succeed and materialise that environment's id.
+        assert!(materialise_deploy_state(&project_root, "api", &config, "staging").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            "id = \"kv-staging\""
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn scratch_lock_path(label: &str) -> std::path::PathBuf {
@@ -3162,14 +3682,17 @@ mod tests {
     fn context_flag_names_a_dependency_that_was_never_deployed() {
         let g = graph(&[("orders", &["payment"]), ("payment", &[])]);
         assert_eq!(
-            absent_dependencies("orders", &g, &DeployLock::default()),
+            absent_dependencies("orders", &g, &DeployLock::default(), "default"),
             names(&["payment"]),
             "deploying orders alone would fail at upload — say which target is missing"
         );
         // Once payment is in the ledger, orders alone is fine.
-        assert!(absent_dependencies("orders", &g, &lock_with_deployed(&["payment"])).is_empty());
+        assert!(
+            absent_dependencies("orders", &g, &lock_with_deployed(&["payment"]), "default")
+                .is_empty()
+        );
         // A worker with no bindings never has an absent dependency.
-        assert!(absent_dependencies("payment", &g, &DeployLock::default()).is_empty());
+        assert!(absent_dependencies("payment", &g, &DeployLock::default(), "default").is_empty());
     }
 
     #[test]
@@ -3698,6 +4221,7 @@ WITH_EQUALS=a=b
             &DeployLock::default(),
             &source(&[("STRIPE_KEY", SENTINEL)], &[]),
             false,
+            "default",
         );
         for format in [DeployFormat::Short, DeployFormat::Json] {
             let rendered = plan_report(&plan, format);
@@ -3761,6 +4285,7 @@ WITH_EQUALS=a=b
             &expects("app.b", "whoami", "317bdd3de84d2176"),
             &lock,
             |c| c.replace('.', "-"),
+            "default",
         );
         assert!(found.is_empty(), "{found:?}");
     }
@@ -3774,6 +4299,7 @@ WITH_EQUALS=a=b
             &expects("app.b", "whoami", "317bdd3de84d2176"),
             &lock,
             |c| c.replace('.', "-"),
+            "default",
         );
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].dependency, "app.b");
@@ -3789,6 +4315,7 @@ WITH_EQUALS=a=b
             &expects("app.b", "whoami", "317bdd3de84d2176"),
             &lock,
             |c| c.replace('.', "-"),
+            "default",
         );
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].live, "<absent>");
@@ -3807,6 +4334,7 @@ WITH_EQUALS=a=b
             &expects("app.b", "whoami", "317bdd3de84d2176"),
             &lock,
             |c| c.replace('.', "-"),
+            "default",
         );
         assert!(found.is_empty(), "{found:?}");
     }
@@ -3824,6 +4352,7 @@ WITH_EQUALS=a=b
             &expects("app.b", "whoami", "317bdd3de84d2176"),
             &lock,
             |c| c.replace('.', "-"),
+            "default",
         );
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].live, "<absent>");
@@ -3837,6 +4366,7 @@ WITH_EQUALS=a=b
             &expects("app.b", "whoami", "317bdd3de84d2176"),
             &DeployLock::default(),
             |c| c.replace('.', "-"),
+            "default",
         );
         assert!(found.is_empty(), "{found:?}");
     }
