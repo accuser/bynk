@@ -91,6 +91,13 @@ pub(crate) fn process_tests(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    // v0.17 (Locale capability track, slice 1, #844): capability name -> owning
+    // unit, per target, for capabilities flattened in via `consumes U { Cap }`
+    // (this never includes anything a target declares itself). Needed so
+    // `makeTestDeps()` wires an adapter-flattened capability (real *or*
+    // stubbed) — it is not in `UnitTable.capabilities`, which holds only
+    // locally-declared capabilities.
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
     // v0.132: production unit name -> its `parsed` file indices, so a barrel can
     // resolve a multi-file commons the test module imports back to its files.
     groups: &HashMap<String, Vec<usize>>,
@@ -216,6 +223,7 @@ pub(crate) fn process_tests(
             unit_consumes,
             unit_consumes_aliases,
             unit_uses,
+            unit_flattened,
             exports_visibility,
             tests_prefix,
             import_ext,
@@ -3233,6 +3241,7 @@ fn emit_test_module(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
     exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
     tests_prefix: &Path,
     import_ext: ImportExt,
@@ -3399,6 +3408,7 @@ fn emit_test_module(
         unit_tables,
         unit_consumes,
         unit_consumes_aliases,
+        unit_flattened,
     ));
     out.push('\n');
 
@@ -4130,6 +4140,7 @@ fn emit_test_deps(
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
 ) -> String {
     let mut out = String::new();
     out.push_str("function makeTestDeps() {\n");
@@ -4155,13 +4166,34 @@ fn emit_test_deps(
             };
             entries.push(entry);
         }
+        // v0.17 (Locale capability track, slice 1, #844): a capability
+        // flattened in via `consumes U { Cap }` (e.g. an adapter's `Locale`)
+        // is never in `table.capabilities` above — that holds only
+        // capabilities this unit declares itself. Its real implementation is
+        // wired by production `compose()` from a platform binding the test
+        // module never imports, so an un-stubbed one is always the
+        // placeholder, exactly like a locally-declared capability with no
+        // provider.
+        let mut flattened: Vec<(&String, &String)> = unit_flattened
+            .get(target_name)
+            .map(|m| m.iter().collect())
+            .unwrap_or_default();
+        flattened.sort_by_key(|(cap, _)| cap.as_str());
+        for (cap, owner) in flattened {
+            let owner_ns = owner.replace('.', "_");
+            let entry = if stubs.contains_key(cap) {
+                format!("{cap}: new __Stub_{cap}()")
+            } else {
+                format!("{cap}: undefined as unknown as {owner_ns}.{cap}")
+            };
+            entries.push(entry);
+        }
         // Cross-context surface: consumed contexts run with their real surface
         // (v0.118 `stub` is capability-only — a consumed-context capability
-        // flattened via `consumes U { Cap }` is a target capability above).
-        // An `adapter` target (e.g. `consumes bynk { Locale }`) has no
-        // `makeSurface` at all — its capabilities are already flattened into
-        // `caps` above — so it must not get a surface entry (Locale
-        // capability track, slice 1, #844).
+        // flattened via `consumes U { Cap }` is folded in via `unit_flattened`
+        // above). An `adapter` target (e.g. `consumes bynk { Locale }`) has no
+        // `makeSurface` at all — so it must not get a surface entry either
+        // (Locale capability track, slice 1, #844).
         let consumed: Vec<String> = unit_consumes
             .get(target_name)
             .cloned()

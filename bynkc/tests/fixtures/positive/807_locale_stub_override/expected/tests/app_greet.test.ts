@@ -42,7 +42,7 @@ class __Stub_Locale {
 }
 
 function makeTestDeps() {
-  return {  };
+  return { Locale: new __Stub_Locale() };
 }
 
 // case tier: integration

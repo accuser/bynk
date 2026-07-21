@@ -2485,6 +2485,16 @@ pub(crate) struct LowerCtx<'a> {
     /// click-through) rather than a bare byte offset. `None` for non-test
     /// emission, where `assert` doesn't appear.
     pub assert_loc: Option<AssertLoc>,
+    /// True when lowering **any** generated test-scaffold body (a test-case
+    /// body, or a `stub`/`where`/`requires` predicate value lowered via
+    /// `lower_block_to_async_body`) — distinct from `assert_loc`, which is
+    /// only ever `Some` for the first of those and carries an unrelated
+    /// payload (a diagnostic location). Set alongside `assert_loc` at each of
+    /// the lowering entry points below; kept as its own field (Locale
+    /// capability track, slice 1, #844 review) rather than overloading
+    /// `assert_loc.is_some()`, since that conflated "has a location" with
+    /// "is test scaffolding" for a caller that has no location to give.
+    pub test_scaffold: bool,
     /// Slice 1 (ADR 0103): the source-map builder for the file being emitted, if
     /// any. The deep lowering chain records `(generated offset → source span)`
     /// checkpoints here; `emit_project` owns the `RefCell` and threads a shared
@@ -2504,15 +2514,14 @@ pub(crate) struct AssertLoc {
 }
 
 impl<'a> LowerCtx<'a> {
-    /// True when lowering a **generated test-case body** (`tests/*.test.ts`), where
-    /// branded types are destructured into `any`-typed value bindings rather than
-    /// referenced as types. `assert_loc` is set only by the two test-body lowering
-    /// entry points and is `None` for all production emission, so it doubles as the
-    /// test-scaffold discriminator. Callers that emit a branded `as`-cast consult
-    /// this to pick `unchecked_construct_test` (→ `(v as any)`) over the production
+    /// True when lowering **generated test-scaffold** TypeScript (a test-case
+    /// body, or a `stub`/`where`/`requires` predicate value), where branded
+    /// types are destructured into `any`-typed value bindings rather than
+    /// referenced as types. Callers that emit a branded `as`-cast consult this
+    /// to pick `unchecked_construct_test` (→ `(v as any)`) over the production
     /// `(v as T)` form, which cannot resolve `T` in the test module's scope.
     pub(crate) fn in_test_scaffold(&self) -> bool {
-        self.assert_loc.is_some()
+        self.test_scaffold
     }
 
     fn new(
@@ -2562,6 +2571,7 @@ impl<'a> LowerCtx<'a> {
             deps_identity_binder: None,
             actor_sum_binder: None,
             assert_loc: None,
+            test_scaffold: false,
             source_map: None,
         }
     }

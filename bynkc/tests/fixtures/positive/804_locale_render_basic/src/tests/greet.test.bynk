@@ -5,6 +5,8 @@ output is always `code` plus a deterministic, key-sorted rendering of
 multiple params (proving sort-by-key, not insertion order).
 ---
 suite app.greet as unit {
+  stub Locale.current() returns "en"
+
   case "no params renders just the code" {
     let g <- greeting.call()
     expect g == "hello"

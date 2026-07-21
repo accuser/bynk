@@ -3342,6 +3342,7 @@ fn run_checks(
         &unit_consumes,
         &unit_consumes_aliases,
         &unit_uses,
+        &unit_flattened,
         &groups,
         tests_prefix,
         import_ext,

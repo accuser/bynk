@@ -27,8 +27,22 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
+function __bynkDeepEqual(a: unknown, b: unknown): boolean {
+  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === "bigint" ? "__bigint__" + String(val) : val);
+  try { return s(a) === s(b); } catch { return a === b; }
+}
+
+class __Stub_Locale {
+  async current(): Promise<bynk_locale.LocaleTag> {
+    if (true) {
+      return ("en" as any);
+    }
+    throw new Error("bynk: no stub clause matched for Locale.current");
+  }
+}
+
 function makeTestDeps() {
-  return {  };
+  return { Locale: new __Stub_Locale() };
 }
 
 // case tier: unit
@@ -39,7 +53,7 @@ async function test_no_params_renders_just_the_code() {
     const { LocaleTag, Message, MessageArg, message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
     const { FetchError, Method, Request, Response, Uuid } = bynk as any;
     const g = await greeting.call(deps);
-    if (!(g === "hello")) { throw __bynkExpectFailure("tests/greet.test.bynk:10:12", 390, 402, "expect g == \"hello\"\n  expected: g == \"hello\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("hello"))); }
+    if (!(g === "hello")) { throw __bynkExpectFailure("tests/greet.test.bynk:12:12", 428, 440, "expect g == \"hello\"\n  expected: g == \"hello\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("hello"))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -57,7 +71,7 @@ async function test_one_param_renders_code_plus_the_substitution() {
     const { LocaleTag, Message, MessageArg, message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
     const { FetchError, Method, Request, Response, Uuid } = bynk as any;
     const g = await greetingWithName.call("Ada", deps);
-    if (!(g === "greeting {name=Ada}")) { throw __bynkExpectFailure("tests/greet.test.bynk:15:12", 517, 543, "expect g == \"greeting {name=Ada}\"\n  expected: g == \"greeting {name=Ada}\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("greeting {name=Ada}"))); }
+    if (!(g === "greeting {name=Ada}")) { throw __bynkExpectFailure("tests/greet.test.bynk:17:12", 555, 581, "expect g == \"greeting {name=Ada}\"\n  expected: g == \"greeting {name=Ada}\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("greeting {name=Ada}"))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -75,7 +89,7 @@ async function test_multiple_params_render_sorted_by_key__not_call_order() {
     const { LocaleTag, Message, MessageArg, message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
     const { FetchError, Method, Request, Response, Uuid } = bynk as any;
     const g = await greetingWithCountAndName.call("Ada", 3, deps);
-    if (!(g === "greeting {count=3, name=Ada}")) { throw __bynkExpectFailure("tests/greet.test.bynk:20:12", 677, 712, "expect g == \"greeting {count=3, name=Ada}\"\n  expected: g == \"greeting {count=3, name=Ada}\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("greeting {count=3, name=Ada}"))); }
+    if (!(g === "greeting {count=3, name=Ada}")) { throw __bynkExpectFailure("tests/greet.test.bynk:22:12", 715, 750, "expect g == \"greeting {count=3, name=Ada}\"\n  expected: g == \"greeting {count=3, name=Ada}\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("greeting {count=3, name=Ada}"))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
