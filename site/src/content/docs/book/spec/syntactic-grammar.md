@@ -650,6 +650,15 @@ highest (`*`, `/`); the production order is the precedence order. `implies`
 (v0.80) is logical implication, right-associative, `P implies Q` ≡ `!P || Q`.
 Well-formedness: §5.
 
+v0.130 (ADR 0158): a `+`/`-` that begins a new line does **not** continue the
+additive chain — it starts a new construct instead, so a comma-less match arm
+beginning with a negative literal pattern (`10` ⏎ `-2 => …`) reads as two arms,
+not `10 - 2`. This applies only at the `+`/`-` level; `*` and `/` continue
+across a line break as usual. Like the same-line `[` rule for type application
+([§4.6.8](#468-method_call), [§4.6.10](#4610-call), [§4.6.21a](#4621a-list_literal)),
+this is a case where a line break is syntactically significant — see
+[§3.4](/book/spec/lexical-grammar/#34-trivia).
+
 ### §4.6.7 unary_expr
 
 {{#grammar unary_expr}}

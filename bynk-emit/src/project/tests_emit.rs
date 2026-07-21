@@ -1212,6 +1212,38 @@ fn emit_system_http_support(
                     method = method.as_str(),
                 ));
             }
+            // #821: the raw *and* no-auth driver combined, for a call mixing
+            // `Wire(…)` with `by Nobody` — every slot is a raw `string` (as
+            // `__sysdrive_raw`) and the `Authorization` header is dropped (as
+            // `__sysdrive_noauth`), so the seam rejects the missing credential
+            // before the (possibly malformed) raw body is even read.
+            // `responseToUnauthOutcome` already delegates a non-`401` status to
+            // `responseToHttpOutcome`'s shape-based classification, so a raw
+            // body that would have been rejected on its own shape still decodes
+            // correctly here. Emitted under the same conditions as both parent
+            // drivers: a `Wire`-eligible slot and a Bearer-secured route.
+            if !h.params.is_empty() && !auth_header.is_empty() {
+                let raw_params: Vec<String> = h
+                    .params
+                    .iter()
+                    .map(|p| format!("{}: string", crate::emitter::ts_ident(&p.name.name)))
+                    .collect();
+                let raw_body_init = match body_ps.first() {
+                    Some(p) => format!("body: {}, ", crate::emitter::ts_ident(&p.name.name)),
+                    None => String::new(),
+                };
+                routes.push_str(&format!(
+                "async function __sysdrive_rawnoauth_{sname}_{key}({params}{sep}__sub: string) {{\n\
+                 \x20 const __h = makeHarness();\n\
+                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}}}, {raw_body_init}}});\n\
+                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+                 \x20 return responseToUnauthOutcome(__res, {payload_deser});\n\
+                 }}\n",
+                    params = raw_params.join(", "),
+                    sep = if raw_params.is_empty() { "" } else { ", " },
+                    method = method.as_str(),
+                ));
+            }
         }
         // #707: one generic wrong-method driver per service — drives an arbitrary
         // `(method, path)` (an existing path, an undeclared method) and decodes

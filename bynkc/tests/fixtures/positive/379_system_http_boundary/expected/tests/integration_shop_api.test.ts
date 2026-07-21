@@ -67,6 +67,12 @@ async function __sysdrive_noauth_api_http_POST_cart(body: any, __sub: string) {
   const __res = await __h.env.SHOP_API.fetch(__req);
   return responseToUnauthOutcome(__res, shop_api.deserialise_Item);
 }
+async function __sysdrive_rawnoauth_api_http_POST_cart(body: string, __sub: string) {
+  const __h = makeHarness();
+  const __req = new Request(`https://test/cart`, { method: "POST", headers: { "content-type": "application/json", }, body: body, });
+  const __res = await __h.env.SHOP_API.fetch(__req);
+  return responseToUnauthOutcome(__res, shop_api.deserialise_Item);
+}
 async function __sysdrive_api_http_GET_cart_size(__sub: string) {
   const __h = makeHarness();
   const __req = new Request(`https://test/cart/size`, { method: "GET", headers: { "authorization": `Bearer ${await __bynkSignHs256({ sub: __sub, exp: __bynkNow() + 3600 }, ((globalThis as any).process?.env?.["AUTH_SECRET"] ?? ""))}`, }, });
