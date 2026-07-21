@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Or-patterns (`p₁ | p₂`) in `match` arms and after `is`
----
+# 0252 — Or-patterns (`p₁ | p₂`)
 
-## ADR: or-patterns
-title: Or-patterns (`p₁ | p₂`)
-summary: Pattern alternation in `match` and `is`, and its emitter split between a flat switch and an if-chain
+- **Status:** Accepted (v0.219)
 
 **Status:** Accepted
 
