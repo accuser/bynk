@@ -56,9 +56,9 @@ pub struct DeployOptions {
     /// `--force` — overwrite a secret already set, rather than skipping it.
     pub force: bool,
     /// `--prune` (slice 5) — delete every reported KV/queue orphan, behind
-    /// its own confirmation ([`confirm_prune`]). Never deletes a Worker
-    /// (DECISION C). Defaults to report-only, matching the track's
-    /// "report or prevent, never silently share/destroy" posture (§6).
+    /// its own confirmation. Never deletes a Worker (DECISION C). Defaults
+    /// to report-only, matching the track's "report or prevent, never
+    /// silently share/destroy" posture (§6).
     pub prune: bool,
     pub wrangler_args: Vec<String>,
 }
