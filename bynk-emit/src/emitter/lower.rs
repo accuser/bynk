@@ -4228,14 +4228,29 @@ fn emit_match_case(
         }
         // #474: a bindingless or-pattern (guaranteed by `match_needs_if_chain`
         // routing — a bound/guarded one takes the if-chain path instead) lowers
-        // to one fall-through `case` label per alternative, sharing one body.
+        // to one fall-through `case` label per alternative, sharing one body —
+        // *unless* an alternative is `_`/a bare binding (#825 review): that
+        // alone already matches everything (`Pending | _` is exactly as
+        // irrefutable as a bare `_`, per `Pattern::is_irrefutable`), and JS
+        // `switch` has no `case _:` form, only `default:`. Emitting case
+        // labels for the other (now-redundant) alternatives and dropping the
+        // wildcard produced malformed, `tsc`-rejected output.
         Pattern::Or(alts, _) => {
+            if arm.pattern.is_irrefutable() {
+                write_line(out, indent, "default: {");
+                emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+                write_line(out, indent, "}");
+                return;
+            }
             let last = alts.len() - 1;
             for (i, alt) in alts.iter().enumerate() {
                 let label = match alt {
                     Pattern::Literal { value, .. } => literal_case_label(value),
                     Pattern::Variant { variant, .. } => format!("\"{}\"", variant.name),
-                    _ => continue,
+                    Pattern::Wildcard(_) | Pattern::Binding(_) => unreachable!(
+                        "pattern.is_irrefutable() is false, so no alternative is a wildcard or binding"
+                    ),
+                    Pattern::Or(..) => unreachable!("an Or's alternatives are always leaves"),
                 };
                 if i == last {
                     write_line(out, indent, &format!("case {label}: {{"));

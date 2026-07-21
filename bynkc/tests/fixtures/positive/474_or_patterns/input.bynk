@@ -57,3 +57,16 @@ fn describe(s: BookingState) -> String {
 fn isActive(s: BookingState) -> Bool {
   s is (Held(_, _, _, _, _) | Confirmed(_, _, _, _, _))
 }
+
+type Status = | Pending | Active | Done
+
+-- #825 review: a wildcard alternative mixed into an otherwise-bindingless
+-- or-pattern is exactly as irrefutable as a bare `_` (`Pending | _` matches
+-- everything) — the flat-switch path must lower this to `default:`, not a
+-- `case "Pending":` label that silently drops `Active`.
+fn classify(s: Status) -> String {
+  match s {
+    Done => "done"
+    Pending | _ => "not done"
+  }
+}

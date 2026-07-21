@@ -1,0 +1,9 @@
+commons demo
+
+fn f(n: Int) -> String {
+  match n {
+    1 | 2 => "small"
+    2 => "two"
+    _ => "other"
+  }
+}

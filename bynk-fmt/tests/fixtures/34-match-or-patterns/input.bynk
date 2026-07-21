@@ -10,4 +10,12 @@ commons demo {
       Some(_)=>"other"
       None=>"none" }
   }
+  type Command = |Login(user:String,pass:String)|Register(user:String,pass:String)|Logout
+  fn route(c:Command)->String{
+    match c {
+      Login(u,_)|Register(u,_) if u=="admin"=>"admin"
+      Login(_,_)|Register(_,_)=>"user"
+      Logout=>"bye"
+    }
+  }
 }

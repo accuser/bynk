@@ -3719,9 +3719,16 @@ fn gather_pattern_bindings(
     types: &HashMap<String, TypeDecl>,
     out: &mut Vec<(String, Ty)>,
 ) {
-    // #474: an or-pattern's alternatives are guaranteed (Rule 2) to give any
-    // shared name the same type, so the first alternative's mapping is
-    // representative of them all — recurse into it alone.
+    // #474: when Rule 2 holds, every alternative gives a shared name the same
+    // type, so the first alternative's mapping is representative — recurse
+    // into it alone rather than merging all alternatives. This is safe even
+    // when Rule 2 does *not* hold: `check_is_pattern`'s own `Or` arm is what
+    // detects and reports that mismatch (by calling this same function once
+    // per alternative and comparing), so by the time this call is reached the
+    // violation is already a separate diagnostic — sampling one alternative
+    // here is best-effort narrowing for error recovery, not a load-bearing
+    // invariant. (Do not add a `debug_assert` that all alternatives agree:
+    // the negative fixtures deliberately exercise the disagreeing case.)
     if let Pattern::Or(alts, _) = pattern {
         if let Some(first) = alts.first() {
             gather_pattern_bindings(value_ty, first, types, out);

@@ -25,6 +25,17 @@ export const Command = {
   Logout: { tag: "Logout" } as Command,
 };
 
+export type Status =
+    { readonly tag: "Pending" }
+  | { readonly tag: "Active" }
+  | { readonly tag: "Done" };
+
+export const Status = {
+  Pending: { tag: "Pending" } as Status,
+  Active: { tag: "Active" } as Status,
+  Done: { tag: "Done" } as Status,
+};
+
 export function roomOf(s: BookingState): number {
   if ((s.tag === "Held" || s.tag === "Confirmed")) {
     let r, rsv;
@@ -125,5 +136,17 @@ export function describe(s: BookingState): string {
 
 export function isActive(s: BookingState): boolean {
   return (s.tag === "Held" || s.tag === "Confirmed");
+}
+
+export function classify(s: Status): string {
+  switch (s.tag) {
+    case "Done": {
+      return "done";
+    }
+    default: {
+      return "not done";
+    }
+  }
+  throw new Error("non-exhaustive match");
 }
 
