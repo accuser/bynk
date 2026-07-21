@@ -167,10 +167,10 @@ commons app.messages {
 
 with a sibling `messages fr { ... }` in a second file in the same directory.
 `messages` is a new **item** parseable inside a `commons` body — not a new
-top-level source-unit kind alongside `commons`/`context`
-([`SourceUnit`](../../bynk-syntax/src/ast.rs), which is exactly the two file-
-level kinds today, no third). `context` is the wrong home regardless: it is
-"a deployable context (services, agents, capabilities)"
+top-level source-unit kind alongside `commons`/`context`/`suite`/`adapter`
+([`SourceUnit`](../../bynk-syntax/src/ast.rs), which is exactly those four
+file-level kinds today, no fifth). `context` is the wrong home regardless: it
+is "a deployable context (services, agents, capabilities)"
 ([`bynk-syntax/src/keywords.rs`](../../bynk-syntax/src/keywords.rs)), and a
 message bundle is exactly what `commons` already means — "a pure, stateless
 module of types and functions" — plus data.
