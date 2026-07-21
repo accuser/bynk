@@ -166,6 +166,11 @@ Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
 to provision the required KV namespace and publish a Worker. After that first
 deploy, `bynk dev -- --remote` uses the recorded namespace id for remote dev.
 
+If you deployed to a [named environment](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/#environments)
+(`bynk deploy --env staging`), pass the same name so `--remote` reads the right
+one — `bynk dev --env staging -- --remote`. Omit it and `--remote` reads the
+default environment, same as before.
+
 ## Related
 
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/) — the two emission targets

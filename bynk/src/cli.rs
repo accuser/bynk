@@ -84,6 +84,12 @@ pub enum Command {
         /// as `--base-port` is (default 9229).
         #[arg(long, default_value_t = 9229)]
         inspect_port: u16,
+        /// Which `bynk.deploy.lock` environment `-- --remote` reads the KV id
+        /// from. `dev` never provisions, so this only selects among what
+        /// `bynk deploy --env NAME` already recorded — irrelevant without
+        /// `--remote`. Omit for today's single, unqualified default.
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        env: String,
         /// Arguments after `--`, forwarded to `wrangler dev` (e.g. `-- --remote`).
         /// Ports are the driver's to allocate: use `--base-port` / `--inspect-port`.
         #[arg(last = true)]

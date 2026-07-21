@@ -704,7 +704,14 @@ struct PlanMigration<'a> {
 /// (`--port`/`--inspector-port` there). Returns the matched literal, not just
 /// a bool, so the error can name what it conflicts with. Pure, so the rule is
 /// tested without touching `DeployOptions`.
-fn conflicting_env_passthrough(wrangler_args: &[String]) -> Option<&str> {
+///
+/// `pub(crate)`: `dev.rs` reuses this for the identical clash between its own
+/// `--env` (which environment's ledger section `--remote` reads) and a
+/// `-- --env`/`-- --environment` passthrough to `wrangler dev` (which
+/// environment Wrangler actually connects to) — the same "two explicit,
+/// conflicting environment selections, one of them silent" shape, just
+/// without a value `dev` forwards to wrangler itself.
+pub(crate) fn conflicting_env_passthrough(wrangler_args: &[String]) -> Option<&str> {
     wrangler_args
         .iter()
         .find(|arg| {
@@ -1497,10 +1504,18 @@ fn synthesise_environment_block(
 /// Fill a generated worker configuration from the committed deploy ledger.
 /// This is shared with `bynk dev -- --remote`; local dev leaves placeholders
 /// alone because Miniflare does not read the Cloudflare namespace id.
+///
+/// `environment` (slice 4, #837 review): before `--env` existed every real
+/// deploy recorded into `"default"` regardless, so hardcoding it here always
+/// matched. A project deployed only under a non-default `--env` now has
+/// nothing under `"default"` — reading the wrong section would misreport a
+/// provisioned project as never deployed, so this reads whichever section
+/// `bynk dev --env NAME -- --remote` names (default `"default"`, unchanged).
 pub fn materialise_deploy_state(
     project_root: &Path,
     worker: &str,
     config: &Path,
+    environment: &str,
 ) -> Result<bool, String> {
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
     if !text.contains(KV_NAMESPACE_ID_PLACEHOLDER) {
@@ -1509,12 +1524,12 @@ pub fn materialise_deploy_state(
     let lock = read_lock(&project_root.join(LOCK_FILE))?;
     let Some(id) = lock
         .environments
-        .get("default")
-        .and_then(|environment| environment.kv.get(worker))
+        .get(environment)
+        .and_then(|env| env.kv.get(worker))
         .map(|namespace| namespace.id.as_str())
     else {
         return Err(format!(
-            "remote KV for `{worker}` has not been provisioned; run `bynk deploy` first"
+            "remote KV for `{worker}` has not been provisioned under environment `{environment}`; run `bynk deploy --env {environment}` first"
         ));
     };
     if materialise_kv_id(config, id) {
@@ -3176,6 +3191,70 @@ max_batch_size = 10
         assert!(lock.is_deployed("staging", "api"));
         assert!(lock.has_queue("staging", "jobs"));
         assert_eq!(recorded_kv(&lock, "api", "staging"), Some("kv-staging"));
+    }
+
+    /// #837 review: `materialise_deploy_state` (shared with `bynk dev --
+    /// --remote`) hardcoded `"default"` even after `--env` shipped. Before
+    /// `--env` existed every real deploy recorded into `"default"`
+    /// regardless, so that always matched — but a project deployed *only*
+    /// under `bynk deploy --env staging` now has nothing under `"default"`,
+    /// and reading the wrong section misreports a provisioned project as
+    /// never deployed.
+    #[test]
+    fn materialise_deploy_state_reads_the_named_environment_not_default() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bynk-materialise-state-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project_root = dir.clone();
+        let config = dir.join("wrangler.toml");
+        std::fs::write(&config, format!("id = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"")).unwrap();
+
+        // Provisioned under "staging" alone — the scenario the review named:
+        // a project that has never had a plain `bynk deploy` (no "default").
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.environments
+            .entry("staging".into())
+            .or_default()
+            .kv
+            .insert(
+                "api".into(),
+                KvNamespace {
+                    id: "kv-staging".into(),
+                },
+            );
+        std::fs::write(
+            project_root.join(LOCK_FILE),
+            toml::to_string_pretty(&lock).unwrap(),
+        )
+        .unwrap();
+
+        // Reading "default" (what this function did unconditionally before
+        // the fix) must fail helpfully, not silently mis-materialise.
+        let err = materialise_deploy_state(&project_root, "api", &config, "default")
+            .expect_err("nothing is recorded under \"default\" — this must not silently pass");
+        assert!(
+            err.contains("environment `default`"),
+            "the error should name which environment it looked under: {err}"
+        );
+
+        // Reading "staging" — the environment it was actually deployed under
+        // — must succeed and materialise that environment's id.
+        assert!(materialise_deploy_state(&project_root, "api", &config, "staging").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            "id = \"kv-staging\""
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn scratch_lock_path(label: &str) -> std::path::PathBuf {

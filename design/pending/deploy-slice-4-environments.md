@@ -1,6 +1,6 @@
 ---
 level: patch
-changelog: "`bynk deploy --env NAME` for independent multi-environment provisioning and deploy"
+changelog: "`bynk deploy --env NAME` for independent multi-environment provisioning and deploy; `bynk dev -- --remote` reads the matching environment"
 ---
 
 ## ADR: deploy-environments
@@ -91,6 +91,21 @@ switching covers a `staging`/`production`-different-account setup, as it does
 today. This slice does not close the pre-flight's "is *some* account
 authenticated" gap into "is the *right* account for this environment" — see
 Consequences.
+
+**D7 — `bynk dev -- --remote` gets the same `--env`, for the same reason
+(PR review).** `materialise_deploy_state` — the KV-placeholder-fill
+`--remote` shares with `deploy` (§3 of the track doc names this seam
+explicitly) — read the ledger's `"default"` section unconditionally. Before
+`--env` existed every real deploy recorded into `"default"` regardless, so
+that always matched; once a project can be deployed *only* under
+`bynk deploy --env staging`, reading `"default"` misreports a provisioned
+project as never deployed. `dev` gains `--env NAME` (default `"default"`),
+used **only** to select the ledger section `--remote` reads — never forwarded
+to `wrangler dev` itself, since `dev` curates no Wrangler-side environment
+config and never provisions. The same passthrough-conflict guard (D5) applies
+when `--remote` is present, since a `-- --env`/`-- --environment` would
+otherwise pick a different Wrangler-side environment than the one `dev`
+materialises the KV id for.
 
 **Consequences.** A non-default `--env` costs one extra parse-and-serialise
 pass per context at deploy time — negligible next to the network round-trips

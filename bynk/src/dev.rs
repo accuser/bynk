@@ -53,6 +53,15 @@ pub struct DevOptions {
     /// Base inspector port for `--inspect` (default 9229); allocated per context
     /// exactly as `base_port` is.
     pub inspect_port: u16,
+    /// `--env NAME` (default `"default"`) — which `bynk.deploy.lock` section
+    /// `--remote` reads the KV id from. `dev` never provisions and never
+    /// writes the ledger (unchanged); this only selects which of `deploy`'s
+    /// environments `--remote` connects the placeholder to. Purely a `bynk`
+    /// concept — never forwarded to `wrangler dev` itself, since `dev` curates
+    /// no Wrangler-side environment config (slice 4, #837 review: a project
+    /// deployed only under a non-default `--env` previously read as
+    /// "never provisioned" here, because this always looked at `"default"`).
+    pub environment: String,
     /// Everything after `--`, forwarded to `wrangler dev` verbatim (D5).
     pub wrangler_args: Vec<String>,
 }
@@ -81,6 +90,21 @@ pub fn run(
     node_floor: u32,
     opts: &DevOptions,
 ) -> ExitCode {
+    // #837 review: once `--remote` reads a ledger section by `--env`, a
+    // `-- --env`/`-- --environment` passthrough would silently diverge —
+    // `bynk` materialises one environment's KV id while Wrangler actually
+    // connects to a different one. Checked only when `--remote` is present,
+    // since `--env` is otherwise inert (nothing reads the ledger without it).
+    if opts.wrangler_args.iter().any(|arg| arg == "--remote")
+        && let Some(conflict) = crate::deploy::conflicting_env_passthrough(&opts.wrangler_args)
+    {
+        eprintln!(
+            "bynk: `--env {}` conflicts with `{conflict}` after `--` — pass one or the other, not both",
+            opts.environment
+        );
+        return ExitCode::FAILURE;
+    }
+
     // 1. Pre-flight — reuse doctor's Deploy gate (Node + wrangler) plus the
     //    always-on compile floor. Failing here, with doctor's remedy text, beats
     //    a confusing error out of a half-built tree (proposal §2.2).
@@ -166,6 +190,7 @@ pub fn run(
                 project_root,
                 &s.worker,
                 &workers_dir.join(&s.worker).join("wrangler.toml"),
+                &opts.environment,
             ) {
                 eprintln!("bynk: {e}");
                 return ExitCode::FAILURE;

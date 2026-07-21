@@ -333,5 +333,6 @@ queue, because a queue's name comes from your source — the next run derives th
 same name and finds the same queue, with or without the lock file.
 
 After a first deploy, `bynk dev -- --remote` reads the same lock file to fill
-the KV binding. Normal local `bynk dev` remains entirely local and needs no
-Cloudflare account.
+the KV binding — pass the matching `--env` if you deployed to a named one
+(`bynk dev --env staging -- --remote`). Normal local `bynk dev` remains
+entirely local and needs no Cloudflare account.
