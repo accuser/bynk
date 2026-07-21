@@ -179,7 +179,7 @@ ISO 3166-1, or 3 digits, UN M49). Covers `en`, `en-US`, `pt-BR`, `zh-Hans`,
 refinement engine wraps every pattern in `^(?:…)$`.
 
 ```
-type MessageArg = Text(String) | Whole(Int) | Num(Float) | Moment(Instant)
+type MessageArg = Text(value: String) | Whole(value: Int) | Num(value: Float) | Moment(value: Instant)
 
 type Message = { code: String, params: Map[String, MessageArg] }
 
