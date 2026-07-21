@@ -1,0 +1,2 @@
+bynk.parse.expected_token
+found `where`

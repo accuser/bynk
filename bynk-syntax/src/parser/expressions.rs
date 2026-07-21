@@ -267,7 +267,30 @@ impl<'a> Parser<'a> {
         // equality but produces a Bool from a pattern test.
         if self.peek_kind() == Some(TokenKind::Is) {
             self.bump();
-            let pattern = self.parse_pattern()?;
+            // #472: `is`'s pattern is a top-level position — [`Parser::parse_pattern_top`]
+            // admits a trailing `where` there the same as a match arm's
+            // pattern (a nested payload never does — `r is Ok(_ where P)` is
+            // a syntax error, caught below the recursive `parse_pattern`).
+            // But a *top-level* refined pattern is rejected here too, at
+            // parse time rather than deferred to `check_is`: the tree-sitter
+            // grammar cannot admit `refined_pattern` inside `is_expr` at all
+            // (D4 in the refined-patterns ADR) — `refinement`'s own
+            // `&&`-joined predicate list is ambiguous with the surrounding
+            // expression grammar there, an ambiguity that exists regardless
+            // of nesting depth. Rejecting it here, not just in the checker,
+            // keeps the two parsers in agreement on every input (ADR 0213),
+            // not only the nested case.
+            let pattern = self.parse_pattern_top()?;
+            if matches!(pattern, Pattern::Refined { .. }) {
+                return Err(CompileError::new(
+                    "bynk.types.is_refined_pattern",
+                    pattern.span(),
+                    "the `is` operator does not accept a refined pattern here",
+                )
+                .with_note(
+                    "declare a named refined type and use `x is TypeName`, or use a `match` arm",
+                ));
+            }
             let span = lhs.span.merge(pattern.span());
             return Ok(Expr {
                 kind: ExprKind::Is {
@@ -1149,7 +1172,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_match_arm(&mut self) -> Result<MatchArm, CompileError> {
-        let pattern = self.parse_pattern()?;
+        // #472: a match arm's pattern is a top-level position — a trailing
+        // `where` is admitted here, but not on a nested payload pattern.
+        let pattern = self.parse_pattern_top()?;
         // Optional `if <Bool-expr>` guard between the pattern and `=>` (ADR 0169).
         // The guard sees the arm's bindings; it is unambiguous here because an
         // arm-position `if` can only be a guard.
@@ -1174,12 +1199,35 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Depth-guarded entry to the pattern grammar. Variant patterns nest
-    /// (`parse_pattern` -> `parse_pattern_binding` -> `parse_pattern`), a third
-    /// self-recursive descent independent of `parse_expr`/`parse_type_ref`, so
-    /// it needs its own guard or a nested `Ok(Ok(…))` still overflows (#713).
-    /// The unguarded body lives in [`Parser::parse_pattern_inner`].
+    /// Depth-guarded entry to the pattern grammar for a **nested** position —
+    /// a variant payload (`parse_pattern` -> `parse_pattern_binding` ->
+    /// `parse_pattern`), a third self-recursive descent independent of
+    /// `parse_expr`/`parse_type_ref`, so it needs its own guard or a nested
+    /// `Ok(Ok(…))` still overflows (#713).
+    ///
+    /// Deliberately does **not** check for a trailing `where` (#472) — that
+    /// suffix is admitted only at a pattern's top level (a match arm's
+    /// pattern, or `is`'s right-hand side; see [`Parser::parse_pattern_top`]),
+    /// matching the tree-sitter grammar, where `refined_pattern` is an
+    /// alternative on `match_arm`'s pattern field specifically, not part of
+    /// the shared `_pattern` rule nested payloads recurse through. Folding
+    /// the `where` check into this function too would let it fire from every
+    /// recursive call — `Ok(_ where P)`, `r is Ok(_ where P)` — which the
+    /// grammar (and `check_is`, which only inspects the top-level pattern)
+    /// does not admit.
     fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
+        self.enter_recursion("this pattern")?;
+        let result = self.parse_pattern_base();
+        self.depth -= 1;
+        result
+    }
+
+    /// Depth-guarded entry to the pattern grammar for a **top-level**
+    /// position — a match arm's pattern, or `is`'s right-hand side — where a
+    /// trailing `where <refinement>` (#472) is admitted. See
+    /// [`Parser::parse_pattern`] for why nested payload positions must not
+    /// share this entry point.
+    fn parse_pattern_top(&mut self) -> Result<Pattern, CompileError> {
         self.enter_recursion("this pattern")?;
         let result = self.parse_pattern_inner();
         self.depth -= 1;
@@ -1191,7 +1239,8 @@ impl<'a> Parser<'a> {
     /// wildcard `_` as the refined inner form; any other inner shape is
     /// rejected (`bynk.parse.refined_pattern_inner`) rather than silently
     /// accepted, so the AST doesn't need reworking once binding/nested forms
-    /// are designed.
+    /// are designed. Only called from [`Parser::parse_pattern_top`] — never
+    /// recursively — so a `where` cannot appear on a nested payload pattern.
     fn parse_pattern_inner(&mut self) -> Result<Pattern, CompileError> {
         let base = self.parse_pattern_base()?;
         if self.peek_kind() == Some(TokenKind::Where) {

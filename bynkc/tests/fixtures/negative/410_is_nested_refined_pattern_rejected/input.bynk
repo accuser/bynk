@@ -1,0 +1,5 @@
+commons demo {
+  fn f(r: Result[Int, String]) -> Bool {
+    r is Ok(_ where NonNegative)
+  }
+}

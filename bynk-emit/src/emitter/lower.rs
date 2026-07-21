@@ -4264,9 +4264,18 @@ fn pattern_match_tests(
             inner, predicate, ..
         } => {
             pattern_match_tests(path, path_ty, inner, cx, tests);
-            let base = path_ty
-                .and_then(literal_base_of_ty)
-                .unwrap_or(BaseType::Int);
+            // The checker (`check_pattern`) already rejected any scrutinee
+            // that isn't literal-kind before this point, so `path_ty` is
+            // always `Int` or `String` here for a well-typed program — a
+            // silent fallback would mask a real bug (wrong predicate codegen
+            // against the wrong base) rather than surfacing it loudly, the
+            // same posture as `emit_match_case`'s `Pattern::Refined` arm.
+            let base = path_ty.and_then(literal_base_of_ty).unwrap_or_else(|| {
+                panic!(
+                    "a refined pattern's scrutinee must be literal-kind (Int/String), got {:?}",
+                    path_ty
+                )
+            });
             tests.push(refined_check_as_bool(path, base, Some(predicate)));
         }
         Pattern::Variant {

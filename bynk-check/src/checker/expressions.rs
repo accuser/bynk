@@ -3350,6 +3350,11 @@ pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut C
         // `match`-only. `is` already has its own refinement check — a bare
         // nullary name resolving to a declared refined type (ADR 0007) —
         // so an inline `_ where P` here would be a confusing near-duplicate.
+        // The parser (`parse_eq`) already rejects a *top-level* refined
+        // pattern after `is` at parse time (the tree-sitter grammar cannot
+        // admit `refined_pattern` inside `is_expr` at all — D4), so this arm
+        // is unreachable for any program that reaches the checker; kept for
+        // match exhaustiveness and as a defensive second line.
         Pattern::Refined { .. } => {
             ctx.errors.push(
                 CompileError::new(

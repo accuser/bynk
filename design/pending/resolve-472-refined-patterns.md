@@ -54,28 +54,47 @@ rejected (`bynk.parse.refined_pattern_inner`). This keeps the AST
 (`Pattern::Refined { inner: Box<Pattern>, .. }`) forward-compatible with a
 wider inner form later, without a rework.
 
-D4 — **Grammar: admitted only at a match arm's top-level pattern, not through
-`pattern` generally.** The tree-sitter grammar's `refined_pattern` rule is an
-alternative on `match_arm`'s pattern field specifically
-(`choice($._pattern, $.refined_pattern)`), not folded into the shared
-`_pattern` rule nested payloads and `is_expr` also use. Reason: `is_expr` sits
-in a general, expression-continuable grammar position (`&&`, `(`, `~>`, …),
-and `refinement`'s own `&&`-joined predicate-list repetition collides with
-that surrounding grammar — `x is _ where NonNegative && y` is genuinely
-ambiguous between "another predicate" and "the boolean-and continuing the
-outer expression". A match arm's pattern is always followed by a fixed
-terminator (`if`/`=>`), so no such ambiguity exists there. The Rust
-hand-written parser is unambiguous by construction and does admit
-`Pattern::Refined` on the right of `is` syntactically (it shares
-`parse_pattern` with match arms); D5 rejects it at check time instead, the
-same posture as literal patterns. This is a narrow, deliberate, and harmless
-grammar/parser asymmetry restricted to an already-invalid construct — no valid
-program is affected, and no corpus fixture exercises it.
+D4 — **Grammar: admitted only at a top-level pattern position, never through a
+nested payload.** `refinement`'s own `&&`-joined predicate-list repetition
+collides with a surrounding expression grammar wherever a pattern is
+expression-continuable (`&&`, `(`, `~>`, …) — a top-level `is_expr` pattern
+being one such position, and a nested variant payload (reachable both from a
+`match` arm and from `is`) another, since the whole enclosing pattern is
+itself followed by more expression grammar once its `)` closes. The
+tree-sitter grammar resolves this by admitting `refined_pattern` only as an
+alternative on `match_arm`'s pattern field (`choice($._pattern,
+$.refined_pattern)`) — never through the shared `_pattern` rule nested
+payloads use, and never on `is_expr`'s pattern field, which keeps the
+original 3-way `_pattern` choice unchanged.
 
-D5 — **`match`-only; rejected after `is`.** Mirrors ADR 0158's literal-pattern
-posture: a refined pattern on the right of `is` raises
-`bynk.types.is_refined_pattern`, steering toward a named refined type
-(`x is TypeName`, ADR 0007) or a `match` arm.
+The Rust hand-written parser mirrors this exactly, not just at the top level:
+`parse_pattern_top` (which checks for a trailing `where`) is used only by
+`parse_match_arm` and by `is`'s pattern in `parse_eq`; every *nested* pattern
+position (`parse_pattern_binding`, reached from both a `match` arm's and
+`is`'s variant payloads) calls the plain `parse_pattern`, which never checks
+for `where` — so `Ok(_ where P)` and `r is Ok(_ where P)` are syntax errors in
+both parsers, in agreement. (An earlier revision of this PR let the `where`
+check leak into every recursive call via a shared function, so both
+constructs silently parsed and compiled — a genuine grammar/parser
+conformance break caught in review; the `parse_pattern` /
+`parse_pattern_top` split is the fix, and both cases are now covered by a
+tree-sitter corpus/conformance case and negative fixtures.)
+
+D5 — **`match`-only; rejected after `is`, at parse time.** A refined pattern on
+the right of `is` is invalid, mirroring ADR 0158's literal-pattern posture —
+but unlike a literal pattern (which has no grammar-level reason to exclude
+from `is_expr`, and so is checker-rejected), a refined pattern's `where` is
+genuinely ambiguous inside `is_expr`'s expression-continuable position (D4).
+Since the tree-sitter grammar therefore can never admit it there at all, the
+Rust parser rejects it at the same point, in `parse_eq`, right after parsing
+`is`'s top-level pattern — not deferred to the checker — so both parsers
+agree on every input, not only the nested case. It still raises
+`bynk.types.is_refined_pattern` (the code and message are unchanged; only the
+layer that raises it moved), steering toward a named refined type
+(`x is TypeName`, ADR 0007) or a `match` arm. `check_is` keeps a defensive
+`Pattern::Refined` arm with the same diagnostic for exhaustiveness — it is
+unreachable for any program that parses, since the parser has already
+rejected the input by then.
 
 D6 — **Composes with `if` guards for free.** `if`-guards already ship (ADR
 0169); a `_ where P if guard => body` arm needs no new interaction handling —
@@ -98,11 +117,16 @@ casing.
   same posture as ADR 0158 on refinement inhabitance; a redundant refined arm
   is harmless dead code, not a compile error.
 - New diagnostics: `bynk.parse.refined_pattern_inner`,
-  `bynk.types.is_refined_pattern`.
-- New tree-sitter rule `refined_pattern`; `is_expr`'s pattern field is
-  unaffected (still the original 3-way `_pattern` choice).
+  `bynk.types.is_refined_pattern` (now raised from the parser; see D5).
+- New tree-sitter rule `refined_pattern`, reachable only from `match_arm`;
+  `is_expr`'s pattern field is unaffected (still the original 3-way
+  `_pattern` choice) and `_pattern` itself (nested payloads) is unaffected.
 - Editor completion gains a `where`-position branch (offering the predicate
   vocabulary) shared by both a type declaration's `where` and a match arm's
   `_ where` — this vocabulary was not previously offered anywhere (only
   present as inert snippet placeholder text), so this is new completion
-  surface, not an extension of an existing one.
+  surface, not an extension of an existing one. Excludes a `for all x: T, …
+  where <cursor>` generative-test binder's clause, which takes an arbitrary
+  `Bool` expression, not the predicate catalogue (caught in review — the
+  purely textual `after_clause_keyword("where")` check doesn't distinguish
+  grammar positions on its own).
