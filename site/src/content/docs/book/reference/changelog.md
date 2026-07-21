@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.220.1** | "`bynk deploy --env NAME` for independent multi-environment provisioning and deploy; `bynk dev -- --remote` reads the matching environment" |
 | **v0.220.0** | Refined patterns (`_ where <predicate>`) in `match` arms |
 | **v0.219.0** | Or-patterns (`p₁ | p₂`) in `match` arms and after `is` |
 | **v0.218.0** | A system-tier case mixing Wire(...) with a by Nobody call now drives a raw no-auth driver, instead of silently reaching the typed no-auth driver unconverted |

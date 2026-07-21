@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0254](0254-deploy-environments.md) | **Environment selection at deploy time: driver-synthesised per-environment config, not emitter-curated** (v0.220.1) — `--env` threads a real environment through the ledger and provisioning calls; a non-default environment gets a driver-synthesised `[env.<name>]` Wrangler config block, not an emitter change | Accepted (v0.220.1) |
 | [0253](0253-refined-patterns.md) | **Refined patterns in `match`: guard-only, `_`-inner, extends the ADR 0169 if-chain** (v0.220) — `_ where predicate` as a runtime guard over a literal-kind scrutinee | Accepted (v0.220) |
 | [0252](0252-or-patterns.md) | **Or-patterns (`p₁ | p₂`)** (v0.219) — Pattern alternation in `match` and `is`, and its emitter split between a flat switch and an if-chain | Accepted (v0.219) |
 | [0251](0251-system-tier-wire-nocred-mixed-args.md) | **A `system`-tier case combines `Wire(...)` with a `by Nobody` http address call** (v0.218) — The no-auth driver gains a raw-flavoured sibling for a `Wire`-carrying, no-credential call | Accepted (v0.218) |

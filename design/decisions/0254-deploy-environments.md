@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "`bynk deploy --env NAME` for independent multi-environment provisioning and deploy; `bynk dev -- --remote` reads the matching environment"
----
+# 0254 — Environment selection at deploy time: driver-synthesised per-environment config, not emitter-curated
 
-## ADR: deploy-environments
-title: Environment selection at deploy time: driver-synthesised per-environment config, not emitter-curated
-summary: `--env` threads a real environment through the ledger and provisioning calls; a non-default environment gets a driver-synthesised `[env.<name>]` Wrangler config block, not an emitter change
+- **Status:** Accepted (v0.220.1)
 
 **Context.** The deploy-state ledger (`bynk.deploy.lock`) was built env-keyed
 from slice 0 on (`DeployLock.environments: BTreeMap<String, Environment>`),
