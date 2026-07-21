@@ -1,0 +1,72 @@
+commons demo.or_patterns
+
+type BookingState =
+  | Held(guest: String, room: Int, days: Int, rsv: Int, note: String)
+  | Confirmed(who: String, room: Int, days: Int, rsv: Int, note: String)
+  | Cancelled(reason: String)
+
+-- Rule 3 (same value type) over variant patterns, plus a guard on the arm.
+fn roomOf(s: BookingState) -> Int {
+  match s {
+    Held(_, r, _, rsv, _) | Confirmed(_, r, _, rsv, _) if rsv > 0 => r + rsv
+    Held(_, r, _, _, _) | Confirmed(_, r, _, _, _) => r
+    Cancelled(_) => 0
+  }
+}
+
+-- Bindingless or-patterns lower to fall-through `case` labels on a flat
+-- switch (no guard/binding anywhere in this match).
+fn small(n: Int) -> String {
+  match n {
+    1 | 2 | 3 => "small"
+    4 | 5 | 6 => "medium"
+    _ => "large"
+  }
+}
+
+type Command = | Login(user: String, pass: String) | Register(user: String, pass: String) | Logout
+
+-- Or-patterns compose with guards; the guard sees the shared binding.
+fn route(c: Command) -> String {
+  match c {
+    Login(u, _) | Register(u, _) if u == "admin" => "admin path"
+    Login(_, _) | Register(_, _) => "user path"
+    Logout => "bye"
+  }
+}
+
+-- A nested payload or-pattern (`Some(1 | 2)`).
+fn smallOption(o: Option[Int]) -> String {
+  match o {
+    Some(1 | 2) => "small"
+    Some(_) => "other"
+    None => "none"
+  }
+}
+
+-- `is` (§2.3.6): an or-pattern narrows the shared bindings into scope.
+fn describe(s: BookingState) -> String {
+  if s is (Held(_, r, _, rsv, _) | Confirmed(_, r, _, rsv, _)) {
+    "room \(r) rsv \(rsv)"
+  } else {
+    "cancelled"
+  }
+}
+
+-- `is` with a bindingless or-pattern.
+fn isActive(s: BookingState) -> Bool {
+  s is (Held(_, _, _, _, _) | Confirmed(_, _, _, _, _))
+}
+
+type Status = | Pending | Active | Done
+
+-- #825 review: a wildcard alternative mixed into an otherwise-bindingless
+-- or-pattern is exactly as irrefutable as a bare `_` (`Pending | _` matches
+-- everything) — the flat-switch path must lower this to `default:`, not a
+-- `case "Pending":` label that silently drops `Active`.
+fn classify(s: Status) -> String {
+  match s {
+    Done => "done"
+    Pending | _ => "not done"
+  }
+}

@@ -1,0 +1,11 @@
+commons demo
+
+type BookingState =
+  | Held(guest: String, room: Int, days: Int, rsv: Int, note: String)
+  | Confirmed(who: String, room: Int, days: Int, rsv: Int, note: String)
+
+fn f(s: BookingState) -> Int {
+  match s {
+    Held(g, r, _, _, _) | Confirmed(_, r, _, rsv, _) => r
+  }
+}

@@ -1,0 +1,8 @@
+commons demo
+
+fn f(o: Option[Int]) -> Int {
+  match o {
+    1 | Some(_) => 0
+    None => 1
+  }
+}

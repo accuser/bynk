@@ -2306,6 +2306,12 @@ fn pattern_to_string(p: &Pattern) -> String {
                 format!("{}({})", name_part, parts.join(", "))
             }
         }
+        // #474: an or-pattern renders as its alternatives joined by `|`.
+        Pattern::Or(alts, _) => alts
+            .iter()
+            .map(pattern_to_string)
+            .collect::<Vec<_>>()
+            .join(" | "),
     }
 }
 

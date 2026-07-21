@@ -2047,6 +2047,60 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                     }
                 }
             }
+            // #474 §2.3.6: an or-pattern's shared names can live at different
+            // structural paths per alternative (`Held`'s field 2 vs
+            // `Confirmed`'s field 4), so — like the `match` if-chain's
+            // `emit_pattern_bindings` — declare each name once with `let`,
+            // then dispatch per alternative. Still depth-1 only (the same
+            // existing `is` limitation as the `Variant` case above): an
+            // alternative that isn't itself a flat `Variant` contributes no
+            // bindings, only its tag test.
+            if let Pattern::Or(alts, _) = pattern {
+                let names = pattern.bound_names();
+                if names.is_empty() {
+                    return;
+                }
+                let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
+                out.push(format!("let {};", decl.join(", ")));
+                let last = alts.len() - 1;
+                for (i, alt) in alts.iter().enumerate() {
+                    let (tag, pairs) = match alt {
+                        Pattern::Variant {
+                            variant, bindings, ..
+                        } => {
+                            let mut pairs = Vec::new();
+                            for (j, b) in bindings.iter().enumerate() {
+                                let Pattern::Binding(name) = b.pattern() else {
+                                    continue;
+                                };
+                                let field = match &b.kind {
+                                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                                    PatternBindingKind::Positional { .. } => {
+                                        cx.positional_field_name(disc_ty.as_ref(), &variant.name, j)
+                                    }
+                                };
+                                pairs.push((ts_ident(&name.name), format!("{value_text}.{field}")));
+                            }
+                            (Some(variant.name.clone()), pairs)
+                        }
+                        _ => (None, Vec::new()),
+                    };
+                    if i == last {
+                        out.push("} else {".to_string());
+                    } else {
+                        let cond = tag
+                            .as_ref()
+                            .map(|t| format!("{value_text}.tag === \"{t}\""))
+                            .unwrap_or_else(|| "true".to_string());
+                        let kw = if i == 0 { "if" } else { "} else if" };
+                        out.push(format!("{kw} ({cond}) {{"));
+                    }
+                    for (name, path) in &pairs {
+                        out.push(format!("  {name} = {path};"));
+                    }
+                }
+                out.push("}".to_string());
+            }
         }
         ExprKind::BinOp(BinOp::And, l, r) => {
             gather_is_bindings_for_emit(l, cx, out, found);
@@ -3225,21 +3279,32 @@ fn cond_contains_is(e: &Expr) -> bool {
 /// non-wildcard binding. Walks through `&&`, `||`, and parens.
 fn cond_has_is_bindings(e: &Expr, cx: &LowerCtx) -> bool {
     match &e.kind {
-        ExprKind::Is {
-            value,
-            pattern: Pattern::Variant {
-                variant, bindings, ..
-            },
+        ExprKind::Is { value, pattern } => pattern_is_has_bindings(pattern, value, cx),
+        ExprKind::BinOp(BinOp::And, l, r) | ExprKind::BinOp(BinOp::Or, l, r) => {
+            cond_has_is_bindings(l, cx) || cond_has_is_bindings(r, cx)
+        }
+        ExprKind::Paren(inner) => cond_has_is_bindings(inner, cx),
+        _ => false,
+    }
+}
+
+/// The per-pattern-kind check `cond_has_is_bindings` delegates to (#474: split
+/// out so an or-pattern can recurse into its alternatives).
+fn pattern_is_has_bindings(pattern: &Pattern, value: &Expr, cx: &LowerCtx) -> bool {
+    match pattern {
+        Pattern::Variant {
+            variant, bindings, ..
         } => {
             bindings.iter().any(|b| !b.is_wildcard())
                 // v0.13: a refined `is`-narrowing introduces a (shadow) binding
                 // even though the pattern carries none.
                 || (bindings.is_empty() && cx.is_refined_is_check(value, &variant.name))
         }
-        ExprKind::BinOp(BinOp::And, l, r) | ExprKind::BinOp(BinOp::Or, l, r) => {
-            cond_has_is_bindings(l, cx) || cond_has_is_bindings(r, cx)
-        }
-        ExprKind::Paren(inner) => cond_has_is_bindings(inner, cx),
+        // #474: Rule 1 guarantees every alternative binds the same names, so
+        // any one alternative having bindings means the whole pattern does.
+        Pattern::Or(alts, _) => alts
+            .iter()
+            .any(|alt| pattern_is_has_bindings(alt, value, cx)),
         _ => false,
     }
 }
@@ -4166,6 +4231,41 @@ fn emit_match_case(
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
+        // #474: a bindingless or-pattern (guaranteed by `match_needs_if_chain`
+        // routing — a bound/guarded one takes the if-chain path instead) lowers
+        // to one fall-through `case` label per alternative, sharing one body —
+        // *unless* an alternative is `_`/a bare binding (#825 review): that
+        // alone already matches everything (`Pending | _` is exactly as
+        // irrefutable as a bare `_`, per `Pattern::is_irrefutable`), and JS
+        // `switch` has no `case _:` form, only `default:`. Emitting case
+        // labels for the other (now-redundant) alternatives and dropping the
+        // wildcard produced malformed, `tsc`-rejected output.
+        Pattern::Or(alts, _) => {
+            if arm.pattern.is_irrefutable() {
+                write_line(out, indent, "default: {");
+                emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+                write_line(out, indent, "}");
+                return;
+            }
+            let last = alts.len() - 1;
+            for (i, alt) in alts.iter().enumerate() {
+                let label = match alt {
+                    Pattern::Literal { value, .. } => literal_case_label(value),
+                    Pattern::Variant { variant, .. } => format!("\"{}\"", variant.name),
+                    Pattern::Wildcard(_) | Pattern::Binding(_) => unreachable!(
+                        "pattern.is_irrefutable() is false, so no alternative is a wildcard or binding"
+                    ),
+                    Pattern::Or(..) => unreachable!("an Or's alternatives are always leaves"),
+                };
+                if i == last {
+                    write_line(out, indent, &format!("case {label}: {{"));
+                } else {
+                    write_line(out, indent, &format!("case {label}:"));
+                }
+            }
+            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
     }
 }
 
@@ -4206,6 +4306,14 @@ fn pattern_has_nested_test(pat: &Pattern) -> bool {
             let sp = b.pattern();
             !sp.is_irrefutable() || pattern_has_nested_test(sp)
         }),
+        // #474: a bindingless, non-nested or-pattern (`1 | 2 | 3`,
+        // `Pending | Cancelled(_, _)`) stays on the flat switch — it lowers to
+        // fall-through `case` labels sharing one body. One with bindings or a
+        // nested refutable payload needs the if-chain (a `switch` can't bind
+        // different alternatives' fields to the same name).
+        Pattern::Or(alts, _) => alts
+            .iter()
+            .any(|p| !p.bound_names().is_empty() || pattern_has_nested_test(p)),
         _ => false,
     }
 }
@@ -4243,6 +4351,26 @@ fn pattern_match_tests(
                 let field_ty = cx.payload_field_ty(path_ty, &variant.name, i);
                 pattern_match_tests(&format!("{path}.{field}"), field_ty.as_ref(), sp, cx, tests);
             }
+        }
+        // #474: an or-pattern matches `path` when any alternative does — AND
+        // each alternative's own tests, then OR the alternatives together, and
+        // push the whole disjunction as a single combined test (so a caller
+        // AND-joining `tests` composes it correctly with sibling tests, e.g. a
+        // nested `Some(1 | 2)`'s outer `.tag === "Some"` test).
+        Pattern::Or(alts, _) => {
+            let terms: Vec<String> = alts
+                .iter()
+                .map(|alt| {
+                    let mut t = Vec::new();
+                    pattern_match_tests(path, path_ty, alt, cx, &mut t);
+                    if t.is_empty() {
+                        "true".to_string()
+                    } else {
+                        t.join(" && ")
+                    }
+                })
+                .collect();
+            tests.push(format!("({})", terms.join(" || ")));
         }
     }
 }
@@ -4285,6 +4413,95 @@ fn emit_pattern_bindings(
                     b.pattern(),
                     cx,
                 );
+            }
+        }
+        // #474: different alternatives can bind the same name at different
+        // structural paths (`Held`'s field 2 vs `Confirmed`'s field 4), so a
+        // single `const` can't express it. Declare each shared name once with
+        // `let`, then dispatch per alternative — only the (small) binding
+        // resolution is duplicated per alternative, not the arm body that
+        // follows. Alternatives are mutually exclusive at runtime (a value has
+        // exactly one tag, or a literal one value), so a plain if/else-if/else
+        // chain is exhaustive over them once the caller's own combined test
+        // (built by `pattern_match_tests`) has already passed.
+        Pattern::Or(alts, _) => {
+            let names = pattern.bound_names();
+            if names.is_empty() {
+                return;
+            }
+            let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
+            write_line(out, indent, &format!("let {};", decl.join(", ")));
+            let last = alts.len() - 1;
+            for (i, alt) in alts.iter().enumerate() {
+                if i == last {
+                    write_line(out, indent, "} else {");
+                } else {
+                    let mut t = Vec::new();
+                    pattern_match_tests(path, path_ty, alt, cx, &mut t);
+                    let cond = if t.is_empty() {
+                        "true".to_string()
+                    } else {
+                        t.join(" && ")
+                    };
+                    let kw = if i == 0 { "if" } else { "} else if" };
+                    write_line(out, indent, &format!("{kw} ({cond}) {{"));
+                }
+                let mut pairs = Vec::new();
+                pattern_binding_paths(path, path_ty, alt, cx, &mut pairs);
+                for (name, p) in &pairs {
+                    write_line(
+                        out,
+                        indent + INDENT_STEP,
+                        &format!("{} = {p};", ts_ident(name)),
+                    );
+                }
+            }
+            write_line(out, indent, "}");
+        }
+    }
+}
+
+/// Collect `(name, runtime-path)` pairs for the names `pattern` binds from
+/// `path`, recursing through nested payloads — the same traversal as
+/// `emit_pattern_bindings`, but returning the resolved paths instead of
+/// writing `const` declarations, so an or-pattern's per-alternative dispatch
+/// (above) can assign a shared `let` from whichever alternative matched.
+fn pattern_binding_paths(
+    path: &str,
+    path_ty: Option<&Ty>,
+    pattern: &Pattern,
+    cx: &LowerCtx,
+    out: &mut Vec<(String, String)>,
+) {
+    match pattern {
+        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
+        Pattern::Binding(id) => out.push((id.name.clone(), path.to_string())),
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            for (i, b) in bindings.iter().enumerate() {
+                let field = match &b.kind {
+                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Positional { .. } => {
+                        cx.positional_field_name(path_ty, &variant.name, i)
+                    }
+                };
+                let field_ty = cx.payload_field_ty(path_ty, &variant.name, i);
+                pattern_binding_paths(
+                    &format!("{path}.{field}"),
+                    field_ty.as_ref(),
+                    b.pattern(),
+                    cx,
+                    out,
+                );
+            }
+        }
+        // Never reached from the parser (an `Or`'s alternatives are always
+        // leaves), but recurse into the first alternative defensively rather
+        // than panic, mirroring `gather_pattern_bindings`'s checker-side choice.
+        Pattern::Or(alts, _) => {
+            if let Some(first) = alts.first() {
+                pattern_binding_paths(path, path_ty, first, cx, out);
             }
         }
     }
@@ -4409,6 +4626,15 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
             } else {
                 tests.join(" && ")
             }
+        }
+        // #474 §2.3.6: an or-pattern is legal after `is`. `pattern_match_tests`
+        // already knows how to OR its alternatives together (pushing one
+        // combined `(...) || (...)` term), so this is a thin wrapper.
+        Pattern::Or(..) => {
+            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let mut tests = Vec::new();
+            pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
+            tests.join(" && ")
         }
     }
 }

@@ -4420,6 +4420,14 @@
             "named": true
           },
           {
+            "type": "or_pattern",
+            "named": true
+          },
+          {
+            "type": "paren_pattern",
+            "named": true
+          },
+          {
             "type": "variant_pattern",
             "named": true
           },
@@ -5584,6 +5592,14 @@
             "named": true
           },
           {
+            "type": "or_pattern",
+            "named": true
+          },
+          {
+            "type": "paren_pattern",
+            "named": true
+          },
+          {
             "type": "variant_pattern",
             "named": true
           },
@@ -6076,6 +6092,14 @@
             "named": true
           },
           {
+            "type": "or_pattern",
+            "named": true
+          },
+          {
+            "type": "paren_pattern",
+            "named": true
+          },
+          {
             "type": "variant_pattern",
             "named": true
           },
@@ -6440,6 +6464,37 @@
     }
   },
   {
+    "type": "or_pattern",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "literal_pattern",
+          "named": true
+        },
+        {
+          "type": "or_pattern",
+          "named": true
+        },
+        {
+          "type": "paren_pattern",
+          "named": true
+        },
+        {
+          "type": "variant_pattern",
+          "named": true
+        },
+        {
+          "type": "wildcard_pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "param",
     "named": true,
     "fields": {
@@ -6619,6 +6674,37 @@
         },
         {
           "type": "wire_expr",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "paren_pattern",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "literal_pattern",
+          "named": true
+        },
+        {
+          "type": "or_pattern",
+          "named": true
+        },
+        {
+          "type": "paren_pattern",
+          "named": true
+        },
+        {
+          "type": "variant_pattern",
+          "named": true
+        },
+        {
+          "type": "wildcard_pattern",
           "named": true
         }
       ]
@@ -9967,6 +10053,14 @@
         },
         {
           "type": "named_binding",
+          "named": true
+        },
+        {
+          "type": "or_pattern",
+          "named": true
+        },
+        {
+          "type": "paren_pattern",
           "named": true
         },
         {

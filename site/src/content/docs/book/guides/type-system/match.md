@@ -138,6 +138,47 @@ A guarded arm never counts toward exhaustiveness — the guard can fail at runti
 from the closed refinement vocabulary over a primitive, `where` is planned as the
 complementary form.)
 
+## Match several patterns with `|`
+
+An **or-pattern** `p₁ | p₂` matches if either alternative matches — useful when
+several variants (or literals) share a body:
+
+```bynk
+fn small(n: Int) -> String {
+  match n {
+    1 | 2 | 3 => "small"
+    _         => "large"
+  }
+}
+```
+
+Every alternative must bind the **same set of names**, and a name shared across
+alternatives must have the **same type** in each — this is what lets the arm's
+body (and an optional trailing guard) see one consistent set of bindings
+regardless of which alternative matched:
+
+```bynk
+commons booking {
+  type State =
+    | Held(guest: String, room: Int, days: Int, rsv: Int)
+    | Confirmed(who: String, room: Int, days: Int, rsv: Int)
+    | Cancelled(reason: String)
+
+  fn roomOf(s: State) -> Int {
+    match s {
+      Held(_, r, _, rsv) | Confirmed(_, r, _, rsv) if rsv > 0 => r
+      Held(_, r, _, _)   | Confirmed(_, r, _, _)              => r
+      Cancelled(_)                                            => 0
+    }
+  }
+}
+```
+
+An or-pattern covers all its alternatives for exhaustiveness, and composes with
+`is` (see [Narrow and bind with `is`](/book/guides/type-system/narrow-with-is/)):
+`if state is (Held(_, r, ...) | Confirmed(_, r, ...)) { … r … }` narrows and
+binds `r` in the truthy branch.
+
 ## Related
 
 - For a one-branch test that yields a `Bool`, see

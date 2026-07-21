@@ -1181,13 +1181,65 @@ impl<'a> Parser<'a> {
     /// The unguarded body lives in [`Parser::parse_pattern_inner`].
     fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
         self.enter_recursion("this pattern")?;
-        let result = self.parse_pattern_inner();
+        let result = self.parse_pattern_or();
         self.depth -= 1;
         result
     }
 
+    /// #474: `p₁ | p₂ | … | pₙ` — an or-pattern, left-associative. Built as an
+    /// iterative chain fold over `parse_pattern_inner` (like `parse_or`'s fold
+    /// over boolean `||`, lines 211-237) rather than a recursive production, so
+    /// a long chain costs one nesting level total against the shared budget
+    /// (#714) instead of one per alternative. `|` is lexically distinct from
+    /// `||` and not a valid expression operator, so there is no ambiguity with
+    /// the surrounding `is`/match-arm callers.
+    fn parse_pattern_or(&mut self) -> Result<Pattern, CompileError> {
+        let first = self.parse_pattern_inner()?;
+        if self.peek_kind() != Some(TokenKind::Pipe) {
+            return Ok(first);
+        }
+        // Parenthesized grouping (`(A | B) | C`) is transparent — matching an
+        // or-pattern is associative regardless of how it's grouped — so an
+        // already-`Or` atom (from a parenthesized sub-pattern, see the
+        // `LParen` case in `parse_pattern_inner`) splices its alternatives in
+        // rather than nesting, preserving the "an `Or`'s alternatives are
+        // always leaves" invariant every `Pattern::Or` consumer relies on.
+        let mut alts = flatten_or_alt(first);
+        let mut folds = 0usize;
+        let result = loop {
+            if self.peek_kind() != Some(TokenKind::Pipe) {
+                break Ok(());
+            }
+            self.bump();
+            match self.parse_pattern_inner() {
+                Ok(p) => alts.extend(flatten_or_alt(p)),
+                Err(e) => break Err(e),
+            }
+            if let Err(e) = self.enter_chain_fold(&mut folds, alts.last().unwrap().span()) {
+                break Err(e);
+            }
+        };
+        self.depth -= folds;
+        result?;
+        let span = alts[0].span().merge(alts.last().unwrap().span());
+        Ok(Pattern::Or(alts, span))
+    }
+
     fn parse_pattern_inner(&mut self) -> Result<Pattern, CompileError> {
         if let Some(t) = self.peek() {
+            // #474 §2.3.6: parens around a pattern are transparent grouping —
+            // `is (Held(...) | Confirmed(...))` — recommended for readability
+            // around an or-pattern but not otherwise meaningful (the spec calls
+            // them "syntactically optional": `is` already greedily parses one
+            // whole pattern, `|`-chain included, with or without them). Recurse
+            // through the full `parse_pattern` entry (not `_inner`) so a nested
+            // `|` chain inside the parens is grouped as one alternative.
+            if t.kind == TokenKind::LParen {
+                self.bump();
+                let inner = self.parse_pattern()?;
+                self.expect(TokenKind::RParen, "to close a parenthesized pattern")?;
+                return Ok(inner);
+            }
             if t.kind == TokenKind::Underscore {
                 self.bump();
                 return Ok(Pattern::Wildcard(t.span));
@@ -1496,5 +1548,15 @@ impl<'a> Parser<'a> {
             .with_note("an interpolation hole `\\(…)` holds a single expression"));
         }
         Ok(expr)
+    }
+}
+
+/// #474: the alternatives `p` contributes to an enclosing or-pattern — its own
+/// alternatives if it is already `Pattern::Or` (a parenthesized sub-or-pattern
+/// being spliced in), otherwise itself alone. Keeps every `Pattern::Or` flat.
+fn flatten_or_alt(p: Pattern) -> Vec<Pattern> {
+    match p {
+        Pattern::Or(alts, _) => alts,
+        p => vec![p],
     }
 }

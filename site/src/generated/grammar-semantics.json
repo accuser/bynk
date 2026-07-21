@@ -578,6 +578,14 @@
     {
       "code": "bynk.types.is_unknown_variant",
       "summary": "`is` names a variant the type does not have."
+    },
+    {
+      "code": "bynk.types.or_pattern_binding_mismatch",
+      "summary": "An or-pattern's alternatives don't all bind the same set of names."
+    },
+    {
+      "code": "bynk.types.or_pattern_type_mismatch",
+      "summary": "An or-pattern's alternatives give a shared binding different types (or refinements)."
     }
   ],
   "lambda_expr": [
@@ -630,6 +638,14 @@
     {
       "code": "bynk.types.match_arm_mismatch",
       "summary": "A `match` arm has a different type from the others."
+    },
+    {
+      "code": "bynk.types.or_pattern_binding_mismatch",
+      "summary": "An or-pattern's alternatives don't all bind the same set of names."
+    },
+    {
+      "code": "bynk.types.or_pattern_type_mismatch",
+      "summary": "An or-pattern's alternatives give a shared binding different types (or refinements)."
     },
     {
       "code": "bynk.types.unreachable_arm",

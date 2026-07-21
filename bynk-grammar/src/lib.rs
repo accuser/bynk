@@ -407,7 +407,9 @@ mod tests {
         // `by <Actor>(<identity>)` clause). Net +1.
         // Slice C added: wire_expr (the `Wire(<String>)` raw system-tier
         // argument). Net +1.
-        assert_eq!(rules.len(), 140);
+        // #474 added: or_pattern (`p₁ | p₂`) and paren_pattern (transparent
+        // grouping around a pattern, e.g. after `is`). Net +2.
+        assert_eq!(rules.len(), 142);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

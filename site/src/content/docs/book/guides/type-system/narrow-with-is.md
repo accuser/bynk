@@ -65,6 +65,32 @@ The value must be an identifier to be narrowed, and the refined type's base must
 match it ([`bynk.types.is_base_mismatch`](/book/troubleshooting/is-base-mismatch/)).
 Use `.of` instead when you need to handle the failure as a value.
 
+## Test several patterns with `|`
+
+The pattern after `is` can be an or-pattern — parentheses are recommended for
+readability but not required:
+
+```bynk
+commons booking {
+  type State =
+    | Held(guest: String, room: Int)
+    | Confirmed(who: String, room: Int)
+    | Cancelled(reason: String)
+
+  fn roomOf(s: State) -> String {
+    if s is (Held(_, r) | Confirmed(_, r)) {
+      "room \(r)"
+    } else {
+      "no room"
+    }
+  }
+}
+```
+
+`r` is bound in the then-branch regardless of which alternative matched — every
+alternative of an or-pattern must bind the same names at the same type, exactly
+as in a [`match` arm](/book/guides/type-system/match/).
+
 ## In assertions
 
 Because `is` yields a `Bool`, it pairs naturally with `expect` in tests:
