@@ -45,7 +45,13 @@ sed -i.bak -E 's/^(  "bynkServerVersion": )"[^"]+"/\1"v'"$ver"'"/' \
 	vscode-bynk/package.json
 rm vscode-bynk/package.json.bak tree-sitter-bynk/package.json.bak
 
-# Sync the npm lockfiles to the new manifest versions.
+# Sync the npm lockfiles to the new manifest versions. These calls exist to
+# *rewrite* the lockfiles after the version bump, so they cannot use the
+# reproducible `npm ci` form (which consumes the very lockfile they produce);
+# `--package-lock-only` touches no node_modules and `--ignore-scripts` runs no
+# install scripts. Scorecard Pinned-Dependencies flags these as unpinned npm
+# invocations, but there is no hash/lockfile pin for a lockfile-generating call.
+# Accepted risk, #828.
 (cd vscode-bynk && npm install --package-lock-only --ignore-scripts >/dev/null)
 (cd tree-sitter-bynk && npm install --package-lock-only --ignore-scripts >/dev/null)
 
