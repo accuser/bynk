@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A system-tier case mixing Wire(...) with a by Nobody call now drives a raw no-auth driver, instead of silently reaching the typed no-auth driver unconverted
----
+# 0251 — A `system`-tier case combines `Wire(...)` with a `by Nobody` http address call
 
-## ADR: system-tier-wire-nocred-mixed-args
-title: A `system`-tier case combines `Wire(...)` with a `by Nobody` http address call
-summary: The no-auth driver gains a raw-flavoured sibling for a `Wire`-carrying, no-credential call
+- **Status:** Accepted (v0.218)
 
 **Context.** ADR 0210 (system-tier-wire-rejection) gave a `Wire(...)`-carrying call a raw driver (`__sysdrive_raw_…`, every slot a `string`, decoding to an `HttpOutcome`). ADR 0212 (system-tier-no-credential) gave a `by Nobody` call a no-auth driver (`__sysdrive_noauth_…`, the *typed* driver's request minus the `Authorization` header). ADR 0249 (system-tier-wire-mixed-args) then let a raw call also carry a *typed* argument alongside a `Wire` one, converting it at the call site to the string the raw driver's slot expects.
 
