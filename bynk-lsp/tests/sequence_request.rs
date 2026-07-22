@@ -95,7 +95,11 @@ fn sequence_model_at_resolves_for_a_cursor_anywhere_in_the_handler_body() {
         .expect("a handler encloses this offset");
     // The `by Visitor` principal is the leftmost participant, ahead of the
     // entry, so: Visitor + Entry + Clock + Limiter.
-    assert_eq!(model.participants.len(), 4, "Actor + Entry + Clock + Limiter");
+    assert_eq!(
+        model.participants.len(),
+        4,
+        "Actor + Entry + Clock + Limiter"
+    );
 
     // Confirm the LSP-side wire conversion round-trips the span data too — and
     // that the new `Actor` kind and per-branch `reply` cross the wire.
