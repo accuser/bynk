@@ -17,6 +17,11 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0269](0269-documentation-view-webview-substrate-and-links.md) | **Shared webview substrate, HTML-disabled Markdown, http(s) link allow-list** (v0.225) — The doc view reuses #846's webview substrate and renders doc Markdown safely | Accepted (v0.225) |
+| [0268](0268-documentation-view-tier-1-on-demand.md) | **Documentation view Tier 1 — on-demand, not live-synced** (v0.225) — The page is built from the committed round on command, with no refresh push | Accepted (v0.225) |
+| [0267](0267-documentation-view-renders-signatures.md) | **Each declaration renders its signature, reusing hover's assembly** (v0.225) — The page is a reference (signature + doc), not a comment dump, sharing hover's renderer | Accepted (v0.225) |
+| [0266](0266-documentation-view-shows-undocumented.md) | **Undocumented declarations render as a coverage signal** (v0.225) — The page lists undocumented declarations with a placeholder, toggle to hide | Accepted (v0.225) |
+| [0265](0265-documentation-view-file-scoped.md) | **The documentation view is file-scoped in Tier 1** (v0.225) — A doc page aggregates one file's declarations, not a whole context | Accepted (v0.225) |
 | [0264](0264-explain-diagnostics.md) | **Diagnostic explanations are a compiler-owned mapping to Book anchors, surfaced by `bynk explain` and `codeDescription`** (v0.224) — A `code → { blurb, example, page/anchor }` table in the compiler links each curated diagnostic code to its Book concept page and prints an offline-complete explanation | Accepted (v0.224) |
 | [0263](0263-inline-doc-rendering.md) | **In-editor doc-comment rendering is style-in-place client decorations over a client-side Markdown tokenizer** (v0.223.1) — The VS Code extension decorates doc-comment Markdown in the source buffer (heading colour + bold, bold, italic) without concealing markers, tokenized client-side | Accepted (v0.223.1) |
 | [0262](0262-sequence-diagram-corrected-citations.md) | **Two citation corrections carried from issue review into the implementation** (v0.223) — The issue's grounding citations for agent-dispatch recognition and CodeLens plumbing pointed at the wrong code; the implementation uses the corrected locations | Accepted (v0.223) |

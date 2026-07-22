@@ -118,3 +118,18 @@ fn handler_lens_sites_covers_both_agent_and_service_handlers() {
     let sites = bynk_lsp::sequence_request::handler_lens_sites(RATELIMIT_SRC);
     assert_eq!(sites.len(), 2, "one agent handler + one service handler");
 }
+
+/// #847: the params must deserialize from the **camelCase** wire shape the
+/// client sends (`textDocument`/`position`), not the Rust field names. The
+/// in-crate tests above drive `sequence_model_at` directly and never round-trip
+/// these params, so this mismatch shipped latent in #846 until the doc-view
+/// work surfaced the same class of bug — pinned here so it cannot regress.
+#[test]
+fn params_deserialize_from_the_camelcase_wire_shape() {
+    let wire = r#"{"textDocument":{"uri":"file:///x.bynk"},"position":{"line":3,"character":5}}"#;
+    let params: bynk_lsp::sequence_request::SequenceModelParams =
+        serde_json::from_str(wire).expect("camelCase textDocument/position must deserialize");
+    assert_eq!(params.text_document.uri.as_str(), "file:///x.bynk");
+    assert_eq!(params.position.line, 3);
+    assert_eq!(params.position.character, 5);
+}

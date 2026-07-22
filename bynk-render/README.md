@@ -39,7 +39,7 @@ CLIs rather than depending on it directly.
 
 ```toml
 [dependencies]
-bynk-render = "0.224"
+bynk-render = "0.225"
 ```
 
 ```rust
