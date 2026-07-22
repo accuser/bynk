@@ -84,7 +84,12 @@ do it first.
   are unusually **prescriptive** — they already say "add `X` to the `given` clause", "add
   a `consumes` for `B`", "construct via `T.of(...)`". Turning those notes into one‑click
   quick fixes is nearly free (the suggestion text exists) and makes Bynk feel *more*
-  polished than languages with vaguer diagnostics.
+  polished than languages with vaguer diagnostics. **Shipped:** the `given`-clause
+  fixes (v0.26), the InRange-swap (v0.40), and — #852 — the **capability-aware** set:
+  fill missing record field(s), add a missing `consumes` for an unconsumed cross-context
+  call, and auto-`uses`/`consumes` an unresolved name (the Bynk analogue of auto-import).
+  Follow-ups: snippet-placeholder field fills, remove/rename fixes for unknown/duplicate
+  fields, and remove-unused-`consumes`.
 - **Find references** and **rename** (`prepareRename` + `rename`) — the two refactor
   table‑stakes; both ride A‑0.
 - **Comprehensive completion** — today `consumes`/`given` only. Extend to: types, fns,
