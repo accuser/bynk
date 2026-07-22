@@ -1,0 +1,11 @@
+context commerce.payment
+
+service authorise {
+  on call(cents: Cents) -> Effect[Result[String, PaymentError]] {
+    if cents > 100000 {
+      Err(Declined)
+    } else {
+      Ok("AUTH-42")
+    }
+  }
+}

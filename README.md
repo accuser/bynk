@@ -96,6 +96,7 @@ This is a Cargo workspace. The published crates are `bynkc`, `bynk`, `bynk-fmt`,
 | [`tree-sitter-bynk/`](tree-sitter-bynk/) | The tree-sitter grammar — the source of truth for syntax highlighting. | npm |
 | [`vscode-bynk/`](vscode-bynk/) | The VS Code extension (bundles the language server). | — |
 | [`site/`](site/) | The Bynk Book (Astro + Starlight): tutorials, how-to guides, reference, and the normative spec. Published at [bynk-lang.org](https://bynk-lang.org/book/). | — |
+| [`book/`](book/) | The independent Typst manuscript for a narrative, print-first book about the problems Bynk addresses. | — |
 | [`design/`](design/) | Internal design notes and decision records (ADRs). | — |
 | [`examples/`](examples/) | Example projects. | — |
 
@@ -111,8 +112,12 @@ each topic keeps its explanation, recipes, and reference together:
 - **[Reference](https://bynk-lang.org/book/reference/)** — exact behaviour, including the
   [normative spec](https://bynk-lang.org/book/spec/) and [CLI reference](https://bynk-lang.org/docs/cli/).
 
-The Book's source lives in [`site/`](site/). Build it locally with
+The online Book's source lives in [`site/`](site/). Build it locally with
 [Astro](https://astro.build/): `cd site && npm install && npm run dev`.
+
+A separate, print-first narrative manuscript is being developed in [`book/`](book/).
+It draws on the documentation as research but does not share its prose or replace
+the online guide and reference.
 
 ## Status
 

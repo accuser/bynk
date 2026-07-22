@@ -9,6 +9,10 @@ target/
 # mdBook build output
 docs/book/
 
+# Print manuscript build output
+book/build/
+output/pdf/
+
 # `bynkc test` build output written into a fixture dir (never tracked; the
 # fixtures are driven from temp dirs, so a committed out/ is stale cruft)
 bynkc/tests/fixtures/**/out/

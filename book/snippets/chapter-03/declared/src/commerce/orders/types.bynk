@@ -1,0 +1,12 @@
+context commerce.orders
+
+uses commerce.order_values
+
+consumes commerce.payment as Payment
+
+exports transparent { OrderError }
+
+type OrderError =
+  | OrderMissing(id: OrderId)
+  | Payment(reason: PaymentError)
+  embeds PaymentError as Payment

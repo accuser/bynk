@@ -1,0 +1,9 @@
+context commerce.payment
+
+fn shouldRetry(outcome: Result[String, PaymentError]) -> Bool {
+  match outcome {
+    Ok(_) => false
+    Err(Declined) => false
+    Err(ProviderUnavailable) => true
+  }
+}

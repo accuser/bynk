@@ -1,0 +1,17 @@
+commons commerce.order_values
+
+fn OrderId.parse(raw: String) -> Result[OrderId, ValidationError] {
+  OrderId.of(raw)
+}
+
+fn CustomerId.parse(raw: String) -> Result[CustomerId, ValidationError] {
+  CustomerId.of(raw)
+}
+
+fn Quantity.parse(raw: Int) -> Result[Quantity, ValidationError] {
+  Quantity.of(raw)
+}
+
+fn defaultQuantity() -> Quantity {
+  1
+}

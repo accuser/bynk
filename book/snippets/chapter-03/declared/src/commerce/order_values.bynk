@@ -1,0 +1,8 @@
+commons commerce.order_values
+
+type OrderId = opaque String where NonEmpty
+type Cents = Int where Positive
+
+fn OrderId.isSample(self) -> Bool {
+  self.raw == "ord-42"
+}

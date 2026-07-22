@@ -1,0 +1,13 @@
+context commerce.payment
+
+type PaymentError = enum {
+  Declined,
+  ProviderUnavailable,
+}
+
+fn shouldRetry(outcome: Result[String, PaymentError]) -> Bool {
+  match outcome {
+    Ok(_) => false
+    Err(ProviderUnavailable) => true
+  }
+}

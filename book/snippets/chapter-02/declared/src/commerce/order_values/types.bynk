@@ -1,0 +1,11 @@
+commons commerce.order_values
+
+type OrderId = opaque String where NonEmpty
+type CustomerId = opaque String where NonEmpty
+type Quantity = Int where InRange(1, 100)
+
+type OrderLine = {
+  orderId: OrderId,
+  customerId: CustomerId,
+  quantity: Quantity,
+}

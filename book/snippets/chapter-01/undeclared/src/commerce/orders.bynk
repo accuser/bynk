@@ -1,0 +1,15 @@
+context commerce.orders
+
+exports transparent { OrderError }
+
+type OrderError = enum { PaymentDeclined }
+
+service place {
+  on call(id: String, cents: Int) -> Effect[Result[String, OrderError]] {
+    let decision <- commerce.payment.authorise(cents)
+    match decision {
+      Ok(_)  => Ok(id)
+      Err(_) => Err(PaymentDeclined)
+    }
+  }
+}
