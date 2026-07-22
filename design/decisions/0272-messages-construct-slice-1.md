@@ -1,11 +1,6 @@
----
-level: minor
-changelog: The `messages` construct compiles a locale's message bundle to a lookup and a bundle-aware `render`, wired to `bynk.locale`'s bundle-free `render` (ADR 0256) as its fallback
----
+# 0272 — The `messages` construct, slice 1 — a single-locale bundle and a bundle-aware `render`
 
-## ADR: messages-construct-slice-1
-title: The `messages` construct, slice 1 — a single-locale bundle and a bundle-aware `render`
-summary: Grammar, placement, the checked-catalogue floor, and the checker-visible render binding for message-bundles slice 1
+- **Status:** Accepted (v0.228)
 
 **Context.** [Message bundles](../tracks/message-bundles.md) (spine
 [#857](https://github.com/accuser/bynk/issues/857)), slice 1
