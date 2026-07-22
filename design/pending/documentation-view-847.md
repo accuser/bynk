@@ -109,10 +109,11 @@ both webviews consume (issue #847's "built once, two consumers"); the only
 per-view delta is the vendored renderer bundle (Mermaid for #846, `markdown-it`
 here, each its own esbuild target). Render doc Markdown with **`html: false`**
 (raw HTML in a doc comment becomes text, never markup) and **`linkify: false`**
-(a bare URL stays literal), under the same `default-src 'none'` CSP. An explicit
-`[text](url)` link renders as an anchor, but a click is gated through an
-**http(s) allow-list** — the webview posts an `openExternal` message only for an
-`http(s)` href, and the host re-checks the scheme before `vscode.env.openExternal`
+(a *bare* URL stays literal — an explicit `[text](url)` or a `<url>` autolink
+still renders as an anchor), under the same `default-src 'none'` CSP. Whatever
+renders as a link, a click is gated through an **http(s) allow-list** — the
+webview posts an `openExternal` message only for an `http(s)` href, and the host
+re-checks the scheme before `vscode.env.openExternal`
 (which shows its own trust prompt); a `command:`/`file:`/`vscode:` href is inert.
 Unlike #846's SVG-order zip, the doc DOM is built element-by-element, so each
 heading/signature holds its own click-to-code span directly.

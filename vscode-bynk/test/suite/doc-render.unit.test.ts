@@ -55,6 +55,15 @@ describe("doc-render", () => {
     assert.ok(html.includes('href="https://example.com"'), html);
   });
 
+  it("renders a CommonMark <url> autolink as an anchor even with linkify off", () => {
+    // `linkify: false` only suppresses *bare* URLs; an angle-bracket autolink is
+    // core CommonMark. It still flows through the same http(s) click gate.
+    const md = createMarkdownRenderer();
+    const html = renderDocMarkdown(md, "See <https://example.com>.");
+    assert.ok(html.includes('href="https://example.com"'), html);
+    assert.ok(isExternalHttpLink("https://example.com"));
+  });
+
   it("maps nesting depth to heading tags, clamped at h4", () => {
     assert.strictEqual(headingTag(0), "h2");
     assert.strictEqual(headingTag(1), "h3");

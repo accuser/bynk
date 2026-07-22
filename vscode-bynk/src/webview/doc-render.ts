@@ -6,17 +6,21 @@
 // Security posture (issue #847's "untrusted Markdown in doc comments" risk):
 // `html: false` drops any raw HTML in a doc comment to text, so a `<script>`
 // or `<img onerror=…>` written in a `---` block can never reach the DOM as
-// markup. `linkify: false` means a bare URL stays literal text — only an
-// explicit `[text](url)` becomes a link, and the webview still gates those
-// clicks through the host's http(s) allow-list (`webviewHost.openExternalHref`).
-// Combined with the page's `default-src 'none'` CSP (no inline scripts, no
-// external fetches), the render cannot execute or exfiltrate.
+// markup. `linkify: false` means a *bare* URL stays literal text (an explicit
+// `[text](url)` or a CommonMark `<url>` autolink still becomes an anchor).
+// Whatever renders as a link, the webview gates its clicks through the host's
+// http(s) allow-list (`webviewHost.openExternalHref`) — so the security posture
+// does not depend on how few things markdown-it turns into anchors. Combined
+// with the page's `default-src 'none'` CSP (no inline scripts, no external
+// fetches), the render cannot execute or exfiltrate.
 
 import MarkdownIt from "markdown-it";
 
 /** A `markdown-it` configured for the doc webview: HTML disabled, no
- *  auto-linkification, typographic replacements off (a doc comment's literal
- *  punctuation should render verbatim). */
+ *  auto-linkification of bare URLs (an explicit `[text](url)`/`<url>` still
+ *  links — every link is gated at click time regardless), typographic
+ *  replacements off (a doc comment's literal punctuation should render
+ *  verbatim). */
 export function createMarkdownRenderer(): MarkdownIt {
   return new MarkdownIt({
     html: false,
