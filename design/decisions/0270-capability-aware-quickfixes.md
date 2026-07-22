@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Capability-aware quick-fixes — add a missing `consumes`, fill missing record fields, and auto-`uses`/`consumes` an unresolved name (#852)
----
+# 0270 — Capability-aware quick-fixes for boundary/resolution diagnostics
 
-## ADR: capability-aware-quickfixes
-title: Capability-aware quick-fixes for boundary/resolution diagnostics
-summary: Where each capability-aware fix is computed, plus ambiguity, default-value, and clause-placement rules
+- **Status:** Accepted (v0.226)
 
 **Context.** Before this increment `bynk-lsp` offered exactly two quick-fixes,
 both `given`-clause edits authored as structured `Suggestion`s at the checker's

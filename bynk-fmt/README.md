@@ -34,7 +34,7 @@ front-ends over the compiler set.
 
 ```toml
 [dependencies]
-bynk-fmt = "0.225"
+bynk-fmt = "0.226"
 ```
 
 ```rust
