@@ -8,7 +8,8 @@
 //! rule lets these locally-defined names win over the glob import.
 pub use bynk_ide::symbols::*;
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::Url;
@@ -50,4 +51,42 @@ pub fn describe_symbol_cross_file(
     let current_path = current_uri.to_file_path().ok()?;
     let (path, desc) = bynk_ide::symbols::describe_symbol_cross_file(files, &current_path, name)?;
     Some((Url::from_file_path(&path).ok()?, desc))
+}
+
+/// #848: rewrite every resolvable intra-doc-link candidate in `content`
+/// (hover Markdown — a ```bynk fenced signature, optionally followed by the
+/// declaration's doc-comment prose) into a Markdown link, resolved against
+/// `owner_unit`'s doc-link scope order (`crate::index_queries::resolve_doc_link`).
+/// The fenced signature block (and any author example fence) is never
+/// touched — `scan_doc_link_candidates` skips fenced regions itself. An
+/// unresolved candidate is left exactly as authored — no diagnostic,
+/// matching the render-only decision.
+pub fn linkify_doc_links(
+    content: &str,
+    index: &bynk_check::index::ProjectIndex,
+    doc_scope: &HashMap<String, Vec<String>>,
+    project_root: &Path,
+    owner_unit: &str,
+) -> String {
+    let candidates = bynk_ide::symbols::scan_doc_link_candidates(content);
+    if candidates.is_empty() {
+        return content.to_string();
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut last = 0;
+    for cand in candidates {
+        let Some(def) =
+            crate::index_queries::resolve_doc_link(index, doc_scope, owner_unit, &cand.name)
+        else {
+            continue;
+        };
+        let Ok(url) = Url::from_file_path(project_root.join(&def.path)) else {
+            continue;
+        };
+        out.push_str(&content[last..cand.span.start]);
+        out.push_str(&format!("[{}]({url})", cand.display));
+        last = cand.span.end;
+    }
+    out.push_str(&content[last..]);
+    out
 }

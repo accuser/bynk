@@ -584,6 +584,216 @@ pub fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
     out
 }
 
+/// #848: one intra-doc-link candidate scanned from doc-comment text — a
+/// `[Name]` shortcut, a `` [`Name`] `` code-span-wrapped shortcut, or a
+/// `[text][Name]` full reference. `span` is the byte range (into the text the
+/// scanner was given) of the whole construct to rewrite when `name` resolves;
+/// `display` is the link text to keep (`Name` for a shortcut, the code span
+/// including backticks for the code-span form, `text` for a full reference).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocLinkCandidate {
+    pub name: String,
+    pub span: std::ops::Range<usize>,
+    pub display: String,
+}
+
+/// #848: is `s` shaped like a doc-link candidate name — a bare identifier, or
+/// two identifiers joined by `.` (an `Owner.member` reference)? Ordinary
+/// bracketed prose (`[note]`, `[sic]`) is never a candidate.
+fn is_doc_link_name(s: &str) -> bool {
+    fn is_ident(part: &str) -> bool {
+        let mut chars = part.chars();
+        matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+    match s.split_once('.') {
+        Some((owner, member)) => is_ident(owner) && is_ident(member),
+        None => is_ident(s),
+    }
+}
+
+/// #848: fenced-code-block byte ranges (paired ` ``` ` lines only — doc
+/// comments are free text, not guaranteed well-formed Markdown, so a `~~~`
+/// fence or an unterminated one just gets a best-effort range to end of text)
+/// and the set of `[label]: destination`-shaped reference-definition labels,
+/// both found in `text` line by line. [`scan_doc_link_candidates`] excludes
+/// both: fenced content is never scanned for candidates, and a label with an
+/// author-defined reference keeps its ordinary Markdown meaning instead of
+/// becoming an intra-doc link.
+fn doc_link_prepass(text: &str) -> (Vec<(usize, usize)>, std::collections::HashSet<String>) {
+    let mut fenced = Vec::new();
+    let mut defined = std::collections::HashSet::new();
+    let mut in_fence = false;
+    let mut fence_start = 0usize;
+    let mut pos = 0usize;
+    loop {
+        let line_end = text[pos..]
+            .find('\n')
+            .map(|i| pos + i + 1)
+            .unwrap_or(text.len());
+        let line = &text[pos..line_end];
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            if in_fence {
+                fenced.push((fence_start, line_end));
+                in_fence = false;
+            } else {
+                fence_start = pos;
+                in_fence = true;
+            }
+        } else if !in_fence {
+            // A reference definition (`[label]: url`) — CommonMark allows up
+            // to 3 leading spaces.
+            let indent = line.len() - trimmed.len();
+            if indent <= 3
+                && let Some(rest) = trimmed.strip_prefix('[')
+                && let Some(close) = rest.find(']')
+            {
+                let label = &rest[..close];
+                if let Some(after_colon) = rest[close + 1..].strip_prefix(':')
+                    && !label.is_empty()
+                    && !after_colon.trim().is_empty()
+                {
+                    defined.insert(label.to_string());
+                }
+            }
+        }
+        if line_end >= text.len() {
+            break;
+        }
+        pos = line_end;
+    }
+    if in_fence {
+        fenced.push((fence_start, text.len()));
+    }
+    (fenced, defined)
+}
+
+/// #848: scans the bracket construct starting at `text[start]` (which must be
+/// `[`) for one of the recognised intra-doc-link forms. `None` when the
+/// bracket isn't well-formed, is an explicit-URL link (`[text](url)`), is a
+/// collapsed reference (`[text][]` — out of scope), names something that
+/// isn't identifier-shaped, or names an author-defined reference label.
+fn scan_bracket_candidate(
+    text: &str,
+    start: usize,
+    defined: &std::collections::HashSet<String>,
+) -> Option<DocLinkCandidate> {
+    let bytes = text.as_bytes();
+    debug_assert_eq!(bytes[start], b'[');
+    // `` [`Name`] `` — a code-span-wrapped shortcut.
+    if bytes.get(start + 1) == Some(&b'`') {
+        let inner_start = start + 2;
+        let close_tick = text[inner_start..].find('`')? + inner_start;
+        if bytes.get(close_tick + 1) != Some(&b']') {
+            return None;
+        }
+        let name = &text[inner_start..close_tick];
+        if !is_doc_link_name(name) || defined.contains(name) {
+            return None;
+        }
+        return Some(DocLinkCandidate {
+            name: name.to_string(),
+            span: start..close_tick + 2,
+            display: text[start + 1..close_tick + 1].to_string(),
+        });
+    }
+    let inner_start = start + 1;
+    let close = text[inner_start..].find(']')? + inner_start;
+    let inner = &text[inner_start..close];
+    let after = close + 1;
+    match bytes.get(after) {
+        // `[text](url)` — an explicit URL, unchanged Markdown.
+        Some(b'(') => None,
+        // A reference-definition line reached mid-scan (pass 1 already
+        // excludes true line-start ones) — never a candidate.
+        Some(b':') => None,
+        // `[text][label]` — a full reference.
+        Some(b'[') => {
+            let label_start = after + 1;
+            let label_close = text[label_start..].find(']')? + label_start;
+            let label = &text[label_start..label_close];
+            // `[text][]` (collapsed reference) is out of scope this increment.
+            if label.is_empty() || !is_doc_link_name(label) || defined.contains(label) {
+                return None;
+            }
+            Some(DocLinkCandidate {
+                name: label.to_string(),
+                span: start..label_close + 1,
+                display: inner.to_string(),
+            })
+        }
+        // `[Name]` — a shortcut.
+        _ => {
+            if !is_doc_link_name(inner) || defined.contains(inner) {
+                return None;
+            }
+            Some(DocLinkCandidate {
+                name: inner.to_string(),
+                span: start..after,
+                display: inner.to_string(),
+            })
+        }
+    }
+}
+
+/// #848: every intra-doc-link candidate in `text`, in order. `[text](url)`,
+/// an author-defined `[label]: url` reference, fenced-code-block content, and
+/// non-identifier bracket content (`[note]`) are excluded — see
+/// `scan_bracket_candidate` and `doc_link_prepass` (private below).
+pub fn scan_doc_link_candidates(text: &str) -> Vec<DocLinkCandidate> {
+    let (fenced, defined) = doc_link_prepass(text);
+    let in_fenced = |i: usize| fenced.iter().any(|&(s, e)| i >= s && i < e);
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'[' || in_fenced(i) {
+            i += 1;
+            continue;
+        }
+        match scan_bracket_candidate(text, i, &defined) {
+            Some(cand) => {
+                i = cand.span.end;
+                out.push(cand);
+            }
+            None => i += 1,
+        }
+    }
+    out
+}
+
+/// #848: the `(candidate name, absolute source span)` of every intra-doc-link
+/// candidate inside every `DocBlock` token in `source` — the clickable
+/// ranges for doc-comment document links, mirroring [`unit_reference_spans`]'s
+/// role for `uses`/`consumes` targets. Spans are computed against the raw,
+/// unstripped doc-block body (`bynk_syntax::lexer::doc_block_body_range`),
+/// not the common-indent-stripped `doc_block_content` text — that stripping
+/// is not offset-preserving, so a span-based caller must avoid it. Only
+/// tokenizes (not a full parse), so links still surface even when the rest of
+/// the file has a parse error elsewhere, as long as tokenization succeeds.
+pub fn doc_link_spans(source: &str) -> Vec<(String, Span)> {
+    let Ok(tokens) = tokenize(source) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for t in tokens {
+        if t.kind != bynk_syntax::lexer::TokenKind::DocBlock {
+            continue;
+        }
+        let Some(range) = bynk_syntax::lexer::doc_block_body_range(source, t.span) else {
+            continue;
+        };
+        for cand in scan_doc_link_candidates(&source[range.clone()]) {
+            out.push((
+                cand.name,
+                Span::new(range.start + cand.span.start, range.start + cand.span.end),
+            ));
+        }
+    }
+    out
+}
+
 /// #302: the source's own declared qualified name and its span — the
 /// rewrite target when the file backing this unit is renamed. `None` for a
 /// `suite` (its `SourceUnit::name()` is its *target*'s name, not one of its
@@ -1406,6 +1616,96 @@ mod tests {
         // The span covers exactly the target name (so the link underlines it).
         let (_, span) = spans.iter().find(|(n, _)| n == "todos").unwrap();
         assert_eq!(&src[span.start..span.end], "todos");
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_finds_a_bare_shortcut() {
+        let cands = scan_doc_link_candidates("See [Limiter] for details.");
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].name, "Limiter");
+        assert_eq!(cands[0].display, "Limiter");
+        assert_eq!(
+            &"See [Limiter] for details."[cands[0].span.clone()],
+            "[Limiter]"
+        );
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_finds_a_dotted_shortcut() {
+        let cands = scan_doc_link_candidates("See [RateView.remaining].");
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].name, "RateView.remaining");
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_finds_a_code_span_shortcut() {
+        let text = "The [`RateView.remaining`] field is never negative.";
+        let cands = scan_doc_link_candidates(text);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].name, "RateView.remaining");
+        assert_eq!(cands[0].display, "`RateView.remaining`");
+        assert_eq!(&text[cands[0].span.clone()], "[`RateView.remaining`]");
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_finds_a_full_reference() {
+        let cands = scan_doc_link_candidates("See [the limiter][Limiter] for details.");
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].name, "Limiter");
+        assert_eq!(cands[0].display, "the limiter");
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_leaves_an_explicit_url_untouched() {
+        let cands = scan_doc_link_candidates("See [Limiter](https://example.com).");
+        assert!(cands.is_empty(), "{cands:?}");
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_leaves_an_author_defined_reference_untouched() {
+        let text = "See [foo] for details.\n\n[foo]: https://example.com\n";
+        let cands = scan_doc_link_candidates(text);
+        assert!(cands.is_empty(), "{cands:?}");
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_ignores_non_identifier_bracket_content() {
+        let cands = scan_doc_link_candidates("See [see note] and [1] below.");
+        assert!(cands.is_empty(), "{cands:?}");
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_ignores_fenced_code_block_content() {
+        let text = "Example:\n```\n[Bracket, Syntax]\n[label]: not-a-real-def\n```\nSee [Limiter].";
+        let cands = scan_doc_link_candidates(text);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].name, "Limiter");
+    }
+
+    #[test]
+    fn scan_doc_link_candidates_does_not_recognise_the_collapsed_reference_form() {
+        // `[label][]` (CommonMark's "collapsed reference") is deliberately out
+        // of scope this increment — use the shortcut form `[label]` instead.
+        let cands = scan_doc_link_candidates("See [Limiter][].");
+        assert!(cands.is_empty(), "{cands:?}");
+    }
+
+    #[test]
+    fn doc_link_spans_reports_absolute_offsets_in_an_indented_doc_block() {
+        let src = "context app.main\n  ---\n  See [Limiter] here.\n  ---\n  service api {}\n";
+        let spans = doc_link_spans(src);
+        assert_eq!(spans.len(), 1);
+        let (name, span) = &spans[0];
+        assert_eq!(name, "Limiter");
+        assert_eq!(&src[span.start..span.end], "[Limiter]");
+    }
+
+    #[test]
+    fn doc_link_spans_finds_links_across_multiple_doc_blocks() {
+        let src = "---\nSee [Foo].\n---\ntype Foo = Int\n\n---\nSee [Bar].\n---\ntype Bar = Int\n";
+        let spans = doc_link_spans(src);
+        let names: Vec<&str> = spans.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["Foo", "Bar"]);
     }
 
     #[test]

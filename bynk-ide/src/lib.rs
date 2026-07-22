@@ -154,6 +154,10 @@ pub struct ProjectDiagnostics {
     /// in discovery order — the unit→file map backing document links and
     /// consumed-context navigation. Synthetic units excluded; empty on a bail.
     pub unit_sources: HashMap<String, Vec<PathBuf>>,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order — itself first, then its `uses` targets, then its `consumes`
+    /// targets. See `bynk_emit::project::diagnostics::ProjectAnalysis::doc_scope`.
+    pub doc_scope: HashMap<String, Vec<String>>,
 }
 
 /// Slice A: which trees a project's analysis walks.
@@ -270,5 +274,6 @@ pub fn diagnose_project_with(
         expr_types: analysis.expr_types,
         locals: analysis.locals,
         unit_sources: analysis.unit_sources,
+        doc_scope: analysis.doc_scope,
     }
 }

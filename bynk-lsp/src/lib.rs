@@ -107,6 +107,11 @@ struct Analysis {
     /// Slice 6b (ADR 0095): qualified unit name → its project source file(s),
     /// project-relative — backs document links (`uses`/`consumes` → source).
     unit_sources: std::collections::HashMap<String, Vec<PathBuf>>,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order — itself first, then its `uses` targets, then its `consumes`
+    /// targets — backs intra-doc-link resolution in `document_link` and
+    /// `hover`. See `bynk_ide::ProjectDiagnostics::doc_scope`.
+    doc_scope: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl Analysis {
@@ -653,6 +658,7 @@ impl Backend {
                 locals: result.locals,
                 expr_types: result.expr_types,
                 unit_sources: result.unit_sources,
+                doc_scope: result.doc_scope,
             });
             let mut state = self.state.write().await;
             let Some(ps) = state.projects.get_mut(&root) else {
@@ -1831,6 +1837,8 @@ impl LanguageServer for Backend {
                 expr_types: &a.expr_types,
                 rel,
                 offset: *offset,
+                project_root: &a.project_root,
+                doc_scope: &a.doc_scope,
             });
         let content = crate::hover::hover_content(&crate::hover::HoverInput {
             analysis,
@@ -2147,6 +2155,13 @@ impl LanguageServer for Backend {
     /// buffer; the target is the unit's first source file from the round's
     /// unit→source map. A first-party `uses` (embedded, no on-disk file) or an
     /// unresolved unit yields no link.
+    ///
+    /// #848: plus intra-doc links inside the file's own `--- … ---` doc
+    /// comments — `[Name]`/`[Owner.member]` resolved against the declaring
+    /// unit's `doc_scope`. Resolves against the full `analysis.index` under
+    /// the same `committed_analysis` gate as the unit-reference links above;
+    /// consistent with `code_lens`/`capability_provider_lenses`, which
+    /// already resolve full-index cross-references under this gate.
     async fn document_link(
         &self,
         params: DocumentLinkParams,
@@ -2166,7 +2181,7 @@ impl LanguageServer for Backend {
         let (Some(text), Some(analysis)) = (text, analysis) else {
             return Ok(None);
         };
-        let links: Vec<DocumentLink> = crate::symbols::unit_reference_spans(&text)
+        let mut links: Vec<DocumentLink> = crate::symbols::unit_reference_spans(&text)
             .into_iter()
             .filter_map(|(unit, span)| {
                 let rel = analysis.unit_sources.get(&unit)?.first()?;
@@ -2179,6 +2194,30 @@ impl LanguageServer for Backend {
                 })
             })
             .collect();
+        // #848: a suite file's own doc comments are out of scope this
+        // increment (own_declaration_name returns None for a suite; its
+        // uses-clause links above are unaffected).
+        if let Some((owner_unit, _)) = crate::symbols::own_declaration_name(&text) {
+            for (name, span) in crate::symbols::doc_link_spans(&text) {
+                let Some(def) = crate::index_queries::resolve_doc_link(
+                    &analysis.index,
+                    &analysis.doc_scope,
+                    &owner_unit,
+                    &name,
+                ) else {
+                    continue;
+                };
+                let Ok(target) = Url::from_file_path(analysis.project_root.join(&def.path)) else {
+                    continue;
+                };
+                links.push(DocumentLink {
+                    range: crate::position::span_to_range(&text, span),
+                    target: Some(target),
+                    tooltip: Some(format!("Go to `{name}`")),
+                    data: None,
+                });
+            }
+        }
         Ok((!links.is_empty()).then_some(links))
     }
 
