@@ -3239,6 +3239,12 @@ fn run_checks(
     // -- 6. Name-conflict detection for uses imports (commons-only check). --
     phase_uses_name_conflicts(&unit_uses, &unit_tables, &parsed, &groups, &mut errors);
 
+    // -- 6a'. message-bundles slice 1 (#859): messages-block legality,
+    //         @reference cardinality, within-block duplicate codes, and the
+    //         `uses bynk.locale` dependency. Runs here (not in phase_group)
+    //         because it needs `unit_uses`, resolved just above.
+    check_messages_bundles(&parsed, &groups, &kinds, &unit_uses, &mut errors);
+
     // -- 6b. Validate exports clauses (each name is a locally-declared type;
     //         no duplicates within or across opaque/transparent). --
     let exports_visibility = phase_validate_type_exports(
