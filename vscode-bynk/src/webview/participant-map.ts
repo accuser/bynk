@@ -22,6 +22,16 @@
 // `.actor-man` for stick-figures), collapse the top/bottom pair to one entry
 // per distinct `x`, and sort by `x`. That yields exactly one element per
 // participant, in declaration order — the order `participantOrder` is in.
+//
+// Both halves are live: `mermaid-gen.ts` emits `actor` (stick-figure, hence
+// `.actor-man`) for the principal originator (`Actor` kind) and `participant`
+// (box, hence `.actor-box`) for every other lifeline, so a real handler mixes
+// the two and their layout order interleaves — the `x` sort handles that.
+//
+// This couples to a Mermaid DOM detail — that `x` sits on the `text` label
+// element itself. If a Mermaid bump moves it, every `x` reads `NaN`, this
+// returns `[]`, and all participant clicks silently stop working; that failure
+// is exactly what the `sequenceWebview` integration test guards against.
 
 /** One label element per participant, left-to-right (= declaration order).
  *  Length equals the participant count, so callers can zip it 1:1 against

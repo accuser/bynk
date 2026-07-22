@@ -15,19 +15,23 @@
 //
 // Mermaid's `click` directive support for `sequenceDiagram` is inconsistent
 // across versions and does not cover every element kind this renders (an
-// `alt`/`opt` header, a `note`), so click-to-code is wired the same way in
-// `main.ts`: a DOM-order zip against `participantOrder`/`messageOrder`
-// (the emission order — the same order the caller must walk `.actor` /
-// message-line elements in the rendered SVG) rather than embedded `click`
-// statements.
+// `alt`/`opt` header, a `note`), so click-to-code is wired by zipping these
+// orderings against the rendered SVG in `main.ts` rather than via embedded
+// `click` statements. `messageOrder`/`noteOrder` are emission order and zip
+// 1:1 against `.messageText`/`.noteText` (which appear in that order);
+// `participantOrder` is declaration order but does NOT zip against raw
+// `.actor` nodes (Mermaid emits several per participant, regrouped) — the
+// caller recovers one element per participant via `participant-map.ts`.
 
 import type { AltBlock, Message, Participant, Range, SequenceModel } from "./types";
 
 export interface MermaidResult {
   text: string;
-  /** `model.participants` order — the caller zips this 1:1 against the
-   *  rendered SVG's `.actor` elements, which Mermaid emits in the same
-   *  `participant` declaration order this function writes them in. */
+  /** `model.participants` in declaration order — the order this function
+   *  writes the `participant P#` lines. The caller zips this against one
+   *  element per participant, recovered by `participant-map.ts`'s
+   *  `participantEls` (NOT a raw `.actor` walk — Mermaid emits several
+   *  `.actor` nodes per participant, regrouped out of declaration order). */
   participantOrder: Participant[];
   /** Emission order (source-position order, following nesting) — the
    *  caller zips this 1:1 against the rendered SVG's message-line

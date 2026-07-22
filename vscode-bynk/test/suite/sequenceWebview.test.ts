@@ -27,23 +27,29 @@ const R = (line: number) => ({
   end: { line, character: 4 },
 });
 
-// Four participants with distinct, single-word names so a mis-zip (element for
+// Five participants with distinct, single-word names so a mis-zip (element for
 // participant `i` belonging to some other participant, or to a label-less
-// `rect`) surfaces as a label≠name mismatch. Entry carries no range (not
-// clickable) but still renders a box, so it must still occupy slot 0.
+// `rect`) surfaces as a label≠name mismatch. Deliberately MIXED: a principal
+// `Actor` (stick-figure → `.actor-man`) at slot 0, an `Entry` (box, no range —
+// not clickable but still rendered), and `Capability` boxes. Mermaid emits the
+// stick-figure nodes at the END of DOM order and the boxes regrouped out of
+// declaration order, so this only passes if the zip recovers declaration order
+// across BOTH element kinds (the crux of #852, now that #876 ships actors).
 const MODEL: SequenceModel = {
   participants: [
-    { id: 0, kind: "Entry", name: "Entry", range: null },
-    { id: 1, kind: "Capability", name: "Clock", range: R(1) },
-    { id: 2, kind: "Capability", name: "Store", range: R(2) },
-    { id: 3, kind: "Capability", name: "Logger", range: R(3) },
+    { id: 0, kind: "Actor", name: "Caller", range: R(0) },
+    { id: 1, kind: "Entry", name: "Entry", range: null },
+    { id: 2, kind: "Capability", name: "Clock", range: R(2) },
+    { id: 3, kind: "Capability", name: "Store", range: R(3) },
+    { id: 4, kind: "Capability", name: "Logger", range: R(4) },
   ],
   messages: [
-    { from: 0, to: 1, kind: "Call", label: "now", range: R(1), block: null },
-    { from: 1, to: 0, kind: "Return", label: "", range: R(1), block: null },
-    { from: 0, to: 2, kind: "Call", label: "get", range: R(2), block: null },
-    { from: 2, to: 0, kind: "Return", label: "", range: R(2), block: null },
-    { from: 0, to: 3, kind: "Send", label: "info", range: R(3), block: null },
+    { from: 0, to: 1, kind: "Call", label: "check", range: R(1), block: null },
+    { from: 1, to: 2, kind: "Call", label: "now", range: R(2), block: null },
+    { from: 2, to: 1, kind: "Return", label: "", range: R(2), block: null },
+    { from: 1, to: 3, kind: "Call", label: "get", range: R(3), block: null },
+    { from: 3, to: 1, kind: "Return", label: "", range: R(3), block: null },
+    { from: 1, to: 4, kind: "Send", label: "info", range: R(4), block: null },
   ],
   blocks: [],
 };
@@ -62,7 +68,9 @@ function nonce(): string {
 
 /** The production HTML shell (`webviewHost.renderWebviewHtml`) embeds only the
  *  model global; this mirrors it but also sets the `__BYNK_SEQUENCE_DEBUG__`
- *  seam so the bundle reports its wiring back. */
+ *  seam so the bundle reports its wiring back. Keep the CSP/nonce in sync with
+ *  `webviewHost.renderWebviewHtml` — the two shells are intentionally parallel,
+ *  differing only in the extra debug global. */
 function debugHtml(webview: vscode.Webview, scriptUri: vscode.Uri, payload: SequencePayload): string {
   const n = nonce();
   const json = JSON.stringify(payload).replace(/</g, "\\u003c");
