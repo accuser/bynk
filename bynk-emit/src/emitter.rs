@@ -283,6 +283,10 @@ pub fn emit_project(
                 smb.borrow_mut().record(out.len(), a.span);
                 emit_agent(&mut out, a, commons, ctx, Some(&smb));
             }
+            CommonsItem::Messages(m) => {
+                smb.borrow_mut().record(out.len(), m.span);
+                emit_messages(&mut out, m);
+            }
             _ => {}
         }
     }
@@ -1463,10 +1467,24 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                     collect_refs_in_typeref(id, &local_to_file, ctx, &mut refs);
                 }
             }
-            // slice 1: `MessageEntry.code`/`.template` are plain string
-            // literals, no TypeRefs/exprs to walk for cross-file/commons
-            // imports.
-            CommonsItem::Messages(_) => {}
+            // `MessageEntry.code`/`.template` are plain string literals with
+            // no TypeRefs/exprs of their own to walk — but the generated
+            // `render` (emit_messages) has a signature and body that name
+            // `LocaleTag`/`Message`/`MessageArg` even though no expression in
+            // this file's *source* does, so those three are registered here
+            // by hand, the same way a real reference would be. `render`/
+            // `renderArg` are deliberately NOT registered this way —
+            // `render` collides with the generated function of the same
+            // name, and both are instead imported together under
+            // `emit_unit`'s (project.rs) hand-written, aliased extra import
+            // line, bypassing this dedup/merge path entirely (importing
+            // `renderArg` there too, alongside the aliased `render`, avoids a
+            // duplicate import of it from here).
+            CommonsItem::Messages(_) => {
+                for name in ["LocaleTag", "Message", "MessageArg"] {
+                    record_name_ref(name, &local_to_file, ctx, &mut refs);
+                }
+            }
         }
     }
     refs

@@ -2619,6 +2619,37 @@ fn emit_unit(
         HashMap::new()
     };
 
+    // message-bundles slice 1 (#859): a `messages` block's generated `render`
+    // needs `bynk.locale`'s own `render` in scope for its fallback rung, but
+    // under a private alias — this file's own `export function render` would
+    // otherwise collide with a plain `import { render }`. Injected as a hand-
+    // written extra import line rather than through the usual reference-
+    // collection path (`collect_external_references`/`record_name_ref`),
+    // which has no per-name aliasing of its own and would emit a colliding,
+    // unaliased `render`.
+    let mut extra_import_lines: Vec<String> = agent_deps_plan
+        .map(|p| p.imports.clone())
+        .unwrap_or_default();
+    if pf
+        .items()
+        .iter()
+        .any(|it| matches!(it, CommonsItem::Messages(_)))
+    {
+        let render_path = imported_decl_paths_emit
+            .get("bynk.locale")
+            .and_then(|m| m.get("render"))
+            .cloned()
+            .unwrap_or_else(|| EmitProjectCtx::commons_path("bynk.locale"));
+        let import = emitter::cross_commons_import_specifier_for_path(
+            &emit_source_path,
+            &render_path,
+            import_ext,
+        );
+        extra_import_lines.push(format!(
+            "import {{ render as __bynkLocaleRender, renderArg }} from \"{import}\";"
+        ));
+    }
+
     let emit_ctx = EmitProjectCtx {
         source_path: emit_source_path,
         commons_name: name.to_string(),
@@ -2642,9 +2673,7 @@ fn emit_unit(
         boundary_type_owners,
         local_agents: info.table.agents.keys().cloned().collect(),
         agent_given_deps: agent_deps_plan.map(|p| p.exprs.clone()).unwrap_or_default(),
-        extra_import_lines: agent_deps_plan
-            .map(|p| p.imports.clone())
-            .unwrap_or_default(),
+        extra_import_lines,
         agent_method_givens: info
             .table
             .agents
