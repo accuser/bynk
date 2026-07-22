@@ -39,6 +39,7 @@ mod locals_nav;
 pub mod position;
 mod project;
 mod publish;
+pub mod sequence_request;
 mod signature_help;
 mod structure;
 pub mod symbols;
@@ -107,6 +108,10 @@ struct Analysis {
     /// Slice 6b (ADR 0095): qualified unit name → its project source file(s),
     /// project-relative — backs document links (`uses`/`consumes` → source).
     unit_sources: std::collections::HashMap<String, Vec<PathBuf>>,
+    /// #846: qualified context/adapter unit name → the cross-context/agent
+    /// tables the `bynk/sequenceModel` request classifies handler calls
+    /// against.
+    sequence_info: std::collections::HashMap<String, bynk_ide::ContextSequenceInfo>,
     /// #848: qualified unit name → its doc-comment intra-doc-link search
     /// order — itself first, then its `uses` targets, then its `consumes`
     /// targets — backs intra-doc-link resolution in `document_link` and
@@ -658,6 +663,7 @@ impl Backend {
                 locals: result.locals,
                 expr_types: result.expr_types,
                 unit_sources: result.unit_sources,
+                sequence_info: result.sequence_info,
                 doc_scope: result.doc_scope,
             });
             let mut state = self.state.write().await;
@@ -1654,6 +1660,35 @@ impl Backend {
         }
         None
     }
+
+    /// #846: `bynk/sequenceModel` — the sequence-diagram query for the
+    /// handler under the cursor. This server's first custom (non-standard)
+    /// request, registered via `custom_method` in [`run`] rather than a
+    /// `LanguageServer` trait slot. Served from the committed round (#733),
+    /// like `code_lens`; no refresh nudge (see the `sequence_request` module
+    /// doc for why one isn't needed).
+    async fn sequence_model(
+        &self,
+        params: sequence_request::SequenceModelParams,
+    ) -> JsonRpcResult<Option<sequence_request::WireSequenceModel>> {
+        let uri = params.text_document.uri;
+        let Some(analysis) = self.committed_analysis(&uri).await else {
+            return Ok(None);
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
+            return Ok(None);
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Ok(None);
+        };
+        let Some(offset) = crate::position::position_to_offset(text, params.position) else {
+            return Ok(None);
+        };
+        let info = bynk_ide::symbols::own_declaration_name(text)
+            .and_then(|(name, _)| analysis.sequence_info.get(&name));
+        let model = sequence_request::sequence_model_at(text, offset, info);
+        Ok(model.map(|m| sequence_request::to_wire(&m, text)))
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -2021,6 +2056,33 @@ impl LanguageServer for Backend {
                         locations,
                         format!("{n} refinements of {}", base.name()),
                     )
+                }),
+        );
+        // #846: a "Show Sequence" lens above every handler declaration —
+        // `bynk.showSequenceDiagram` is a plain extension command (not a
+        // built-in VS Code command), so its arguments travel as plain JSON
+        // with no `codelens.ts` hydration needed, unlike `show_references`
+        // above. A direct AST walk (`handler_lens_sites`), not
+        // `index_queries::code_lenses` — that only indexes agent handlers
+        // (`SymbolKind::Handler`; service handlers have no per-handler name)
+        // and would silently drop the lens for every service handler.
+        lenses.extend(
+            crate::sequence_request::handler_lens_sites(text)
+                .into_iter()
+                .map(|span| {
+                    let range = crate::position::span_to_range(text, span);
+                    CodeLens {
+                        range,
+                        command: Some(Command {
+                            title: "Show Sequence".to_string(),
+                            command: "bynk.showSequenceDiagram".to_string(),
+                            arguments: Some(vec![
+                                serde_json::to_value(&uri).unwrap_or_default(),
+                                serde_json::to_value(range.start).unwrap_or_default(),
+                            ]),
+                        }),
+                        data: None,
+                    }
                 }),
         );
         Ok(Some(lenses))
@@ -3356,6 +3418,10 @@ fn server_capabilities() -> ServerCapabilities {
                 ..Default::default()
             }),
         }),
+        // #846: no standard `ServerCapabilities` field exists for a custom
+        // request — `experimental` is the only feature-detection surface a
+        // client has for `bynk/sequenceModel`.
+        experimental: Some(serde_json::json!({ "sequenceModel": true })),
         ..Default::default()
     }
 }
@@ -3945,7 +4011,13 @@ pub async fn run() {
     tracing::info!("bynkc-lsp v{} starting", SERVER_VERSION);
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    let (service, socket) = LspService::new(Backend::new);
+    // #846: this server's first custom (non-standard) request — everything
+    // else is a `LanguageServer` trait method, registered automatically by
+    // `LspService::new`. `bynk/sequenceModel` has no trait slot, so it needs
+    // the builder's `custom_method` instead.
+    let (service, socket) = LspService::build(Backend::new)
+        .custom_method("bynk/sequenceModel", Backend::sequence_model)
+        .finish();
     Server::new(stdin, stdout, socket).serve(service).await;
 }
 

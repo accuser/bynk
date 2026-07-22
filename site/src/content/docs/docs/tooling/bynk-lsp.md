@@ -33,7 +33,8 @@ backed by a request handler.
 | Document symbols | The file outline for the editor's symbol view and quick-open. |
 | Completion | Scope- and context-aware: units after `consumes `, capabilities inside `consumes U { … }` and after `given `, in-scope locals at keyword and expression positions, and members after `.` on a typed value receiver. Documentation is resolved lazily on the focused item so the initial list stays cheap. |
 | Signature help | The active parameter of the call being typed, triggered on `(` and `,`. Covers named callees and value-receiver methods. |
-| Code lens | A reference-count lens above each top-level definition, clickable to peek the references. |
+| Code lens | A reference-count lens above each top-level definition, clickable to peek the references, plus a "Show Sequence" lens above every handler. |
+| Sequence diagram | `bynk/sequenceModel` — a custom (non-standard) request, advertised via `ServerCapabilities.experimental` rather than a dedicated provider field — classifies the handler under the cursor's calls into runtime-participant lifelines (consumed capabilities, consumed contexts, agents) for the VS Code extension's "Bynk: Show Sequence Diagram" webview. Served from the committed round; re-issued fresh by the client on each invocation (no refresh-push mechanism). |
 | Call hierarchy | Incoming and outgoing calls over the binding index's call graph. |
 | Implementation | From a capability to its providers (the reverse direction, provider to capability, is served by go-to-definition). |
 | Document links | `uses`/`consumes` unit names — and a test file's `suite <target>` header — become clickable links to the unit's source file. Inside doc comments, a `[Name]`/`[Owner.member]` intra-doc link also becomes clickable when it resolves against the declaring unit's scope (itself, its `uses`, its `consumes`); an unresolved one renders as plain text. |
@@ -181,6 +182,7 @@ The crate is split into focused modules:
 | `document_symbols.rs` | The document-symbol outline. |
 | `publish.rs` | The pure publish plan (which files to publish, which to clear). |
 | `project.rs` | `bynk.toml` project configuration. |
+| `sequence_request.rs` | `bynk/sequenceModel`: the enclosing-handler-at-cursor lookup, the "Show Sequence" CodeLens site list, and the wire-shape conversion from `bynk_ide::sequence::SequenceModel`. |
 
 ## Logging
 

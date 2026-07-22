@@ -166,6 +166,11 @@
         "command": "bynk.debugTests",
         "title": "Debug Tests",
         "category": "Bynk"
+      },
+      {
+        "command": "bynk.showSequenceDiagram",
+        "title": "Show Sequence Diagram",
+        "category": "Bynk"
       }
     ],
     "menus": {
@@ -197,6 +202,10 @@
         {
           "command": "bynk.showServerOutput",
           "when": "editorLangId == bynk || bynk.hasProject"
+        },
+        {
+          "command": "bynk.showSequenceDiagram",
+          "when": "editorLangId == bynk"
         }
       ],
       "editor/title/run": [
@@ -453,7 +462,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
+    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify && esbuild src/webview/main.ts --bundle --outfile=out/webview.js --format=iife --platform=browser --target=es2022 --minify",
     "check": "tsc -p . --noEmit",
     "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap --watch",
     "package": "npm run build && npx @vscode/vsce package",
@@ -472,6 +481,7 @@
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
     "glob": "^13.0.6",
+    "mermaid": "^11.16.0",
     "mocha": "^11.7.6",
     "typescript": "^7.0.2"
   },
