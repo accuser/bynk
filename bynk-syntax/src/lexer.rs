@@ -209,6 +209,10 @@ pub enum TokenKind {
     // records (parsed by scope, like `result` in an `ensures`).
     #[token("transition")]
     Transition,
+    // message-bundles track, slice 1: `messages <tag> { "code" => "template" }`
+    // — a commons item declaring one locale's message bundle.
+    #[token("messages")]
+    Messages,
     /// `...` — used in record-spread expressions (v0.5).
     #[token("...")]
     DotDotDot,
@@ -413,6 +417,7 @@ impl TokenKind {
             Requires => "`requires`",
             Ensures => "`ensures`",
             Transition => "`transition`",
+            Messages => "`messages`",
             ColonEq => "`:=`",
             DotDotDot => "`...`",
             LArrow => "`<-`",

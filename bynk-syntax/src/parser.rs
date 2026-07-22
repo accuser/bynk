@@ -504,6 +504,7 @@ impl<'a> Parser<'a> {
             match t.kind {
                 TokenKind::Type
                 | TokenKind::Fn
+                | TokenKind::Messages
                 | TokenKind::Uses
                 | TokenKind::Consumes
                 | TokenKind::Exports
@@ -1412,6 +1413,83 @@ mod tests {
         };
         assert_eq!(t.trivia.leading, vec![" intro".to_string()]);
         assert_eq!(t.documentation.as_deref(), Some("docs"));
+    }
+
+    #[test]
+    fn messages_keyword_does_not_collide_with_a_commons_name_segment() {
+        // `messages` is RESERVED_CONTEXTUAL (like `case`/`on`/`suite`), not a
+        // hard keyword: `commons app.messages { ... }` — the design's own
+        // natural naming choice for a bundle commons — must still parse.
+        // (Caught during slice-1 implementation: a first pass made `messages`
+        // a plain hard keyword and this exact name broke.)
+        let src = "commons app.messages {\ntype T = Int where Positive\n}";
+        let c = parse_str(src).unwrap();
+        assert_eq!(c.name.joined(), "app.messages");
+    }
+
+    #[test]
+    fn messages_decl_parses_tag_annotation_and_entries() {
+        // message-bundles slice 1 (#859): the construct + doc/trivia wiring.
+        let src = "commons app.messages {\n\
+                   -- intro\n\
+                   ---\n\
+                   docs\n\
+                   ---\n\
+                   messages en @reference {\n\
+                   \"greeting\" => \"Hello, {name}!\"\n\
+                   \"farewell\" => \"Bye\"\n\
+                   } -- trailing\n\
+                   }";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Messages(m) = &c.items[0] else {
+            panic!("expected a messages item, got {:?}", c.items[0]);
+        };
+        assert_eq!(m.tag.name, "en");
+        assert_eq!(m.annotations.len(), 1);
+        assert_eq!(m.annotations[0].name.name, "reference");
+        assert!(m.annotations[0].args.is_empty());
+        assert_eq!(m.entries.len(), 2);
+        assert_eq!(m.entries[0].code, "greeting");
+        assert_eq!(m.entries[0].template, "Hello, {name}!");
+        assert_eq!(m.entries[1].code, "farewell");
+        assert_eq!(m.entries[1].template, "Bye");
+        assert_eq!(m.trivia.leading, vec![" intro".to_string()]);
+        assert_eq!(m.documentation.as_deref(), Some("docs"));
+        assert_eq!(m.trivia.trailing.as_deref(), Some(" trailing"));
+    }
+
+    #[test]
+    fn messages_decl_parses_with_no_annotation_and_no_entries() {
+        // The parser stays permissive on annotation cardinality (zero-or-more)
+        // — "exactly one `@reference`" is a checker concern (validate.rs), not
+        // a parse error.
+        let src = "commons app.messages {\nmessages en {\n}\n}";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Messages(m) = &c.items[0] else {
+            panic!("expected a messages item, got {:?}", c.items[0]);
+        };
+        assert_eq!(m.tag.name, "en");
+        assert!(m.annotations.is_empty());
+        assert!(m.entries.is_empty());
+    }
+
+    #[test]
+    fn messages_decl_parses_syntactically_inside_a_context_too() {
+        // Commons-only legality is a checker concern (bynk.messages.outside_commons
+        // in bynk-emit's project validation), not a parser rejection — mirrors
+        // how `service`/`agent` already parse syntactically inside `adapter`
+        // bodies for the same reason.
+        let src = "context app.svc {\nmessages en @reference {\n\"a\" => \"b\"\n}\n}";
+        let toks = tokenize(src).unwrap();
+        let (unit, errors) = parse_unit_with_recovery(&toks, src);
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        let Some(SourceUnit::Context(ctx)) = unit else {
+            panic!("expected a context")
+        };
+        let CommonsItem::Messages(m) = &ctx.items[0] else {
+            panic!("expected a messages item, got {:?}", ctx.items[0]);
+        };
+        assert_eq!(m.tag.name, "en");
     }
 
     #[test]

@@ -185,6 +185,19 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                Some(TokenKind::Messages) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_messages_decl() {
+                        Ok(mut m) => {
+                            m.documentation = doc;
+                            m.trivia.leading = leading;
+                            m.trivia.trailing = self.take_trailing_trivia();
+                            items.push(CommonsItem::Messages(m));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 Some(TokenKind::Capability) => {
                     let err = CompileError::new(
                         "bynk.capability.outside_context",
@@ -231,12 +244,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `type`, `fn`, or `uses` declaration, found {}",
+                            "expected `type`, `fn`, `messages`, or `uses` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "the body of a commons contains zero or more `type`, `fn`, or `uses` declarations",
+                        "the body of a commons contains zero or more `type`, `fn`, `messages`, or `uses` declarations",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -346,6 +359,21 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                Some(TokenKind::Messages) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_messages_decl() {
+                        Ok(mut m) => {
+                            m.documentation = doc;
+                            m.trivia.leading = leading;
+                            m.trivia.trailing = self.take_trailing_trivia();
+                            last_span = m.span;
+                            items.push(CommonsItem::Messages(m));
+                            seen_item = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 None => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
@@ -407,12 +435,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `type`, `fn`, or `uses` declaration, found {}",
+                            "expected `type`, `fn`, `messages`, or `uses` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "in fragment-form commons (no braces), the body is a sequence of `type`, `fn`, or `uses` declarations to end of file",
+                        "in fragment-form commons (no braces), the body is a sequence of `type`, `fn`, `messages`, or `uses` declarations to end of file",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -1224,13 +1252,31 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                // v0.223 (message-bundles slice 1): `messages` parses
+                // syntactically in a context too — same shape as `Service`/
+                // `Agent` inside an `adapter` body — so the checker can
+                // reject it precisely (`bynk.messages.outside_commons`)
+                // rather than the parser rejecting it per unit kind.
+                Some(TokenKind::Messages) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_messages_decl() {
+                        Ok(mut m) => {
+                            m.documentation = doc;
+                            m.trivia.leading = leading;
+                            m.trivia.trailing = self.take_trailing_trivia();
+                            items.push(CommonsItem::Messages(m));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 Some(_) => {
                     let t = self.peek().unwrap();
                     let err = CompileError::new(
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected a `type`, `fn`, `uses`, `consumes`, `exports`, `capability`, `provides`, `service`, `agent`, or `actor` declaration, found {}",
+                            "expected a `type`, `fn`, `messages`, `uses`, `consumes`, `exports`, `capability`, `provides`, `service`, `agent`, or `actor` declaration, found {}",
                             t.kind.describe()
                         ),
                     );
@@ -1492,6 +1538,22 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                // See parse_context_brace's matching arm.
+                Some(TokenKind::Messages) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_messages_decl() {
+                        Ok(mut m) => {
+                            m.documentation = doc;
+                            m.trivia.leading = leading;
+                            m.trivia.trailing = self.take_trailing_trivia();
+                            last_span = m.span;
+                            items.push(CommonsItem::Messages(m));
+                            seen_item = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 None => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
@@ -1510,7 +1572,7 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected a `type`, `fn`, `uses`, `consumes`, `exports`, `capability`, `provides`, `service`, `agent`, or `actor` declaration, found {}",
+                            "expected a `type`, `fn`, `messages`, `uses`, `consumes`, `exports`, `capability`, `provides`, `service`, `agent`, or `actor` declaration, found {}",
                             t.kind.describe()
                         ),
                     );
@@ -1735,6 +1797,23 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                // `messages` parses into items too, so the checker can reject
+                // it precisely (`bynk.messages.outside_commons`) — same
+                // reasoning as `service`/`agent` above.
+                Some(TokenKind::Messages) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_messages_decl() {
+                        Ok(mut m) => {
+                            m.documentation = doc;
+                            m.trivia.leading = leading;
+                            m.trivia.trailing = self.take_trailing_trivia();
+                            last_span = m.span;
+                            items.push(CommonsItem::Messages(m));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 _ => {
                     let t = match self.peek() {
                         Some(t) => t,
@@ -1750,7 +1829,7 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected a `binding`, `type`, `fn`, `uses`, `consumes`, `exports`, `capability`, or `provides` declaration, found {}",
+                            "expected a `binding`, `type`, `fn`, `messages`, `uses`, `consumes`, `exports`, `capability`, or `provides` declaration, found {}",
                             t.kind.describe()
                         ),
                     );
@@ -2956,6 +3035,83 @@ impl<'a> Parser<'a> {
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_alphabetic())
+    }
+
+    /// Consume a bare string-literal token, returning its parsed content
+    /// (escapes applied, quotes stripped) and span. No expression parsing is
+    /// involved — this is for grammar positions (a `messages` entry's code/
+    /// template) that are always a plain string, never an interpolated one
+    /// or any other expression form.
+    fn expect_str_lit(&mut self, ctx: &str) -> Result<(String, Span), CompileError> {
+        match self.peek() {
+            Some(t) if t.kind == TokenKind::StrLit => {
+                self.bump();
+                Ok((parse_string_literal(self.slice(t.span), t.span)?, t.span))
+            }
+            Some(t) => Err(CompileError::new(
+                "bynk.parse.expected_token",
+                t.span,
+                format!(
+                    "expected a string literal {ctx}, found {}",
+                    t.kind.describe()
+                ),
+            )),
+            None => Err(CompileError::new(
+                "bynk.parse.unexpected_eof",
+                self.eof_span(),
+                format!("expected a string literal {ctx}, found end of file"),
+            )),
+        }
+    }
+
+    /// message-bundles track, slice 1: `messages <tag> @reference { "code" =>
+    /// "template" ... }` — a commons item declaring one locale's message
+    /// bundle. `tag` is a plain identifier (its `LocaleTag` refinement is a
+    /// checker concern, not a grammar one); annotations are zero-or-more here
+    /// (cardinality — exactly one `@reference` per bundle — is validated
+    /// downstream, per the same permissive-grammar/precise-checker split
+    /// `@indexed`/`@ttl` already use, ADR 0111). Legality (commons-only) is
+    /// likewise a checker concern, not a parser one — this function parses
+    /// identically wherever it's called from.
+    fn parse_messages_decl(&mut self) -> Result<MessagesDecl, CompileError> {
+        let kw = self.expect(TokenKind::Messages, "to start a messages declaration")?;
+        let tag = self.expect_ident("as the locale tag after `messages`")?;
+        let mut annotations = Vec::new();
+        while self.peek_kind() == Some(TokenKind::At) {
+            annotations.push(self.parse_annotation()?);
+        }
+        self.expect(TokenKind::LBrace, "to open the messages body")?;
+        let mut entries = Vec::new();
+        while self.peek_kind() != Some(TokenKind::RBrace) {
+            entries.push(self.parse_message_entry()?);
+            let _ = self.eat(TokenKind::Comma);
+        }
+        let close = self.expect(TokenKind::RBrace, "to close the messages body")?;
+        Ok(MessagesDecl {
+            tag,
+            annotations,
+            entries,
+            documentation: None,
+            span: kw.span.merge(close.span),
+            trivia: Trivia::default(),
+        })
+    }
+
+    /// One `"code" => "template"` entry inside a `messages` body. Both sides
+    /// are plain string literals — a template's `{name}` placeholders are
+    /// resolved by a compile-time string scan during lowering, not parsed
+    /// here (Decision D, message-bundles slice 1).
+    fn parse_message_entry(&mut self) -> Result<MessageEntry, CompileError> {
+        let (code, code_span) = self.expect_str_lit("as a message code")?;
+        self.expect(TokenKind::FatArrow, "after a message code")?;
+        let (template, template_span) = self.expect_str_lit("as a message template")?;
+        Ok(MessageEntry {
+            code,
+            code_span,
+            template,
+            template_span,
+            span: code_span.merge(template_span),
+        })
     }
 
     /// Parse a storage kind applied to its element type(s): `Cell[Int]`,
