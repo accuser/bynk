@@ -1,0 +1,11 @@
+suite app.bundle {
+  case "reference locale renders its own arm order fine" {
+    let msg = withWhole(message("cart.count"), "count", 1)
+    expect render("en", msg) == "You have 1 item"
+  }
+
+  case "reordered-and-extra-arm locale still renders correctly" {
+    let msg = withWhole(message("cart.count"), "count", 2)
+    expect render("pl", msg) == "Masz 2 elementy"
+  }
+}

@@ -1,0 +1,7 @@
+commons bundle
+
+uses bynk.locale
+
+messages en @reference {
+  "greeting" => "{g, select, male {# things} female {things} other {things}}"
+}

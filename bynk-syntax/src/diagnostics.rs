@@ -894,8 +894,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
     ),
     d(
+        "bynk.messages.format_mismatch",
+        "A code's placeholder is formatted as a different ICU kind (plain/plural/select/number/date) across declared locales.",
+    ),
+    d(
         "bynk.messages.incomplete",
         "A locale is missing a code the reference locale declares.",
+    ),
+    d(
+        "bynk.messages.malformed_icu_syntax",
+        "A message template's ICU placeholder syntax is invalid — unbalanced arm braces, an unknown format keyword, `#` outside a plural arm, a missing mandatory `other` arm, or an explicitly out-of-scope construct (`selectordinal`, `offset:`/`=N`, a CLDR skeleton).",
     ),
     d(
         "bynk.messages.missing_locale_dependency",

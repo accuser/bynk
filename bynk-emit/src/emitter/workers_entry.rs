@@ -507,7 +507,11 @@ pub fn emit_worker_entry(
     // emitter runs, keyed on what the body actually references.
     if out.contains("__bynkBytes") {
         // The entry's own runtime import, emitted verbatim above.
-        out = crate::emitter::inject_bytes_runtime_imports(out, "../../runtime.js");
+        out = crate::emitter::inject_runtime_imports(
+            out,
+            "../../runtime.js",
+            crate::emitter::BYTES_RUNTIME_IMPORTS,
+        );
     }
 
     out

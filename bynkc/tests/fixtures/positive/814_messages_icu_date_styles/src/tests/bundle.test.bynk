@@ -1,0 +1,25 @@
+---
+Deliberately not asserted against an exact date string (`Intl.DateTimeFormat`
+with no `timeZone` override is host-timezone-sensitive) — asserts properties
+that hold regardless of which timezone the test runner is in: every style
+renders something non-empty containing the year, and `full` (which spells
+out the weekday and month name) is always longer than `short` (numeric
+`m/d/yy`).
+---
+suite app.bundle {
+  case "bare date renders a non-empty string containing the year" {
+    let msg = withMoment(message("published"), "d", Instant.fromEpochMillis(1592222400000))
+    expect render("en", msg).contains("2020")
+  }
+
+  case "full style is longer than short style (more detail, not less)" {
+    let short = render("en", withMoment(message("published.short"), "d", Instant.fromEpochMillis(1592222400000)))
+    let full = render("en", withMoment(message("published.full"), "d", Instant.fromEpochMillis(1592222400000)))
+    expect full.length() > short.length()
+  }
+
+  case "missing param falls back to the literal placeholder text" {
+    let msg = message("published")
+    expect render("en", msg) == "Published {d}"
+  }
+}

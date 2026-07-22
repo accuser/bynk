@@ -1,0 +1,23 @@
+---
+message-bundles slice 3 (#878): Polish's real CLDR plural rule (1 -> one;
+2..4 (not 12-14) -> few; most others -> many) is exercised for real, not
+asserted against a guessed value — verified once already via a scratch
+smoke test against real `node`/`Intl.PluralRules` before this fixture was
+committed.
+---
+suite app.bundle {
+  case "one" {
+    let msg = withWhole(message("cart.count"), "n", 1)
+    expect render("pl", msg) == "Masz 1 element w koszyku"
+  }
+
+  case "few" {
+    let msg = withWhole(message("cart.count"), "n", 2)
+    expect render("pl", msg) == "Masz 2 elementy w koszyku"
+  }
+
+  case "many" {
+    let msg = withWhole(message("cart.count"), "n", 5)
+    expect render("pl", msg) == "Masz 5 elementow w koszyku"
+  }
+}

@@ -852,10 +852,15 @@ fn sanitise_path_segment(s: &str) -> String {
 
 // -- message-bundles slice 1 (#859) --
 
-/// A `{name}` placeholder or a run of literal text inside a message template.
+/// A `{name}` placeholder (plain, or — message-bundles slice 3 (#878) — an
+/// ICU-dispatch placeholder whose `inner` text contains a `,`) or a run of
+/// literal text inside a message template. `offset` is the byte offset in
+/// the owning template where `inner`/the placeholder's content begins (right
+/// after the opening `{`) — used by slice 3's `icu::icu_dispatch_placeholders`
+/// to rebase parse-error spans (Decision C).
 pub(crate) enum TemplateSegment<'a> {
     Literal(&'a str),
-    Placeholder(&'a str),
+    Placeholder { offset: usize, inner: &'a str },
 }
 
 /// Compile-time string scan splitting a template into literal/placeholder
@@ -867,23 +872,58 @@ pub(crate) enum TemplateSegment<'a> {
 /// placeholder literally named `" name "`, which will never match a `params`
 /// key and so always renders as literal text (PR #872 review) — a real rough
 /// edge, left for a future slice rather than guessed at here.
+///
+/// message-bundles slice 3 (#878): if a `,` appears before the placeholder's
+/// naive (non-nested) closing `}`, it's treated as an ICU-dispatch
+/// placeholder instead of a plain one — the true close is then found via a
+/// quote+depth-aware scan (`icu::find_icu_close`), since an ICU construct's
+/// arms can themselves contain nested `{…}` bodies. This is the *only*
+/// change from slice 1/2's behaviour: a template with no comma inside any
+/// `{…}` is scanned byte-for-byte identically to before.
 pub(crate) fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
     let mut segments = Vec::new();
     let mut literal_start = 0;
     let mut i = 0;
     while i < template.len() {
-        if template.as_bytes()[i] == b'{'
-            && let Some(rel_end) = template[i + 1..].find('}')
-        {
-            let name = &template[i + 1..i + 1 + rel_end];
-            if !name.is_empty() && !name.contains('{') {
-                if literal_start < i {
-                    segments.push(TemplateSegment::Literal(&template[literal_start..i]));
+        if template.as_bytes()[i] == b'{' {
+            let rest = &template[i + 1..];
+            let first_close = rest.find('}');
+            let first_comma = rest.find(',');
+            let is_icu = match (first_comma, first_close) {
+                (Some(c), Some(cl)) => c < cl,
+                (Some(_), None) => true,
+                (None, _) => false,
+            };
+            if is_icu {
+                if let Some(close_rel) = icu::find_icu_close(rest) {
+                    let inner = &rest[..close_rel];
+                    if literal_start < i {
+                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
+                    }
+                    segments.push(TemplateSegment::Placeholder {
+                        offset: i + 1,
+                        inner,
+                    });
+                    i = i + 1 + close_rel + 1;
+                    literal_start = i;
+                    continue;
                 }
-                segments.push(TemplateSegment::Placeholder(name));
-                i = i + 1 + rel_end + 1;
-                literal_start = i;
-                continue;
+                // No true close found anywhere — falls through to the
+                // one-char literal advance below, same as an unmatched `{`.
+            } else if let Some(rel_end) = first_close {
+                let name = &rest[..rel_end];
+                if !name.is_empty() && !name.contains('{') {
+                    if literal_start < i {
+                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
+                    }
+                    segments.push(TemplateSegment::Placeholder {
+                        offset: i + 1,
+                        inner: name,
+                    });
+                    i = i + 1 + rel_end + 1;
+                    literal_start = i;
+                    continue;
+                }
             }
         }
         // Advance by one char (not one byte) to stay on UTF-8 boundaries.
@@ -902,12 +942,20 @@ pub(crate) fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
 /// message-bundles slice 2 (#874): a template's placeholder-name *set*, for
 /// cross-locale agreement checking (`bynk-emit/src/project/validate.rs`).
 /// Exposes only the name set, not `TemplateSegment` itself, keeping the
-/// checker's dependency on the emitter narrow.
+/// checker's dependency on the emitter narrow. message-bundles slice 3
+/// (#878): an ICU-dispatch placeholder's name is its `inner` text up to the
+/// first top-level comma, trimmed — a plain placeholder's `inner` never
+/// contains a comma (by construction of `split_template`'s `is_icu` decision
+/// above), so it's returned verbatim, preserving the untrimmed-name quirk
+/// documented on `split_template` exactly as before.
 pub(crate) fn placeholder_names(template: &str) -> BTreeSet<&str> {
     split_template(template)
         .into_iter()
         .filter_map(|s| match s {
-            TemplateSegment::Placeholder(name) => Some(name),
+            TemplateSegment::Placeholder { inner, .. } => Some(match inner.find(',') {
+                None => inner,
+                Some(idx) => inner[..idx].trim(),
+            }),
             TemplateSegment::Literal(_) => None,
         })
         .collect()
@@ -919,20 +967,37 @@ pub(crate) fn placeholder_names(template: &str) -> BTreeSet<&str> {
 /// `renderArg` (imported from `bynk.locale`, never duplicated here) when
 /// present, else left as the literal `{name}` token — total, never throws,
 /// matching `render`'s own totality contract.
-fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry) {
+///
+/// message-bundles slice 3 (#878): an ICU-dispatch placeholder (`inner`
+/// contains a `,`) instead becomes `emit_icu_placeholder`'s codegen, which
+/// needs `locale_tag` to construct `Intl.*` at runtime. `Err(_)` (a
+/// malformed ICU construct) is unreachable in practice — the checker
+/// (`bynk.messages.malformed_icu_syntax`) already rejects it before emission
+/// runs on an error-free project — but is handled totally, matching this
+/// function's own "never throws" contract, rather than `unreachable!()`.
+fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry, locale_tag: &str) {
     write!(out, "(params: ReadonlyMap<string, MessageArg>): string => ").unwrap();
     let segments = split_template(&entry.template);
     let parts: Vec<String> = segments
         .iter()
         .map(|s| match s {
             TemplateSegment::Literal(lit) => format!("\"{}\"", escape_ts_string(lit)),
-            TemplateSegment::Placeholder(name) => {
-                let key = format!("\"{}\"", escape_ts_string(name));
-                let fallback = format!("\"{{{}}}\"", escape_ts_string(name));
-                format!(
-                    "(params.get({key}) !== undefined ? renderArg(params.get({key}) as MessageArg) : {fallback})"
-                )
-            }
+            TemplateSegment::Placeholder { inner, .. } => match inner.find(',') {
+                None => {
+                    let key = format!("\"{}\"", escape_ts_string(inner));
+                    let fallback = format!("\"{{{}}}\"", escape_ts_string(inner));
+                    format!(
+                        "(params.get({key}) !== undefined ? renderArg(params.get({key}) as MessageArg) : {fallback})"
+                    )
+                }
+                Some(_) => match icu::parse_icu_placeholder(inner) {
+                    Ok(p) => emit_icu_placeholder(&p, locale_tag),
+                    Err(_) => {
+                        let name = inner.split(',').next().unwrap_or(inner).trim();
+                        format!("\"{{{}}}\"", escape_ts_string(name))
+                    }
+                },
+            },
         })
         .collect();
     if parts.is_empty() {
@@ -940,6 +1005,84 @@ fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry) {
     } else {
         write!(out, "{}", parts.join(" + ")).unwrap();
     }
+}
+
+/// message-bundles slice 3 (#878): codegen for one ICU-dispatch placeholder.
+/// Each kind emits as an IIFE (matching this file's own "non-tail dispatch
+/// becomes an IIFE" idiom) guarding on the looked-up `MessageArg`'s `.tag`
+/// before touching `.value` — TS narrows `__arg` to the matching variant
+/// after the guard, so no cast is needed. Falls back to the literal
+/// `"{name}"` text when the param is missing or the wrong `MessageArg`
+/// variant, matching the plain-placeholder fallback's own convention.
+fn emit_icu_placeholder(p: &icu::IcuPlaceholder<'_>, locale_tag: &str) -> String {
+    let tag_lit = format!("\"{}\"", escape_ts_string(locale_tag));
+    let key = format!("\"{}\"", escape_ts_string(p.name));
+    let fallback = format!("\"{{{}}}\"", escape_ts_string(p.name));
+    let arg = format!("params.get({key})");
+    match &p.kind {
+        icu::PlaceholderKind::Plural { arms } => {
+            let arms_obj: Vec<String> = arms
+                .iter()
+                .map(|(cat, segs)| {
+                    format!("\"{}\": {}", cat.as_str(), emit_sub_message(segs, &tag_lit))
+                })
+                .collect();
+            format!(
+                "((__arg) => __arg === undefined || (__arg.tag !== \"Whole\" && __arg.tag !== \"Num\") ? {fallback} : selectPluralArm({tag_lit}, __arg.value, {{ {} }}))({arg})",
+                arms_obj.join(", ")
+            )
+        }
+        icu::PlaceholderKind::Select { arms } => {
+            let arms_obj: Vec<String> = arms
+                .iter()
+                .map(|(k, segs)| {
+                    format!(
+                        "\"{}\": {}",
+                        escape_ts_string(k),
+                        emit_sub_message(segs, &tag_lit)
+                    )
+                })
+                .collect();
+            format!(
+                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback}; }} const __arms: Record<string, string> = {{ {} }}; return __arms[__arg.value] ?? __arms[\"other\"]; }})({arg})",
+                arms_obj.join(", ")
+            )
+        }
+        icu::PlaceholderKind::Number { style } => {
+            let style_arg = style
+                .map(|s| format!(", \"{}\"", s.as_str()))
+                .unwrap_or_default();
+            format!(
+                "((__arg) => __arg !== undefined && (__arg.tag === \"Whole\" || __arg.tag === \"Num\") ? formatIcuNumber({tag_lit}, __arg.value{style_arg}) : {fallback})({arg})"
+            )
+        }
+        icu::PlaceholderKind::Date { style } => {
+            let style_arg = style
+                .map(|s| format!(", \"{}\"", s.as_str()))
+                .unwrap_or_default();
+            format!(
+                "((__arg) => __arg !== undefined && __arg.tag === \"Moment\" ? formatIcuDate({tag_lit}, __arg.value{style_arg}) : {fallback})({arg})"
+            )
+        }
+    }
+}
+
+/// Turns one `plural`/`select` arm's sub-message into a `+`-joined TS
+/// expression, evaluated inside `emit_icu_placeholder`'s IIFE where `__arg`
+/// is already in scope and narrowed. `Hash` only ever occurs in a `plural`
+/// arm (the parser's `allow_hash` guarantees a `select` arm never contains
+/// one), where `__arg.value: number` after narrowing.
+fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str) -> String {
+    if segs.is_empty() {
+        return "\"\"".to_string();
+    }
+    segs.iter()
+        .map(|seg| match seg {
+            icu::SubSegment::Literal(s) => format!("\"{}\"", escape_ts_string(s)),
+            icu::SubSegment::Hash => format!("formatIcuNumber({tag_lit}, __arg.value)"),
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
 }
 
 /// Compiles every `messages` block in one commons into one `code ->
@@ -977,7 +1120,7 @@ pub(crate) fn emit_messages_bundle(
         .unwrap();
         for entry in &m.entries {
             write!(out, "  \"{}\": ", escape_ts_string(&entry.code)).unwrap();
-            emit_message_entry_renderer(out, entry);
+            emit_message_entry_renderer(out, entry, &m.tag.name);
             writeln!(out, ",").unwrap();
         }
         writeln!(out, "}};").unwrap();
@@ -3571,14 +3714,15 @@ mod doc_block_tests {
 
 #[cfg(test)]
 mod messages_template_tests {
-    use super::{TemplateSegment, split_template};
+    use super::{TemplateSegment, placeholder_names, split_template};
+    use std::collections::BTreeSet;
 
     fn kinds(template: &str) -> Vec<(&str, &str)> {
         split_template(template)
             .into_iter()
             .map(|s| match s {
                 TemplateSegment::Literal(l) => ("lit", l),
-                TemplateSegment::Placeholder(p) => ("ph", p),
+                TemplateSegment::Placeholder { inner, .. } => ("ph", inner),
             })
             .collect()
     }
@@ -3630,6 +3774,49 @@ mod messages_template_tests {
         assert_eq!(
             kinds("caf\u{e9} {name} \u{1f980}"),
             vec![("lit", "caf\u{e9} "), ("ph", "name"), ("lit", " \u{1f980}")],
+        );
+    }
+
+    // -- message-bundles slice 3 (#878): ICU-dispatch placeholders --
+
+    #[test]
+    fn icu_plural_placeholder_captures_full_inner_text_with_nested_braces() {
+        assert_eq!(
+            kinds("You have {n, plural, one {# item} other {# items}}."),
+            vec![
+                ("lit", "You have "),
+                ("ph", "n, plural, one {# item} other {# items}"),
+                ("lit", "."),
+            ],
+        );
+    }
+
+    #[test]
+    fn icu_placeholder_and_plain_placeholder_side_by_side() {
+        assert_eq!(
+            kinds("{name}: {n, number}"),
+            vec![("ph", "name"), ("lit", ": "), ("ph", "n, number")],
+        );
+    }
+
+    #[test]
+    fn icu_placeholder_with_no_true_close_falls_back_to_literal() {
+        // A `,` precedes the naive first `}`, so this is ICU-dispatch — but
+        // the arm's own `{` is never closed, so `find_icu_close` never
+        // reaches depth 0. Same "just literal text" policy as an unmatched
+        // plain `{`.
+        assert_eq!(
+            kinds("{n, plural, one {# item"),
+            vec![("lit", "{n, plural, one {# item")],
+        );
+    }
+
+    #[test]
+    fn placeholder_names_trims_icu_names_but_not_plain_ones() {
+        assert_eq!(placeholder_names("{ name }"), BTreeSet::from([" name "]));
+        assert_eq!(
+            placeholder_names("{ n , plural, one {#} other {#}}"),
+            BTreeSet::from(["n"])
         );
     }
 }

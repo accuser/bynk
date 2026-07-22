@@ -49,6 +49,8 @@ pub(crate) mod source_map;
 pub(crate) use lower::*;
 pub(crate) mod emit;
 pub(crate) use emit::*;
+pub(crate) mod icu;
+pub(crate) use icu::*;
 pub(crate) mod websocket;
 
 const INDENT_STEP: usize = 2;
@@ -115,6 +117,19 @@ const TSCONFIG_JSON: &str = r#"{
   "include": ["**/*.ts"]
 }
 "#;
+
+/// message-bundles slice 3 (#878): a message template's placeholders and
+/// their ICU format kind (`"plain"`/`"plural"`/`"select"`/`"number"`/`"date"`),
+/// sorted by placeholder name — for hover (`bynk-ide::symbols::describe_messages`).
+/// A narrow, purpose-built public surface rather than exposing the internal
+/// `icu` module's `FormatKind`/`IcuPlaceholder` types themselves, which stay
+/// crate-private.
+pub fn message_template_placeholder_summary(template: &str) -> Vec<(String, &'static str)> {
+    icu::template_format_kinds(template)
+        .into_iter()
+        .map(|(name, kind)| (name.to_string(), kind.as_str()))
+        .collect()
+}
 
 /// Compute the runtime import specifier for a module at `from_source`. For a
 /// file at `commerce/payment.ts` the runtime sits two levels up, so this
@@ -377,17 +392,38 @@ pub fn emit_project(
     // (no new line, no body-column shift), so the source map computed above from
     // the pre-injection text stays valid.
     if out.contains("__bynkBytes") {
-        out = inject_bytes_runtime_imports(
+        out = inject_runtime_imports(
             out,
             &runtime_import_for(&ctx.source_path, ctx.import_ext),
+            BYTES_RUNTIME_IMPORTS,
+        );
+    }
+    // message-bundles slice 3 (#878, Decision G): same mechanism, for the
+    // three ICU-formatting runtime helpers. `emit_messages_bundle` (called
+    // above, before this post-pass) is the only place that can reference
+    // them; a project with no `plural`/`select`/`number`/`date` placeholder
+    // anywhere never triggers this. All three are imported together
+    // (mirrors `BYTES_RUNTIME_IMPORTS`'s own all-or-nothing shape) rather
+    // than cherry-picked per-name — the emitted `tsconfig.json` has no
+    // `noUnusedLocals`, so an unused named import is inert.
+    if out.contains("selectPluralArm(")
+        || out.contains("formatIcuNumber(")
+        || out.contains("formatIcuDate(")
+    {
+        out = inject_runtime_imports(
+            out,
+            &runtime_import_for(&ctx.source_path, ctx.import_ext),
+            MESSAGES_RUNTIME_IMPORTS,
         );
     }
     (out, source_map)
 }
 
-/// v0.110 (ADR 0142): append the `Bytes` runtime helpers to a module's existing
+/// v0.110 (ADR 0142): append a set of runtime helpers to a module's existing
 /// runtime import. Done as a post-pass so the decision keys on what the body
 /// references, without a second emission or a source-map-shifting reorder.
+/// Generalised in message-bundles slice 3 (#878) from a `Bytes`-only helper
+/// to take `extra` as a parameter, shared with the ICU-formatting helpers.
 ///
 /// v0.176 (#642): anchored on the runtime import's **exact specifier** rather
 /// than on the `type ValidationError` binding it happens to carry. With `Bytes`
@@ -398,12 +434,12 @@ pub fn emit_project(
 ///
 /// The specifier is matched exactly (`from "<specifier>"`), not by substring: a
 /// `contains("runtime.js")` would also match a *user* module that happens to be
-/// named `runtime` — or anything like `"./my-runtime.js"` — and appending the
-/// `__bynkBytes*` bindings to that import would produce an unresolved export.
-/// The caller already knows the exact path it emitted, so there is no reason to
+/// named `runtime` — or anything like `"./my-runtime.js"` — and appending
+/// `extra`'s bindings to that import would produce an unresolved export. The
+/// caller already knows the exact path it emitted, so there is no reason to
 /// guess.
-pub(crate) fn inject_bytes_runtime_imports(out: String, runtime_specifier: &str) -> String {
-    let mut result = String::with_capacity(out.len() + BYTES_RUNTIME_IMPORTS.len());
+pub(crate) fn inject_runtime_imports(out: String, runtime_specifier: &str, extra: &str) -> String {
+    let mut result = String::with_capacity(out.len() + extra.len());
     let mut injected = false;
     let from_runtime = format!(" }} from \"{runtime_specifier}\"");
     for line in out.split_inclusive('\n') {
@@ -413,7 +449,7 @@ pub(crate) fn inject_bytes_runtime_imports(out: String, runtime_specifier: &str)
             && let Some(pos) = line.rfind(&from_runtime)
         {
             result.push_str(&line[..pos]);
-            result.push_str(BYTES_RUNTIME_IMPORTS);
+            result.push_str(extra);
             result.push_str(&line[pos..]);
             injected = true;
             continue;
@@ -2322,8 +2358,14 @@ fn write_header_single(
 /// v0.110 (ADR 0142): the `Bytes` runtime helpers, appended to a module's
 /// import list when the emitted body references them. `bytesEqual` backs `==`;
 /// the base64/UTF-8 helpers back the kernel and codec.
-const BYTES_RUNTIME_IMPORTS: &str =
+pub(crate) const BYTES_RUNTIME_IMPORTS: &str =
     ", __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8";
+
+/// message-bundles slice 3 (#878, Decision G): the ICU-formatting runtime
+/// helpers, appended to a module's import list when an emitted `messages`
+/// bundle's `render` references any of them (`emit_icu_placeholder`,
+/// `bynk-emit/src/emitter/emit.rs`).
+const MESSAGES_RUNTIME_IMPORTS: &str = ", selectPluralArm, formatIcuNumber, formatIcuDate";
 
 /// Emit the commons-level doc block (if any) at the current position.
 fn write_commons_doc(out: &mut String, commons: &TypedCommons) {
