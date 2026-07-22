@@ -127,16 +127,7 @@ const TSCONFIG_JSON: &str = r#"{
 pub fn message_template_placeholder_summary(template: &str) -> Vec<(String, &'static str)> {
     icu::template_format_kinds(template)
         .into_iter()
-        .map(|(name, kind)| {
-            let kind_str = match kind {
-                icu::FormatKind::Plain => "plain",
-                icu::FormatKind::Plural => "plural",
-                icu::FormatKind::Select => "select",
-                icu::FormatKind::Number => "number",
-                icu::FormatKind::Date => "date",
-            };
-            (name.to_string(), kind_str)
-        })
+        .map(|(name, kind)| (name.to_string(), kind.as_str()))
         .collect()
 }
 

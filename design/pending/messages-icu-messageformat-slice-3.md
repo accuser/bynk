@@ -70,10 +70,14 @@ separate from the existing `bynk.messages.placeholder_mismatch` (name-set
 only) so that check's meaning doesn't silently broaden underneath slice 1/2
 authors. `bynk.messages.malformed_icu_syntax`: one code covering every
 parse failure (unbalanced arm braces, an unknown format keyword, `#`
-outside a `plural` arm, a missing mandatory `other` arm, or an explicitly
-out-of-scope construct) — matching `split_template`'s own established
-philosophy that malformed input is one class of author mistake, not many
-near-duplicate codes.
+outside a `plural` arm, a missing mandatory `other` arm, a repeated arm key,
+or an explicitly out-of-scope construct) — matching `split_template`'s own
+established philosophy that malformed input is one class of author
+mistake, not many near-duplicate codes. (A repeated arm key was caught by
+review, not the original implementation: it parsed without error and
+emitted a duplicate-property object literal `tsc --strict` rejects —
+exactly the "generated-code failure, not a Bynk diagnostic" outcome this
+diagnostic exists to prevent.)
 
 **Decision — the concrete surface is deliberately capped**, each excluded
 construct diagnosed rather than silently mishandled: no `selectordinal`, no
@@ -90,7 +94,15 @@ checker feature, not incidental to landing ICU formatting itself.
 **Consequences.** A `messages` template can now express plural/gender/
 number/date-aware text without an author hand-rolling locale-specific
 branching. The compiler takes on no CLDR-data maintenance burden — that
-stays with the JS host. The named exclusions (`selectordinal`, `offset:`,
+stays with the JS host. One subtle backward-incompatibility (review
+finding 3): a pre-slice-3 template with a comma inside a bare `{...}`
+placeholder's *name* (e.g. `{a,b}` — always inert before, since no
+`params` key is ever named `"a,b"`) is now parsed as an attempted ICU
+placeholder and reported as `bynk.messages.malformed_icu_syntax` instead of
+silently rendering as literal-ish text. A comma in a placeholder name was
+never a meaningful pattern, so no real template is expected to hit this,
+but it is a genuine behaviour change worth calling out rather than leaving
+implicit. The named exclusions (`selectordinal`, `offset:`,
 skeletons, nesting, call-site argument checking) are real gaps, each with a
 diagnosable "not supported" signal rather than silent misbehaviour, and are
 candidate follow-ons if real demand appears; none block this slice's own

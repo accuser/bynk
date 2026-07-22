@@ -60,6 +60,23 @@ pub(crate) enum FormatKind {
     Date,
 }
 
+impl FormatKind {
+    /// PR #879 review (finding 2): the lowercase surface vocabulary used
+    /// everywhere else (the diagnostics registry, ICU keywords themselves,
+    /// `message_template_placeholder_summary`) — not `{:?}`'s capitalized
+    /// Rust enum name, which leaked into `bynk.messages.format_mismatch`'s
+    /// message text.
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Plain => "plain",
+            Self::Plural => "plural",
+            Self::Select => "select",
+            Self::Number => "number",
+            Self::Date => "date",
+        }
+    }
+}
+
 impl<'a> PlaceholderKind<'a> {
     pub(crate) fn format_kind(&self) -> FormatKind {
         match self {
@@ -186,6 +203,7 @@ pub(crate) enum IcuParseErrorKind {
     },
     TrailingContentAfterStyle(String),
     UnknownPluralCategory(String),
+    DuplicateArmKey(String),
     MissingArmBody(String),
     MissingOtherArm,
     HashOutsidePluralArm,
@@ -221,6 +239,9 @@ impl IcuParseErrorKind {
             ),
             Self::UnknownPluralCategory(key) => format!(
                 "unknown plural category \"{key}\"; expected one of zero, one, two, few, many, other"
+            ),
+            Self::DuplicateArmKey(key) => format!(
+                "arm \"{key}\" is already declared in this placeholder"
             ),
             Self::MissingArmBody(key) => {
                 if key.is_empty() {
@@ -363,6 +384,19 @@ fn parse_arms(
                 base_offset + key_start,
                 key.len(),
                 IcuParseErrorKind::UnknownPluralCategory(key.to_string()),
+            ));
+        }
+        // PR #879 review (finding 1): a repeated arm key parses fine but
+        // emits a duplicate-property object literal (`{ "one": ..., "one":
+        // ... }`), which `tsc --strict` rejects (TS1117) — a generated-code
+        // failure the author never sees as a Bynk diagnostic. Caught here,
+        // before the body is even parsed, so it's reported at the key
+        // itself like every other arm-key error.
+        if arms.iter().any(|(k, _)| k == key) {
+            return Err(IcuParseError::at(
+                base_offset + key_start,
+                key.len(),
+                IcuParseErrorKind::DuplicateArmKey(key.to_string()),
             ));
         }
         while i < text.len() && text.as_bytes()[i].is_ascii_whitespace() {
@@ -863,6 +897,25 @@ mod icu_parser_tests {
         assert_eq!(
             parse_err("n, plural, teen {x} other {y}"),
             IcuParseErrorKind::UnknownPluralCategory("teen".to_string())
+        );
+    }
+
+    #[test]
+    fn err_duplicate_plural_arm() {
+        // PR #879 review (finding 1): a repeated category compiled fine
+        // before this fix and emitted a duplicate-property object literal
+        // `tsc --strict` rejects (TS1117).
+        assert_eq!(
+            parse_err("n, plural, one {a} one {b} other {c}"),
+            IcuParseErrorKind::DuplicateArmKey("one".to_string())
+        );
+    }
+
+    #[test]
+    fn err_duplicate_select_arm() {
+        assert_eq!(
+            parse_err("g, select, male {a} male {b} other {c}"),
+            IcuParseErrorKind::DuplicateArmKey("male".to_string())
         );
     }
 

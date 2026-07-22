@@ -362,8 +362,11 @@ pub(crate) fn check_messages_bundles(
                                         "bynk.messages.format_mismatch",
                                         locale_entry.template_span,
                                         format!(
-                                            "locale \"{tag}\"'s placeholder \"{pname}\" in code \"{}\" is formatted as {locale_kind:?}, but the reference locale \"{}\"'s is {ref_kind:?}",
-                                            ref_entry.code, reference.tag.name
+                                            "locale \"{tag}\"'s placeholder \"{pname}\" in code \"{}\" is formatted as {}, but the reference locale \"{}\"'s is {}",
+                                            ref_entry.code,
+                                            locale_kind.as_str(),
+                                            reference.tag.name,
+                                            ref_kind.as_str(),
                                         ),
                                     ),
                                 );
