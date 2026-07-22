@@ -7,7 +7,7 @@
 //! `ts_*`/`LowerCtx` core stay in the parent and are reached via `use super::*`.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::project::EmitProjectCtx;
@@ -853,7 +853,7 @@ fn sanitise_path_segment(s: &str) -> String {
 // -- message-bundles slice 1 (#859) --
 
 /// A `{name}` placeholder or a run of literal text inside a message template.
-enum TemplateSegment<'a> {
+pub(crate) enum TemplateSegment<'a> {
     Literal(&'a str),
     Placeholder(&'a str),
 }
@@ -867,7 +867,7 @@ enum TemplateSegment<'a> {
 /// placeholder literally named `" name "`, which will never match a `params`
 /// key and so always renders as literal text (PR #872 review) — a real rough
 /// edge, left for a future slice rather than guessed at here.
-fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
+pub(crate) fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
     let mut segments = Vec::new();
     let mut literal_start = 0;
     let mut i = 0;
@@ -899,6 +899,20 @@ fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
     segments
 }
 
+/// message-bundles slice 2 (#874): a template's placeholder-name *set*, for
+/// cross-locale agreement checking (`bynk-emit/src/project/validate.rs`).
+/// Exposes only the name set, not `TemplateSegment` itself, keeping the
+/// checker's dependency on the emitter narrow.
+pub(crate) fn placeholder_names(template: &str) -> BTreeSet<&str> {
+    split_template(template)
+        .into_iter()
+        .filter_map(|s| match s {
+            TemplateSegment::Placeholder(name) => Some(name),
+            TemplateSegment::Literal(_) => None,
+        })
+        .collect()
+}
+
 /// One message entry's TS renderer: `(params) => <expr>`. A literal-only
 /// template collapses to a plain string; a template with placeholders becomes
 /// a `+`-concatenation, each placeholder substituted from `params` via
@@ -928,35 +942,93 @@ fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry) {
     }
 }
 
-/// Compiles a `messages` block's entries into a `code -> renderer` lookup,
-/// plus a generated, bundle-scoped `render(tag, msg)` that looks up
-/// `msg.code`, substitutes placeholders, and falls back to `bynk.locale`'s
-/// own `render` (imported under the private alias `__bynkLocaleRender` —
-/// `emit_unit`, project.rs — since this file's own `render` would otherwise
-/// collide with the imported name) for any code the bundle doesn't declare.
-/// `tag` is accepted but, like ADR 0256's own slice 1, not yet consulted —
-/// there is only the one (reference) locale until slice 2.
-pub(crate) fn emit_messages(out: &mut String, m: &MessagesDecl) {
-    emit_doc_block(out, m.documentation.as_deref(), 0);
-    let table = format!("__messages_{}", ts_ident(&m.tag.name));
+/// Compiles every `messages` block in one commons into one `code ->
+/// renderer` lookup per locale, a shared dispatch object keyed by locale tag,
+/// and one bundle-scoped `render(tag, msg)` that looks up the resolved
+/// `tag`'s own table, else the `@reference` locale's, else falls back to
+/// `bynk.locale`'s own `render` (imported under the private alias
+/// `__bynkLocaleRender` — `emit_unit`, project.rs — since this file's own
+/// `render` would otherwise collide with the imported name) for any code no
+/// declared locale covers. Also exports the bundle's declared-locale set and
+/// reference tag (message-bundles slice 2, #874) — the precondition Locale's
+/// own slice 2 (negotiation) needs before it can start (design/tracks/
+/// message-bundles.md §9).
+///
+/// `blocks` is every `CommonsItem::Messages` in the commons, in source
+/// order; `reference` is the one block among them carrying `@reference` —
+/// the caller (`emit_project`) already found it to decide *whether* to call
+/// this function at all, so it's passed in rather than re-derived here (PR
+/// #875 review — a harmless but needless second scan).
+pub(crate) fn emit_messages_bundle(
+    out: &mut String,
+    blocks: &[&MessagesDecl],
+    reference: &MessagesDecl,
+) {
+    let reference_tag = escape_ts_string(&reference.tag.name);
+
+    let mut tables = Vec::with_capacity(blocks.len());
+    for m in blocks {
+        emit_doc_block(out, m.documentation.as_deref(), 0);
+        let table = format!("__messages_{}", ts_ident(&m.tag.name));
+        writeln!(
+            out,
+            "const {table}: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {{"
+        )
+        .unwrap();
+        for entry in &m.entries {
+            write!(out, "  \"{}\": ", escape_ts_string(&entry.code)).unwrap();
+            emit_message_entry_renderer(out, entry);
+            writeln!(out, ",").unwrap();
+        }
+        writeln!(out, "}};").unwrap();
+        writeln!(out).unwrap();
+        tables.push((escape_ts_string(&m.tag.name), table));
+    }
+
     writeln!(
         out,
-        "const {table}: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {{"
+        "const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
     )
     .unwrap();
-    for entry in &m.entries {
-        write!(out, "  \"{}\": ", escape_ts_string(&entry.code)).unwrap();
-        emit_message_entry_renderer(out, entry);
-        writeln!(out, ",").unwrap();
+    for (tag, table) in &tables {
+        writeln!(out, "  \"{tag}\": {table},").unwrap();
     }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
+
+    writeln!(
+        out,
+        "export const messagesReferenceLocale: LocaleTag = (\"{reference_tag}\" as string) as LocaleTag;"
+    )
+    .unwrap();
+    let locale_list: Vec<String> = tables
+        .iter()
+        .map(|(tag, _)| format!("(\"{tag}\" as string) as LocaleTag"))
+        .collect();
+    writeln!(
+        out,
+        "export const messagesLocales: readonly LocaleTag[] = [{}];",
+        locale_list.join(", ")
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+
     writeln!(
         out,
         "export function render(tag: LocaleTag, msg: Message): string {{"
     )
     .unwrap();
-    writeln!(out, "  const __entry = {table}[msg.code];").unwrap();
+    writeln!(out, "  const __localeTable = messagesByLocale[tag];").unwrap();
+    writeln!(
+        out,
+        "  const __referenceTable = messagesByLocale[messagesReferenceLocale];"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];"
+    )
+    .unwrap();
     writeln!(out, "  if (__entry !== undefined) {{").unwrap();
     writeln!(out, "    return __entry(msg.params);").unwrap();
     writeln!(out, "  }}").unwrap();

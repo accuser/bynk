@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **424** codes in total.
+There are **427** codes in total.
 
 ## Agents
 
@@ -169,10 +169,12 @@ There are **424** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
+| `bynk.messages.incomplete` | A locale is missing a code the reference locale declares. |  |
 | `bynk.messages.missing_locale_dependency` | A commons declaring `messages` doesn't `uses bynk.locale`, which its generated `render`'s fallback needs. |  |
 | `bynk.messages.missing_reference` | A message bundle has no `@reference` block. |  |
 | `bynk.messages.multiple_reference` | A message bundle has more than one `@reference` block. |  |
 | `bynk.messages.outside_commons` | A `messages` declaration appears outside a commons. |  |
+| `bynk.messages.placeholder_mismatch` | A locale's template for a code uses a different set of `{name}` placeholders than the reference locale's. |  |
 
 ## Observation
 
@@ -421,6 +423,7 @@ There are **424** codes in total.
 | `bynk.resolve.duplicate_field_init` | A record construction initialises a field twice. | [`record_construction`](/book/reference/grammar/#rule-record_construction) |
 | `bynk.resolve.duplicate_fn` | Two functions share a name. | [`fn_decl`](/book/reference/grammar/#rule-fn_decl) |
 | `bynk.resolve.duplicate_message_code` | A message bundle declares the same code twice in one block. |  |
+| `bynk.resolve.duplicate_message_locale` | Two `messages` blocks in one bundle declare the same locale tag. |  |
 | `bynk.resolve.duplicate_method` | Two methods share a name. | [`fn_decl`](/book/reference/grammar/#rule-fn_decl) |
 | `bynk.resolve.duplicate_param` | A parameter name is repeated. | [`param`](/book/reference/grammar/#rule-param) |
 | `bynk.resolve.duplicate_provider` | A capability is provided more than once. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |
