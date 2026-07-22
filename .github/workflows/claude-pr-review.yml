@@ -67,5 +67,8 @@ jobs:
             Prioritise real, actionable findings over stylistic nits. If the
             change looks sound, say so briefly rather than inventing concerns.
           # Opus for the deepest correctness/edge-case rigour on code changes.
-          # Bump --max-turns for deeper reviews; each turn adds usage cost.
-          claude_args: "--max-turns 10 --model claude-opus-4-8"
+          # A workflow-aware review spends turns browsing design/ + the diff
+          # before it posts, so the ceiling must be generous — 10 hit the limit
+          # (error_max_turns) before any comment landed. Each turn adds usage
+          # cost, so raise only as far as reviews actually need.
+          claude_args: "--max-turns 30 --model claude-opus-4-8"
