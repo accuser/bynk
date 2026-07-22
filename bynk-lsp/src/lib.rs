@@ -3936,6 +3936,53 @@ fn is_bynk_toml(uri: &Url) -> bool {
     path.file_name().and_then(|n| n.to_str()) == Some("bynk.toml")
 }
 
+/// The `codeDescription` link for a diagnostic `code` (#853): a clickable link
+/// to the code's Book explanation when the compiler curates one, else `None`
+/// (the designed graceful-fallback state — an uncurated code renders no link,
+/// which is not an error). Split out from [`make_diagnostic`] so the
+/// mapped→`Some` / uncurated→`None` contract is directly testable.
+fn code_description(code: &str) -> Option<CodeDescription> {
+    let href = Url::parse(&bynk_syntax::diagnostics::explain(code)?.href()).ok()?;
+    Some(CodeDescription { href })
+}
+
+#[cfg(test)]
+mod code_description_tests {
+    use super::code_description;
+
+    #[test]
+    fn mapped_code_gets_a_valid_book_link() {
+        let cd = code_description("bynk.resolve.unknown_type")
+            .expect("a curated code produces a codeDescription");
+        assert_eq!(cd.href.scheme(), "https");
+        assert_eq!(cd.href.host_str(), Some("bynk-lang.org"));
+        assert!(cd.href.path().starts_with("/book/"));
+    }
+
+    #[test]
+    fn uncurated_code_gets_no_link() {
+        // A real code with no curated explanation, and a nonsense code, both
+        // fall back to no link (graceful — not an error).
+        assert!(code_description("bynk.resolve.duplicate_type").is_none());
+        assert!(code_description("bynk.not.a_real_code").is_none());
+    }
+
+    #[test]
+    fn every_curated_explanation_yields_a_parseable_url() {
+        // Guards that no curated href ever silently drops its link because
+        // `Url::parse` rejected it.
+        for e in bynk_syntax::diagnostics::EXPLANATIONS {
+            assert!(
+                code_description(e.code).is_some(),
+                "curated explanation `{}` produced no codeDescription — its href \
+                 `{}` did not parse as a URL",
+                e.code,
+                e.href()
+            );
+        }
+    }
+}
+
 fn make_diagnostic(
     d: &bynk_ide::Diagnostic,
     positions: &crate::position::PositionMap,
@@ -3971,7 +4018,11 @@ fn make_diagnostic(
         range,
         severity: Some(severity),
         code: Some(NumberOrString::String(d.error.category.to_string())),
-        code_description: None,
+        // #853: a curated code carries a `codeDescription` link to its Book
+        // explanation (rendered as a link on the code in Problems/hover); an
+        // uncurated code has no entry and stays `None` — the designed
+        // graceful-fallback state, not an error.
+        code_description: code_description(d.error.category),
         source: Some(SERVER_NAME.to_string()),
         message,
         related_information: if related_information.is_empty() {

@@ -2,7 +2,7 @@
   "name": "bynk-vscode",
   "displayName": "Bynk",
   "description": "Language support for Bynk (.bynk) source files.",
-  "version": "0.223.0",
+  "version": "0.224.0",
   "publisher": "bynk",
   "license": "MIT OR Apache-2.0",
   "icon": "assets/bynk-icon.png",
@@ -10,7 +10,7 @@
     "url": "https://github.com/accuser/bynk"
   },
   "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "bynkServerVersion": "v0.223.0",
+  "bynkServerVersion": "v0.224.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -415,9 +415,26 @@
           "type": "boolean",
           "default": true,
           "description": "Show a `Run Test | Debug Test` CodeLens above each test in a `.bynk` file. The native gutter run/debug icons appear regardless; turn this off to use only those. (Both run the project's tests — `bynkc test` has no single-test filter.)"
+        },
+        "bynk.inlineDocRendering.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Render doc comments (`--- … ---`) in place with light Markdown affordances — heading colour, **bold**, *italic* — while reading the source. Markers stay visible (style-in-place, no font-size change); clickable `[Name]` links come from document links. Turn off to see doc comments as plain comment text."
         }
       }
     },
+    "colors": [
+      {
+        "id": "bynk.docHeadingForeground",
+        "description": "Foreground colour of Markdown heading lines rendered in place inside `--- … ---` doc comments (bynk.inlineDocRendering.enable).",
+        "defaults": {
+          "light": "#0000c0",
+          "dark": "#569cd6",
+          "highContrast": "#9cdcfe",
+          "highContrastLight": "#0000c0"
+        }
+      }
+    ],
     "configurationDefaults": {
       "[bynk]": {
         "editor.defaultFormatter": "bynk.bynk-vscode"

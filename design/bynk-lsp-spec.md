@@ -159,6 +159,7 @@ The LSP server runs the existing Bynk compiler on the project's source corpus an
 - Primary range (the source span).
 - Secondary ranges where helpful (e.g., the conflicting declaration, the type mismatch source).
 - Error category code (e.g., `bynk.types.if_branch_mismatch`) included in the diagnostic for filterability.
+- **Code explanation link (`codeDescription`, #853).** When the compiler curates an explanation for a code, the diagnostic carries `codeDescription.href` — a link to that code's Book concept page — so the editor renders the code as a clickable link in the Problems panel and hover. The link is composed from the compiler-owned `code → { blurb, href }` mapping (`bynk_syntax::diagnostics::EXPLANATIONS`), the same table that backs the `bynk explain <code>` CLI, so the two surfaces never drift. Coverage is incremental: a code with no curated explanation carries no `codeDescription` (the designed graceful-fallback state — no link, no error), never a broken one.
 
 **Configuration:** Users can set `[lsp].diagnostics_mode = "on_save"` to disable live diagnostics. In on-save mode, diagnostics run only when the file is saved.
 
