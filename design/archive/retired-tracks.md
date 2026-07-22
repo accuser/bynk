@@ -379,3 +379,56 @@ imposed; entries keep the order they were retired in.
   whoever picks up packaging must sequence its naming cutover against
   `deploy`'s provisioned state, or a rename orphans already-live resources
   with no automatic recovery.
+- **`message-bundles.md`** — the sibling `locale-capability.md` named but left
+  unfiled at settling time: turned [ADR 0256](../decisions/0256-locale-capability-slice-1.md)'s
+  shipped, bundle-free `render` (a `tag` it accepted but never consulted, "no
+  bundle/lookup mechanism") into a real localiser, using mechanisms this
+  compiler already had rather than inventing new ones — the multi-file-commons
+  merge ([ADR 0160](../decisions/0160-multi-file-commons-test-barrel.md)) for
+  "one locale per file, several files, one bundle," and `match` exhaustiveness's
+  bounded-structural-coverage shape
+  ([ADR 0169](../decisions/0169-nested-payload-patterns-and-match-arm-guards.md))
+  for reference-bundle completeness. All three named slices shipped: **1**
+  (v0.228.0, [ADR 0272](../decisions/0272-messages-construct-slice-1.md),
+  [#859](https://github.com/accuser/bynk/issues/859)) — the `messages <tag>
+  @reference { "code" => "template" }` construct as a commons item, a
+  `(tag, code) -> template` lookup, and a generated bundle-scoped `render`
+  composing with `bynk.locale.render`'s existing floor, given a real
+  checker-visible signature via a synthetic function-table entry; **2**
+  (v0.229.0, [ADR 0273](../decisions/0273-messages-checked-catalogue-slice-2.md),
+  [#874](https://github.com/accuser/bynk/issues/874)) — multi-locale bundles
+  actually render (`tag` finally read, not just accepted),
+  `bynk.messages.incomplete` (reference-bundle completeness, one diagnostic
+  per missing `(locale, code)` witness) and `bynk.messages.placeholder_mismatch`
+  (cross-locale template-placeholder *set* agreement, order-insensitive), and
+  the exported `messagesLocales`/`messagesReferenceLocale` set that unblocked
+  the Locale track's own negotiation slice; **3** (v0.230.0,
+  [ADR 0276](../decisions/0276-messages-icu-format-slice-3.md),
+  [#878](https://github.com/accuser/bynk/issues/878)) — ICU MessageFormat
+  (`plural`/`select`/`number`/`date` placeholders), parsed by a new
+  self-contained mini-parser (`bynk-emit/src/emitter/icu.rs`, no
+  `bynk-syntax` grammar change) and rendered by delegating to the host `Intl`
+  object — no CLDR data bundled in the compiler — plus
+  `bynk.messages.format_mismatch` and `bynk.messages.malformed_icu_syntax`.
+  Spec-in-place in `design/tracks/message-bundles.md`'s own §4 (now retired
+  with the doc; the decisions live on in the ADRs above); surface lives in
+  `bynk-emit/src/emitter/emit.rs`, `bynk-emit/src/emitter/icu.rs`, and
+  `bynk-emit/src/project/validate.rs`. **Deferred follow-ons, named not
+  silently assumed away:** construction-site catalogue checking — does a
+  `message(code).withText(...)` builder chain actually supply the parameter
+  names its code's reference template declares — has no precedent anywhere
+  in this compiler (every existing "declared shape checked at use" mechanism
+  keys on an identifier, never a runtime `String` value) and was deliberately
+  left unbuilt (§4.3/§7 M1); code identity ships as a bare, unnamespaced
+  dotted `String` pending the still-unfiled packaging identity model (§4.5/§7
+  M5 — the same gap `deploy.md`'s own retirement summary above names);
+  slice 3's own named exclusions — `selectordinal`, `plural`'s `offset:`/`=N`,
+  CLDR skeletons beyond a fixed style-keyword set, nested ICU dispatch, and
+  construction-site argument-type checking against a code's declared ICU
+  usage — each diagnosed rather than silently mishandled, not built. A real,
+  pre-existing rough edge surfaced during slice 3 but not fixed: a context
+  consuming a different commons' message bundle for its own `render` hits a
+  `bynk.uses.name_conflict` if it also needs `bynk.locale`'s
+  `message`/`withWhole`-family constructors (both export a symbol named
+  `render`) — no fixture across any slice exercises cross-context bundle
+  consumption, only a bundle testing its own commons.

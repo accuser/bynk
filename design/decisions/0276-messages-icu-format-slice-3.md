@@ -2,7 +2,8 @@
 
 - **Status:** Accepted (v0.230)
 
-**Context.** [Message bundles](../tracks/message-bundles.md) (spine #857),
+**Context.** Message bundles (spine #857, track retired — see
+[`../archive/retired-tracks.md`](../archive/retired-tracks.md)),
 slice 3 (#878, sub-issue of the spine): slice 1 (#859, ADR 0272) shipped the
 `messages` construct and a single-locale bundle; slice 2 (#874, ADR 0273)
 shipped multi-locale completeness and placeholder-*name*-set agreement. Both
