@@ -63,10 +63,17 @@ message-bundles.md §9) — they are meant to be imported by that future work,
 not treated as private. Wiring them into Locale's own negotiation provider
 is that track's proposal to cut, not this one's.
 
-**Consequences.** Two blocks declaring the same locale tag are not
-diagnosed this slice — the later block's entries win in the internal
-per-tag map, an accepted, named simplification (the track doc's own slice-2
-scope never committed to catching this). Construction-site checking (a
+**Decision — two blocks declaring the same locale tag are rejected
+(`bynk.resolve.duplicate_message_locale`), not last-write-wins (PR #875
+review).** The emitter has no dedup of its own — every block in
+`emit_messages_bundle`'s `blocks` slice gets its own `const
+__messages_<tag>` declaration unconditionally — so a silent "later block
+wins" at the checker level would let a duplicate tag through to a hard
+`tsc` redeclare error instead. Mirrors `bynk.resolve.duplicate_fn`'s own
+shape: only the first occurrence of a tag is recorded, so every later
+occurrence reports against the original.
+
+**Consequences.** Construction-site checking (a
 `message(code).withText(...)` chain vs. a code's declared parameter names)
 remains the same named, deliberately deferred gap slice 1 named (§7 M1 of
 the track doc) — completeness/placeholder-agreement are both bundle-internal

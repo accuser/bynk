@@ -180,10 +180,11 @@ pub(crate) fn check_platform_lock(
 /// convention) and cross-locale placeholder-*set* agreement
 /// (`bynk.messages.placeholder_mismatch`, only for codes present in both —
 /// a missing code is `incomplete`'s job, not this one's). Two blocks
-/// declaring the same tag are not diagnosed this slice — the second's
-/// entries simply win in `by_tag` — an accepted, named simplification
-/// (design/tracks/message-bundles.md's own slice-2 scope never committed to
-/// catching this).
+/// declaring the same locale tag are rejected outright
+/// (`bynk.resolve.duplicate_message_locale`, PR #875 review) — the emitter
+/// has no dedup of its own, so a silent last-wins here would let a hard
+/// `tsc` redeclare error (two colliding `const __messages_<tag>`
+/// declarations) through instead.
 pub(crate) fn check_messages_bundles(
     parsed: &[ParsedFile],
     groups: &HashMap<String, Vec<usize>>,
@@ -215,7 +216,31 @@ pub(crate) fn check_messages_bundles(
                     );
                     continue;
                 }
-                by_tag.insert(m.tag.name.as_str(), (i, m));
+                // message-bundles slice 2 (#874, PR #875 review): two blocks
+                // declaring the same locale tag are rejected, not
+                // last-write-wins — the emitter (`emit_messages_bundle`)
+                // has no dedup of its own and would emit two colliding
+                // `const __messages_<tag>` declarations, a hard `tsc`
+                // redeclare error. Mirrors `bynk.resolve.duplicate_fn`'s own
+                // shape: only the *first* occurrence seeds `by_tag`, so a
+                // third duplicate still reports against the original, not
+                // the second.
+                if let Some(&(_, prev)) = by_tag.get(m.tag.name.as_str()) {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.resolve.duplicate_message_locale",
+                            m.tag.span,
+                            format!(
+                                "locale \"{}\" is already declared in this bundle",
+                                m.tag.name
+                            ),
+                        )
+                        .with_label(prev.tag.span, "previously declared here"),
+                    );
+                } else {
+                    by_tag.insert(m.tag.name.as_str(), (i, m));
+                }
                 for ann in &m.annotations {
                     if ann.name.name == "reference" {
                         reference_sites.push((i, ann.span));

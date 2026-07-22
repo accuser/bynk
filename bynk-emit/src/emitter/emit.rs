@@ -955,15 +955,15 @@ fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry) {
 /// message-bundles.md §9).
 ///
 /// `blocks` is every `CommonsItem::Messages` in the commons, in source
-/// order; exactly one carries `@reference` (the checker,
-/// `check_messages_bundles`, guarantees this before emission is ever
-/// reached — a bundle failing that cardinality check never compiles far
-/// enough to call this).
-pub(crate) fn emit_messages_bundle(out: &mut String, blocks: &[&MessagesDecl]) {
-    let reference = blocks
-        .iter()
-        .find(|m| m.annotations.iter().any(|a| a.name.name == "reference"))
-        .expect("check_messages_bundles guarantees exactly one @reference block reaches emission");
+/// order; `reference` is the one block among them carrying `@reference` —
+/// the caller (`emit_project`) already found it to decide *whether* to call
+/// this function at all, so it's passed in rather than re-derived here (PR
+/// #875 review — a harmless but needless second scan).
+pub(crate) fn emit_messages_bundle(
+    out: &mut String,
+    blocks: &[&MessagesDecl],
+    reference: &MessagesDecl,
+) {
     let reference_tag = escape_ts_string(&reference.tag.name);
 
     let mut tables = Vec::with_capacity(blocks.len());

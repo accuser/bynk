@@ -297,7 +297,7 @@ pub fn emit_project(
         .find(|m| m.annotations.iter().any(|a| a.name.name == "reference"))
     {
         smb.borrow_mut().record(out.len(), reference.span);
-        emit_messages_bundle(&mut out, &messages_blocks);
+        emit_messages_bundle(&mut out, &messages_blocks, reference);
     }
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {

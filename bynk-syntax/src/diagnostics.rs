@@ -1313,6 +1313,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.resolve.duplicate_message_code",
         "A message bundle declares the same code twice in one block.",
     ),
+    d(
+        "bynk.resolve.duplicate_message_locale",
+        "Two `messages` blocks in one bundle declare the same locale tag.",
+    ),
     dg(
         "bynk.resolve.duplicate_method",
         "Two methods share a name.",
