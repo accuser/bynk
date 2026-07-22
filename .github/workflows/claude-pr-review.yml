@@ -1,0 +1,74 @@
+# Automated code review on pull requests.
+#
+# Runs on every non-draft PR (and every push to it) and posts review comments
+# without needing an `@claude` mention. Reviews are workflow-aware: Claude reads
+# `design/` at runtime, so it can check a change against our release discipline
+# (the `design/pending/<slug>.md` increment file, ADR conventions, the test
+# gate) rather than reviewing the diff in isolation.
+#
+# NOTE on fork PRs: `pull_request` from a fork gets a read-only token, so review
+# comments will NOT post on external contributions. If you need that, switch to
+# `pull_request_target` and check out the *base* ref to stay safe from untrusted
+# code — see anthropics/claude-code-action security docs before doing so.
+#
+# Requires the Claude GitHub App installed on the repo and a
+# `CLAUDE_CODE_OAUTH_TOKEN` secret — a Claude Pro/Max subscription token from
+# `claude setup-token` (or wired up by `/install-github-app`). Runs draw on the
+# subscription's usage limits, not metered API billing.
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+# A new push supersedes the in-flight review for the same PR.
+concurrency:
+  group: claude-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Least privilege: read the tree, write the PR review/comments.
+# `id-token: write` lets the action mint its GitHub token from the Claude App
+# via OIDC — required by claude-code-action@v1 regardless of the Anthropic auth.
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  review:
+    # Skip drafts; a real review runs once the PR is marked ready.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+        with:
+          fetch-depth: 0 # full history so Claude can diff against the base branch
+
+      - uses: anthropics/claude-code-action@fa7e2f0a29a126f0b81cdcf360561b36e44cf608 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Review this pull request and post your findings as PR review
+            comments. Read `design/` for our conventions before reviewing.
+
+            Focus on:
+            - Correctness: logic errors, edge cases, and boundary conditions
+              that the changed code could get wrong.
+            - Security and safety of the change.
+            - Fit with our release discipline: does a non-trivial code change
+              carry the increment artefact it needs (a single
+              `design/pending/<slug>.md` with a `level` + `changelog`, per
+              `design/bynk-release-discipline.md`)? Flag if it is missing, or if
+              a pure docs/infra change added one unnecessarily. Do NOT pick a
+              version or ADR number — those are assigned by the merge-time stamp.
+            - Test coverage: is the edge where the change could be wrong actually
+              exercised, not just the happy path?
+
+            Prioritise real, actionable findings over stylistic nits. If the
+            change looks sound, say so briefly rather than inventing concerns.
+          # Opus for the deepest correctness/edge-case rigour on code changes.
+          # A workflow-aware review spends turns browsing design/ + the diff
+          # before it posts, so the ceiling must be generous — 10 hit the limit
+          # (error_max_turns) before any comment landed. Each turn adds usage
+          # cost, so raise only as far as reviews actually need.
+          claude_args: "--max-turns 30 --model claude-opus-4-8"
