@@ -225,6 +225,19 @@ orchestration lives in the driver. The arc is **`doctor` → `new` → `dev`**:
 With `doctor` (v0.46), `new` (v0.58), and `dev` (v0.57) shipped, the on-ramp arc
 is complete; `deploy` (provisioning + remote) follows.
 
+## 5.2 The test runner
+
+`bynkc test` (and its `bynk test` pass-through) already owns discovery, rich/JSON
+output (ADR 0098), seeded `property` tests, per-case filtering, and an inspector
+path (ADR 0104). **Coverage** now sits on top: `bynkc test --coverage` reports
+**statement/line** coverage attributed to `.bynk` source — a rich summary table
+or a `coverage` block under `--format json` — collected via V8's
+`NODE_V8_COVERAGE` and remapped through the emitted source maps ([ADR 0103](decisions/0103-source-map-contract.md)),
+scoped to user source (the `tests/` tree and workers scaffold excluded), on the
+`tsc → node` path only (#854, closes it). **Follow-ups:** per-**branch** coverage
+in `.bynk` terms (a coarser-than-JS notion of a Bynk branch), and widening
+`--coverage` beyond `tsc → node` (the `tsx`/`--inspect` paths).
+
 ## 6. Suggested sequencing
 
 1. **B‑0** (server provisioning) — without it nothing else is *felt*. Smallest, highest impact.

@@ -1,0 +1,5 @@
+suite demo.m {
+  case "doubles" {
+    expect double(2) == 4
+  }
+}

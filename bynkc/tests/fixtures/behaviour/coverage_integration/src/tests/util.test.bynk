@@ -1,0 +1,5 @@
+suite shop.util {
+  case "ten percent" {
+    expect tax(100) == 10
+  }
+}

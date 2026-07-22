@@ -41,7 +41,8 @@ fn main() -> ExitCode {
             inspect,
             seed,
             case,
-        } => run_test(input, output, no_run, format, inspect, seed, case),
+            coverage,
+        } => run_test(input, output, no_run, format, inspect, seed, case, coverage),
     }
 }
 
@@ -71,8 +72,26 @@ fn run_test(
     inspect: bool,
     seed: Option<String>,
     case: Option<String>,
+    coverage: bool,
 ) -> ExitCode {
     let json = matches!(format, TestFormat::Json);
+    // #854 DECISION C: `--coverage` requires the `tsc → node` path — the CI-shaped
+    // path with real `.js.map`s. `--inspect` is a debug path with no `tsc` (and a
+    // different map role), and `--no-run` never launches a process to observe.
+    // Reject both up front with an actionable message rather than producing
+    // silently-wrong or empty numbers.
+    if coverage && inspect {
+        return coverage_unsupported(
+            json,
+            "`--coverage` cannot be combined with `--inspect` — coverage needs the `tsc → node` run, not the inspector.",
+        );
+    }
+    if coverage && no_run {
+        return coverage_unsupported(
+            json,
+            "`--coverage` cannot be combined with `--no-run` — there is no run to measure.",
+        );
+    }
     // v0.127 (editor-currency slice 6): the per-case run filter. An empty
     // `--case` is treated as unset (run all) rather than "match the empty name".
     let case_filter = case.filter(|c| !c.is_empty());
@@ -234,6 +253,17 @@ fn run_test(
     }
 
     let tsconfig = output_root.join("tsconfig.json");
+    // #854: coverage needs tsc's `.js.map`s (remap hop 1). Overwrite the default
+    // tsconfig the compile wrote with the `sourceMap: true` variant, kept
+    // coverage-only so a normal `bynkc test` / deployment build ships no maps.
+    if coverage
+        && let Err(e) = std::fs::write(&tsconfig, bynkc::emitter::emit_tsconfig_with_source_maps())
+    {
+        return coverage_unsupported(
+            json,
+            format!("could not enable source maps for coverage: {e}"),
+        );
+    }
     // Preferred: `tsc -p out/tsconfig.json` → `node out-js/tests/main.js`.
     // tsc gives us full type-checking before execution and matches what a
     // production deployment build would do. If tsc is missing, fall back to
@@ -309,6 +339,20 @@ fn run_test(
         if tsc_ok {
             let mut node_cmd = ProcCommand::new("node");
             node_cmd.arg(&main_js);
+            // #854: the coverage path owns the node launch (it sets
+            // `NODE_V8_COVERAGE` and reads the result back), so it does not go
+            // through `finish_runner`.
+            if coverage {
+                return run_with_coverage(
+                    node_cmd,
+                    json,
+                    seed_hex.as_deref(),
+                    case_filter.as_deref(),
+                    &out_js_root,
+                    &output_root,
+                    &input,
+                );
+            }
             return match finish_runner(node_cmd, json, seed_hex.as_deref(), case_filter.as_deref())
             {
                 Ok(code) => code,
@@ -329,6 +373,16 @@ fn run_test(
                 }
             };
         }
+    }
+
+    // #854 DECISION C: with `--coverage`, the `tsc → node` path is required — do
+    // not silently fall through to `tsx`, whose on-the-fly transform muddies
+    // which map applies. Fail clearly instead.
+    if coverage {
+        return coverage_unsupported(
+            json,
+            "`--coverage` requires `tsc` and `node` on PATH (the CI-shaped path with `.js.map`s); the `tsx` fallback is not supported for coverage.",
+        );
     }
 
     // tsx fallback chain.
@@ -440,6 +494,94 @@ fn exit_from(success: bool) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// #854: a `--coverage` request that cannot be honoured (unsupported flag combo,
+/// no `tsc → node`, or a setup error). In JSON mode it is a `runtime` error so
+/// the document stays the only thing on stdout; in rich mode a plain stderr line.
+fn coverage_unsupported(json: bool, message: impl Into<String>) -> ExitCode {
+    let message = message.into();
+    if json {
+        print!("{}", TestRun::runtime_error(message, None).render());
+    } else {
+        eprintln!("bynkc test --coverage: {message}");
+    }
+    ExitCode::FAILURE
+}
+
+/// #854: run the emitted runner under V8 coverage and attribute the result to
+/// `.bynk` source. Owns the `node` launch: it points `NODE_V8_COVERAGE` at a
+/// scratch dir, runs the suite exactly as [`finish_runner`] would, then remaps
+/// the V8 output through the emitted source maps ([`bynkc::coverage`]). In rich
+/// mode the summary table is appended after the human ✓ / ✗ output; in JSON mode
+/// the `coverage` block is folded into the pinned document. The **exit code
+/// follows the run's own status** — coverage is a report about the run, never a
+/// gate on it (a partial or unreadable map degrades the numbers, not the code).
+fn run_with_coverage(
+    mut cmd: ProcCommand,
+    json: bool,
+    seed_hex: Option<&str>,
+    case: Option<&str>,
+    out_js_root: &Path,
+    out_root: &Path,
+    source_root: &Path,
+) -> ExitCode {
+    // A scratch dir beside the build output; cleared first so a prior run's JSON
+    // never leaks in. `NODE_V8_COVERAGE` writes one file per process on exit.
+    let cov_dir = out_root.join(".v8-coverage");
+    let _ = std::fs::remove_dir_all(&cov_dir);
+    if let Err(e) = std::fs::create_dir_all(&cov_dir) {
+        return coverage_unsupported(json, format!("could not create the coverage dir: {e}"));
+    }
+    cmd.env("NODE_V8_COVERAGE", &cov_dir);
+    if let Some(hex) = seed_hex {
+        cmd.env("BYNK_TEST_SEED", hex);
+    }
+    if let Some(name) = case {
+        cmd.env("BYNK_TEST_CASE", name);
+    }
+
+    let collect = || {
+        bynkc::coverage::collect_coverage(&cov_dir, out_js_root, out_root, source_root)
+            .unwrap_or_default()
+    };
+
+    let code = if json {
+        cmd.env("BYNK_TEST_FORMAT", "ndjson");
+        let out = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output() {
+            Ok(o) => o,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&cov_dir);
+                return coverage_unsupported(true, format!("could not run node: {e}"));
+            }
+        };
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let report = collect();
+        let doc = bynkc::test_json::parse_ndjson(&stdout)
+            .into_document(&stderr)
+            .with_coverage(&report);
+        print!("{}", doc.render());
+        exit_from(out.status.success())
+    } else {
+        let status = cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status();
+        let status = match status {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&cov_dir);
+                eprintln!("bynkc test --coverage: could not run node: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let report = collect();
+        print!("{}", bynkc::coverage::render_rich(&report));
+        exit_from(status.success())
+    };
+    let _ = std::fs::remove_dir_all(&cov_dir);
+    code
 }
 
 /// Slice 2 (ADR 0104): launch the emitted `.ts` test entry under Node's inspector
