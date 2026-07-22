@@ -93,12 +93,21 @@ fn sequence_model_at_resolves_for_a_cursor_anywhere_in_the_handler_body() {
 
     let model = bynk_lsp::sequence_request::sequence_model_at(RATELIMIT_SRC, offset, Some(info))
         .expect("a handler encloses this offset");
-    assert_eq!(model.participants.len(), 3, "Entry + Clock + Limiter");
+    // The `by Visitor` principal is the leftmost participant, ahead of the
+    // entry, so: Visitor + Entry + Clock + Limiter.
+    assert_eq!(model.participants.len(), 4, "Actor + Entry + Clock + Limiter");
 
-    // Confirm the LSP-side wire conversion round-trips the span data too.
+    // Confirm the LSP-side wire conversion round-trips the span data too — and
+    // that the new `Actor` kind and per-branch `reply` cross the wire.
     let wire = bynk_lsp::sequence_request::to_wire(&model, RATELIMIT_SRC);
-    assert_eq!(wire.participants.len(), 3);
-    assert_eq!(wire.messages.len(), 4);
+    assert_eq!(wire.participants.len(), 4);
+    assert_eq!(wire.participants[0].kind, "Actor");
+    assert!(
+        wire.participants[0].range.is_some(),
+        "the actor participant carries the `by` clause span"
+    );
+    // request + Clock Call/Return + Limiter Call/Return + a reply-to-actor per branch.
+    assert_eq!(wire.messages.len(), 7);
     assert_eq!(wire.blocks.len(), 1);
 }
 

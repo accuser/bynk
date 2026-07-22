@@ -44,11 +44,12 @@ describe("toMermaid", () => {
     assert.strictEqual(messageOrder.length, 3);
   });
 
-  it("renders a return-gating if/else even when both branches carry no messages", () => {
-    // The corrected extractor rule's own regression case: rate-limiter's
+  it("renders a return-gating if/else's branch outcomes as notes when both branches carry no messages", () => {
+    // The issue's own regression case: rate-limiter's
     // `if view.allowed { Ok(view) } else { TooManyRequests(...) }` produces
-    // an AltBlock whose branches are message-free — the block itself must
-    // still render.
+    // an AltBlock whose branches are message-free. The block must not only
+    // render — each branch's reply must render as a note, or Mermaid draws an
+    // empty `alt` as a mangled zero-width box (the reported symptom).
     const model: SequenceModel = {
       participants: [{ id: 0, kind: "Entry", name: "api call", range: null }],
       messages: [],
@@ -57,8 +58,8 @@ describe("toMermaid", () => {
           id: 0,
           kind: "If",
           branches: [
-            { label: "then", messageIds: [] },
-            { label: "else", messageIds: [] },
+            { label: "view.allowed", messageIds: [], reply: "Ok(view)" },
+            { label: "otherwise", messageIds: [], reply: "TooManyRequests(...)" },
           ],
           range: ZERO_RANGE,
           parent: null,
@@ -66,10 +67,41 @@ describe("toMermaid", () => {
         },
       ],
     };
-    const { text } = toMermaid(model);
-    assert.ok(text.includes("alt then"), text);
-    assert.ok(text.includes("else else"), text);
+    const { text, noteOrder } = toMermaid(model);
+    assert.ok(text.includes("alt view.allowed"), text);
+    assert.ok(text.includes("else otherwise"), text);
+    assert.ok(text.includes("note over P0: Ok(view)"), text);
+    assert.ok(text.includes("note over P0: TooManyRequests(...)"), text);
     assert.ok(text.includes("end"), text);
+    // One note per branch reply, each linking back to the block for click-to-code.
+    assert.strictEqual(noteOrder.length, 2);
+    assert.ok(noteOrder.every((b) => b.id === 0));
+  });
+
+  it("anchors a message-free, reply-free branch with a placeholder note so the box never collapses", () => {
+    // Defensive floor: a branch that yields nothing renderable (an explicit
+    // `{ () }` — no messages, no nested block, no reply) would still collapse
+    // the `alt`. A placeholder note keeps it legible.
+    const model: SequenceModel = {
+      participants: [{ id: 0, kind: "Entry", name: "api call", range: null }],
+      messages: [],
+      blocks: [
+        {
+          id: 0,
+          kind: "If",
+          branches: [
+            { label: "a", messageIds: [], reply: null },
+            { label: "b", messageIds: [], reply: null },
+          ],
+          range: ZERO_RANGE,
+          parent: null,
+          parentBranch: null,
+        },
+      ],
+    };
+    const { text, noteOrder } = toMermaid(model);
+    assert.strictEqual((text.match(/note over P0: …/g) ?? []).length, 2, text);
+    assert.strictEqual(noteOrder.length, 2);
   });
 
   it("nests a child block under the correct parent branch, not just the parent block", () => {
@@ -104,8 +136,8 @@ describe("toMermaid", () => {
           id: 0,
           kind: "If",
           branches: [
-            { label: "then", messageIds: [] },
-            { label: "else", messageIds: [] },
+            { label: "then", messageIds: [], reply: null },
+            { label: "else", messageIds: [], reply: null },
           ],
           range: { start: { line: 0, character: 0 }, end: { line: 5, character: 0 } },
           parent: null,
@@ -115,8 +147,8 @@ describe("toMermaid", () => {
           id: 1,
           kind: "If",
           branches: [
-            { label: "then", messageIds: [0, 1] },
-            { label: "else", messageIds: [] },
+            { label: "then", messageIds: [0, 1], reply: null },
+            { label: "else", messageIds: [], reply: null },
           ],
           range: { start: { line: 1, character: 0 }, end: { line: 3, character: 0 } },
           parent: 0,
@@ -149,10 +181,49 @@ describe("toMermaid", () => {
         },
       ],
     };
-    const { text, collapsedOrder } = toMermaid(model);
+    const { text, noteOrder } = toMermaid(model);
     assert.ok(text.includes("note over P0"), text);
     assert.ok(!text.includes("alt "), text);
-    assert.strictEqual(collapsedOrder.length, 1);
+    assert.strictEqual(noteOrder.length, 1);
+  });
+
+  it("renders an Actor participant with the `actor` keyword and routes replies to it", () => {
+    // With a principal, the actor originates the request (a Call in) and
+    // receives the handler's outcomes as Return messages (not notes).
+    const model: SequenceModel = {
+      participants: [
+        { id: 1, kind: "Actor", name: "Visitor", range: ZERO_RANGE },
+        { id: 0, kind: "Entry", name: "api", range: null },
+      ],
+      messages: [
+        { from: 1, to: 0, kind: "Call", label: "GET /check/:client", range: ZERO_RANGE, block: null },
+        { from: 0, to: 1, kind: "Return", label: "Ok(view)", range: ZERO_RANGE, block: 0 },
+        { from: 0, to: 1, kind: "Return", label: "TooManyRequests(...)", range: ZERO_RANGE, block: 0 },
+      ],
+      blocks: [
+        {
+          id: 0,
+          kind: "If",
+          branches: [
+            { label: "view.allowed", messageIds: [1], reply: null },
+            { label: "otherwise", messageIds: [2], reply: null },
+          ],
+          range: ZERO_RANGE,
+          parent: null,
+          parentBranch: null,
+        },
+      ],
+    };
+    const { text, noteOrder } = toMermaid(model);
+    assert.ok(text.includes("actor P1 as Visitor"), text);
+    assert.ok(text.includes("participant P0 as api"), text);
+    assert.ok(text.includes("P1->>P0: GET /check/#58;client"), text);
+    // The outcomes are dashed return arrows to the actor, inside the alt.
+    assert.ok(text.includes("P0-->>P1: Ok(view)"), text);
+    assert.ok(text.includes("P0-->>P1: TooManyRequests(...)"), text);
+    // No reply notes and no empty-branch placeholders — the arrows are content.
+    assert.strictEqual(noteOrder.length, 0, text);
+    assert.ok(!text.includes("note over"), text);
   });
 
   it("renders opt (not alt) for a single-branch block", () => {
@@ -163,7 +234,7 @@ describe("toMermaid", () => {
         {
           id: 0,
           kind: "Match",
-          branches: [{ label: "Some(x)", messageIds: [] }],
+          branches: [{ label: "Some(x)", messageIds: [], reply: null }],
           range: ZERO_RANGE,
           parent: null,
           parentBranch: null,
