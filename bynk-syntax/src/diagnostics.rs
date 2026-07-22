@@ -894,6 +894,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
     ),
     d(
+        "bynk.messages.incomplete",
+        "A locale is missing a code the reference locale declares.",
+    ),
+    d(
         "bynk.messages.missing_locale_dependency",
         "A commons declaring `messages` doesn't `uses bynk.locale`, which its generated `render`'s fallback needs.",
     ),
@@ -908,6 +912,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.messages.outside_commons",
         "A `messages` declaration appears outside a commons.",
+    ),
+    d(
+        "bynk.messages.placeholder_mismatch",
+        "A locale's template for a code uses a different set of `{name}` placeholders than the reference locale's.",
     ),
     d(
         "bynk.namespace.reserved",
@@ -1304,6 +1312,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.resolve.duplicate_message_code",
         "A message bundle declares the same code twice in one block.",
+    ),
+    d(
+        "bynk.resolve.duplicate_message_locale",
+        "Two `messages` blocks in one bundle declare the same locale tag.",
     ),
     dg(
         "bynk.resolve.duplicate_method",

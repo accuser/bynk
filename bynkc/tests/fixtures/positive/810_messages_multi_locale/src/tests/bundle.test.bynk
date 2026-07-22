@@ -1,0 +1,27 @@
+---
+Slice 2 (#874): render actually reads `tag` now. Each locale gets its
+own substitution; an undeclared locale falls back to the reference;
+an undeclared code falls all the way to bynk.locale.render's floor
+even with two locales present.
+---
+suite app.bundle {
+  case "the reference locale still renders its own translation" {
+    let msg = withWhole(withText(message("greeting"), "name", "Ada"), "age", 30)
+    expect render("en", msg) == "Hello, Ada, you are 30"
+  }
+
+  case "a second, declared locale renders its own translation" {
+    let msg = withWhole(withText(message("greeting"), "name", "Ada"), "age", 30)
+    expect render("fr", msg) == "30 ans, bonjour Ada"
+  }
+
+  case "a locale not declared in the bundle falls back to the reference" {
+    let msg = withWhole(withText(message("greeting"), "name", "Ada"), "age", 30)
+    expect render("de", msg) == "Hello, Ada, you are 30"
+  }
+
+  case "a code no locale declares falls back to bynk.locale.render's floor" {
+    let msg = withWhole(message("nope"), "x", 5)
+    expect render("fr", msg) == "nope {x=5}"
+  }
+}
