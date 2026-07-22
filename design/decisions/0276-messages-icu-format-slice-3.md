@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "`messages` templates gain ICU `plural`/`select`/`number`/`date` placeholders, formatted via the host `Intl`"
----
+# 0276 — The ICU MessageFormat template format, slice 3 — plural/select/number/date over MessageArg's typed args
 
-## ADR: messages-icu-format-slice-3
-title: The ICU MessageFormat template format, slice 3 — plural/select/number/date over MessageArg's typed args
-summary: A bynk-emit-only mini-parser adds four ICU dispatch forms to a message template, checked and emitted with no bynk-syntax grammar change
+- **Status:** Accepted (v0.230)
 
 **Context.** [Message bundles](../tracks/message-bundles.md) (spine #857),
 slice 3 (#878, sub-issue of the spine): slice 1 (#859, ADR 0272) shipped the

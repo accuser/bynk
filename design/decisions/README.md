@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0276](0276-messages-icu-format-slice-3.md) | **The ICU MessageFormat template format, slice 3 — plural/select/number/date over MessageArg's typed args** (v0.230) — A bynk-emit-only mini-parser adds four ICU dispatch forms to a message template, checked and emitted with no bynk-syntax grammar change | Accepted (v0.230) |
 | [0275](0275-sequence-diagram-principal-actor.md) | **The handler's `by` principal is an actor that originates the request and receives replies** (v0.229.1) — A principal renders as a leftmost actor; the request is an inbound message and outcomes return to it | Accepted (v0.229.1) |
 | [0274](0274-sequence-diagram-branch-outcomes.md) | **A return-gating branch renders its outcome, not an empty `alt`** (v0.229.1) — The reply ADR 0260 named is emitted per branch — as a note, or (with a principal) a return to the actor | Accepted (v0.229.1) |
 | [0273](0273-messages-checked-catalogue-slice-2.md) | **The checked-catalogue model, slice 2 — multi-locale bundles, completeness, and placeholder agreement** (v0.229) — Reference-bundle coverage, cross-locale placeholder-set agreement, and the multi-locale render-dispatch/export surface | Accepted (v0.229) |
