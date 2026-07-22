@@ -890,7 +890,11 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
 /// v0.166 (#616): an actor as declared — the `auth` scheme with its config, the
 /// `identity` type, or the refinement form's base and claim predicate.
 /// Mirrors `bynk-fmt`'s `format_actor`, as [`describe_agent`] mirrors an agent.
-fn describe_actor(a: &ActorDecl) -> String {
+///
+/// #847: `pub(crate)` so the documentation-view aggregator ([`crate::documentation`])
+/// renders each declaration through the *same* signature+doc assembly hover uses,
+/// rather than a parallel renderer that could drift from it.
+pub(crate) fn describe_actor(a: &ActorDecl) -> String {
     let mut out = String::from("```bynk\n");
     match &a.refinement {
         // `actor Admin = User where hasClaim("admin")` (ADR 0091).
@@ -939,7 +943,7 @@ fn describe_actor(a: &ActorDecl) -> String {
 /// v0.166 (#616): a capability operation as declared, attributed to the
 /// capability that owns it. Mirrors how [`describe_capability`] renders the same
 /// op within the capability body, as [`describe_record_field`] does for a field.
-fn describe_capability_op(c: &CapabilityDecl, op: &CapabilityOp) -> String {
+pub(crate) fn describe_capability_op(c: &CapabilityDecl, op: &CapabilityOp) -> String {
     let params: Vec<String> = op
         .params
         .iter()
@@ -962,7 +966,7 @@ fn describe_capability_op(c: &CapabilityDecl, op: &CapabilityOp) -> String {
 
 /// #304: an agent handler as declared, attributed to the agent that owns it —
 /// its dispatch name, params, and return type. Mirrors [`describe_capability_op`].
-fn describe_agent_handler(a: &AgentDecl, h: &Handler, handler_name: &str) -> String {
+pub(crate) fn describe_agent_handler(a: &AgentDecl, h: &Handler, handler_name: &str) -> String {
     let params: Vec<String> = h
         .params
         .iter()
@@ -983,10 +987,39 @@ fn describe_agent_handler(a: &AgentDecl, h: &Handler, handler_name: &str) -> Str
     out
 }
 
+/// #847: a service handler as declared, attributed to the service that owns it —
+/// its route/protocol (`on GET("/x")`, `on call`, …) with the typed params and
+/// return type. The documentation-view counterpart to [`describe_agent_handler`]:
+/// a service handler has no compound index key (its route, not a dispatch name,
+/// identifies it — see `bynk-lsp/src/sequence_request.rs`), so hover never
+/// describes one on its own; the doc page is the first surface that renders each
+/// individually, and it does so through the same fenced-signature + doc-prose
+/// shape every other `describe_*` uses.
+pub(crate) fn describe_service_handler(s: &ServiceDecl, h: &Handler) -> String {
+    let params: Vec<String> = h
+        .params
+        .iter()
+        .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
+        .collect();
+    let mut out = format!(
+        "```bynk\n{}({}) -> {}\n```\n\nA handler of service `{}`.\n",
+        handler_line(h),
+        params.join(", "),
+        type_ref_str(&h.return_type),
+        s.name.name
+    );
+    if let Some(doc) = &h.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
+}
+
 /// #611: a record field as declared — its type and any `where` refinement —
 /// attributed to the record that owns it. Mirrors how [`describe_type`] renders
 /// the same field within the record body.
-fn describe_record_field(t: &TypeDecl, f: &RecordField) -> String {
+pub(crate) fn describe_record_field(t: &TypeDecl, f: &RecordField) -> String {
     let mut sig = format!("{}: {}", f.name.name, type_ref_str(&f.type_ref));
     if let Some(r) = &f.refinement {
         sig.push_str(&format!(" where {}", bynk_fmt::refinement_to_string(r)));
@@ -994,7 +1027,7 @@ fn describe_record_field(t: &TypeDecl, f: &RecordField) -> String {
     format!("```bynk\n{sig}\n```\n\nA field of `{}`.", t.name.name)
 }
 
-fn describe_type(t: &TypeDecl) -> String {
+pub(crate) fn describe_type(t: &TypeDecl) -> String {
     let mut out = String::new();
     out.push_str("```bynk\n");
     // v0.157 (ADR 0183): render `[A, B]` type parameters on a generic type.
@@ -1071,7 +1104,7 @@ fn describe_type(t: &TypeDecl) -> String {
     out
 }
 
-fn describe_fn(f: &FnDecl) -> String {
+pub(crate) fn describe_fn(f: &FnDecl) -> String {
     let mut out = String::new();
     out.push_str("```bynk\n");
     out.push_str("fn ");
@@ -1112,7 +1145,7 @@ fn describe_fn(f: &FnDecl) -> String {
     out
 }
 
-fn describe_capability(c: &CapabilityDecl) -> String {
+pub(crate) fn describe_capability(c: &CapabilityDecl) -> String {
     let mut out = String::new();
     out.push_str("```bynk\ncapability ");
     out.push_str(&c.name.name);
@@ -1217,7 +1250,7 @@ fn limits_summary(limits: &LimitsPolicy) -> String {
 }
 
 /// v0.123 (slice 2): the `on …` line for a handler — its route/protocol shape.
-fn handler_line(h: &Handler) -> String {
+pub(crate) fn handler_line(h: &Handler) -> String {
     match &h.kind {
         HandlerKind::Call => "on call".to_string(),
         HandlerKind::Http { method, path } => format!("on {}(\"{}\")", method.as_str(), path),
@@ -1228,7 +1261,7 @@ fn handler_line(h: &Handler) -> String {
     }
 }
 
-fn describe_service(s: &ServiceDecl) -> String {
+pub(crate) fn describe_service(s: &ServiceDecl) -> String {
     // v0.123 (slice 2): the protocol header and a line per route (was a bare
     // handler count).
     let mut out = format!(
@@ -1275,7 +1308,7 @@ fn store_kind_str(k: &StoreKind) -> String {
     }
 }
 
-fn describe_agent(a: &AgentDecl) -> String {
+pub(crate) fn describe_agent(a: &AgentDecl) -> String {
     // v0.123 (slice 2): the store fields plus the `invariant`/`transition` step
     // invariants (v0.116), was a bare store-field count.
     let mut out = format!(
@@ -1314,7 +1347,7 @@ fn describe_agent(a: &AgentDecl) -> String {
     out
 }
 
-fn describe_provider(p: &ProviderDecl) -> String {
+pub(crate) fn describe_provider(p: &ProviderDecl) -> String {
     let mut out = format!(
         "```bynk\nprovides {} = {}\n```\n",
         p.capability.name, p.provider_name.name

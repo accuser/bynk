@@ -32,6 +32,7 @@ use bynk_syntax::{ast, lexer, parser};
 pub use bynk_emit::project::ContextSequenceInfo;
 
 pub mod completion;
+pub mod documentation;
 pub mod locals_nav;
 pub mod sequence;
 pub mod signature_help;

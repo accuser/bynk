@@ -31,6 +31,7 @@
 pub mod code_actions;
 pub mod completion;
 mod document_symbols;
+pub mod documentation_request;
 mod extract;
 pub mod hover;
 pub mod index_queries;
@@ -1688,6 +1689,32 @@ impl Backend {
             .and_then(|(name, _)| analysis.sequence_info.get(&name));
         let model = sequence_request::sequence_model_at(text, offset, info);
         Ok(model.map(|m| sequence_request::to_wire(&m, text)))
+    }
+
+    /// #847: `bynk/documentationModel` — the documentation-view query for the
+    /// whole file under the request. This server's second custom request,
+    /// registered via `custom_method` in [`run`] (like `sequence_model`).
+    /// Served from the committed round (#733), on-demand: no cursor position
+    /// (the page is the whole file, Decision A) and no refresh nudge (Decision
+    /// D — see the `documentation_request` module doc, and #846's for why a
+    /// custom method needs none). A non-project file / no committed round →
+    /// `None` (empty page).
+    async fn documentation_model(
+        &self,
+        params: documentation_request::DocumentationModelParams,
+    ) -> JsonRpcResult<Option<documentation_request::WireDocModel>> {
+        let uri = params.text_document.uri;
+        let Some(analysis) = self.committed_analysis(&uri).await else {
+            return Ok(None);
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
+            return Ok(None);
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Ok(None);
+        };
+        let model = documentation_request::documentation_model_at(text);
+        Ok(model.map(|m| documentation_request::to_wire(&m, text)))
     }
 }
 
@@ -3418,10 +3445,13 @@ fn server_capabilities() -> ServerCapabilities {
                 ..Default::default()
             }),
         }),
-        // #846: no standard `ServerCapabilities` field exists for a custom
+        // #846/#847: no standard `ServerCapabilities` field exists for a custom
         // request — `experimental` is the only feature-detection surface a
-        // client has for `bynk/sequenceModel`.
-        experimental: Some(serde_json::json!({ "sequenceModel": true })),
+        // client has for `bynk/sequenceModel` and `bynk/documentationModel`.
+        experimental: Some(serde_json::json!({
+            "sequenceModel": true,
+            "documentationModel": true,
+        })),
         ..Default::default()
     }
 }
@@ -3926,6 +3956,53 @@ fn is_bynk_toml(uri: &Url) -> bool {
     path.file_name().and_then(|n| n.to_str()) == Some("bynk.toml")
 }
 
+/// The `codeDescription` link for a diagnostic `code` (#853): a clickable link
+/// to the code's Book explanation when the compiler curates one, else `None`
+/// (the designed graceful-fallback state — an uncurated code renders no link,
+/// which is not an error). Split out from [`make_diagnostic`] so the
+/// mapped→`Some` / uncurated→`None` contract is directly testable.
+fn code_description(code: &str) -> Option<CodeDescription> {
+    let href = Url::parse(&bynk_syntax::diagnostics::explain(code)?.href()).ok()?;
+    Some(CodeDescription { href })
+}
+
+#[cfg(test)]
+mod code_description_tests {
+    use super::code_description;
+
+    #[test]
+    fn mapped_code_gets_a_valid_book_link() {
+        let cd = code_description("bynk.resolve.unknown_type")
+            .expect("a curated code produces a codeDescription");
+        assert_eq!(cd.href.scheme(), "https");
+        assert_eq!(cd.href.host_str(), Some("bynk-lang.org"));
+        assert!(cd.href.path().starts_with("/book/"));
+    }
+
+    #[test]
+    fn uncurated_code_gets_no_link() {
+        // A real code with no curated explanation, and a nonsense code, both
+        // fall back to no link (graceful — not an error).
+        assert!(code_description("bynk.resolve.duplicate_type").is_none());
+        assert!(code_description("bynk.not.a_real_code").is_none());
+    }
+
+    #[test]
+    fn every_curated_explanation_yields_a_parseable_url() {
+        // Guards that no curated href ever silently drops its link because
+        // `Url::parse` rejected it.
+        for e in bynk_syntax::diagnostics::EXPLANATIONS {
+            assert!(
+                code_description(e.code).is_some(),
+                "curated explanation `{}` produced no codeDescription — its href \
+                 `{}` did not parse as a URL",
+                e.code,
+                e.href()
+            );
+        }
+    }
+}
+
 fn make_diagnostic(
     d: &bynk_ide::Diagnostic,
     positions: &crate::position::PositionMap,
@@ -3961,7 +4038,11 @@ fn make_diagnostic(
         range,
         severity: Some(severity),
         code: Some(NumberOrString::String(d.error.category.to_string())),
-        code_description: None,
+        // #853: a curated code carries a `codeDescription` link to its Book
+        // explanation (rendered as a link on the code in Problems/hover); an
+        // uncurated code has no entry and stays `None` — the designed
+        // graceful-fallback state, not an error.
+        code_description: code_description(d.error.category),
         source: Some(SERVER_NAME.to_string()),
         message,
         related_information: if related_information.is_empty() {
@@ -4018,6 +4099,7 @@ pub async fn run() {
     // the builder's `custom_method` instead.
     let (service, socket) = LspService::build(Backend::new)
         .custom_method("bynk/sequenceModel", Backend::sequence_model)
+        .custom_method("bynk/documentationModel", Backend::documentation_model)
         .finish();
     Server::new(stdin, stdout, socket).serve(service).await;
 }
