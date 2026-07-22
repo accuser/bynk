@@ -41,6 +41,9 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
+            REPO: ${{ github.repository }}
+            ISSUE NUMBER: ${{ github.event.issue.number }}
+
             This issue is an increment proposal — the sign-off artefact reviewed
             before any implementation begins (label `proposal`; `accepted` means
             approved to build).
@@ -60,8 +63,17 @@ jobs:
             existing `design/decisions/` ADRs for precedent; skim `design/tracks/`
             only to check for conflicts. Do NOT read `design/` exhaustively — that
             burns the turn budget before you can post. Be concise and specific.
-            Do NOT open pull requests or modify files — this is a comment only.
+
+            Post your analysis ONLY as a comment on this issue, via
+            `gh issue comment <ISSUE NUMBER above> --body "..."` — do NOT emit it
+            as a chat message (that goes nowhere), do NOT open pull requests, and
+            do NOT modify files. This is a comment only.
           # Sonnet suits the higher-level analysis a proposal review needs.
           # The prompt keeps reads targeted (not a full design/ browse), so 20
           # turns is comfortable headroom above the read budget.
-          claude_args: "--max-turns 20 --model claude-sonnet-5"
+          # --allowedTools is REQUIRED so the `gh issue comment` post is not
+          # denied — the action does not auto-publish; Claude must post it.
+          claude_args: >-
+            --max-turns 20
+            --model claude-sonnet-5
+            --allowedTools "Bash(gh issue comment:*),Bash(gh issue view:*),Read,Grep,Glob"
