@@ -26,6 +26,7 @@ pub struct TestArgs {
     pub inspect: bool,
     pub seed: Option<String>,
     pub case: Option<String>,
+    pub coverage: bool,
 }
 
 /// Run `bynk test` by shelling the resolved `bynkc`. When no `bynkc` could be
@@ -60,6 +61,9 @@ pub fn run(compiler: &Compiler, args: TestArgs) -> ExitCode {
     if let Some(case) = args.case {
         argv.push("--case".into());
         argv.push(case.into());
+    }
+    if args.coverage {
+        argv.push("--coverage".into());
     }
 
     crate::shell::delegate(bynkc, argv)

@@ -87,6 +87,7 @@ fn golden_document_normal() {
             ],
         }]),
         error: None,
+        coverage: None,
     };
     bless_or_assert("test-json-normal.json", &run.render());
 }

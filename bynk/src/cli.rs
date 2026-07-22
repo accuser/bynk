@@ -241,6 +241,12 @@ pub enum Command {
         /// with `--no-run`.
         #[arg(long, value_name = "NAME")]
         case: Option<String>,
+        /// After the suite runs, report statement/line coverage attributed to
+        /// `.bynk` source (a rich summary table, or a `coverage` block in
+        /// `--format json`). Requires the `tsc → node` path: incompatible with
+        /// `--inspect` and `--no-run`, and errors if only `tsx` is available.
+        #[arg(long)]
+        coverage: bool,
     },
 }
 

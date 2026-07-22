@@ -1,0 +1,10 @@
+commons calc.pure
+
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+
+fn scale(n: Int) -> Int {
+  let doubled = add(n, n)
+  add(doubled, n)
+}

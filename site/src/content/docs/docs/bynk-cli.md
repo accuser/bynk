@@ -284,7 +284,7 @@ Discover and run a project's test declarations — the same behaviour as
 Node.js) or `tsx` on `PATH`, exactly as `bynkc test`.
 
 ```text
-bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--seed HEX] [--case NAME]
+bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--seed HEX] [--case NAME] [--coverage]
 ```
 
 | Argument | Default | Meaning |
@@ -296,6 +296,7 @@ bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--see
 | `--inspect` | off | Launch the runner under Node's inspector (`node --inspect-brk`) and print the inspector URL. Requires Node ≥ 22.18 (or ≥ 23.6 unflagged). Does not run `tsc`. |
 | `--seed HEX` | random | Root seed for generative `property` tests (e.g. `0x5f3a`). A failing property prints the seed it used; re-running with `--seed <hex>` reproduces the run byte-for-byte. |
 | `--case NAME` | — | Run only test cases whose name matches `NAME` — the filter behind the editor's per-case *▷ Run Test* lens. No effect with `--no-run`. |
+| `--coverage` | off | After the run, report statement/line coverage attributed to `.bynk` source (rich table, or a `coverage` block under `--format json`). Requires the `tsc → node` path — incompatible with `--inspect` and `--no-run`. |
 
 **Exit code** — follows the runner's own process status: `0` when every case
 passed, non-zero on a failing case, a compile error, or a missing runner.

@@ -28,6 +28,58 @@ pub struct TestRun {
     pub suites: Option<Vec<Suite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<TestError>,
+    /// v0.223 (#854): the optional coverage block, present only for a
+    /// `--coverage` run that produced attributable lines. Last field, so every
+    /// existing document's byte layout is unchanged when it is absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<Coverage>,
+}
+
+/// The `coverage` block: whole-run totals plus one entry per measured `.bynk`
+/// file, keyed by project-relative path. Attributed to `.bynk` source lines, not
+/// emitted `.ts`/`.js` (issue #854); generated glue with no source origin is
+/// out-of-scope, never counted.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct Coverage {
+    /// Covered executable lines across every measured file.
+    pub covered: u32,
+    /// Total executable lines across every measured file.
+    pub lines: u32,
+    /// Whole-run percentage (0–100), rounded.
+    pub percent: u32,
+    pub files: Vec<FileCoverage>,
+}
+
+/// One measured `.bynk` file's line coverage.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct FileCoverage {
+    pub path: String,
+    pub covered: u32,
+    pub lines: u32,
+    pub percent: u32,
+    /// Uncovered executable lines, 1-based and ascending.
+    pub uncovered: Vec<u32>,
+}
+
+impl From<&crate::coverage::CoverageReport> for Coverage {
+    fn from(r: &crate::coverage::CoverageReport) -> Self {
+        Coverage {
+            covered: r.total_covered(),
+            lines: r.total_lines(),
+            percent: r.total_percent(),
+            files: r
+                .files
+                .iter()
+                .map(|f| FileCoverage {
+                    path: f.path.clone(),
+                    covered: f.covered,
+                    lines: f.total,
+                    percent: crate::coverage::percent(f.covered, f.total),
+                    uncovered: f.uncovered.clone(),
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -78,7 +130,19 @@ impl TestRun {
             failed: 0,
             suites: Some(Vec::new()),
             error: None,
+            coverage: None,
         }
+    }
+
+    /// Attach a coverage block (`--coverage`, issue #854). A report with no
+    /// attributed line is dropped rather than serialising an empty block, so a
+    /// coverage run over a project with nothing measurable reads like a normal
+    /// run.
+    pub fn with_coverage(mut self, report: &crate::coverage::CoverageReport) -> Self {
+        if !report.is_empty() {
+            self.coverage = Some(Coverage::from(report));
+        }
+        self
     }
 
     /// v0.67: a **discovery** document (`--no-run --format json`) — the suites and
@@ -93,6 +157,7 @@ impl TestRun {
             failed: 0,
             suites: Some(suites),
             error: None,
+            coverage: None,
         }
     }
 
@@ -111,6 +176,7 @@ impl TestRun {
                 diagnostics: Vec::new(),
                 stderr: stderr.filter(|s| !s.trim().is_empty()),
             }),
+            coverage: None,
         }
     }
 
@@ -126,6 +192,7 @@ impl TestRun {
                 diagnostics,
                 stderr: None,
             }),
+            coverage: None,
         }
     }
 
@@ -161,6 +228,7 @@ impl ParsedRun {
                 failed: self.failed,
                 suites: Some(self.suites),
                 error: None,
+                coverage: None,
             }
         } else {
             let trimmed = stderr.trim();
@@ -174,6 +242,7 @@ impl ParsedRun {
                     diagnostics: Vec::new(),
                     stderr: (!trimmed.is_empty()).then(|| trimmed.to_string()),
                 }),
+                coverage: None,
             }
         }
     }

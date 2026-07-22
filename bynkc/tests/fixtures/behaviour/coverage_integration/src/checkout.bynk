@@ -1,0 +1,11 @@
+---
+Integration + unit coverage: the orders→payment flow runs across the real
+Worker boundary (its scaffold is *not* measured, DECISION D), while a plain
+unit suite over the `shop.util` commons is what coverage attributes to.
+---
+suite shop.orders as system {
+  case "small order authorises across the wire" {
+    let r <- shop.orders.place(100)
+    expect r is Ok(_)
+  }
+}

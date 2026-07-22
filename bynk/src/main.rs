@@ -89,6 +89,7 @@ fn main() -> ExitCode {
             inspect,
             seed,
             case,
+            coverage,
         } => run_test(TestArgs {
             input,
             output,
@@ -97,6 +98,7 @@ fn main() -> ExitCode {
             inspect,
             seed,
             case,
+            coverage,
         }),
     }
 }
