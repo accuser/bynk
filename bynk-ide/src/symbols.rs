@@ -1176,7 +1176,7 @@ pub(crate) fn describe_capability(c: &CapabilityDecl) -> String {
 /// message-bundles slice 1 (#859): a message bundle's tag, its annotations
 /// (`@reference`, unresolved cardinality shown as-is — that's a checker
 /// concern, not hover's), and its declared codes.
-fn describe_messages(m: &MessagesDecl) -> String {
+pub(crate) fn describe_messages(m: &MessagesDecl) -> String {
     let mut out = String::new();
     out.push_str("```bynk\nmessages ");
     out.push_str(&m.tag.name);
