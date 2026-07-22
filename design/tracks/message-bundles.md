@@ -1,8 +1,9 @@
 # Message bundles — the `messages` construct, the checked catalogue, and the bundle `render` consumes
 
 - **Status:** Slicing — slice 1 (the `messages` construct, a single
-  `@reference` bundle, and render wiring, #859) shipped; slices 2–3 follow,
-  each cut as a proposal sub-issue of the track's **spine issue**,
+  `@reference` bundle, and render wiring, #859) and slice 2 (multi-locale
+  bundles, completeness, placeholder agreement, #874) shipped; slice 3
+  follows, cut as a proposal sub-issue of the track's **spine issue**,
   [#857](https://github.com/accuser/bynk/issues/857)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** the Locale capability track's own unfiled sibling — its
@@ -410,14 +411,24 @@ ADRs; accepting the proposal authorises the build.
   (`bynk.messages.missing_locale_dependency`) since nothing auto-injects it.
   Positional templates only, one locale (the reference). **Makes `render`
   actually emit declared text for the reference locale.**
-- **Slice 2 — multi-locale bundles, reference-bundle completeness, and
-  cross-locale placeholder agreement.** Additional non-reference `messages`
-  blocks in the same bundle; `bynk.messages.incomplete` reference-coverage
-  checking; cross-locale template-placeholder agreement (§4.3). Lands the
-  checked-catalogue-model ADR. **Produces "the bundle's declared locales" —
-  the precondition the Locale track's own spine names for its slice 2, which
-  must not start before this slice lands** (carried forward from the spine
-  issue's own dependency note, §9).
+- **Slice 2 — shipped (#874).** Multi-locale bundles, reference-bundle
+  completeness, and cross-locale placeholder agreement: a non-reference
+  `messages` block now actually renders — `render(tag, msg)` looks up the
+  resolved `tag`'s own table, else the `@reference` locale's, else falls to
+  `bynk.locale.render`'s existing floor (`tag` is finally read, not just
+  accepted). `bynk.messages.incomplete` (every reference-declared code
+  covered by every other locale, one diagnostic per missing `(locale, code)`
+  witness, mirroring `bynk.types.non_exhaustive_match`'s own convention) and
+  `bynk.messages.placeholder_mismatch` (cross-locale template-placeholder
+  *set* agreement — order-insensitive, since translators legitimately
+  reorder placeholders) land the checked-catalogue-model ADR. **Produces
+  "the bundle's declared locales"**: the generated module exports
+  `messagesLocales`/`messagesReferenceLocale` (no leading underscore —
+  deliberately public, unlike the file's other `__`-prefixed internals) —
+  the concrete precondition the Locale track's own spine names for its
+  slice 2, which **may now start** (carried forward from the spine issue's
+  own dependency note, §9) — wiring these exports into Locale's own
+  negotiation provider is that track's proposal to cut, not this one's.
 - **Slice 3 — ICU MessageFormat.** Plural/gender/number/date over
   `MessageArg`'s typed args, the CLDR-data commitment; re-homes
   `locale-capability.md`'s L4/slice 3 (§4.4).
@@ -430,10 +441,11 @@ Preserved from the spine issue's own "do not lose again" section, since
 - **Locale slice 1 (shipped, ADR 0256) → this track's slice 1.** This
   track's slice 1 gives the shipped `render` a bundle to read; until it
   lands, `tag` stays unused and nothing localises (§1).
-- **This track's slice 2 → Locale slice 2.** Locale's slice 2 negotiates
-  `Accept-Language` against "the bundle's declared locales" — not a checkable
-  set until this track's completeness checking (slice 2 here) lands. **Locale
-  slice 2 must not start before this track's slice 2.**
+- **This track's slice 2 (shipped, #874) → Locale slice 2.** Locale's slice 2
+  negotiates `Accept-Language` against "the bundle's declared locales" — now
+  a checkable, exported set (`messagesLocales`/`messagesReferenceLocale`).
+  **Locale slice 2 may now start** — a separate proposal against the Locale
+  track, not this one.
 - **This track's slice 3 ↔ Locale slice 3 (L4).** One decision, owned here
   (§4.4). Locale's doc gets a one-line update to its own §8 when this
   track's slice-3 sub-issue opens, rather than the decision being re-derived
