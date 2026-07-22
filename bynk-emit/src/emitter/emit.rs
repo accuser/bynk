@@ -868,18 +868,18 @@ fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
     let mut literal_start = 0;
     let mut i = 0;
     while i < template.len() {
-        if template.as_bytes()[i] == b'{' {
-            if let Some(rel_end) = template[i + 1..].find('}') {
-                let name = &template[i + 1..i + 1 + rel_end];
-                if !name.is_empty() && !name.contains('{') {
-                    if literal_start < i {
-                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
-                    }
-                    segments.push(TemplateSegment::Placeholder(name));
-                    i = i + 1 + rel_end + 1;
-                    literal_start = i;
-                    continue;
+        if template.as_bytes()[i] == b'{'
+            && let Some(rel_end) = template[i + 1..].find('}')
+        {
+            let name = &template[i + 1..i + 1 + rel_end];
+            if !name.is_empty() && !name.contains('{') {
+                if literal_start < i {
+                    segments.push(TemplateSegment::Literal(&template[literal_start..i]));
                 }
+                segments.push(TemplateSegment::Placeholder(name));
+                i = i + 1 + rel_end + 1;
+                literal_start = i;
+                continue;
             }
         }
         // Advance by one char (not one byte) to stay on UTF-8 boundaries.

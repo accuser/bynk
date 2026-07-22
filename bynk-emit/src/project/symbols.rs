@@ -584,32 +584,32 @@ pub(crate) fn build_unit_table(
     // else. The body is a placeholder — nothing ever type-checks it, since
     // body-checking walks `commons.items` (real AST items) directly, and this
     // entry is never added there.
-    if kind == UnitKind::Commons {
-        if let Some(m) = indices.iter().find_map(|&i| {
+    if kind == UnitKind::Commons
+        && let Some(m) = indices.iter().find_map(|&i| {
             parsed[i].items().iter().find_map(|item| match item {
                 CommonsItem::Messages(m) => Some(m),
                 _ => None,
             })
-        }) {
-            if let Some(prev) = table.fns.get("render") {
-                out.push((
-                    parsed[indices[0]].identity_path.clone(),
-                    CompileError::new(
-                        "bynk.resolve.duplicate_fn",
-                        m.span,
-                        "function `render` is already declared",
-                    )
-                    .with_label(prev.name.ident().span, "previously declared here")
-                    .with_note(
-                        "a `messages` block in this commons implicitly declares its own \
-                         `render(tag, msg) -> String` — name it something else",
-                    ),
-                ));
-            } else {
-                table
-                    .fns
-                    .insert("render".to_string(), synthetic_render_fn());
-            }
+        })
+    {
+        if let Some(prev) = table.fns.get("render") {
+            out.push((
+                parsed[indices[0]].identity_path.clone(),
+                CompileError::new(
+                    "bynk.resolve.duplicate_fn",
+                    m.span,
+                    "function `render` is already declared",
+                )
+                .with_label(prev.name.ident().span, "previously declared here")
+                .with_note(
+                    "a `messages` block in this commons implicitly declares its own \
+                     `render(tag, msg) -> String` — name it something else",
+                ),
+            ));
+        } else {
+            table
+                .fns
+                .insert("render".to_string(), synthetic_render_fn());
         }
     }
     table
