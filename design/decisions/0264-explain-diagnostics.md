@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Diagnostic codes are teachable — curated codes carry a `codeDescription` link to their Book explanation in the editor, and `bynk explain <code>` prints the offline-complete blurb, an example, and the link
----
+# 0264 — Diagnostic explanations are a compiler-owned mapping to Book anchors, surfaced by `bynk explain` and `codeDescription`
 
-## ADR: explain-diagnostics
-title: Diagnostic explanations are a compiler-owned mapping to Book anchors, surfaced by `bynk explain` and `codeDescription`
-summary: A `code → { blurb, example, page/anchor }` table in the compiler links each curated diagnostic code to its Book concept page and prints an offline-complete explanation
+- **Status:** Accepted (v0.224)
 
 **Context.** Every `bynk.*` diagnostic carries a stable machine code
 (`bynk.resolve.unknown_type`, …), but the code was inert: the LSP built every
