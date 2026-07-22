@@ -60,7 +60,7 @@ use validate::*;
 
 // External facade: items referenced as `crate::project::X` from outside this
 // module (emitter, main, lib) must stay reachable at that path.
-pub use diagnostics::{AttributedError, ProjectAnalysis, ProjectFailure};
+pub use diagnostics::{AttributedError, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
 pub use paths::{
     ProjectPaths, read_project_paths, worker_dir_name, worker_handlers_output_path,
     worker_handlers_source_path,
@@ -731,6 +731,8 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
             requirements: requirements.take_files(),
             // No parsed tree on the bail path — the map stays empty (ADR 0095).
             unit_sources: HashMap::new(),
+            // #846: same bail rule as `unit_sources` — nothing was resolved.
+            sequence_info: HashMap::new(),
         },
         RunChecks::Checked {
             errors,
@@ -743,6 +745,10 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
             parsed,
             unit_uses,
             unit_consumes,
+            unit_consumes_aliases,
+            unit_tables,
+            unit_flattened,
+            kinds,
             ..
         } => {
             let index = assemble_index(
@@ -764,6 +770,39 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
                     .or_default()
                     .push(pf.identity_path.clone());
             }
+            // #846: qualified context/adapter unit name → the cross-context +
+            // agent tables the sequence-diagram classifier needs. Rebuilt from
+            // the same retained per-project tables the per-file checking pass
+            // used to build its own transient `cross_context_for_file` (see
+            // the call site of `build_cross_context_info` above, in the
+            // per-file loop) — that transient value is never itself kept
+            // around, so this re-derives it once per unit instead of once per
+            // file, from data `run_checks` already retains.
+            let mut sequence_info: HashMap<String, ContextSequenceInfo> = HashMap::new();
+            for (name, kind) in &kinds {
+                if !matches!(kind, UnitKind::Context | UnitKind::Adapter) {
+                    continue;
+                }
+                let Some(table) = unit_tables.get(name) else {
+                    continue;
+                };
+                let mut cross_context = build_cross_context_info(
+                    name,
+                    &unit_consumes,
+                    &unit_consumes_aliases,
+                    &unit_uses,
+                    &unit_tables,
+                );
+                cross_context.flattened_caps =
+                    unit_flattened.get(name).cloned().unwrap_or_default();
+                sequence_info.insert(
+                    name.clone(),
+                    ContextSequenceInfo {
+                        cross_context,
+                        agents: table.agents.clone(),
+                    },
+                );
+            }
             ProjectAnalysis {
                 snapshots,
                 errors: errors.into_all(),
@@ -773,6 +812,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
                 expr_types: exprs.take_files(),
                 requirements: requirements.take_files(),
                 unit_sources,
+                sequence_info,
             }
         }
     }

@@ -22,8 +22,18 @@ use bynk_check::{checker, expr_types, hints, index, locals, requirements, resolv
 use bynk_syntax::error::{CompileError, Severity};
 use bynk_syntax::{ast, lexer, parser};
 
+/// #846: re-exported rather than left as a raw `bynk_emit::project` path —
+/// `bynk-lsp` links `bynk-ide`/`bynk-check`/`bynk-syntax` directly and
+/// deliberately does not depend on `bynk-emit` (the whole-compiler crate);
+/// see `bynk-lsp/Cargo.toml`'s dependency comment. Unlike `Roots`/
+/// `AnalysisRoots` (which the IDE layer re-shapes because the raw type
+/// carries build-only concerns), `ContextSequenceInfo`'s fields are already
+/// IDE-appropriate as-is, so this is a plain re-export rather than a lowering.
+pub use bynk_emit::project::ContextSequenceInfo;
+
 pub mod completion;
 pub mod locals_nav;
+pub mod sequence;
 pub mod signature_help;
 pub mod symbols;
 
@@ -154,6 +164,10 @@ pub struct ProjectDiagnostics {
     /// in discovery order — the unit→file map backing document links and
     /// consumed-context navigation. Synthetic units excluded; empty on a bail.
     pub unit_sources: HashMap<String, Vec<PathBuf>>,
+    /// #846: qualified context/adapter unit name → the cross-context/agent
+    /// tables the sequence-diagram query classifies handler calls against.
+    /// See `bynk_emit::project::ProjectAnalysis::sequence_info`.
+    pub sequence_info: HashMap<String, ContextSequenceInfo>,
 }
 
 /// Slice A: which trees a project's analysis walks.
@@ -270,5 +284,6 @@ pub fn diagnose_project_with(
         expr_types: analysis.expr_types,
         locals: analysis.locals,
         unit_sources: analysis.unit_sources,
+        sequence_info: analysis.sequence_info,
     }
 }

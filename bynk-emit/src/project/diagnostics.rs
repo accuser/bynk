@@ -126,6 +126,25 @@ pub struct ProjectAnalysis {
     /// links and consumed-context navigation. Excludes synthetic (toolchain-
     /// injected) units; empty when the pipeline bails before the checker.
     pub unit_sources: HashMap<String, Vec<PathBuf>>,
+    /// #846: qualified context/adapter unit name → the cross-context and agent
+    /// tables needed to classify a handler call as a lifeline (consumed
+    /// capability, consumed-context call, or agent) for the sequence-diagram
+    /// query. Reconstructed from the same retained per-project tables
+    /// (`unit_uses`/`unit_consumes`/`unit_tables`) the per-file checking pass
+    /// builds its own transient `ResolvedCommons.cross_context` from — that
+    /// transient value is never itself retained, so this is a deliberately
+    /// lean re-derivation (not the full `ResolvedCommons`: no `types`/`fns`/
+    /// `methods`, which the classifier never needs). Only contexts/adapters
+    /// have an entry; empty when the pipeline bails before the checker.
+    pub sequence_info: HashMap<String, ContextSequenceInfo>,
+}
+
+/// #846: the per-unit slice of resolution the sequence-diagram classifier
+/// needs — see [`ProjectAnalysis::sequence_info`].
+#[derive(Debug, Clone, Default)]
+pub struct ContextSequenceInfo {
+    pub cross_context: resolver::CrossContextInfo,
+    pub agents: HashMap<String, AgentDecl>,
 }
 
 /// v0.24: a failed build with its attribution and snapshots intact — what

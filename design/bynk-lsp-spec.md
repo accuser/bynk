@@ -630,6 +630,16 @@ For each `FileRename`, the handler parses the *old* file's own snapshot to get i
 
 When the name does change, the edit set is: the moved file's own declaration header (targeting its **old** URI — the client applies the returned edit against pre-move locations, then performs the actual rename, so the file lands at its new path already correct), plus every other project file's matching `uses`/`consumes` reference spans (`symbols::unit_reference_spans`, the same span-finder `documentLink` uses). Edits are versioned `TextDocumentEdit`s, gated by `analysis_covering_open_buffers` (§3.2.1) — the same whole-project freshness `rename` needs, since this handler emits the same kind of multi-file versioned edit and a stale open buffer would otherwise carry a version the client rejects. The handler never refuses: a filesystem rename isn't something this edit-only hook can block, so anything it can't confidently resolve is skipped rather than erroring the batch.
 
+### 3.23 Sequence diagram (#846)
+
+`bynk/sequenceModel` — a **custom (non-standard) request**, this server's first: everything in §3.1–3.22 is a standard `LanguageServer` trait method, registered automatically; this one has no trait slot and is wired via `tower-lsp`'s `LspService::build(...).custom_method("bynk/sequenceModel", Backend::sequence_model)`. Advertised through `ServerCapabilities.experimental` (`{"sequenceModel": true}`) — the only feature-detection surface a client has for a custom method. Params are the usual two-field cursor shape (`textDocument`, `position`); the response is a `SequenceModel | null` (`null` when no handler encloses the cursor).
+
+Backs the VS Code extension's **"Bynk: Show Sequence Diagram"** command and a per-handler **"Show Sequence"** CodeLens (sourced from a direct AST walk over `Service.handlers`/`AgentDecl.handlers`, not `index_queries::code_lenses` — that indexes only agent handlers, since `SymbolKind::Handler` excludes service handlers, which have no per-handler name). Served from the **committed round** through the non-refreshing decoration gate (§3.2.1, #733), same as CodeLens/inlay hints. **No refresh-nudge exists for it** — Tier 1 (see the design ADR, `design/pending/sequence-diagram-846.md` pre-stamp / its post-stamp ADR home) is on-demand: the client re-issues the request each time the command/lens fires, since there is no generic "refresh a custom method" in the LSP spec or in `tower_lsp::Client`.
+
+The query itself, `bynk_ide::sequence::sequence_model`, classifies each call in the handler body as a **lifeline** — a consumed capability, a call into a consumed context, or an agent (same-context included) — or as local computation that folds into the entry activation. It needs the handler's owning unit's cross-context/agent tables, which the per-file checking pass builds transiently and never retains; #846 adds `ProjectAnalysis.sequence_info` (mirrors the `unit_sources`, ADR 0095, precedent: a project-wide analysis table, not a per-file `bynk-check` captured one, since cross-context classification is inherently project-wide), threaded `ProjectAnalysis` → `ProjectDiagnostics` → the LSP `Analysis`, alongside the others. Cross-context/agent calls are **boundary-stop**: one Call+Return message, the callee's own body never walked. `if`/`match` render as `alt`/`opt` up to a depth budget (~2 levels); deeper nesting collapses to a single marker, still click-to-code-able via its own span.
+
+The Mermaid diagram text itself is generated **client-side** (`vscode-bynk/src/webview/mermaid-gen.ts`) from the structured `SequenceModel` JSON — `bynk-check`/`bynk-ide`/`bynk-lsp` stay Mermaid-agnostic; the extension's first webview owns rendering, CSP (vendored Mermaid, no CDN, per the documentation track's convention), and click-to-code (a DOM-order zip against the rendered SVG, not Mermaid's inconsistent `click`-directive support for sequence diagrams).
+
 ---
 
 ## 4. Implementation architecture
@@ -713,6 +723,12 @@ workspace.symbol                   (v0.26, §3.11; aggregated across projects, �
 workspace.workspaceFolders         (real multi-root, v0.182, §2.4)
 workspace.didChangeWatchedFiles    (registered dynamically by the server, v0.183, §2.3)
 workspace.fileOperations.willRename (#302, §3.22; `**/*.bynk` files only, not folders)
+```
+
+Custom (non-standard) requests — no `LanguageServer` trait slot, registered via `tower-lsp`'s `custom_method` builder, advertised through `experimental` (the only feature-detection surface a client has for one):
+
+```
+bynk/sequenceModel               (#846, §3.23; served from the committed round, no refresh nudge)
 ```
 
 Not declared (genuinely out of scope so far):
