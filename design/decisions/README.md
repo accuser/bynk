@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0263](0263-inline-doc-rendering.md) | **In-editor doc-comment rendering is style-in-place client decorations over a client-side Markdown tokenizer** (v0.223.1) — The VS Code extension decorates doc-comment Markdown in the source buffer (heading colour + bold, bold, italic) without concealing markers, tokenized client-side | Accepted (v0.223.1) |
 | [0262](0262-sequence-diagram-corrected-citations.md) | **Two citation corrections carried from issue review into the implementation** (v0.223) — The issue's grounding citations for agent-dispatch recognition and CodeLens plumbing pointed at the wrong code; the implementation uses the corrected locations | Accepted (v0.223) |
 | [0261](0261-sequence-diagram-nested-block-branch-tracking.md) | **A nested block records its parent's branch index, not just its parent block id** (v0.223) — Needed to place a nested `if`/`match` correctly when its parent branch is itself message-free | Accepted (v0.223) |
 | [0260](0260-sequence-diagram-return-gating-blocks.md) | **An `if`/`match` renders even when every branch is call-free, when it gates the handler's own return** (v0.223) — Corrects a narrower reading of the issue text that would have dropped the rate-limiter's own worked example | Accepted (v0.223) |
