@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **424** codes in total.
+There are **426** codes in total.
 
 ## Agents
 
@@ -169,10 +169,12 @@ There are **424** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
+| `bynk.messages.incomplete` | A locale is missing a code the reference locale declares. |  |
 | `bynk.messages.missing_locale_dependency` | A commons declaring `messages` doesn't `uses bynk.locale`, which its generated `render`'s fallback needs. |  |
 | `bynk.messages.missing_reference` | A message bundle has no `@reference` block. |  |
 | `bynk.messages.multiple_reference` | A message bundle has more than one `@reference` block. |  |
 | `bynk.messages.outside_commons` | A `messages` declaration appears outside a commons. |  |
+| `bynk.messages.placeholder_mismatch` | A locale's template for a code uses a different set of `{name}` placeholders than the reference locale's. |  |
 
 ## Observation
 

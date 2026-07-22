@@ -1,0 +1,12 @@
+commons bundle
+
+uses bynk.locale
+
+messages en @reference {
+  "greeting" => "Hello"
+  "farewell" => "Bye"
+}
+
+messages fr {
+  "greeting" => "Bonjour"
+}
