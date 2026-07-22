@@ -1,12 +1,6 @@
----
-level: minor
-changelog: "`bynkc test --coverage` (and `bynk test --coverage`) reports statement/line coverage attributed to `.bynk` source — a rich summary table, or a `coverage` block under `--format json` — collected via V8's `NODE_V8_COVERAGE` and remapped through the emitted source maps, with the generated TypeScript invisible; closes #854"
----
+# 0271 — `bynkc test --coverage` — V8 line coverage remapped onto `.bynk` source
 
-## ADR: bynkc-test-coverage
-
-title: `bynkc test --coverage` — V8 line coverage remapped onto `.bynk` source
-summary: Collect coverage at the runner's one node launch and attribute it to `.bynk` lines through the emitted source maps
+- **Status:** Accepted (v0.227)
 
 **Context.** Bynk has a first-class test runner — discovery, rich/JSON output,
 seeded `property` tests, per-case filtering, an inspector path — but no way to

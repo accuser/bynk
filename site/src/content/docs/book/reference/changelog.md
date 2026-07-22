@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.226**.
+written against **v0.227**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.227.0** | "`bynkc test --coverage` (and `bynk test --coverage`) reports statement/line coverage attributed to `.bynk` source — a rich summary table, or a `coverage` block under `--format json` — collected via V8's `NODE_V8_COVERAGE` and remapped through the emitted source maps, with the generated TypeScript invisible; closes #854" |
 | **v0.226.0** | Capability-aware quick-fixes — add a missing `consumes`, fill missing record fields, and auto-`uses`/`consumes` an unresolved name (#852) |
 | **v0.225.0** | VS Code documentation view — a file's doc comments as a rendered reference page (`bynk/documentationModel` + webview) |
 | **v0.224.0** | Diagnostic codes are teachable — curated codes carry a `codeDescription` link to their Book explanation in the editor, and `bynk explain <code>` prints the offline-complete blurb, an example, and the link |
