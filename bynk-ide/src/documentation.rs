@@ -338,6 +338,18 @@ agent Counter {
             .find(|e| e.name == "Counter.bump")
             .unwrap();
         assert!(bump.markdown.contains("Adds `amount` to the total"));
+
+        // `describe_service_handler` is the one net-new renderer in #847 — pin
+        // both its signature and its appended doc prose (the `if let Some(doc)`
+        // branch), which no other assertion here reaches.
+        let get_now = model
+            .entries
+            .iter()
+            .find(|e| e.kind == "handler" && e.name.starts_with("on GET"))
+            .expect("the service handler entry");
+        assert!(get_now.markdown.contains("```bynk"));
+        assert!(get_now.markdown.contains("A handler of service `Api`."));
+        assert!(get_now.markdown.contains("Returns the current instant."));
     }
 
     #[test]

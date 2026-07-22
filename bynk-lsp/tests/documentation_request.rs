@@ -96,6 +96,26 @@ fn documentation_model_aggregates_and_lowers_the_whole_file() {
         .expect("the agent handler entry");
     assert!(apply.documented);
     assert!(apply.markdown.contains("Applies a signed delta"));
+
+    // The service handler goes through `describe_service_handler` (the one
+    // net-new renderer) — pin its signature + appended doc prose survive to the
+    // wire form.
+    let balance = wire
+        .entries
+        .iter()
+        .find(|e| e.kind == "handler" && e.name.starts_with("on GET"))
+        .expect("the service handler entry");
+    assert!(balance.documented);
+    assert!(
+        balance
+            .markdown
+            .contains("A handler of service `Accounts`.")
+    );
+    assert!(
+        balance
+            .markdown
+            .contains("The current balance for the addressed account.")
+    );
     // A real, non-empty click-to-code target (the `apply` name span).
     let (s, e) = (apply.range.start, apply.range.end);
     assert!((s.line, s.character) < (e.line, e.character));
