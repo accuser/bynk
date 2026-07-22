@@ -226,6 +226,33 @@ describe("toMermaid", () => {
     assert.ok(!text.includes("note over"), text);
   });
 
+  it("anchors notes over the entry, not the actor, when a principal is present", () => {
+    // Regression: `entryAnchor` must be found by kind, not array position — the
+    // actor sits at participants[0] (id 1) ahead of the entry (id 0), so a
+    // placeholder/collapsed note anchored by position would draw over the actor.
+    const model: SequenceModel = {
+      participants: [
+        { id: 1, kind: "Actor", name: "Visitor", range: ZERO_RANGE },
+        { id: 0, kind: "Entry", name: "api", range: null },
+      ],
+      messages: [],
+      blocks: [
+        {
+          id: 0,
+          kind: "Collapsed",
+          branches: [],
+          range: ZERO_RANGE,
+          parent: null,
+          parentBranch: null,
+        },
+      ],
+    };
+    const { text, noteOrder } = toMermaid(model);
+    assert.ok(text.includes("note over P0:"), text);
+    assert.ok(!text.includes("note over P1:"), text);
+    assert.strictEqual(noteOrder.length, 1);
+  });
+
   it("renders opt (not alt) for a single-branch block", () => {
     const model: SequenceModel = {
       participants: [{ id: 0, kind: "Entry", name: "api call", range: null }],

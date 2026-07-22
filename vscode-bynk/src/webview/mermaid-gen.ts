@@ -80,10 +80,12 @@ export function toMermaid(model: SequenceModel): MermaidResult {
   const messageOrder: Message[] = [];
   const noteOrder: AltBlock[] = [];
 
-  // The entry lifeline (participant 0) — where every note (a collapsed
-  // marker, a branch reply, an empty-branch placeholder) is anchored, since
-  // the handler *is* the entry and its reply has no separate caller lifeline.
-  const entryAnchor = model.participants[0]?.id ?? 0;
+  // The entry lifeline — where every note (a collapsed marker, a branch reply,
+  // an empty-branch placeholder) is anchored, since the handler *is* the entry.
+  // Found by kind, not array position: with a principal the actor is inserted
+  // at index 0 (ahead of the entry), so `participants[0]` is no longer the
+  // entry — anchoring by position would draw notes over the actor.
+  const entryAnchor = model.participants.find((p) => p.kind === "Entry")?.id ?? 0;
 
   for (const p of model.participants) {
     // The principal renders as an `actor` (stick figure); everyone else is a
