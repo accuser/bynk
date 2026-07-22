@@ -66,5 +66,6 @@ jobs:
 
             Prioritise real, actionable findings over stylistic nits. If the
             change looks sound, say so briefly rather than inventing concerns.
-          # Bump --max-turns for deeper reviews; each turn adds token cost.
-          claude_args: "--max-turns 10"
+          # Opus for the deepest correctness/edge-case rigour on code changes.
+          # Bump --max-turns for deeper reviews; each turn adds usage cost.
+          claude_args: "--max-turns 10 --model claude-opus-4-8"

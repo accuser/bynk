@@ -61,4 +61,5 @@ jobs:
 
             Be concise and specific. Do NOT open pull requests or modify files —
             this is a review comment only.
-          claude_args: "--max-turns 6"
+          # Sonnet suits the higher-level analysis a proposal review needs.
+          claude_args: "--max-turns 6 --model claude-sonnet-5"
