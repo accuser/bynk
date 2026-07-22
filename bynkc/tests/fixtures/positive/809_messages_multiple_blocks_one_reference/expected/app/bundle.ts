@@ -20,8 +20,22 @@ const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) =>
   "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
 };
 
+const __messages_fr: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
+  "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Bonjour, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
+};
+
+const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+  "en": __messages_en,
+  "fr": __messages_fr,
+};
+
+export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;
+export const messagesLocales: readonly LocaleTag[] = [("en" as string) as LocaleTag, ("fr" as string) as LocaleTag];
+
 export function render(tag: LocaleTag, msg: Message): string {
-  const __entry = __messages_en[msg.code];
+  const __localeTable = messagesByLocale[tag];
+  const __referenceTable = messagesByLocale[messagesReferenceLocale];
+  const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];
   if (__entry !== undefined) {
     return __entry(msg.params);
   }

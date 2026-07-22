@@ -1,4 +1,5 @@
 use super::*;
+use crate::emitter;
 use bynk_check::builtin_names::methods::{OF, UNSAFE};
 
 /// v0.19: the lock violation a deployment unit's native-platform set implies
@@ -170,6 +171,20 @@ pub(crate) fn check_platform_lock(
 /// `code`, and (since nothing in this compiler auto-injects a `uses`
 /// clause) that a commons declaring `messages` also `uses bynk.locale` —
 /// the generated bundle-scoped `render`'s fallback needs it in scope.
+///
+/// message-bundles slice 2 (#874): once cardinality confirms exactly one
+/// `@reference` block, a second pass diffs every other declared locale
+/// against it — reference-bundle completeness (`bynk.messages.incomplete`,
+/// one diagnostic per missing `(locale, code)` witness, mirroring
+/// `bynk.types.non_exhaustive_match`'s own one-witness-per-diagnostic
+/// convention) and cross-locale placeholder-*set* agreement
+/// (`bynk.messages.placeholder_mismatch`, only for codes present in both —
+/// a missing code is `incomplete`'s job, not this one's). Two blocks
+/// declaring the same locale tag are rejected outright
+/// (`bynk.resolve.duplicate_message_locale`, PR #875 review) — the emitter
+/// has no dedup of its own, so a silent last-wins here would let a hard
+/// `tsc` redeclare error (two colliding `const __messages_<tag>`
+/// declarations) through instead.
 pub(crate) fn check_messages_bundles(
     parsed: &[ParsedFile],
     groups: &HashMap<String, Vec<usize>>,
@@ -180,6 +195,8 @@ pub(crate) fn check_messages_bundles(
     for (name, indices) in groups {
         let mut first_messages: Option<(usize, Span)> = None;
         let mut reference_sites: Vec<(usize, Span)> = Vec::new();
+        let mut reference_block: Option<(usize, &MessagesDecl)> = None;
+        let mut by_tag: HashMap<&str, (usize, &MessagesDecl)> = HashMap::new();
         for &i in indices {
             for item in parsed[i].items() {
                 let CommonsItem::Messages(m) = item else {
@@ -199,9 +216,35 @@ pub(crate) fn check_messages_bundles(
                     );
                     continue;
                 }
+                // message-bundles slice 2 (#874, PR #875 review): two blocks
+                // declaring the same locale tag are rejected, not
+                // last-write-wins — the emitter (`emit_messages_bundle`)
+                // has no dedup of its own and would emit two colliding
+                // `const __messages_<tag>` declarations, a hard `tsc`
+                // redeclare error. Mirrors `bynk.resolve.duplicate_fn`'s own
+                // shape: only the *first* occurrence seeds `by_tag`, so a
+                // third duplicate still reports against the original, not
+                // the second.
+                if let Some(&(_, prev)) = by_tag.get(m.tag.name.as_str()) {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.resolve.duplicate_message_locale",
+                            m.tag.span,
+                            format!(
+                                "locale \"{}\" is already declared in this bundle",
+                                m.tag.name
+                            ),
+                        )
+                        .with_label(prev.tag.span, "previously declared here"),
+                    );
+                } else {
+                    by_tag.insert(m.tag.name.as_str(), (i, m));
+                }
                 for ann in &m.annotations {
                     if ann.name.name == "reference" {
                         reference_sites.push((i, ann.span));
+                        reference_block = Some((i, m));
                     }
                 }
                 let mut seen: HashMap<&str, Span> = HashMap::new();
@@ -244,7 +287,57 @@ pub(crate) fn check_messages_bundles(
                     ),
                 );
             }
-            1 => {}
+            1 => {
+                // message-bundles slice 2 (#874): "the reference" is only
+                // well-defined here — 0 or 2+ already reported their own
+                // diagnostic above, and completeness/placeholder-agreement
+                // against an ambiguous or absent reference would be noise.
+                let (_, reference) = reference_block
+                    .expect("reference_sites.len() == 1 implies reference_block is Some");
+                // Sorted for deterministic diagnostic order — `by_tag`'s
+                // HashMap iteration is not otherwise stable across runs.
+                let mut sorted_tags: Vec<&&str> = by_tag.keys().collect();
+                sorted_tags.sort();
+                for &&tag in &sorted_tags {
+                    let &(locale_i, locale_m) = &by_tag[tag];
+                    if tag == reference.tag.name.as_str() {
+                        continue;
+                    }
+                    for ref_entry in &reference.entries {
+                        let Some(locale_entry) =
+                            locale_m.entries.iter().find(|e| e.code == ref_entry.code)
+                        else {
+                            errors.push_for(
+                                Some(&parsed[locale_i].identity_path),
+                                CompileError::new(
+                                    "bynk.messages.incomplete",
+                                    locale_m.span,
+                                    format!(
+                                        "locale \"{tag}\" is missing code \"{}\", declared by the reference locale \"{}\"",
+                                        ref_entry.code, reference.tag.name
+                                    ),
+                                ),
+                            );
+                            continue;
+                        };
+                        let ref_names = emitter::placeholder_names(&ref_entry.template);
+                        let locale_names = emitter::placeholder_names(&locale_entry.template);
+                        if ref_names != locale_names {
+                            errors.push_for(
+                                Some(&parsed[locale_i].identity_path),
+                                CompileError::new(
+                                    "bynk.messages.placeholder_mismatch",
+                                    locale_entry.template_span,
+                                    format!(
+                                        "locale \"{tag}\"'s template for code \"{}\" uses placeholders {locale_names:?}, but the reference locale \"{}\"'s uses {ref_names:?}",
+                                        ref_entry.code, reference.tag.name
+                                    ),
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
             _ => {
                 let (_, first_ref_span) = reference_sites[0];
                 for &(i, span) in &reference_sites[1..] {

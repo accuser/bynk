@@ -4,7 +4,7 @@
 // hand alongside the Rust side — the same posture every other custom
 // LSP-adjacent shape in this extension takes.
 
-export type ParticipantKind = "Entry" | "Capability" | "Context" | "Agent";
+export type ParticipantKind = "Entry" | "Capability" | "Context" | "Agent" | "Actor";
 export type MessageKind = "Call" | "Return" | "Send";
 export type AltKind = "If" | "Match" | "Collapsed";
 
@@ -37,6 +37,11 @@ export interface Message {
 export interface Branch {
   label: string;
   messageIds: number[];
+  /** The value the handler yields on this branch (`Ok(view)`) — rendered as a
+   *  note over the entry lifeline so a return-gating block (whose branches
+   *  call no lifeline) has content instead of collapsing to an empty `alt`.
+   *  `null` when the tail carries no distinguishable reply. */
+  reply: string | null;
 }
 
 export interface AltBlock {

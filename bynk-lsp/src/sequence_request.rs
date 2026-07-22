@@ -43,9 +43,10 @@ pub fn sequence_model_at(
                     return Some(sequence::sequence_model(
                         h,
                         HandlerOwner::Service(&s.name.name),
-                        // v0.155: a handler with no `given` of its own inherits
-                        // the service-level default. See `sequence_model`.
+                        // v0.155: a handler with no `given`/`by` of its own
+                        // inherits the service-level default. See `sequence_model`.
                         &s.default_given,
+                        s.default_by.as_ref(),
                         info,
                     ));
                 }
@@ -55,8 +56,10 @@ pub fn sequence_model_at(
                     return Some(sequence::sequence_model(
                         h,
                         HandlerOwner::Agent(&a.name.name),
-                        // Agents have no service-level `given` default.
+                        // Agents have no service-level `given` default and no
+                        // principal (`by`).
                         &[],
+                        None,
                         info,
                     ));
                 }
@@ -166,6 +169,9 @@ pub struct WireBranch {
     pub label: String,
     #[serde(rename = "messageIds")]
     pub message_ids: Vec<usize>,
+    /// The branch's rendered outcome (`Ok(view)`) — see
+    /// [`bynk_ide::sequence::Branch::reply`]. `null` on the wire when absent.
+    pub reply: Option<String>,
 }
 
 fn participant_kind_str(k: ParticipantKind) -> &'static str {
@@ -174,6 +180,7 @@ fn participant_kind_str(k: ParticipantKind) -> &'static str {
         ParticipantKind::Capability => "Capability",
         ParticipantKind::Context => "Context",
         ParticipantKind::Agent => "Agent",
+        ParticipantKind::Actor => "Actor",
     }
 }
 
@@ -229,6 +236,7 @@ pub fn to_wire(model: &SequenceModel, text: &str) -> WireSequenceModel {
                     .map(|br| WireBranch {
                         label: br.label.clone(),
                         message_ids: br.message_ids.clone(),
+                        reply: br.reply.clone(),
                     })
                     .collect(),
                 range: crate::position::span_to_range(text, b.span),

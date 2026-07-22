@@ -60,6 +60,12 @@ pub enum ParticipantKind {
     Capability,
     Context,
     Agent,
+    /// The handler's **principal** — the `by <Actor>` role (v0.45) that
+    /// originates the request. Rendered leftmost, as the sender of the initial
+    /// inbound message into the entry, and the recipient of the handler's
+    /// replies. Present only for a handler that declares (or inherits) a `by`
+    /// clause — HTTP/WebSocket service handlers; agents have no principal.
+    Actor,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +114,20 @@ pub enum AltKind {
 pub struct Branch {
     pub label: String,
     pub message_ids: Vec<usize>,
+    /// The value the handler yields on this branch — its rendered tail
+    /// expression (`Ok(view)`, `TooManyRequests(...)`). This is the "reply to
+    /// its own caller" ADR 0260 names as always present, but which the
+    /// original model never actually emitted: a return-gating `if`/`match`
+    /// whose branches call no lifeline produced two empty branches, and an
+    /// empty `alt` renders as a mangled zero-width box (issue: rate-limiter's
+    /// `GET /check/:client`). Carrying the outcome here gives the block real
+    /// content to render as a note over the entry lifeline.
+    ///
+    /// `None` when the tail carries no distinguishable signal: a unit `()`
+    /// tail (an else-less `if`'s synthesised branch), or control flow
+    /// (`if`/`match`/block) that is itself already rendered as nested
+    /// structure — a note duplicating it would be noise.
+    pub reply: Option<String>,
 }
 
 /// Whether an expression sits directly under an effect operator
@@ -141,10 +161,15 @@ struct BlockCtx {
 /// the service default would drop every capability lifeline. Pass `&[]` when
 /// there is no default (always the case for `HandlerOwner::Agent` — agents
 /// have no service-level `given`).
+/// `default_by` is the owning service's service-level `by` default (v0.155,
+/// `ServiceDecl.default_by`) — a handler that declares no `by` of its own
+/// inherits it, exactly as it does the `given` default. Pass `None` for an
+/// agent (agents have no principal).
 pub fn sequence_model(
     handler: &Handler,
     owner: HandlerOwner<'_>,
     default_given: &[CapRef],
+    default_by: Option<&ByClause>,
     info: Option<&ContextSequenceInfo>,
 ) -> SequenceModel {
     let given = if handler.given.is_empty() {
@@ -152,13 +177,27 @@ pub fn sequence_model(
     } else {
         &handler.given
     };
-    let mut b = Builder::new(entry_label(handler, owner), given, info);
-    b.walk_block(&handler.body, None, 0);
+    let by = handler.by_clause.as_ref().or(default_by);
+    let mut b = Builder::new(entry_label(handler, owner, by.is_some()), given, info);
+    if let Some(by) = by {
+        // The principal originates the request: a leftmost actor lifeline that
+        // sends the initial inbound message (the route/method) into the entry.
+        // The entry label is bare (`api`) in this case — the request descriptor
+        // rides on the message rather than doubling into the entry box.
+        b.add_actor(actor_name(by), by.span);
+        b.emit_request(discriminator(handler), handler.span);
+    }
+    // The whole body is in the handler's return position: its tail (and each
+    // return-gating branch's tail) is what the handler replies to the actor.
+    b.walk_block(&handler.body, None, 0, true);
     b.finish()
 }
 
-fn entry_label(handler: &Handler, owner: HandlerOwner<'_>) -> String {
-    let discriminator = match &handler.kind {
+/// The handler's request descriptor — its method + path (`GET /check/:client`),
+/// method name, or lifecycle kind. Labels the initial actor→entry message, and
+/// (when there is no actor) the entry box's own discriminator suffix.
+fn discriminator(handler: &Handler) -> String {
+    match &handler.kind {
         HandlerKind::Call => match handler.method_name.as_ref() {
             Some(m) => m.name.clone(),
             None => "call".to_string(),
@@ -168,10 +207,29 @@ fn entry_label(handler: &Handler, owner: HandlerOwner<'_>) -> String {
         HandlerKind::Message => "message".to_string(),
         HandlerKind::Open => "open".to_string(),
         HandlerKind::Close => "close".to_string(),
-    };
+    }
+}
+
+/// The actor participant's name — the referenced actor contract(s). More than
+/// one (`by who: A | B`, an ordered sum of peer actors) joins with `|`.
+fn actor_name(by: &ByClause) -> String {
+    by.actors
+        .iter()
+        .map(|a| a.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// The entry lifeline's label. With an actor present the request descriptor
+/// moves onto the initial message, so the entry is just its owner name
+/// (`api`); without one it keeps the self-describing combined form
+/// (`api GET /check/:client`, `Limiter.hit`).
+fn entry_label(handler: &Handler, owner: HandlerOwner<'_>, has_actor: bool) -> String {
     match owner {
-        HandlerOwner::Service(name) => format!("{name} {discriminator}"),
-        HandlerOwner::Agent(name) => format!("{name}.{discriminator}"),
+        HandlerOwner::Service(name) if has_actor => name.to_string(),
+        HandlerOwner::Agent(name) if has_actor => name.to_string(),
+        HandlerOwner::Service(name) => format!("{name} {}", discriminator(handler)),
+        HandlerOwner::Agent(name) => format!("{name}.{}", discriminator(handler)),
     }
 }
 
@@ -181,6 +239,11 @@ struct Builder<'a> {
     participants: Vec<Participant>,
     messages: Vec<Message>,
     blocks: Vec<AltBlock>,
+    /// The principal's participant id, once [`Builder::add_actor`] has run.
+    /// Its presence is also the switch for reply routing: with an actor, a
+    /// return-position outcome is emitted as a `Return` message *to the actor*;
+    /// without one it stays a note on the branch (`Branch::reply`).
+    actor: Option<u32>,
 }
 
 impl<'a> Builder<'a> {
@@ -200,7 +263,57 @@ impl<'a> Builder<'a> {
             }],
             messages: Vec::new(),
             blocks: Vec::new(),
+            actor: None,
         }
+    }
+
+    /// Add the principal as the leftmost participant. Inserted at index 0 so it
+    /// renders left of the entry, while the entry keeps [`ENTRY_ID`] (`0`) —
+    /// participant ids are stable labels, independent of array position, so
+    /// every `from: ENTRY_ID` reference stays correct.
+    fn add_actor(&mut self, name: String, span: Span) {
+        let id = self.participants.len() as u32;
+        self.participants.insert(
+            0,
+            Participant {
+                id,
+                kind: ParticipantKind::Actor,
+                name,
+                span: Some(span),
+            },
+        );
+        self.actor = Some(id);
+    }
+
+    /// The initial inbound request: a lone `Call` from the actor to the entry
+    /// (no paired `Return` — the handler's replies are the branch outcomes).
+    /// Spanned at the handler declaration so it sorts ahead of every body
+    /// message and click-navigates to the handler.
+    fn emit_request(&mut self, label: String, handler_span: Span) {
+        let Some(actor) = self.actor else { return };
+        self.messages.push(Message {
+            from: actor,
+            to: ENTRY_ID,
+            kind: MessageKind::Call,
+            label,
+            span: handler_span,
+            block: None,
+        });
+    }
+
+    /// A return-position outcome replied to the principal — a `Return` message
+    /// from the entry to the actor. A no-op when there is no actor (the outcome
+    /// stays a branch note instead).
+    fn emit_reply(&mut self, outcome: String, span: Span, current_block: Option<BlockCtx>) {
+        let Some(actor) = self.actor else { return };
+        self.messages.push(Message {
+            from: ENTRY_ID,
+            to: actor,
+            kind: MessageKind::Return,
+            label: outcome,
+            span,
+            block: current_block.map(|c| c.id),
+        });
     }
 
     fn finish(self) -> SequenceModel {
@@ -230,25 +343,43 @@ impl<'a> Builder<'a> {
     }
 
     /// Walk a block's statements, then its tail — the traversal spine every
-    /// call site (top-level body, `if`/`match` branch) shares.
-    fn walk_block(&mut self, block: &Block, current_block: Option<BlockCtx>, depth: u32) {
+    /// call site (top-level body, `if`/`match` branch) shares. `ret` is whether
+    /// this block sits in the handler's **return position**: only then is its
+    /// tail a value the handler replies to the caller. Statements are never in
+    /// return position (their values are bound or discarded); only the tail
+    /// inherits the block's `ret`.
+    fn walk_block(
+        &mut self,
+        block: &Block,
+        current_block: Option<BlockCtx>,
+        depth: u32,
+        ret: bool,
+    ) {
         for stmt in &block.statements {
             match stmt {
                 Statement::EffectLet(l) => {
-                    self.walk_value(&l.value, current_block, depth, Some(Arrow::Awaited))
+                    self.walk_value(&l.value, current_block, depth, Some(Arrow::Awaited), false)
                 }
                 Statement::Do(d) => {
-                    self.walk_value(&d.value, current_block, depth, Some(Arrow::Awaited))
+                    self.walk_value(&d.value, current_block, depth, Some(Arrow::Awaited), false)
                 }
-                Statement::Send(s) => {
-                    self.walk_value(&s.value, current_block, depth, Some(Arrow::FireAndForget))
+                Statement::Send(s) => self.walk_value(
+                    &s.value,
+                    current_block,
+                    depth,
+                    Some(Arrow::FireAndForget),
+                    false,
+                ),
+                Statement::Let(l) => self.walk_value(&l.value, current_block, depth, None, false),
+                Statement::Expect(e) => {
+                    self.walk_value(&e.value, current_block, depth, None, false)
                 }
-                Statement::Let(l) => self.walk_value(&l.value, current_block, depth, None),
-                Statement::Expect(e) => self.walk_value(&e.value, current_block, depth, None),
-                Statement::Assign(a) => self.walk_value(&a.value, current_block, depth, None),
+                Statement::Assign(a) => {
+                    self.walk_value(&a.value, current_block, depth, None, false)
+                }
             }
         }
-        self.walk_value(&block.tail, current_block, depth, None);
+        self.walk_value(&block.tail, current_block, depth, None, ret);
     }
 
     /// Classify one expression reached directly under a statement (or a
@@ -265,35 +396,53 @@ impl<'a> Builder<'a> {
         current_block: Option<BlockCtx>,
         depth: u32,
         arrow: Option<Arrow>,
+        ret: bool,
     ) {
         let inner = peel_paren(expr);
         match &inner.kind {
-            ExprKind::If {
-                then_block,
-                else_block,
-                ..
-            } => self.walk_if(inner.span, then_block, else_block, current_block, depth),
-            ExprKind::Match { arms, .. } => self.walk_match(inner.span, arms, current_block, depth),
-            ExprKind::Block(b) => self.walk_block(b, current_block, depth),
+            // Control flow in return position keeps the `ret` flag: each
+            // branch's own tail is what the handler ultimately returns.
+            ExprKind::If { .. } => self.walk_if(inner, current_block, depth, ret),
+            ExprKind::Match { arms, .. } => {
+                self.walk_match(inner.span, arms, current_block, depth, ret)
+            }
+            ExprKind::Block(b) => self.walk_block(b, current_block, depth, ret),
             ExprKind::Call { .. }
             | ExprKind::ConstructorCall { .. }
             | ExprKind::MethodCall { .. } => {
                 if let Some(arrow) = arrow {
                     self.classify_call(inner, arrow, current_block);
                 }
+                self.maybe_reply(inner, current_block, ret);
             }
-            _ => {}
+            _ => self.maybe_reply(inner, current_block, ret),
         }
     }
 
-    fn walk_if(
-        &mut self,
-        span: Span,
-        then_block: &Block,
-        else_block: &Block,
-        current_block: Option<BlockCtx>,
-        depth: u32,
-    ) {
+    /// A value tail in return position is the handler's reply to the actor.
+    /// A no-op off the return path, on a signal-free outcome (unit), or with
+    /// no actor (`emit_reply` itself then does nothing).
+    fn maybe_reply(&mut self, expr: &Expr, current_block: Option<BlockCtx>, ret: bool) {
+        if !ret {
+            return;
+        }
+        if let Some(outcome) = branch_outcome(expr) {
+            self.emit_reply(outcome, expr.span, current_block);
+        }
+    }
+
+    /// `if_expr` is the (paren-peeled) `ExprKind::If` — destructured here rather
+    /// than in the caller to keep the argument list small.
+    fn walk_if(&mut self, if_expr: &Expr, current_block: Option<BlockCtx>, depth: u32, ret: bool) {
+        let ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } = &if_expr.kind
+        else {
+            return;
+        };
+        let span = if_expr.span;
         if depth >= MAX_BLOCK_DEPTH {
             self.push_collapsed(span, current_block);
             return;
@@ -308,24 +457,42 @@ impl<'a> Builder<'a> {
             parent_branch: current_block.map(|c| c.branch),
         });
         let then_start = self.messages.len();
-        self.walk_block(then_block, Some(BlockCtx { id, branch: 0 }), depth + 1);
+        self.walk_block(then_block, Some(BlockCtx { id, branch: 0 }), depth + 1, ret);
         let then_ids = (then_start..self.messages.len()).collect();
-        let else_start = self.messages.len();
-        // An implicit (synthesised) `()` else has nothing to say for itself —
-        // still walked (it may itself contain lifeline calls it just doesn't
-        // gate a return with), but its branch label reflects the omission.
-        self.walk_block(else_block, Some(BlockCtx { id, branch: 1 }), depth + 1);
-        let else_ids = (else_start..self.messages.len()).collect();
-        self.blocks[id as usize].branches = vec![
-            Branch {
-                label: "then".to_string(),
-                message_ids: then_ids,
-            },
-            Branch {
-                label: "else".to_string(),
-                message_ids: else_ids,
-            },
-        ];
+        // The condition itself labels the `then` branch (`alt view.allowed`)
+        // rather than a bare "then" — the branch predicate is the signal.
+        let mut branches = vec![Branch {
+            label: bynk_fmt::expr_to_string(cond),
+            message_ids: then_ids,
+            reply: self.branch_reply(&then_block.tail),
+        }];
+        // An else-less `if` has a synthesised `()` else block: no messages, no
+        // nested blocks, no outcome. Rendering it as a second (empty) branch
+        // gains nothing — a single-branch block renders as an `opt`, which is
+        // exactly the right shape for a guard with no alternative. A written
+        // `else` is always walked and always contributes its branch.
+        if !else_block.is_synth_unit() {
+            let else_start = self.messages.len();
+            self.walk_block(else_block, Some(BlockCtx { id, branch: 1 }), depth + 1, ret);
+            branches.push(Branch {
+                label: "otherwise".to_string(),
+                message_ids: (else_start..self.messages.len()).collect(),
+                reply: self.branch_reply(&else_block.tail),
+            });
+        }
+        self.blocks[id as usize].branches = branches;
+    }
+
+    /// A branch's `reply` note — its outcome, but only when there is no actor.
+    /// With an actor the outcome is instead emitted as a `Return` message to it
+    /// (by the return-position walk of the branch tail), so a note would double
+    /// it.
+    fn branch_reply(&self, tail: &Expr) -> Option<String> {
+        if self.actor.is_some() {
+            None
+        } else {
+            branch_outcome(tail)
+        }
     }
 
     fn walk_match(
@@ -334,6 +501,7 @@ impl<'a> Builder<'a> {
         arms: &[MatchArm],
         current_block: Option<BlockCtx>,
         depth: u32,
+        ret: bool,
     ) {
         if depth >= MAX_BLOCK_DEPTH {
             self.push_collapsed(span, current_block);
@@ -355,13 +523,23 @@ impl<'a> Builder<'a> {
                 id,
                 branch: arm_index as u32,
             });
-            match &arm.body {
-                MatchBody::Expr(e) => self.walk_value(e, branch_ctx, depth + 1, None),
-                MatchBody::Block(b) => self.walk_block(b, branch_ctx, depth + 1),
-            }
+            // The arm's tail — the value it yields — is its outcome, whether
+            // the body is a bare expression or a block. It is in the match's
+            // own return position, so a return-position arm replies to the actor.
+            let reply = match &arm.body {
+                MatchBody::Expr(e) => {
+                    self.walk_value(e, branch_ctx, depth + 1, None, ret);
+                    self.branch_reply(e)
+                }
+                MatchBody::Block(b) => {
+                    self.walk_block(b, branch_ctx, depth + 1, ret);
+                    self.branch_reply(&b.tail)
+                }
+            };
             branches.push(Branch {
                 label: pattern_summary(&arm.pattern),
                 message_ids: (start..self.messages.len()).collect(),
+                reply,
             });
         }
         self.blocks[id as usize].branches = branches;
@@ -497,6 +675,22 @@ impl<'a> Builder<'a> {
 fn call_label(method: &str, args: &[Expr]) -> String {
     let rendered: Vec<String> = args.iter().map(bynk_fmt::expr_to_string).collect();
     format!("{method}({})", rendered.join(", "))
+}
+
+/// A branch's rendered outcome — the tail value the handler yields on that
+/// path (`Ok(view)`), which a renderer shows as a note over the entry
+/// lifeline. `None` when the tail carries no distinguishable reply: a unit
+/// `()` (an else-less `if`'s synthesised branch, or an explicit `()` tail), or
+/// control flow (`if`/`match`/block) that is already rendered as its own
+/// nested structure — repeating it as a note would only add noise.
+fn branch_outcome(tail: &Expr) -> Option<String> {
+    let inner = peel_paren(tail);
+    match &inner.kind {
+        ExprKind::UnitLit | ExprKind::If { .. } | ExprKind::Match { .. } | ExprKind::Block(_) => {
+            None
+        }
+        _ => Some(bynk_fmt::expr_to_string(inner)),
+    }
 }
 
 fn peel_paren(expr: &Expr) -> &Expr {
@@ -636,9 +830,13 @@ service api from http {
             handler,
             HandlerOwner::Service("api"),
             &svc.default_given,
+            svc.default_by.as_ref(),
             Some(info),
         );
 
+        // The handler's `by Visitor` principal is the leftmost participant and
+        // originates the request; the entry box drops to the bare owner name
+        // (`api`) since the route now rides on the inbound message.
         let kinds: Vec<(ParticipantKind, &str)> = model
             .participants
             .iter()
@@ -647,30 +845,64 @@ service api from http {
         assert_eq!(
             kinds,
             vec![
-                (ParticipantKind::Entry, "api GET /check/:client"),
+                (ParticipantKind::Actor, "Visitor"),
+                (ParticipantKind::Entry, "api"),
                 (ParticipantKind::Capability, "Clock"),
                 (ParticipantKind::Agent, "Limiter"),
             ]
         );
+        let actor_id = model.participants[0].id;
+
+        // The initial inbound request: Visitor -> api, labelled by the route.
+        let req = &model.messages[0];
+        assert_eq!(req.kind, MessageKind::Call);
+        assert_eq!((req.from, req.to), (actor_id, ENTRY_ID));
+        assert_eq!(req.label, "GET /check/:client");
+
+        // now() + reply, hit(...) + reply, then a reply-to-actor per branch.
         assert_eq!(
             model.messages.len(),
-            4,
-            "Call+Return for Clock.now(), Call+Return for Limiter(client).hit(...)"
+            7,
+            "request + Clock Call/Return + Limiter Call/Return + a reply-to-actor per branch"
         );
-        assert_eq!(
-            model.blocks.len(),
-            1,
-            "the if/else gating the final return must produce an AltBlock even though \
-             neither branch calls a lifeline — matches the issue's own worked example"
-        );
+
+        assert_eq!(model.blocks.len(), 1);
         assert_eq!(model.blocks[0].kind, AltKind::If);
         assert_eq!(model.blocks[0].branches.len(), 2);
+        // With an actor, each branch carries no *note* (`reply` is None) — its
+        // outcome is instead a `Return` message back to the actor, which the
+        // `then`/`else` branches own via their `message_ids`.
+        let labels: Vec<&str> = model.blocks[0]
+            .branches
+            .iter()
+            .map(|b| b.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["view.allowed", "otherwise"]);
         assert!(
-            model.blocks[0]
-                .branches
-                .iter()
-                .all(|b| b.message_ids.is_empty()),
-            "neither branch calls anything lifeline-worthy — only the block itself is the signal"
+            model.blocks[0].branches.iter().all(|b| b.reply.is_none()),
+            "with an actor the outcome is a message, not a note"
+        );
+        let branch_replies: Vec<(MessageKind, u32, u32, &str)> = model.blocks[0]
+            .branches
+            .iter()
+            .flat_map(|b| &b.message_ids)
+            .map(|&i| {
+                let m = &model.messages[i];
+                (m.kind, m.from, m.to, m.label.as_str())
+            })
+            .collect();
+        assert_eq!(
+            branch_replies,
+            vec![
+                (MessageKind::Return, ENTRY_ID, actor_id, "Ok(view)"),
+                (
+                    MessageKind::Return,
+                    ENTRY_ID,
+                    actor_id,
+                    "TooManyRequests(\"rate limit exceeded\")",
+                ),
+            ],
+            "each branch replies its outcome to the actor"
         );
     }
 
@@ -717,6 +949,7 @@ service api {
             handler,
             HandlerOwner::Service("api"),
             &svc.default_given,
+            svc.default_by.as_ref(),
             Some(info),
         );
 
@@ -795,6 +1028,7 @@ service nestedService {
             handler,
             HandlerOwner::Service("fireService"),
             &svc.default_given,
+            svc.default_by.as_ref(),
             Some(&info),
         );
 
@@ -818,6 +1052,7 @@ service nestedService {
             handler,
             HandlerOwner::Service("localService"),
             &svc.default_given,
+            svc.default_by.as_ref(),
             Some(&info),
         );
 
@@ -840,6 +1075,7 @@ service nestedService {
             handler,
             HandlerOwner::Service("nestedService"),
             &svc.default_given,
+            svc.default_by.as_ref(),
             Some(&info),
         );
 
@@ -903,11 +1139,16 @@ service api from http by Visitor given Clock {
             "fixture handler must omit its own `given`"
         );
         assert_eq!(svc.default_given.len(), 1, "service-level `given Clock`");
+        assert!(
+            handler.by_clause.is_none() && svc.default_by.is_some(),
+            "fixture handler must inherit the service-level `by Visitor`"
+        );
 
         let model = sequence_model(
             handler,
             HandlerOwner::Service("api"),
             &svc.default_given,
+            svc.default_by.as_ref(),
             Some(info),
         );
 
@@ -919,11 +1160,108 @@ service api from http by Visitor given Clock {
         assert_eq!(
             kinds,
             vec![
-                (ParticipantKind::Entry, "api GET /now"),
+                // Both service-level defaults are inherited: `by Visitor` (the
+                // actor) and `given Clock` (the capability lifeline).
+                (ParticipantKind::Actor, "Visitor"),
+                (ParticipantKind::Entry, "api"),
                 (ParticipantKind::Capability, "Clock"),
             ],
-            "Clock must classify as a capability lifeline via the inherited \
-             service-level `given` — with only `handler.given` it would be dropped"
+            "Clock must classify via the inherited `given`, and Visitor via the \
+             inherited `by` — with only `handler.given`/`handler.by_clause` both \
+             would be dropped"
         );
+
+        // A non-branching handler tail still replies to the actor: the last
+        // message is the `Ok(...)` return, entry -> Visitor.
+        let actor_id = model.participants[0].id;
+        let last = model.messages.last().expect("at least one message");
+        assert_eq!(last.kind, MessageKind::Return);
+        assert_eq!((last.from, last.to), (ENTRY_ID, actor_id));
+        assert_eq!(last.label, "Ok(now.toEpochMillis())");
+    }
+
+    // -- Fixture 7 (issue): branch outcomes + else-less-if shape. An else-less
+    // -- `if` renders as an `opt` (one branch, not an empty second branch), and
+    // -- a `match` captures each arm's yielded value as its reply — the content
+    // -- that keeps a return-gating block from rendering as an empty box.
+    const OUTCOME_SRC: &str = r#"context outcome
+
+consumes bynk { Logger }
+
+service guardSvc {
+  on call(flag: Bool) -> Effect[()] given Logger {
+    if flag {
+      ~> Logger.info("hi")
+    }
+  }
+}
+
+service routeSvc {
+  on call(x: Int) -> Effect[Int] {
+    match x {
+      0 => 100
+      _ => x
+    }
+  }
+}
+"#;
+
+    #[test]
+    fn else_less_if_is_a_single_branch_opt_and_match_arms_capture_replies() {
+        // `info` is `None` here: this fixture references only a capability
+        // (`given Logger`) and control flow — no agent or cross-context call —
+        // so classification needs no project table, and this stays a pure
+        // parse-only test (the full project wouldn't type-check anyway).
+        let ctx = parse_context(OUTCOME_SRC);
+        let guard_svc = find_service(&ctx, "guardSvc");
+        let route_svc = find_service(&ctx, "routeSvc");
+
+        // `guard`: an else-less `if` — one branch (an `opt`), labelled by its
+        // condition. Its `then` carries the Send but its tail is unit, so it
+        // has no reply of its own.
+        let guard = &guard_svc.handlers[0];
+        let gm = sequence_model(
+            guard,
+            HandlerOwner::Service("guardSvc"),
+            &guard_svc.default_given,
+            guard_svc.default_by.as_ref(),
+            None,
+        );
+        assert_eq!(gm.blocks.len(), 1);
+        assert_eq!(gm.blocks[0].kind, AltKind::If);
+        assert_eq!(
+            gm.blocks[0].branches.len(),
+            1,
+            "an else-less `if` renders as an `opt`, not an `alt` with an empty second branch"
+        );
+        assert_eq!(gm.blocks[0].branches[0].label, "flag");
+        assert_eq!(
+            gm.blocks[0].branches[0].reply, None,
+            "a unit tail has no reply"
+        );
+        assert_eq!(
+            gm.blocks[0].branches[0].message_ids.len(),
+            1,
+            "the `~>` Send"
+        );
+
+        // `route`: a `match` whose arms yield distinct values — each captured
+        // as that branch's reply.
+        let route = &route_svc.handlers[0];
+        let rm = sequence_model(
+            route,
+            HandlerOwner::Service("routeSvc"),
+            &route_svc.default_given,
+            route_svc.default_by.as_ref(),
+            None,
+        );
+        assert_eq!(rm.blocks.len(), 1);
+        assert_eq!(rm.blocks[0].kind, AltKind::Match);
+        let replies: Vec<Option<&str>> = rm.blocks[0]
+            .branches
+            .iter()
+            .map(|b| b.reply.as_deref())
+            .collect();
+        assert_eq!(replies, vec![Some("100"), Some("x")]);
     }
 }

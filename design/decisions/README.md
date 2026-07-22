@@ -17,6 +17,9 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0275](0275-sequence-diagram-principal-actor.md) | **The handler's `by` principal is an actor that originates the request and receives replies** (v0.229.1) — A principal renders as a leftmost actor; the request is an inbound message and outcomes return to it | Accepted (v0.229.1) |
+| [0274](0274-sequence-diagram-branch-outcomes.md) | **A return-gating branch renders its outcome, not an empty `alt`** (v0.229.1) — The reply ADR 0260 named is emitted per branch — as a note, or (with a principal) a return to the actor | Accepted (v0.229.1) |
+| [0273](0273-messages-checked-catalogue-slice-2.md) | **The checked-catalogue model, slice 2 — multi-locale bundles, completeness, and placeholder agreement** (v0.229) — Reference-bundle coverage, cross-locale placeholder-set agreement, and the multi-locale render-dispatch/export surface | Accepted (v0.229) |
 | [0272](0272-messages-construct-slice-1.md) | **The `messages` construct, slice 1 — a single-locale bundle and a bundle-aware `render`** (v0.228) — Grammar, placement, the checked-catalogue floor, and the checker-visible render binding for message-bundles slice 1 | Accepted (v0.228) |
 | [0271](0271-bynkc-test-coverage.md) | **`bynkc test --coverage` — V8 line coverage remapped onto `.bynk` source** (v0.227) — Collect coverage at the runner's one node launch and attribute it to `.bynk` lines through the emitted source maps | Accepted (v0.227) |
 | [0270](0270-capability-aware-quickfixes.md) | **Capability-aware quick-fixes for boundary/resolution diagnostics** (v0.226) — Where each capability-aware fix is computed, plus ambiguity, default-value, and clause-placement rules | Accepted (v0.226) |

@@ -51,7 +51,7 @@ async function main(): Promise<void> {
 
   mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
 
-  const { text, participantOrder, messageOrder, collapsedOrder } = toMermaid(payload.model);
+  const { text, participantOrder, messageOrder, noteOrder } = toMermaid(payload.model);
   let svg: string;
   try {
     ({ svg } = await mermaid.render("bynk-sequence-diagram", text));
@@ -92,9 +92,12 @@ async function main(): Promise<void> {
     }
   }
 
-  // Collapsed-nesting notes (`.noteText`), in emission order.
+  // Notes (`.noteText`), in emission order — a collapsed-nesting marker, a
+  // branch's reply outcome, or an empty-branch placeholder. Each links to its
+  // owning block's span (the reply/placeholder have no separate source range
+  // of their own; jumping to the `if`/`match` is the useful target).
   const noteEls = root.querySelectorAll(".noteText");
-  collapsedOrder.forEach((block, i) => {
+  noteOrder.forEach((block, i) => {
     const el = noteEls[i];
     if (el) wireClickable(el, payload.uri, block.range);
   });
