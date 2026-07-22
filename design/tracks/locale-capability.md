@@ -1,8 +1,10 @@
 # The `Locale` capability — ambient locale reads and a pure render seam for user-facing text
 
 - **Status:** Slicing — slice 1 (the `Locale` capability, `LocaleTag`, `Message`/
-  `MessageArg`, and a bundle-free `render`, #844) shipped; slices 2–3 follow, each
-  cut as a proposal sub-issue of the track's **spine issue**,
+  `MessageArg`, and a bundle-free `render`, #844) shipped; slice 3 (ICU
+  MessageFormat, L4) is retired in favour of message-bundles' own slice 3
+  (§7 L4/§8) — only slice 2 (negotiation) remains, cut as a proposal
+  sub-issue of the track's **spine issue**,
   [#838](https://github.com/accuser/bynk/issues/838)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** Bynk's first i18n requirement — a handler-authored or
@@ -336,10 +338,15 @@ identifier, an implementation detail phrased carelessly into the message).
   compile-time *addition* on top of this runtime fallback, not a replacement
   for it — the runtime must stay total regardless of what compile-time
   completeness checking is layered on.
-- **L4 — the ICU/CLDR runtime dependency. Recommended: adopt ICU
-  MessageFormat (§4.5), deferred to slice 3** — a data-format choice that
-  commits the runtime to CLDR data, justified by `Money`/`Instant`/`Duration`
-  needing locale-aware formatting eventually; not new language surface.
+- **L4 — the ICU/CLDR runtime dependency. Resolved — subsumed by
+  message-bundles' slice 3** ([#878](https://github.com/accuser/bynk/issues/878),
+  [ADR 0276](../decisions/0276-messages-icu-format-slice-3.md), that track
+  now retired — see
+  [`../archive/retired-tracks.md`](../archive/retired-tracks.md)): host
+  `Intl` delegation (`Intl.PluralRules`/`Intl.NumberFormat`/`Intl.DateTimeFormat`),
+  no CLDR data bundled in the compiler. This track's own slice 3 (§8) is
+  retired in favour of that work — no separate ICU/CLDR decision remains
+  open here.
 
 ## 8. Slice decomposition (ordered)
 
@@ -362,9 +369,13 @@ internals.
 - **Slice 2 — locale negotiation & fallback.** The default provider resolves
   `Accept-Language` → `LocaleTag` against the bundle's declared locales, RFC
   4647 basic filtering, fallback chain to the reference locale (§4.4).
-- **Slice 3 — ICU MessageFormat.** Plurals, gender, and locale-aware
-  number/date/currency formatting (§4.5), landing the ICU/CLDR dependency
-  decision.
+- **Slice 3 — retired in favour of message-bundles' slice 3.** Shipped as
+  part of that track instead
+  ([#878](https://github.com/accuser/bynk/issues/878),
+  [ADR 0276](../decisions/0276-messages-icu-format-slice-3.md)): `plural`/
+  `select`/`number`/`date` placeholders over `Message.params`' `MessageArg`
+  values, resolving the ICU/CLDR dependency decision (L4) for both tracks.
+  This track has no further slice.
 
 ## 9. Risks
 
