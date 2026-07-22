@@ -242,6 +242,19 @@ pub enum Command {
         #[arg(long, value_name = "NAME")]
         case: Option<String>,
     },
+    /// Explain a diagnostic code — the longer-form "what the rule is, why it
+    /// exists, and how to fix it" behind a `bynk.*` error code (#853).
+    ///
+    /// Prints a curated blurb, a minimal before/after example, and a link to
+    /// the relevant Book concept page. The blurb is offline-complete, so the
+    /// substance is available without network. Codes without a curated
+    /// explanation report that gracefully; an unrecognised code exits non-zero.
+    /// The same explanations back the editor's clickable diagnostic-code links.
+    Explain {
+        /// The diagnostic code to explain, e.g. `bynk.resolve.unknown_type`.
+        #[arg(value_name = "CODE")]
+        code: String,
+    },
 }
 
 /// `bynk check --format` selector, mirroring `bynkc`'s `DiagFormat` (rich/short)

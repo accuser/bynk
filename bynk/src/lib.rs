@@ -30,6 +30,7 @@ pub mod deploy;
 pub mod dev;
 pub mod diagnostics;
 pub mod doctor;
+pub mod explain;
 pub mod fmt;
 pub mod new;
 pub mod probe;

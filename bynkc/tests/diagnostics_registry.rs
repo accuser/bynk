@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use bynkc::diagnostics::{REGISTRY, render_markdown};
+use bynkc::diagnostics::{EXPLANATIONS, REGISTRY, render_markdown};
 
 fn grammar_json() -> String {
     let path =
@@ -140,4 +140,108 @@ fn generated_diagnostics_page_is_up_to_date() {
         "site/src/content/docs/book/reference/diagnostics.md is out of date with the registry.\n\
          Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test diagnostics_registry"
     );
+}
+
+// --- #853: `bynk explain` / `codeDescription` explanations ------------------
+
+/// A GitHub-style heading slug: lowercase, non-alphanumerics (bar spaces and
+/// hyphens) dropped, spaces collapsed to single hyphens. Sufficient for the
+/// simple headings the curated explanations anchor at (the guard fails loudly
+/// if a chosen anchor ever needs richer slugging).
+fn slug(heading: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in heading.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if (ch == ' ' || ch == '-' || ch == '_') && !out.is_empty() && !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+        // Everything else (backticks, parens, punctuation) is dropped.
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// The `##`-level (and deeper) heading slugs present in a Markdown page.
+fn heading_slugs(markdown: &str) -> BTreeSet<String> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            trimmed
+                .starts_with('#')
+                .then(|| slug(trimmed.trim_start_matches('#')))
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+#[test]
+fn explanations_reference_real_codes_and_are_sorted() {
+    let registered: BTreeSet<&str> = REGISTRY.iter().map(|d| d.code).collect();
+    for e in EXPLANATIONS {
+        assert!(
+            registered.contains(e.code),
+            "EXPLANATIONS entry `{}` is not a real diagnostic code in REGISTRY \
+             (bynk-syntax/src/diagnostics.rs).",
+            e.code
+        );
+    }
+    let codes: Vec<&str> = EXPLANATIONS.iter().map(|e| e.code).collect();
+    let mut sorted = codes.clone();
+    sorted.sort_unstable();
+    assert_eq!(codes, sorted, "EXPLANATIONS must be sorted by code");
+
+    let unique: BTreeSet<&str> = codes.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        codes.len(),
+        "EXPLANATIONS has a duplicate code"
+    );
+}
+
+/// The code→page mapping is guarded against Book-page moves and anchor renames:
+/// each explanation's target page must exist on disk and, when an anchor is
+/// given, a heading with that slug must be present. (The generated diagnostics
+/// page also links these in-site, so `astro build`'s link checker is a second,
+/// independent guard.)
+#[test]
+fn explanation_pages_and_anchors_exist() {
+    let docs_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/content/docs");
+    for e in EXPLANATIONS {
+        assert!(
+            e.page.starts_with('/') && !e.page.ends_with('/'),
+            "EXPLANATIONS `{}` page `{}` must be a root-relative path with no trailing slash",
+            e.code,
+            e.page
+        );
+        // `/book/reference/types` → `<docs>/book/reference/types.md`
+        let file = docs_root.join(format!("{}.md", e.page.trim_start_matches('/')));
+        let markdown = fs::read_to_string(&file).unwrap_or_else(|_| {
+            panic!(
+                "EXPLANATIONS `{}` points at Book page `{}`, but {} does not exist. \
+                 Update the mapping in bynk-syntax/src/diagnostics.rs if the page moved.",
+                e.code,
+                e.page,
+                file.display()
+            )
+        });
+        if !e.anchor.is_empty() {
+            let slugs = heading_slugs(&markdown);
+            assert!(
+                slugs.contains(e.anchor),
+                "EXPLANATIONS `{}` anchors at `#{}`, but {} has no heading with that slug. \
+                 Present slugs: {:?}",
+                e.code,
+                e.anchor,
+                file.display(),
+                slugs
+            );
+        }
+    }
 }
