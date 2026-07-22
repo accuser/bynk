@@ -28,6 +28,7 @@
 //! stable API — `bynk-lsp` is a language-server binary and makes no library
 //! compatibility promise.
 
+pub mod capability_fixes;
 pub mod code_actions;
 pub mod completion;
 mod document_symbols;
@@ -2697,6 +2698,16 @@ impl LanguageServer for Backend {
         let version = analysis.versions.get(&rel).copied();
         let span = bynk_syntax::span::Span::new(start, end);
         let mut actions = crate::code_actions::quick_fixes(text, diags, span, &uri, version);
+        // #852: capability-aware header fixes (`add consumes`, auto-`uses`/
+        // `consumes`), computed from the committed index + a fresh reparse.
+        actions.extend(crate::capability_fixes::header_quick_fixes(
+            text,
+            diags,
+            span,
+            &uri,
+            version,
+            &analysis.index,
+        ));
         actions.extend(crate::extract::extract_variable(text, span, &uri, version));
         let empty_reqs = Vec::new();
         let empty_locals = Vec::new();
