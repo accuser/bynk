@@ -21,7 +21,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::index::{RefSink, SymbolKind};
 use bynk_syntax::ast::*;
-use bynk_syntax::error::CompileError;
+use bynk_syntax::error::{Applicability, CompileError};
+use bynk_syntax::span::Span;
 
 /// The resolver's two collection points, bundled so the reference walk
 /// threads one parameter (v0.25, ADR 0053). `push` forwards to the error
@@ -1010,7 +1011,11 @@ pub(crate) fn check_record_field_set(
     type_name: &Ident,
     fields: &[FieldInit],
     record: &RecordBody,
-    decl_name_span: bynk_syntax::span::Span,
+    decl_name_span: Span,
+    // #852: the span of the whole `TypeName { … }` literal, so the missing-field
+    // quick-fix knows where to insert a new field (before the closing brace when
+    // the literal is empty).
+    construction_span: Span,
     in_scope: impl Fn(&str) -> bool,
     errors: &mut Vec<CompileError>,
 ) {
@@ -1063,21 +1068,92 @@ pub(crate) fn check_record_field_set(
             );
         }
     }
-    for decl_field in &record.fields {
-        if !provided.contains_key(decl_field.name.name.as_str()) {
-            errors.push(
-                CompileError::new(
-                    "bynk.resolve.missing_field",
-                    type_name.span,
-                    format!(
-                        "missing required field `{}` for record `{}`",
-                        decl_field.name.name, type_name.name
-                    ),
-                )
-                .with_label(decl_field.name.span, "field declared here"),
+    // Missing required fields. Each is a diagnostic anchored at the type name;
+    // a field whose type has a safe default additionally carries a
+    // machine-applicable "add field `x`" quick-fix (#852, DECISIONS B/C) that
+    // inserts `x: <default>` at a fmt-stable position, and — when more than one
+    // field is missing and every missing field is defaultable — the first such
+    // diagnostic also carries an "add all missing fields" convenience.
+    let missing: Vec<&RecordField> = record
+        .fields
+        .iter()
+        .filter(|f| !provided.contains_key(f.name.name.as_str()))
+        .collect();
+    // The edit for a `body` of one or more `name: default` entries. With
+    // existing fields it appends `, body` right after the last one. With an
+    // *empty* literal there is no field span to anchor to and the interior
+    // spacing/trailing punctuation is unknown, so instead the whole ` { … }`
+    // tail (from the end of the type name through the closing brace) is
+    // **replaced** with a canonical ` { body }` — fmt-stable regardless of how
+    // the empty braces were originally spelled (`{}`, `{ }`, `{  }`).
+    let field_edit = |body: &str| -> (Span, String) {
+        match fields.iter().map(|f| f.span.end).max() {
+            Some(end) => (Span::new(end, end), format!(", {body}")),
+            None => (
+                Span::new(type_name.span.end, construction_span.end),
+                format!(" {{ {body} }}"),
+            ),
+        }
+    };
+    // Defaultable missing fields, in declaration order, as `name: default`.
+    let defaultable: Vec<String> = missing
+        .iter()
+        .filter_map(|f| field_default_init(f))
+        .collect();
+    let all_defaultable = defaultable.len() == missing.len();
+
+    for (i, decl_field) in missing.iter().enumerate() {
+        let mut err = CompileError::new(
+            "bynk.resolve.missing_field",
+            type_name.span,
+            format!(
+                "missing required field `{}` for record `{}`",
+                decl_field.name.name, type_name.name
+            ),
+        )
+        .with_label(decl_field.name.span, "field declared here");
+        if let Some(piece) = field_default_init(decl_field) {
+            err = err.with_suggestion(
+                format!("add field `{}`", decl_field.name.name),
+                vec![field_edit(&piece)],
+                Applicability::MachineApplicable,
             );
         }
+        // The "add all missing fields" convenience rides on the first missing
+        // diagnostic (they all share `type_name.span`, so it surfaces together
+        // with the single-field fixes), and only when the whole set is
+        // defaultable and there is more than one to add.
+        if i == 0 && missing.len() > 1 && all_defaultable {
+            err = err.with_suggestion(
+                "add all missing fields",
+                vec![field_edit(&defaultable.join(", "))],
+                Applicability::MachineApplicable,
+            );
+        }
+        errors.push(err);
     }
+}
+
+/// The `name: <default>` initialiser for a missing record field, or `None` when
+/// the field's type has no value that is guaranteed to re-check clean (#852,
+/// DECISION B). Deliberately conservative: an inline-refined field or a
+/// user-named type (which may itself be refined, a sum, or opaque) has no
+/// synthesised default — only the unrefined built-in scalars, `Option` (`None`),
+/// and `List` (`[]`) do, so the inserted value always type-checks.
+fn field_default_init(field: &RecordField) -> Option<String> {
+    if field.refinement.is_some() {
+        return None;
+    }
+    let default = match &field.type_ref {
+        TypeRef::Base(BaseType::Int, _) => "0",
+        TypeRef::Base(BaseType::Float, _) => "0.0",
+        TypeRef::Base(BaseType::String, _) => "\"\"",
+        TypeRef::Base(BaseType::Bool, _) => "false",
+        TypeRef::Option(..) => "None",
+        TypeRef::List(..) => "[]",
+        _ => return None,
+    };
+    Some(format!("{}: {}", field.name.name, default))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1783,6 +1859,7 @@ fn check_expr_references(
                                 fields,
                                 r,
                                 decl.name.span,
+                                expr.span,
                                 |n| name_in_scope(n, params, scopes),
                                 errors.errs,
                             );
