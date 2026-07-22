@@ -1,0 +1,12 @@
+commons commerce.order_values
+
+type OrderId = opaque String where NonEmpty
+type CustomerId = opaque String where NonEmpty
+
+fn reserve(orderId: OrderId, customerId: CustomerId) -> Bool {
+  true
+}
+
+fn reserveFor(orderId: OrderId, customerId: CustomerId) -> Bool {
+  reserve(customerId, orderId)
+}

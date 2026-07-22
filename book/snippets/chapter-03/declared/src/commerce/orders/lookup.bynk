@@ -1,0 +1,12 @@
+context commerce.orders
+
+fn findTotal(id: OrderId) -> Option[Cents] {
+  if id.isSample() { Some(2500) } else { None }
+}
+
+fn requireTotal(id: OrderId, total: Option[Cents]) -> Result[Cents, OrderError] {
+  match total {
+    Some(cents) => Ok(cents)
+    None => Err(OrderMissing(id))
+  }
+}

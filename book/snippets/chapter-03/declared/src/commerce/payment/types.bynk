@@ -1,0 +1,10 @@
+context commerce.payment
+
+uses commerce.order_values
+
+exports transparent { PaymentError }
+
+type PaymentError = enum {
+  Declined,
+  ProviderUnavailable,
+}

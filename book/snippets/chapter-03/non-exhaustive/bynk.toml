@@ -1,0 +1,4 @@
+# Intentionally rejected source for chapter 3.
+[project]
+name = "chapter-03-non-exhaustive"
+version = "0.1.0"

@@ -1,0 +1,10 @@
+context commerce.orders
+
+service place {
+  on call(id: OrderId) -> Effect[Result[String, OrderError]] {
+    let cents = requireTotal(id, findTotal(id))?
+    let decision <- Payment.authorise(cents)
+    let authorisation = decision?
+    Ok(authorisation)
+  }
+}

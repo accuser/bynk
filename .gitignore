@@ -9,6 +9,10 @@ target/
 # mdBook build output
 docs/book/
 
+# Print manuscript build output
+book/build/
+output/pdf/
+
 # Editor / OS
 .DS_Store
 .idea/
