@@ -22,8 +22,11 @@
 //! **Decisions realised here** (recorded in the ADR): line/statement coverage
 //! only, no branch coverage (DECISION B) — a `.bynk` line is *covered* if any
 //! generated line mapping to it executed; and the measured set excludes the
-//! `tests/` tree and the workers scaffold (DECISION D), filtered on the emitted
-//! `out-js` path before the maps are even consulted.
+//! `tests/` tree and the workers scaffold (DECISION D), filtered once on the
+//! `out-js`-relative path of the executed `.js` — the emitted tree's own
+//! top-level `tests/`/`workers/` dirs — before the maps are even consulted. The
+//! `.bynk` side is deliberately *not* re-filtered, so a user source that merely
+//! lives under a dir named `tests`/`workers` is still measured.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
@@ -224,12 +227,13 @@ pub fn collect_coverage(
                         continue;
                     };
                     let disp = relativise(bynk_abs, source_root);
-                    // DECISION D again, on the `.bynk` side: a source that lives
-                    // under a `tests`/`workers` component is never user code
-                    // under measure (belt-and-suspenders to the `out-js` filter).
-                    if has_excluded_component(&disp) {
-                        continue;
-                    }
+                    // DECISION D is enforced once, authoritatively, on the emitted
+                    // tree by `is_measurable_emitted` (the `tests/` and `workers/`
+                    // top-level dirs of `out-js`). We deliberately do *not* re-filter
+                    // on the `.bynk` side: a user source that merely lives under a
+                    // dir named `tests`/`workers` (e.g. `src/workers/helpers.bynk`)
+                    // is real code whose `.js` already passed the emitted filter, so
+                    // dropping it here would silently omit it from coverage.
                     let file = acc.entry(disp).or_default();
                     // Lines are 1-based in every report the user sees. A `.bynk`
                     // line's verdict is decided by the *most specific* (smallest-
@@ -352,14 +356,6 @@ fn is_measurable_emitted(rel: &Path) -> bool {
         return false;
     }
     true
-}
-
-/// Whether a project-relative `.bynk` display path lives under a `tests` or
-/// `workers` directory component (DECISION D, on the source side).
-fn has_excluded_component(disp: &str) -> bool {
-    Path::new(disp)
-        .components()
-        .any(|c| matches!(c, Component::Normal(s) if s == "tests" || s == "workers"))
 }
 
 /// Relativise an absolute `.bynk` source path against the project root, forward-
