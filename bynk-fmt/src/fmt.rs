@@ -918,6 +918,36 @@ impl<'a> Formatter<'a> {
             CommonsItem::Service(s) => self.format_service(s),
             CommonsItem::Agent(a) => self.format_agent(a),
             CommonsItem::Actor(a) => self.format_actor(a),
+            CommonsItem::Messages(m) => self.format_messages(m),
+        }
+    }
+
+    fn format_messages(&mut self, m: &MessagesDecl) {
+        self.emit_leading_comments(&m.trivia.leading);
+        if let Some(doc) = &m.documentation {
+            self.emit_doc(doc);
+        }
+        self.push(&format!("messages {}", m.tag.name));
+        for ann in &m.annotations {
+            self.push(" ");
+            self.push(&annotation_to_string(ann));
+        }
+        self.push(" {");
+        self.newline();
+        self.indented(|f| {
+            for entry in &m.entries {
+                f.push(&format!(
+                    "\"{}\" => \"{}\"",
+                    escape_string(&entry.code),
+                    escape_string(&entry.template)
+                ));
+                f.newline();
+            }
+        });
+        self.push("}");
+        self.emit_trailing_comment(m.trivia.trailing.as_deref());
+        if m.trivia.trailing.is_none() {
+            self.newline();
         }
     }
 

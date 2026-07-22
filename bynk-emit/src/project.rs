@@ -2797,6 +2797,9 @@ fn check_unit_files(
                     // emitter can read their schemes for the verification seam.
                     emit_items.push(CommonsItem::Actor(a.clone()));
                 }
+                CommonsItem::Messages(m) => {
+                    emit_items.push(CommonsItem::Messages(m.clone()));
+                }
             }
         }
         for type_name in &types_in_this_file {

@@ -1463,6 +1463,10 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                     collect_refs_in_typeref(id, &local_to_file, ctx, &mut refs);
                 }
             }
+            // slice 1: `MessageEntry.code`/`.template` are plain string
+            // literals, no TypeRefs/exprs to walk for cross-file/commons
+            // imports.
+            CommonsItem::Messages(_) => {}
         }
     }
     refs

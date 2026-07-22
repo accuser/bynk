@@ -97,6 +97,9 @@ fn walk_item(item: &CommonsItem, out: &mut Vec<(Span, bool)>) {
         CommonsItem::Actor(a) => {
             out.push((a.span, true));
         }
+        CommonsItem::Messages(m) => {
+            out.push((m.span, true));
+        }
     }
 }
 

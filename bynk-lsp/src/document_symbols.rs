@@ -113,7 +113,19 @@ fn item_symbol(pm: &PositionMap, item: &CommonsItem) -> DocumentSymbol {
         CommonsItem::Service(s) => service_symbol(pm, s),
         CommonsItem::Agent(a) => agent_symbol(pm, a),
         CommonsItem::Actor(a) => actor_symbol(pm, a),
+        CommonsItem::Messages(m) => messages_symbol(pm, m),
     }
+}
+
+fn messages_symbol(pm: &PositionMap, m: &MessagesDecl) -> DocumentSymbol {
+    make_symbol(
+        format!("messages {}", m.tag.name),
+        detail_from_doc(&m.documentation),
+        SymbolKind::STRUCT,
+        pm.range(m.span),
+        pm.range(m.tag.span),
+        Vec::new(),
+    )
 }
 
 fn actor_symbol(pm: &PositionMap, a: &ActorDecl) -> DocumentSymbol {

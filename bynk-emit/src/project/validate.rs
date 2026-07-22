@@ -3975,7 +3975,9 @@ pub fn check_function_type_boundary_items(
                         reject_fn_types(id, "an actor identity type", types, errors);
                     }
                 }
-                CommonsItem::Fn(_) | CommonsItem::Provider(_) => {}
+                // slice 1: `MessageEntry.code`/`.template` are plain string
+                // literals, no fn-type-bearing fields to reject here.
+                CommonsItem::Fn(_) | CommonsItem::Provider(_) | CommonsItem::Messages(_) => {}
             }
         }
     }

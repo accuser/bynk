@@ -64,6 +64,11 @@ pub(crate) fn assemble_index(
                         &a.name.name,
                         symbol_modifiers(&unit, None),
                     ),
+                    CommonsItem::Messages(m) => (
+                        SymbolKind::Messages,
+                        &m.tag.name,
+                        symbol_modifiers(&unit, None),
+                    ),
                 };
                 builder.add_first_party_def(&unit, kind, name, modifiers);
             }
@@ -198,6 +203,15 @@ pub(crate) fn assemble_index(
                         SymbolKind::Actor,
                         &a.name.name,
                         site(&a.name),
+                        symbol_modifiers(&unit, None),
+                    );
+                }
+                CommonsItem::Messages(m) => {
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Messages,
+                        &m.tag.name,
+                        site(&m.tag),
                         symbol_modifiers(&unit, None),
                     );
                 }
@@ -611,7 +625,10 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
                 | CommonsItem::Provider(_)
                 | CommonsItem::Service(_)
                 | CommonsItem::Agent(_)
-                | CommonsItem::Actor(_) => {}
+                | CommonsItem::Actor(_)
+                // `messages` bundles aren't cross-file-imported by name in
+                // slice 1 (no multi-file bundle merge yet).
+                | CommonsItem::Messages(_) => {}
             }
         }
     }

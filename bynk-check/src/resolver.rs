@@ -203,7 +203,11 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             | CommonsItem::Provider(_)
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_)
-            | CommonsItem::Actor(_) => {}
+            | CommonsItem::Actor(_)
+            // `messages` entries are plain string literals with no type refs
+            // to resolve here; commons-only legality and the reference/
+            // duplicate-code checks live in bynk-emit's project validation.
+            | CommonsItem::Messages(_) => {}
             CommonsItem::Type(t) => {
                 if let Some(prev) = types.get(&t.name.name) {
                     errors.push(
@@ -351,7 +355,11 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             | CommonsItem::Provider(_)
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_)
-            | CommonsItem::Actor(_) => {}
+            | CommonsItem::Actor(_)
+            // `messages` entries are plain string literals with no type refs
+            // to resolve here; commons-only legality and the reference/
+            // duplicate-code checks live in bynk-emit's project validation.
+            | CommonsItem::Messages(_) => {}
         }
     }
 
@@ -414,7 +422,11 @@ pub fn resolve_file_record(
             | CommonsItem::Provider(_)
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_)
-            | CommonsItem::Actor(_) => {}
+            | CommonsItem::Actor(_)
+            // `messages` entries are plain string literals with no type refs
+            // to resolve here; commons-only legality and the reference/
+            // duplicate-code checks live in bynk-emit's project validation.
+            | CommonsItem::Messages(_) => {}
         }
         sinks.refs.clear_owner();
     }
