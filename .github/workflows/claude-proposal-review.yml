@@ -22,9 +22,12 @@ concurrency:
   cancel-in-progress: true
 
 # Least privilege: read the tree for context, write only the issue comment.
+# `id-token: write` lets the action mint its GitHub token from the Claude App
+# via OIDC — required by claude-code-action@v1 regardless of the Anthropic auth.
 permissions:
   contents: read
   issues: write
+  id-token: write
 
 jobs:
   review:
