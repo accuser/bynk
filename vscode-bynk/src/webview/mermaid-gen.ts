@@ -34,9 +34,14 @@ export interface MermaidResult {
    *  elements, which Mermaid emits in the order the diagram text names
    *  them, i.e. this order. */
   messageOrder: Message[];
-  /** One entry per rendered `Collapsed` marker, in emission order — zipped
-   *  against the rendered SVG's `note` elements the same way. */
-  collapsedOrder: AltBlock[];
+  /** One entry per rendered `note` element, in emission order — the block
+   *  each note belongs to (a `Collapsed` marker, a branch's reply outcome, or
+   *  an empty-branch placeholder). The caller zips this 1:1 against the
+   *  rendered SVG's `.noteText` elements and links each to its block's span,
+   *  so every note is click-to-code just like the collapsed markers always
+   *  were. (A single block can contribute several notes — one reply per
+   *  branch — so this is not 1:1 with `model.blocks`.) */
+  noteOrder: AltBlock[];
 }
 
 const RESERVED_LABEL_CHARS: Record<string, string> = {
@@ -73,10 +78,20 @@ function orderedContent(messages: Message[], blocks: AltBlock[]): ContentItem[] 
 export function toMermaid(model: SequenceModel): MermaidResult {
   const lines: string[] = ["sequenceDiagram"];
   const messageOrder: Message[] = [];
-  const collapsedOrder: AltBlock[] = [];
+  const noteOrder: AltBlock[] = [];
+
+  // The entry lifeline — where every note (a collapsed marker, a branch reply,
+  // an empty-branch placeholder) is anchored, since the handler *is* the entry.
+  // Found by kind, not array position: with a principal the actor is inserted
+  // at index 0 (ahead of the entry), so `participants[0]` is no longer the
+  // entry — anchoring by position would draw notes over the actor.
+  const entryAnchor = model.participants.find((p) => p.kind === "Entry")?.id ?? 0;
 
   for (const p of model.participants) {
-    lines.push(`    participant P${p.id} as ${escapeLabel(p.name)}`);
+    // The principal renders as an `actor` (stick figure); everyone else is a
+    // `participant` box.
+    const keyword = p.kind === "Actor" ? "actor" : "participant";
+    lines.push(`    ${keyword} P${p.id} as ${escapeLabel(p.name)}`);
   }
 
   const emitMessage = (m: Message): void => {
@@ -94,11 +109,14 @@ export function toMermaid(model: SequenceModel): MermaidResult {
     }
   };
 
+  const emitNote = (block: AltBlock, text: string): void => {
+    noteOrder.push(block);
+    lines.push(`    note over P${entryAnchor}: ${text}`);
+  };
+
   const emitBlock = (block: AltBlock): void => {
     if (block.kind === "Collapsed") {
-      collapsedOrder.push(block);
-      const anchor = model.participants[0]?.id ?? 0;
-      lines.push(`    note over P${anchor}: nested branching — click to view source`);
+      emitNote(block, "nested branching — click to view source");
       return;
     }
     const keyword = block.branches.length <= 1 ? "opt" : "alt";
@@ -108,7 +126,17 @@ export function toMermaid(model: SequenceModel): MermaidResult {
         .map((id) => model.messages[id])
         .filter((m): m is Message => m !== undefined);
       const children = childBlocksOf(model.blocks, block.id, branchIndex);
+      const before = lines.length;
       renderContent(branchMessages, children);
+      // The branch's own reply — the value the handler yields on this path —
+      // as a note over the entry lifeline. This is the content that keeps a
+      // return-gating block (both branches call no lifeline) from rendering
+      // as an empty, mangled `alt` box.
+      if (branch.reply) emitNote(block, escapeLabel(branch.reply));
+      // A branch that emitted nothing at all (no messages, no nested block,
+      // no reply — e.g. an explicit `{ () }`) would still collapse the box;
+      // anchor it with a placeholder so the diagram stays legible.
+      if (lines.length === before) emitNote(block, "…");
     });
     lines.push("    end");
   };
@@ -128,6 +156,6 @@ export function toMermaid(model: SequenceModel): MermaidResult {
     text: lines.join("\n"),
     participantOrder: model.participants,
     messageOrder,
-    collapsedOrder,
+    noteOrder,
   };
 }
