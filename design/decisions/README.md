@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0272](0272-messages-construct-slice-1.md) | **The `messages` construct, slice 1 — a single-locale bundle and a bundle-aware `render`** (v0.228) — Grammar, placement, the checked-catalogue floor, and the checker-visible render binding for message-bundles slice 1 | Accepted (v0.228) |
 | [0271](0271-bynkc-test-coverage.md) | **`bynkc test --coverage` — V8 line coverage remapped onto `.bynk` source** (v0.227) — Collect coverage at the runner's one node launch and attribute it to `.bynk` lines through the emitted source maps | Accepted (v0.227) |
 | [0270](0270-capability-aware-quickfixes.md) | **Capability-aware quick-fixes for boundary/resolution diagnostics** (v0.226) — Where each capability-aware fix is computed, plus ambiguity, default-value, and clause-placement rules | Accepted (v0.226) |
 | [0269](0269-documentation-view-webview-substrate-and-links.md) | **Shared webview substrate, HTML-disabled Markdown, http(s) link allow-list** (v0.225) — The doc view reuses #846's webview substrate and renders doc Markdown safely | Accepted (v0.225) |
