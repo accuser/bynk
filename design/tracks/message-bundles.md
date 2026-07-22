@@ -1,11 +1,12 @@
 # Message bundles — the `messages` construct, the checked catalogue, and the bundle `render` consumes
 
-- **Status:** Slicing — slice 1 (the `messages` construct, a single
-  `@reference` bundle, and render wiring, #859) and slice 2 (multi-locale
-  bundles, completeness, placeholder agreement, #874) shipped; slice 3
-  follows, cut as a proposal sub-issue of the track's **spine issue**,
-  [#857](https://github.com/accuser/bynk/issues/857)
-  ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
+- **Status:** All three named slices shipped — slice 1 (the `messages`
+  construct, a single `@reference` bundle, and render wiring, #859), slice 2
+  (multi-locale bundles, completeness, placeholder agreement, #874), and
+  slice 3 (ICU MessageFormat — `plural`/`select`/`number`/`date`, #878). §8
+  names no further slice; the track is a candidate for retirement (see the
+  spine issue, [#857](https://github.com/accuser/bynk/issues/857) —
+  [ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** the Locale capability track's own unfiled sibling — its
   [§2 non-goal and Q0](locale-capability.md#7-open-questions-settle-before-slicing)
   named "the message-bundle / translation-catalogue format and its completeness
@@ -429,9 +430,20 @@ ADRs; accepting the proposal authorises the build.
   slice 2, which **may now start** (carried forward from the spine issue's
   own dependency note, §9) — wiring these exports into Locale's own
   negotiation provider is that track's proposal to cut, not this one's.
-- **Slice 3 — ICU MessageFormat.** Plural/gender/number/date over
-  `MessageArg`'s typed args, the CLDR-data commitment; re-homes
-  `locale-capability.md`'s L4/slice 3 (§4.4).
+- **Slice 3 — shipped (#878).** ICU MessageFormat: `plural`, `select`,
+  `number`, and `date` placeholders over `MessageArg`'s typed args, checked
+  by a new self-contained mini-parser (`bynk-emit/src/emitter/icu.rs`, no
+  `bynk-syntax` grammar change) and rendered at runtime by delegating to the
+  host `Intl` object (`Intl.PluralRules`/`Intl.NumberFormat`/
+  `Intl.DateTimeFormat` — no CLDR data bundled in the compiler), re-homing
+  `locale-capability.md`'s L4/slice 3 (§4.4). Two new diagnostics,
+  `bynk.messages.format_mismatch` (cross-locale ICU-kind agreement) and
+  `bynk.messages.malformed_icu_syntax` (one code for every parse failure).
+  Deliberately capped surface — no `selectordinal`, no `plural`'s
+  `offset:`/`=N`, no CLDR skeletons beyond a fixed style-keyword set, no
+  nested dispatch, no construction-site argument-type checking — each
+  excluded case diagnosed rather than silently mishandled, named as
+  follow-ons in the implementing ADR rather than blocking this slice.
 
 ## 9. Slice dependencies (Locale ↔ message-bundles) — carried from the spine
 
@@ -446,10 +458,11 @@ Preserved from the spine issue's own "do not lose again" section, since
   a checkable, exported set (`messagesLocales`/`messagesReferenceLocale`).
   **Locale slice 2 may now start** — a separate proposal against the Locale
   track, not this one.
-- **This track's slice 3 ↔ Locale slice 3 (L4).** One decision, owned here
-  (§4.4). Locale's doc gets a one-line update to its own §8 when this
-  track's slice-3 sub-issue opens, rather than the decision being re-derived
-  or duplicated in two places.
+- **This track's slice 3 (shipped, #878) ↔ Locale slice 3 (L4) — resolved.**
+  The ICU/CLDR-runtime-dependency decision (§4.4) is settled here: host
+  `Intl` delegation, no bundled CLDR data. Locale's own doc's L4/§8 should be
+  updated (or its slice 3 retired outright in favour of this one) as a
+  one-line follow-up against that track, not duplicated here.
 
 ## 10. Risks
 

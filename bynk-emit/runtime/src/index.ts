@@ -11,3 +11,4 @@ export * from "./queue.ts";
 export * from "./agent.ts";
 export * from "./auth.ts";
 export * from "./connection.ts";
+export * from "./messages.ts";

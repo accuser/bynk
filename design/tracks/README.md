@@ -67,7 +67,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`locale-capability.md`](locale-capability.md) | [#838](https://github.com/accuser/bynk/issues/838) | Slicing (slice 1 shipped) | The `Locale` capability: ambient locale reads and a pure render seam for user-facing text, Bynk's first i18n surface |
-| [`message-bundles.md`](message-bundles.md) | [#857](https://github.com/accuser/bynk/issues/857) | Slicing (slices 1–2 shipped) | The `messages` construct, the checked catalogue, and the bundle lookup that turns the shipped, bundle-free `render` (ADR 0256) into a real localiser |
+| [`message-bundles.md`](message-bundles.md) | [#857](https://github.com/accuser/bynk/issues/857) | All slices shipped (1–3) — retirement candidate | The `messages` construct, the checked catalogue, and the bundle lookup that turns the shipped, bundle-free `render` (ADR 0256) into a real localiser |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue

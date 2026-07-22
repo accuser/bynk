@@ -265,6 +265,11 @@ pub(crate) fn check_messages_bundles(
                     } else {
                         seen.insert(entry.code.as_str(), entry.code_span);
                     }
+                    // message-bundles slice 3 (#878): runs unconditionally,
+                    // once per entry, regardless of `@reference` cardinality
+                    // — malformed ICU syntax shouldn't wait on cardinality
+                    // being resolved first.
+                    check_entry_icu_syntax(entry, Some(&parsed[i].identity_path), errors);
                 }
             }
         }
@@ -335,6 +340,35 @@ pub(crate) fn check_messages_bundles(
                                 ),
                             );
                         }
+                        // message-bundles slice 3 (#878, Decision D): a name
+                        // present in both templates must also agree on ICU
+                        // format *kind* (plain/plural/select/number/date) —
+                        // a UI can't sanely alternate that per locale. A
+                        // missing name is `placeholder_mismatch`'s job, not
+                        // this one's; a malformed template's kinds are
+                        // silently absent from `template_format_kinds`
+                        // (already reported once by `check_entry_icu_syntax`
+                        // above, never double-reported here).
+                        let ref_kinds = emitter::template_format_kinds(&ref_entry.template);
+                        let locale_kinds = emitter::template_format_kinds(&locale_entry.template);
+                        for (pname, ref_kind) in &ref_kinds {
+                            let Some(locale_kind) = locale_kinds.get(pname) else {
+                                continue;
+                            };
+                            if locale_kind != ref_kind {
+                                errors.push_for(
+                                    Some(&parsed[locale_i].identity_path),
+                                    CompileError::new(
+                                        "bynk.messages.format_mismatch",
+                                        locale_entry.template_span,
+                                        format!(
+                                            "locale \"{tag}\"'s placeholder \"{pname}\" in code \"{}\" is formatted as {locale_kind:?}, but the reference locale \"{}\"'s is {ref_kind:?}",
+                                            ref_entry.code, reference.tag.name
+                                        ),
+                                    ),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -363,6 +397,41 @@ pub(crate) fn check_messages_bundles(
                     "bynk.messages.missing_locale_dependency",
                     first_span,
                     "a commons declaring `messages` must also `uses bynk.locale`",
+                ),
+            );
+        }
+    }
+}
+
+/// message-bundles slice 3 (#878): reports `bynk.messages.malformed_icu_syntax`
+/// for every ICU-dispatch placeholder in `entry.template` that fails to
+/// parse (unbalanced arm braces, an unknown format keyword, `#` outside a
+/// `plural` arm, a missing mandatory `other` arm, or an explicitly
+/// out-of-scope construct — `selectordinal`, `offset:`/`=N`, an unrecognised
+/// skeleton). Runs once per entry, independent of `@reference` cardinality.
+///
+/// Decision C: no `MessageEntry` position-map field exists — the span is
+/// derived by byte-offset arithmetic against `entry.template_span`, which
+/// covers the *raw quoted source token*, while `entry.template` is the
+/// *decoded* value (only `\n \t \" \\` are decoded, each shrinking 2 raw
+/// bytes to 1 — `bynk-syntax/src/parser.rs`'s `parse_string_literal`). `+ 1`
+/// skips the opening quote. This is exact unless an escape occurs *earlier
+/// in the same template*, in which case the derived span under-shoots by the
+/// number of such escapes — a named, accepted approximation, not a claim of
+/// general precision (real message templates essentially never contain an
+/// escape before an ICU placeholder).
+fn check_entry_icu_syntax(entry: &MessageEntry, file: Option<&Path>, errors: &mut ErrorSink) {
+    for (inner_offset, inner) in emitter::icu_dispatch_placeholders(&entry.template) {
+        if let Err(e) = emitter::parse_icu_placeholder(inner) {
+            let decoded_start = inner_offset + e.offset;
+            let decoded_span = Span::new(decoded_start, decoded_start + e.len);
+            let raw_span = decoded_span.offset(entry.template_span.start + 1);
+            errors.push_for(
+                file,
+                CompileError::new(
+                    "bynk.messages.malformed_icu_syntax",
+                    raw_span,
+                    e.kind.message(),
                 ),
             );
         }

@@ -1,0 +1,16 @@
+suite app.bundle {
+  case "male arm" {
+    let msg = withText(message("greeting"), "g", "male")
+    expect render("en", msg) == "He liked this."
+  }
+
+  case "female arm" {
+    let msg = withText(message("greeting"), "g", "female")
+    expect render("en", msg) == "She liked this."
+  }
+
+  case "undeclared key falls back to other" {
+    let msg = withText(message("greeting"), "g", "nonbinary")
+    expect render("en", msg) == "They liked this."
+  }
+}

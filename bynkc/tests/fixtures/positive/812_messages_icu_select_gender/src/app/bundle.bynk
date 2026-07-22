@@ -1,0 +1,12 @@
+commons app.bundle
+
+uses bynk.locale
+
+---
+message-bundles slice 3 (#878): a `select` placeholder with arbitrary
+(non-CLDR) keys, plus its mandatory `other` arm as the fallback for an
+undeclared key.
+---
+messages en @reference {
+  "greeting" => "{g, select, male {He} female {She} other {They}} liked this."
+}
