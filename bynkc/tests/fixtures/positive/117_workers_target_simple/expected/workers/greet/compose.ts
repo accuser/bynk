@@ -11,7 +11,7 @@ export function compose(env: Env) {
   const Clock = new handlers.FixedClock();
   const deps = { Clock };
   return {
-    async hello(name: any) {
+    async hello(name: string) {
       return handlers.hello.call(name, deps);
     },
   };

@@ -209,6 +209,10 @@ pub enum TokenKind {
     // records (parsed by scope, like `result` in an `ensures`).
     #[token("transition")]
     Transition,
+    // message-bundles track, slice 1: `messages <tag> { "code" => "template" }`
+    // — a commons item declaring one locale's message bundle.
+    #[token("messages")]
+    Messages,
     /// `...` — used in record-spread expressions (v0.5).
     #[token("...")]
     DotDotDot,
@@ -413,6 +417,7 @@ impl TokenKind {
             Requires => "`requires`",
             Ensures => "`ensures`",
             Transition => "`transition`",
+            Messages => "`messages`",
             ColonEq => "`:=`",
             DotDotDot => "`...`",
             LArrow => "`<-`",
@@ -542,7 +547,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
         // invalid escape in the logos grammar, so this never re-routes a
         // currently-valid literal.
         if bytes[pos] == b'"' && has_interp_hole(bytes, pos) {
-            let end = scan_str(bytes, source, pos)?;
+            let end = scan_str(bytes, source, pos, 0)?;
             tokens.push(Token {
                 kind: TokenKind::InterpStr,
                 span: Span::new(pos, end),
@@ -705,8 +710,12 @@ fn has_interp_hole(bytes: &[u8], start: usize) -> bool {
 /// the byte offset just past the closing `"`. Recognises the four simple
 /// escapes plus `\(…)` interpolation holes, whose parens are balanced (and
 /// whose nested strings are skipped) by [`scan_hole`]. (v0.43.)
-fn scan_str(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileError> {
+fn scan_str(bytes: &[u8], source: &str, start: usize, depth: usize) -> Result<usize, CompileError> {
     debug_assert_eq!(bytes[start], b'"');
+    if depth > crate::MAX_NESTING_DEPTH {
+        // Anchor on the opening `"` of the string that tipped over the limit.
+        return Err(too_deeply_nested_interpolation(Span::new(start, start + 1)));
+    }
     let mut i = start + 1;
     loop {
         if i >= bytes.len() || bytes[i] == b'\n' {
@@ -724,7 +733,7 @@ fn scan_str(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileEr
             b'"' => return Ok(i + 1),
             b'\\' => match bytes.get(i + 1) {
                 Some(b'n' | b't' | b'"' | b'\\') => i += 2,
-                Some(b'(') => i = scan_hole(bytes, source, i + 2)?,
+                Some(b'(') => i = scan_hole(bytes, source, i + 2, depth + 1)?,
                 other => {
                     let shown = other.map(|b| (*b as char).to_string()).unwrap_or_default();
                     // Cover `\` plus the whole offending char, advanced to a char
@@ -753,7 +762,21 @@ fn scan_str(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileEr
 /// the offset just past the matching `)`. Tracks paren depth and skips nested
 /// strings (whose own parens must not close the hole), recursing through
 /// [`scan_str`] so nested interpolation nests correctly. (v0.43.)
-fn scan_hole(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileError> {
+fn scan_hole(
+    bytes: &[u8],
+    source: &str,
+    start: usize,
+    nesting: usize,
+) -> Result<usize, CompileError> {
+    if nesting > crate::MAX_NESTING_DEPTH {
+        // Anchor on the `\(` opener that tipped over the limit; it sits two
+        // bytes before `start` and is pure ASCII, so the span stays on char
+        // boundaries (a fuzz invariant).
+        return Err(too_deeply_nested_interpolation(Span::new(
+            start.saturating_sub(2),
+            start,
+        )));
+    }
     let mut i = start;
     let mut depth = 1usize;
     loop {
@@ -779,10 +802,30 @@ fn scan_hole(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileE
                     return Ok(i);
                 }
             }
-            b'"' => i = scan_str(bytes, source, i)?,
+            b'"' => i = scan_str(bytes, source, i, nesting + 1)?,
             _ => i += 1,
         }
     }
+}
+
+/// The bounded-depth diagnostic for interpolation that nests past
+/// [`crate::MAX_NESTING_DEPTH`]. `\("\("\(…` mutually recurses
+/// [`scan_str`] ↔ [`scan_hole`], one stack frame per level, so an unbounded
+/// scanner overflows and aborts `tokenize` (#713). `span` anchors the report on
+/// the opener that tipped over the limit (the `"` or the `\(`).
+fn too_deeply_nested_interpolation(span: Span) -> CompileError {
+    CompileError::new(
+        "bynk.lex.interpolation_too_deep",
+        span,
+        format!(
+            "string interpolation nests more than {} levels deep",
+            crate::MAX_NESTING_DEPTH
+        ),
+    )
+    .with_note(
+        "deeply nested `\\(…)` interpolation is rejected to keep the lexer from \
+         overflowing its stack and aborting; flatten or split the string",
+    )
 }
 
 /// One segment of a split interpolated string (v0.43): literal text (escapes
@@ -828,7 +871,7 @@ pub(crate) fn split_interp(source: &str, span: Span) -> Result<Vec<InterpSegment
                         segments.push(InterpSegment::Chunk(std::mem::take(&mut chunk)));
                     }
                     let hole_start = i + 2;
-                    let after = scan_hole(bytes, source, hole_start)?;
+                    let after = scan_hole(bytes, source, hole_start, 0)?;
                     // `after` is one past the matching `)`; the hole body is
                     // everything up to that `)`.
                     segments.push(InterpSegment::Hole(Span::new(hole_start, after - 1)));
@@ -927,19 +970,17 @@ fn at_line_start(source: &str, pos: usize) -> bool {
     bytes[pos - 1] == b'\n'
 }
 
-/// Extract the body content of a doc-block token from its source span.
-/// Strips the leading and trailing `---` marker lines and returns the body
-/// verbatim. If every non-empty content line begins with the same horizontal
-/// whitespace prefix (e.g., because the doc block sits inside a brace-form
-/// commons body), that common prefix is removed so the body reads naturally
-/// when emitted as JSDoc.
-pub fn doc_block_content(source: &str, span: Span) -> String {
+/// The doc-block body as a byte range into `source` — leading/trailing `---`
+/// marker lines stripped, no further processing (unlike [`doc_block_content`],
+/// which additionally strips a common per-line indent — not offset-preserving).
+/// Callers that need to map a position in the body back to `source` (e.g.
+/// document-link spans) use this instead of re-deriving it from the string
+/// `doc_block_content` returns.
+pub fn doc_block_body_range(source: &str, span: Span) -> Option<std::ops::Range<usize>> {
     let slice = &source[span.range()];
     // Drop the first line (opening marker).
-    let after_open = match slice.find('\n') {
-        Some(i) => &slice[i + 1..],
-        None => return String::new(),
-    };
+    let after_open_rel = slice.find('\n')? + 1;
+    let after_open = &slice[after_open_rel..];
     let bytes = after_open.as_bytes();
     // Trim the trailing closing-marker line.
     let mut i = bytes.len();
@@ -955,7 +996,21 @@ pub fn doc_block_content(source: &str, span: Span) -> String {
     if i > 0 && bytes[i - 1] == b'\n' {
         i -= 1;
     }
-    let body = &after_open[..i];
+    let start = span.range().start + after_open_rel;
+    Some(start..start + i)
+}
+
+/// Extract the body content of a doc-block token from its source span.
+/// Strips the leading and trailing `---` marker lines and returns the body
+/// verbatim. If every non-empty content line begins with the same horizontal
+/// whitespace prefix (e.g., because the doc block sits inside a brace-form
+/// commons body), that common prefix is removed so the body reads naturally
+/// when emitted as JSDoc.
+pub fn doc_block_content(source: &str, span: Span) -> String {
+    let Some(range) = doc_block_body_range(source, span) else {
+        return String::new();
+    };
+    let body = &source[range];
 
     // Compute the common leading-whitespace prefix across all non-empty lines
     // and strip it. This lets writers indent the doc block alongside the
@@ -1050,6 +1105,19 @@ mod tests {
         );
         // #548: `and` is no longer a keyword — it lexes as an ordinary identifier.
         assert_eq!(kinds("and"), vec![Ident]);
+    }
+
+    #[test]
+    fn deeply_nested_interpolation_is_bounded_not_overflowed() {
+        // `"\("\("\(…` mutually recurses scan_str <-> scan_hole, one frame per
+        // level, and an unbounded scanner overflows `tokenize` and aborts the
+        // process (#713). Well past the limit it must return a bounded-depth
+        // diagnostic instead. The holes are left open so the depth guard, not a
+        // later `)`, stops the scan.
+        let depth = crate::MAX_NESTING_DEPTH + 8;
+        let src = format!("\"{}", "\\(\"".repeat(depth));
+        let err = tokenize(&src).unwrap_err();
+        assert_eq!(err.category, "bynk.lex.interpolation_too_deep");
     }
 
     #[test]
@@ -1296,5 +1364,51 @@ mod tests {
     fn bad_escape_in_interp_string_is_an_error() {
         let err = tokenize(r#""a \q \(x)""#).unwrap_err();
         assert_eq!(err.category, "bynk.lex.bad_escape");
+    }
+
+    fn doc_block_span(source: &str) -> Span {
+        tokenize(source)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.kind == TokenKind::DocBlock)
+            .expect("a DocBlock token")
+            .span
+    }
+
+    #[test]
+    fn doc_block_body_range_slices_to_the_same_bytes_doc_block_content_would_strip() {
+        let src = "---\nHello there.\n---\nfn f() -> Int = 1\n";
+        let span = doc_block_span(src);
+        let range = doc_block_body_range(src, span).unwrap();
+        assert_eq!(&src[range], "Hello there.");
+    }
+
+    #[test]
+    fn doc_block_body_range_is_offset_preserving_unlike_doc_block_content() {
+        // A content line indented relative to its (unindented) markers:
+        // doc_block_content strips the common indent (not offset-preserving),
+        // doc_block_body_range does not — its slice still contains the raw
+        // indentation, so span-based callers can map a position in the raw
+        // body straight back to `src`.
+        let src = "---\n  See [Foo].\n---\nfn f() -> Int = 1\n";
+        let span = doc_block_span(src);
+        let range = doc_block_body_range(src, span).unwrap();
+        assert_eq!(&src[range.clone()], "  See [Foo].");
+        assert_eq!(doc_block_content(src, span), "See [Foo].");
+        // The raw range still locates `[Foo]` correctly within `src`.
+        let bracket_rel = src[range.clone()].find('[').unwrap();
+        assert_eq!(
+            &src[range.start + bracket_rel..range.start + bracket_rel + 5],
+            "[Foo]"
+        );
+    }
+
+    #[test]
+    fn doc_block_content_and_body_range_agree_on_empty_body() {
+        let src = "---\n---\nfn f() -> Int = 1\n";
+        let span = doc_block_span(src);
+        let range = doc_block_body_range(src, span).unwrap();
+        assert_eq!(&src[range], "");
+        assert_eq!(doc_block_content(src, span), "");
     }
 }

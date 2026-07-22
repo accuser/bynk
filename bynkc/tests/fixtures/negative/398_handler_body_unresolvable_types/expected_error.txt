@@ -1,0 +1,5 @@
+# #712: each unresolvable type in a handler body now reports, rather than
+# being silently swallowed (the program used to exit 0 with zero diagnostics).
+bynk.resolve.unknown_type unknown type `Missing`
+bynk.resolve.unknown_type unknown type `Nope`
+bynk.resolve.unknown_type unknown type `Typo`

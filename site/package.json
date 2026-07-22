@@ -6,15 +6,17 @@
   "description": "The Bynk documentation & web presence (documentation track) — Astro + Starlight, deployed to bynk-lang.org: the landing page, the Book (tutorials, guides, reference, normative spec), and faithful bynk highlighting from the editor's TextMate grammar.",
   "scripts": {
     "dev": "astro dev",
+    "prebuild": "node scripts/build-llms-full.mjs",
     "build": "astro build",
     "preview": "astro preview"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.41.1",
-    "astro": "^7.0.4",
+    "@astrojs/markdown-remark": "^7.2.1",
+    "@astrojs/starlight": "^0.41.3",
+    "astro": "^7.1.1",
     "playwright": "^1.61.1",
     "rehype-mermaid": "^3.0.0",
-    "sharp": "^0.35.2",
+    "sharp": "^0.35.3",
     "starlight-links-validator": "^0.25.2"
   }
 }

@@ -62,9 +62,12 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
+      # Global CLI install, not a `uses:` action, so there is no lockfile or
+      # commit-hash to pin against (Scorecard Pinned-Dependencies has no hash
+      # mechanism for `npm install -g`). Range-pinned to major 5. Accepted, #828.
       - name: Install TypeScript
         if: ${{ inputs.run_tests }}
         run: npm install -g typescript@5
@@ -136,7 +139,7 @@ jobs:
         working-directory: tree-sitter-bynk
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"

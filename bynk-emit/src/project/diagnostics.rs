@@ -91,6 +91,13 @@ impl ErrorSink {
 pub struct ProjectAnalysis {
     /// `(project-relative source path, analysed text)` for every file read,
     /// including clean files (the LSP needs them to clear diagnostics).
+    ///
+    /// Slice 0: this is genuinely project-relative now — it keys on
+    /// `ParsedFile::identity_path`, so `src/todos.bynk` and `tests/todos.bynk`
+    /// are distinct entries. Before slice 0 the path was relative to each
+    /// `include` root, so those two collided on `todos.bynk` and a consumer
+    /// mapping by this key silently dropped one; this comment described the
+    /// intent rather than the behaviour, which is why it went unnoticed.
     pub snapshots: Vec<(PathBuf, String)>,
     pub errors: Vec<AttributedError>,
     /// v0.25 (ADR 0053): the project-wide binding index. Empty when the
@@ -119,6 +126,35 @@ pub struct ProjectAnalysis {
     /// links and consumed-context navigation. Excludes synthetic (toolchain-
     /// injected) units; empty when the pipeline bails before the checker.
     pub unit_sources: HashMap<String, Vec<PathBuf>>,
+    /// #846: qualified context/adapter unit name → the cross-context and agent
+    /// tables needed to classify a handler call as a lifeline (consumed
+    /// capability, consumed-context call, or agent) for the sequence-diagram
+    /// query. Reconstructed from the same retained per-project tables
+    /// (`unit_uses`/`unit_consumes`/`unit_tables`) the per-file checking pass
+    /// builds its own transient `ResolvedCommons.cross_context` from — that
+    /// transient value is never itself retained, so this is a deliberately
+    /// lean re-derivation (not the full `ResolvedCommons`: no `types`/`fns`/
+    /// `methods`, which the classifier never needs). Only contexts/adapters
+    /// have an entry; empty when the pipeline bails before the checker.
+    pub sequence_info: HashMap<String, ContextSequenceInfo>,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order — itself first, then its `uses` targets, then its `consumes`
+    /// targets, in that order (mirrors `IndexBuilder::qualify_with`'s
+    /// bare-name qualification, `bynk-check/src/index.rs` — the index itself
+    /// retains no scope past assembly, so this is assembled here from the
+    /// same `unit_uses`/`unit_consumes` phase outputs `unit_sources` is built
+    /// alongside). A synthetic unit never owns a doc comment, so it's never a
+    /// key here, though it may still appear as a scope target; empty when the
+    /// pipeline bails before the checker.
+    pub doc_scope: HashMap<String, Vec<String>>,
+}
+
+/// #846: the per-unit slice of resolution the sequence-diagram classifier
+/// needs — see [`ProjectAnalysis::sequence_info`].
+#[derive(Debug, Clone, Default)]
+pub struct ContextSequenceInfo {
+    pub cross_context: resolver::CrossContextInfo,
+    pub agents: HashMap<String, AgentDecl>,
 }
 
 /// v0.24: a failed build with its attribution and snapshots intact — what

@@ -33,7 +33,7 @@ function __zeroOfOrderState(): OrderState { return { status: OrderStatus.Pending
 
 function __rehydrateOrderState(s: OrderState): void {
   { const __r = deserialise_OrderStatus((s.status as unknown as JsonValue), "status"); if (__r.tag === "Err") throw rehydrationViolation("Order", __r.error); }
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "number", actual: typeof __v } as BoundaryError))((s.items as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Order", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "items", expected: "integer", actual: String(__v) } as BoundaryError))((s.items as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Order", __r.error); }
 }
 
 export class Order {

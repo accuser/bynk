@@ -10,7 +10,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async check(c: any) {
+    async check(c: handlers.Cents) {
       return handlers.check.call(c, deps);
     },
   };

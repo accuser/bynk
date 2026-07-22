@@ -477,6 +477,11 @@ pub enum CommonsItem {
     /// `actor Name { auth = Scheme, identity = T }` (v0.45). A nominal boundary
     /// contract consumed by a handler's `by` clause; not a runnable entity.
     Actor(ActorDecl),
+    /// `messages <tag> @reference { "code" => "template" ... }` — a message
+    /// bundle for one locale. Commons-only (checker-enforced, not grammar);
+    /// legal syntactically wherever any `CommonsItem` is, per the existing
+    /// `Service`/`Agent`-in-`adapter` precedent.
+    Messages(MessagesDecl),
 }
 
 impl CommonsItem {
@@ -489,8 +494,38 @@ impl CommonsItem {
             CommonsItem::Service(s) => &s.name,
             CommonsItem::Agent(a) => &a.name,
             CommonsItem::Actor(a) => &a.name,
+            CommonsItem::Messages(m) => &m.tag,
         }
     }
+}
+
+/// One locale's message bundle (v0.222+): `messages <tag> @reference { ... }`.
+/// `tag` is a plain identifier at the grammar level — its `LocaleTag`
+/// refinement (`bynk.locale`) is checked later, not lexed as a string.
+#[derive(Debug, Clone)]
+pub struct MessagesDecl {
+    pub tag: Ident,
+    /// Every `@`-annotation attached to this block. The parser stays
+    /// permissive (zero or more, same as `store` field annotations); cardinality
+    /// (exactly one `@reference` per bundle, counted across every `Messages`
+    /// item in the commons) is a checker concern, not a parse error.
+    pub annotations: Vec<Annotation>,
+    pub entries: Vec<MessageEntry>,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// One `"code" => "template"` entry inside a `messages` block. Both sides are
+/// plain string literals — a template's `{name}` placeholders are resolved by
+/// a compile-time string scan during lowering, not parsed as expressions.
+#[derive(Debug, Clone)]
+pub struct MessageEntry {
+    pub code: String,
+    pub code_span: Span,
+    pub template: String,
+    pub template_span: Span,
+    pub span: Span,
 }
 
 /// A capability declaration (v0.5 §3.3). Capabilities are interface-like
@@ -1090,6 +1125,22 @@ impl ByClause {
     pub fn is_sum(&self) -> bool {
         self.actors.len() > 1
     }
+}
+
+/// v0.182 (testing-the-boundary Slice A, #664): a call-site actor clause on a
+/// test-body `let x <- <service address> by <Actor>(<identity>)`. Distinct from
+/// [`ByClause`] (the handler/header form): the *declaration* names which actor
+/// may call and binds the verified identity, whereas the *call site* names the
+/// actor the case is acting as and supplies the identity value. A unit-identity
+/// actor (`Visitor`, and cron/queue's internal actors) carries no `identity`.
+#[derive(Debug, Clone)]
+pub struct CallSiteActor {
+    /// The actor the case acts as — a local actor decl or a prelude actor.
+    pub actor: Ident,
+    /// The supplied identity value (`"bob"` in `by User("bob")`), or `None` for a
+    /// unit-identity actor written `by Visitor` with no argument.
+    pub identity: Option<Box<Expr>>,
+    pub span: Span,
 }
 
 /// A handler block — `on call(args) -> T given C1, C2 { body }`.
@@ -1872,6 +1923,11 @@ pub struct LetStmt {
     pub name: Ident,
     pub type_annot: Option<TypeRef>,
     pub value: Expr,
+    /// v0.182 (#664): the call-site `by <Actor>(<identity>)` clause on an
+    /// `EffectLet` whose value addresses a test service handler. `None` on a pure
+    /// `Let` (the `by` is parsed only in the `<-` arm) and on an effect-let with
+    /// no principal.
+    pub principal: Option<CallSiteActor>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -1988,6 +2044,99 @@ impl TypeRef {
             TypeRef::App { span, .. } => *span,
         }
     }
+}
+
+/// v0.174 (#592): does the generic record type `name` transitively contain a
+/// reference to itself — through any field-type path, including collection and
+/// `Option` wrappers, sum-variant payloads, and generic type arguments? Such a
+/// type has no finite set of monomorphised boundary codecs: uniform recursion
+/// (`Node[T] = { next: Option[Node[T]] }`) would need a self-referential codec
+/// chain the per-instantiation model does not yet generate, and polymorphic
+/// recursion (`Weird[T] = { next: Option[Weird[List[T]]] }`) an unbounded set of
+/// instantiations. Both are rejected at a boundary
+/// (`bynk.generics.recursive_generic_at_boundary`).
+///
+/// Detection is reachability over the type-containment graph: `name` is
+/// recursive iff it is reachable from its own body, following every named /
+/// applied head and descending into every wrapper, map/result pair, function
+/// position, and generic argument. Terminates via the `visited` set.
+pub fn generic_record_is_recursive(
+    name: &str,
+    types: &std::collections::HashMap<String, TypeDecl>,
+) -> bool {
+    fn heads(t: &TypeRef, out: &mut Vec<String>) {
+        match t {
+            TypeRef::Named(id) => out.push(id.name.clone()),
+            TypeRef::App {
+                name: app_name,
+                args,
+                ..
+            } => {
+                out.push(app_name.name.clone());
+                for a in args {
+                    heads(a, out);
+                }
+            }
+            TypeRef::Option(a, _)
+            | TypeRef::List(a, _)
+            | TypeRef::Effect(a, _)
+            | TypeRef::HttpResult(a, _)
+            | TypeRef::Query(a, _)
+            | TypeRef::Stream(a, _)
+            | TypeRef::Connection(a, _)
+            | TypeRef::History(a, _) => heads(a, out),
+            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+                heads(a, out);
+                heads(b, out);
+            }
+            TypeRef::Fn(ps, r, _) => {
+                for p in ps {
+                    heads(p, out);
+                }
+                heads(r, out);
+            }
+            TypeRef::Base(..)
+            | TypeRef::QueueResult(_)
+            | TypeRef::ValidationError(_)
+            | TypeRef::JsonError(_)
+            | TypeRef::Unit(_) => {}
+        }
+    }
+    fn body_heads(decl: &TypeDecl, out: &mut Vec<String>) {
+        match &decl.body {
+            TypeBody::Record(r) => {
+                for f in &r.fields {
+                    heads(&f.type_ref, out);
+                }
+            }
+            TypeBody::Sum(s) => {
+                for v in &s.variants {
+                    for p in &v.payload {
+                        heads(&p.type_ref, out);
+                    }
+                }
+            }
+            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+        }
+    }
+    let Some(root) = types.get(name) else {
+        return false;
+    };
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stack: Vec<String> = Vec::new();
+    body_heads(root, &mut stack);
+    while let Some(n) = stack.pop() {
+        if n == name {
+            return true;
+        }
+        if !visited.insert(n.clone()) {
+            continue;
+        }
+        if let Some(decl) = types.get(&n) {
+            body_heads(decl, &mut stack);
+        }
+    }
+    false
 }
 
 #[derive(Debug, Clone)]
@@ -2143,6 +2292,14 @@ pub enum ExprKind {
         type_ref: TypeRef,
         args: Vec<Expr>,
     },
+    /// `Wire(<String>)` — a raw, pre-validation argument to a `system`-tier
+    /// service address (testing-the-boundary Slice C). The inner expression is a
+    /// `String` carrying the wire form the boundary will receive *unvalidated* —
+    /// a body's JSON text or a path segment — so a case can drive the router with
+    /// input the type system forbids and observe the rejection. Legal only at
+    /// `system` (there is no wire at `unit`); the router validates it, so no
+    /// refined value is ever minted from a `Wire` (ADR 0182 untouched).
+    Wire(Box<Expr>),
     /// `[a, b, c]` — list literal (v0.20b). An empty `[]` requires an
     /// expected type (`bynk.types.uninferable_element_type`).
     ListLit(Vec<Expr>),
@@ -2201,6 +2358,7 @@ pub fn expr_children(e: &Expr) -> Vec<&Expr> {
         | ExprKind::ConstructorCall { args, .. }
         | ExprKind::Val { args, .. }
         | ExprKind::ListLit(args) => out.extend(args.iter()),
+        ExprKind::Wire(inner) => out.push(inner.as_ref()),
         ExprKind::Lambda(l) => out.push(l.body.as_ref()),
         ExprKind::BinOp(_, l, r) => {
             out.push(l.as_ref());
@@ -2386,6 +2544,26 @@ pub enum Pattern {
         bindings: Vec<PatternBinding>,
         span: Span,
     },
+    /// `p 'where' refinement-predicate` — a refinement guard on a pattern
+    /// (#472). Matches when `inner` matches *and* the scrutinee satisfies
+    /// `predicate` at runtime. v1 admits only `Wildcard` as `inner` (no
+    /// binding form yet); refutable — never counts toward exhaustiveness or
+    /// as a catch-all arm, the same treatment as an `if` guard (§2.3.4).
+    Refined {
+        inner: Box<Pattern>,
+        predicate: Refinement,
+        span: Span,
+    },
+    /// `p₁ | p₂ | … | pₙ` — an or-pattern (#474 §2.3.4): matches if any
+    /// alternative matches. Left-associative `|`, flattened by the parser's
+    /// chain fold into one `Vec` — an alternative is always a leaf
+    /// (`Wildcard`/`Binding`/`Literal`/`Variant`), never itself an `Or`
+    /// (there is no parenthesized-pattern syntax to nest one inside another).
+    /// Well-typedness (checked, not parsed): every alternative binds the same
+    /// set of names, a name shared across alternatives has the same type
+    /// (including refinement) in each, and every alternative matches the same
+    /// value type.
+    Or(Vec<Pattern>, Span),
 }
 
 /// The value carried by a [`Pattern::Literal`]. A closed set (ADR 0001):
@@ -2417,12 +2595,19 @@ impl Pattern {
             Pattern::Binding(id) => id.span,
             Pattern::Literal { span, .. } => *span,
             Pattern::Variant { span, .. } => *span,
+            Pattern::Refined { span, .. } => *span,
+            Pattern::Or(_, span) => *span,
         }
     }
 
     /// Every identifier this pattern binds into scope, recursively (`_` and
     /// nullary variants bind nothing). Used by the resolver and the checker to
     /// populate an arm's scope, and by the guard to see the arm's bindings.
+    ///
+    /// For [`Pattern::Or`] this returns the *first* alternative's names — the
+    /// checker separately verifies (#474 Rule 1) that every alternative binds
+    /// the same set, so this is a defensive default when that rule is
+    /// violated, not a semantic choice among alternatives.
     pub fn bound_names(&self) -> Vec<&Ident> {
         match self {
             Pattern::Wildcard(_) | Pattern::Literal { .. } => Vec::new(),
@@ -2431,6 +2616,8 @@ impl Pattern {
                 .iter()
                 .flat_map(|b| b.pattern().bound_names())
                 .collect(),
+            Pattern::Refined { inner, .. } => inner.bound_names(),
+            Pattern::Or(alts, _) => alts.first().map(Pattern::bound_names).unwrap_or_default(),
         }
     }
 
@@ -2442,9 +2629,15 @@ impl Pattern {
     }
 
     /// True when this pattern matches every value (a `_` or a name binding),
-    /// i.e. it is irrefutable and covers the position for exhaustiveness.
+    /// i.e. it is irrefutable and covers the position for exhaustiveness. An
+    /// [`Pattern::Or`] is irrefutable when any alternative is — `_` in any
+    /// position already makes the whole pattern match everything.
     pub fn is_irrefutable(&self) -> bool {
-        matches!(self, Pattern::Wildcard(_) | Pattern::Binding(_))
+        match self {
+            Pattern::Wildcard(_) | Pattern::Binding(_) => true,
+            Pattern::Or(alts, _) => alts.iter().any(Pattern::is_irrefutable),
+            _ => false,
+        }
     }
 }
 

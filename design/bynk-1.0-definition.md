@@ -77,14 +77,16 @@ The point of naming the layer is that 1.0 does **not** wait for the whole langua
 to stop moving. It freezes the part real services stand on, and lets the rest keep
 growing.
 
-### Gate 2 — `deploy`
+### Gate 2 — `deploy` (satisfied)
 
 `bynk deploy` — provisioning + remote deploy — must exist. This is the first
 [adoption blocker](bynk-adoption-sequencing.md) and the capstone of the
-`doctor → new → dev → deploy` driver arc ([`tracks/deploy.md`](tracks/deploy.md)).
-The rationale is definitional: a **stability** promise is meaningless for software
-that cannot reach production in the first place. There is nothing to keep stable
-until there is something deployed.
+`doctor → new → dev → deploy` driver arc. The rationale is definitional: a
+**stability** promise is meaningless for software that cannot reach
+production in the first place. There is nothing to keep stable until there
+is something deployed. The `deploy` feature track shipped all six slices
+(v0.154–v0.220.2) and retired — see its closing summary in
+[`archive/retired-tracks.md`](archive/retired-tracks.md).
 
 ### Gate 3 — state migrations
 
@@ -94,10 +96,10 @@ Foundations stability keeps *source* compiling, but a deployed agent owns
 **persisted state**, and the first breaking change to that state's shape is
 unshippable without a migration path. Note this is **distinct** from the platform
 DO-migration application `deploy` already wires up
-([`tracks/deploy.md`](tracks/deploy.md) §4.2), which drives Cloudflare's own
-mechanism; Gate 3 is evolving the *Bynk* state schema a stable-source upgrade
-reads. Source-compatible and data-compatible are two promises, and a real upgrade
-needs both.
+([ADR 0194](decisions/0194-deploy-queues-and-delegated-do-migrations.md)),
+which drives Cloudflare's own mechanism; Gate 3 is evolving the *Bynk* state
+schema a stable-source upgrade reads. Source-compatible and data-compatible
+are two promises, and a real upgrade needs both.
 
 ## What is explicitly post-1.0 (additive)
 

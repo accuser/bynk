@@ -16,13 +16,15 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "cache": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "b232012bc9c63357") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "cache", expected: "b232012bc9c63357", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             if (typeof args !== "object" || args === null || Array.isArray(args)) return new Response(JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: JsonValue };
-            const __r_key = (typeof argsObj["key"] === "string" ? Ok(argsObj["key"]) : Err({ kind: "StructuralMismatch", path: "$.key", expected: "string", actual: typeof argsObj["key"] }) as Result<any, BoundaryError>);
+            const __r_key = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$.key", expected: "string", actual: typeof __v } as BoundaryError))(argsObj["key"]);
             if (__r_key.tag === "Err") return new Response(JSON.stringify(__r_key.error), { status: 400, headers: { "content-type": "application/json" } });
             const key = __r_key.value;
-            const __r_value = (typeof argsObj["value"] === "string" ? Ok(argsObj["value"]) : Err({ kind: "StructuralMismatch", path: "$.value", expected: "string", actual: typeof argsObj["value"] }) as Result<any, BoundaryError>);
+            const __r_value = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$.value", expected: "string", actual: typeof __v } as BoundaryError))(argsObj["value"]);
             if (__r_value.tag === "Err") return new Response(JSON.stringify(__r_value.error), { status: 400, headers: { "content-type": "application/json" } });
             const value = __r_value.value;
             const result = await surface.cache(key, value);

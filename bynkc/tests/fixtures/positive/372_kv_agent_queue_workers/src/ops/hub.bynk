@@ -1,0 +1,27 @@
+context ops.hub
+
+consumes bynk.cloudflare { Kv }
+
+type JobId = opaque String
+
+type Job = {
+  id:      String,
+  payload: String,
+}
+
+agent JobLedger {
+  key id: JobId
+
+  store seen: Cell[Int]
+
+  on call total() -> Effect[Int] {
+    Effect.pure(seen)
+  }
+}
+
+service intake from queue("job-intake") {
+  on message(message: Job) -> Effect[QueueResult] given Kv {
+    let _ <- Kv.put(message.id, message.payload)
+    Ack
+  }
+}

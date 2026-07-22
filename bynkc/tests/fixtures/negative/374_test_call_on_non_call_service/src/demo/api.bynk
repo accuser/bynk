@@ -1,0 +1,9 @@
+context demo.api
+
+type Title = String where NonEmpty
+
+service api from http {
+  on POST("/items") (title: Title) -> Effect[HttpResult[Title]] by v: Visitor {
+    Created(title)
+  }
+}

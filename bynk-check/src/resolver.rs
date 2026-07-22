@@ -21,7 +21,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::index::{RefSink, SymbolKind};
 use bynk_syntax::ast::*;
-use bynk_syntax::error::CompileError;
+use bynk_syntax::error::{Applicability, CompileError};
+use bynk_syntax::span::Span;
 
 /// The resolver's two collection points, bundled so the reference walk
 /// threads one parameter (v0.25, ADR 0053). `push` forwards to the error
@@ -203,7 +204,11 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             | CommonsItem::Provider(_)
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_)
-            | CommonsItem::Actor(_) => {}
+            | CommonsItem::Actor(_)
+            // `messages` entries are plain string literals with no type refs
+            // to resolve here; commons-only legality and the reference/
+            // duplicate-code checks live in bynk-emit's project validation.
+            | CommonsItem::Messages(_) => {}
             CommonsItem::Type(t) => {
                 if let Some(prev) = types.get(&t.name.name) {
                     errors.push(
@@ -279,25 +284,29 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                         );
                         continue;
                     }
-                    // v0.157 (ADR 0183): methods on a generic type would require
-                    // generic methods (out of this increment — ADR 0028 keeps
-                    // generic methods additive). Reject the attachment rather
-                    // than emit an under-applied `self: Box` TypeScript signature.
-                    if types
-                        .get(&type_name.name)
-                        .is_some_and(|d| !d.type_params.is_empty())
+                    // #594: an *instance* method on a generic type is a generic
+                    // method — the receiver's type arguments supply the type's
+                    // parameters (`self: Box[A]`), so it resolves and emits as an
+                    // erased TS generic method. A *static* method has no receiver
+                    // to supply those parameters, so it stays deferred (it would
+                    // need free-function-style inference of the type's params);
+                    // reject it rather than emit an under-applied `Box` signature.
+                    if !f.has_self
+                        && types
+                            .get(&type_name.name)
+                            .is_some_and(|d| !d.type_params.is_empty())
                     {
                         errors.push(
                             CompileError::new(
                                 "bynk.generics.method_on_generic_type",
                                 type_name.span,
                                 format!(
-                                    "method `{}.{}` is attached to generic type `{}` — methods on generic types are not in v0.157",
+                                    "static method `{}.{}` is attached to generic type `{}` — static methods on generic types are deferred (instance methods are supported)",
                                     type_name.name, method_name.name, type_name.name
                                 ),
                             )
                             .with_note(
-                                "use a free function taking the generic value as a parameter instead",
+                                "give the method a `self` receiver, or use a free function taking the generic value as a parameter instead",
                             ),
                         );
                         continue;
@@ -347,7 +356,11 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             | CommonsItem::Provider(_)
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_)
-            | CommonsItem::Actor(_) => {}
+            | CommonsItem::Actor(_)
+            // `messages` entries are plain string literals with no type refs
+            // to resolve here; commons-only legality and the reference/
+            // duplicate-code checks live in bynk-emit's project validation.
+            | CommonsItem::Messages(_) => {}
         }
     }
 
@@ -410,7 +423,11 @@ pub fn resolve_file_record(
             | CommonsItem::Provider(_)
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_)
-            | CommonsItem::Actor(_) => {}
+            | CommonsItem::Actor(_)
+            // `messages` entries are plain string literals with no type refs
+            // to resolve here; commons-only legality and the reference/
+            // duplicate-code checks live in bynk-emit's project validation.
+            | CommonsItem::Messages(_) => {}
         }
         sinks.refs.clear_owner();
     }
@@ -488,23 +505,62 @@ fn check_duplicate_type_params(params: &[TypeParam], owner: &str, errors: &mut S
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
 fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
-    // v0.157 (ADR 0183): only a record body may be generic. Type parameters on
-    // a refined / opaque / sum body are rejected; a parameter shadowing a
-    // declared type is diagnosed (mirrors the function-generics rule).
+    // A `type` declaration may not reuse a compiler-known built-in type name
+    // (`List`, `Map`, `Query`, …). Those names are dispatched on by the type
+    // parser (`parser/types.rs`), so any *reference* to the alias would be
+    // intercepted as the built-in — the declaration would be silently shadowed
+    // (`QueueResult`) or fail with an incoherent message at the use site. Reject
+    // it here, at the declaration, with a message the user can act on. Base
+    // types and other reserved *keywords* (`Int`, `Result`, …) are already
+    // rejected earlier, by `expect_ident` at parse time.
+    if bynk_syntax::keywords::is_builtin_type_name(&t.name.name) {
+        errors.push(
+            CompileError::new(
+                "bynk.resolve.reserved_builtin_type",
+                t.name.span,
+                format!(
+                    "`{}` is a built-in type name and cannot be redeclared",
+                    t.name.name
+                ),
+            )
+            .with_note("rename the type — built-in type names are reserved in type position"),
+        );
+    }
+    // v0.157 (ADR 0183): a record body may be generic. #593: a sum body may too
+    // — its variant payloads resolve the parameters as rigid vars, exactly as
+    // record fields do. Type parameters on a refined / opaque body are still
+    // rejected; a parameter shadowing a declared type is diagnosed (mirrors the
+    // function-generics rule).
     let type_params: HashSet<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
     if !t.type_params.is_empty() {
         check_duplicate_type_params(&t.type_params, &format!("type `{}`", t.name.name), errors);
-        if !matches!(t.body, TypeBody::Record(_)) {
+        if !matches!(t.body, TypeBody::Record(_) | TypeBody::Sum(_)) {
             errors.push(
                 CompileError::new(
                     "bynk.generics.generic_non_record",
                     t.type_params[0].span,
                     format!(
-                        "type `{}` declares type parameters, but only a record type (`{{ … }}`) may be generic",
+                        "type `{}` declares type parameters, but only a record (`{{ … }}`) or sum (`| … | …`) type may be generic",
                         t.name.name
                     ),
                 )
-                .with_note("refined, opaque, and sum types cannot yet be generic (ADR 0183)"),
+                .with_note("refined and opaque types cannot be generic — their base is a fixed primitive"),
+            );
+        }
+        // #593: a generic sum may not carry an `embeds` clause. Embedding folds
+        // another sum's variants in by name; composing that with per-parameter
+        // substitution (the embedded source could itself be generic, or mention
+        // the host's parameters) is out of scope for this increment.
+        if let TypeBody::Sum(s) = &t.body
+            && let Some(clause) = s.embeds.first()
+        {
+            errors.push(
+                CompileError::new(
+                    "bynk.generics.generic_sum_embeds",
+                    clause.span,
+                    format!("generic sum `{}` cannot use an `embeds` clause", t.name.name),
+                )
+                .with_note("embedding into a generic sum is not supported — declare the variants directly, or make the sum non-generic"),
             );
         }
         for tp in &t.type_params {
@@ -622,7 +678,10 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
                     } else {
                         payload_seen.insert(f.name.name.clone(), f.name.span);
                     }
-                    check_type_ref_resolves(&f.type_ref, types, errors);
+                    // #593: a generic sum's declared type parameters are in scope
+                    // in its variant payloads, resolving as rigid vars (empty set
+                    // for a non-generic sum — the same reference walk as before).
+                    check_type_ref_resolves_in(&f.type_ref, types, &type_params, errors);
                 }
             }
             // v0.154 (ADR 0178): the `embeds E as V` clauses' source types must
@@ -644,7 +703,7 @@ fn check_fn_refs(
     // Parameter types resolve.
     // v0.20a: the fn's type parameters are legal named references in its
     // own signature and body annotations.
-    let type_params: HashSet<String> = f
+    let mut type_params: HashSet<String> = f
         .type_params
         .iter()
         .map(|tp| tp.name.name.clone())
@@ -654,6 +713,34 @@ fn check_fn_refs(
         &format!("function `{}`", f.name.display()),
         errors,
     );
+    // #594: an instance method on a generic type inherits the receiver type's
+    // parameters into scope, so `fn Box.map[U](self, f: A -> U) -> Box[U]` may
+    // name the type's own parameter `A` alongside the method's `U`. A method
+    // parameter that reuses one of the type's parameter names would shadow it
+    // ambiguously in the substitution — diagnose the collision.
+    if let FnName::Method { type_name, .. } = &f.name
+        && let Some(recv) = types.get(&type_name.name)
+    {
+        for tp in &recv.type_params {
+            if type_params.contains(&tp.name.name) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.generics.duplicate_type_param",
+                        f.type_params
+                            .iter()
+                            .find(|mp| mp.name.name == tp.name.name)
+                            .map_or(tp.span, |mp| mp.span),
+                        format!(
+                            "type parameter `{}` is already a parameter of the receiver type `{}`",
+                            tp.name.name, type_name.name
+                        ),
+                    )
+                    .with_label(tp.span, "declared on the type here"),
+                );
+            }
+            type_params.insert(tp.name.name.clone());
+        }
+    }
     let mut seen_params: HashMap<&str, &Ident> = HashMap::new();
     for p in &f.params {
         check_type_ref_resolves_in(&p.type_ref, types, &type_params, errors);
@@ -919,6 +1006,168 @@ fn name_in_scope(name: &str, params: &HashMap<String, ()>, scopes: &[HashMap<Str
     scopes.iter().rev().any(|s| s.contains_key(name))
 }
 
+/// Validate a record construction's *field set* — every required field present,
+/// no undeclared extra field, no field initialised twice, and every shorthand
+/// `{ name }` bound in scope. Pure over the declaration and the provided fields;
+/// the caller supplies its own scope predicate (the resolver's lexical scope via
+/// [`name_in_scope`], the checker's binding table via `Ctx::lookup`) and its own
+/// diagnostic sink.
+///
+/// #711: this walk skips `Service`/`Agent`/`Actor` items, so their handler
+/// bodies never pass through it — the checker's `check_record_construction` is
+/// their only backstop and calls this same function. A single implementation is
+/// the point: an earlier fix copied three of these four checks into the checker
+/// and dropped the shorthand one, re-opening the gap for shorthand fields. Both
+/// callers now share this, so the two cannot re-diverge.
+pub(crate) fn check_record_field_set(
+    type_name: &Ident,
+    fields: &[FieldInit],
+    record: &RecordBody,
+    decl_name_span: Span,
+    // #852: the span of the whole `TypeName { … }` literal, so the missing-field
+    // quick-fix knows where to insert a new field (before the closing brace when
+    // the literal is empty).
+    construction_span: Span,
+    in_scope: impl Fn(&str) -> bool,
+    errors: &mut Vec<CompileError>,
+) {
+    let declared: HashMap<&str, &RecordField> = record
+        .fields
+        .iter()
+        .map(|f| (f.name.name.as_str(), f))
+        .collect();
+    let mut provided: HashMap<&str, bynk_syntax::span::Span> = HashMap::new();
+    for f in fields {
+        if !declared.contains_key(f.name.name.as_str()) {
+            errors.push(
+                CompileError::new(
+                    "bynk.resolve.unknown_field",
+                    f.name.span,
+                    format!(
+                        "record type `{}` has no field `{}`",
+                        type_name.name, f.name.name
+                    ),
+                )
+                .with_label(decl_name_span, "type declared here"),
+            );
+        }
+        if let Some(prev) = provided.get(f.name.name.as_str()) {
+            errors.push(
+                CompileError::new(
+                    "bynk.resolve.duplicate_field_init",
+                    f.name.span,
+                    format!("field `{}` is initialised more than once", f.name.name),
+                )
+                .with_label(*prev, "previously initialised here"),
+            );
+        } else {
+            provided.insert(f.name.name.as_str(), f.name.span);
+        }
+        // A shorthand `{ name }` (no `: value`) reads the binding `name` from
+        // scope — it must exist. The full `field: value` form is checked by the
+        // caller (the resolver recurses into the value, the checker types it).
+        if f.value.is_none() && !in_scope(&f.name.name) {
+            errors.push(
+                CompileError::new(
+                    "bynk.resolve.unknown_name",
+                    f.name.span,
+                    format!(
+                        "shorthand field initialiser `{}` requires a binding of that name in scope",
+                        f.name.name
+                    ),
+                )
+                .with_note("either bring `{name}` into scope or use the full `field: value` form"),
+            );
+        }
+    }
+    // Missing required fields. Each is a diagnostic anchored at the type name;
+    // a field whose type has a safe default additionally carries a
+    // machine-applicable "add field `x`" quick-fix (#852, DECISIONS B/C) that
+    // inserts `x: <default>` at a fmt-stable position, and — when more than one
+    // field is missing and every missing field is defaultable — the first such
+    // diagnostic also carries an "add all missing fields" convenience.
+    let missing: Vec<&RecordField> = record
+        .fields
+        .iter()
+        .filter(|f| !provided.contains_key(f.name.name.as_str()))
+        .collect();
+    // The edit for a `body` of one or more `name: default` entries. With
+    // existing fields it appends `, body` right after the last one. With an
+    // *empty* literal there is no field span to anchor to and the interior
+    // spacing/trailing punctuation is unknown, so instead the whole ` { … }`
+    // tail (from the end of the type name through the closing brace) is
+    // **replaced** with a canonical ` { body }` — fmt-stable regardless of how
+    // the empty braces were originally spelled (`{}`, `{ }`, `{  }`).
+    let field_edit = |body: &str| -> (Span, String) {
+        match fields.iter().map(|f| f.span.end).max() {
+            Some(end) => (Span::new(end, end), format!(", {body}")),
+            None => (
+                Span::new(type_name.span.end, construction_span.end),
+                format!(" {{ {body} }}"),
+            ),
+        }
+    };
+    // Defaultable missing fields, in declaration order, as `name: default`.
+    let defaultable: Vec<String> = missing
+        .iter()
+        .filter_map(|f| field_default_init(f))
+        .collect();
+    let all_defaultable = defaultable.len() == missing.len();
+
+    for (i, decl_field) in missing.iter().enumerate() {
+        let mut err = CompileError::new(
+            "bynk.resolve.missing_field",
+            type_name.span,
+            format!(
+                "missing required field `{}` for record `{}`",
+                decl_field.name.name, type_name.name
+            ),
+        )
+        .with_label(decl_field.name.span, "field declared here");
+        if let Some(piece) = field_default_init(decl_field) {
+            err = err.with_suggestion(
+                format!("add field `{}`", decl_field.name.name),
+                vec![field_edit(&piece)],
+                Applicability::MachineApplicable,
+            );
+        }
+        // The "add all missing fields" convenience rides on the first missing
+        // diagnostic (they all share `type_name.span`, so it surfaces together
+        // with the single-field fixes), and only when the whole set is
+        // defaultable and there is more than one to add.
+        if i == 0 && missing.len() > 1 && all_defaultable {
+            err = err.with_suggestion(
+                "add all missing fields",
+                vec![field_edit(&defaultable.join(", "))],
+                Applicability::MachineApplicable,
+            );
+        }
+        errors.push(err);
+    }
+}
+
+/// The `name: <default>` initialiser for a missing record field, or `None` when
+/// the field's type has no value that is guaranteed to re-check clean (#852,
+/// DECISION B). Deliberately conservative: an inline-refined field or a
+/// user-named type (which may itself be refined, a sum, or opaque) has no
+/// synthesised default — only the unrefined built-in scalars, `Option` (`None`),
+/// and `List` (`[]`) do, so the inserted value always type-checks.
+fn field_default_init(field: &RecordField) -> Option<String> {
+    if field.refinement.is_some() {
+        return None;
+    }
+    let default = match &field.type_ref {
+        TypeRef::Base(BaseType::Int, _) => "0",
+        TypeRef::Base(BaseType::Float, _) => "0.0",
+        TypeRef::Base(BaseType::String, _) => "\"\"",
+        TypeRef::Base(BaseType::Bool, _) => "false",
+        TypeRef::Option(..) => "None",
+        TypeRef::List(..) => "[]",
+        _ => return None,
+    };
+    Some(format!("{}: {}", field.name.name, default))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn check_block_references(
     block: &Block,
@@ -1102,6 +1351,21 @@ fn check_expr_references(
                     errors,
                 );
             }
+        }
+        // Slice C: `Wire(<String>)` — the raw inner expression resolves as an
+        // ordinary value (a string literal in practice).
+        ExprKind::Wire(inner) => {
+            check_expr_references(
+                inner,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
+            );
         }
         // v0.20a: a lambda introduces a scope frame holding its params; the
         // body walks with the frame in place. Annotated param types resolve
@@ -1290,7 +1554,19 @@ fn check_expr_references(
                 );
             }
         }
-        ExprKind::Call { name, args, .. } => {
+        ExprKind::Call {
+            name,
+            type_args,
+            args,
+        } => {
+            // #712: explicit type arguments (`identity[T](…)`) are type
+            // references and must resolve — the checker's `check_generic_call`
+            // otherwise dropped an unknown one silently. Validated here so
+            // `fn`/method bodies are covered; the checker backstops handler
+            // bodies (which never reach this walk).
+            for ta in type_args {
+                check_type_ref_resolves_in(ta, types, type_params, errors);
+            }
             match fns.get(&name.name) {
                 Some(decl) => {
                     errors.refs.record(name.span, SymbolKind::Fn, &name.name);
@@ -1585,41 +1861,23 @@ fn check_expr_references(
                         .record(type_name.span, SymbolKind::Type, &type_name.name);
                     match &decl.body {
                         TypeBody::Record(r) => {
-                            let declared: HashMap<&str, &RecordField> =
-                                r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
-                            let mut provided: HashMap<&str, &Ident> = HashMap::new();
+                            // Field-set validation (missing / unknown / duplicate
+                            // / shorthand-in-scope) is shared with the checker's
+                            // `check_record_construction` so the two cannot
+                            // re-diverge (#711). The value recursion below stays
+                            // here — it is the resolver's reference walk.
+                            check_record_field_set(
+                                type_name,
+                                fields,
+                                r,
+                                decl.name.span,
+                                expr.span,
+                                |n| name_in_scope(n, params, scopes),
+                                errors.errs,
+                            );
                             for f in fields {
-                                if !declared.contains_key(f.name.name.as_str()) {
-                                    errors.push(
-                                        CompileError::new(
-                                            "bynk.resolve.unknown_field",
-                                            f.name.span,
-                                            format!(
-                                                "record type `{}` has no field `{}`",
-                                                type_name.name, f.name.name
-                                            ),
-                                        )
-                                        .with_label(decl.name.span, "type declared here"),
-                                    );
-                                }
-                                if let Some(prev) = provided.get(f.name.name.as_str()) {
-                                    errors.push(
-                                        CompileError::new(
-                                            "bynk.resolve.duplicate_field_init",
-                                            f.name.span,
-                                            format!(
-                                                "field `{}` is initialised more than once",
-                                                f.name.name
-                                            ),
-                                        )
-                                        .with_label(prev.span, "previously initialised here"),
-                                    );
-                                } else {
-                                    provided.insert(f.name.name.as_str(), &f.name);
-                                }
-                                // Shorthand `name` — must be in scope.
-                                match &f.value {
-                                    Some(v) => check_expr_references(
+                                if let Some(v) = &f.value {
+                                    check_expr_references(
                                         v,
                                         params,
                                         in_method,
@@ -1629,38 +1887,6 @@ fn check_expr_references(
                                         fns,
                                         methods,
                                         errors,
-                                    ),
-                                    None => {
-                                        if !name_in_scope(&f.name.name, params, scopes) {
-                                            errors.push(
-                                            CompileError::new(
-                                                "bynk.resolve.unknown_name",
-                                                f.name.span,
-                                                format!(
-                                                    "shorthand field initialiser `{}` requires a binding of that name in scope",
-                                                    f.name.name
-                                                ),
-                                            )
-                                            .with_note(
-                                                "either bring `{name}` into scope or use the full `field: value` form",
-                                            ),
-                                        );
-                                        }
-                                    }
-                                }
-                            }
-                            for decl_field in &r.fields {
-                                if !provided.contains_key(decl_field.name.name.as_str()) {
-                                    errors.push(
-                                        CompileError::new(
-                                            "bynk.resolve.missing_field",
-                                            type_name.span,
-                                            format!(
-                                                "missing required field `{}` for record `{}`",
-                                                decl_field.name.name, type_name.name
-                                            ),
-                                        )
-                                        .with_label(decl_field.name.span, "field declared here"),
                                     );
                                 }
                             }
@@ -1979,23 +2205,36 @@ fn check_expr_references(
 /// `(expr is Pat)` flow into the surrounding truthy branch.
 fn collect_is_binding_names(expr: &Expr, into: &mut HashMap<String, ()>) {
     match &expr.kind {
-        ExprKind::Is {
-            pattern: Pattern::Variant { bindings, .. },
-            ..
-        } => {
-            // `is` supports only flat, depth-1 name bindings (ADR 0169 keeps
-            // nesting/guards match-only), matching `gather_pattern_bindings`.
+        ExprKind::Is { pattern, .. } => collect_is_pattern_binding_names(pattern, into),
+        ExprKind::BinOp(BinOp::And, l, r) => {
+            collect_is_binding_names(l, into);
+            collect_is_binding_names(r, into);
+        }
+        ExprKind::Paren(inner) => collect_is_binding_names(inner, into),
+        _ => {}
+    }
+}
+
+/// The depth-1 names an `is` pattern introduces — a `Variant`'s own flat
+/// bindings (`is` supports only flat, depth-1 name bindings, ADR 0169 keeps
+/// nesting/guards match-only, matching `gather_pattern_bindings`), or — #474
+/// — for an or-pattern, the first alternative's (Rule 2 guarantees every
+/// alternative gives a shared name the same type, so any one alternative's
+/// names are representative of them all).
+fn collect_is_pattern_binding_names(pattern: &Pattern, into: &mut HashMap<String, ()>) {
+    match pattern {
+        Pattern::Variant { bindings, .. } => {
             for b in bindings {
                 if let Pattern::Binding(name) = b.pattern() {
                     into.insert(name.name.clone(), ());
                 }
             }
         }
-        ExprKind::BinOp(BinOp::And, l, r) => {
-            collect_is_binding_names(l, into);
-            collect_is_binding_names(r, into);
+        Pattern::Or(alts, _) => {
+            if let Some(first) = alts.first() {
+                collect_is_pattern_binding_names(first, into);
+            }
         }
-        ExprKind::Paren(inner) => collect_is_binding_names(inner, into),
         _ => {}
     }
 }

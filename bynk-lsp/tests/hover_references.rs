@@ -35,36 +35,17 @@
 //! it. Skipping when a root is absent is not the alternative: ADR 0190 D6
 //! requires these to read real output, and a skip could pass vacuously in-repo.
 
-#[allow(dead_code)]
-#[path = "../src/completion.rs"]
-mod completion;
-#[allow(dead_code)]
-#[path = "../src/hover.rs"]
-mod hover;
-#[allow(dead_code)]
-#[path = "../src/index_queries.rs"]
-mod index_queries;
-#[allow(dead_code)]
-#[path = "../src/locals_nav.rs"]
-mod locals_nav;
-#[allow(dead_code)]
-#[path = "../src/position.rs"]
-mod position;
-#[allow(dead_code)]
-#[path = "../src/signature_help.rs"]
-mod signature_help;
-#[allow(dead_code)]
-#[path = "../src/symbols.rs"]
-mod symbols;
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bynk_ide::ProjectDiagnostics;
+use bynk_lsp::hover;
 use tower_lsp::lsp_types::Url;
 
-/// The analysed `examples/todo` project — the issue's reproduction.
-fn todos() -> (ProjectDiagnostics, PathBuf, String) {
+/// The analysed `examples/todo` project — the issue's reproduction. The
+/// fourth element is the project root `hover_at` needs to build a #848
+/// doc-link's `file://` target.
+fn todos() -> (ProjectDiagnostics, PathBuf, String, PathBuf) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/todo/src");
     let r = bynk_ide::diagnose_project(&root, &HashMap::new());
     let file = r
@@ -73,14 +54,15 @@ fn todos() -> (ProjectDiagnostics, PathBuf, String) {
         .find(|f| f.source_path.to_string_lossy().ends_with("todos.bynk"))
         .expect("todos.bynk analysed");
     let (path, text) = (file.source_path.clone(), file.text.clone());
-    (r, path, text)
+    (r, path, text, root)
 }
 
 /// v0.166 (#616): any project under `<crate>/{rel}` analysed, with the cursor
-/// file's index-relative path and text. The `Method`/`CapabilityOp` fixtures
-/// need declarations `examples/todo` has none of, so they borrow the compiler's
-/// own positive fixtures — real projects on disk, analysed the same way.
-fn analysed(rel: &str, file: &str) -> (ProjectDiagnostics, PathBuf, String) {
+/// file's index-relative path and text, plus the project root (see [`todos`]).
+/// The `Method`/`CapabilityOp` fixtures need declarations `examples/todo` has
+/// none of, so they borrow the compiler's own positive fixtures — real
+/// projects on disk, analysed the same way.
+fn analysed(rel: &str, file: &str) -> (ProjectDiagnostics, PathBuf, String, PathBuf) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
     let r = bynk_ide::diagnose_project(&root, &HashMap::new());
     let f = r
@@ -90,7 +72,7 @@ fn analysed(rel: &str, file: &str) -> (ProjectDiagnostics, PathBuf, String) {
         .unwrap_or_else(|| panic!("{file} analysed"));
     let (path, text) = (f.source_path.clone(), f.text.clone());
     let key = index_key(&r, &path);
-    (r, key, text)
+    (r, key, text, root)
 }
 
 /// The byte offset of `needle` at or after `anchor` — the reference site, as
@@ -120,7 +102,13 @@ fn index_path(r: &ProjectDiagnostics) -> PathBuf {
 /// project output. The snapshot and the live buffer are the same text here — the
 /// file is on disk and unedited — which is exactly the steady state a saved
 /// document is in.
-fn hover_at(r: &ProjectDiagnostics, rel: &Path, text: &str, offset: usize) -> Option<String> {
+fn hover_at(
+    r: &ProjectDiagnostics,
+    rel: &Path,
+    text: &str,
+    root: &Path,
+    offset: usize,
+) -> Option<String> {
     let snapshots: HashMap<PathBuf, String> = r
         .files
         .iter()
@@ -135,12 +123,14 @@ fn hover_at(r: &ProjectDiagnostics, rel: &Path, text: &str, offset: usize) -> Op
             expr_types: &r.expr_types,
             rel,
             offset,
+            project_root: root,
+            doc_scope: &r.doc_scope,
         }),
         doc: Some((text, offset)),
         uri: &uri,
         // No src_root: the cross-file / first-party rungs are not what these
         // fixtures exercise, and `examples/todo` is single-file.
-        src_root: None,
+        files: None,
     })
 }
 
@@ -179,14 +169,14 @@ fn in_add_handler(text: &str, needle: &str) -> usize {
 /// hovers as its `store lastSeq: Cell[Int]` declaration. Observed: nothing.
 #[test]
 fn store_field_reference_hovers_as_its_declaration() {
-    let (r, _, text) = todos();
+    let (r, _, text, root) = todos();
     let rel = index_path(&r);
-    let hover = hover_at(&r, &rel, &text, in_add_handler(&text, "lastSeq + 1"))
+    let hover = hover_at(&r, &rel, &text, &root, in_add_handler(&text, "lastSeq + 1"))
         .expect("hover on the `lastSeq` reference");
     assert!(hover.contains("store lastSeq: Cell[Int]"), "{hover}");
 
     // The declaration hovered before this change and still does — identically.
-    let decl = hover_at(&r, &rel, &text, text.find("store lastSeq").unwrap())
+    let decl = hover_at(&r, &rel, &text, &root, text.find("store lastSeq").unwrap())
         .expect("hover on the declaration");
     assert_eq!(hover, decl);
 }
@@ -196,7 +186,7 @@ fn store_field_reference_hovers_as_its_declaration() {
 /// handler param `title`; `seq:`/`done:` showed nothing.
 #[test]
 fn record_construction_labels_hover_as_the_types_fields() {
-    let (r, _, text) = todos();
+    let (r, _, text, root) = todos();
     let rel = index_path(&r);
     let ctor = in_add_handler(&text, "Stored { seq: next");
 
@@ -206,7 +196,7 @@ fn record_construction_labels_hover_as_the_types_fields() {
         ("done: false", "done: Bool"),
     ] {
         let offset = ctor + text[ctor..].find(label).expect("the label");
-        let hover = hover_at(&r, &rel, &text, offset)
+        let hover = hover_at(&r, &rel, &text, &root, offset)
             .unwrap_or_else(|| panic!("no hover on the `{label}` label"));
         assert!(
             hover.contains(expected) && hover.contains("A field of `Stored`"),
@@ -219,7 +209,7 @@ fn record_construction_labels_hover_as_the_types_fields() {
     let param = text
         .find("title: Title) -> Effect")
         .expect("the handler param");
-    let hover = hover_at(&r, &rel, &text, param).expect("hover on the param");
+    let hover = hover_at(&r, &rel, &text, &root, param).expect("hover on the param");
     assert!(
         hover.contains("param"),
         "the param still hovers as one: {hover}"
@@ -230,14 +220,14 @@ fn record_construction_labels_hover_as_the_types_fields() {
 /// the `store items` field, the operation as its signature. Observed: nothing.
 #[test]
 fn store_method_call_hovers_receiver_and_operation() {
-    let (r, _, text) = todos();
+    let (r, _, text, root) = todos();
     let rel = index_path(&r);
     let call = in_add_handler(&text, "items.put(id, item)");
 
-    let recv = hover_at(&r, &rel, &text, call).expect("hover on the `items` receiver");
+    let recv = hover_at(&r, &rel, &text, &root, call).expect("hover on the `items` receiver");
     assert!(recv.contains("store items: Map[String, Stored]"), "{recv}");
 
-    let op = hover_at(&r, &rel, &text, call + "items.".len()).expect("hover on `put`");
+    let op = hover_at(&r, &rel, &text, &root, call + "items.".len()).expect("hover on `put`");
     assert!(op.contains("put(key: K, value: V) -> Effect[()]"), "{op}");
     assert!(op.contains("store items: Map[String, Stored]"), "{op}");
 }
@@ -252,14 +242,14 @@ fn store_method_call_hovers_receiver_and_operation() {
 /// replica of it) load-bearing.
 #[test]
 fn a_structural_rung_outranks_the_name_matching_locals_rung() {
-    let (r, _, text) = todos();
+    let (r, _, text, root) = todos();
     let rel = index_path(&r);
 
     // `title:` — the index resolves `Stored.title`; the locals rung would match
     // the in-scope `add(title: Title)` param by name. The index must win.
     let ctor = in_add_handler(&text, "Stored { seq: next");
     let label = ctor + text[ctor..].find("title: title").expect("the label");
-    let hover = hover_at(&r, &rel, &text, label).expect("hover on the label");
+    let hover = hover_at(&r, &rel, &text, &root, label).expect("hover on the label");
     assert!(
         hover.contains("A field of `Stored`") && !hover.contains("param"),
         "the index rung must outrank the locals rung, got:\n{hover}"
@@ -269,7 +259,7 @@ fn a_structural_rung_outranks_the_name_matching_locals_rung() {
     // local named `put` exists here, so this pins the rung is reached at all
     // (it sits between the index and locals rungs).
     let call = in_add_handler(&text, "items.put(id, item)");
-    let op = hover_at(&r, &rel, &text, call + "items.".len()).expect("hover on `put`");
+    let op = hover_at(&r, &rel, &text, &root, call + "items.".len()).expect("hover on `put`");
     assert!(op.contains("store operation"), "{op}");
 }
 
@@ -279,8 +269,8 @@ fn a_structural_rung_outranks_the_name_matching_locals_rung() {
 /// no later rung knows what an actor is.
 #[test]
 fn actor_reference_hovers_as_its_declaration() {
-    let (r, rel, text) = analysed("../examples/todo/src", "todos.bynk");
-    let hover = hover_at(&r, &rel, &text, at(&text, "by u: User", "User"))
+    let (r, rel, text, root) = analysed("../examples/todo/src", "todos.bynk");
+    let hover = hover_at(&r, &rel, &text, &root, at(&text, "by u: User", "User"))
         .expect("hover on the `User` actor reference");
     assert!(
         hover.contains(
@@ -291,7 +281,7 @@ fn actor_reference_hovers_as_its_declaration() {
 
     // ADR 0190 D2: a reference answers the same question as its declaration, so
     // it renders the same content, from the same builder.
-    let decl = hover_at(&r, &rel, &text, at(&text, "actor User", "User"))
+    let decl = hover_at(&r, &rel, &text, &root, at(&text, "actor User", "User"))
         .expect("hover on the declaration");
     assert_eq!(hover, decl);
 }
@@ -305,7 +295,7 @@ fn actor_reference_hovers_as_its_declaration() {
 /// declared. `fn Gauge.bump`'s own declaration hovered as `Counter.bump` too.
 #[test]
 fn method_reference_hovers_the_bound_method_not_a_same_named_one() {
-    let (r, rel, text) = analysed(
+    let (r, rel, text, root) = analysed(
         "../bynkc/tests/fixtures/positive/216_method_index/src",
         "shop.bynk",
     );
@@ -317,7 +307,7 @@ fn method_reference_hovers_the_bound_method_not_a_same_named_one() {
         ("c.bump()", "fn Counter.bump(self) -> Counter", "Gauge"),
         ("fn Gauge.bump", "fn Gauge.bump(self) -> Gauge", "Counter"),
     ] {
-        let hover = hover_at(&r, &rel, &text, at(&text, anchor, "bump"))
+        let hover = hover_at(&r, &rel, &text, &root, at(&text, anchor, "bump"))
             .unwrap_or_else(|| panic!("no hover on `bump` at `{anchor}`"));
         assert!(
             hover.contains(expect) && !hover.contains(not),
@@ -336,13 +326,19 @@ fn method_reference_hovers_the_bound_method_not_a_same_named_one() {
 /// parameter, a different owner.
 #[test]
 fn capability_op_reference_hovers_the_projects_own_op() {
-    let (r, rel, text) = analysed(
+    let (r, rel, text, root) = analysed(
         "../bynkc/tests/fixtures/positive/160_provider_given_basic/src",
         "demo.bynk",
     );
 
-    let hover = hover_at(&r, &rel, &text, at(&text, "Logger.info(\"hello\")", "info"))
-        .expect("hover on the `Logger.info` reference");
+    let hover = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "Logger.info(\"hello\")", "info"),
+    )
+    .expect("hover on the `Logger.info` reference");
     assert!(
         hover.contains("fn info(message: String) -> Effect[()]")
             && hover.contains("An operation of capability `Logger`"),
@@ -359,17 +355,58 @@ fn capability_op_reference_hovers_the_projects_own_op() {
         &r,
         &rel,
         &text,
+        &root,
         at(&text, "capability Logger { fn info", "info"),
     )
     .expect("hover on the declaration");
     assert_eq!(hover, decl);
 }
 
+/// #848 — a resolvable intra-doc link in a declaration's doc comment renders
+/// as a Markdown link in hover, not literal brackets. `ClientId`'s doc
+/// references `[Limiter]`, a bare name declared in the same unit.
+#[test]
+fn hover_renders_a_resolved_intra_doc_link() {
+    let (r, rel, text, root) = analysed("../examples/rate-limiter/src", "ratelimit.bynk");
+    let hover = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "type ClientId", "ClientId"),
+    )
+    .expect("hover on the `ClientId` declaration");
+    assert!(
+        hover.contains("[Limiter](file://") && hover.contains("ratelimit.bynk"),
+        "the doc's `[Limiter]` reference should render as a link, got:\n{hover}"
+    );
+}
+
+/// #848 — an intra-doc link that doesn't resolve (a first-party capability
+/// op, out of scope this increment — see `[Clock.now]` in the fixture's
+/// `api` service doc) renders unchanged: literal brackets, no diagnostic.
+#[test]
+fn hover_leaves_an_unresolved_intra_doc_link_unchanged() {
+    let (r, rel, text, root) = analysed("../examples/rate-limiter/src", "ratelimit.bynk");
+    let hover = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "service api from http", "api"),
+    )
+    .expect("hover on the `api` service declaration");
+    assert!(
+        hover.contains("[Clock.now]") && !hover.contains("[Clock.now]("),
+        "an unresolved doc link should render as plain text, got:\n{hover}"
+    );
+}
+
 /// The example this issue reproduces in must stay clean — every assertion above
 /// reads real analysis output, which a broken fixture would silently empty.
 #[test]
 fn the_todo_example_analyses_cleanly() {
-    let (r, _, _) = todos();
+    let (r, _, _, _) = todos();
     let errors: Vec<_> = r
         .files
         .iter()

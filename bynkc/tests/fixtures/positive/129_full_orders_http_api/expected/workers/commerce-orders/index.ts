@@ -17,10 +17,12 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "placement": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "76925704cff4e061") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "placement", expected: "76925704cff4e061", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_total = handlers.deserialise_Money(args, "$");
             if (__r_total.tag === "Err") return new Response(JSON.stringify(__r_total.error), { status: 400, headers: { "content-type": "application/json" } });
-            const total = __r_total.value;
+            const total = __r_total.value as unknown as handlers.Money;
             const result = await surface.placement(total);
             const body = handlers.serialise_Result_Unit_OrderError(result);
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -36,10 +38,10 @@ export default {
           try {
             __body_json = (await request.json()) as JsonValue;
           } catch {
-            return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            return applySecurityHeaders(new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } }), __security_orders);
           }
           const __r_body = handlers.deserialise_CreateOrderRequest(__body_json, "$");
-          if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
+          if (__r_body.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_orders);
           const body = __r_body.value;
           const result = await surface.http_POST_orders(body);
           return applySecurityHeaders(httpResultToResponse(result, handlers.serialise_OrderView), __security_orders);

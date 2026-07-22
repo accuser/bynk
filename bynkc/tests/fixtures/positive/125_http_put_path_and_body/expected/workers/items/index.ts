@@ -26,16 +26,16 @@ export default {
         if (method === "PUT" && __m) {
           const __raw_id = __m.params["id"];
           const __r_id = handlers.ItemId.of(__raw_id);
-          if (__r_id.tag === "Err") return new Response(JSON.stringify({ kind: "RefinementViolation", path: "path.id", violation: __r_id.error }), { status: 400, headers: { "content-type": "application/json" } });
+          if (__r_id.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify({ kind: "RefinementViolation", path: "path.id", violation: __r_id.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           const id = __r_id.value;
           let __body_json: JsonValue;
           try {
             __body_json = (await request.json()) as JsonValue;
           } catch {
-            return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            return applySecurityHeaders(new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           }
           const __r_body = handlers.deserialise_UpdateItem(__body_json, "$");
-          if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
+          if (__r_body.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           const body = __r_body.value;
           const result = await surface.http_PUT_items_Param_id(id, body);
           return applySecurityHeaders(httpResultToResponse(result, handlers.serialise_ItemView), __security_api);

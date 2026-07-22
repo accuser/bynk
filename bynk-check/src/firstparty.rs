@@ -54,6 +54,15 @@ impl Platform {
 /// The unit name of the reserved first-party surface adapter.
 pub const BYNK_UNIT: &str = "bynk";
 
+/// The capabilities the env-free `bynk` surface exports (its `exports
+/// capability { … }` line in `bynk.bynk`). First-party symbols live on
+/// synthetic files and are excluded from the binding index, so the
+/// unknown-name quick-fix (#852) offering `consumes bynk { … }` needs this
+/// explicit list. Kept in sync with the adapter source by
+/// `bynk_surface_capabilities_match_the_adapter`.
+pub const BYNK_SURFACE_CAPABILITIES: &[&str] =
+    &["Clock", "Random", "Logger", "Fetch", "Secrets", "Locale"];
+
 /// The unit name of the first-party Cloudflare platform adapter (v0.19,
 /// decision 0026): inside the reserved `bynk.*` prefix, so no separate
 /// reservation rule is needed. The surface unit `bynk` stays the portability
@@ -120,6 +129,20 @@ pub const STRING_UNIT: &str = "bynk.string";
 /// yet" from "first element was empty").
 pub const BYNK_STRING_SRC: &str = include_str!("firstparty/bynk.string.bynk");
 
+/// Inside the reserved `bynk.*` prefix; injected when `uses`-imported. Also
+/// `uses`-imported by the `bynk` adapter itself, to give `capability Locale`'s
+/// `current() -> Effect[LocaleTag]` a type to name (an adapter may `uses` a
+/// commons; a commons cannot in turn reference an adapter, which is why
+/// `LocaleTag`/`Message`/`MessageArg`/`render` live here rather than in
+/// `bynk.bynk` alongside `Locale` — Locale capability track, slice 1, #844).
+pub const LOCALE_UNIT: &str = "bynk.locale";
+
+/// `bynk.locale` — the locale value types (`LocaleTag`, `MessageArg`,
+/// `Message`) and the bundle-free `render` helper (slice 1: formats `code`
+/// plus a deterministic sorted-by-key rendering of `params`; no lookup, no
+/// locale-dependent behaviour).
+pub const BYNK_LOCALE_SRC: &str = include_str!("firstparty/bynk.locale.bynk");
+
 /// The reserved `bynk` conformance-surface adapter (env-free core). It has no
 /// `binding` clause — the toolchain supplies one per platform (see
 /// [`Platform::bynk_binding_source`]).
@@ -172,4 +195,31 @@ const CLOUDFLARE_BINDING: &str = include_str!("firstparty/bindings/cloudflare.bi
 /// The toolchain-supplied binding for the Cloudflare platform adapter.
 pub fn cloudflare_binding_source() -> &'static str {
     CLOUDFLARE_BINDING
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hardcoded [`BYNK_SURFACE_CAPABILITIES`] must match the adapter's
+    /// `exports capability { … }` line — otherwise the unknown-name quick-fix
+    /// (#852) would offer a stale `consumes bynk { … }` set.
+    #[test]
+    fn bynk_surface_capabilities_match_the_adapter() {
+        let src = BYNK_ADAPTER_SRC;
+        let line = src
+            .lines()
+            .find(|l| l.trim_start().starts_with("exports capability {"))
+            .expect("adapter declares `exports capability`");
+        let inner = line
+            .split_once('{')
+            .and_then(|(_, r)| r.split_once('}'))
+            .map(|(names, _)| names)
+            .expect("braced capability list");
+        let declared: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+        assert_eq!(
+            declared, BYNK_SURFACE_CAPABILITIES,
+            "BYNK_SURFACE_CAPABILITIES is out of sync with bynk.bynk"
+        );
+    }
 }

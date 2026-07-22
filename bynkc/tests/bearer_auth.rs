@@ -147,6 +147,9 @@ await rejects(await sign({ sub: "u", exp: now + 3600, nbf: now + 1000 }, SECRET)
 // malformed exp (string, not NumericDate)
 await rejects(await sign({ sub: "u", exp: "later" }, SECRET), SECRET, "malformed exp rejected");
 
+// missing exp — a token with no expiry must not verify (it would never age out)
+await rejects(await sign({ sub: "u" }, SECRET), SECRET, "missing exp rejected");
+
 // missing sub
 await rejects(await sign({ exp: now + 3600 }, SECRET), SECRET, "missing sub rejected");
 

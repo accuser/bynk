@@ -11,7 +11,7 @@ export function compose(env: Env) {
   const Payments = new handlers.StubPayments();
   const deps = { Payments };
   return {
-    async authorise(amount: any) {
+    async authorise(amount: handlers.Money) {
       return handlers.authorise.call(amount, deps);
     },
   };

@@ -35,6 +35,7 @@ fn main() -> ExitCode {
             base_port,
             inspect,
             inspect_port,
+            env,
             wrangler_args,
         } => run_dev(
             path,
@@ -43,24 +44,37 @@ fn main() -> ExitCode {
                 base_port,
                 inspect,
                 inspect_port,
+                environment: env,
                 wrangler_args,
             },
         ),
         Command::Deploy {
             path,
+            context,
+            env,
             dry_run,
             format,
             yes,
+            secrets_file,
+            secrets,
+            force,
+            prune,
             wrangler_args,
         } => run_deploy(
             path,
             DeployOptions {
+                context,
+                environment: env,
                 dry_run,
                 format: match format {
                     bynk::cli::DeployFormatArg::Short => DeployFormat::Short,
                     bynk::cli::DeployFormatArg::Json => DeployFormat::Json,
                 },
                 yes,
+                secrets_file,
+                secrets,
+                force,
+                prune,
                 wrangler_args,
             },
         ),
@@ -75,6 +89,7 @@ fn main() -> ExitCode {
             inspect,
             seed,
             case,
+            coverage,
         } => run_test(TestArgs {
             input,
             output,
@@ -83,7 +98,9 @@ fn main() -> ExitCode {
             inspect,
             seed,
             case,
+            coverage,
         }),
+        Command::Explain { code } => bynk::explain::run(&code),
     }
 }
 

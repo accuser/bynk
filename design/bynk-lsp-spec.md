@@ -28,14 +28,12 @@ This is the first tooling increment for Bynk — a pause from language developme
 
 ### Out of scope (deferred to later tooling increments)
 
-- General autocomplete at every cursor position (substantial work). *(v0.17 adds a
-  scoped completion for the adapter surface: consumable units after `consumes `,
-  a unit's exported capabilities inside `consumes U { … }`, and in-scope
-  capabilities after `given `. Broader completion remains deferred.)*
-- Inlay hints (showing inferred types inline).
-- Code lenses (e.g., "show service handlers" markers).
+The initial increments deferred several of the items originally listed here;
+they later shipped and moved into the capability set above — general completion
+(§3.15), code lenses (§3.17), inlay hints (§3.13), and semantic tokens (§3.14).
+What remains genuinely deferred:
+
 - Refactorings beyond rename (extract function, inline); non-quick-fix code-action kinds.
-- Semantic tokens (type-aware highlighting beyond tree-sitter's syntactic level).
 - Editor commands beyond what LSP standard provides (no "Bynk: Build" / "Bynk: Run tests" yet — those come later).
 - Marketplace publication.
 - Editor support beyond VS Code.
@@ -47,7 +45,9 @@ This is the first tooling increment for Bynk — a pause from language developme
 
 ### 2.1 Project discovery
 
-A Bynk project is a directory containing `bynk.toml` at its root. The LSP discovers the project root by walking upward from any open `.bynk` file until it finds `bynk.toml`. If none is found before the filesystem root, the LSP treats the file as a single-file project (no workspace features) and shows a warning.
+A Bynk project is a directory containing `bynk.toml` at its root. The LSP discovers the project a file belongs to by walking upward from that file until it finds `bynk.toml` (or, for a rootless `src/` tree, the nearest enclosing `src/`). This is the **same** attribution `bynkc` gives the file. If none is found before the filesystem root, the LSP treats the file as a single-file project (no workspace features).
+
+**A request routes to its file's project, not to a workspace folder** (v0.182, §2.4): the server holds a *map* of projects keyed by discovered root, so several projects — a monorepo's packages, two folders in one window — coexist, each analysed, versioned, and published independently.
 
 ### 2.2 `bynk.toml` schema
 
@@ -57,8 +57,8 @@ name    = "my-bynk-project"     # required
 version = "0.1.0"               # optional, free-form
 
 [paths]
-src = "src"                     # source root (default: "src")
-out = "out"                     # compiled TypeScript output (default: "out")
+include = ["src", "tests"]      # source trees the compiler discovers (default: src/ and tests/ when present, else the project root — ADR 0147)
+exclude = []                    # extra trees to skip; out/ and node_modules are always excluded
 
 [fmt]
 indent             = "tab"      # "tab" (default) or "spaces"
@@ -82,11 +82,22 @@ The LSP applies defaults for everything else. The file's *presence* is what mark
 
 Future configuration alternatives (`.yaml`, `.json`) are not supported in this increment but the schema is designed to translate cleanly.
 
-### 2.3 Workspace discovery
+### 2.3 Startup analysis and watchers (v0.183)
 
-Once the project root is found, the LSP discovers all `.bynk` files under the configured `src` directory (recursive). These files form the project's source corpus. The LSP loads, parses, resolves, and type-checks them all on startup.
+On `initialized`, the server **discovers every project under the workspace folders** — a bounded walk for `bynk.toml` (skipping `out`, `node_modules`, `target`, `.git`, and dot-directories, and guarding against symlink cycles), plus any manifest at or above a folder — and analyses each, so diagnostics appear at activation **without a file being opened**. A workspace folder added later (`workspace/didChangeWorkspaceFolders`) is warmed the same way, and a `bynk.toml` created later is warmed via its watcher event. Each project's file set is exactly what `bynkc` compiles: the manifest's `[paths] include`, with `exclude` honoured (§2.1, [ADR 0201](../decisions/0201-the-lsp-analyses-the-compilers-project-model.md)).
 
-File watching is enabled for the `src` directory. Changes (file added, removed, modified externally) trigger re-discovery and re-resolution of affected files.
+The server **registers its file watchers itself**. On `initialized`, if the client supports `workspace/didChangeWatchedFiles` dynamic registration, the server registers `**/*.bynk` and `**/bynk.toml` (one global registration, folder-independent — §2.4). A `.bynk` change re-analyses the owning project; a `bynk.toml` change reloads that project's config first. A client that does *not* support dynamic registration supplies the watchers itself (as the VS Code extension did before v0.183, and no longer needs to). Either way the server is notified — it no longer depends on a specific client to provide watchers.
+
+### 2.4 Per-workspace state (v0.182)
+
+The server implements the workspace-folders capability it advertises: one editor window may hold many projects at once. The model (settled as Q4 of the LSP-foundations track):
+
+- **Routing is by discovered project root, not by workspace folder.** A URI routes to its nearest enclosing `bynk.toml` (§2.1) — so nested or overlapping folders raise no ambiguity (each file lands in its nearest project), a folder holding two `bynk.toml` projects yields two projects, and two folders sharing one project share one entry. Workspace folders are **discovery seeds** — they bound where the server looks for and prunes projects — never the routing key.
+- **A file under no project stays in single-file mode** — per-buffer diagnostics, no cross-file navigation. Requests that need an index decline for it; they do not error.
+- **`workspace/didChangeWorkspaceFolders`** adds and removes seeds. A project no longer reachable from any remaining folder is dropped and its diagnostics cleared — unless it still holds an open buffer, which retains it until the last buffer closes.
+- **One global `workspace/didChangeWatchedFiles` registration** (`**/*.bynk`, `**/bynk.toml`), registered dynamically by the server at `initialized` (§2.3), covers every folder; the folder set does not change it, so folder changes never re-register.
+
+Each project carries its own `bynk.toml` config, analysis round (with its own freshness generation, §3.2.1), and published-diagnostics set. `workspace/symbol` (§3.11) is the one cross-project query — it aggregates over every project.
 
 ---
 
@@ -113,18 +124,27 @@ The LSP server runs the existing Bynk compiler on the project's source corpus an
 - Publish: **all-and-clear** — every file with diagnostics is published;
   every file that carried diagnostics last round and is now clean gets an
   **empty publish**. The publish/clear diff is a pure function
-  (`bynk-lsp/src/publish.rs`), unit-tested without a transport.
+  (`bynk-lsp/src/publish.rs`), unit-tested without a transport. **Each publish
+  carries the document version the round analysed the file at** (v0.179, the
+  freshness contract §3.2.1 — a disk-only file carries none), so a client drops
+  a range whose buffer has already moved past it.
 - **Positions convert against the analysed snapshot** — `diagnose_project`
   returns the per-file text it analysed; spans never convert against a
   newer buffer (the analyse→publish window is real; debounce narrows but
   does not close it).
 - Project-level diagnostics with no single owning file (group/cycle/
   directory validations) surface on `bynk.toml` at position 0:0.
-- Single-file mode (no `bynk.toml`): the per-buffer `diagnose` path,
-  unchanged.
-- Debounce: 200ms, generation-counter based (a typing burst produces one
-  analysis). Incremental/salsa-style recompute is deferred — full
-  re-analysis is acceptable at current scale.
+- Single-file mode (no `bynk.toml`): the per-buffer `diagnose` path — also
+  debounced (v0.184), so a burst runs one `diagnose`, not one per keystroke.
+- Debounce (v0.184, one scheduler over both modes): a single generation-based
+  debounce at the configured `[lsp] diagnostics_debounce_ms` (default 300 ms).
+  A typing burst produces one analysis. Before v0.184 the project path
+  debounced twice — the configured delay *plus* a hardcoded 200 ms — and
+  single-file mode had no generation; both are now the one scheduler. A round
+  already in flight when a newer edit arrives is not aborted (a whole-project
+  analysis runs on a blocking thread and cannot be cancelled) — its result is
+  discarded at commit instead, never published. Incremental/salsa-style
+  recompute is deferred — full re-analysis is acceptable at current scale.
 - Reported back via `textDocument/publishDiagnostics`.
 
 **Severity levels:**
@@ -139,8 +159,67 @@ The LSP server runs the existing Bynk compiler on the project's source corpus an
 - Primary range (the source span).
 - Secondary ranges where helpful (e.g., the conflicting declaration, the type mismatch source).
 - Error category code (e.g., `bynk.types.if_branch_mismatch`) included in the diagnostic for filterability.
+- **Code explanation link (`codeDescription`, #853).** When the compiler curates an explanation for a code, the diagnostic carries `codeDescription.href` — a link to that code's Book concept page — so the editor renders the code as a clickable link in the Problems panel and hover. The link is composed from the compiler-owned `code → { blurb, href }` mapping (`bynk_syntax::diagnostics::EXPLANATIONS`), the same table that backs the `bynk explain <code>` CLI, so the two surfaces never drift. Coverage is incremental: a code with no curated explanation carries no `codeDescription` (the designed graceful-fallback state — no link, no error), never a broken one.
 
 **Configuration:** Users can set `[lsp].diagnostics_mode = "on_save"` to disable live diagnostics. In on-save mode, diagnostics run only when the file is saved.
+
+### 3.2.1 The freshness contract (v0.179, ADR 0202)
+
+An **index-backed request always answers against the buffer the client
+currently holds.** Each analysed file records the document version it was
+analysed at (`Analysis.versions`, keyed project-relative). A request for a file
+whose open buffer has moved past the last round triggers a **refresh** — a round
+over the current buffers — before the request is answered, so a position is
+never resolved against text the user has already edited past.
+
+- **Uniform for cursor requests.** Every handler that resolves the client's
+  cursor against the analysed snapshot routes through one strict gate
+  (`Backend::analysis_for`). The pre-v0.179 split — some handlers on the cached
+  round, `rename` alone on a fresh one, several reading `state.analysis` raw —
+  is gone; freshness is the contract, not a per-handler choice. `completion` and
+  `document_symbol` remain outside it (they resolve against **live** buffer text
+  directly, so there is no snapshot to be stale). The pull-based *decoration*
+  requests take a distinct, non-refreshing gate (next bullet).
+- **Stale-while-revalidate for pull-based decorations (#733).** The requests the
+  editor auto-fires on every `didChange` — `semanticTokens`, `inlayHint`,
+  `codeLens`, `documentLink`, `codeAction` — go through `committed_analysis`,
+  which serves the **last committed round as-is**, without forcing a refresh.
+  This is safe where the strict gate is required elsewhere because these handlers
+  resolve nothing against the client's live cursor: every range and span they
+  emit converts against the round's own snapshot (or, for `documentLink`, against
+  live text plus the project-level `unit_sources` map). A committed round lagging
+  the buffer by at most one debounce cycle is therefore internally consistent —
+  and forcing a whole-project round on each keystroke was defeating the debounce,
+  the latency growing with project size. The revalidation is the debounce round
+  already scheduled by the edit; when it commits, the server nudges the client to
+  re-pull via `workspace/{semanticTokens,inlayHint,codeLens}/refresh` (each sent
+  only if the client advertised `refresh_support`). Cold start (no round yet)
+  answers empty, and the client re-pulls on the first refresh nudge.
+- **A multi-file edit needs more than the per-file gate.** `rename` emits
+  versioned edits across every file referencing the symbol, so it refreshes
+  **every open buffer** (`analysis_covering_open_buffers`), not just the
+  cursor's — a buffer edited but not under the cursor would otherwise be stamped
+  with a stale version and the client would reject the whole rename. The per-URI
+  gate is right for a request that reads one file, not one that writes many.
+- **Decline, not stale.** The gate returns nothing — the request answers empty —
+  only when it cannot reach the client's version: single-file mode (no project),
+  a file outside every `include` root (never a snapshot key), or a concurrent
+  edit that raced the refresh (rare; the next request is current). It never
+  returns a snapshot older than the client's buffer.
+- **Affordable, and coalesced.** A round is whole-project (no incremental layer)
+  but fast — single-digit milliseconds for a typical project, under ~100 ms at
+  200 files, measured before this was settled (Q3). A request-driven refresh
+  supersedes the pending debounce round rather than racing it, and concurrent
+  requests after one edit share a single refresh (a serialising lock). The
+  scaling cliff — a many-hundred-file project would make a per-request full
+  round noticeable — is the one thing that would revisit this; not present at
+  Bynk's scale.
+
+This **revises** the pre-v0.179 rule that requests convert against "the analysed
+snapshot" of "the cached round": for an index-backed request the snapshot is now
+*made* current before it is read. The rule still holds for **diagnostics** — a
+published range converts against the round's snapshot (the analyse→publish window
+is real) and now carries that round's version so the client can reject it.
 
 ### 3.3 Hover
 
@@ -210,7 +289,7 @@ Hover content is rendered as Markdown by the editor. The LSP returns `MarkupCont
 
 1. A fenced code block (```` ```bynk ```` ) containing the declaration's source form (formatted via the canonical formatter so it matches the project's style).
 2. A blank line.
-3. The attached doc-block content (if any), as plain Markdown.
+3. The attached doc-block content (if any), as plain Markdown — with any `[Name]`/`[Owner.member]` intra-doc link inside it that resolves against the declaration's own unit (§3.21) rewritten to a Markdown link; an unresolved one renders exactly as written. This rewrite applies only to rung 1 (the binding-index path, above) — the lexical rungs keep plain doc rendering.
 4. For types with additional metadata (exported visibility, opaque representation note, etc.), a short list below the doc content.
 
 Example for a `Money` record type:
@@ -344,7 +423,7 @@ If a declaration has an attached doc block, its content (truncated to one line i
 
 `textDocument/references` returns every reference to the symbol under the cursor, project-wide, from the **binding index** (ADR 0053): the index is assembled from use→def edges recorded at the compiler's resolution sites during the project analysis pass — binding-correct by construction, never name-matched. Two same-named symbols in different units never conflate.
 
-**Coverage.** Top-level named declarations: types, free `fn`s, capabilities, services, agents, providers. **Members (v0.36, ADR 0069)** — instance methods, record fields, and capability ops — are also indexed, each keyed by a compound name (`"Type.method"`, `"Type.field"`, `"Cap.op"`) and recorded already-spelled from the parent type/capability the checker resolved at the use site, then qualified through the same `uses`/`consumes` walk as a cross-file type reference (so a same-named member on two parents stays distinct: `Counter.bump` ≠ `Gauge.bump`). A method **call** (`x.m()`), a **field** in any form (read `r.field`, construction label `T { field: … }`, spread override), and a capability-**op** call (local or cross-context) are all reference sites — so rename and references are complete. Reference sites include every way such a symbol is named — annotation and static-receiver type positions (`T.of`, `T.Variant`, `T { … }`, pattern qualifiers, `Mock[T]`), fn calls and first-class fn values, `given` clauses (bare, dotted `B.Cap`, flattened), capability op-call receivers, cross-context service calls, the clause lists (`exports opaque/transparent { T }`, `exports capability { Cap }`, `consumes U { Cap }` selections), and references from **test and integration units** (including a test body's `svc.call(…)`). Spans cover the **name segment only** — in `shop.billing.Pay` the reference is `Pay`; in `Counter.bump` the method site is `bump`.
+**Coverage.** Top-level named declarations: types, free `fn`s, capabilities, services, agents, providers. **Members (v0.36, ADR 0069)** — instance methods, record fields, and capability ops — are also indexed, each keyed by a compound name (`"Type.method"`, `"Type.field"`, `"Cap.op"`) and recorded already-spelled from the parent type/capability the checker resolved at the use site, then qualified through the same `uses`/`consumes` walk as a cross-file type reference (so a same-named member on two parents stays distinct: `Counter.bump` ≠ `Gauge.bump`). **Agent handlers (#304)** follow the same convention — `"Agent.handler"`, recorded at the dispatch call site (`agentInstance.handler(...)`); service handlers have no per-handler name and stay uncovered. A method **call** (`x.m()`), a **field** in any form (read `r.field`, construction label `T { field: … }`, spread override), a capability-**op** call (local or cross-context), and an agent-**handler** dispatch call are all reference sites — so rename and references are complete. Reference sites include every way such a symbol is named — annotation and static-receiver type positions (`T.of`, `T.Variant`, `T { … }`, pattern qualifiers, `Mock[T]`), fn calls and first-class fn values, `given` clauses (bare, dotted `B.Cap`, flattened), capability op-call receivers, cross-context service calls, the clause lists (`exports opaque/transparent { T }`, `exports capability { Cap }`, `consumes U { Cap }` selections), and references from **test and integration units** (including a test body's `svc.call(…)`). Spans cover the **name segment only** — in `shop.billing.Pay` the reference is `Pay`; in `Counter.bump` the method site is `bump`.
 
 **Local bindings (v0.31, ADR 0064).** `let`/`let <-` bindings and fn/handler/lambda params are **not** in the cross-file index (they are file-local); references for them come from the per-file **locals** instead — the definition plus every use that resolves to it within the binding's scope, recovered by a pure lexer scan over the snapshot (shadowing-safe). References/definition/highlight fall back to this when the index has no symbol at the cursor.
 
@@ -354,7 +433,7 @@ Positions convert against the **analysed snapshot** (§3.2's rule); `includeDecl
 
 ### 3.9 Rename (v0.25)
 
-`textDocument/rename` renames a symbol project-wide; `textDocument/prepareRename` (declared via `prepareProvider: true`) validates the position first and **refuses** (returns null) on anything the index does not cover — locals and unit/context names (renaming a unit implies a file move; that is the A-3 file-operations increment). Member rename (v0.36): renaming a method, field, or op edits the member segment of the compound key (`"Type.method"`, `"Type.field"`, `"Cap.op"`), never the parent prefix.
+`textDocument/rename` renames a symbol project-wide; `textDocument/prepareRename` (declared via `prepareProvider: true`) validates the position first and **refuses** (returns null) on anything the index does not cover — locals and unit/context names (renaming a unit implies a file move; §3.22 covers that path). Member rename (v0.36): renaming a method, field, or op edits the member segment of the compound key (`"Type.method"`, `"Type.field"`, `"Cap.op"`), never the parent prefix.
 
 **Plan.** The edit set is exactly the index's sites for the symbol — definition plus every reference, name segments only — built against a **fresh analysis** of the current buffers. The new name must lex as a single identifier (keywords refuse).
 
@@ -369,11 +448,11 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 ### 3.10 Code actions (v0.26)
 
-`textDocument/codeAction` offers **quick-fixes** (`CodeActionKind.QuickFix`, the only kind advertised) computed from the **structured suggestions** riding on the diagnostics (ADR 0054): `bynkc` attaches machine-applicable `Suggestion`s — message, span→replacement edits, an `Applicability` — at the diagnosis site, the only place the exact spans and replacement are known. The LSP never re-derives a fix from a diagnostic's category or message.
+`textDocument/codeAction` offers **quick-fixes** (`CodeActionKind.QuickFix`, the only kind advertised) computed from the **structured suggestions** riding on the diagnostics (ADR 0054): `bynkc` attaches machine-applicable `Suggestion`s — message, span→replacement edits, an `Applicability` — at the diagnosis site, the only place the exact spans and replacement are known. The LSP never re-derives such a fix from a diagnostic's category or message. The one scoped exception is the **capability-aware** family (#852, below): its fix location is a *unit-header* edit that only exists once the buffer is reparsed, and (for auto-import) its resolution is a *whole-project* query over the binding index — neither available at the per-unit diagnosis site — so these are computed in the LSP, keyed on category, but stay honest by reading the flagged name from the source at the **diagnostic's own span** rather than from the message text.
 
 **Keying.** A diagnostic's suggestions are offered when the requested range intersects the **diagnostic's span** — never the edits' spans, which can land far from the squiggle (both `given` fixes do: the diagnostic sits on the usage site or the return type; the edit lands in the clause).
 
-**Serving.** Actions are computed from the **cached analysis round** (the same retained snapshots/versions that back references and rename, extended to retain the round's per-file diagnostics), never a fresh analysis — a fresh run is slow and can disagree with the squiggles the client is showing. A request arriving **before the first analysis round**, or for a file **outside the project**, returns the empty list. The request range converts against the analysed snapshot (§3.2's rule); each action's `WorkspaceEdit` is a **versioned** `TextDocumentEdit` against the analysed document version, so a drifted buffer rejects the edit rather than mis-applying it.
+**Serving.** Actions are computed from the **last committed round**, served through the non-refreshing decoration gate (§3.2.1's stale-while-revalidate rule, #733) — `codeAction` fires on selection changes, so it does not force a whole-project round. A request for a file **outside the project**, or one with no committed round yet, returns the empty list. The round retains the per-file diagnostics the suggestions ride on; the request range and those diagnostics both convert against the round's snapshot, and each action's `WorkspaceEdit` is a **versioned** `TextDocumentEdit` against the round's document version, so a drifted buffer rejects the edit rather than mis-applying it. The request range is the client's *live*-buffer selection: converting it against a round up to one debounce cycle behind can momentarily map it to a slightly wrong location (a stray or empty action) until the refresh nudge re-pulls — an **accepted** trade-off, bounded by the versioned edit (never a mis-application), the same as `semanticTokens/range` (§3.14).
 
 **Applicability.** Only `MachineApplicable` suggestions surface as quick-fixes; `HasPlaceholders` exists for a future CLI `--fix` and is never offered as a one-click edit.
 
@@ -381,9 +460,24 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **The seed catalogue (v0.26):** remove an unused capability from the `given` clause (`bynk.given.unused_capability`) and add an undeclared one (`bynk.given.undeclared_capability`, bare and cross-context `B.Cap` — the cross-context entry inserts the canonical context path). Both edits are **list-aware**, authored in the checker: removal takes one adjacent comma and surrounding space with it, removing the *only* capability deletes the `given` keyword too, and adding inserts `, Cap` after the last entry or synthesises ` given Cap` after the handler's return type when the clause is absent. The result never double-commas, leading-commas, or leaves a dangling `given`.
 
+**Extract variable (v0.213, ADR 0239).** A selection offers `CodeActionKind::RefactorExtract` when it sits inside an `fn`/handler/provider-op/test-case body: the smallest AST expression node whose span fully contains the selection is bound to a fresh `let` inserted immediately above its enclosing statement (or block tail), and the selection's span is replaced with the new name. Descending through `if`/`match`/block-expression boundaries resets the insertion point to that nested block's own statement/tail — extracting from inside an `if` branch inserts the `let` there, not above the whole `if`. Computed **live** — it reparses the current buffer text rather than reading a cached AST (`Analysis` retains none; same posture as `structure.rs`'s folding/selection ranges) — but served through the same `committed_analysis` gate as the rest of §3.10 (extraction never crosses files, so it needs no whole-project refresh). The placeholder name (`extracted`, `extracted2`, …) is chosen by a whole-file word-boundary scan, not scope-aware binding analysis — a client's rename-on-extract is the expected next step for a better name. **Tooling delta (ADR 0156):** hover, completion, semantic tokens, and signature help are unchanged.
+
+**Extract function (track #800, settled capability-free-only).** A selection offers a second `CodeActionKind::RefactorExtract` action — "Extract function `extractedFn`" — reusing extract-variable's exact selection algorithm, but only within a `Commons`/`Context` file's top-level `fn`/`Provider`/`Service`/`Agent` item (a new top-level `fn` needs somewhere top-level to live, so an `Adapter` or a `Suite` test case offers nothing). The selected expression's free identifiers — its `Ident` references whose nearest enclosing local binding sits outside the selection, via the same `locals` scope data hover/completion already use — become the new `fn`'s parameters; the selection itself becomes the fn's body (its tail expression), and the call site replaces the selection. `fn` has no `given` clause to propagate a capability-using body into, unlike `Handler`/`Provider` — a language change deliberately not taken on here — so the action is **capability-free-only**: it declines whenever the selection's site carries any recorded capability requirement (the same `requirements` ledger §3.9's ghost `given` inlay hint reads), covered or not. It also declines whenever a parameter or return type isn't available (both `expr_types` and `locals`' rendered types are Ok-path captures, ADR 0063's clean-file ceiling) or whenever two distinct outer-scope bindings share a free variable's name (a rare nested-shadow collision safer to decline than guess).
+
+**Extract function, multi-statement (#813).** The selection may also resolve to a contiguous run of one or more full statements from a single block, optionally including the block's tail, when the selection's span aligns exactly with statement boundaries (whitespace-trimmed at either end, so a "select these lines" editor gesture matches) — a selection that doesn't align falls back to the single-expression algorithm unchanged. Free-variable synthesis is the same walk, seeded from every selected statement's values instead of one expression. When the tail is included the new `fn`'s return type is the tail's type, as before; when the run stops short of the tail, the new `fn` returns `()` — or `Effect[()]` when the run itself contains a `~>`/`do`/`<-` statement (recursively, through nested `if`/`match`/block bodies), so those forms stay legal in the lifted body — with no explicit tail, the same implicit-unit-tail shape the parser already synthesises for any statements-only block (v0.146, ADR 0170). Because Bynk has no expression-statement form, a tail-excluded run's call site can't stand alone as a bare `extractedFn(args)`: it becomes `let _ = extractedFn(args)` (pure) or `do extractedFn(args)` (effectful) instead. The action declines whenever a `:=` (`Cell` store write) statement falls inside the run — a lifted top-level `fn` has no store fields, so this would always fail to typecheck — or whenever a binding the run introduces (a `let`/`<-` name) is still referenced later in the same block: lifting it away would strand that reference.
+
+**Capability-aware quick-fixes (#852).** Four fixes that repair a boundary/resolution diagnostic, split by where the information they need lives.
+
+- **Missing record field(s)** — checker-authored, like the seed catalogue. `check_record_field_set` attaches to each `bynk.resolve.missing_field` an "add field `x`" fix and, when several fields are missing, an "add all missing fields" convenience **[DECISION B]**. Both insert a *valid default value* per field type (`Int`→`0`, `Float`→`0.0`, `String`→`""`, `Bool`→`false`, `Option`→`None`, `List`→`[]`), so the applied buffer re-checks clean. A field with an inline refinement or a user-named type (possibly refined/sum/opaque) has no synthesised default and is not offered; "add all missing" is withheld unless the whole missing set is defaultable. The insertion anchor is a fmt-stable zero-width span after the last provided field, or just inside the closing brace when the literal is empty.
+- **Add missing `consumes`** — LSP-computed. On `bynk.resolve.unconsumed_context`, insert `consumes <chain>` for the cross-context chain the diagnostic flagged.
+- **Auto-`uses`/`consumes`** (Bynk's analogue of auto-import) — LSP-computed. On `bynk.resolve.unknown_name` / `unknown_type`, query the binding index for every unit that declares the name and offer **one action per candidate [DECISION A]**, never a guess: a commons declaration → `uses <commons>`; a capability exported by a context/adapter → `consumes <context> { <name> }`. The env-free `bynk` surface capabilities (`Clock`, `Random`, `Logger`, `Fetch`, `Secrets`, `Locale`) are first-party synthetic symbols excluded from the index, so they are offered from an explicit list kept in sync with the adapter source. Commons-vs-context is inferred from a candidate unit's own index symbols (a context/adapter additionally declares a service/agent/actor/capability/provider); an unclassifiable unit is conservatively not offered for `uses`. A capability auto-`consumes` resolves the name but leaves the ordinary `given` requirement, whose existing add-`given` fix then reaches clean — the two compose as the intended repair sequence.
+- **Clause placement [DECISION C].** A new clause inserts fmt-stably — after the last existing clause of its kind, else on a fresh line under the unit name (before any `uses`, the consumes-first order) — so the edit round-trips through `fmt` unchanged; a braced `consumes <unit> { … }` for the same target is extended in place rather than duplicated.
+
+All four emit **versioned** `WorkspaceEdit`s and are offered only when sound and non-redundant (a clause already present, or one the current unit cannot host — a commons cannot `consumes` — is dropped). The LSP fixes reparse the committed round's buffer for the header, and read the index from the same committed round, like the extract refactors. **Tooling delta (ADR 0156):** hover, completion, semantic tokens, and signature help are unchanged.
+
 ### 3.11 Workspace symbols (v0.26 rider)
 
-`workspace/symbol` enumerates the binding index's **definitions** (ADR 0055) — the same coverage as §3.8: types, free fns, capabilities, services, agents, providers. The query is a case-insensitive substring match on the symbol name (an empty query lists all), results ordered by (name, unit) with the owning unit as the container name. Positions convert against the analysed snapshot.
+`workspace/symbol` enumerates the binding index's **definitions** (ADR 0055) — the same coverage as §3.8: types, free fns, capabilities, services, agents, providers. The query is a case-insensitive substring match on the symbol name (an empty query lists all), results ordered by (name, unit) with the owning unit as the container name. Positions convert against the analysed snapshot. **Workspace-wide across projects (v0.182, §2.4):** the query aggregates over *every* open project — the one cross-project handler — so a symbol in any package of a multi-root window is reachable.
 
 ### 3.12 Document highlights (v0.26 rider)
 
@@ -401,7 +495,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Harvesting (ADR 0056).** Hints are a curated per-file set recorded by the **checker** at each binding site as it computes the binding's final type — never a tool-side re-inference, and not the raw typed model (which cannot position a hint). The sink is a `&mut` parameter (the `RefSink` shape), so recorded hints **survive a transient type error** at every site the checker still reaches; a fn-body error short-circuits that file's v0.5 declaration pass, so its **handler-body** hints are suppressed until the error clears. Synthetic and test/integration files record nothing.
 
-**Serving.** Hints are served from the **cached analysis round** only, like code actions (§3.10): a request before the first round, or for a file outside the project, returns the empty list — as does a file whose group's composition failed (no analysed model). The visible range and the hint positions convert against the analysed snapshot (§3.2's rule). The server always produces hints; visibility is the client's (the editor's built-in inlay toggle; a `bynk.inlayHints.enable` extension setting is a B-1 surface item). `inlayHint/resolve` is not declared — labels are computed eagerly.
+**Serving.** Hints are served from the **last committed round** through the non-refreshing decoration gate (§3.2.1's stale-while-revalidate rule, #733), like code actions (§3.10) — the editor re-fires `inlayHint` on every edit, so it does not force a round; the `workspace/inlayHint/refresh` nudge on round-commit re-pulls the fresh hints. A request for a file outside the project, or one with no committed round yet, returns the empty list — as does a file whose group's composition failed (no analysed model). The visible range and the hint positions convert against the analysed snapshot (§3.2's rule). The server always produces hints; visibility is the client's (the editor's built-in inlay toggle; a `bynk.inlayHints.enable` extension setting is a B-1 surface item). `inlayHint/resolve` is not declared — labels are computed eagerly.
 
 ### 3.14 Semantic tokens (v0.28)
 
@@ -420,7 +514,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Sources (ADR 0057).** A pure `index_queries` producer reads **two** sources from the cached round: `ProjectIndex.symbols` (user-defined defs + refs) and **`ProjectIndex.foreign_refs`** — references to first-party (`bynk.*`) symbols, which `symbols` deliberately drops (synthetic defs point at files not on disk; definition/rename/workspace-symbol must never surface them). The side table is tokens-only; the v0.25 navigation invariants on `symbols` are untouched. `test`/`integration` files' references are in the index, so semantic tokens light up test files too.
 
-**Serving & encoding.** Tokens are served from the **cached analysis round** only (no cached round / non-project file → empty); positions and the `range` request convert against the analysed snapshot (§3.2's rule). The token array is delta-encoded per the protocol — relative line/char, position-sorted (name segments never overlap), lengths in UTF-16 code units. The **`delta`** request variant is not declared (a later optimisation).
+**Serving & encoding.** Tokens are served from the **last committed round** through the non-refreshing decoration gate (§3.2.1's stale-while-revalidate rule, #733) — the editor re-fires `semanticTokens` on every edit, so it does not force a round; the `workspace/semanticTokens/refresh` nudge on round-commit re-pulls the fresh tokens (non-project file, or no committed round yet → empty). Positions and the `range` request convert against that round's snapshot — the `range` variant's window is the client's live-buffer range, so up to one debounce cycle behind it can momentarily cover slightly-off tokens until the nudge re-pulls (the accepted trade-off noted for code actions, §3.10). The token array is delta-encoded per the protocol — relative line/char, position-sorted (name segments never overlap), lengths in UTF-16 code units. The **`delta`** request variant is not declared (a later optimisation).
 
 **Client theming (v0.29, ADR 0058).** The custom token types (`capability`/`service`/`agent`/`provider`) and modifiers (`refined`/`opaque`/`platformNative`) render with **no colour** under default themes unless the *client* declares them. The VS Code extension therefore declares them in `contributes.semanticTokenTypes` / `semanticTokenModifiers` (each custom type with a standard `superType` — `interface`/`type`/`class`/`function` — so semantic-highlighting themes colour it) and maps fallback TextMate scopes in `contributes.semanticTokenScopes` for theme without semantic rules. The declared **names are a cross-component contract** with the server's frozen legend — they must match exactly, or those tokens silently go unthemed — enforced by a `bynk-lsp` test that parses the extension's `package.json` against `semantic_tokens_legend()` (the single source of truth). Token *visibility* is the client's: the built-in `editor.semanticHighlighting.enabled`, with no Bynk-specific toggle.
 
@@ -479,6 +573,8 @@ known limitation.
 
 **Value-receiver members (v0.30.2, ADR 0063).** A **value** receiver — a lowercase `x.` — needs the receiver's *type*, which the checker discards on the analyse path and which a bare mid-edit `x.` doesn't even parse. So the LSP **rewrites** the buffer to drop the trailing `.partial` (then `x` parses), **re-analyses** it, and types the receiver via the retained `expr_types` (`type_at_offset`). The type maps to its **kernel methods** — from the enumerable `bynkc::kernel_methods` registry (`List`→`fold`/`get`/…, `String`→`split`/…, `Option`/`Result`→`map`/`andThen`/…, `Int`/`Float`→`abs`/`round`/…), drift-pinned against the checker's dispatch — plus **record fields** from the AST. (`bynk.list`/`bynk.map` combinators like `map`/`filter` are *free functions* `map(xs, f)`, not members.) **Error-tolerant since slice 4 (ADR 0094):** the checker already types every well-typed sub-expression, then discarded the file's whole `expr_types` map on a final `errors.is_empty()` gate. Analyse mode now records that **best-effort partial map** at every per-file check exit (`check_record` *and* the context/declaration checks, where handler bodies are typed), so the receiver types whenever it *itself* type-checks — completion and signature help work mid-edit despite an unrelated *type* error elsewhere. Build stays Ok-only (codegen untouched). One ceiling remains: an unresolved name elsewhere bails before the checker runs (the resolve gate), so it still blanks the receiver.
 
+**Store-map query vocabulary (#596).** `kernel_methods` gained a `Query[T]` entry — the ADR 0115/0116/0120 lazy-query vocabulary (builders `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`/`parTraverse`/`traverseAll`/`parTraverseAll`/`traverseTry`/`parTraverseTry`) — so completion on any `Query`-typed receiver (a `store Map`'s `.entries`/`.keys`/`.values`, a `store Log`'s time-window roots, or a bare `store Map` used as a value) now offers it; previously the type-based path alone answered `[]` for every `Query` receiver. A **second, provenance-based path** closes the rest of the gap: a bare `store` field receiver (`items.`) types, via the checker's ADR 0120 "whole map as a value" reading, to plain `Ty::Query` — indistinguishable from an ordinary `Query`-typed local — so the entry ops (`put`/`get`/`update`/`upsert`/`remove`/`contains`/`size`, from the existing `bynkc::store_ops` registry hover already used) and, for a `Map`, the `.entries`/`.keys`/`.values` accessors (a new `MAP_QUERY_ACCESSORS` table, refused on a held `Map[K, Connection]`) are offered by reading the receiver's *syntactic provenance* instead: is it a bare, non-dot-qualified identifier, not shadowed by a local, naming a `store` field of the enclosing agent — the same by-provenance check hover's `describe_store_op_at` makes, generalised to start from the receiver's own span (`symbols::store_field_kind_at`) rather than walking back from an already-typed operation name. Both paths merge into one completion list.
+
 **Conservative detection.** Type-position triggers exclude a list-literal `[` (its bracket isn't preceded by a type constructor); the one accepted false positive is a record *construction* value (`Order { id: ` — lexically identical to a record field-type declaration), where offering type names is mild noise. Name-receiver detection requires a *single* uppercase-initial segment, excluding the decimal `1.` and the `.`-qualified `a.B.`. Out-of-context prefixes (e.g. `let x = `) yield `[]`.
 
 **Locals (v0.31.2, ADR 0064).** In-scope local bindings are offered at **keyword position** (appended to the keywords + snippets) and at **expression position** — after `=`/`(`/`,`, a `=>` lambda arrow, or a binary operator (the type arrow `->` excluded) — as `variable` items with their inferred type. They come from the **cached** analysis's `FileLocals` (the last good round's bindings around the cursor), so they survive the mid-edit buffer; positions convert against the cached snapshot. Locals are appended to a specific context's results only at keyword position — never to type/member completion.
@@ -504,15 +600,15 @@ Signatures render through the **same `type_ref_str` renderer as hover** (§3.3) 
 
 ### 3.17 CodeLens (v0.33)
 
-`textDocument/codeLens` returns one **reference-count lens** above each top-level **index definition** in the file — types, free fns, capabilities, services, agents, providers (the v0.25 index set; locals/methods/fields aren't indexed and get none). Served from the **cached analysis round**, positions against the analysed snapshot (§3.2's rule). The count is `refs.len()` from the binding index (a pure `code_lenses(index, path)` query returning `(def site, reference sites)`, sorted by definition position). The lens title is `"{n} reference(s)"` with the standard **`editor.action.showReferences`** command (args: the def URI, the def position, the reference `Location`s) — clicking peeks the references, no extension support required; non-VS-Code clients still render the title. **`"0 references"` is shown** (a dead-code signal). Computed eagerly (`resolve_provider: false`) — the count is `O(1)` off the index. The **test-run lens** ("▶ Run") needs test discovery + a run command and is deferred.
+`textDocument/codeLens` returns one **reference-count lens** above each top-level **index definition** in the file — types, free fns, capabilities, services, agents, providers (the v0.25 index set; locals/methods/fields aren't indexed and get none). Served from the **last committed round** through the non-refreshing decoration gate (§3.2.1's stale-while-revalidate rule, #733), positions against that round's snapshot; the `workspace/codeLens/refresh` nudge on round-commit re-pulls the fresh counts. The count is `refs.len()` from the binding index (a pure `code_lenses(index, path)` query returning `(def site, reference sites)`, sorted by definition position). The lens title is `"{n} reference(s)"` with the standard **`editor.action.showReferences`** command (args: the def URI, the def position, the reference `Location`s) — clicking peeks the references, no extension support required; non-VS-Code clients still render the title. **`"0 references"` is shown** (a dead-code signal). Computed eagerly (`resolve_provider: false`) — the count is `O(1)` off the index. The **test-run lens** ("▶ Run") needs test discovery + a run command and is deferred.
 
 ### 3.18 Call hierarchy (v0.34)
 
 Call hierarchy is a three-call protocol served from the binding index's **call graph**. `textDocument/prepareCallHierarchy` resolves the symbol under the cursor to a `CallHierarchyItem` (the goto-def resolution, anchored on the definition); `callHierarchy/incomingCalls` lists its callers, `callHierarchy/outgoingCalls` what it calls — each with the call-site ranges.
 
-The graph is a `CallEdge { caller, callee, site }` side table on `ProjectIndex`, built by **preserving `RefEdge.owner`** — the enclosing top-level declaration already recorded around each fn/service/agent/provider/capability body (`index.rs:73`) and, until now, used only for file re-attribution and then dropped. At assembly the owner resolves to the caller's `SymbolKey` through an `owner_keys` map populated in `add_def` alongside the existing `owner_files`, the same `(namespace, owner)` lookup the re-attribution uses. **Callees are `Fn` only** (method/op/dispatch callees aren't index symbols — deferred index kinds); **any indexed owner may be a caller** (so a service handler calling a free fn shows the service as a caller). Method owners (`"T.m"`) aren't index symbols, so they record no edge — visible as a callee whose reference count exceeds its incoming-call count. The call site (the callee-name span) is the `fromRanges` for both directions.
+The graph is a `CallEdge { caller, callee, site }` side table on `ProjectIndex`, built by **preserving `RefEdge.owner`** — the enclosing top-level declaration already recorded around each fn/service/agent/provider/capability body (`index.rs:73`) and, until now, used only for file re-attribution and then dropped. At assembly the owner resolves to the caller's `SymbolKey` through an `owner_keys` map populated in `add_def` alongside the existing `owner_files`, the same `(namespace, owner)` lookup the re-attribution uses. **Callees**: `Fn`, `Method` (v0.36, ADR 0069), and — closing the under-reporting gap in #304 — `CapabilityOp` and agent `Handler` (`"Agent.handler"`, recorded at the `agentInstance.handler(...)` dispatch call). **Any indexed owner may be a caller** (so a service handler calling a free fn shows the service as a caller); caller granularity is per top-level declaration, not per-handler — a call inside one agent handler's body attributes to the agent, not that specific handler. **Service cross-context dispatch callees remain uncovered** — a service exposes one dispatchable `on call` with no per-handler name to index, unlike an agent's named handlers. The call site (the callee-name span) is the `fromRanges` for both directions.
 
-Pure `index_queries::{prepare_call_hierarchy, incoming_calls, outgoing_calls}` over `ProjectIndex.calls`, served from the **cached round**. The resolved `SymbolKey` round-trips through `CallHierarchyItem.data` (a `SerKey`, since the index kind isn't `Serialize`) so the follow-ups resolve straight off it; a missing/garbled payload returns no calls. Method/op/dispatch edges join the graph for free once the deferred index kinds land; **implementation navigation** (`given Cap` → provider) is §3.19.
+Pure `index_queries::{prepare_call_hierarchy, incoming_calls, outgoing_calls}` over `ProjectIndex.calls`, served from the round the freshness contract (§3.2.1) keeps current for the requested file. The resolved `SymbolKey` round-trips through `CallHierarchyItem.data` (a `SerKey`, since the index kind isn't `Serialize`) so the follow-ups resolve straight off it; a missing/garbled payload returns no calls. **Implementation navigation** (`given Cap` → provider) is §3.19.
 
 ### 3.19 Implementation navigation (v0.35)
 
@@ -520,7 +616,7 @@ Pure `index_queries::{prepare_call_hierarchy, incoming_calls, outgoing_calls}` o
 
 The edge comes from the `provides Cap = Provider` clause, which records a `Capability` reference whose owner is the provider. A provider may *also* declare `given Cap2` (its own deps) — also a capability ref owned by the same provider — so the owner alone can't tell "implements" from "depends on". The `provides` clause therefore records its ref with a **`provides` flag**; only flagged edges whose owner resolves to a `Provider` become `ImplEdge`s (the ref still counts as an ordinary capability reference). Cross-context `provides` links the capability's key in its defining unit to the provider's key in the providing unit, by construction.
 
-`implementation` resolves the symbol at the cursor, requires it be a `Capability`, and returns the providers' def sites (a provider is an index symbol — the edge only names it), sorted by position; a non-capability symbol or a capability with no providers returns `None`. The **reverse** (provider → its capability) is already **goto-definition** on the `provides Cap` name and isn't re-plumbed. **External/adapter providers** are included — navigation lands on the Bynk `provides Cap = Name { external }` declaration, never the off-tree `.binding.ts`. Pure `index_queries::implementations(index, key)` over `ProjectIndex.impls`, served from the **cached round**.
+`implementation` resolves the symbol at the cursor, requires it be a `Capability`, and returns the providers' def sites (a provider is an index symbol — the edge only names it), sorted by position; a non-capability symbol or a capability with no providers returns `None`. The **reverse** (provider → its capability) is already **goto-definition** on the `provides Cap` name and isn't re-plumbed. **External/adapter providers** are included — navigation lands on the Bynk `provides Cap = Name { external }` declaration, never the off-tree `.binding.ts`. Pure `index_queries::implementations(index, key)` over `ProjectIndex.impls`, served from the round the freshness contract (§3.2.1) keeps current for the requested file.
 
 **Go-to-type-definition (`textDocument/typeDefinition`, slice 6).** From a **value** at the cursor to the declaration of its (user-declared) type. The round's `expr_types` is now retained in the LSP `Analysis` (alongside the index/snapshots/locals); the handler reads the value's `Ty` at the offset (`type_at_offset`), unwraps a single-parameter container (`Option`/`Effect`/`List`/`HttpResult`) to its `Named` element, and returns that `Type` symbol's definition site(s). The lookup is a **bare-name match** (`Ty::Named.name` and the index both use bare names), so a type name shared across units yields several locations — the LSP-conventional resolution, the client lets the user choose. Built-in, function, actor, and two-parameter (`Result`/`Map`) types have no single type-declaration target and return `None`, as does a cursor not on a typed expression in a clean round. The **consumed-context** half (`uses B` / `B.Cap` → the context's source file) stays deferred — context units aren't index symbols, so it needs the unit→file map (also the basis for document links).
 
@@ -536,6 +632,36 @@ The edge comes from the `provides Cap = Provider` clause, which records a `Capab
 
 `textDocument/documentLink` underlines each `uses`/`consumes` **unit name** — and the `suite <target>` header's target (#609) — and makes it clickable to that unit's source. It joins two pieces: the clickable **range** comes from parsing the *live buffer* (`symbols::unit_reference_spans` walks the recovered AST's `uses`/`consumes` declarations, plus a suite's `target` and its own `uses`, and returns each target's name span — so links track the document even mid-edit); the link **target** comes from the round's **unit→source map** (`unit_sources`), keyed by qualified unit name, resolving to the unit's first source file (a unit may span files). The map is **new analysis surface** (ADR 0095) — context/unit names aren't index symbols, the gap ADR 0068 flagged — built in one pass over the non-synthetic parsed units, available whenever the project structurally analyses (type errors included; empty only on a parse bail), and threaded `ProjectAnalysis` → `ProjectDiagnostics` → the LSP `Analysis`. A **first-party `uses`** (`bynk.list`, embedded via `include_str!`, no on-disk file) and an unresolved unit yield no link, by design — their *symbols* still surface through hover/completion (slice 9). **Go-to-definition on the same `uses`/`consumes` names** rides the same map: when the cursor sits on a unit-reference span and the index/locals paths don't resolve it, `goto_definition` returns the unit's first source file (at the top — units have no finer def site than their header). This closes the consumed-context half of §3.19's deferral for unit *declarations*; a unit-qualified capability reference (`B.Cap`) inside an expression is not yet a navigation source.
 
+**Intra-doc links (#848).** Inside a `--- … ---` doc comment, a bare `[Name]` or dotted `[Owner.member]` — plus a `` [`Name`] `` code-span-wrapped shortcut and a `[text][Name]` full reference — becomes a clickable link when it resolves, exactly as go-to-definition would resolve the same name at that point in the source: the *declaring unit's* doc-link scope order (itself, then its `uses` targets, then its `consumes` targets — `Analysis::doc_scope`, a sibling map built alongside `unit_sources` at the same assembly point, from the same `uses`/`consumes` phase outputs), first scope-order unit with any match wins, more than one candidate there is unresolved rather than guessed (no `kind@` disambiguation prefix). `[text](url)`, an author-defined `[name]: url` reference, and fenced code-block content keep their ordinary Markdown meaning and are never scanned as candidates. An unresolved name — including any first-party/synthetic-unit name, which has no on-disk location by construction — renders as plain text; there is no diagnostic for a broken intra-doc link in this increment. The clickable **range** comes from scanning the live buffer's `DocBlock` tokens directly (`symbols::doc_link_spans`), the same live-buffer-tracks-mid-edit approach `unit_reference_spans` uses above; the **target** is the resolved symbol's definition site (`index_queries::resolve_doc_link`), built the same way `goto_definition` builds one. Resolves against the full `analysis.index` under the same `committed_analysis` (stale-while-revalidate, §3.2.1) gate as the `uses`/`consumes` links above — consistent with `code_lens`, which already resolves full-index cross-references under that gate.
+
+### 3.22 File-rename awareness (#302)
+
+`workspace/willRenameFiles` keeps `uses`/`consumes` references in sync when a `.bynk` file is renamed or moved in the editor — the file-move half of §3.9's deferral for unit names. The capability is registered with a filter matching `.bynk` **files only** (`FileOperationPatternKind::File`), not folders — a directory move is a follow-up.
+
+For each `FileRename`, the handler parses the *old* file's own snapshot to get its declared qualified name and the span of that declaration (`symbols::own_declaration_name` — `None` for a `suite`, whose `SourceUnit::name()` is its *target*'s name, not one of its own, so nothing addresses it by name and a suite rename produces no edits). It then derives the name the *new* path implies, preserving whichever single-file/multi-file arrangement the old path satisfied against the compiler's own path↔name consistency rule (`bynk_ide::renamed_unit_name`, delegating to `bynk-emit`'s `check_path_name_alignment` logic rather than re-deriving it in the LSP). Renaming one member file within a multi-file unit's directory is a no-op by construction — the qualified name is the directory, not the filename.
+
+When the name does change, the edit set is: the moved file's own declaration header (targeting its **old** URI — the client applies the returned edit against pre-move locations, then performs the actual rename, so the file lands at its new path already correct), plus every other project file's matching `uses`/`consumes` reference spans (`symbols::unit_reference_spans`, the same span-finder `documentLink` uses). Edits are versioned `TextDocumentEdit`s, gated by `analysis_covering_open_buffers` (§3.2.1) — the same whole-project freshness `rename` needs, since this handler emits the same kind of multi-file versioned edit and a stale open buffer would otherwise carry a version the client rejects. The handler never refuses: a filesystem rename isn't something this edit-only hook can block, so anything it can't confidently resolve is skipped rather than erroring the batch.
+
+### 3.23 Sequence diagram (#846)
+
+`bynk/sequenceModel` — a **custom (non-standard) request**, this server's first: everything in §3.1–3.22 is a standard `LanguageServer` trait method, registered automatically; this one has no trait slot and is wired via `tower-lsp`'s `LspService::build(...).custom_method("bynk/sequenceModel", Backend::sequence_model)`. Advertised through `ServerCapabilities.experimental` (`{"sequenceModel": true}`) — the only feature-detection surface a client has for a custom method. Params are the usual two-field cursor shape (`textDocument`, `position`); the response is a `SequenceModel | null` (`null` when no handler encloses the cursor).
+
+Backs the VS Code extension's **"Bynk: Show Sequence Diagram"** command and a per-handler **"Show Sequence"** CodeLens (sourced from a direct AST walk over `Service.handlers`/`AgentDecl.handlers`, not `index_queries::code_lenses` — that indexes only agent handlers, since `SymbolKind::Handler` excludes service handlers, which have no per-handler name). Served from the **committed round** through the non-refreshing decoration gate (§3.2.1, #733), same as CodeLens/inlay hints. **No refresh-nudge exists for it** — Tier 1 (see the design ADR, `design/pending/sequence-diagram-846.md` pre-stamp / its post-stamp ADR home) is on-demand: the client re-issues the request each time the command/lens fires, since there is no generic "refresh a custom method" in the LSP spec or in `tower_lsp::Client`.
+
+The query itself, `bynk_ide::sequence::sequence_model`, classifies each call in the handler body as a **lifeline** — a consumed capability, a call into a consumed context, or an agent (same-context included) — or as local computation that folds into the entry activation. It needs the handler's owning unit's cross-context/agent tables, which the per-file checking pass builds transiently and never retains; #846 adds `ProjectAnalysis.sequence_info` (mirrors the `unit_sources`, ADR 0095, precedent: a project-wide analysis table, not a per-file `bynk-check` captured one, since cross-context classification is inherently project-wide), threaded `ProjectAnalysis` → `ProjectDiagnostics` → the LSP `Analysis`, alongside the others. Cross-context/agent calls are **boundary-stop**: one Call+Return message, the callee's own body never walked. `if`/`match` render as `alt`/`opt` up to a depth budget (~2 levels); deeper nesting collapses to a single marker, still click-to-code-able via its own span. Each branch also carries its **outcome** (`Branch.reply`) — the value the handler yields on that path (`Ok(view)`) — so a return-gating `if`/`match` whose branches call no lifeline (the rate-limiter's `if view.allowed { Ok(view) } else { TooManyRequests(...) }`) has real content rather than an empty `alt` that Mermaid draws as a mangled zero-width box. An `if` branch is labelled by its condition (`view.allowed`), and an else-less `if` renders as a single-branch `opt` rather than an `alt` with an empty second branch. A handler's **principal** — its `by <Actor>` clause (or the service-level `default_by` it inherits) — becomes a leftmost `Actor` participant that originates the request (an inbound message carrying the route, so the entry box drops to the bare owner name `api`); every return-position outcome then renders as a `Return` message *to* that actor rather than a note. Handlers with no principal (agents, services without `by`) keep the combined entry label and render outcomes as entry-anchored notes.
+
+The Mermaid diagram text itself is generated **client-side** (`vscode-bynk/src/webview/mermaid-gen.ts`) from the structured `SequenceModel` JSON — `bynk-check`/`bynk-ide`/`bynk-lsp` stay Mermaid-agnostic; the extension's first webview owns rendering, CSP (vendored Mermaid, no CDN, per the documentation track's convention), and click-to-code (a DOM-order zip against the rendered SVG, not Mermaid's inconsistent `click`-directive support for sequence diagrams).
+
+### 3.24 Documentation view (#847)
+
+`bynk/documentationModel` — the server's **second custom request**, wired the same way as §3.23 (`LspService::build(...).custom_method("bynk/documentationModel", Backend::documentation_model)`, advertised through `ServerCapabilities.experimental` as `{"documentationModel": true}`). Unlike `bynk/sequenceModel` it carries **no cursor position**: a documentation page is the *whole file's* declarations (Tier 1 is file-scoped — see the design ADR), so the params are a bare `textDocument`; the response is a `DocModel | null` (`null` for a non-project file, a `suite` unit, or a file with no committed round).
+
+Backs the VS Code extension's **"Bynk: Show Documentation"** command. Served from the **committed round** through the non-refreshing decoration gate (§3.2.1, #733), on-demand with **no refresh nudge** (same reasoning as §3.23 — a custom method has no generic refresh in the spec; the client re-issues the request each time the command fires).
+
+The query, `bynk_ide::documentation::documentation_model`, aggregates every declaration in the file into an ordered, hierarchical page — for each: a heading name, a short kind label, its nesting `depth` (a top-level declaration is `0`; a capability's ops and a service/agent's handlers are `1`), its rendered Markdown, a `documented` flag, and the name span each heading links back to. It reuses two things rather than re-deriving them: the traversal shape is `document_symbols`' exhaustive `CommonsItem` walk (a new declaration kind is a compile error, not a silently-missed row — §3.7), and each entry's Markdown (a fenced `bynk` signature followed by its doc-comment prose) is produced by **hover's own `describe_*` assembly** (§3.3), so the page cannot drift from hover. An **undocumented** declaration still renders its signature, flagged for the "no documentation" coverage placeholder the webview shows (with a toggle to hide it for a clean reading page).
+
+Markdown is rendered **client-side** (`vscode-bynk/src/webview/doc-render.ts`, vendored `markdown-it`) with **HTML disabled** — a doc comment's raw `<script>`/`<img>` never reaches the DOM as markup — under the same `default-src 'none'` webview CSP #846 established (now factored into a shared `webviewHost.ts` substrate this view and the sequence view both consume). A link written `[text](url)` (or a `<url>` autolink) renders as an anchor, but a click is gated through an **http(s) allow-list** before the host opens it externally — the security posture holds whatever markdown-it turns into a link; a *bare* URL is not auto-linkified. Click-to-code posts a `{uri, range}` reveal, hydrated host-side into a real editor navigation (the DOM is built element-by-element here, so each heading holds its own span directly — no SVG-order zip).
+
 ---
 
 ## 4. Implementation architecture
@@ -549,9 +675,10 @@ bynk-tooling/
 ├── tree-sitter-bynk/        -- Tree-sitter grammar (separate sub-project)
 │   ├── grammar.js
 │   └── ...
-├── bynk-lsp/                -- LSP server binary (Rust, in the compiler workspace)
-│   ├── src/main.rs
-│   ├── src/handlers/        -- LSP request handlers
+├── bynk-lsp/                -- LSP server (Rust, in the compiler workspace)
+│   ├── src/lib.rs           -- the server: Backend, the LanguageServer impl, run()
+│   ├── src/main.rs          -- thin binary entry point (bynk_lsp::run())
+│   ├── src/hover.rs, completion.rs, index_queries.rs, …  -- flat handler modules
 │   └── ...
 ├── bynk-fmt/                -- Formatter (Rust, in the compiler workspace; used by both LSP and CLI)
 │   └── src/lib.rs
@@ -596,27 +723,40 @@ textDocument.synchronization: Full
 textDocument.publishDiagnostics
 textDocument.hover
 textDocument.definition
+textDocument.typeDefinition        (v0.35, §3.19)
+textDocument.implementation        (v0.35, §3.19)
 textDocument.formatting
 textDocument.rangeFormatting
 textDocument.documentSymbol
+textDocument.completion            (v0.17 consumes/given; positional v0.30, §3.15; resolveProvider: true)
+textDocument.signatureHelp         (v0.32, §3.16; triggers "(" ",")
 textDocument.references            (v0.25, §3.8)
 textDocument.rename                (v0.25, §3.9; prepareProvider: true)
 textDocument.codeAction            (v0.26, §3.10; kinds: [quickfix])
+textDocument.codeLens              (v0.33, §3.17)
 textDocument.documentHighlight     (v0.26, §3.12)
+textDocument.documentLink          (§3.21)
 textDocument.inlayHint             (v0.27, §3.13)
 textDocument.semanticTokens        (v0.28, §3.14; full + range)
-workspace.symbol                   (v0.26, §3.11)
-workspace.workspaceFolders
-workspace.didChangeWatchedFiles
+textDocument.callHierarchy         (v0.34, §3.18)
+textDocument.foldingRange          (v0.37, §3.20)
+textDocument.selectionRange        (v0.37, §3.20)
+workspace.symbol                   (v0.26, §3.11; aggregated across projects, §2.4)
+workspace.workspaceFolders         (real multi-root, v0.182, §2.4)
+workspace.didChangeWatchedFiles    (registered dynamically by the server, v0.183, §2.3)
+workspace.fileOperations.willRename (#302, §3.22; `**/*.bynk` files only, not folders)
 ```
 
-(Completion was added in v0.17 for `consumes`/`given` surfaces.)
+Custom (non-standard) requests — no `LanguageServer` trait slot, registered via `tower-lsp`'s `custom_method` builder, advertised through `experimental` (the only feature-detection surface a client has for one):
 
-Not declared (out of scope so far):
-- completionItem/resolve
-- codeLens, inlayHint/resolve
-- semanticTokens/delta
-- signatureHelp
+```
+bynk/sequenceModel               (#846, §3.23; served from the committed round, no refresh nudge)
+bynk/documentationModel          (#847, §3.24; whole-file, served from the committed round, no refresh nudge)
+```
+
+Not declared (genuinely out of scope so far):
+- inlayHint/resolve, semanticTokens/delta (throughput, not correctness)
+- pull diagnostics (`textDocument/diagnostic`) — the server pushes
 
 ### 4.4 Error recovery for diagnostics
 
@@ -753,25 +893,19 @@ Updates are manual: rebuild, reinstall. Auto-update via a marketplace is deferre
 
 ## 8. What's deferred (future tooling increments)
 
-After this increment, the language has working tooling for the v0.5 surface. Future tooling work:
+The editor surface is, by this repo's standard, complete: every capability §4.3
+declares is backed by a handler, and the foundation under it — one project model
+shared with `bynkc`, a freshness contract, real multi-root workspaces, startup
+analysis, dynamic watchers, and one diagnostics scheduler — landed across the
+**LSP foundations** track (ADRs 0198, 0201, 0202, 0204). What remains deferred:
 
-**Tooling v2 (probably after v0.6):**
-- Autocomplete (the substantial missing feature).
-- Semantic tokens (semantic highlighting).
-- Editor commands ("Bynk: Build", "Bynk: Run tests").
+**Capability depth** (genuinely unbuilt, not throughput):
+- Rename for local bindings; match-arm and `is`-narrowing navigation; service cross-context dispatch callee edges in call hierarchy (§3.18 — `Fn`/`Method`/`CapabilityOp`/agent-`Handler` edges shipped, #304); the consumed-context (`uses B`/`B.Cap`) navigation half; auto-import via `completionItem/resolve`; a test-run ("▶ Run") codelens; `extract`/`inline` refactorings.
 
-Document symbols are shipped in v1.1 (§3.7) — they're cheap to implement
-(AST walk) and unlock VS Code's outline view.
+**Throughput** (correctness is unaffected):
+- Semantic-token delta, `inlayHint/resolve`, pull diagnostics, and an incremental (salsa-style) analysis layer — full re-analysis is acceptable at current scale (§3.2, the named scaling cliff at many-hundred-file projects).
 
-**Tooling v3:**
-- Workspace symbol search.
-- Refactorings (rename, extract).
-- Inlay hints.
-- Code actions / quick fixes.
-
-**Tooling v4:**
-- Marketplace publication.
-- Auto-update infrastructure.
-- Editor support beyond VS Code (Neovim, Helix, etc. — the tree-sitter grammar enables this; the LSP works in any LSP-capable editor; the question is which extensions to package and maintain).
+**Packaging / reach:**
+- Marketplace publication and auto-update; editor support beyond VS Code (the tree-sitter grammar and the stdio LSP already work in any LSP-capable editor — the open question is which extensions to package and maintain).
 
 These come as practice surfaces the need.

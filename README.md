@@ -41,8 +41,8 @@ you.
   (`given Logger`), supplied by the platform, and mockable in tests.
 - **Compiles to TypeScript.** You get JavaScript-ecosystem interop and a natural
   fit for Cloudflare Workers, with a static type system in front of it.
-- **Testing is built in.** `test` blocks, `assert`, dependency `mocks`, and
-  `Mock[T]` value fabrication ship with the language.
+- **Testing is built in.** `suite`/`case` blocks, `expect`, and `Val[T]` value
+  fabrication ship with the language.
 
 ## Install
 
@@ -54,12 +54,13 @@ source with a recent Rust toolchain (stable, 2024 edition — see
 git clone https://github.com/accuser/bynk.git
 cd bynk
 cargo install --path bynkc      # the `bynkc` compiler
-cargo install --path bynk       # the `bynk` driver (doctor / new / dev)
+cargo install --path bynk       # the `bynk` driver (doctor / dev / deploy / new / check / fmt / test)
 cargo install --path bynk-lsp   # optional: the `bynkc-lsp` language server
 ```
 
 `bynkc --help` lists the four compiler commands (`compile`, `check`, `fmt`,
-`test`); `bynk --help` lists the driver's (`doctor`, `new`, `dev`).
+`test`); `bynk --help` lists the driver's (`doctor`, `dev`, `deploy`, `new`,
+`check`, `fmt`, `test`).
 
 ## Quick start
 

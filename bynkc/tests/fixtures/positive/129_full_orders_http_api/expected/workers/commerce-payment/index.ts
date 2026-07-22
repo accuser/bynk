@@ -16,10 +16,12 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "authorise": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "938adff5c562387b") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "authorise", expected: "938adff5c562387b", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_amount = handlers.deserialise_Money(args, "$");
             if (__r_amount.tag === "Err") return new Response(JSON.stringify(__r_amount.error), { status: 400, headers: { "content-type": "application/json" } });
-            const amount = __r_amount.value;
+            const amount = __r_amount.value as unknown as handlers.Money;
             const result = await surface.authorise(amount);
             const body = handlers.serialise_Result_AuthId_PaymentError(result);
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });

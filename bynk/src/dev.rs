@@ -53,6 +53,15 @@ pub struct DevOptions {
     /// Base inspector port for `--inspect` (default 9229); allocated per context
     /// exactly as `base_port` is.
     pub inspect_port: u16,
+    /// `--env NAME` (default `"default"`) — which `bynk.deploy.lock` section
+    /// `--remote` reads the KV id from. `dev` never provisions and never
+    /// writes the ledger (unchanged); this only selects which of `deploy`'s
+    /// environments `--remote` connects the placeholder to. Purely a `bynk`
+    /// concept — never forwarded to `wrangler dev` itself, since `dev` curates
+    /// no Wrangler-side environment config (slice 4, #837 review: a project
+    /// deployed only under a non-default `--env` previously read as
+    /// "never provisioned" here, because this always looked at `"default"`).
+    pub environment: String,
     /// Everything after `--`, forwarded to `wrangler dev` verbatim (D5).
     pub wrangler_args: Vec<String>,
 }
@@ -81,6 +90,21 @@ pub fn run(
     node_floor: u32,
     opts: &DevOptions,
 ) -> ExitCode {
+    // #837 review: once `--remote` reads a ledger section by `--env`, a
+    // `-- --env`/`-- --environment` passthrough would silently diverge —
+    // `bynk` materialises one environment's KV id while Wrangler actually
+    // connects to a different one. Checked only when `--remote` is present,
+    // since `--env` is otherwise inert (nothing reads the ledger without it).
+    if opts.wrangler_args.iter().any(|arg| arg == "--remote")
+        && let Some(conflict) = crate::deploy::conflicting_env_passthrough(&opts.wrangler_args)
+    {
+        eprintln!(
+            "bynk: `--env {}` conflicts with `{conflict}` after `--` — pass one or the other, not both",
+            opts.environment
+        );
+        return ExitCode::FAILURE;
+    }
+
     // 1. Pre-flight — reuse doctor's Deploy gate (Node + wrangler) plus the
     //    always-on compile floor. Failing here, with doctor's remedy text, beats
     //    a confusing error out of a half-built tree (proposal §2.2).
@@ -166,6 +190,7 @@ pub fn run(
                 project_root,
                 &s.worker,
                 &workers_dir.join(&s.worker).join("wrangler.toml"),
+                &opts.environment,
             ) {
                 eprintln!("bynk: {e}");
                 return ExitCode::FAILURE;
@@ -493,8 +518,6 @@ pub fn discover_workers(workers_dir: &Path) -> Vec<String> {
 pub enum SelectError {
     /// No worker was produced by the compile (e.g. an empty project).
     NoneBuilt,
-    /// More than one context, and no `--context` to disambiguate.
-    Ambiguous(Vec<String>),
     /// `--context NAME` named a context that doesn't exist.
     NotFound {
         requested: String,
@@ -511,14 +534,6 @@ impl std::fmt::Display for SelectError {
                     "no workers were built — does the project define any contexts?"
                 )
             }
-            // No `--context` advice: since #552 gave `dev` its own plural
-            // rule, `deploy` is the only caller that can reach this, and
-            // `deploy` has no such flag. The caller supplies the remedy.
-            SelectError::Ambiguous(available) => write!(
-                f,
-                "this project has several contexts: {}",
-                available.join(", ")
-            ),
             SelectError::NotFound {
                 requested,
                 available,
@@ -528,28 +543,6 @@ impl std::fmt::Display for SelectError {
                 available.join(", ")
             ),
         }
-    }
-}
-
-/// Pick the *single* worker dir a command can act on — ADR 0096's
-/// select-or-default rule, now **`deploy`'s** alone: since #552 `dev` serves
-/// every context ([`select_contexts`]), and `deploy` still ships one Worker at a
-/// time, so several contexts remains a genuine ambiguity there.
-///
-/// `available` are worker *directory* names (dots already dasherised, e.g.
-/// `commerce-payment`). A requested name matches either the raw or the
-/// dasherised form, so both `commerce.payment` and `commerce-payment` resolve.
-pub fn select_context(
-    available: &[String],
-    requested: Option<&str>,
-) -> Result<String, SelectError> {
-    match requested {
-        Some(name) => resolve_one(available, name),
-        None => match available {
-            [] => Err(SelectError::NoneBuilt),
-            [one] => Ok(one.clone()),
-            many => Err(SelectError::Ambiguous(many.to_vec())),
-        },
     }
 }
 
@@ -740,49 +733,16 @@ mod tests {
     }
 
     #[test]
-    fn sole_context_is_served_without_a_flag() {
+    fn a_sole_context_is_selected_without_a_flag() {
         assert_eq!(
-            select_context(&names(&["links"]), None),
-            Ok("links".to_string())
-        );
-    }
-
-    #[test]
-    fn ambiguous_without_context_lists_the_options() {
-        assert_eq!(
-            select_context(&names(&["api", "worker"]), None),
-            Err(SelectError::Ambiguous(names(&["api", "worker"])))
+            select_contexts(&names(&["links"]), &[]),
+            Ok(names(&["links"]))
         );
     }
 
     #[test]
     fn no_workers_is_its_own_error() {
-        assert_eq!(select_context(&[], None), Err(SelectError::NoneBuilt));
-    }
-
-    #[test]
-    fn context_flag_selects_by_raw_or_dasherised_name() {
-        let avail = names(&["api", "commerce-payment"]);
-        assert_eq!(
-            select_context(&avail, Some("commerce-payment")),
-            Ok("commerce-payment".to_string())
-        );
-        // Dotted context name resolves to its dasherised worker dir.
-        assert_eq!(
-            select_context(&avail, Some("commerce.payment")),
-            Ok("commerce-payment".to_string())
-        );
-    }
-
-    #[test]
-    fn unknown_context_reports_what_is_available() {
-        assert_eq!(
-            select_context(&names(&["api"]), Some("nope")),
-            Err(SelectError::NotFound {
-                requested: "nope".to_string(),
-                available: names(&["api"]),
-            })
-        );
+        assert_eq!(select_contexts(&[], &[]), Err(SelectError::NoneBuilt));
     }
 
     #[test]

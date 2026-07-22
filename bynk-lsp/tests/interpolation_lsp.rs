@@ -4,16 +4,10 @@
 //! pin that the index actually records hole-interior references (and would
 //! catch a future walker that stopped recursing into holes).
 
+use bynk_lsp::index_queries;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-
-#[allow(dead_code)]
-#[path = "../src/index_queries.rs"]
-mod index_queries;
-#[allow(dead_code)]
-#[path = "../src/position.rs"]
-mod position;
 
 fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!(

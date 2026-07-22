@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, Ht
 
 import { CurrencyCode as __CommonsCurrencyCode, Money as __CommonsMoney } from "../../commerce/money.js";
 
-import * as commerce_payment from "../commerce-payment/handlers.js";
+import type * as commerce_payment from "../commerce-payment/handlers.js";
 
 export type CurrencyCode = __CommonsCurrencyCode & { readonly __ctxBrand: "commerce.orders" };
 export const CurrencyCode = {
@@ -59,7 +59,7 @@ export const placement = {
    * contexts can integrate without coupling to HTTP status semantics.
    */
   async call(total: Money, deps: { env: { COMMERCE_PAYMENT: ServiceBinding } }): Promise<Result<void, OrderError>> {
-    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", commerce_payment.serialise_Money(total), commerce_payment.deserialise_Result_AuthId_PaymentError, "commerce.orders");
+    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", serialise_Money(total), deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b");
     switch (auth.tag) {
       case "Ok": {
         return Ok(undefined);
@@ -93,7 +93,7 @@ export const orders = {
    */
   async http_POST_orders(body: CreateOrderRequest, deps: { env: { COMMERCE_PAYMENT: ServiceBinding } }): Promise<HttpResult<OrderView>> {
     const total = { minorUnits: body.amountMinor, currency: body.currency };
-    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", commerce_payment.serialise_Money(total), commerce_payment.deserialise_Result_AuthId_PaymentError, "commerce.orders");
+    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", serialise_Money(total), deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b");
     switch (auth.tag) {
       case "Ok": {
         return HttpResult.Created({ status: "placed", totalMinor: body.amountMinor });
@@ -222,6 +222,71 @@ export function deserialise_Result_Unit_OrderError(json: JsonValue, path: string
   if (__r_e.tag === "Err") return __r_e;
   const __e = __r_e.value;
     return Ok(Err(__e) as Result<void, OrderError>);
+  }
+  return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
+}
+
+export function serialise_AuthId(value: commerce_payment.AuthId): JsonValue {
+  return value as unknown as string;
+}
+
+export function deserialise_AuthId(json: JsonValue, path: string = "$"): Result<commerce_payment.AuthId, BoundaryError> {
+  if (typeof json !== "string") {
+    return Err({ kind: "StructuralMismatch", path, expected: "string", actual: typeof json });
+  }
+  return Ok(json as unknown as commerce_payment.AuthId);
+}
+
+export function serialise_PaymentError(value: commerce_payment.PaymentError): JsonValue {
+  switch (value.tag) {
+    case "Declined":
+      return { kind: "Declined" };
+    case "InsufficientFunds":
+      return { kind: "InsufficientFunds" };
+    case "GatewayDown":
+      return { kind: "GatewayDown" };
+  }
+}
+
+export function deserialise_PaymentError(json: JsonValue, path: string = "$"): Result<commerce_payment.PaymentError, BoundaryError> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  const kind = obj["kind"];
+  switch (kind) {
+    case "Declined":
+      return Ok({ tag: "Declined" } as commerce_payment.PaymentError);
+    case "InsufficientFunds":
+      return Ok({ tag: "InsufficientFunds" } as commerce_payment.PaymentError);
+    case "GatewayDown":
+      return Ok({ tag: "GatewayDown" } as commerce_payment.PaymentError);
+    default:
+      return Err({ kind: "StructuralMismatch", path, expected: "sum variant kind", actual: String(kind) });
+  }
+}
+
+
+export function serialise_Result_AuthId_PaymentError(value: Result<commerce_payment.AuthId, commerce_payment.PaymentError>): JsonValue {
+  if (value.tag === "Ok") return { kind: "Ok", value: serialise_AuthId(value.value) };
+  return { kind: "Err", error: serialise_PaymentError(value.error) };
+}
+
+export function deserialise_Result_AuthId_PaymentError(json: JsonValue, path: string = "$"): Result<Result<commerce_payment.AuthId, commerce_payment.PaymentError>, BoundaryError> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  if (obj["kind"] === "Ok") {
+  const __r_v = deserialise_AuthId(obj["value"], `${path}.value`);
+  if (__r_v.tag === "Err") return __r_v;
+  const __v = __r_v.value;
+    return Ok(Ok(__v) as Result<commerce_payment.AuthId, commerce_payment.PaymentError>);
+  } else if (obj["kind"] === "Err") {
+  const __r_e = deserialise_PaymentError(obj["error"], `${path}.error`);
+  if (__r_e.tag === "Err") return __r_e;
+  const __e = __r_e.value;
+    return Ok(Err(__e) as Result<commerce_payment.AuthId, commerce_payment.PaymentError>);
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }

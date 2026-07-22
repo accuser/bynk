@@ -12,7 +12,7 @@ const __TaskRegistry = new StateRegistry();
 function __zeroOfTaskState(): TaskState { return { retries: 3, done: false }; }
 
 function __rehydrateTaskState(s: TaskState): void {
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "retries", expected: "number", actual: typeof __v } as BoundaryError))((s.retries as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Task", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "retries", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "retries", expected: "integer", actual: String(__v) } as BoundaryError))((s.retries as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Task", __r.error); }
   { const __r = ((__v) => typeof __v === "boolean" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "done", expected: "boolean", actual: typeof __v } as BoundaryError))((s.done as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Task", __r.error); }
 }
 

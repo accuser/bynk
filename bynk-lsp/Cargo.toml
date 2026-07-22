@@ -20,14 +20,22 @@ categories = ["development-tools", "compilers"]
 # next one here.
 #   v0.29  (ADR 0058): legend_drift      → ../vscode-bynk/package.json
 #   v0.121 (ADR 0157): scaffolds_compile → ../vscode-bynk/snippets/bynk.json
-#   v0.166 (#616):     hover_references  → ../examples/todo, ../bynkc fixtures
-#   v0.168 (#619):     declaration_spans → ../examples/todo, ../bynkc fixtures
+#   v0.166 (#616):     hover_references     → ../examples/todo, ../bynkc fixtures
+#   v0.168 (#619):     declaration_spans    → ../examples/todo, ../bynkc fixtures
+#   v0.178 (#647):     project_model        → ../examples/todo, ../bynkc fixtures
+#   #848:              document_link_fixture → ../examples/rate-limiter
 exclude = [
     "tests/legend_drift.rs",
     "tests/scaffolds_compile.rs",
     "tests/hover_references.rs",
     "tests/declaration_spans.rs",
+    "tests/project_model.rs",
+    "tests/document_link_fixture.rs",
 ]
+
+[lib]
+name = "bynk_lsp"
+path = "src/lib.rs"
 
 [[bin]]
 name = "bynkc-lsp"

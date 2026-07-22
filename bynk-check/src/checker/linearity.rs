@@ -15,7 +15,9 @@
 
 use std::collections::HashMap;
 
-use bynk_syntax::ast::{Block, Expr, ExprKind, MatchBody, Param, Statement, TypeDecl};
+use bynk_syntax::ast::{
+    Block, Expr, ExprKind, Ident, MatchBody, Param, Pattern, Statement, TypeDecl,
+};
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
 
@@ -85,7 +87,7 @@ pub(crate) fn check(
         }
     }
     // A held parameter is owned for the whole body; it must be disposed before
-    // the handler returns (the body block is its scope).
+    // the handler or function returns (the body block is its scope).
     lin.walk_block(body, &mut state);
     for (name, span) in seeded {
         if state.get(&name) == Some(&Held::Owned) {
@@ -105,7 +107,7 @@ impl Lin<'_> {
                 "bynk.held.leak",
                 span,
                 format!(
-                    "held value `{name}` is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns"
+                    "held value `{name}` is still owned at scope exit — it must be disposed (stored, closed, or transferred) before returning"
                 ),
             )
             .with_note("store it (`<map>.put(k, conn)`), close it (`conn.close()`), or pass it to a function that consumes it"),
@@ -182,6 +184,8 @@ impl Lin<'_> {
                     self.walk_expr(a, state);
                 }
             }
+            // Slice C: `Wire(<String>)` — walk the raw inner expression.
+            ExprKind::Wire(inner) => self.walk_expr(inner, state),
             ExprKind::If {
                 cond,
                 then_block,
@@ -189,21 +193,33 @@ impl Lin<'_> {
             } => {
                 self.walk_expr(cond, state);
                 self.walk_branches(
-                    &[BranchBody::Block(then_block), BranchBody::Block(else_block)],
+                    &[Branch::block(then_block), Branch::block(else_block)],
                     e.span,
                     state,
                 );
             }
             ExprKind::Match { discriminant, arms } => {
                 self.walk_expr(discriminant, state);
-                let bodies: Vec<BranchBody> = arms
+                // Each arm's pattern may bind held resources out of the
+                // discriminant (`Some(conn)` over `Option[Connection]`, `Ok(c)`
+                // over `Result[Connection, _]`). Register those bindings as
+                // owned for the arm and require the arm to dispose them —
+                // consistent with `let`-binding handling. Without this the held
+                // value escapes the pass entirely (#719).
+                let branches: Vec<Branch> = arms
                     .iter()
-                    .map(|a| match &a.body {
-                        MatchBody::Expr(ex) => BranchBody::Expr(ex),
-                        MatchBody::Block(b) => BranchBody::Block(b),
+                    .map(|a| {
+                        let body = match &a.body {
+                            MatchBody::Expr(ex) => BranchBody::Expr(ex),
+                            MatchBody::Block(b) => BranchBody::Block(b),
+                        };
+                        Branch {
+                            body,
+                            bindings: self.held_pattern_bindings(&a.pattern),
+                        }
                     })
                     .collect();
-                self.walk_branches(&bodies, e.span, state);
+                self.walk_branches(&branches, e.span, state);
             }
             ExprKind::Block(b) => self.walk_block(b, state),
             ExprKind::Paren(inner)
@@ -410,17 +426,56 @@ impl Lin<'_> {
         }
     }
 
+    /// Held-typed idents a pattern binds into an arm's scope — the payload
+    /// bindings that name a held resource (recursing through nested payloads).
+    /// Their type is read from `expr_types`, where the checker records each
+    /// pattern binding's resolved type at its ident span.
+    fn held_pattern_bindings<'p>(&self, pat: &'p Pattern) -> Vec<&'p Ident> {
+        pat.bound_names()
+            .into_iter()
+            .filter(|id| self.expr_types.get(&id.span).is_some_and(held_value))
+            .collect()
+    }
+
     /// Walk a set of branch bodies from a shared pre-branch `state`, then unify:
     /// every outer held binding must end each branch in the same state, else the
     /// branches diverge. Branch-local bindings are leak-checked within each body.
-    fn walk_branches(&mut self, bodies: &[BranchBody], span: Span, state: &mut State) {
+    fn walk_branches(&mut self, branches: &[Branch], span: Span, state: &mut State) {
         let outer: Vec<String> = state.keys().cloned().collect();
         let mut ends: Vec<State> = Vec::new();
-        for body in bodies {
+        for br in branches {
             let mut branch = state.clone();
-            match body {
+            // Introduce this arm's held pattern bindings as owned, saving any
+            // outer binding they shadow (shadowing is legal — resolver.rs). The
+            // arm binding is scoped to the arm: it must be disposed by the arm's
+            // end, and the shadowed outer binding is restored afterwards so a
+            // consume of the inner value is not misattributed to the outer one.
+            let saved: Vec<(String, Option<Held>)> = br
+                .bindings
+                .iter()
+                .map(|id| (id.name.clone(), branch.get(&id.name).copied()))
+                .collect();
+            for id in &br.bindings {
+                branch.insert(id.name.clone(), Held::Owned);
+            }
+            match &br.body {
                 BranchBody::Block(b) => self.walk_block(b, &mut branch),
                 BranchBody::Expr(ex) => self.walk_expr(ex, &mut branch),
+            }
+            for id in &br.bindings {
+                if branch.get(&id.name) == Some(&Held::Owned) {
+                    self.leak(&id.name, id.span);
+                }
+            }
+            for (name, prev) in saved {
+                match prev {
+                    Some(p) => {
+                        branch.insert(name, p);
+                    }
+                    None => {
+                        branch.remove(&name);
+                    }
+                }
             }
             ends.push(branch);
         }
@@ -461,4 +516,22 @@ fn storage_value_is_held(t: &Ty) -> bool {
 enum BranchBody<'a> {
     Block(&'a Block),
     Expr(&'a Expr),
+}
+
+/// One arm of a branching construct: its body, plus the held-typed pattern
+/// bindings it introduces into scope (empty for an `if`/`else` block, which
+/// binds nothing).
+struct Branch<'a> {
+    body: BranchBody<'a>,
+    bindings: Vec<&'a Ident>,
+}
+
+impl<'a> Branch<'a> {
+    /// A branch whose body is a block and which binds nothing (an `if`/`else`).
+    fn block(b: &'a Block) -> Self {
+        Branch {
+            body: BranchBody::Block(b),
+            bindings: Vec::new(),
+        }
+    }
 }

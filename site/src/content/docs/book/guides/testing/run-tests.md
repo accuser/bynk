@@ -99,6 +99,67 @@ There are three shapes a consumer should handle, distinguished by `error`:
 The exit code always follows the runner's own process status, so a crash is
 never reported as success.
 
+## Coverage: `--coverage`
+
+`--coverage` runs the suite as normal, then reports **statement/line coverage
+attributed to your `.bynk` source** — not the generated TypeScript:
+
+```sh
+bynkc test --coverage
+```
+
+```text
+✓ 12 passed  (rate-limiter)
+
+Coverage
+  src/limiter.bynk    ▓▓▓▓▓▓··   86%   (42/49 lines)
+  src/decide.bynk     ▓▓▓▓▓▓▓▓  100%   (11/11 lines)
+  src/entry.bynk      ▓▓▓▓▓···   71%   (20/28 lines)  uncovered: 34-38, 51
+  ─────────────────────────────────────────────────
+  total                          84%   (73/88 lines)
+```
+
+Coverage is collected out-of-band by the runtime (V8's `NODE_V8_COVERAGE`) and
+remapped through the same source maps the debugger trusts, so the generated
+`.ts`/`.js` layer is invisible: a covered line is a **`.bynk`** line. Generated
+glue with no source origin (codec wrappers, capability-injection) is
+out-of-scope — never counted as uncovered user code — and the measured set
+excludes your `tests/` tree and the workers scaffold an integration suite stands
+up, so what you see is the source you are actually testing.
+
+`--coverage` needs the `tsc → node` run: it is **incompatible with `--inspect`
+and `--no-run`**, and requires `tsc` and `node` on your `PATH` (the `tsx`
+fallback is not supported for coverage). Any of those combinations fails with an
+actionable message rather than silently producing wrong numbers. This increment
+reports **line/statement** coverage; per-branch coverage is a planned follow-up.
+
+With `--format json`, the same numbers arrive as a `coverage` block instead of
+the table — for a CI artifact:
+
+```jsonc
+{
+  "passed": 12,
+  "failed": 0,
+  "suites": [ /* … */ ],
+  "coverage": {
+    "covered": 73,
+    "lines": 88,
+    "percent": 84,
+    "files": [
+      {"path": "src/limiter.bynk", "covered": 42, "lines": 49, "percent": 86,
+       "uncovered": []},
+      {"path": "src/entry.bynk", "covered": 20, "lines": 28, "percent": 71,
+       "uncovered": [34, 35, 36, 37, 38, 51]}
+    ]
+  }
+}
+```
+
+The block is present only for a `--coverage` run that attributed lines; a normal
+run omits it, so an existing consumer's document is byte-for-byte unchanged.
+Every `path` is a project-relative `.bynk` file, and `uncovered` lists the
+1-based source lines that never ran.
+
 ## In the editor: the Test Explorer
 
 The [VS Code extension](/docs/editor-and-tooling/editor-support/) consumes that

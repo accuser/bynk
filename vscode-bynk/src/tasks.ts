@@ -1,31 +1,46 @@
-// A build task that type-checks the whole project with `bynkc check . --format
+// A build task that type-checks the whole project through `bynk check . --format
 // short`, wired to the `$bynkc` problem-matcher so errors land in the Problems
 // panel. The LSP already reports diagnostics for *open* files; this catches the
 // rest (unopened files, project-level errors) on demand.
+//
+// Goes through the `bynk` driver rather than shelling `bynkc` directly (#486):
+// the driver resolves its compiler as `$BYNK_BYNKC` → PATH → sibling-of-`bynk`,
+// richer than a bare PATH lookup — a driver-first install (`bynkc` reachable
+// only via `BYNK_BYNKC`, or sitting next to `bynk` off PATH) now works here too.
 
 import * as vscode from "vscode";
 
 const TASK_TYPE = "bynkc";
 
-/** The compiler command — `bynk.compilerPath` setting, else `bynkc` on PATH. */
-export function compilerPath(): string {
+/** The `bynk` driver command — `bynk.bynkPath` setting, else `bynk` on PATH. */
+export function bynkPath(): string {
   return (
-    vscode.workspace
-      .getConfiguration("bynk")
-      .get<string>("compilerPath", "")
-      .trim() || "bynkc"
+    vscode.workspace.getConfiguration("bynk").get<string>("bynkPath", "").trim() ||
+    "bynk"
   );
 }
 
-/** The `bynkc: check` build task: `<bynkc> check . --format short`, run at the
+/** The `bynk.compilerPath` setting, or `undefined` when unset. Passed through as
+ *  `BYNK_BYNKC` when shelling `bynk`, so the setting keeps pinning an exact
+ *  `bynkc` now that `check`/`test` run through the driver instead of calling
+ *  `bynkc` directly — `bynk` honours the same override. */
+export function compilerOverride(): string | undefined {
+  const p = vscode.workspace
+    .getConfiguration("bynk")
+    .get<string>("compilerPath", "")
+    .trim();
+  return p || undefined;
+}
+
+/** The `bynkc: check` build task: `bynk check . --format short`, run at the
  *  workspace root, errors routed through `$bynkc`. */
 function checkTask(definition: vscode.TaskDefinition = { type: TASK_TYPE }): vscode.Task {
-  const exec = new vscode.ShellExecution(compilerPath(), [
-    "check",
-    ".",
-    "--format",
-    "short",
-  ]);
+  const override = compilerOverride();
+  const exec = new vscode.ShellExecution(
+    bynkPath(),
+    ["check", ".", "--format", "short"],
+    override ? { env: { BYNK_BYNKC: override } } : undefined,
+  );
   const task = new vscode.Task(
     definition,
     vscode.TaskScope.Workspace,

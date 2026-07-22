@@ -4,6 +4,8 @@
 //! v0.36 (ADR 0069): methods are now index symbols, so a method caller
 //! (`Counter.bump`) records an edge too. The fixture exercises a free fn
 //! caller, a service caller, and a method caller.
+//! #304: `CapabilityOp` and agent `Handler` callees join the graph too — see
+//! `803_capability_op_and_handler_call_hierarchy` below.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,6 +14,11 @@ use bynkc::index::{ProjectIndex, SymbolKey, SymbolKind};
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/positive/215_call_hierarchy/src")
+}
+
+fn capability_op_and_handler_fixture_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/positive/803_capability_op_and_handler_call_hierarchy/src")
 }
 
 fn analyse(root: &Path) -> ProjectIndex {
@@ -90,4 +97,43 @@ fn unknown_key_has_no_calls() {
     let ghost = key("callgraph", SymbolKind::Fn, "nope");
     assert_eq!(index.calls_into(&ghost).count(), 0);
     assert_eq!(index.calls_from(&ghost).count(), 0);
+}
+
+/// #304: `CapabilityOp` (ADR 0069 scoped its call-graph edges out; reversed —
+/// the reference-count/incoming-call mismatch it produced was more confusing
+/// than the edge it withheld) and agent `Handler` (new this increment) join
+/// the call graph. The fixture's `api` service handler calls a local
+/// capability op (`Clock.now`) and dispatches an agent handler
+/// (`Order.addItem`) — both must now show `api` as their caller.
+#[test]
+fn call_graph_records_capability_op_and_agent_handler_callees() {
+    let index = analyse(&capability_op_and_handler_fixture_root());
+
+    let clock_now = key("billing", SymbolKind::CapabilityOp, "Clock.now");
+    let order_add_item = key("billing", SymbolKind::Handler, "Order.addItem");
+    let api = key("billing", SymbolKind::Service, "api");
+
+    let into_clock_now: Vec<&SymbolKey> = index.calls_into(&clock_now).map(|e| &e.caller).collect();
+    assert_eq!(
+        into_clock_now,
+        vec![&api],
+        "a local capability-op call is now a call-hierarchy edge"
+    );
+
+    let into_order_add_item: Vec<&SymbolKey> = index
+        .calls_into(&order_add_item)
+        .map(|e| &e.caller)
+        .collect();
+    assert_eq!(
+        into_order_add_item,
+        vec![&api],
+        "an agent-handler dispatch call is now a call-hierarchy edge"
+    );
+
+    let from_api: Vec<&SymbolKey> = index.calls_from(&api).map(|e| &e.callee).collect();
+    assert_eq!(
+        from_api,
+        vec![&clock_now, &order_add_item],
+        "outgoing calls mirror incoming off the same table"
+    );
 }

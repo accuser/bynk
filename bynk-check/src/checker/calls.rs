@@ -35,7 +35,7 @@ pub(crate) fn check_fn(
     // v0.20a: the fn's type parameters are *rigid* type variables while
     // checking its own body. A type param shadowing a declared type is
     // confusing — diagnose the collision.
-    let vars: HashSet<String> = f
+    let mut vars: HashSet<String> = f
         .type_params
         .iter()
         .map(|tp| tp.name.name.clone())
@@ -55,18 +55,38 @@ pub(crate) fn check_fn(
             );
         }
     }
+    // #594: an instance method on a generic type inherits the receiver type's
+    // parameters as additional rigid vars, so its signature and body may name
+    // them (`self: Box[A]`, `f: A -> U`). The receiver's parameters are the
+    // type's own — they never shadow a declared type — so they bypass the guard
+    // above.
+    if let FnName::Method { type_name, .. } = &f.name
+        && let Some(decl) = input.types.get(&type_name.name)
+    {
+        for tp in &decl.type_params {
+            vars.insert(tp.name.name.clone());
+        }
+    }
     let return_ty = match resolve_type_ref_in(&f.return_type, &input.types, &vars) {
         Some(t) => t,
         None => return,
     };
     record_type_refs(&f.return_type, &input.types, &vars, refs);
     let mut param_scope: HashMap<String, Ty> = HashMap::new();
-    // For methods, the implicit `self` parameter has the attached type.
+    // For methods, the implicit `self` parameter has the attached type. #594: on
+    // a generic receiver, `self` is the type applied to its own parameters as
+    // rigid vars (`Box[A]`), so field access substitutes them and the body's
+    // uses of `A` line up with the signature.
     if let FnName::Method { type_name, .. } = &f.name
         && f.has_self
-        && let Some(self_ty) = type_from_decl(type_name, &input.types)
+        && let Some(decl) = input.types.get(&type_name.name)
     {
-        param_scope.insert("self".to_string(), self_ty);
+        let self_args = decl
+            .type_params
+            .iter()
+            .map(|tp| Ty::Var(tp.name.name.clone()))
+            .collect();
+        param_scope.insert("self".to_string(), named_ty_with_args(decl, self_args));
     }
     for p in &f.params {
         if let Some(ty) = resolve_type_ref_in(&p.type_ref, &input.types, &vars) {
@@ -122,6 +142,7 @@ pub(crate) fn check_fn(
         locals,
         requirements,
         scopes: vec![param_scope],
+        is_binding_cache: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span: f.return_type.span(),
         effectful,
@@ -129,7 +150,8 @@ pub(crate) fn check_fn(
         commit_seen: false,
         caps: CapabilityCtx::default(),
         in_test_body: false,
-        test_services: HashSet::new(),
+        test_services: HashMap::new(),
+        test_actors: HashMap::new(),
         type_vars: vars.clone(),
         store_cells: HashMap::new(),
         store_maps: HashMap::new(),
@@ -140,6 +162,21 @@ pub(crate) fn check_fn(
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
         return;
     };
+    // #718: run the held-resource linearity pass over `fn`/method bodies too, not
+    // just handlers. The caller side treats passing a held value into a function
+    // as a transfer (disposal), so the callee *owns* any held parameter and must
+    // dispose it (close, store, or transfer) before returning — otherwise a
+    // `swallow(c)` leaks and a double `c.close()` goes undiagnosed. No parameter
+    // is borrowed here (the borrowed case is a handler's firing connection), so
+    // the borrowed set is empty; every held param is seeded owned.
+    linearity::check(
+        &f.body,
+        &f.params,
+        &input.types,
+        ctx.expr_types,
+        &HashSet::new(),
+        ctx.errors,
+    );
     if !compatible(&body_ty, &return_ty) {
         ctx.errors.push(
             CompileError::new(
@@ -191,6 +228,7 @@ pub fn check_state_initialiser(
             locals,
             requirements: &mut init_requirements,
             scopes: vec![HashMap::new()],
+            is_binding_cache: HashMap::new(),
             return_ty: field_ty.clone(),
             return_ty_span: init.span,
             effectful: false,
@@ -198,7 +236,8 @@ pub fn check_state_initialiser(
             commit_seen: false,
             caps: CapabilityCtx::default(),
             in_test_body: false,
-            test_services: HashSet::new(),
+            test_services: HashMap::new(),
+            test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -305,12 +344,15 @@ pub(crate) fn check_call(
     type_args: &[TypeRef],
     args: &[Expr],
     span: Span,
+    // #593: the binding's expected type grounds a generic variant constructor
+    // whose payload cannot determine every parameter (`let o: Opt[Int] = Nil`).
+    expected: Option<&Ty>,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
-    if let Some(fn_decl) = ctx.input.fns.get(&name.name).cloned() {
+    if let Some(fn_decl) = ctx.input.fns.get(&name.name) {
         ctx.refs.record(name.span, SymbolKind::Fn, &name.name);
         warn_bynk_list_deprecation(name, args, span, ctx);
-        return check_call_against_fn(name, &fn_decl, type_args, args, ctx);
+        return check_call_against_fn(name, fn_decl, type_args, args, ctx);
     }
     // v0.20a: explicit type arguments only apply to (generic) functions.
     if !type_args.is_empty() {
@@ -327,17 +369,17 @@ pub(crate) fn check_call(
         }
         return None;
     }
-    // Could be a bare variant constructor with payload.
-    let owners: Vec<TypeDecl> = ctx
+    // Could be a bare variant constructor with payload. Borrow the matching
+    // sum decls (references only — no full-body clones); the ambiguity check
+    // below reuses the same list.
+    let owners: Vec<&TypeDecl> = ctx
         .input
         .types
         .values()
         .filter(|t| matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == name.name)))
-        .cloned()
         .collect();
     if owners.len() == 1 {
-        let owner = owners.into_iter().next().unwrap();
-        return check_variant_construction(&owner, &name.name, args, span, ctx);
+        return check_variant_construction(owners[0], &name.name, args, span, expected, ctx);
     }
     // Agent instantiation: `AgentName(key)` constructs an instance keyed by
     // `key`. The result type carries the agent's name so subsequent
@@ -589,8 +631,10 @@ fn check_generic_call(
         for (tp, ta) in fn_decl.type_params.iter().zip(type_args) {
             // Resolve explicit type args with the *enclosing* fn's type
             // params in scope, so `identity[A](x)` inside a generic body
-            // works.
-            let ty = resolve_type_ref_in(ta, &ctx.input.types, &ctx.type_vars)?;
+            // works. #712: report (not silently drop) an unknown type arg —
+            // the resolver never validates `Call::type_args` (it destructures
+            // `Call { name, args, .. }`), so this is the only guard.
+            let ty = resolve_expr_type_ref(ta, ctx)?;
             subst.insert(tp.name.name.clone(), ty);
         }
     }
@@ -861,6 +905,9 @@ pub(crate) fn check_static_call(
     method: &Ident,
     args: &[Expr],
     span: Span,
+    // #593: threaded to `check_variant_construction` so a qualified generic
+    // variant (`Opt.Nil`) can ground its arguments from the binding's type.
+    expected: Option<&Ty>,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     // Capability dispatch (v0.5): if `type_name` names a capability declared
@@ -1000,24 +1047,25 @@ pub(crate) fn check_static_call(
         }
         return Some(op_clone.return_ty);
     }
-    let decl = ctx.input.types.get(&type_name.name)?.clone();
+    let decl = ctx.input.types.get(&type_name.name)?;
     ctx.refs
         .record(type_name.span, SymbolKind::Type, &type_name.name);
-    let table = ctx
+
+    // 1) User-declared static method. Borrow the method table and decl
+    // straight out of the (immutable) input rather than cloning the whole
+    // `MethodTable`/`FnDecl` on every static-shaped call.
+    if let Some(method_decl) = ctx
         .input
         .methods
         .get(&type_name.name)
-        .cloned()
-        .unwrap_or_default();
-
-    // 1) User-declared static method.
-    if let Some(method_decl) = table.statics.get(&method.name).cloned() {
-        return check_method_args(&method_decl, args, ctx, type_name, method);
+        .and_then(|table| table.statics.get(&method.name))
+    {
+        return check_method_args(method_decl, args, ctx, type_name, method);
     }
 
     // 2) Built-in `of` constructor on refined or opaque types.
     if method.name == OF
-        && let Some(base) = type_decl_base(&decl)
+        && let Some(base) = type_decl_base(decl)
     {
         if args.len() != 1 {
             ctx.errors.push(CompileError::new(
@@ -1053,7 +1101,7 @@ pub(crate) fn check_static_call(
         // `admit_refined_literal`, used by `type_of` — so `.of`'s type never
         // depends on the form of its argument.
         return Some(Ty::Result(
-            Box::new(named_ty(&decl)),
+            Box::new(named_ty(decl)),
             Box::new(Ty::ValidationError),
         ));
     }
@@ -1107,12 +1155,12 @@ pub(crate) fn check_static_call(
             ));
             return None;
         }
-        return Some(named_ty(&decl));
+        return Some(named_ty(decl));
     }
 
     // 3) Qualified variant construction `TypeName.Variant(args)`.
     if let TypeBody::Sum(_) = &decl.body {
-        return check_variant_construction(&decl, &method.name, args, span, ctx);
+        return check_variant_construction(decl, &method.name, args, span, expected, ctx);
     }
 
     ctx.errors.push(
@@ -1712,9 +1760,11 @@ pub(crate) fn check_method_call(
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     // v0.22b: explicit type arguments apply only to the `Json.decode[T]`
-    // static — every other method/static takes none (the 0039/0045 rule;
-    // generic *user* methods remain deferred). A user-declared type named
-    // `Json` shadows the codec module and takes no type arguments.
+    // static — every other method/static takes none (the 0039/0045 rule). A
+    // user-declared type named `Json` shadows the codec module and takes no type
+    // arguments. #594: a generic *user* instance method infers its type
+    // arguments from the receiver and the argument types — the explicit
+    // `x.map[U](…)` form is deferred, so explicit type args are rejected here.
     if !type_args.is_empty()
         && !matches!(&receiver.kind, ExprKind::Ident(id) if id.name == JSON
             && !ctx.input.types.contains_key(JSON))
@@ -1723,7 +1773,7 @@ pub(crate) fn check_method_call(
             "bynk.generics.type_arg_mismatch",
             span,
             format!(
-                "`{}` is not a generic method — it takes no type arguments",
+                "`{}` does not take explicit type arguments — a generic method infers them from the receiver and arguments",
                 method.name
             ),
         ));
@@ -1732,25 +1782,26 @@ pub(crate) fn check_method_call(
         }
         return None;
     }
-    // v0.25: a test body invokes the target's service as `svc.call(args)`.
-    // The emitter wires it from the same service set; the checker types it
-    // loosely (the runner recovers outcomes at runtime), but the binding
-    // edge is real — record it so test-file references index. Returns here:
-    // the loose typing must not fall through to the receiver walk, which
-    // would report the service name as unknown (#504 backstop).
+    // v0.25 / v0.178: a test body invokes the target's service as
+    // `svc.call(args)`. The emitter wires the call from the same service set;
+    // the checker resolves the service's `on call` handler and verifies the
+    // call's arity and argument types (v0.178, #662 — before this, the branch
+    // matched the literal method name `call` without checking the handler
+    // exists, so `api.call(…)` on a `from http` service passed `check` and
+    // crashed at runtime, #654). The outcome type stays loose — the runner
+    // recovers `Result`/`Effect` shapes at runtime — but the binding edge is
+    // real, so it is recorded for test-file references. Returns here: the
+    // resolution must not fall through to the receiver walk, which would
+    // report the service name as unknown (#504 backstop).
     if let ExprKind::Ident(id) = &receiver.kind
-        && method.name == "call"
         && ctx.lookup(id.name.as_str()).is_none()
-        && ctx.test_services.contains(&id.name)
+        && let Some(sig) = ctx.test_services.get(&id.name).cloned()
     {
         if let Some(unit) = ctx.input.cross_context.self_context.clone() {
             ctx.refs
                 .record_in_unit(id.span, SymbolKind::Service, &id.name, &unit);
         }
-        for a in args {
-            let _ = type_of(a, None, ctx);
-        }
-        return None;
+        return check_test_service_address(&sig, id, method, args, ctx);
     }
     // v0.6: cross-context service call. Two shapes:
     //   - `Alias.service(args)`           where Alias is from `consumes X as Alias`
@@ -1818,7 +1869,7 @@ pub(crate) fn check_method_call(
         && (ctx.caps.capabilities.contains_key(&id.name)
             || ctx.caps.declared_capabilities.contains_key(&id.name))
     {
-        return check_static_call(id, method, args, span, ctx);
+        return check_static_call(id, method, args, span, expected, ctx);
     }
     // Detect static-call shape: receiver is a bare Ident naming a declared
     // type (not a local/param). Dispatch to check_static_call.
@@ -1826,7 +1877,7 @@ pub(crate) fn check_method_call(
         && ctx.lookup(id.name.as_str()).is_none()
         && ctx.input.types.contains_key(&id.name)
     {
-        return check_static_call(id, method, args, span, ctx);
+        return check_static_call(id, method, args, span, expected, ctx);
     }
     // v0.20b: qualified statics on the built-in collection types —
     // `List.empty()` / `Map.empty()`. Like an empty `[]`, they need an
@@ -2003,6 +2054,15 @@ pub(crate) fn check_method_call(
             }
             return None;
         };
+        // #304: the handler is a first-class index symbol, keyed by the
+        // compound `"Agent.handler"` name — same convention and same
+        // recorded-regardless-of-downstream-errors placement as the
+        // ordinary instance-method call below.
+        ctx.refs.record(
+            method.span,
+            SymbolKind::Handler,
+            &format!("{type_name}.{}", method.name),
+        );
         if handler.params.len() != args.len() {
             ctx.errors.push(CompileError::new(
                 "bynk.agent.handler_arity",
@@ -2092,6 +2152,30 @@ pub(crate) fn check_method_call(
         SymbolKind::Method,
         &format!("{type_name}.{}", method.name),
     );
+    // #594: a generic instance method — one on a generic receiver, or one
+    // carrying its own type parameters — resolves its parameter and return
+    // types against a substitution seeded from the receiver's type arguments,
+    // then infers the method's own parameters from the argument types
+    // (argument-directed unification, ADR 0029). A method on a non-generic
+    // receiver with no own type parameters takes the plain path below,
+    // byte-identically to before.
+    let recv_type_params: Vec<String> = ctx
+        .input
+        .types
+        .get(&type_name)
+        .map(|d| d.type_params.iter().map(|p| p.name.name.clone()).collect())
+        .unwrap_or_default();
+    if !recv_type_params.is_empty() || !method_decl.type_params.is_empty() {
+        return check_generic_method_call(
+            &type_name,
+            &recv_type_params,
+            &recv_ty,
+            &method_decl,
+            method,
+            args,
+            ctx,
+        );
+    }
     // Param count excludes the implicit `self`.
     if method_decl.params.len() != args.len() {
         ctx.errors.push(
@@ -2144,6 +2228,816 @@ pub(crate) fn check_method_call(
         return None;
     }
     resolve_type_ref(&method_decl.return_type, &ctx.input.types)
+}
+
+/// #594: type-check a call to a generic instance method — one attached to a
+/// generic type (so `self` carries the type's parameters) and/or carrying its
+/// own `[U]` parameters. Mirrors [`check_generic_call`] (the free-function
+/// path, ADR 0029): resolve the method's parameter/return patterns with the
+/// rigid vars in scope, seed the substitution from the receiver's concrete type
+/// arguments, then drive argument-directed inference over the method's own
+/// parameters. The receiver's parameters are already ground (from the receiver
+/// type), so only the method's own parameters need inferring.
+fn check_generic_method_call(
+    type_name: &str,
+    recv_type_params: &[String],
+    recv_ty: &Ty,
+    method_decl: &FnDecl,
+    method: &Ident,
+    args: &[Expr],
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    // Rigid vars: the receiver type's parameters plus the method's own.
+    let mut vars: HashSet<String> = recv_type_params.iter().cloned().collect();
+    for tp in &method_decl.type_params {
+        vars.insert(tp.name.name.clone());
+    }
+    // Param count excludes the implicit `self`.
+    if method_decl.params.len() != args.len() {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.types.method_arity",
+                method.span,
+                format!(
+                    "method `{}.{}` expects {} argument(s), but {} were given",
+                    type_name,
+                    method.name,
+                    method_decl.params.len(),
+                    args.len()
+                ),
+            )
+            .with_label(method_decl.name.ident().span, "method declared here"),
+        );
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    // Seed the substitution from the receiver's concrete type arguments: the
+    // type's parameters are ground the moment the receiver's type is known
+    // (`self.map(g)` on a `Box[User]` binds the type's `A` to `User`; on `self`
+    // it binds `A` to its own rigid var). An arity mismatch here means the
+    // receiver was under-applied — reported where the receiver was typed — so we
+    // leave those parameters unseeded and fail below as uninferable.
+    let mut subst: HashMap<String, Ty> = HashMap::new();
+    if let Ty::Named {
+        args: recv_args, ..
+    } = recv_ty
+        && recv_args.len() == recv_type_params.len()
+    {
+        for (name, arg) in recv_type_params.iter().zip(recv_args.iter()) {
+            subst.insert(name.clone(), arg.clone());
+        }
+    }
+    // Resolve the method's parameter and return patterns with every rigid var in
+    // scope (a name matching one resolves to `Ty::Var`, not an unknown type).
+    let var_params: Vec<Option<Ty>> = method_decl
+        .params
+        .iter()
+        .map(|p| resolve_type_ref_in(&p.type_ref, &ctx.input.types, &vars))
+        .collect();
+    let ret_pattern = resolve_type_ref_in(&method_decl.return_type, &ctx.input.types, &vars)?;
+
+    let mut arg_tys: Vec<Option<Ty>> = vec![None; args.len()];
+    // Pass 1 — non-lambda arguments (mirrors `check_generic_call`).
+    for (i, arg) in args.iter().enumerate() {
+        if matches!(arg.kind, ExprKind::Lambda(_)) {
+            continue;
+        }
+        let expected = var_params[i].as_ref().map(|p| substitute(p, &subst));
+        let ty = type_of(arg, expected.as_ref(), ctx);
+        if let (Some(pattern), Some(actual)) = (var_params[i].as_ref(), ty.as_ref())
+            && !unify(pattern, actual, &mut subst)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.generics.type_arg_mismatch",
+                arg.span,
+                format!(
+                    "argument {} infers a type for `{}.{}`'s type parameter that conflicts with an earlier argument or the receiver",
+                    i + 1,
+                    type_name,
+                    method.name
+                ),
+            ));
+            return None;
+        }
+        arg_tys[i] = ty;
+    }
+    // Pass 2 — lambda arguments, against the now-substituted expecteds.
+    for (i, arg) in args.iter().enumerate() {
+        if !matches!(arg.kind, ExprKind::Lambda(_)) {
+            continue;
+        }
+        let expected = var_params[i].as_ref().map(|p| substitute(p, &subst));
+        let params_unconstrained = matches!(
+            expected.as_ref(),
+            Some(Ty::Fn { params, .. }) if params.iter().any(contains_var)
+        );
+        let fully_annotated = matches!(
+            &arg.kind,
+            ExprKind::Lambda(l) if l.params.iter().all(|p| p.type_ref.is_some())
+        );
+        if params_unconstrained && !fully_annotated {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.generics.uninferable_type_arg",
+                    arg.span,
+                    format!(
+                        "the lambda's parameter types depend on `{}.{}`'s type parameters, which the receiver and other arguments do not determine",
+                        type_name, method.name
+                    ),
+                )
+                .with_note("annotate the lambda's parameters"),
+            );
+            return None;
+        }
+        let ty = if params_unconstrained {
+            type_of(arg, None, ctx)
+        } else {
+            type_of(arg, expected.as_ref(), ctx)
+        };
+        if let (Some(pattern), Some(actual)) = (var_params[i].as_ref(), ty.as_ref())
+            && !unify(pattern, actual, &mut subst)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.generics.type_arg_mismatch",
+                arg.span,
+                format!(
+                    "the lambda's type conflicts with `{}.{}`'s inferred type arguments",
+                    type_name, method.name
+                ),
+            ));
+            return None;
+        }
+        arg_tys[i] = ty;
+    }
+    // Every one of the method's own type parameters must now be determined (the
+    // receiver's parameters were seeded above).
+    for tp in &method_decl.type_params {
+        if !subst.contains_key(&tp.name.name) {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.generics.uninferable_type_arg",
+                    method.span,
+                    format!(
+                        "type parameter `{}` of `{}.{}` is not inferable from the receiver or the arguments",
+                        tp.name.name, type_name, method.name
+                    ),
+                )
+                .with_label(tp.span, "declared here"),
+            );
+            return None;
+        }
+    }
+    // Final compatibility over the fully-ground parameter types.
+    let mut ok = true;
+    for (i, (pattern, arg)) in var_params.iter().zip(args).enumerate() {
+        record_param_hint(ctx.hints, &method_decl.params[i].name.name, arg);
+        let (Some(pattern), Some(arg_ty)) = (pattern.as_ref(), arg_tys[i].as_ref()) else {
+            continue;
+        };
+        let ground = substitute(pattern, &subst);
+        if !compatible(arg_ty, &ground) {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "argument {} to `{}.{}` has type `{}`, but `{}` is expected",
+                    i + 1,
+                    type_name,
+                    method.name,
+                    arg_ty.display(),
+                    ground.display()
+                ),
+            ));
+            ok = false;
+        }
+    }
+    if !ok {
+        return None;
+    }
+    // v0.39 (ADR 0072)-style hint: show the inferred method type arguments after
+    // the method name (`box.map` [Int] `(f)`). Only the method's own
+    // parameters — the receiver's are visible in the receiver's type.
+    if !method_decl.type_params.is_empty() {
+        let rendered: Option<Vec<String>> = method_decl
+            .type_params
+            .iter()
+            .map(|tp| subst.get(&tp.name.name).map(|t| t.display()))
+            .collect();
+        if let Some(parts) = rendered {
+            ctx.hints
+                .record(method.span, format!("[{}]", parts.join(", ")));
+        }
+    }
+    Some(substitute(&ret_pattern, &subst))
+}
+
+/// v0.178 (#662) / v0.182 (#664): resolve a test-body service invocation against
+/// the target's declared handlers and check its arity and argument types. The
+/// address form depends on the method name:
+///
+/// - `svc.call(args)` — the `on call` handler (#662);
+/// - `svc.<VERB>("/path", …)` — an http route (`GET`/`POST`/`PUT`/`PATCH`/`DELETE`);
+/// - `svc.schedule("<expr>", …)` — a cron handler by its schedule string;
+/// - `svc.message(msg)` — the queue message handler.
+///
+/// The outcome type stays loose (the runner recovers `Result`/`Effect` at
+/// runtime); the call-site principal (`by <Actor>`) is checked separately at the
+/// statement level. Returns `None` (the loose outcome) in every arm.
+fn check_test_service_address(
+    sig: &TestServiceSig,
+    id: &Ident,
+    method: &Ident,
+    args: &[Expr],
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    use bynk_syntax::ast::{ExprKind as EK, HandlerKind};
+
+    // `svc.call(...)` — the `on call` handler (Slice 0).
+    if method.name == "call" {
+        let Some(handler) = sig.call_handler() else {
+            let message = match &sig.protocol {
+                Some(protocol) => format!(
+                    "`{}` is a `from {protocol}` service and has no `on call` handler to invoke",
+                    id.name
+                ),
+                None => format!("service `{}` has no `on call` handler to invoke", id.name),
+            };
+            ctx.errors.push(
+                CompileError::new("bynk.test.service_no_call_handler", method.span, message)
+                    .with_note(
+                        "call an `on call` service with `svc.call(...)`, an http route with `svc.GET(\"/path\")`, cron with `svc.schedule(\"…\")`, or a queue with `svc.message(m)`",
+                    ),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let params = handler.params.clone();
+        let hspan = handler.span;
+        check_address_args(&id.name, "call", &params, hspan, args, method.span, ctx);
+        return None;
+    }
+
+    // `svc.<VERB>("/path", …)` — an http route. The first argument is the route
+    // *pattern* (a compile-time-resolved name), the rest are positional path
+    // params then the body, matched against the handler's declared params.
+    // `HttpMethod::from_ident` is the single source of truth the emitter shares.
+    if bynk_syntax::ast::HttpMethod::from_ident(&method.name).is_some() {
+        let Some(EK::StrLit(path)) = args.first().map(|a| &a.kind) else {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.service_bad_address",
+                    method.span,
+                    format!(
+                        "`{}.{}` addresses an http route, so its first argument must be the route pattern string (e.g. `\"/todos\"`)",
+                        id.name, method.name
+                    ),
+                ),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let matched = sig.handlers.iter().find(|h| {
+            matches!(&h.kind, HandlerKind::Http { method: m, path: p } if m.as_str() == method.name && p == path)
+        });
+        let Some(handler) = matched else {
+            // #707: the method has no handler at this path. If the *path* is
+            // declared (for some other method), this is a **wrong-method** call —
+            // the `405` fall-through test. Allow it: it drives the router with a
+            // method the path has no handler for and observes `Rejected(
+            // MethodNotAllowed)`. There is no handler, so no args are matched (a
+            // `405` is synthesised before the body is read); the outcome is loose.
+            let path_declared = sig
+                .handlers
+                .iter()
+                .any(|h| matches!(&h.kind, HandlerKind::Http { path: p, .. } if p == path));
+            if path_declared {
+                let _ = type_of(&args[0], None, ctx);
+                // A wrong-method call has no handler, so it takes only the path;
+                // diagnose extra args rather than silently dropping them (the
+                // lowering forwards only method+path to the generic driver).
+                if args.len() > 1 {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.test.service_call_arity",
+                            method.span,
+                            format!(
+                                "`{}.{}(\"{}\")` is a wrong-method `405` test and takes only the route path, but {} argument(s) were given",
+                                id.name,
+                                method.name,
+                                path,
+                                args.len() - 1
+                            ),
+                        )
+                        .with_note("a wrong-method call reaches no handler, so it passes no body or params"),
+                    );
+                    for a in &args[1..] {
+                        let _ = type_of(a, None, ctx);
+                    }
+                }
+                return None;
+            }
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.service_unknown_route",
+                    method.span,
+                    format!(
+                        "`{}` declares no route at `\"{}\"` (no handler for any method)",
+                        id.name, path
+                    ),
+                )
+                .with_note("the path must match a declared route; drive a wrong method against an existing path to test the `405` fall-through"),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let params = handler.params.clone();
+        let hspan = handler.span;
+        // Type the route-pattern string as an ordinary string; check the rest.
+        let _ = type_of(&args[0], None, ctx);
+        check_address_args(
+            &id.name,
+            &method.name,
+            &params,
+            hspan,
+            &args[1..],
+            method.span,
+            ctx,
+        );
+        return None;
+    }
+
+    // `svc.schedule("<expr>", …)` — a cron handler, matched by its schedule.
+    if method.name == "schedule" {
+        let Some(EK::StrLit(expr)) = args.first().map(|a| &a.kind) else {
+            ctx.errors.push(CompileError::new(
+                "bynk.test.service_bad_address",
+                method.span,
+                format!(
+                    "`{}.schedule` addresses a cron handler, so its first argument must be the schedule string",
+                    id.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let matched = sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Cron { expr: e } if e == expr));
+        let Some(handler) = matched else {
+            ctx.errors.push(CompileError::new(
+                "bynk.test.service_unknown_route",
+                method.span,
+                format!(
+                    "`{}` declares no `on schedule(\"{}\")` handler",
+                    id.name, expr
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let params = handler.params.clone();
+        let hspan = handler.span;
+        let _ = type_of(&args[0], None, ctx);
+        check_address_args(
+            &id.name,
+            "schedule",
+            &params,
+            hspan,
+            &args[1..],
+            method.span,
+            ctx,
+        );
+        return None;
+    }
+
+    // `svc.message(msg)` — the queue message handler.
+    if method.name == "message" {
+        let matched = sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Message));
+        let Some(handler) = matched else {
+            ctx.errors.push(CompileError::new(
+                "bynk.test.service_unknown_route",
+                method.span,
+                format!("`{}` declares no `on message(...)` handler", id.name),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        let params = handler.params.clone();
+        let hspan = handler.span;
+        check_address_args(&id.name, "message", &params, hspan, args, method.span, ctx);
+        return None;
+    }
+
+    // Not a recognised address form for this service.
+    let proto = sig.protocol.as_deref().unwrap_or("call");
+    ctx.errors.push(CompileError::new(
+        "bynk.test.service_bad_address",
+        method.span,
+        format!(
+            "`{}.{}` is not a way to address a `from {proto}` service in a test body",
+            id.name, method.name
+        ),
+    ));
+    for a in args {
+        let _ = type_of(a, None, ctx);
+    }
+    None
+}
+
+/// What identity, if any, a resolved actor expects (v0.182).
+enum ActorIdentity {
+    Typed(Ty),
+    CallerString,
+    Unit,
+    Unknown,
+}
+
+/// Resolve an actor name to the identity it carries (v0.182).
+fn resolve_actor_identity(name: &str, ctx: &Ctx) -> ActorIdentity {
+    use crate::actors::{Identity, prelude_actor};
+    if let Some(decl) = ctx.test_actors.get(name) {
+        return match &decl.identity {
+            Some(t) => match resolve_type_ref(t, &ctx.input.types) {
+                Some(ty) => ActorIdentity::Typed(ty),
+                None => ActorIdentity::Unit,
+            },
+            None => ActorIdentity::Unit,
+        };
+    }
+    match prelude_actor(name) {
+        Some(c) => match c.identity {
+            Identity::Unit => ActorIdentity::Unit,
+            Identity::CallerId => ActorIdentity::CallerString,
+            Identity::Declared(_) => ActorIdentity::Unit,
+        },
+        None => ActorIdentity::Unknown,
+    }
+}
+
+/// The actor a handler runs as: its declared `by <Actor>`, or the protocol
+/// default (`Call`->`Caller`, `Cron`->`Scheduler`, `Queue`->`Producer`; http
+/// has no default, so an http handler always declares one) (v0.182).
+fn handler_actor_name(handler: &TestHandler, protocol: Option<&str>) -> Option<String> {
+    if let Some(by) = &handler.by_clause {
+        return Some(by.primary().name.clone());
+    }
+    match protocol {
+        None => Some("Caller".to_string()),
+        Some("cron") => Some("Scheduler".to_string()),
+        Some("queue") => Some("Producer".to_string()),
+        _ => None,
+    }
+}
+
+/// v0.182 (#664): resolve the handler a test-body address invocation targets,
+/// without side effects. Shared by the argument check and the principal check.
+fn resolve_test_address<'a>(
+    sig: &'a TestServiceSig,
+    method: &str,
+    args: &[Expr],
+) -> Option<&'a TestHandler> {
+    use bynk_syntax::ast::{ExprKind as EK, HandlerKind, HttpMethod};
+    if method == "call" {
+        return sig.call_handler();
+    }
+    if HttpMethod::from_ident(method).is_some() {
+        let EK::StrLit(path) = &args.first()?.kind else {
+            return None;
+        };
+        return sig.handlers.iter().find(|h| {
+            matches!(&h.kind, HandlerKind::Http { method: m, path: p } if m.as_str() == method && p == path)
+        });
+    }
+    if method == "schedule" {
+        let EK::StrLit(expr) = &args.first()?.kind else {
+            return None;
+        };
+        return sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Cron { expr: e } if e == expr));
+    }
+    if method == "message" {
+        return sig
+            .handlers
+            .iter()
+            .find(|h| matches!(&h.kind, HandlerKind::Message));
+    }
+    None
+}
+
+/// v0.182 (#664): validate the call-site principal of a test `effect_let`
+/// against the ADDRESSED HANDLER. This is where per-case identity isolation is
+/// enforced: an identity-carrying handler driven with a unit principal (`by
+/// Visitor`) or no `by` at all would otherwise emit a call with
+/// `deps.identity === undefined`. The identity value is typed against the
+/// handler's required identity type, not the principal actor's.
+pub(crate) fn check_effect_let_principal(
+    value: &Expr,
+    principal: Option<&bynk_syntax::ast::CallSiteActor>,
+    ctx: &mut Ctx,
+) {
+    let ExprKind::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = &value.kind
+    else {
+        if let Some(p) = principal {
+            report_principal_actor(p, ctx);
+        }
+        return;
+    };
+    let ExprKind::Ident(id) = &receiver.kind else {
+        if let Some(p) = principal {
+            report_principal_actor(p, ctx);
+        }
+        return;
+    };
+    let Some(sig) = ctx.test_services.get(&id.name).cloned() else {
+        if let Some(p) = principal {
+            report_principal_actor(p, ctx);
+        }
+        return;
+    };
+    let Some(handler) = resolve_test_address(&sig, &method.name, args).cloned() else {
+        if let Some(p) = principal {
+            // #707: a wrong-method `405` test (an http method whose path is
+            // declared for *another* method) reaches no handler, so a `by` clause
+            // is meaningless — reject it clearly. (An unresolvable address of any
+            // other shape already errors in `check_test_service_address`; only the
+            // now-allowed wrong-method call would otherwise drop the `by`.)
+            let wrong_method = bynk_syntax::ast::HttpMethod::from_ident(&method.name).is_some()
+                && matches!(args.first().map(|a| &a.kind), Some(bynk_syntax::ast::ExprKind::StrLit(path))
+                    if sig.handlers.iter().any(|h| matches!(&h.kind, bynk_syntax::ast::HandlerKind::Http { path: p, .. } if p == path)));
+            if wrong_method {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.test.principal_on_wrong_method",
+                        p.span,
+                        format!(
+                            "a wrong-method `405` test reaches no handler, so `by {}` is meaningless",
+                            p.actor.name
+                        ),
+                    )
+                    .with_note("drop the `by` clause on a wrong-method call"),
+                );
+                if let Some(id) = &p.identity {
+                    let _ = type_of(id, None, ctx);
+                }
+            } else {
+                report_principal_actor(p, ctx);
+            }
+        }
+        return;
+    };
+
+    // #706: `by Nobody` is the reserved "no credential" principal. It drives the
+    // route with no `Authorization` header so the real auth seam rejects it
+    // (`401` → `Rejected(Unauthorized)`), so it is valid on any http handler
+    // regardless of the required identity — the whole point is that *no* valid
+    // credential is presented. It carries no identity (`by Nobody(...)` is
+    // meaningless). The `system`-only tier rule is enforced at emit time, like
+    // `Wire`'s (the checker has no tier).
+    if let Some(p) = principal
+        && p.actor.name == "Nobody"
+    {
+        // #710-style: `by Nobody` is only *implemented* for a Bearer-secured
+        // route — the no-auth driver leaves out the `Authorization` header the
+        // Bearer seam checks. On an unsecured (`Visitor`/`None`) or
+        // `Signature`/`Oidc` route there is no such seam to reject a missing
+        // credential, so reject it here rather than emit a call to a driver that
+        // was never generated.
+        let secured = handler
+            .by_clause
+            .as_ref()
+            .is_some_and(|by| crate::actors::by_clause_is_bearer(by, &ctx.test_actors));
+        if !secured {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.nobody_needs_secured_route",
+                    p.span,
+                    "`by Nobody` drives the Bearer auth seam to a `401`, but this handler's route is not Bearer-secured — there is no credential check to reject",
+                )
+                .with_note(
+                    "use `by Nobody` only on a route guarded by a `Bearer` actor; a public (`Visitor`) route has no seam to test",
+                ),
+            );
+        }
+        if let Some(idv) = &p.identity {
+            ctx.errors.push(CompileError::new(
+                "bynk.test.actor_no_identity",
+                p.span,
+                "`Nobody` presents no credential, so it takes no identity — write `by Nobody`",
+            ));
+            let _ = type_of(idv, None, ctx);
+        }
+        return;
+    }
+
+    let required = handler_actor_name(&handler, sig.protocol.as_deref())
+        .map(|actor| resolve_actor_identity(&actor, ctx));
+
+    match (required, principal) {
+        (Some(ActorIdentity::Typed(ty)), principal) => match principal {
+            Some(p) => match resolve_actor_identity(&p.actor.name, ctx) {
+                ActorIdentity::Unknown => report_principal_actor(p, ctx),
+                ActorIdentity::Unit | ActorIdentity::CallerString => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.test.principal_identity_mismatch",
+                        p.span,
+                        format!(
+                            "this handler runs as an actor carrying `{}`, but `by {}` supplies no matching identity",
+                            ty.display(),
+                            p.actor.name
+                        ),
+                    ));
+                    if let Some(idv) = &p.identity {
+                        let _ = type_of(idv, None, ctx);
+                    }
+                }
+                ActorIdentity::Typed(_) => match &p.identity {
+                    Some(idv) => {
+                        let got = type_of(idv, Some(&ty), ctx);
+                        if let Some(g) = got.as_ref()
+                            && !compatible(g, &ty)
+                        {
+                            ctx.errors.push(CompileError::new(
+                                "bynk.types.argument_mismatch",
+                                idv.span,
+                                format!(
+                                    "identity has type `{}`, but the handler expects `{}`",
+                                    g.display(),
+                                    ty.display()
+                                ),
+                            ));
+                        }
+                    }
+                    None => ctx.errors.push(CompileError::new(
+                        "bynk.test.actor_identity_required",
+                        p.span,
+                        format!(
+                            "actor `{}` carries an identity, so write `by {}(...)`",
+                            p.actor.name, p.actor.name
+                        ),
+                    )),
+                },
+            },
+            None => ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.principal_required",
+                    value.span,
+                    format!(
+                        "this handler runs as a verified actor carrying `{}`; the case must act as it with `by <Actor>(<identity>)`",
+                        ty.display()
+                    ),
+                )
+                .with_note("append a call-site actor, e.g. `... by User(\"alice\")`"),
+            ),
+        },
+        (_, Some(p)) => report_principal_actor(p, ctx),
+        (_, None) => {}
+    }
+}
+
+/// Resolve a call-site principal actor for its own diagnostics (v0.182).
+fn report_principal_actor(p: &bynk_syntax::ast::CallSiteActor, ctx: &mut Ctx) {
+    let name = &p.actor.name;
+    match resolve_actor_identity(name, ctx) {
+        ActorIdentity::Unknown => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.unknown_actor",
+                    p.actor.span,
+                    format!("`{name}` is not an actor of the target context or a prelude actor"),
+                )
+                .with_note("name an `actor` the target declares, or a prelude actor (`Visitor`, `Caller`, …)"),
+            );
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+            }
+        }
+        ActorIdentity::Typed(ty) => match &p.identity {
+            Some(id) => {
+                let got = type_of(id, Some(&ty), ctx);
+                if let Some(g) = got.as_ref()
+                    && !compatible(g, &ty)
+                {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.argument_mismatch",
+                        id.span,
+                        format!(
+                            "identity has type `{}`, but actor `{name}` expects `{}`",
+                            g.display(),
+                            ty.display()
+                        ),
+                    ));
+                }
+            }
+            None => ctx.errors.push(CompileError::new(
+                "bynk.test.actor_identity_required",
+                p.span,
+                format!("actor `{name}` carries an identity, so `by {name}(...)` needs an identity value"),
+            )),
+        },
+        ActorIdentity::CallerString => {
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+            }
+        }
+        ActorIdentity::Unit => {
+            if let Some(id) = &p.identity {
+                let _ = type_of(id, None, ctx);
+                ctx.errors.push(CompileError::new(
+                    "bynk.test.actor_no_identity",
+                    p.span,
+                    format!("actor `{name}` has no identity, so write `by {name}` with no argument"),
+                ));
+            }
+        }
+    }
+}
+
+/// Shared arity + argument-type check for a resolved test-body service address.
+/// `positional` are the arguments that map to the handler's declared params (for
+/// http/cron the leading pattern string has already been split off).
+fn check_address_args(
+    svc: &str,
+    addr: &str,
+    params: &[bynk_syntax::ast::Param],
+    handler_span: Span,
+    positional: &[Expr],
+    err_span: Span,
+    ctx: &mut Ctx,
+) {
+    if params.len() != positional.len() {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.test.service_call_arity",
+                err_span,
+                format!(
+                    "`{svc}.{addr}` expects {} argument(s), but {} were given",
+                    params.len(),
+                    positional.len()
+                ),
+            )
+            .with_label(handler_span, "handler declared here"),
+        );
+        for a in positional {
+            let _ = type_of(a, None, ctx);
+        }
+        return;
+    }
+    for (i, (param, arg)) in params.iter().zip(positional.iter()).enumerate() {
+        record_param_hint(ctx.hints, &param.name.name, arg);
+        // Slice C: a `Wire(<String>)` argument is *raw* — it deliberately bypasses
+        // the param's type so a case can drive the boundary with input the type
+        // forbids. Validate only that the inner is a `String` (the wire form); the
+        // `system`-only tier rule is enforced at emit time (where the tier is
+        // known), alongside `system_needs_wire`. Intercept before the generic
+        // `type_of`, which would otherwise report the address-arg `Wire` as
+        // misplaced.
+        if let bynk_syntax::ast::ExprKind::Wire(inner) = &arg.kind {
+            let _ = type_of(inner, Some(&Ty::Base(BaseType::String)), ctx);
+            continue;
+        }
+        let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
+        let arg_ty = type_of(arg, expected.as_ref(), ctx);
+        if let (Some(a), Some(p)) = (arg_ty.as_ref(), expected.as_ref())
+            && !compatible(a, p)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "argument {} has type `{}`, but `{svc}.{addr}` expects `{}` for `{}`",
+                    i + 1,
+                    a.display(),
+                    p.display(),
+                    param.name.name
+                ),
+            ));
+        }
+    }
 }
 
 /// If `receiver` resolves to a consumed-context prefix (an alias or a

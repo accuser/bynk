@@ -10,7 +10,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async check(sku: any) {
+    async check(sku: handlers.Sku) {
       return handlers.check.call(sku, deps);
     },
   };

@@ -8,7 +8,10 @@
 //!   - `security { hsts: 180.days }` stamps `Strict-Transport-Security:
 //!     max-age=15552000` alongside `nosniff`;
 //!   - `security { nosniff: false }` opts out — no security headers at all;
-//!   - the synthesised `405`/`OPTIONS` and the `HEAD` answer carry the policy too.
+//!   - the synthesised `405`/`OPTIONS` and the `HEAD` answer carry the policy too;
+//!   - a boundary-rejection `400` (a refined path param refused before the handler)
+//!     carries the addressed service's policy as well — the #659 (v0.188) fix, and
+//!     the opt-out service's rejection opts out too (the policy is the service's own).
 //!
 //! Like the caching harness, this skips loudly when no TypeScript toolchain is
 //! available; `BYNK_REQUIRE_TSC=1` turns the skip into a failure.
@@ -115,6 +118,34 @@ async function main(): Promise<void> {
   assert(r.status === 405, "POST to a GET-only path is 405");
   assert(r.headers.get("allow") === "GET, HEAD, OPTIONS", "the 405 carries the Allow header");
   assert(r.headers.get("x-content-type-options") === "nosniff", "the 405 is security-stamped");
+
+  // --- #659 (v0.188): a boundary-rejection `400` carries the service policy too.
+  // `/store/:code` is `ShortCode = String where MinLength(3)`, so a 2-char segment
+  // is refused before the handler with a `RefinementViolation` — the response class
+  // that reflects attacker input and used to ship WITHOUT `nosniff`. ---
+  r = await worker.fetch(req("GET", "/store/xy"), env);
+  assert(r.status === 400, "a too-short path param is a 400");
+  const rejBody = await r.text();
+  assert(rejBody.includes("RefinementViolation"), "the 400 body is the RefinementViolation");
+  assert(rejBody.includes("xy"), "the 400 reflects the offending input (the vector #659 is about)");
+  assert(
+    r.headers.get("x-content-type-options") === "nosniff",
+    "the reflected-input 400 is now nosniff-stamped (the #659 fix)",
+  );
+  assert(
+    r.headers.get("strict-transport-security") === "max-age=15552000",
+    "the rejection carries the store service's HSTS, exactly as its 200 does",
+  );
+
+  // --- The policy is the ADDRESSED service's, not a blanket header: `admin` opts
+  // out of nosniff, and its rejection opts out too. Proves the fix stamps the
+  // per-service policy rather than hardcoding a header on every rejection. ---
+  r = await worker.fetch(req("GET", "/admin/item/xy"), env);
+  assert(r.status === 400, "the opt-out service still rejects a bad param with a 400");
+  assert(
+    r.headers.get("x-content-type-options") === null,
+    "the opt-out service's rejection has no nosniff — the policy is the service's own",
+  );
 
   // --- A bare `OPTIONS` (204) is stamped too. ---
   r = await worker.fetch(req("OPTIONS", "/products/42"), env);

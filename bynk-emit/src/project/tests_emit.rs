@@ -73,7 +73,12 @@ struct ResolvedStub {
     clauses: Vec<StubClause>,
     /// The test file declaring the first clause — the recording context for
     /// edges in its value expressions (v0.25).
-    source_path: PathBuf,
+    ///
+    /// ADR 0198/0201: a *recording context* is an index key, so this is the
+    /// file's **identity** (project-relative), not its `include`-root-relative
+    /// unit path. Everything the index keys must name a file the round
+    /// analysed.
+    identity_path: PathBuf,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -86,6 +91,13 @@ pub(crate) fn process_tests(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    // v0.17 (Locale capability track, slice 1, #844): capability name -> owning
+    // unit, per target, for capabilities flattened in via `consumes U { Cap }`
+    // (this never includes anything a target declares itself). Needed so
+    // `makeTestDeps()` wires an adapter-flattened capability (real *or*
+    // stubbed) — it is not in `UnitTable.capabilities`, which holds only
+    // locally-declared capabilities.
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
     // v0.132: production unit name -> its `parsed` file indices, so a barrel can
     // resolve a multi-file commons the test module imports back to its files.
     groups: &HashMap<String, Vec<usize>>,
@@ -211,6 +223,7 @@ pub(crate) fn process_tests(
             unit_consumes,
             unit_consumes_aliases,
             unit_uses,
+            unit_flattened,
             exports_visibility,
             tests_prefix,
             import_ext,
@@ -277,14 +290,14 @@ fn resolve_stubs(
         let Some(t) = parsed[i].test() else { continue };
         for case in &t.cases {
             for pc in &case.stubs {
-                collected.push((pc.clone(), parsed[i].source_path.clone()));
+                collected.push((pc.clone(), parsed[i].identity_path.clone()));
             }
         }
     }
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
         for pc in &t.stubs {
-            collected.push((pc.clone(), parsed[i].source_path.clone()));
+            collected.push((pc.clone(), parsed[i].identity_path.clone()));
         }
     }
 
@@ -304,7 +317,7 @@ fn resolve_stubs(
     };
 
     let mut out: HashMap<String, ResolvedStub> = HashMap::new();
-    for (pc, source_path) in collected {
+    for (pc, identity_path) in collected {
         let cap_name = pc.capability.name.clone();
         let Some(cap_decl) = resolve_cap(&cap_name) else {
             // Commons have no seams at all; contexts may still name a
@@ -352,7 +365,7 @@ fn resolve_stubs(
             cap: cap_name.clone(),
             cap_decl: cap_decl.clone(),
             clauses: Vec::new(),
-            source_path: source_path.clone(),
+            identity_path: identity_path.clone(),
         });
         entry.clauses.push(pc);
     }
@@ -405,20 +418,36 @@ pub(crate) fn process_integration_tests(
 
         let mut bad = false;
 
-        // v0.118: a `system`-tier suite needs a real wire — the target plus at
-        // least one consumed context. Fewer than two participants means there is
-        // nothing to serialise across (replaces `too_few_participants`).
-        if participants.len() < 2 {
+        // v0.118 / testing-the-boundary Slice B: a `system` suite needs a real
+        // **serialisation edge** — not merely ≥ 2 participants. The original rule
+        // (`participants.len() < 2`) was a proxy for "nothing to serialise
+        // across", exact only when the sole edge was cross-context. A single
+        // context that exposes an `http` service has a real edge (the public
+        // boundary: deserialise → handler → serialise), so it qualifies.
+        //
+        // Only `http` is admitted here, because only http-at-system is *wired*
+        // (`emit_system_http_support` drives `worker.fetch`). A `queue` service
+        // does serialise its message, but driving a queue over a real wire at
+        // `system` is not built this slice — admitting it would let a queue-only
+        // target compile as `system` while `q.message(...)` silently fell through
+        // to the unit-tier direct call (no wire). `cron` never qualifies —
+        // `scheduled` serialises nothing. Queue-at-system is a noted follow-on.
+        let has_serialisation_edge = unit_tables.get(&suite_target).is_some_and(|t| {
+            t.services
+                .values()
+                .any(|s| matches!(s.protocol, bynk_syntax::ast::ServiceProtocol::Http))
+        });
+        if participants.len() < 2 && !has_serialisation_edge {
             errors.push(
                 CompileError::new(
                     "bynk.tier.system_needs_wire",
                     decl.target.span,
                     format!(
-                        "`system`-tier suite for `{suite_target}` has nothing to wire — the target consumes no other context",
+                        "`system`-tier suite for `{suite_target}` has no serialisation edge — the target consumes no other context and exposes no `http` service",
                     ),
                 )
                 .with_note(
-                    "a `system` test wires the target across the real serialisation boundary to the contexts it consumes; test a single context with `unit` or `integration`",
+                    "a `system` case crosses a real serialise → JSON → deserialise boundary; this target has none to cross, so `unit` already covers it",
                 ),
             );
             bad = true;
@@ -490,7 +519,7 @@ pub(crate) fn process_integration_tests(
             let Some(d) = parsed[i].integration() else {
                 continue;
             };
-            refs.enter_file(&parsed[i].source_path, &harness_name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path, &harness_name, parsed[i].synthetic);
             for case in &d.cases {
                 check_integration_case_body(
                     &participants,
@@ -501,6 +530,45 @@ pub(crate) fn process_integration_tests(
                     &mut body_errs,
                     refs,
                 );
+                // Slice C: `Wire(…)` is a `system`-only raw argument (it drives the
+                // real wire); in a non-`system` case it has no wire to be raw
+                // about, so lowering it would silently pass raw text to a direct
+                // in-process handler call. Reject it at the tier where it is known.
+                if !matches!(
+                    super::discovery::case_effective_tier(case, d),
+                    bynk_syntax::ast::TestTier::System
+                ) && block_uses_wire(&case.body)
+                {
+                    body_errs.push(CompileError::new(
+                        "bynk.test.wire_needs_system",
+                        case.name_span,
+                        format!(
+                            "case `\"{}\"` uses `Wire(...)` but is not a `system`-tier case",
+                            case.name
+                        ),
+                    ).with_note(
+                        "`Wire` hands raw, pre-validation input to the real boundary; promote the case with `as system`, or pass a typed argument",
+                    ));
+                }
+                // #706: `by Nobody` presents no credential to the real auth seam
+                // (the 401 path), which exists only at `system`; at a lower tier
+                // the handler just runs with no identity, silently not a 401.
+                if !matches!(
+                    super::discovery::case_effective_tier(case, d),
+                    bynk_syntax::ast::TestTier::System
+                ) && block_uses_nobody(&case.body)
+                {
+                    body_errs.push(CompileError::new(
+                        "bynk.test.credential_needs_system",
+                        case.name_span,
+                        format!(
+                            "case `\"{}\"` drives `by Nobody` but is not a `system`-tier case",
+                            case.name
+                        ),
+                    ).with_note(
+                        "`by Nobody` presents no credential to the real auth seam (the 401 path), which exists only at `system`; promote the case with `as system`, or supply `by <Actor>(<identity>)`",
+                    ));
+                }
             }
         }
         let bodies_failed = !body_errs.is_empty();
@@ -705,6 +773,7 @@ fn check_integration_case_body(
         locals: &mut no_locals,
         requirements: &mut no_requirements,
         scopes: vec![HashMap::new()],
+        is_binding_cache: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span: case.span,
         effectful: true,
@@ -712,7 +781,11 @@ fn check_integration_case_body(
         commit_seen: false,
         caps: checker::CapabilityCtx::default(),
         in_test_body: true,
-        test_services: HashSet::new(),
+        // Slice B: a `system` case addresses the target's own service (`api.POST`)
+        // and names a principal (`by User(...)`), so the checker needs the
+        // target's services and actors — the same resolution the unit tier does.
+        test_services: target_test_services(participants.first().and_then(|t| unit_tables.get(t))),
+        test_actors: target_test_actors(participants.first().and_then(|t| unit_tables.get(t))),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -761,7 +834,7 @@ fn emit_integration_module(
         ""
     };
     out.push_str(&format!(
-        "import {{ Ok, Err, Some, None, callService, type Result, type Option, type ValidationError, type JsonError, type JsonValue, type BoundaryError, type ServiceBinding{agent_imports} }} from \"{runtime_import}\";\n"
+        "import {{ Ok, Err, Some, None, callService, type Result, type Option, type ValidationError, type JsonError, type JsonValue, type BoundaryError, type ServiceBinding, responseToHttpResult, responseToHttpOutcome, responseToUnauthOutcome{agent_imports} }} from \"{runtime_import}\";\n"
     ));
 
     // Per-participant: workers handler namespace + Worker entry default export.
@@ -800,6 +873,14 @@ fn emit_integration_module(
         unit_tables,
     ));
     out.push('\n');
+
+    // Slice B: the test-only signer + per-route drivers for the target's http
+    // service, and the set of http service names so the lowering calls a driver.
+    let http_support = emit_system_http_support(suite, unit_tables);
+    if !http_support.code.is_empty() {
+        out.push_str(&http_support.code);
+        out.push('\n');
+    }
 
     // One async function per case.
     let mut typed = integration_typed_commons(uses_targets, participants, unit_tables);
@@ -840,6 +921,10 @@ fn emit_integration_module(
             &case.body,
             &mut typed,
             cross_context,
+            http_support.http_services.clone(),
+            http_support.declared_routes.clone(),
+            http_support.route_body.clone(),
+            http_support.type_ns.clone(),
             input.source,
             &input.rel_path,
         );
@@ -897,6 +982,362 @@ fn emit_integration_module(
             cases: discovered,
         },
     ))
+}
+
+/// testing-the-boundary Slice B: for a `system` suite whose target exposes an
+/// `http` service, emit a **test-only** HS256 signer and one **driver** per
+/// route. A driver builds a real `Request` (concrete path, JSON body, a signed
+/// `Authorization: Bearer …`), drives the target Worker's public `fetch`, and
+/// decodes the `Response` back to `HttpResult[T]`. The developer's `by
+/// User("bob")` supplies the `sub`; the framework signs it (the developer never
+/// hand-crafts auth — real-token ceremony is an e2e concern), and the real,
+/// unmodified emitted Worker verifies it. Returns the emitted TS plus the set of
+/// the target's http service names, so the case-body lowering knows to call a
+/// driver (`__sysdrive_<svc>_<key>`) rather than `callService`.
+/// The declared `(service, method, path)` http routes of a system target — the
+/// set the lowering checks to tell a normal call from a **wrong-method** call
+/// (#707): a `(method, path)` not in the set, whose *path* is, drives the `405`
+/// fall-through through the generic `__sysdrive_wrongmethod_<svc>` driver.
+type DeclaredRoutes = std::collections::HashSet<(String, String, String)>;
+/// #708: for each declared route with a body param, the body's zero-based
+/// position among the route's positional call args and its declared type —
+/// what the raw driver's mixed typed+`Wire` call-site lowering needs to
+/// serialise a typed body into the raw driver's `string` slot.
+type RouteBodyMap = HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>;
+
+/// The emitted `emit_system_http_support` output: the driver/signer TS source
+/// plus the metadata the case-body lowering needs to route and convert calls.
+struct SystemHttpSupport {
+    code: String,
+    http_services: std::collections::HashSet<String>,
+    declared_routes: DeclaredRoutes,
+    /// #708: per-route body-param position/type, for the raw driver's
+    /// mixed typed+`Wire` call-site conversion.
+    route_body: RouteBodyMap,
+    /// The target's type namespace (`<target>.`), `route_body`'s types
+    /// resolve `serialise_*` calls through.
+    type_ns: String,
+}
+
+fn emit_system_http_support(
+    target: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+) -> SystemHttpSupport {
+    use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
+    let mut http_services: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut declared: DeclaredRoutes = std::collections::HashSet::new();
+    let mut route_body: RouteBodyMap = HashMap::new();
+    let Some(table) = unit_tables.get(target) else {
+        return SystemHttpSupport {
+            code: String::new(),
+            http_services,
+            declared_routes: declared,
+            route_body,
+            type_ns: String::new(),
+        };
+    };
+    let ns = target.replace('.', "_");
+    let binding = crate::emitter::wrangler::consumed_binding_name(target);
+    let type_ns = format!("{ns}.");
+
+    let mut routes = String::new();
+    let mut secrets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    let mut svc_names: Vec<&String> = table.services.keys().collect();
+    svc_names.sort();
+    for sname in svc_names {
+        let decl = &table.services[sname];
+        if !matches!(decl.protocol, ServiceProtocol::Http) {
+            continue;
+        }
+        http_services.insert(sname.clone());
+        for h in &decl.handlers {
+            let HandlerKind::Http { method, path } = &h.kind else {
+                continue;
+            };
+            declared.insert((sname.clone(), method.as_str().to_string(), path.clone()));
+            let key = crate::emitter::http_handler_method_name(*method, path);
+            // Split the handler's params into path params (matching `:name` in
+            // the pattern, in order) and the optional body (the remaining param).
+            let path_params: Vec<&str> = path
+                .split('/')
+                .filter_map(|seg| seg.strip_prefix(':'))
+                .collect();
+            let (_path_ps, body_ps): (Vec<_>, Vec<_>) = h
+                .params
+                .iter()
+                .partition(|p| path_params.contains(&p.name.name.as_str()));
+            // #708: record the body param's position (within the call's
+            // positional args, matching `h.params` declaration order) and
+            // declared type, so a mixed typed+`Wire` call can serialise a
+            // typed body into the raw driver's `string` slot.
+            if let Some(bp) = body_ps.first() {
+                let idx = h
+                    .params
+                    .iter()
+                    .position(|p| p.name.name == bp.name.name)
+                    .expect("body param is drawn from h.params");
+                route_body.insert(
+                    (sname.clone(), method.as_str().to_string(), path.clone()),
+                    (idx, bp.type_ref.clone()),
+                );
+            }
+            // The concrete URL: substitute each `:name` with its param.
+            let concrete_path = {
+                let mut s = String::new();
+                for seg in path.split('/').filter(|x| !x.is_empty()) {
+                    s.push('/');
+                    if let Some(name) = seg.strip_prefix(':') {
+                        s.push_str(&format!("${{{}}}", crate::emitter::ts_ident(name)));
+                    } else {
+                        s.push_str(seg);
+                    }
+                }
+                if s.is_empty() {
+                    s.push('/');
+                }
+                s
+            };
+            // The signed Authorization header, if the handler's `by` is Bearer.
+            let (auth_header, _secret_name) = match bynk_check::actors::bearer_seam_for(
+                h,
+                &table.actors,
+            ) {
+                Some(seam) => {
+                    secrets.insert(seam.secret.clone());
+                    let secret_read = format!(
+                        "((globalThis as any).process?.env?.[{:?}] ?? \"\")",
+                        seam.secret
+                    );
+                    (
+                        format!(
+                            "\"authorization\": `Bearer ${{await __bynkSignHs256({{ sub: __sub, exp: __bynkNow() + 3600 }}, {secret_read})}}`, "
+                        ),
+                        Some(seam.secret),
+                    )
+                }
+                None => (String::new(), None),
+            };
+            // Body param → serialise; path params → the URL.
+            let body_arg = body_ps.first();
+            let (body_line, body_init) = match body_arg {
+                Some(p) => {
+                    let ser = crate::emitter::serialisation::serialise_expr_via(
+                        &p.type_ref,
+                        &crate::emitter::ts_ident(&p.name.name),
+                        &type_ns,
+                    );
+                    (
+                        format!("  const __body = JSON.stringify({ser});\n"),
+                        "body: __body, ",
+                    )
+                }
+                None => (String::new(), ""),
+            };
+            // The response payload deserialiser: the `T` of `Effect[HttpResult[T]]`.
+            let payload_deser = match strip_effect_httpresult(&h.return_type) {
+                Some(inner) => crate::emitter::serialisation::deserialise_ref_via(inner, &type_ns),
+                None => format!("{type_ns}deserialise_unit"),
+            };
+            // Driver params mirror the handler's params (path params, then body).
+            let driver_params: Vec<String> = h
+                .params
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}: {}",
+                        crate::emitter::ts_ident(&p.name.name),
+                        driver_param_ty(&p.type_ref, &ns)
+                    )
+                })
+                .collect();
+            let content_type = if body_arg.is_some() {
+                "\"content-type\": \"application/json\", "
+            } else {
+                ""
+            };
+            routes.push_str(&format!(
+                "async function __sysdrive_{sname}_{key}({params}{sep}__sub: string) {{\n\
+                 {body_line}\
+                 \x20 const __h = makeHarness();\n\
+                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {body_init}}});\n\
+                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+                 \x20 return responseToHttpResult(__res, {payload_deser});\n\
+                 }}\n",
+                params = driver_params.join(", "),
+                sep = if driver_params.is_empty() { "" } else { ", " },
+                method = method.as_str(),
+            ));
+            // Slice C: the raw driver for a `Wire(…)`-carrying call. Every slot is
+            // a raw `string` (the wire form the boundary receives *unvalidated*):
+            // path params flow into the URL, the body string is sent verbatim (no
+            // `serialise`), and the response decodes to an `HttpOutcome` —
+            // `Rejected(detail)` when the router refused the input before the
+            // handler, `Handled(httpResult)` when it ran. Emitted only for a route
+            // with a `Wire`-eligible slot (a body or a path param); a bodyless,
+            // path-param-less route (e.g. `GET /cart/size`) can carry no `Wire`
+            // argument, so its raw driver would be dead code.
+            if !h.params.is_empty() {
+                let raw_params: Vec<String> = h
+                    .params
+                    .iter()
+                    .map(|p| format!("{}: string", crate::emitter::ts_ident(&p.name.name)))
+                    .collect();
+                let raw_body_init = match body_ps.first() {
+                    Some(p) => format!("body: {}, ", crate::emitter::ts_ident(&p.name.name)),
+                    None => String::new(),
+                };
+                routes.push_str(&format!(
+                "async function __sysdrive_raw_{sname}_{key}({params}{sep}__sub: string) {{\n\
+                 \x20 const __h = makeHarness();\n\
+                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}{auth_header}}}, {raw_body_init}}});\n\
+                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+                 \x20 return responseToHttpOutcome(__res, {payload_deser});\n\
+                 }}\n",
+                    params = raw_params.join(", "),
+                    sep = if raw_params.is_empty() { "" } else { ", " },
+                    method = method.as_str(),
+                ));
+            }
+            // #706: the no-auth driver for a `by Nobody` call — the same request
+            // the typed driver builds, minus the `Authorization` header, so the
+            // real auth seam rejects it. A `401` decodes to `Rejected(
+            // Unauthorized)` (`responseToUnauthOutcome`); anything else decodes
+            // normally. Emitted only for a Bearer-secured route (one that carries
+            // an auth header) — an unsecured route has no seam to reject a missing
+            // credential, so a `by Nobody` there is meaningless.
+            if !auth_header.is_empty() {
+                routes.push_str(&format!(
+                "async function __sysdrive_noauth_{sname}_{key}({params}{sep}__sub: string) {{\n\
+                 {body_line}\
+                 \x20 const __h = makeHarness();\n\
+                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}}}, {body_init}}});\n\
+                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+                 \x20 return responseToUnauthOutcome(__res, {payload_deser});\n\
+                 }}\n",
+                    params = driver_params.join(", "),
+                    sep = if driver_params.is_empty() { "" } else { ", " },
+                    method = method.as_str(),
+                ));
+            }
+            // #821: the raw *and* no-auth driver combined, for a call mixing
+            // `Wire(…)` with `by Nobody` — every slot is a raw `string` (as
+            // `__sysdrive_raw`) and the `Authorization` header is dropped (as
+            // `__sysdrive_noauth`), so the seam rejects the missing credential
+            // before the (possibly malformed) raw body is even read.
+            // `responseToUnauthOutcome` already delegates a non-`401` status to
+            // `responseToHttpOutcome`'s shape-based classification, so a raw
+            // body that would have been rejected on its own shape still decodes
+            // correctly here. Emitted under the same conditions as both parent
+            // drivers: a `Wire`-eligible slot and a Bearer-secured route.
+            if !h.params.is_empty() && !auth_header.is_empty() {
+                let raw_params: Vec<String> = h
+                    .params
+                    .iter()
+                    .map(|p| format!("{}: string", crate::emitter::ts_ident(&p.name.name)))
+                    .collect();
+                let raw_body_init = match body_ps.first() {
+                    Some(p) => format!("body: {}, ", crate::emitter::ts_ident(&p.name.name)),
+                    None => String::new(),
+                };
+                routes.push_str(&format!(
+                "async function __sysdrive_rawnoauth_{sname}_{key}({params}{sep}__sub: string) {{\n\
+                 \x20 const __h = makeHarness();\n\
+                 \x20 const __req = new Request(`https://test{concrete_path}`, {{ method: {method:?}, headers: {{ {content_type}}}, {raw_body_init}}});\n\
+                 \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+                 \x20 return responseToUnauthOutcome(__res, {payload_deser});\n\
+                 }}\n",
+                    params = raw_params.join(", "),
+                    sep = if raw_params.is_empty() { "" } else { ", " },
+                    method = method.as_str(),
+                ));
+            }
+        }
+        // #707: one generic wrong-method driver per service — drives an arbitrary
+        // `(method, path)` (an existing path, an undeclared method) and decodes
+        // the router's `405` fall-through to `Rejected(MethodNotAllowed)`. The
+        // handler never runs, so there is no body to serialise and the payload
+        // deserialiser is unused (the `405` takes the `Rejected` arm).
+        routes.push_str(&format!(
+            "async function __sysdrive_wrongmethod_{sname}(method: string, path: string) {{\n\
+             \x20 const __h = makeHarness();\n\
+             \x20 const __req = new Request(`https://test${{path}}`, {{ method }});\n\
+             \x20 const __res = await __h.env.{binding}.fetch(__req);\n\
+             \x20 return responseToHttpOutcome(__res, (__j: JsonValue) => Ok(__j as never));\n\
+             }}\n",
+        ));
+    }
+
+    if http_services.is_empty() {
+        return SystemHttpSupport {
+            code: String::new(),
+            http_services,
+            declared_routes: declared,
+            route_body,
+            type_ns: String::new(),
+        };
+    }
+
+    let mut out = String::new();
+    // A monotonic clock the signer's `exp` uses; kept out of `bundle`d runtime.
+    out.push_str("function __bynkNow(): number { return Math.floor(Date.now() / 1000); }\n");
+    // Test-only HS256 signer (never in the deployable app; e2e owns real auth).
+    out.push_str(
+        "function __b64url(s: string): string { return btoa(s).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
+         function __bytesB64url(bytes: Uint8Array): string { let bin = \"\"; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\"); }\n\
+         async function __bynkSignHs256(payload: Record<string, unknown>, secret: string): Promise<string> {\n\
+         \x20 const h = __b64url(JSON.stringify({ alg: \"HS256\", typ: \"JWT\" }));\n\
+         \x20 const p = __b64url(JSON.stringify(payload));\n\
+         \x20 const enc = new TextEncoder();\n\
+         \x20 const key = await crypto.subtle.importKey(\"raw\", enc.encode(secret) as BufferSource, { name: \"HMAC\", hash: \"SHA-256\" }, false, [\"sign\"]);\n\
+         \x20 const sig = await crypto.subtle.sign(\"HMAC\", key, enc.encode(`${h}.${p}`) as BufferSource);\n\
+         \x20 return `${h}.${p}.${__bytesB64url(new Uint8Array(sig))}`;\n\
+         }\n",
+    );
+    // Set each secret the target's actors read, so the real Bearer seam verifies.
+    for s in &secrets {
+        out.push_str(&format!(
+            "(globalThis as any).process = (globalThis as any).process ?? {{ env: {{}} }};\n(globalThis as any).process.env[{s:?}] = \"__bynk_test_secret\";\n"
+        ));
+    }
+    out.push_str(&routes);
+    SystemHttpSupport {
+        code: out,
+        http_services,
+        declared_routes: declared,
+        route_body,
+        type_ns,
+    }
+}
+
+/// Type a system-http driver parameter (v0.182): a named type is reached
+/// through the target's handler namespace (`todos.AddRequest`); primitives and
+/// compound shapes fall back to `unknown` — the driver only forwards the value
+/// to the namespace's `serialise_*`, and the Bynk checker already typed the call.
+fn driver_param_ty(t: &bynk_syntax::ast::TypeRef, _ns: &str) -> String {
+    use bynk_syntax::ast::TypeRef;
+    match t {
+        // A named type may embed a branded refined field (`AddRequest.title:
+        // Title`), and the case body passes a plain object literal — the Bynk
+        // checker already type-checked the call's args against the handler
+        // (Slice A), so the driver forwards the value to the namespace's
+        // `serialise_*`. Primitives stay precise.
+        TypeRef::Named(_) => "any".to_string(),
+        other => crate::emitter::ts_type_ref(other),
+    }
+}
+
+/// Extract `T` from a handler return type `Effect[HttpResult[T]]` (v0.182).
+fn strip_effect_httpresult(t: &bynk_syntax::ast::TypeRef) -> Option<&bynk_syntax::ast::TypeRef> {
+    use bynk_syntax::ast::TypeRef;
+    let inner = match t {
+        TypeRef::Effect(b, _) => b.as_ref(),
+        other => other,
+    };
+    match inner {
+        TypeRef::HttpResult(payload, _) => Some(payload.as_ref()),
+        _ => None,
+    }
 }
 
 /// Emit the `makeHarness()` factory: an in-process env per participant whose
@@ -1134,7 +1575,7 @@ fn check_test_bodies(
         )
     {
         for rp in stubs.values() {
-            refs.enter_file(&rp.source_path, target_name, false);
+            refs.enter_file(&rp.identity_path, target_name, false);
             for clause in &rp.clauses {
                 let Some(op) = rp
                     .cap_decl
@@ -1181,7 +1622,7 @@ fn check_test_bodies(
         };
         // v0.25: test-case edges record in the test file, resolving bare
         // names through the *target* unit's namespace.
-        refs.enter_file(&parsed[i].source_path, target_name, parsed[i].synthetic);
+        refs.enter_file(&parsed[i].identity_path, target_name, parsed[i].synthetic);
         for case in &test_decl.cases {
             check_test_case_body(
                 target_name,
@@ -1302,6 +1743,42 @@ fn block_uses_observation(block: &Block) -> bool {
     found
 }
 
+/// Slice C: whether a `case` body uses a `Wire(…)` raw argument anywhere. A
+/// `Wire` is only meaningful at `system` (it hands pre-validation input to the
+/// real boundary); used at any other tier it is `bynk.test.wire_needs_system`.
+fn block_uses_wire(block: &Block) -> bool {
+    let mut found = false;
+    let mut check = |e: &Expr| {
+        if matches!(e.kind, ExprKind::Wire(_)) {
+            found = true;
+        }
+    };
+    for s in &block.statements {
+        let e = match s {
+            Statement::Let(l) => &l.value,
+            Statement::EffectLet(l) => &l.value,
+            Statement::Expect(x) => &x.value,
+            Statement::Send(x) => &x.value,
+            Statement::Do(d) => &d.value,
+            Statement::Assign(a) => &a.value,
+        };
+        crate::emitter::walk_exprs(e, &mut check);
+    }
+    crate::emitter::walk_exprs(&block.tail, &mut check);
+    found
+}
+
+/// #706: whether a `case` body drives an effect-let `by Nobody` — the "no
+/// credential" principal. It is only meaningful at `system` (there is no auth
+/// seam to reject a missing credential at `unit`), so a non-`system` case using
+/// it is `bynk.test.credential_needs_system`.
+fn block_uses_nobody(block: &Block) -> bool {
+    block.statements.iter().any(|s| {
+        matches!(s, Statement::EffectLet(l)
+            if l.principal.as_ref().is_some_and(|p| p.actor.name == "Nobody"))
+    })
+}
+
 /// Register a synthetic call-record type per capability operation of the target
 /// context (v0.117, testing track slice 5), so `trace(Cap.op)` — typed
 /// `List[<CallRecord>]` — supports field access on its records. The record's
@@ -1347,6 +1824,62 @@ fn register_call_record_types(
             );
         }
     }
+}
+
+/// v0.178 (#662): build the target's service table for a test-body check —
+/// each service's protocol word and its `on call` handler signature, so a
+/// `svc.call(args)` in a case can be resolved rather than string-matched. A
+/// service with no `on call` handler carries `None`, which turns `svc.call(...)`
+/// into `bynk.test.service_no_call_handler` instead of a silent runtime crash.
+fn target_service_handler_kinds(
+    table: Option<&UnitTable>,
+) -> HashMap<String, Vec<bynk_syntax::ast::HandlerKind>> {
+    let Some(t) = table else {
+        return HashMap::new();
+    };
+    t.services
+        .iter()
+        .map(|(name, decl)| {
+            (
+                name.clone(),
+                decl.handlers.iter().map(|h| h.kind.clone()).collect(),
+            )
+        })
+        .collect()
+}
+
+fn target_test_actors(table: Option<&UnitTable>) -> HashMap<String, bynk_syntax::ast::ActorDecl> {
+    table.map(|t| t.actors.clone()).unwrap_or_default()
+}
+
+fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::TestServiceSig> {
+    use bynk_syntax::ast::ServiceProtocol;
+    let Some(t) = table else {
+        return HashMap::new();
+    };
+    t.services
+        .iter()
+        .map(|(name, decl)| {
+            let protocol = match &decl.protocol {
+                ServiceProtocol::Call => None,
+                ServiceProtocol::Http => Some("http".to_string()),
+                ServiceProtocol::Cron => Some("cron".to_string()),
+                ServiceProtocol::Queue { .. } => Some("queue".to_string()),
+                ServiceProtocol::WebSocket { .. } => Some("websocket".to_string()),
+            };
+            let handlers = decl
+                .handlers
+                .iter()
+                .map(|h| checker::TestHandler {
+                    kind: h.kind.clone(),
+                    params: h.params.clone(),
+                    by_clause: h.by_clause.clone(),
+                    span: h.span,
+                })
+                .collect();
+            (name.clone(), checker::TestServiceSig { protocol, handlers })
+        })
+        .collect()
 }
 
 /// Type-check a test `case`/`property` body against the target unit's privileges,
@@ -1435,6 +1968,7 @@ fn typecheck_case_body(
         locals: &mut no_locals,
         requirements: &mut no_requirements,
         scopes: vec![initial_scope],
+        is_binding_cache: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span,
         effectful,
@@ -1449,10 +1983,8 @@ fn typecheck_case_body(
             given_anchor: None,
         },
         in_test_body: true,
-        test_services: unit_tables
-            .get(target_name)
-            .map(|t| t.services.keys().cloned().collect())
-            .unwrap_or_default(),
+        test_services: target_test_services(unit_tables.get(target_name)),
+        test_actors: target_test_actors(unit_tables.get(target_name)),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -2401,6 +2933,7 @@ fn check_property_body(
         locals: &mut no_locals,
         requirements: &mut no_requirements,
         scopes: vec![binding_scope],
+        is_binding_cache: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span,
         effectful,
@@ -2415,10 +2948,8 @@ fn check_property_body(
             given_anchor: None,
         },
         in_test_body: true,
-        test_services: unit_tables
-            .get(target_name)
-            .map(|t| t.services.keys().cloned().collect())
-            .unwrap_or_default(),
+        test_services: target_test_services(unit_tables.get(target_name)),
+        test_actors: target_test_actors(unit_tables.get(target_name)),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -2710,6 +3241,7 @@ fn emit_test_module(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
     exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
     tests_prefix: &Path,
     import_ext: ImportExt,
@@ -2876,6 +3408,7 @@ fn emit_test_module(
         unit_tables,
         unit_consumes,
         unit_consumes_aliases,
+        unit_flattened,
     ));
     out.push('\n');
 
@@ -3265,14 +3798,29 @@ fn emit_stub_class(
     // its types, variants and `uses` vocabulary resolve unqualified.
     let owning_unit = target_name.to_string();
     let scope_ns = owning_unit.replace('.', "_");
-    let mut scope_type_names: HashSet<String> = unit_tables
+    // Each in-scope type name's *owning* namespace — the target's own for a
+    // locally-declared type, but the specific `uses`d commons' for one reached
+    // only through it (never the target's), since `emit_context_rebrands`
+    // only re-exports a `uses`-sourced type under the target's namespace when
+    // the target's own lowered body references it by name — a stub class
+    // implementing an adapter-flattened capability (e.g. `Locale`) generally
+    // doesn't (Locale capability track, slice 1, #844).
+    let mut type_ns: HashMap<String, String> = unit_tables
         .get(&owning_unit)
-        .map(|t| t.types.keys().cloned().collect())
+        .map(|t| {
+            t.types
+                .keys()
+                .map(|n| (n.clone(), scope_ns.clone()))
+                .collect()
+        })
         .unwrap_or_default();
     if let Some(used) = unit_uses.get(&owning_unit) {
         for u in used {
             if let Some(table) = unit_tables.get(u) {
-                scope_type_names.extend(table.types.keys().cloned());
+                let uns = u.replace('.', "_");
+                for n in table.types.keys() {
+                    type_ns.entry(n.clone()).or_insert_with(|| uns.clone());
+                }
             }
         }
     }
@@ -3320,13 +3868,12 @@ fn emit_stub_class(
                 format!(
                     "{}: {}",
                     p.name.name,
-                    emitter::ts_type_ref_qualified(&p.type_ref, &scope_type_names, &scope_ns)
+                    emitter::ts_type_ref_qualified_multi(&p.type_ref, &type_ns)
                 )
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let return_ty =
-            emitter::ts_type_ref_qualified(&op.return_type, &scope_type_names, &scope_ns);
+        let return_ty = emitter::ts_type_ref_qualified_multi(&op.return_type, &type_ns);
         out.push_str(&format!("  async {method}({params}): {return_ty} {{\n"));
         if !scope_names.is_empty() {
             out.push_str(&format!(
@@ -3593,6 +4140,7 @@ fn emit_test_deps(
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
 ) -> String {
     let mut out = String::new();
     out.push_str("function makeTestDeps() {\n");
@@ -3618,10 +4166,46 @@ fn emit_test_deps(
             };
             entries.push(entry);
         }
+        // v0.17 (Locale capability track, slice 1, #844): a capability
+        // flattened in via `consumes U { Cap }` (e.g. an adapter's `Locale`)
+        // is never in `table.capabilities` above — that holds only
+        // capabilities this unit declares itself. Its real implementation is
+        // wired by production `compose()` from a platform binding the test
+        // module never imports, so an un-stubbed one is always the
+        // placeholder, exactly like a locally-declared capability with no
+        // provider.
+        let mut flattened: Vec<(&String, &String)> = unit_flattened
+            .get(target_name)
+            .map(|m| m.iter().collect())
+            .unwrap_or_default();
+        flattened.sort_by_key(|(cap, _)| cap.as_str());
+        for (cap, owner) in flattened {
+            let owner_ns = owner.replace('.', "_");
+            let entry = if stubs.contains_key(cap) {
+                format!("{cap}: new __Stub_{cap}()")
+            } else {
+                format!("{cap}: undefined as unknown as {owner_ns}.{cap}")
+            };
+            entries.push(entry);
+        }
         // Cross-context surface: consumed contexts run with their real surface
         // (v0.118 `stub` is capability-only — a consumed-context capability
-        // flattened via `consumes U { Cap }` is a target capability above).
-        let consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
+        // flattened via `consumes U { Cap }` is folded in via `unit_flattened`
+        // above). An `adapter` target (e.g. `consumes bynk { Locale }`) has no
+        // `makeSurface` at all — so it must not get a surface entry either
+        // (Locale capability track, slice 1, #844).
+        let consumed: Vec<String> = unit_consumes
+            .get(target_name)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|q| {
+                !matches!(
+                    unit_tables.get(q).and_then(|t| t.kind),
+                    Some(UnitKind::Adapter)
+                )
+            })
+            .collect();
         let aliases = unit_consumes_aliases
             .get(target_name)
             .cloned()
@@ -3750,11 +4334,30 @@ fn emit_test_scope_setup(
         }
     }
     // Bring in `uses` commons names too — the target's body can use them.
+    // message-bundles slice 1 (#859): a name the target itself already
+    // declares must be excluded here — the same local-shadows-`uses`
+    // precedence `compose_unit_symbols` already applies to production
+    // emission (project.rs's `combined_fns`/`combined_types`), which this
+    // test-scaffold path builds independently and had never applied. Never
+    // exercised before this slice: no prior commons declared a name also
+    // present in something it `uses`. Without the filter, a target with its
+    // own `render` (a messages block's synthetic one) *and* `uses
+    // bynk.locale` (which also declares `render`) destructured both into one
+    // scope — `Cannot redeclare block-scoped variable 'render'` under `tsc`.
+    let target_local: std::collections::HashSet<&String> = unit_tables
+        .get(target_name)
+        .map(|t| t.types.keys().chain(t.fns.keys()).collect())
+        .unwrap_or_default();
     if let Some(used) = unit_uses.get(target_name) {
         for u in used {
             let ns = u.replace('.', "_");
             if let Some(table) = unit_tables.get(u) {
-                let mut names: Vec<&String> = table.types.keys().chain(table.fns.keys()).collect();
+                let mut names: Vec<&String> = table
+                    .types
+                    .keys()
+                    .chain(table.fns.keys())
+                    .filter(|n| !target_local.contains(n))
+                    .collect();
                 names.sort();
                 names.dedup();
                 if !names.is_empty() {
@@ -3780,6 +4383,10 @@ fn emit_test_scope_setup(
         }
         for q in consumed {
             let ns = q.replace('.', "_");
+            let is_adapter = matches!(
+                unit_tables.get(q).and_then(|t| t.kind),
+                Some(UnitKind::Adapter)
+            );
             if let Some(table) = unit_tables.get(q) {
                 let mut names: Vec<&String> = table.types.keys().collect();
                 names.sort();
@@ -3790,6 +4397,12 @@ fn emit_test_scope_setup(
                         joined.join(", ")
                     ));
                 }
+            }
+            // An `adapter` target has no `makeSurface`/`deps.surface` entry —
+            // its capabilities are already flattened onto `deps` directly
+            // (Locale capability track, slice 1, #844).
+            if is_adapter {
+                continue;
             }
             let key = alias_for
                 .get(q)
@@ -3869,6 +4482,7 @@ fn emit_test_case_function(
         &mut typed,
         &cross,
         test_services,
+        target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
         source,
         rel_path,
@@ -4685,6 +5299,7 @@ fn emit_test_property_function(
         &mut typed,
         &cross,
         test_services,
+        target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
         source,
         rel_path,
@@ -4858,6 +5473,7 @@ fn emit_test_history_property_function(
         &mut typed,
         &cross,
         test_services,
+        target_service_handler_kinds(unit_tables.get(target_name)),
         test_agents,
         source,
         rel_path,

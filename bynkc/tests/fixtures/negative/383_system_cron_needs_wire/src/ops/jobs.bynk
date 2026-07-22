@@ -1,0 +1,6 @@
+context ops.jobs
+service ticker from cron {
+  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}

@@ -66,11 +66,18 @@ each track's spine issue; this table is deliberately just the map.
 | Track doc | Spine issue | Phase | Theme |
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
-| [`deploy.md`](deploy.md) | [#558](https://github.com/accuser/bynk/issues/558) | Settling — no slice authorised | The `bynk deploy` verb: provisioning + remote deploy, and the load-bearing provisioning-state model |
+| [`locale-capability.md`](locale-capability.md) | [#838](https://github.com/accuser/bynk/issues/838) | Slicing (slice 1 shipped) | The `Locale` capability: ambient locale reads and a pure render seam for user-facing text, Bynk's first i18n surface |
 
-(Both pre-date the GitHub-native flow, so their docs were committed by ordinary
-PRs rather than settling draft PRs; the spine issues were opened retroactively.
-`deploy.md` continues settling via reviewed PRs against the doc.)
+(`documentation.md` pre-dates the GitHub-native flow, so its doc was
+committed by an ordinary PR rather than a settling draft PR; the spine issue
+was opened retroactively. `lsp-foundations.md` (now retired) was the first
+track to run the ADR 0167 flow from the start — spine issue first, doc via a
+settling draft PR; `testing-the-boundary.md` (now retired) was the second;
+`locale-capability.md` is the third; `message-bundles.md` is the fourth.
+`agent-capability-encapsulation.md` is a committed Draft that appears in
+neither this table nor `retired-tracks.md`; it predates this row's addition
+and needs a spine issue or a retirement — tracked separately, not by this
+table.)
 
 ## Retired tracks
 
@@ -78,6 +85,28 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`message-bundles.md`** — the `messages` construct, the checked catalogue,
+  and the bundle lookup that turned the shipped, bundle-free `render` (ADR
+  0256) into a real localiser — the sibling `locale-capability.md` named but
+  left unfiled. All three slices shipped: the construct + a single-reference
+  bundle, multi-locale completeness + placeholder agreement, and ICU
+  MessageFormat (`plural`/`select`/`number`/`date`, host-`Intl` delegation,
+  no CLDR data bundled); shipped v0.228.0–v0.230.0 (ADRs 0272–0273, 0276).
+- **`deploy.md`** — the `bynk deploy` verb: provisioning + remote deploy, and
+  the load-bearing provisioning-state model (`bynk.deploy.lock`); the first
+  driver command with irreversible, outward-facing side effects. All six
+  slices shipped: state model + KV MVP, DO/queue provisioning, multi-context
+  ordering, secrets, environments, and reconciliation maturity + `--prune`;
+  shipped v0.154–v0.220.2 (ADRs 0179–0180, 0193–0196, 0254–0255).
+- **`increment-allocation.md`** — the version and the ADR number, two serial
+  counters that collided across parallel increments, are now assigned by a
+  per-merge stamp on `main` (an `xtask` command + a workflow) from a numberless
+  `design/pending/` file, not chosen in the feature PR; the surface-shrink also
+  made `llms-full.txt` a build artifact. Slices 0–3 shipped (ADR 0206).
+- **`lsp-foundations.md`** — the foundation under the shipped LSP surface: one
+  project model shared with `bynkc`, a freshness contract, real multi-root
+  workspaces, startup analysis + server-registered watchers, one scheduler, and
+  the `[lib]` test seam; shipped v0.175–v0.184 (ADRs 0198, 0201, 0202, 0204).
 - **`editor-currency.md`** — the editor surface (hover, completion, scaffolds,
   menus/keybindings, codelens) brought back in step with the language and held
   there by a mechanical floor; shipped v0.121–v0.129 (ADRs 0156–0157).

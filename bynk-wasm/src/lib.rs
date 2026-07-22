@@ -21,8 +21,15 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use bynk_check::checker::Ty;
+use bynk_check::expr_types::type_at_offset;
 use bynk_check::firstparty::Platform;
-use bynk_emit::project::{AttributedError, BuildTarget, analyse_in_memory, compile_in_memory};
+use bynk_check::locals::locals_at;
+use bynk_emit::project::{
+    AttributedError, BuildTarget, analyse_in_memory, analyse_in_memory_with_types,
+    compile_in_memory,
+};
+use bynk_ide::completion;
 use bynk_syntax::CompileError;
 
 /// One emitted JavaScript module of the compiled program.
@@ -69,6 +76,48 @@ fn severity_str(err: &CompileError) -> &'static str {
     }
 }
 
+/// The human-readable message carried by a caught panic payload, if any.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+/// A synthetic `bynk.wasm.panic` diagnostic standing in for an internal compiler
+/// panic, so an unexpected `panic!`/index-out-of-bounds/`unreachable!` in the
+/// pipeline becomes a structured error rather than propagating past the boundary.
+fn panic_diagnostic(payload: Box<dyn std::any::Any + Send>) -> Diagnostic {
+    Diagnostic {
+        path: None,
+        line: 0,
+        col: 0,
+        from: 0,
+        to: 0,
+        severity: "error".to_string(),
+        category: "bynk.wasm.panic".to_string(),
+        message: format!("internal compiler panic: {}", panic_message(&*payload)),
+    }
+}
+
+/// Run a pipeline entry point, converting an unexpected panic into a diagnostic.
+///
+/// On the native `rlib` path (the tests and any host embedding) this genuinely
+/// unwinds the panic and returns `Err(diagnostic)`, so a reachable-in-principle
+/// `panic!` no longer propagates past the wasm boundary. On the actual
+/// `wasm32-unknown-unknown` target a panic still traps (`RuntimeError:
+/// unreachable`) because the stock target lowers unwinding to a trap — there the
+/// blast radius is bounded instead by the `console_error_panic_hook` (a legible
+/// console error and location) set in the wasm entry points, and this wrapper
+/// becomes effective for free if the playground build ever adopts wasm exception
+/// handling. Fixing the underlying panic sites remains the real fix (#717).
+fn catch_panic<T>(f: impl FnOnce() -> T) -> Result<T, Diagnostic> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(panic_diagnostic)
+}
+
 /// Flatten attributed errors to [`Diagnostic`]s, resolving line/col against the
 /// owning source where known (`sources`), else the user source (`fallback`).
 fn to_diagnostics(
@@ -108,6 +157,14 @@ fn to_diagnostics(
 /// Workers/Cloudflare-only shapes are reported as diagnostics (slice-2 platform
 /// lock), never silently mis-compiled.
 pub fn compile(source: &str, platform: Platform) -> CompileResult {
+    catch_panic(|| compile_inner(source, platform)).unwrap_or_else(|d| CompileResult {
+        ok: false,
+        files: Vec::new(),
+        diagnostics: vec![d],
+    })
+}
+
+fn compile_inner(source: &str, platform: Platform) -> CompileResult {
     match compile_in_memory(source, BuildTarget::Bundle, platform) {
         Ok(out) => match bynk_strip::strip_project_to_js(out) {
             Ok(js) => {
@@ -176,6 +233,12 @@ pub struct AnalyzeResult {
 
 /// Analyse a source for diagnostics only (no compile/emit), for the given platform.
 pub fn analyze(source: &str, platform: Platform) -> AnalyzeResult {
+    catch_panic(|| analyze_inner(source, platform)).unwrap_or_else(|d| AnalyzeResult {
+        diagnostics: vec![d],
+    })
+}
+
+fn analyze_inner(source: &str, platform: Platform) -> AnalyzeResult {
     let errs = analyse_in_memory(source, BuildTarget::Bundle, platform);
     AnalyzeResult {
         diagnostics: to_diagnostics(errs, &HashMap::new(), source),
@@ -189,8 +252,143 @@ pub fn analyze_to_json(source: &str, platform: Platform) -> String {
         .unwrap_or_else(|_| "{\"diagnostics\":[]}".to_string())
 }
 
+/// The inferred type at a cursor position in a single in-memory source, or
+/// `None` if the expression at that position never typed at all — per ADR
+/// 0094, a well-typed function still contributes types even when a *different*
+/// function in the same file has an error, so this isn't blanked by every
+/// mid-edit error, only by one at the position itself (or upstream of it, an
+/// unresolved name). The editor's hover tooltip (#397).
+#[derive(serde::Serialize)]
+pub struct HoverResult {
+    pub ty: Option<String>,
+}
+
+/// Hover for a byte `offset` into `source`, for the given platform.
+pub fn hover(source: &str, offset: usize, platform: Platform) -> HoverResult {
+    catch_panic(|| hover_inner(source, offset, platform)).unwrap_or(HoverResult { ty: None })
+}
+
+fn hover_inner(source: &str, offset: usize, platform: Platform) -> HoverResult {
+    let analysis = analyse_in_memory_with_types(source, BuildTarget::Bundle, platform);
+    let ty = type_at_offset(&analysis.expr_types, offset).map(Ty::display);
+    HoverResult { ty }
+}
+
+/// Hover to a JSON string — `{ ty: string | null }`.
+pub fn hover_to_json(source: &str, offset: usize, platform: Platform) -> String {
+    serde_json::to_string(&hover(source, offset, platform))
+        .unwrap_or_else(|_| "{\"ty\":null}".to_string())
+}
+
+/// One completion candidate, serialised for the JS side — a shadow of
+/// `bynk_ide::completion::Completion`/`CompletionKind` (that crate stays
+/// serde-free; this is the wire DTO, same pattern as [`EmittedFile`]/[`Diagnostic`]).
+#[derive(serde::Serialize)]
+pub struct CompletionCandidate {
+    pub label: String,
+    /// "unit"/"capability"/"type"/"keyword"/"snippet"/"variant"/"member"/
+    /// "field"/"constructor"/"function"/"local".
+    pub kind: &'static str,
+    pub detail: Option<String>,
+    pub insert_text: Option<String>,
+}
+
+/// The editor's completion list at a cursor position (#808).
+#[derive(serde::Serialize)]
+pub struct CompleteResult {
+    pub items: Vec<CompletionCandidate>,
+}
+
+fn to_candidate(c: completion::Completion) -> CompletionCandidate {
+    use completion::CompletionKind::*;
+    let kind = match c.kind {
+        Unit => "unit",
+        Capability => "capability",
+        Type => "type",
+        Keyword => "keyword",
+        Snippet => "snippet",
+        Variant => "variant",
+        Member => "member",
+        Field => "field",
+        Constructor => "constructor",
+        Function => "function",
+    };
+    CompletionCandidate {
+        label: c.label,
+        kind,
+        detail: c.detail,
+        insert_text: c.insert_text,
+    }
+}
+
+/// Completion at a byte `offset` into an in-memory Bynk source, for the given
+/// platform (capability methods, types, keywords, in-scope locals, and
+/// value-receiver members — #808, the other half of #397 hover shipped).
+/// Single buffer, single call — no project files, no multi-doc overlay/caching
+/// (the wasm boundary has none of those, so `files: None` throughout).
+pub fn complete(source: &str, offset: usize, platform: Platform) -> CompleteResult {
+    catch_panic(|| complete_inner(source, offset, platform))
+        .unwrap_or(CompleteResult { items: Vec::new() })
+}
+
+fn complete_inner(source: &str, offset: usize, platform: Platform) -> CompleteResult {
+    let line_prefix = source[..offset].rsplit('\n').next().unwrap_or("");
+    let mut items: Vec<CompletionCandidate> = completion::complete(line_prefix, source, None)
+        .into_iter()
+        .map(to_candidate)
+        .collect();
+
+    // ADR 0093 D3: in-scope locals/params, alongside keywords/constructors at
+    // a keyword or expression position — the same two disjoint positions
+    // `bynk-lsp`'s handler merges locals into.
+    if completion::is_keyword_position(line_prefix)
+        || completion::is_expression_position(line_prefix)
+    {
+        let analysis = analyse_in_memory_with_types(source, BuildTarget::Bundle, platform);
+        items.extend(locals_at(&analysis.locals, offset).into_iter().map(|b| {
+            CompletionCandidate {
+                label: b.name.clone(),
+                kind: "local",
+                detail: Some(b.ty.clone()),
+                insert_text: None,
+            }
+        }));
+    }
+    // A lowercase `receiver.` is a value receiver: `complete()` yields nothing
+    // there directly (ADR 0093 D4), so retype the rewritten buffer (dropping
+    // the trailing partial member) and offer the receiver's kernel methods /
+    // record fields.
+    if items.is_empty()
+        && let Some((rewritten, recv_offset)) = completion::value_receiver_rewrite(source, offset)
+    {
+        let analysis = analyse_in_memory_with_types(&rewritten, BuildTarget::Bundle, platform);
+        if let Some(ty) = type_at_offset(&analysis.expr_types, recv_offset) {
+            items = completion::value_member_candidates(ty, source, None)
+                .into_iter()
+                .map(to_candidate)
+                .collect();
+        }
+    }
+    CompleteResult { items }
+}
+
+/// Complete to a JSON string — `{ items: [{ label, kind, detail, insert_text }] }`.
+pub fn complete_to_json(source: &str, offset: usize, platform: Platform) -> String {
+    serde_json::to_string(&complete(source, offset, platform))
+        .unwrap_or_else(|_| "{\"items\":[]}".to_string())
+}
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
+
+/// Route panics to `console.error` with a readable message and location. Idempotent
+/// (`set_once` installs the hook exactly once), so every entry point may call it.
+/// Without this a panic on adversarial input surfaces as an opaque `RuntimeError:
+/// unreachable` with no clue to its origin (#717).
+#[cfg(target_arch = "wasm32")]
+fn install_panic_hook() {
+    console_error_panic_hook::set_once();
+}
 
 /// The wasm entry point for live editor diagnostics: analyse an in-memory Bynk
 /// source for the browser and return `{ diagnostics: [...] }` (with byte `from`/`to`
@@ -198,7 +396,28 @@ use wasm_bindgen::prelude::wasm_bindgen;
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn bynk_analyze(source: &str) -> String {
+    install_panic_hook();
     analyze_to_json(source, Platform::Browser)
+}
+
+/// The wasm entry point for the editor's hover tooltip: the inferred type at a
+/// byte `offset` into an in-memory Bynk source, as `{ "ty": string | null }`
+/// (#397).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn bynk_hover(source: &str, offset: u32) -> String {
+    install_panic_hook();
+    hover_to_json(source, offset as usize, Platform::Browser)
+}
+
+/// The wasm entry point for the editor's completion: context-aware candidates
+/// at a byte `offset` into an in-memory Bynk source, as
+/// `{ "items": [{ "label", "kind", "detail", "insert_text" }] }` (#808).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn bynk_complete(source: &str, offset: u32) -> String {
+    install_panic_hook();
+    complete_to_json(source, offset as usize, Platform::Browser)
 }
 
 /// The wasm entry point: compile an in-memory Bynk source for the browser
@@ -208,6 +427,7 @@ pub fn bynk_analyze(source: &str) -> String {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn bynk_compile(source: &str) -> String {
+    install_panic_hook();
     compile_to_json(source, Platform::Browser)
 }
 
@@ -332,6 +552,169 @@ mod tests {
         );
         // A real diagnostic carries a span for inline marking.
         assert!(r.diagnostics.iter().any(|d| d.to > d.from));
+    }
+
+    #[test]
+    fn hover_reports_the_inferred_type_of_an_expression() {
+        // The tail expression `now` (the *reference*, not the `let now <-`
+        // binding) — the last occurrence of the substring in `PROG`.
+        let offset = PROG.rfind("now").expect("PROG mentions `now`");
+        let r = hover(PROG, offset, Platform::Browser);
+        assert_eq!(r.ty.as_deref(), Some("Instant"));
+    }
+
+    #[test]
+    fn hover_outside_any_expression_is_none() {
+        // Offset 0 sits in the `context` keyword — a declaration, not an
+        // expression, so nothing is recorded there.
+        let r = hover(PROG, 0, Platform::Browser);
+        assert_eq!(r.ty, None);
+    }
+
+    #[test]
+    fn hover_to_json_is_valid_json() {
+        let offset = PROG.rfind("now").expect("PROG mentions `now`");
+        let json = hover_to_json(PROG, offset, Platform::Browser);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["ty"], "Instant");
+    }
+
+    #[test]
+    fn hover_survives_a_sibling_error() {
+        // ADR 0094: hovering a well-typed expression must not go blank just
+        // because a *different* function in the same buffer is mid-edit and
+        // broken — the whole point of exposing the checker's partial
+        // `expr_types` map rather than its old all-or-nothing gate.
+        let prog = "commons app.demo\n\n\
+            fn good() -> Int {\n  42\n}\n\n\
+            fn bad() -> Int {\n  \"oops\"\n}\n";
+        let offset = prog.find("42").expect("prog mentions 42");
+        let r = hover(prog, offset, Platform::Browser);
+        assert_eq!(r.ty.as_deref(), Some("Int"));
+    }
+
+    #[test]
+    fn complete_offers_in_scope_capability_after_given() {
+        let prog = "context app.demo\n\n\
+            consumes bynk { Clock, Logger }\n\n\
+            service demo {\n\
+            \x20 on call() -> Effect[Instant] given \n\
+            \x20   Clock.now()\n\
+            \x20 }\n\
+            }\n";
+        let offset = prog.find("given \n").expect("prog mentions given") + "given ".len();
+        let r = complete(prog, offset, Platform::Browser);
+        assert!(
+            r.items
+                .iter()
+                .any(|c| c.label == "Logger" && c.kind == "capability"),
+            "{:?}",
+            r.items.iter().map(|c| &c.label).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn complete_offers_in_scope_locals_at_expression_position() {
+        // ADR 0093 D3/D4: `bynk_complete` folds the two contexts that live
+        // handler-side in `bynk-lsp` (locals, value-receiver members) into
+        // the one wasm call — no analysis overlay/caching, single buffer.
+        let offset = PROG.rfind("now").expect("PROG mentions `now`");
+        let r = complete(PROG, offset, Platform::Browser);
+        assert!(
+            r.items.iter().any(|c| c.label == "now"
+                && c.kind == "local"
+                && c.detail.as_deref() == Some("Instant")),
+            "{:?}",
+            r.items
+                .iter()
+                .map(|c| (&c.label, c.kind))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn complete_offers_value_receiver_members_after_dot() {
+        let prog = "commons app.demo\n\n\
+            fn f() -> String {\n\
+            \x20 let value = \"hi\"\n\
+            \x20 value.\n\
+            }\n";
+        let offset = prog.find("value.\n").expect("prog mentions value.") + "value.".len();
+        let r = complete(prog, offset, Platform::Browser);
+        assert!(
+            r.items
+                .iter()
+                .any(|c| c.label == "split" && c.kind == "member"),
+            "{:?}",
+            r.items.iter().map(|c| &c.label).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn complete_survives_a_sibling_error() {
+        // Same ADR 0094 ceiling as hover: a broken sibling function must not
+        // blank out completion in a well-typed one.
+        let prog = "commons app.demo\n\n\
+            fn good() -> Int {\n  let count = 42\n  count\n}\n\n\
+            fn bad() -> Int {\n  \"oops\"\n}\n";
+        let offset = prog.rfind("count").expect("prog mentions count");
+        let r = complete(prog, offset, Platform::Browser);
+        assert!(
+            r.items
+                .iter()
+                .any(|c| c.label == "count" && c.kind == "local"),
+            "{:?}",
+            r.items
+                .iter()
+                .map(|c| (&c.label, c.kind))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn complete_to_json_is_valid_json() {
+        let offset = PROG.rfind("now").expect("PROG mentions `now`");
+        let json = complete_to_json(PROG, offset, Platform::Browser);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert!(v["items"].as_array().is_some_and(|a| !a.is_empty()));
+    }
+
+    #[test]
+    fn complete_survives_a_panic() {
+        // An out-of-bounds offset panics inside `complete_inner`'s slicing
+        // (`source[..offset]`); `complete`'s own `catch_panic` wrapper must
+        // still degrade to empty items rather than propagate, same guarantee
+        // `catch_panic_converts_panic_to_a_diagnostic` proves for the wrapper
+        // in general.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let r = complete("", usize::MAX, Platform::Browser);
+        std::panic::set_hook(prev);
+        assert!(r.items.is_empty());
+    }
+
+    #[test]
+    fn catch_panic_converts_panic_to_a_diagnostic() {
+        // Silence the default hook's stderr backtrace for this deliberate panic,
+        // then restore it so no other test is affected.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let caught = catch_panic(|| -> i32 { panic!("boom {}", 42) });
+        std::panic::set_hook(prev);
+
+        let d = caught.expect_err("a panic must become an Err(diagnostic)");
+        assert_eq!(d.severity, "error");
+        assert_eq!(d.category, "bynk.wasm.panic");
+        assert!(
+            d.message.contains("boom 42"),
+            "the panic message is carried through: {}",
+            d.message
+        );
+    }
+
+    #[test]
+    fn catch_panic_passes_a_value_through() {
+        assert_eq!(catch_panic(|| 7).ok(), Some(7));
     }
 
     #[test]

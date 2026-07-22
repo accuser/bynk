@@ -1,0 +1,145 @@
+name: Stamp increments
+
+# Assign the version and ADR number(s) for a merged increment, on `main`, per the
+# increment-allocation track (ADR 0206, amended by the "stamp pushes as a GitHub
+# App" ADR). A feature PR lands a `design/pending/<slug>.md` carrying only intent
+# — bump level, changelog blurb, ADR prose — and no numbers; this workflow runs
+# `cargo xtask stamp --apply` on merge so the two serial counters are assigned in
+# merge order on `main`, where they can't collide, instead of being chosen in the
+# PR where parallel increments would conflict.
+#
+# `main` is protected by a repository ruleset (a pull request + the "CI green"
+# check are required), so a GITHUB_TOKEN push is rejected. The stamp instead
+# pushes as a GitHub App whose identity is in the ruleset's bypass list (secrets
+# STAMP_APP_ID / STAMP_APP_KEY). Absent the App/secrets/bypass, the job fails safe
+# — the stamp deletes pending files only after a successful bump and pushes
+# nothing on failure, so the pending file survives and the increment can be
+# recovered with a local `cargo xtask stamp --apply`.
+#
+# The bypass-actor token is a privilege-escalation prize, so it is minted only
+# *after* every step that runs untrusted transitive-dependency code (stamp,
+# build, test) and is handed to the push step alone via a one-shot URL — never
+# persisted in .git/config where a malicious build.rs could read it (#727).
+#
+# Unlike a GITHUB_TOKEN push, an App push DOES trigger workflows — so the stamp
+# commit runs the normal CI on `main` (a bonus: it is CI-validated, not only
+# self-validated) and re-fires this workflow. The job-level `if:` below skips that
+# re-run by the stamp commit's own message — the loop prevention the GITHUB_TOKEN
+# no-trigger property used to give for free.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "design/pending/**"
+      # The format doc is not an increment — editing it must not fire a (no-op)
+      # stamp run.
+      - "!design/pending/README.md"
+
+# Serialise stamps so two close merges never race the version counter; never
+# cancel a stamp mid-flight.
+concurrency:
+  group: stamp-main
+  cancel-in-progress: false
+
+# The App token does the writing; GITHUB_TOKEN needs nothing beyond read.
+permissions:
+  contents: read
+
+jobs:
+  stamp:
+    name: Stamp pending increments
+    runs-on: ubuntu-latest
+    # Skip the no-op re-run the stamp's own (App-pushed) commit triggers.
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(stamp):') }}
+    steps:
+      # Check out with the default read-only GITHUB_TOKEN and DO NOT persist it
+      # in .git/config. The bypass-actor App token is minted only *after* all the
+      # arbitrary crate code below (stamp, build, test — build.rs, proc macros,
+      # test binaries) has run, so a compromised transitive dependency can never
+      # read a push-to-protected-`main` credential off disk. See #727.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Full history for the rebase-retry push.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # bump-version.sh (which the stamp shells out to) runs `npm install
+      # --package-lock-only`, so the job needs Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "22"
+
+      # Assign versions + ADR numbers and materialise them: runs bump-version.sh,
+      # prepends the changelog row(s), writes the ADR file(s) + index row(s), and
+      # deletes the consumed pending file(s) — the delete happens only after the
+      # bump succeeds, so a failure in this or the next step leaves nothing to push.
+      - name: Stamp
+        run: cargo run --quiet --package xtask -- stamp --apply
+
+      # An App push runs CI on `main`, but that is after the fact — validate the
+      # stamp's own drift surface here so a bad stamp fails before it lands. Not
+      # the full suite: the increment's own code was already validated in its PR;
+      # only the mechanical bump's outputs need re-checking.
+      - name: Validate the stamped tree
+        run: |
+          cargo test --package bynkc --test doc_version
+          cargo test --package bynkc --test decisions_index
+          cargo build --workspace --locked
+          cargo test --package xtask
+
+      # Only now — after every arbitrary-code step above — mint the App token.
+      # It must be installed with `contents: write` and listed as a bypass actor
+      # on the `main protection` ruleset, so its push bypasses the pull-request +
+      # status-check rules. Nothing that runs a transitive dependency's code
+      # executes after this point, so the token never coexists on disk (or in an
+      # env var) with untrusted build/test code.
+      - name: Mint stamp-app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.STAMP_APP_ID }}
+          private-key: ${{ secrets.STAMP_APP_KEY }}
+
+      # Commit and push the stamp. Stage only the paths the stamp and
+      # bump-version.sh touch — never a blanket `git add -A`, which could sweep a
+      # stray file a build step left behind into an unreviewed commit on `main`.
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git add -A -- \
+            Cargo.toml Cargo.lock \
+            vscode-bynk tree-sitter-bynk bynk*/README.md \
+            site design
+          if git diff --cached --quiet; then
+            echo "No pending increments to stamp — nothing to push."
+            exit 0
+          fi
+          # Attribute the commit to the stamp App's bot identity.
+          slug='${{ steps.app-token.outputs.app-slug }}'
+          uid="$(gh api "/users/${slug}[bot]" --jq .id)"
+          git config user.name "${slug}[bot]"
+          git config user.email "${uid}+${slug}[bot]@users.noreply.github.com"
+          git commit -m "chore(stamp): assign version + ADR number(s) on merge"
+
+          # Checkout persisted no credentials (see above), so authenticate each
+          # remote operation with the App token via a one-shot, in-memory URL —
+          # never written to .git/config. The runner masks the App token (a
+          # registered secret, via create-github-app-token) in logs.
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          # A concurrent merge to main (e.g. a non-increment fix, which fires no
+          # stamp run of its own) can land between checkout and push, losing the
+          # fast-forward race. Rebase the stamp commit — it only adds numbered
+          # files and prepends table rows, so it rarely conflicts — and retry.
+          # An intermediate run losing this race is expected and benign; only a
+          # failure after the retries is a real problem to investigate.
+          for attempt in 1 2 3; do
+            git push "$remote" HEAD:main && exit 0
+            echo "push rejected (attempt $attempt); rebasing onto main and retrying"
+            git pull --rebase "$remote" main
+          done
+          git push "$remote" HEAD:main && exit 0
+          echo "stamp push still failing after rebase retries — run 'cargo xtask stamp --apply' locally and push" >&2
+          exit 1

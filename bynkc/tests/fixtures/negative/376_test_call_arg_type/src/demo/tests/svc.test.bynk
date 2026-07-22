@@ -1,0 +1,6 @@
+suite demo.svc {
+  case "call passes a wrong-typed argument" {
+    let r <- echo.call("not an int")
+    expect r == 2
+  }
+}

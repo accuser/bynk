@@ -1,4 +1,5 @@
 use super::*;
+use crate::emitter;
 use bynk_check::builtin_names::methods::{OF, UNSAFE};
 
 /// v0.19: the lock violation a deployment unit's native-platform set implies
@@ -122,6 +123,7 @@ pub(crate) fn check_platform_lock(
             groups
                 .get(&ctx)
                 .and_then(|idx| consumes_span_of(parsed, idx, unit))
+                .map(|(_, s)| s)
                 .unwrap_or_default()
         };
         match violation {
@@ -159,6 +161,282 @@ pub(crate) fn check_platform_lock(
                     ),
                 );
             }
+        }
+    }
+}
+
+/// message-bundles slice 1 (#859): per-commons validation for `messages`
+/// blocks — commons-only legality, exactly one `@reference` annotation
+/// across every `messages` block in the commons, a within-block duplicate
+/// `code`, and (since nothing in this compiler auto-injects a `uses`
+/// clause) that a commons declaring `messages` also `uses bynk.locale` —
+/// the generated bundle-scoped `render`'s fallback needs it in scope.
+///
+/// message-bundles slice 2 (#874): once cardinality confirms exactly one
+/// `@reference` block, a second pass diffs every other declared locale
+/// against it — reference-bundle completeness (`bynk.messages.incomplete`,
+/// one diagnostic per missing `(locale, code)` witness, mirroring
+/// `bynk.types.non_exhaustive_match`'s own one-witness-per-diagnostic
+/// convention) and cross-locale placeholder-*set* agreement
+/// (`bynk.messages.placeholder_mismatch`, only for codes present in both —
+/// a missing code is `incomplete`'s job, not this one's). Two blocks
+/// declaring the same locale tag are rejected outright
+/// (`bynk.resolve.duplicate_message_locale`, PR #875 review) — the emitter
+/// has no dedup of its own, so a silent last-wins here would let a hard
+/// `tsc` redeclare error (two colliding `const __messages_<tag>`
+/// declarations) through instead.
+pub(crate) fn check_messages_bundles(
+    parsed: &[ParsedFile],
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        let mut first_messages: Option<(usize, Span)> = None;
+        let mut reference_sites: Vec<(usize, Span)> = Vec::new();
+        let mut reference_block: Option<(usize, &MessagesDecl)> = None;
+        let mut by_tag: HashMap<&str, (usize, &MessagesDecl)> = HashMap::new();
+        for &i in indices {
+            for item in parsed[i].items() {
+                let CommonsItem::Messages(m) = item else {
+                    continue;
+                };
+                if first_messages.is_none() {
+                    first_messages = Some((i, m.span));
+                }
+                if kinds.get(name) != Some(&UnitKind::Commons) {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.messages.outside_commons",
+                            m.span,
+                            "`messages` declarations are only allowed inside a commons, not a context or adapter",
+                        ),
+                    );
+                    continue;
+                }
+                // message-bundles slice 2 (#874, PR #875 review): two blocks
+                // declaring the same locale tag are rejected, not
+                // last-write-wins — the emitter (`emit_messages_bundle`)
+                // has no dedup of its own and would emit two colliding
+                // `const __messages_<tag>` declarations, a hard `tsc`
+                // redeclare error. Mirrors `bynk.resolve.duplicate_fn`'s own
+                // shape: only the *first* occurrence seeds `by_tag`, so a
+                // third duplicate still reports against the original, not
+                // the second.
+                if let Some(&(_, prev)) = by_tag.get(m.tag.name.as_str()) {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.resolve.duplicate_message_locale",
+                            m.tag.span,
+                            format!(
+                                "locale \"{}\" is already declared in this bundle",
+                                m.tag.name
+                            ),
+                        )
+                        .with_label(prev.tag.span, "previously declared here"),
+                    );
+                } else {
+                    by_tag.insert(m.tag.name.as_str(), (i, m));
+                }
+                for ann in &m.annotations {
+                    if ann.name.name == "reference" {
+                        reference_sites.push((i, ann.span));
+                        reference_block = Some((i, m));
+                    }
+                }
+                let mut seen: HashMap<&str, Span> = HashMap::new();
+                for entry in &m.entries {
+                    if let Some(prev) = seen.get(entry.code.as_str()) {
+                        errors.push_for(
+                            Some(&parsed[i].identity_path),
+                            CompileError::new(
+                                "bynk.resolve.duplicate_message_code",
+                                entry.code_span,
+                                format!(
+                                    "message code \"{}\" is already declared in this block",
+                                    entry.code
+                                ),
+                            )
+                            .with_label(*prev, "previously declared here"),
+                        );
+                    } else {
+                        seen.insert(entry.code.as_str(), entry.code_span);
+                    }
+                    // message-bundles slice 3 (#878): runs unconditionally,
+                    // once per entry, regardless of `@reference` cardinality
+                    // — malformed ICU syntax shouldn't wait on cardinality
+                    // being resolved first.
+                    check_entry_icu_syntax(entry, Some(&parsed[i].identity_path), errors);
+                }
+            }
+        }
+        let Some((first_i, first_span)) = first_messages else {
+            continue;
+        };
+        if kinds.get(name) != Some(&UnitKind::Commons) {
+            // Already reported above (outside_commons) for every block;
+            // cardinality/uses checks don't apply to a non-commons unit.
+            continue;
+        }
+        match reference_sites.len() {
+            0 => {
+                errors.push_for(
+                    Some(&parsed[first_i].identity_path),
+                    CompileError::new(
+                        "bynk.messages.missing_reference",
+                        first_span,
+                        "a message bundle must have exactly one `@reference` block; none found",
+                    ),
+                );
+            }
+            1 => {
+                // message-bundles slice 2 (#874): "the reference" is only
+                // well-defined here — 0 or 2+ already reported their own
+                // diagnostic above, and completeness/placeholder-agreement
+                // against an ambiguous or absent reference would be noise.
+                let (_, reference) = reference_block
+                    .expect("reference_sites.len() == 1 implies reference_block is Some");
+                // Sorted for deterministic diagnostic order — `by_tag`'s
+                // HashMap iteration is not otherwise stable across runs.
+                let mut sorted_tags: Vec<&&str> = by_tag.keys().collect();
+                sorted_tags.sort();
+                for &&tag in &sorted_tags {
+                    let &(locale_i, locale_m) = &by_tag[tag];
+                    if tag == reference.tag.name.as_str() {
+                        continue;
+                    }
+                    for ref_entry in &reference.entries {
+                        let Some(locale_entry) =
+                            locale_m.entries.iter().find(|e| e.code == ref_entry.code)
+                        else {
+                            errors.push_for(
+                                Some(&parsed[locale_i].identity_path),
+                                CompileError::new(
+                                    "bynk.messages.incomplete",
+                                    locale_m.span,
+                                    format!(
+                                        "locale \"{tag}\" is missing code \"{}\", declared by the reference locale \"{}\"",
+                                        ref_entry.code, reference.tag.name
+                                    ),
+                                ),
+                            );
+                            continue;
+                        };
+                        let ref_names = emitter::placeholder_names(&ref_entry.template);
+                        let locale_names = emitter::placeholder_names(&locale_entry.template);
+                        if ref_names != locale_names {
+                            errors.push_for(
+                                Some(&parsed[locale_i].identity_path),
+                                CompileError::new(
+                                    "bynk.messages.placeholder_mismatch",
+                                    locale_entry.template_span,
+                                    format!(
+                                        "locale \"{tag}\"'s template for code \"{}\" uses placeholders {locale_names:?}, but the reference locale \"{}\"'s uses {ref_names:?}",
+                                        ref_entry.code, reference.tag.name
+                                    ),
+                                ),
+                            );
+                        }
+                        // message-bundles slice 3 (#878, Decision D): a name
+                        // present in both templates must also agree on ICU
+                        // format *kind* (plain/plural/select/number/date) —
+                        // a UI can't sanely alternate that per locale. A
+                        // missing name is `placeholder_mismatch`'s job, not
+                        // this one's; a malformed template's kinds are
+                        // silently absent from `template_format_kinds`
+                        // (already reported once by `check_entry_icu_syntax`
+                        // above, never double-reported here).
+                        let ref_kinds = emitter::template_format_kinds(&ref_entry.template);
+                        let locale_kinds = emitter::template_format_kinds(&locale_entry.template);
+                        for (pname, ref_kind) in &ref_kinds {
+                            let Some(locale_kind) = locale_kinds.get(pname) else {
+                                continue;
+                            };
+                            if locale_kind != ref_kind {
+                                errors.push_for(
+                                    Some(&parsed[locale_i].identity_path),
+                                    CompileError::new(
+                                        "bynk.messages.format_mismatch",
+                                        locale_entry.template_span,
+                                        format!(
+                                            "locale \"{tag}\"'s placeholder \"{pname}\" in code \"{}\" is formatted as {}, but the reference locale \"{}\"'s is {}",
+                                            ref_entry.code,
+                                            locale_kind.as_str(),
+                                            reference.tag.name,
+                                            ref_kind.as_str(),
+                                        ),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                let (_, first_ref_span) = reference_sites[0];
+                for &(i, span) in &reference_sites[1..] {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.messages.multiple_reference",
+                            span,
+                            "a message bundle must have exactly one `@reference` block; found more than one",
+                        )
+                        .with_label(first_ref_span, "first `@reference` here"),
+                    );
+                }
+            }
+        }
+        let has_locale_uses = unit_uses
+            .get(name)
+            .is_some_and(|targets| targets.iter().any(|t| t == "bynk.locale"));
+        if !has_locale_uses {
+            errors.push_for(
+                Some(&parsed[first_i].identity_path),
+                CompileError::new(
+                    "bynk.messages.missing_locale_dependency",
+                    first_span,
+                    "a commons declaring `messages` must also `uses bynk.locale`",
+                ),
+            );
+        }
+    }
+}
+
+/// message-bundles slice 3 (#878): reports `bynk.messages.malformed_icu_syntax`
+/// for every ICU-dispatch placeholder in `entry.template` that fails to
+/// parse (unbalanced arm braces, an unknown format keyword, `#` outside a
+/// `plural` arm, a missing mandatory `other` arm, or an explicitly
+/// out-of-scope construct — `selectordinal`, `offset:`/`=N`, an unrecognised
+/// skeleton). Runs once per entry, independent of `@reference` cardinality.
+///
+/// Decision C: no `MessageEntry` position-map field exists — the span is
+/// derived by byte-offset arithmetic against `entry.template_span`, which
+/// covers the *raw quoted source token*, while `entry.template` is the
+/// *decoded* value (only `\n \t \" \\` are decoded, each shrinking 2 raw
+/// bytes to 1 — `bynk-syntax/src/parser.rs`'s `parse_string_literal`). `+ 1`
+/// skips the opening quote. This is exact unless an escape occurs *earlier
+/// in the same template*, in which case the derived span under-shoots by the
+/// number of such escapes — a named, accepted approximation, not a claim of
+/// general precision (real message templates essentially never contain an
+/// escape before an ICU placeholder).
+fn check_entry_icu_syntax(entry: &MessageEntry, file: Option<&Path>, errors: &mut ErrorSink) {
+    for (inner_offset, inner) in emitter::icu_dispatch_placeholders(&entry.template) {
+        if let Err(e) = emitter::parse_icu_placeholder(inner) {
+            let decoded_start = inner_offset + e.offset;
+            let decoded_span = Span::new(decoded_start, decoded_start + e.len);
+            let raw_span = decoded_span.offset(entry.template_span.start + 1);
+            errors.push_for(
+                file,
+                CompileError::new(
+                    "bynk.messages.malformed_icu_syntax",
+                    raw_span,
+                    e.kind.message(),
+                ),
+            );
         }
     }
 }
@@ -229,6 +507,9 @@ fn walk_expr_for_constraints(
             for el in elems {
                 walk_expr_for_constraints(el, typed, consumed, local, errors);
             }
+        }
+        ExprKind::Wire(inner) => {
+            walk_expr_for_constraints(inner, typed, consumed, local, errors);
         }
         // v0.43: a hole's expression is checked like any other.
         ExprKind::InterpStr(parts) => {
@@ -3632,7 +3913,11 @@ pub(crate) fn type_ref_is_held(r: &TypeRef) -> bool {
 /// serialisable-value rule — hibernation preserves them, not JSON), and rejected
 /// in `Set`/`Log`/`Cache`. Non-held value types fall through to the ordinary
 /// boundary check.
-fn validate_store_field_value_types(f: &StoreField, errors: &mut Vec<CompileError>) {
+fn validate_store_field_value_types(
+    f: &StoreField,
+    types: &std::collections::HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
     let head = f.kind.head.name.as_str();
     let reject_held_storage = |span: Span, errors: &mut Vec<CompileError>| {
         errors.push(
@@ -3652,19 +3937,19 @@ fn validate_store_field_value_types(f: &StoreField, errors: &mut Vec<CompileErro
         // The value position(s) where a held resource is admitted.
         "Cell" => match f.kind.args.first() {
             Some(v) if type_ref_is_held(v) => {} // admitted
-            Some(v) => reject_fn_types(v, "an agent store field", errors),
+            Some(v) => reject_fn_types(v, "an agent store field", types, errors),
             None => {}
         },
         "Map" => match f.kind.args.as_slice() {
             [k, v] => {
-                reject_fn_types(k, "an agent store field", errors); // key
+                reject_fn_types(k, "an agent store field", types, errors); // key
                 if !type_ref_is_held(v) {
-                    reject_fn_types(v, "an agent store field", errors);
+                    reject_fn_types(v, "an agent store field", types, errors);
                 }
             }
             args => {
                 for arg in args {
-                    reject_fn_types(arg, "an agent store field", errors);
+                    reject_fn_types(arg, "an agent store field", types, errors);
                 }
             }
         },
@@ -3674,19 +3959,24 @@ fn validate_store_field_value_types(f: &StoreField, errors: &mut Vec<CompileErro
                 if type_ref_is_held(arg) {
                     reject_held_storage(arg.span(), errors);
                 } else {
-                    reject_fn_types(arg, "an agent store field", errors);
+                    reject_fn_types(arg, "an agent store field", types, errors);
                 }
             }
         }
         _ => {
             for arg in &f.kind.args {
-                reject_fn_types(arg, "an agent store field", errors);
+                reject_fn_types(arg, "an agent store field", types, errors);
             }
         }
     }
 }
 
-fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
+fn reject_fn_types(
+    r: &TypeRef,
+    what: &str,
+    types: &std::collections::HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
     match r {
         TypeRef::Fn(_, _, span) => {
             errors.push(
@@ -3755,36 +4045,49 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
         // v0.20b: the boundary rule looks through collections — a
         // `List[Int -> Int]` field is still `function_at_boundary`.
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
-            reject_fn_types(a, what, errors);
-            reject_fn_types(b, what, errors);
+            reject_fn_types(a, what, types, errors);
+            reject_fn_types(b, what, types, errors);
         }
         TypeRef::Option(a, _)
         | TypeRef::Effect(a, _)
         | TypeRef::HttpResult(a, _)
-        | TypeRef::List(a, _) => reject_fn_types(a, what, errors),
+        | TypeRef::List(a, _) => reject_fn_types(a, what, types, errors),
         // v0.119: a `History[Agent]` reaching a declared position is already
         // reported by the resolver (`bynk.history.outside_property`); nothing to
         // add here.
         TypeRef::History(_, _) => {}
-        // v0.157 (ADR 0183): a generic record instantiation is non-boundary in
-        // v1 — no monomorphised codec is generated for it, so it cannot appear
-        // in a serialised position (a record field, sum payload, handler
-        // signature, or agent store).
-        TypeRef::App { name, span, .. } => {
-            errors.push(
-                CompileError::new(
-                    "bynk.generics.generic_record_at_boundary",
-                    *span,
-                    format!(
-                        "generic record `{}` cannot appear in {what} — generic records are non-boundary in v0.157",
-                        name.name
+        // v0.174 (#592): a generic record instantiation is boundary-serialisable
+        // through its monomorphised codec (`serialise_Paginated_User`) — so the
+        // application itself is admitted, and the rule instead looks *through* it
+        // into the type arguments. A non-serialisable argument (a function, a
+        // `Query`, …) is rejected there, with the argument's own boundary error.
+        // (ADR 0183 Decision C's blanket `generic_record_at_boundary` rejection
+        // was the previous behaviour.) A *recursive* generic record — one that
+        // transitively contains itself, through any wrapper or generic argument —
+        // has no finite set of monomorphised codecs, so it is still rejected
+        // here (the resolver's `recursive_record_field` guard only catches a
+        // direct self-edge, not recursion through an `Option`/`List` wrapper).
+        TypeRef::App { name, args, span } => {
+            if generic_record_is_recursive(&name.name, types) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.generics.recursive_generic_at_boundary",
+                        *span,
+                        format!(
+                            "recursive generic record `{}` cannot appear in {what} — it has no finite monomorphised codec",
+                            name.name
+                        ),
+                    )
+                    .with_note(
+                        "a generic record that transitively contains itself is not yet \
+                         boundary-serialisable; use a concrete (non-generic) recursive type, \
+                         or break the cycle",
                     ),
-                )
-                .with_note(
-                    "use a generic record for internal values (construction, field access, helper returns); \
-                     a boundary payload must be a concrete (non-generic) type",
-                ),
-            );
+                );
+            }
+            for a in args {
+                reject_fn_types(a, what, types, errors);
+            }
         }
         TypeRef::Base(..)
         | TypeRef::Named(_)
@@ -3802,31 +4105,70 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
 /// in v0.20a — see ADR 0030), agent state fields, and agent keys. Free `fn`
 /// signatures are deliberately NOT walked — they are the non-boundary home
 /// of function types.
+///
+/// #696: each diagnostic is paired with the project-relative `identity_path` of
+/// the file whose items produced it, so the CLI renders it against that file's
+/// source.
 pub(crate) fn check_function_type_boundaries(
     parsed: &[ParsedFile],
-    errors: &mut Vec<CompileError>,
-) {
+) -> Vec<(PathBuf, CompileError)> {
+    // v0.174 (#592): the boundary check now also rejects a *recursive* generic
+    // record (`reject_fn_types`' `App` arm), which needs the type declarations to
+    // walk the containment graph. Build the project-wide table once — a generic
+    // referenced from one file may be declared in another.
+    let types = collect_type_decls(parsed.iter().flat_map(|pf| pf.items()));
+    let mut attributed: Vec<(PathBuf, CompileError)> = Vec::new();
     for pf in parsed {
-        check_function_type_boundary_items(pf.items(), errors);
+        let mut file_errors: Vec<CompileError> = Vec::new();
+        check_function_type_boundary_items(pf.items(), &types, &mut file_errors);
+        attributed.extend(
+            file_errors
+                .into_iter()
+                .map(|e| (pf.identity_path.clone(), e)),
+        );
     }
+    attributed
+}
+
+/// v0.174 (#592): a `name -> TypeDecl` table over a set of items, for the
+/// recursive-generic boundary walk.
+pub(crate) fn collect_type_decls<'a>(
+    items: impl Iterator<Item = &'a CommonsItem>,
+) -> std::collections::HashMap<String, TypeDecl> {
+    let mut out = std::collections::HashMap::new();
+    for item in items {
+        if let CommonsItem::Type(t) = item {
+            out.entry(t.name.name.clone()).or_insert_with(|| t.clone());
+        }
+    }
+    out
 }
 
 /// Item-level body of the boundary confinement, shared with the single-file
 /// (legacy) compile path in `bynkc`'s `lib.rs`.
-pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Vec<CompileError>) {
+pub fn check_function_type_boundary_items(
+    items: &[CommonsItem],
+    types: &std::collections::HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
     {
         for item in items {
             match item {
                 CommonsItem::Type(t) => match &t.body {
                     TypeBody::Record(r) => {
                         for f in &r.fields {
-                            reject_fn_types(&f.type_ref, "a record field", errors);
+                            reject_fn_types(&f.type_ref, "a record field", types, errors);
                         }
                     }
                     TypeBody::Sum(s) => {
                         for v in &s.variants {
                             for p in &v.payload {
-                                reject_fn_types(&p.type_ref, "a sum-variant payload", errors);
+                                reject_fn_types(
+                                    &p.type_ref,
+                                    "a sum-variant payload",
+                                    types,
+                                    errors,
+                                );
                             }
                         }
                     }
@@ -3838,6 +4180,7 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                             reject_fn_types(
                                 &p.type_ref,
                                 "a capability operation signature",
+                                types,
                                 errors,
                             );
                         }
@@ -3848,6 +4191,7 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                             reject_fn_types(
                                 &op.return_type,
                                 "a capability operation signature",
+                                types,
                                 errors,
                             );
                         }
@@ -3861,140 +4205,60 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                             // connection), so a `Connection[F]` parameter is
                             // admitted.
                             if !type_ref_is_held(&p.type_ref) {
-                                reject_fn_types(&p.type_ref, "a service handler signature", errors);
+                                reject_fn_types(
+                                    &p.type_ref,
+                                    "a service handler signature",
+                                    types,
+                                    errors,
+                                );
                             }
                         }
-                        reject_fn_types(&h.return_type, "a service handler signature", errors);
+                        reject_fn_types(
+                            &h.return_type,
+                            "a service handler signature",
+                            types,
+                            errors,
+                        );
                     }
                 }
                 CommonsItem::Agent(a) => {
-                    reject_fn_types(&a.key_type, "an agent key", errors);
+                    reject_fn_types(&a.key_type, "an agent key", types, errors);
                     for f in &a.store_fields {
-                        validate_store_field_value_types(f, errors);
+                        validate_store_field_value_types(f, types, errors);
                     }
                     for h in &a.handlers {
                         for p in &h.params {
                             // v0.102 (§2.9.4): a held value may be transferred to
                             // an agent handler as a parameter.
                             if !type_ref_is_held(&p.type_ref) {
-                                reject_fn_types(&p.type_ref, "an agent handler signature", errors);
+                                reject_fn_types(
+                                    &p.type_ref,
+                                    "an agent handler signature",
+                                    types,
+                                    errors,
+                                );
                             }
                         }
-                        reject_fn_types(&h.return_type, "an agent handler signature", errors);
-                    }
-                }
-                CommonsItem::Actor(a) => {
-                    if let Some(id) = &a.identity {
-                        reject_fn_types(id, "an actor identity type", errors);
-                    }
-                }
-                CommonsItem::Fn(_) | CommonsItem::Provider(_) => {}
-            }
-        }
-    }
-}
-
-/// v0.110 (ADR 0142 D8): the span of a `Bytes` reachable in a wire-signature
-/// position *without passing through a named type*. A `Bytes` inside a
-/// record/sum (`Named`) serialises through that type's own base64 codec and
-/// round-trips correctly even on the Workers wire; only a bare `Bytes` (or one
-/// under a generic wrapper) reaches the erased `any`-typed cross-context path,
-/// where it would silently mis-encode. The recursion therefore stops at
-/// `Named` — that is exactly the case v1 *does* support.
-fn bytes_wire_span(r: &TypeRef) -> Option<Span> {
-    match r {
-        TypeRef::Base(BaseType::Bytes, span) => Some(*span),
-        TypeRef::Base(..) | TypeRef::Named(_) => None,
-        // v0.157 (ADR 0183): a generic record instantiation never reaches the
-        // wire — it is rejected at the boundary before this walk runs.
-        TypeRef::App { .. } => None,
-        TypeRef::Option(a, _)
-        | TypeRef::Effect(a, _)
-        | TypeRef::HttpResult(a, _)
-        | TypeRef::List(a, _) => bytes_wire_span(a),
-        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
-            bytes_wire_span(a).or_else(|| bytes_wire_span(b))
-        }
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..)
-        | TypeRef::QueueResult(_)
-        | TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_)
-        | TypeRef::Unit(_) => None,
-    }
-}
-
-fn reject_bytes_wire(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
-    if let Some(span) = bytes_wire_span(r) {
-        errors.push(
-            CompileError::new(
-                "bynk.types.bytes_at_workers_boundary",
-                span,
-                format!(
-                    "a `Bytes` cannot yet cross a `workers` boundary in {what} — the erased Workers wire path does not base64-encode it, so it would silently mis-round-trip"
-                ),
-            )
-            .with_note(
-                "wrap the `Bytes` in a record (whose typed codec base64-encodes it), key on `toBase64()` as a `String`, or build with `--target bundle`; the erased workers edge awaits the roadmap's typed cross-context boundary fix",
-            ),
-        );
-    }
-}
-
-/// v0.110 (ADR 0142 D8): under `--target workers`, a bare `Bytes` in a wire
-/// signature (capability operation, service/agent handler) crosses the erased
-/// cross-context boundary, which does not base64-encode it. v1 guarantees the
-/// *typed* paths — `bundle` cross-context calls and `store`/record fields — and
-/// diagnoses this one rather than emitting a silent mis-encode. Run only under
-/// the Workers target; `bundle` calls are typed and round-trip a `Bytes` fine.
-pub(crate) fn check_bytes_workers_boundaries(
-    parsed: &[ParsedFile],
-    errors: &mut Vec<CompileError>,
-) {
-    for pf in parsed {
-        for item in pf.items() {
-            match item {
-                CommonsItem::Capability(c) => {
-                    for op in &c.ops {
-                        for p in &op.params {
-                            reject_bytes_wire(
-                                &p.type_ref,
-                                "a capability operation signature",
-                                errors,
-                            );
-                        }
-                        reject_bytes_wire(
-                            &op.return_type,
-                            "a capability operation signature",
+                        reject_fn_types(
+                            &h.return_type,
+                            "an agent handler signature",
+                            types,
                             errors,
                         );
                     }
                 }
-                CommonsItem::Service(s) => {
-                    for h in &s.handlers {
-                        for p in &h.params {
-                            reject_bytes_wire(&p.type_ref, "a service handler signature", errors);
-                        }
-                        reject_bytes_wire(&h.return_type, "a service handler signature", errors);
+                CommonsItem::Actor(a) => {
+                    if let Some(id) = &a.identity {
+                        reject_fn_types(id, "an actor identity type", types, errors);
                     }
                 }
-                CommonsItem::Agent(a) => {
-                    for h in &a.handlers {
-                        for p in &h.params {
-                            reject_bytes_wire(&p.type_ref, "an agent handler signature", errors);
-                        }
-                        reject_bytes_wire(&h.return_type, "an agent handler signature", errors);
-                    }
-                }
-                _ => {}
+                // slice 1: `MessageEntry.code`/`.template` are plain string
+                // literals, no fn-type-bearing fields to reject here.
+                CommonsItem::Fn(_) | CommonsItem::Provider(_) | CommonsItem::Messages(_) => {}
             }
         }
     }
 }
-
 #[cfg(test)]
 mod platform_lock_tests {
     use super::{LockViolation, Platform, lock_violation};

@@ -7,7 +7,7 @@
 //! `ts_*`/`LowerCtx` core stay in the parent and are reached via `use super::*`.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::project::EmitProjectCtx;
@@ -67,6 +67,11 @@ pub(crate) fn emit_type(
 
 /// Emit a doc block as a JSDoc-style comment at the given indent. Each line
 /// of the doc body is prefixed with ` * `; empty lines become ` *`.
+///
+/// Doc-block bodies are copied verbatim from source, so a stray `*/` would
+/// otherwise close the JSDoc comment early and let the trailing text land as
+/// executable top-level TypeScript (issue #720). Escape it to `*\/`, which
+/// renders identically but can no longer terminate the comment.
 pub(crate) fn emit_doc_block(out: &mut String, doc: Option<&str>, indent: usize) {
     let Some(doc) = doc else { return };
     let indent_str: String = " ".repeat(indent);
@@ -76,7 +81,8 @@ pub(crate) fn emit_doc_block(out: &mut String, doc: Option<&str>, indent: usize)
         if trimmed.is_empty() {
             writeln!(out, "{indent_str} *").unwrap();
         } else {
-            writeln!(out, "{indent_str} * {trimmed}").unwrap();
+            let safe = trimmed.replace("*/", "*\\/");
+            writeln!(out, "{indent_str} * {safe}").unwrap();
         }
     }
     writeln!(out, "{indent_str} */").unwrap();
@@ -136,7 +142,7 @@ fn emit_refined_type(
         writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
         writeln!(out, "  }},").unwrap();
     }
-    emit_attached_methods(out, &t.name.name, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
@@ -300,13 +306,33 @@ fn emit_record_type(out: &mut String, t: &TypeDecl, r: &RecordBody, commons: &Ty
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
-    emit_attached_methods(out, &t.name.name, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
 
 fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCommons) {
-    writeln!(out, "export type {name} =", name = t.name.name).unwrap();
+    // #593: a generic sum erases to a TypeScript generic discriminated union,
+    // exactly as a generic record erases to `interface Name<T>`. The type
+    // parameters ride the `export type` header and each payload constructor
+    // (`Some: <T>(v: T): Opt<T> => …`); a payload-less constructor stays a
+    // constant, cast to the all-`never` instantiation (`Opt<never>`), which is
+    // assignable to every `Opt<X>` since the nullary arm names no parameter.
+    // Both strings are empty for a non-generic sum, keeping its output identical.
+    let params = ts_type_params(&t.type_params);
+    let never_args = if t.type_params.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<{}>",
+            t.type_params
+                .iter()
+                .map(|_| "never")
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    writeln!(out, "export type {name}{params} =", name = t.name.name).unwrap();
     for (i, v) in s.variants.iter().enumerate() {
         let pipe = if i == 0 { " " } else { "|" };
         if v.payload.is_empty() {
@@ -345,13 +371,13 @@ fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCom
         if v.payload.is_empty() {
             writeln!(
                 out,
-                "  {tag}: {{ tag: \"{tag}\" }} as {name},",
+                "  {tag}: {{ tag: \"{tag}\" }} as {name}{never_args},",
                 tag = v.name.name,
                 name = t.name.name,
             )
             .unwrap();
         } else {
-            let params: Vec<String> = v
+            let ctor_params: Vec<String> = v
                 .payload
                 .iter()
                 .map(|f| {
@@ -365,21 +391,27 @@ fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCom
             let obj_fields: Vec<String> = v.payload.iter().map(|f| f.name.name.clone()).collect();
             writeln!(
                 out,
-                "  {tag}: ({params}): {name} => ({{ tag: \"{tag}\", {fields} }}),",
+                "  {tag}: {params}({ctor_params}): {name}{params} => ({{ tag: \"{tag}\", {fields} }}),",
                 tag = v.name.name,
-                params = params.join(", "),
+                params = params,
+                ctor_params = ctor_params.join(", "),
                 name = t.name.name,
                 fields = obj_fields.join(", "),
             )
             .unwrap();
         }
     }
-    emit_attached_methods(out, &t.name.name, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
 
-fn emit_attached_methods(out: &mut String, type_name: &str, commons: &TypedCommons) {
+fn emit_attached_methods(
+    out: &mut String,
+    type_name: &str,
+    type_params: &[TypeParam],
+    commons: &TypedCommons,
+) {
     for item in &commons.commons.items {
         let CommonsItem::Fn(f) = item else { continue };
         let FnName::Method {
@@ -392,7 +424,7 @@ fn emit_attached_methods(out: &mut String, type_name: &str, commons: &TypedCommo
         if t.name != type_name {
             continue;
         }
-        emit_method(out, f, type_name, method_name, commons);
+        emit_method(out, f, type_name, type_params, method_name, commons);
     }
 }
 
@@ -449,13 +481,22 @@ fn emit_method(
     out: &mut String,
     f: &FnDecl,
     type_name: &str,
+    type_params: &[TypeParam],
     method_name: &Ident,
     commons: &TypedCommons,
 ) {
     emit_doc_block(out, f.documentation.as_deref(), INDENT_STEP);
+    // #594: a method on a generic type erases to a generic namespace-object
+    // member. The namespace `const` cannot itself carry `<T>`, so the type's own
+    // parameters are threaded onto *each* method alongside the method's own
+    // (`map<T, U>(self: Box<T>, …)`). `ts_type_params` is empty for a
+    // non-generic type, keeping the pre-#594 output byte-identical.
+    let self_ty_args = ts_type_params(type_params);
+    let mut method_generics: Vec<TypeParam> = type_params.to_vec();
+    method_generics.extend(f.type_params.iter().cloned());
     let mut params: Vec<String> = Vec::new();
     if f.has_self {
-        params.push(format!("self: {type_name}"));
+        params.push(format!("self: {type_name}{self_ty_args}"));
     }
     for p in &f.params {
         params.push(format!(
@@ -466,8 +507,9 @@ fn emit_method(
     }
     writeln!(
         out,
-        "  {method}({params}): {ret} {{",
+        "  {method}{generics}({params}): {ret} {{",
         method = method_name.name,
+        generics = ts_type_params(&method_generics),
         params = params.join(", "),
         ret = ts_type_ref(&f.return_type),
     )
@@ -806,6 +848,336 @@ fn sanitise_path_segment(s: &str) -> String {
         }
     }
     out
+}
+
+// -- message-bundles slice 1 (#859) --
+
+/// A `{name}` placeholder (plain, or — message-bundles slice 3 (#878) — an
+/// ICU-dispatch placeholder whose `inner` text contains a `,`) or a run of
+/// literal text inside a message template. `offset` is the byte offset in
+/// the owning template where `inner`/the placeholder's content begins (right
+/// after the opening `{`) — used by slice 3's `icu::icu_dispatch_placeholders`
+/// to rebase parse-error spans (Decision C).
+pub(crate) enum TemplateSegment<'a> {
+    Literal(&'a str),
+    Placeholder { offset: usize, inner: &'a str },
+}
+
+/// Compile-time string scan splitting a template into literal/placeholder
+/// segments (Decision D, message-bundles slice 1 — no new lexer/parser
+/// grammar; `{name}` is resolved by this Rust-side scan during lowering, not
+/// parsed as an expression). A `{` with no matching `}`, or an empty `{}`, is
+/// just literal text — malformed-placeholder checking is out of scope here.
+/// The name is taken verbatim, with no whitespace trimming: `{ name }` is a
+/// placeholder literally named `" name "`, which will never match a `params`
+/// key and so always renders as literal text (PR #872 review) — a real rough
+/// edge, left for a future slice rather than guessed at here.
+///
+/// message-bundles slice 3 (#878): if a `,` appears before the placeholder's
+/// naive (non-nested) closing `}`, it's treated as an ICU-dispatch
+/// placeholder instead of a plain one — the true close is then found via a
+/// quote+depth-aware scan (`icu::find_icu_close`), since an ICU construct's
+/// arms can themselves contain nested `{…}` bodies. This is the *only*
+/// change from slice 1/2's behaviour: a template with no comma inside any
+/// `{…}` is scanned byte-for-byte identically to before.
+pub(crate) fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
+    let mut segments = Vec::new();
+    let mut literal_start = 0;
+    let mut i = 0;
+    while i < template.len() {
+        if template.as_bytes()[i] == b'{' {
+            let rest = &template[i + 1..];
+            let first_close = rest.find('}');
+            let first_comma = rest.find(',');
+            let is_icu = match (first_comma, first_close) {
+                (Some(c), Some(cl)) => c < cl,
+                (Some(_), None) => true,
+                (None, _) => false,
+            };
+            if is_icu {
+                if let Some(close_rel) = icu::find_icu_close(rest) {
+                    let inner = &rest[..close_rel];
+                    if literal_start < i {
+                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
+                    }
+                    segments.push(TemplateSegment::Placeholder {
+                        offset: i + 1,
+                        inner,
+                    });
+                    i = i + 1 + close_rel + 1;
+                    literal_start = i;
+                    continue;
+                }
+                // No true close found anywhere — falls through to the
+                // one-char literal advance below, same as an unmatched `{`.
+            } else if let Some(rel_end) = first_close {
+                let name = &rest[..rel_end];
+                if !name.is_empty() && !name.contains('{') {
+                    if literal_start < i {
+                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
+                    }
+                    segments.push(TemplateSegment::Placeholder {
+                        offset: i + 1,
+                        inner: name,
+                    });
+                    i = i + 1 + rel_end + 1;
+                    literal_start = i;
+                    continue;
+                }
+            }
+        }
+        // Advance by one char (not one byte) to stay on UTF-8 boundaries.
+        i += template[i..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(1);
+    }
+    if literal_start < template.len() || segments.is_empty() {
+        segments.push(TemplateSegment::Literal(&template[literal_start..]));
+    }
+    segments
+}
+
+/// message-bundles slice 2 (#874): a template's placeholder-name *set*, for
+/// cross-locale agreement checking (`bynk-emit/src/project/validate.rs`).
+/// Exposes only the name set, not `TemplateSegment` itself, keeping the
+/// checker's dependency on the emitter narrow. message-bundles slice 3
+/// (#878): an ICU-dispatch placeholder's name is its `inner` text up to the
+/// first top-level comma, trimmed — a plain placeholder's `inner` never
+/// contains a comma (by construction of `split_template`'s `is_icu` decision
+/// above), so it's returned verbatim, preserving the untrimmed-name quirk
+/// documented on `split_template` exactly as before.
+pub(crate) fn placeholder_names(template: &str) -> BTreeSet<&str> {
+    split_template(template)
+        .into_iter()
+        .filter_map(|s| match s {
+            TemplateSegment::Placeholder { inner, .. } => Some(match inner.find(',') {
+                None => inner,
+                Some(idx) => inner[..idx].trim(),
+            }),
+            TemplateSegment::Literal(_) => None,
+        })
+        .collect()
+}
+
+/// One message entry's TS renderer: `(params) => <expr>`. A literal-only
+/// template collapses to a plain string; a template with placeholders becomes
+/// a `+`-concatenation, each placeholder substituted from `params` via
+/// `renderArg` (imported from `bynk.locale`, never duplicated here) when
+/// present, else left as the literal `{name}` token — total, never throws,
+/// matching `render`'s own totality contract.
+///
+/// message-bundles slice 3 (#878): an ICU-dispatch placeholder (`inner`
+/// contains a `,`) instead becomes `emit_icu_placeholder`'s codegen, which
+/// needs `locale_tag` to construct `Intl.*` at runtime. `Err(_)` (a
+/// malformed ICU construct) is unreachable in practice — the checker
+/// (`bynk.messages.malformed_icu_syntax`) already rejects it before emission
+/// runs on an error-free project — but is handled totally, matching this
+/// function's own "never throws" contract, rather than `unreachable!()`.
+fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry, locale_tag: &str) {
+    write!(out, "(params: ReadonlyMap<string, MessageArg>): string => ").unwrap();
+    let segments = split_template(&entry.template);
+    let parts: Vec<String> = segments
+        .iter()
+        .map(|s| match s {
+            TemplateSegment::Literal(lit) => format!("\"{}\"", escape_ts_string(lit)),
+            TemplateSegment::Placeholder { inner, .. } => match inner.find(',') {
+                None => {
+                    let key = format!("\"{}\"", escape_ts_string(inner));
+                    let fallback = format!("\"{{{}}}\"", escape_ts_string(inner));
+                    format!(
+                        "(params.get({key}) !== undefined ? renderArg(params.get({key}) as MessageArg) : {fallback})"
+                    )
+                }
+                Some(_) => match icu::parse_icu_placeholder(inner) {
+                    Ok(p) => emit_icu_placeholder(&p, locale_tag),
+                    Err(_) => {
+                        let name = inner.split(',').next().unwrap_or(inner).trim();
+                        format!("\"{{{}}}\"", escape_ts_string(name))
+                    }
+                },
+            },
+        })
+        .collect();
+    if parts.is_empty() {
+        write!(out, "\"\"").unwrap();
+    } else {
+        write!(out, "{}", parts.join(" + ")).unwrap();
+    }
+}
+
+/// message-bundles slice 3 (#878): codegen for one ICU-dispatch placeholder.
+/// Each kind emits as an IIFE (matching this file's own "non-tail dispatch
+/// becomes an IIFE" idiom) guarding on the looked-up `MessageArg`'s `.tag`
+/// before touching `.value` — TS narrows `__arg` to the matching variant
+/// after the guard, so no cast is needed. Falls back to the literal
+/// `"{name}"` text when the param is missing or the wrong `MessageArg`
+/// variant, matching the plain-placeholder fallback's own convention.
+fn emit_icu_placeholder(p: &icu::IcuPlaceholder<'_>, locale_tag: &str) -> String {
+    let tag_lit = format!("\"{}\"", escape_ts_string(locale_tag));
+    let key = format!("\"{}\"", escape_ts_string(p.name));
+    let fallback = format!("\"{{{}}}\"", escape_ts_string(p.name));
+    let arg = format!("params.get({key})");
+    match &p.kind {
+        icu::PlaceholderKind::Plural { arms } => {
+            let arms_obj: Vec<String> = arms
+                .iter()
+                .map(|(cat, segs)| {
+                    format!("\"{}\": {}", cat.as_str(), emit_sub_message(segs, &tag_lit))
+                })
+                .collect();
+            format!(
+                "((__arg) => __arg === undefined || (__arg.tag !== \"Whole\" && __arg.tag !== \"Num\") ? {fallback} : selectPluralArm({tag_lit}, __arg.value, {{ {} }}))({arg})",
+                arms_obj.join(", ")
+            )
+        }
+        icu::PlaceholderKind::Select { arms } => {
+            let arms_obj: Vec<String> = arms
+                .iter()
+                .map(|(k, segs)| {
+                    format!(
+                        "\"{}\": {}",
+                        escape_ts_string(k),
+                        emit_sub_message(segs, &tag_lit)
+                    )
+                })
+                .collect();
+            format!(
+                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback}; }} const __arms: Record<string, string> = {{ {} }}; return __arms[__arg.value] ?? __arms[\"other\"]; }})({arg})",
+                arms_obj.join(", ")
+            )
+        }
+        icu::PlaceholderKind::Number { style } => {
+            let style_arg = style
+                .map(|s| format!(", \"{}\"", s.as_str()))
+                .unwrap_or_default();
+            format!(
+                "((__arg) => __arg !== undefined && (__arg.tag === \"Whole\" || __arg.tag === \"Num\") ? formatIcuNumber({tag_lit}, __arg.value{style_arg}) : {fallback})({arg})"
+            )
+        }
+        icu::PlaceholderKind::Date { style } => {
+            let style_arg = style
+                .map(|s| format!(", \"{}\"", s.as_str()))
+                .unwrap_or_default();
+            format!(
+                "((__arg) => __arg !== undefined && __arg.tag === \"Moment\" ? formatIcuDate({tag_lit}, __arg.value{style_arg}) : {fallback})({arg})"
+            )
+        }
+    }
+}
+
+/// Turns one `plural`/`select` arm's sub-message into a `+`-joined TS
+/// expression, evaluated inside `emit_icu_placeholder`'s IIFE where `__arg`
+/// is already in scope and narrowed. `Hash` only ever occurs in a `plural`
+/// arm (the parser's `allow_hash` guarantees a `select` arm never contains
+/// one), where `__arg.value: number` after narrowing.
+fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str) -> String {
+    if segs.is_empty() {
+        return "\"\"".to_string();
+    }
+    segs.iter()
+        .map(|seg| match seg {
+            icu::SubSegment::Literal(s) => format!("\"{}\"", escape_ts_string(s)),
+            icu::SubSegment::Hash => format!("formatIcuNumber({tag_lit}, __arg.value)"),
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// Compiles every `messages` block in one commons into one `code ->
+/// renderer` lookup per locale, a shared dispatch object keyed by locale tag,
+/// and one bundle-scoped `render(tag, msg)` that looks up the resolved
+/// `tag`'s own table, else the `@reference` locale's, else falls back to
+/// `bynk.locale`'s own `render` (imported under the private alias
+/// `__bynkLocaleRender` — `emit_unit`, project.rs — since this file's own
+/// `render` would otherwise collide with the imported name) for any code no
+/// declared locale covers. Also exports the bundle's declared-locale set and
+/// reference tag (message-bundles slice 2, #874, ADR 0273) — the
+/// precondition Locale's own slice 2 (negotiation) needs before it can
+/// start.
+///
+/// `blocks` is every `CommonsItem::Messages` in the commons, in source
+/// order; `reference` is the one block among them carrying `@reference` —
+/// the caller (`emit_project`) already found it to decide *whether* to call
+/// this function at all, so it's passed in rather than re-derived here (PR
+/// #875 review — a harmless but needless second scan).
+pub(crate) fn emit_messages_bundle(
+    out: &mut String,
+    blocks: &[&MessagesDecl],
+    reference: &MessagesDecl,
+) {
+    let reference_tag = escape_ts_string(&reference.tag.name);
+
+    let mut tables = Vec::with_capacity(blocks.len());
+    for m in blocks {
+        emit_doc_block(out, m.documentation.as_deref(), 0);
+        let table = format!("__messages_{}", ts_ident(&m.tag.name));
+        writeln!(
+            out,
+            "const {table}: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {{"
+        )
+        .unwrap();
+        for entry in &m.entries {
+            write!(out, "  \"{}\": ", escape_ts_string(&entry.code)).unwrap();
+            emit_message_entry_renderer(out, entry, &m.tag.name);
+            writeln!(out, ",").unwrap();
+        }
+        writeln!(out, "}};").unwrap();
+        writeln!(out).unwrap();
+        tables.push((escape_ts_string(&m.tag.name), table));
+    }
+
+    writeln!(
+        out,
+        "const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
+    )
+    .unwrap();
+    for (tag, table) in &tables {
+        writeln!(out, "  \"{tag}\": {table},").unwrap();
+    }
+    writeln!(out, "}};").unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(
+        out,
+        "export const messagesReferenceLocale: LocaleTag = (\"{reference_tag}\" as string) as LocaleTag;"
+    )
+    .unwrap();
+    let locale_list: Vec<String> = tables
+        .iter()
+        .map(|(tag, _)| format!("(\"{tag}\" as string) as LocaleTag"))
+        .collect();
+    writeln!(
+        out,
+        "export const messagesLocales: readonly LocaleTag[] = [{}];",
+        locale_list.join(", ")
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(
+        out,
+        "export function render(tag: LocaleTag, msg: Message): string {{"
+    )
+    .unwrap();
+    writeln!(out, "  const __localeTable = messagesByLocale[tag];").unwrap();
+    writeln!(
+        out,
+        "  const __referenceTable = messagesByLocale[messagesReferenceLocale];"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];"
+    )
+    .unwrap();
+    writeln!(out, "  if (__entry !== undefined) {{").unwrap();
+    writeln!(out, "    return __entry(msg.params);").unwrap();
+    writeln!(out, "  }}").unwrap();
+    writeln!(out, "  return __bynkLocaleRender(tag, msg);").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
 }
 
 // -- v0.5 emission --
@@ -1495,6 +1867,24 @@ fn emit_context_deps_interface(
     deps_name
 }
 
+/// v0.54 (#655): whether any of `services` declares an `on call … by c: Caller`
+/// handler, whose emitted `deps` carries the calling context's qualified name as
+/// its `CallerId` identity (ADR 0092). This is the *single* predicate both
+/// bundle caller-identity seams consult — `emit_make_surface` (which adds the
+/// `__caller` parameter) and the compose root (which passes the name) — so the
+/// two can never disagree on which providers thread a caller. `caller_binder_for`
+/// self-guards `HandlerKind::Call`, so no kind filter is needed or wanted here.
+pub(crate) fn any_service_binds_caller<'a>(
+    services: impl IntoIterator<Item = &'a ServiceDecl>,
+    actors: &HashMap<String, ActorDecl>,
+) -> bool {
+    services.into_iter().any(|s| {
+        s.handlers
+            .iter()
+            .any(|h| bynk_check::actors::caller_binder_for(h, actors).is_some())
+    })
+}
+
 /// Emit the `makeSurface(deps)` function for a context that exposes
 /// services to other contexts (v0.6 §6.3 / §6.4).
 pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) {
@@ -1511,7 +1901,23 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         return;
     }
     let deps_name = emit_context_deps_interface(out, commons, ctx);
-    writeln!(out, "export function makeSurface(deps: {deps_name}) {{").unwrap();
+    // v0.54 (#655): an `on call … by c: Caller` handler reads a live `CallerId`
+    // (the calling context's qualified name) threaded through `deps.identity`.
+    // In bundle mode the compose root supplies that name to `makeSurface` as a
+    // second `__caller` argument — the analogue of the `X-Bynk-Caller` header a
+    // Worker reads at its entry (ADR 0092). Only a context with such a handler
+    // takes the extra parameter, so a caller-free surface is byte-unchanged. The
+    // shared `any_service_binds_caller` predicate is what keeps this seam and the
+    // compose root in lockstep on which providers get the extra argument.
+    let binds_caller =
+        |h: &Handler| bynk_check::actors::caller_binder_for(h, &ctx.actors).is_some();
+    let any_caller = any_service_binds_caller(services.iter().copied(), &ctx.actors);
+    let params = if any_caller {
+        format!("deps: {deps_name}, __caller: string")
+    } else {
+        format!("deps: {deps_name}")
+    };
+    writeln!(out, "export function makeSurface({params}) {{").unwrap();
     writeln!(out, "  return {{").unwrap();
     for s in &services {
         // For each handler kind currently only `call`. We bind it as a
@@ -1533,6 +1939,13 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
             .collect();
         let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
         let ret = ts_type_ref(&h.return_type);
+        // A Caller-binding handler's `deps.identity` is the caller name the
+        // compose root threaded in; every other handler forwards `deps` verbatim.
+        let deps_arg = if binds_caller(h) {
+            "{ ...deps, identity: __caller }"
+        } else {
+            "deps"
+        };
         writeln!(
             out,
             "    {async_kw}{sname}({params}): {ret} {{",
@@ -1542,7 +1955,7 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         .unwrap();
         writeln!(
             out,
-            "      return {svc}.call({args}{sep}deps);",
+            "      return {svc}.call({args}{sep}{deps_arg});",
             svc = s.name.name,
             args = param_args.join(", "),
             sep = if param_args.is_empty() { "" } else { ", " },
@@ -1566,144 +1979,114 @@ pub(crate) fn lower_workers_cross_context_call(
     stmts: &mut Vec<String>,
     cx: &mut LowerCtx<'_>,
 ) -> String {
+    use crate::emitter::serialisation::{deserialise_ref_via, serialise_expr_via};
+
     let info = cx.cross_context;
-    let consumed_ns = qualified_to_ns(consumed);
     let binding = crate::emitter::wrangler::consumed_binding_name(consumed);
 
     // Look up the service signature on the consumed context.
+    //
+    // v0.176 (#642, Decision C): the checker resolved this call before the
+    // emitter ran, so an absent signature is the emitter disagreeing with the
+    // checker — a compiler bug. It used to lower to `value as JsonValue` and an
+    // `((j: any) => ({ tag: "Ok", value: j }))` identity deserialiser, shipping
+    // an unvalidated `any` to production to paper over that bug. Fail instead.
     let svc = info
         .consumed_services
         .get(consumed)
-        .and_then(|map| map.get(&method.name));
+        .and_then(|map| map.get(&method.name))
+        .unwrap_or_else(|| {
+            panic!(
+                "bynk.emit.unresolved_cross_context_signature: no signature for \
+                 `{consumed}.{}` at emit time, though the checker resolved the call",
+                method.name
+            )
+        });
 
-    // Build serialised-arg expression. If we know the parameter types, use
-    // the owning context's serialise_<T> helper; otherwise fall back to
-    // `value as JsonValue`.
+    // #661 (ADR 0199 Decision G discharged): a context's own handlers generate
+    // their *own* codecs for the contracts they participate in
+    // (`emit_boundary_helpers`), so the call site reaches them **locally** — no
+    // namespace prefix. The consumed context's module is then imported for types
+    // only (`import type * as <ns>`), which is what makes each Worker
+    // self-contained: `commerce-orders` no longer bundles `commerce-payment`'s
+    // provider implementation.
+    //
+    // The generated **test harness** (`tests/*.test.ts`) is the exception: it
+    // imports every participating Worker's `handlers.js` as a real value module
+    // (it wires the `env` bindings from them) and does *not* generate its own
+    // codecs, so there it still reaches the callee's codecs through that value
+    // namespace. `in_test_scaffold()` is exactly that discriminator.
+    let ns = if cx.in_test_scaffold() {
+        format!("{}.", qualified_to_ns(consumed))
+    } else {
+        String::new()
+    };
+
+    // One invariant for arity, asserted once, in both directions. The checker
+    // validated it (`bynk.consumes.service_arity`) before emit ran, so a mismatch
+    // either way is the emitter disagreeing with the checker — the same internal
+    // fault the signature lookup above asserts on, and it gets the same answer.
+    // (Previously the two directions disagreed: a surplus argument panicked, while
+    // a missing one silently emitted `null` into the args object — quietly sending
+    // a wrong payload for exactly the fault the other direction refused to ship.)
+    assert_eq!(
+        args.len(),
+        svc.params.len(),
+        "bynk.emit.unresolved_cross_context_signature: `{consumed}.{}` takes {} argument(s) \
+         but the call site has {}, though the checker accepted the call's arity",
+        method.name,
+        svc.params.len(),
+        args.len(),
+    );
+
     let mut args_serialised: Vec<String> = Vec::new();
     for (i, a) in args.iter().enumerate() {
         let lowered = lower_expr(a, stmts, cx);
-        let param_ty = svc.and_then(|s| s.params.get(i)).map(|(_, t)| t);
-        let serialised = match param_ty {
-            Some(tr) => workers_serialise_expr(tr, &lowered, &consumed_ns),
-            None => format!("{lowered} as JsonValue"),
-        };
-        args_serialised.push(serialised);
+        let (_, param_ty) = &svc.params[i];
+        args_serialised.push(serialise_expr_via(param_ty, &lowered, &ns));
     }
     let args_json = if args_serialised.len() == 1 {
         args_serialised.into_iter().next().unwrap()
     } else {
         // Multi-arg: wrap into an object literal keyed by parameter names.
         let pairs: Vec<String> = svc
-            .map(|s| {
-                s.params
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (name, _))| {
-                        let serialised = args_serialised
-                            .get(i)
-                            .cloned()
-                            .unwrap_or_else(|| "null".to_string());
-                        format!("{name}: {serialised}")
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|| {
-                args_serialised
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .map(|(i, s)| format!("arg{i}: {s}"))
-                    .collect()
-            });
+            .params
+            .iter()
+            .zip(&args_serialised)
+            .map(|((name, _), serialised)| format!("{name}: {serialised}"))
+            .collect();
         format!("{{ {} }}", pairs.join(", "))
     };
 
-    // Deserialise the return value via the consumed context's helper.
-    let deser_ref = match svc {
-        Some(s) => workers_deserialise_ref(&s.return_type, &consumed_ns),
-        None => "((j: any) => ({ tag: \"Ok\", value: j }))".to_string(),
-    };
+    let deser_ref = deserialise_ref_via(&svc.return_type, &ns);
 
     // v0.54: stamp the calling context's qualified name so the callee's
     // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
     // constant; the args body is unchanged.
     let caller = escape_ts_string(&cx.commons.commons.name.joined());
+
+    // v0.177 (#643): stamp this context's compiled view of the callee's
+    // contract, so the callee can fail closed when the deployed pair disagree.
+    //
+    // Canonicalised in the **callee's** namespace, from the callee's own type
+    // table (`consumed_types[consumed]`) — never this context's. The callee
+    // builds the same table for itself via the same `combined_types_for`, so the
+    // two hashes agree by construction on a single build and differ only when
+    // the deployed sources genuinely differ. Canonicalising here in the caller's
+    // namespace would rebrand the same types and 409 every call.
+    let contract = match info.consumed_types.get(consumed) {
+        Some(types) => bynk_check::contract::service_contract_hash(svc, types),
+        // Unreachable alongside the signature assertion above: the same resolver
+        // pass populates both maps for a consumed context.
+        None => unreachable!(
+            "consumed_types missing for `{consumed}`, though its service signature resolved"
+        ),
+    };
+
     format!(
-        "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\")",
+        "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\", \"{contract}\")",
         method.name
     )
-}
-
-fn workers_serialise_expr(tr: &TypeRef, value: &str, owning_ns: &str) -> String {
-    match tr {
-        TypeRef::Base(_, _) => format!("{value} as JsonValue"),
-        TypeRef::Named(id) => format!("{owning_ns}.serialise_{}({value})", id.name),
-        TypeRef::Result(_, _, _) | TypeRef::Option(_, _) => {
-            let inst = workers_inner_ts_name(tr);
-            format!("{owning_ns}.serialise_{inst}({value})")
-        }
-        TypeRef::Effect(inner, _) => workers_serialise_expr(inner, value, owning_ns),
-        _ => format!("{value} as JsonValue"),
-    }
-}
-
-fn workers_deserialise_ref(tr: &TypeRef, owning_ns: &str) -> String {
-    // Strip the Effect wrapper — the caller already awaits the Promise.
-    let inner = match tr {
-        TypeRef::Effect(t, _) => t.as_ref(),
-        other => other,
-    };
-    match inner {
-        TypeRef::Named(id) => format!("{owning_ns}.deserialise_{}", id.name),
-        TypeRef::Result(_, _, _)
-        | TypeRef::Option(_, _)
-        | TypeRef::List(_, _)
-        | TypeRef::Map(_, _, _) => {
-            let inst = workers_inner_ts_name(inner);
-            format!("{owning_ns}.deserialise_{inst}")
-        }
-        _ => "((j: any) => ({ tag: \"Ok\", value: j }))".to_string(),
-    }
-}
-
-fn workers_inner_ts_name(t: &TypeRef) -> String {
-    match t {
-        TypeRef::Base(b, _) => b.name().to_string(),
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        TypeRef::Named(id) => id.name.clone(),
-        TypeRef::Result(a, b, _) => format!(
-            "Result_{}_{}",
-            workers_inner_ts_name(a),
-            workers_inner_ts_name(b)
-        ),
-        TypeRef::Option(a, _) => format!("Option_{}", workers_inner_ts_name(a)),
-        TypeRef::Effect(a, _) => format!("Effect_{}", workers_inner_ts_name(a)),
-        TypeRef::HttpResult(a, _) => format!("HttpResult_{}", workers_inner_ts_name(a)),
-        TypeRef::List(a, _) => format!("List_{}", workers_inner_ts_name(a)),
-        TypeRef::Map(k, v, _) => format!(
-            "Map_{}_{}",
-            workers_inner_ts_name(k),
-            workers_inner_ts_name(v)
-        ),
-        TypeRef::QueueResult(_) => "QueueResult".to_string(),
-        TypeRef::ValidationError(_) => "ValidationError".to_string(),
-        TypeRef::JsonError(_) => "JsonError".to_string(),
-        TypeRef::Unit(_) => "Unit".to_string(),
-        // v0.157 (ADR 0183): a generic record is non-boundary — the wire codec
-        // machinery never sees a `Name[Arg, …]` here.
-        TypeRef::App { .. } => {
-            unreachable!("generic records are rejected at boundaries")
-        }
-    }
 }
 
 /// If `receiver` is a dotted chain or single ident that matches one of the
@@ -1782,7 +2165,7 @@ pub(crate) fn param_cast(
 /// If the type-ref names a single user type at its root, return that name.
 /// (For generics like `Result[T, E]`, we don't emit a cast at the outer
 /// layer — TypeScript handles the variance through the intersection.)
-fn type_ref_named_root(r: &TypeRef) -> Option<&str> {
+pub(crate) fn type_ref_named_root(r: &TypeRef) -> Option<&str> {
     match r {
         TypeRef::Named(id) => Some(id.name.as_str()),
         _ => None,
@@ -3279,5 +3662,161 @@ fn emit_ws_dispatch_handlers(out: &mut String, host: &WsOpenHost<'_>) {
         writeln!(out, "    await this.{method}({});", call_args.join(", ")).unwrap();
         writeln!(out, "  }}").unwrap();
         writeln!(out).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod doc_block_tests {
+    use super::emit_doc_block;
+
+    /// A `*/` in a doc body must not close the JSDoc comment early — otherwise
+    /// the trailing text lands as executable top-level TypeScript (issue #720).
+    #[test]
+    fn escapes_comment_terminator() {
+        let mut out = String::new();
+        emit_doc_block(
+            &mut out,
+            Some("docs */ ; (globalThis as any).PWNED = true; /*"),
+            0,
+        );
+        assert!(
+            !out.contains("*/ ;"),
+            "unescaped comment terminator leaked into output: {out}"
+        );
+        assert!(out.contains("*\\/ ;"), "expected escaped terminator: {out}");
+        // The single legitimate closer is the one we emit last.
+        assert_eq!(
+            out.matches("*/").count(),
+            1,
+            "exactly one real closer: {out}"
+        );
+        assert!(out.trim_end().ends_with("*/"));
+    }
+
+    /// Overlapping/adjacent terminators must not survive or re-form a `*/`
+    /// under the non-overlapping left-to-right `str::replace`. Pins the
+    /// behaviour against a future refactor away from `str::replace`.
+    #[test]
+    fn escapes_pathological_terminators() {
+        for body in ["*/*/", "**/", "*/*", "*/ */ */"] {
+            let mut out = String::new();
+            emit_doc_block(&mut out, Some(body), 0);
+            // The only surviving `*/` is the emitter's own trailing closer.
+            assert_eq!(
+                out.matches("*/").count(),
+                1,
+                "input {body:?} left a stray closer: {out}"
+            );
+            assert!(out.trim_end().ends_with("*/"), "input {body:?}: {out}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod messages_template_tests {
+    use super::{TemplateSegment, placeholder_names, split_template};
+    use std::collections::BTreeSet;
+
+    fn kinds(template: &str) -> Vec<(&str, &str)> {
+        split_template(template)
+            .into_iter()
+            .map(|s| match s {
+                TemplateSegment::Literal(l) => ("lit", l),
+                TemplateSegment::Placeholder { inner, .. } => ("ph", inner),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn literal_only_template_is_one_segment() {
+        assert_eq!(kinds("Bye"), vec![("lit", "Bye")]);
+    }
+
+    #[test]
+    fn empty_template_is_one_empty_literal_segment() {
+        // emit_message_entry_renderer's `parts.is_empty()` guard exists
+        // specifically because split_template never returns zero segments —
+        // this pins that invariant.
+        assert_eq!(kinds(""), vec![("lit", "")]);
+    }
+
+    #[test]
+    fn single_placeholder_with_surrounding_literal_text() {
+        assert_eq!(
+            kinds("Hello, {name}!"),
+            vec![("lit", "Hello, "), ("ph", "name"), ("lit", "!")],
+        );
+    }
+
+    #[test]
+    fn placeholder_at_the_very_start_or_end() {
+        assert_eq!(kinds("{name}!"), vec![("ph", "name"), ("lit", "!")]);
+        assert_eq!(kinds("Hi, {name}"), vec![("lit", "Hi, "), ("ph", "name")]);
+    }
+
+    #[test]
+    fn back_to_back_placeholders() {
+        assert_eq!(kinds("{a}{b}"), vec![("ph", "a"), ("ph", "b")],);
+    }
+
+    #[test]
+    fn unmatched_brace_and_empty_braces_are_literal_text() {
+        // No closing `}` at all.
+        assert_eq!(kinds("a {b"), vec![("lit", "a {b")]);
+        // Empty `{}` names nothing, so it's not a placeholder either.
+        assert_eq!(kinds("a {} b"), vec![("lit", "a {} b")]);
+    }
+
+    #[test]
+    fn multibyte_literal_text_around_a_placeholder() {
+        // A non-ASCII literal must not panic the byte-index scan and must
+        // round-trip intact (UTF-8 char-boundary safety, not just byte count).
+        assert_eq!(
+            kinds("caf\u{e9} {name} \u{1f980}"),
+            vec![("lit", "caf\u{e9} "), ("ph", "name"), ("lit", " \u{1f980}")],
+        );
+    }
+
+    // -- message-bundles slice 3 (#878): ICU-dispatch placeholders --
+
+    #[test]
+    fn icu_plural_placeholder_captures_full_inner_text_with_nested_braces() {
+        assert_eq!(
+            kinds("You have {n, plural, one {# item} other {# items}}."),
+            vec![
+                ("lit", "You have "),
+                ("ph", "n, plural, one {# item} other {# items}"),
+                ("lit", "."),
+            ],
+        );
+    }
+
+    #[test]
+    fn icu_placeholder_and_plain_placeholder_side_by_side() {
+        assert_eq!(
+            kinds("{name}: {n, number}"),
+            vec![("ph", "name"), ("lit", ": "), ("ph", "n, number")],
+        );
+    }
+
+    #[test]
+    fn icu_placeholder_with_no_true_close_falls_back_to_literal() {
+        // A `,` precedes the naive first `}`, so this is ICU-dispatch — but
+        // the arm's own `{` is never closed, so `find_icu_close` never
+        // reaches depth 0. Same "just literal text" policy as an unmatched
+        // plain `{`.
+        assert_eq!(
+            kinds("{n, plural, one {# item"),
+            vec![("lit", "{n, plural, one {# item")],
+        );
+    }
+
+    #[test]
+    fn placeholder_names_trims_icu_names_but_not_plain_ones() {
+        assert_eq!(placeholder_names("{ name }"), BTreeSet::from([" name "]));
+        assert_eq!(
+            placeholder_names("{ n , plural, one {#} other {#}}"),
+            BTreeSet::from(["n"])
+        );
     }
 }

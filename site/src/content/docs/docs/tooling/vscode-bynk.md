@@ -37,6 +37,24 @@ reference.
   a builtin base shows an `N refinements of String` lens listing every type over
   the same base across the project; click to peek the family. (A lone refinement
   gets no lens — there is nothing to navigate to.)
+- **Inline doc-comment rendering** — doc comments (`--- … ---`) render in place
+  with light Markdown affordances while you read the source: heading lines are
+  coloured (a themeable `bynk.docHeadingForeground`, paired with bold so the cue
+  is not colour-only), `**bold**` renders bold, and `*italic*` renders italic.
+  Markers stay visible and the font size is never touched, so line height is
+  stable (style-in-place, not conceal-and-reveal). The `[Name]` links inside a
+  doc comment are clickable via [document links](/docs/tooling/bynk-lsp/#capabilities).
+  Toggle with `bynk.inlineDocRendering.enable`.
+- **Show Documentation** — the **Bynk: Show Documentation** command opens a
+  webview rendering the current file's declarations as a reference page ("live
+  rustdoc for Bynk"): each declaration's heading, signature, and doc comment
+  rendered as Markdown, in outline order and hierarchy, each heading clickable
+  back to its source. Undocumented declarations appear with a *No documentation*
+  note so the page doubles as a doc-coverage view (a toggle hides them for a
+  clean read). Doc-comment Markdown is rendered with HTML disabled; the page
+  reads the source's own doc comments, distinct from this documentation site.
+  (Served by the language server's
+  [`bynk/documentationModel`](/docs/tooling/bynk-lsp/#capabilities) request.)
 - A **Get Started with Bynk** walkthrough (Welcome page → Help → walkthroughs)
   that sets up a project and a first context.
 - A **`bynkc: check` build task** (Terminal → Run Task) that type-checks the
@@ -68,13 +86,20 @@ The extension needs `bynkc-lsp` available — build it with
 | `bynk.executablePath` | `bynkc-lsp` | Path to the language-server binary. |
 | `bynk.compilerPath` | `bynkc` | Path to the `bynkc` compiler used by the `bynkc: check` build task. |
 | `bynk.trace.server` | `off` | Trace LSP traffic (`off` / `messages` / `verbose`) in the "Bynk LSP" output channel. |
+| `bynk.inlineDocRendering.enable` | `true` | Render doc comments in place with heading colour, bold, and italic. |
 
 ## Layout
 
 | Path | What it is |
 |---|---|
 | `src/extension.ts` | Entry point: resolves and launches `bynkc-lsp` over stdio. |
+| `src/inlineDoc.ts` | Pure doc-comment Markdown tokenizer → heading/bold/italic ranges. |
+| `src/inlineDocRendering.ts` | Applies those ranges as in-editor decorations (the `inlineDoc.ts` consumer). |
 | `src/scaffold.ts` | The **New Project** / **New Context** command handlers. |
+| `src/webviewHost.ts` | The shared webview substrate: CSP + per-render nonce, the payload-embedding HTML shell, and `postMessage`→reveal click-to-code — built once, consumed by both webviews below. |
+| `src/sequenceDiagram.ts` | The **Show Sequence Diagram** command + panel (`bynk/sequenceModel`). |
+| `src/documentationView.ts` | The **Show Documentation** command + panel (`bynk/documentationModel`). |
+| `src/webview/` | The browser-context webview bundles: `main.ts`/`mermaid-gen.ts` (sequence, vendored Mermaid) and `docview.ts`/`doc-render.ts` (documentation, vendored markdown-it). |
 | `src/tasks.ts` | The `bynkc: check` build-task provider. |
 | `snippets/bynk.json` | Construct scaffolds, wired via `contributes.snippets`. |
 | `walkthroughs/*.md` | The getting-started walkthrough steps. |

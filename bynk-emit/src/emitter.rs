@@ -32,11 +32,14 @@ use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
 
+pub mod contracts;
+pub mod secrets;
 pub mod serialisation;
 pub mod workers;
 pub mod workers_entry;
 pub mod wrangler;
 
+pub use secrets::emit_secrets_manifest;
 pub use workers::emit_worker_compose;
 pub use workers_entry::emit_worker_entry;
 pub use wrangler::emit_wrangler_toml;
@@ -44,8 +47,10 @@ pub use wrangler::emit_wrangler_toml;
 mod lower;
 pub(crate) mod source_map;
 pub(crate) use lower::*;
-mod emit;
+pub(crate) mod emit;
 pub(crate) use emit::*;
+pub(crate) mod icu;
+pub(crate) use icu::*;
 pub(crate) mod websocket;
 
 const INDENT_STEP: usize = 2;
@@ -82,6 +87,18 @@ pub fn emit_tsconfig() -> String {
     TSCONFIG_JSON.to_string()
 }
 
+/// The `bynkc test --coverage` variant (#854): the same config with `sourceMap`
+/// enabled, so `tsc` emits the `.js.map`s the coverage remap consumes (hop 1,
+/// `.js` → emitted `.ts`). Kept coverage-only rather than folded into the
+/// default so a normal `bynkc test` / deployment `tsc` run ships no `.js.map`s.
+/// The runner overwrites the default `out/tsconfig.json` with this before `tsc`.
+pub fn emit_tsconfig_with_source_maps() -> String {
+    TSCONFIG_JSON.replace(
+        "\"outDir\": \"../out-js\",",
+        "\"sourceMap\": true,\n    \"outDir\": \"../out-js\",",
+    )
+}
+
 const TSCONFIG_JSON: &str = r#"{
   "compilerOptions": {
     "target": "ES2022",
@@ -100,6 +117,19 @@ const TSCONFIG_JSON: &str = r#"{
   "include": ["**/*.ts"]
 }
 "#;
+
+/// message-bundles slice 3 (#878): a message template's placeholders and
+/// their ICU format kind (`"plain"`/`"plural"`/`"select"`/`"number"`/`"date"`),
+/// sorted by placeholder name — for hover (`bynk-ide::symbols::describe_messages`).
+/// A narrow, purpose-built public surface rather than exposing the internal
+/// `icu` module's `FormatKind`/`IcuPlaceholder` types themselves, which stay
+/// crate-private.
+pub fn message_template_placeholder_summary(template: &str) -> Vec<(String, &'static str)> {
+    icu::template_format_kinds(template)
+        .into_iter()
+        .map(|(name, kind)| (name.to_string(), kind.as_str()))
+        .collect()
+}
 
 /// Compute the runtime import specifier for a module at `from_source`. For a
 /// file at `commerce/payment.ts` the runtime sits two levels up, so this
@@ -261,6 +291,29 @@ pub fn emit_project(
             emit_free_fn(&mut out, f, commons, Some(&smb), ctx.contracts);
         }
     }
+    // message-bundles slice 2 (#874): every `messages` block in the commons
+    // is emitted together, once, as a single multi-locale bundle — not
+    // per-item like the other behavioural kinds below — so the generated
+    // `render` can dispatch across every declared locale's own table rather
+    // than reading only the `@reference` one (slice 1's scope). Recorded at
+    // the `@reference` block's own span, matching how a single-item emission
+    // records at that item's span elsewhere in this loop.
+    let messages_blocks: Vec<&MessagesDecl> = commons
+        .commons
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            CommonsItem::Messages(m) => Some(m),
+            _ => None,
+        })
+        .collect();
+    if let Some(reference) = messages_blocks
+        .iter()
+        .find(|m| m.annotations.iter().any(|a| a.name.name == "reference"))
+    {
+        smb.borrow_mut().record(out.len(), reference.span);
+        emit_messages_bundle(&mut out, &messages_blocks, reference);
+    }
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {
         match item {
@@ -339,26 +392,64 @@ pub fn emit_project(
     // (no new line, no body-column shift), so the source map computed above from
     // the pre-injection text stays valid.
     if out.contains("__bynkBytes") {
-        out = inject_bytes_runtime_imports(out);
+        out = inject_runtime_imports(
+            out,
+            &runtime_import_for(&ctx.source_path, ctx.import_ext),
+            BYTES_RUNTIME_IMPORTS,
+        );
+    }
+    // message-bundles slice 3 (#878, Decision G): same mechanism, for the
+    // three ICU-formatting runtime helpers. `emit_messages_bundle` (called
+    // above, before this post-pass) is the only place that can reference
+    // them; a project with no `plural`/`select`/`number`/`date` placeholder
+    // anywhere never triggers this. All three are imported together
+    // (mirrors `BYTES_RUNTIME_IMPORTS`'s own all-or-nothing shape) rather
+    // than cherry-picked per-name — the emitted `tsconfig.json` has no
+    // `noUnusedLocals`, so an unused named import is inert.
+    if out.contains("selectPluralArm(")
+        || out.contains("formatIcuNumber(")
+        || out.contains("formatIcuDate(")
+    {
+        out = inject_runtime_imports(
+            out,
+            &runtime_import_for(&ctx.source_path, ctx.import_ext),
+            MESSAGES_RUNTIME_IMPORTS,
+        );
     }
     (out, source_map)
 }
 
-/// v0.110 (ADR 0142): append the `Bytes` runtime helpers to a module's existing
-/// `./runtime.js` import (the line carrying `type ValidationError`). Done as a
-/// post-pass so the decision keys on what the body references, without a second
-/// emission or a source-map-shifting reorder.
-fn inject_bytes_runtime_imports(out: String) -> String {
-    let mut result = String::with_capacity(out.len() + BYTES_RUNTIME_IMPORTS.len());
+/// v0.110 (ADR 0142): append a set of runtime helpers to a module's existing
+/// runtime import. Done as a post-pass so the decision keys on what the body
+/// references, without a second emission or a source-map-shifting reorder.
+/// Generalised in message-bundles slice 3 (#878) from a `Bytes`-only helper
+/// to take `extra` as a parameter, shared with the ICU-formatting helpers.
+///
+/// v0.176 (#642): anchored on the runtime import's **exact specifier** rather
+/// than on the `type ValidationError` binding it happens to carry. With `Bytes`
+/// now able to cross a workers boundary (ADR 0142 D8's guard retired), the
+/// *Worker entry* references `__bynkBytesFromBase64` too — and its import line
+/// names no `ValidationError`, so the old anchor silently failed to inject and
+/// `tsc` reported an unresolved name.
+///
+/// The specifier is matched exactly (`from "<specifier>"`), not by substring: a
+/// `contains("runtime.js")` would also match a *user* module that happens to be
+/// named `runtime` — or anything like `"./my-runtime.js"` — and appending
+/// `extra`'s bindings to that import would produce an unresolved export. The
+/// caller already knows the exact path it emitted, so there is no reason to
+/// guess.
+pub(crate) fn inject_runtime_imports(out: String, runtime_specifier: &str, extra: &str) -> String {
+    let mut result = String::with_capacity(out.len() + extra.len());
     let mut injected = false;
+    let from_runtime = format!(" }} from \"{runtime_specifier}\"");
     for line in out.split_inclusive('\n') {
         if !injected
             && line.starts_with("import {")
-            && line.contains("type ValidationError")
-            && let Some(pos) = line.rfind(" } from \"")
+            && line.contains(&from_runtime)
+            && let Some(pos) = line.rfind(&from_runtime)
         {
             result.push_str(&line[..pos]);
-            result.push_str(BYTES_RUNTIME_IMPORTS);
+            result.push_str(extra);
             result.push_str(&line[pos..]);
             injected = true;
             continue;
@@ -397,6 +488,7 @@ pub(crate) fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
         | ExprKind::Ok(i)
         | ExprKind::Err(i)
         | ExprKind::Some(i)
+        | ExprKind::Wire(i)
         | ExprKind::Question(i) => walk_exprs(i, f),
         ExprKind::Val { args, .. }
         | ExprKind::Call { args, .. }
@@ -596,7 +688,7 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
     b.statements.iter().any(|s| stmt(s, m)) || expr(&b.tail, m)
 }
 
-fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
     for s in &b.statements {
         match s {
             Statement::Let(l) | Statement::EffectLet(l) => walk_exprs(&l.value, f),
@@ -741,6 +833,21 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
     let sp = bynk_syntax::span::Span::new(0, 0);
     Some(match t {
         Ty::Base(b) => TypeRef::Base(*b, sp),
+        // v0.174 (#592): a generic-record instantiation (`Paginated[User]`,
+        // `args` non-empty) round-trips as a `TypeRef::App` so the codec closure
+        // reaches its monomorphised helper; a non-generic named type stays a
+        // bare `Named`.
+        Ty::Named { name, args, .. } if !args.is_empty() => TypeRef::App {
+            name: Ident {
+                name: name.clone(),
+                span: sp,
+            },
+            args: args
+                .iter()
+                .map(ty_to_type_ref)
+                .collect::<Option<Vec<_>>>()?,
+            span: sp,
+        },
         Ty::Named { name, .. } => TypeRef::Named(Ident {
             name: name.clone(),
             span: sp,
@@ -868,7 +975,7 @@ fn emit_json_codec_helpers(
         .filter(|i| !skip_insts.contains(&i.ts_name()))
         .collect();
     if !insts.is_empty() {
-        emit_generic_helpers(out, &insts);
+        emit_generic_helpers(out, &insts, &commons.types);
     }
 }
 
@@ -1007,11 +1114,32 @@ fn emit_boundary_helpers(
         // in handler signatures or in boundary-type fields (v0.18).
         let insts =
             collect_generic_instantiations(&services, &agents, &boundary_types_all, &commons.types);
-        emit_generic_helpers(out, &insts);
-        (
-            boundary_types_all.into_iter().collect(),
-            insts.iter().map(|i| i.ts_name()).collect(),
-        )
+        emit_generic_helpers(out, &insts, &commons.types);
+
+        // #661 (ADR 0199 Decision G discharged): the caller's own view of each
+        // consumed context's boundary codecs, so a cross-context call reaches
+        // `deserialise_Result_AuthId_PaymentError` **locally** instead of through
+        // the callee's module. Workers only — on `bundle` the call is in-process
+        // and needs no wire codec. Everything the caller already emits (its own
+        // boundary types, the commons re-exports above, its own generic
+        // instantiations) is skipped, so only the callee-*owned* types the caller
+        // lacks a local view of are generated.
+        let (consumed_names, consumed_insts) = if workers {
+            let mut emitted_names: HashSet<String> = local_boundary.iter().cloned().collect();
+            for names in by_commons.values() {
+                emitted_names.extend(names.iter().cloned());
+            }
+            let mut emitted_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
+            emit_consumed_context_helpers(out, commons, ctx, &mut emitted_names, &mut emitted_insts)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        let mut ret_names: HashSet<String> = boundary_types_all.into_iter().collect();
+        ret_names.extend(consumed_names);
+        let mut ret_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
+        ret_insts.extend(consumed_insts);
+        (ret_names, ret_insts)
     } else if !workers {
         // Commons/adapters have no agents (no rehydration boundary), and on
         // `bundle` there is no cross-Worker call boundary either — so emit no
@@ -1048,12 +1176,169 @@ fn emit_boundary_helpers(
             &locally,
             &commons.types,
         );
-        emit_generic_helpers(out, &insts);
+        emit_generic_helpers(out, &insts, &commons.types);
         (
             locally.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),
         )
     }
+}
+
+/// #661: emit the caller's own `serialise_*`/`deserialise_*` for every
+/// callee-owned boundary type reachable from the services this context
+/// **calls**, so a `workers` cross-context call resolves its codecs locally
+/// rather than importing the callee's module as a value.
+///
+/// The codec function names stay bare and local; only the TS *type* positions
+/// reach through the callee's `import type * as <ns>` alias (via the `Qual`
+/// map built here). Refinement validation follows the export visibility: an
+/// opaque type casts structurally (Decision C), a transparent refined type
+/// inlines its predicates (Decision D) — both decided inside the codec emitter
+/// from the type's own body.
+///
+/// Only the callee-*owned* types (its `exports`) are generated. Commons types
+/// reachable through the boundary (`Money`) are already emitted or re-exported
+/// by the caller's own path, so they are left out here and deduped against
+/// `emitted_names` / `emitted_insts`, which the caller seeds with everything it
+/// has already emitted. Returns the names and generic-instantiation names newly
+/// emitted, so the Json-codec pass dedupes against them too.
+fn emit_consumed_context_helpers(
+    out: &mut String,
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+    emitted_names: &mut HashSet<String>,
+    emitted_insts: &mut HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    use serialisation::{
+        collect_codec_closure, emit_generic_helpers_qualified, emit_helpers_for_owner_qualified,
+    };
+    let info = &ctx.cross_context;
+    let mut consumed_names_out: Vec<String> = Vec::new();
+    let mut consumed_insts_out: Vec<String> = Vec::new();
+
+    // Only the services this context actually **calls** — not the callee's whole
+    // provided surface. `consumed_services` carries every service the dependency
+    // provides; generating a codec for one this context never reaches would bloat
+    // the bundle with a contract it does not participate in (and pull in the
+    // uncalled service's own boundary types). Mirrors the `called` narrowing the
+    // contract manifest applies to `expects` (ADR 0200 Decision E, one layer up).
+    let called = called_consumed_services(commons, info);
+
+    let mut consumed_keys: Vec<&String> = info.consumed_services.keys().collect();
+    consumed_keys.sort();
+    for c in consumed_keys {
+        let svcs = &info.consumed_services[c];
+        if svcs.is_empty() {
+            continue;
+        }
+        let Some(called_here) = called.get(c) else {
+            continue;
+        };
+        let Some(types_table) = info.consumed_types.get(c) else {
+            continue;
+        };
+        // The callee's exports — the set of types it *owns* and a consumer may
+        // name. A closure type outside this set (a commons type the callee only
+        // `uses`, e.g. `Money`) is the caller's own already, not the callee's to
+        // hand out, so the caller never regenerates it under the callee's ns.
+        let exports = ctx.exports_for_consumed.get(c);
+        let owned = |n: &str| exports.is_some_and(|e| e.contains_key(n));
+
+        // Roots: every called service's parameter and return types, in a stable
+        // order.
+        let mut svc_names: Vec<&String> =
+            svcs.keys().filter(|s| called_here.contains(*s)).collect();
+        svc_names.sort();
+        let mut roots: Vec<bynk_syntax::ast::TypeRef> = Vec::new();
+        for sn in svc_names {
+            let svc = &svcs[sn];
+            for (_, t) in &svc.params {
+                roots.push(t.clone());
+            }
+            roots.push(svc.return_type.clone());
+        }
+        let (names, cinsts) = collect_codec_closure(&roots, types_table);
+
+        let ns = format!("{}.", qualified_to_ns(c));
+        let mut qual: HashMap<String, String> = HashMap::new();
+        for n in &names {
+            if owned(n) {
+                qual.insert(n.clone(), ns.clone());
+            }
+        }
+
+        let mut to_emit: Vec<String> = names
+            .iter()
+            .filter(|n| owned(n) && emitted_names.insert((*n).clone()))
+            .cloned()
+            .collect();
+        to_emit.sort();
+        emit_helpers_for_owner_qualified(
+            out,
+            &to_emit,
+            types_table,
+            ctx.commons_name.as_str(),
+            &qual,
+        );
+        consumed_names_out.extend(to_emit);
+
+        let to_emit_insts: Vec<serialisation::GenericInst> = cinsts
+            .into_iter()
+            .filter(|i| emitted_insts.insert(i.ts_name()))
+            .collect();
+        for i in &to_emit_insts {
+            consumed_insts_out.push(i.ts_name());
+        }
+        emit_generic_helpers_qualified(out, &to_emit_insts, types_table, &qual);
+    }
+
+    (consumed_names_out, consumed_insts_out)
+}
+
+/// #661: the cross-context services this unit actually **calls**, as `consumed
+/// context → service names`. A copy of `project::called_cross_context_services`
+/// over the emitter's AST view (`commons`) — the caller-side codec set follows
+/// the *called* subset, not the callee's full provided surface, so it stays in
+/// step with what the contract manifest records under `expects`.
+fn called_consumed_services(
+    commons: &TypedCommons,
+    info: &bynk_check::resolver::CrossContextInfo,
+) -> HashMap<String, HashSet<String>> {
+    let mut out: HashMap<String, HashSet<String>> = HashMap::new();
+    if info.consumed_contexts.is_empty() && info.aliases.is_empty() {
+        return out;
+    }
+    let mut visit = |e: &Expr| {
+        if let ExprKind::MethodCall {
+            receiver, method, ..
+        } = &e.kind
+            && let Some(chain) = flatten_emit_ident_chain(receiver)
+            && let Some(target) = info.resolve_prefix(&chain)
+        {
+            out.entry(target).or_default().insert(method.name.clone());
+        }
+    };
+    for item in &commons.commons.items {
+        match item {
+            CommonsItem::Service(s) => {
+                for h in &s.handlers {
+                    walk_block_exprs(&h.body, &mut visit);
+                }
+            }
+            CommonsItem::Agent(a) => {
+                for h in &a.handlers {
+                    walk_block_exprs(&h.body, &mut visit);
+                }
+            }
+            CommonsItem::Provider(p) => {
+                for op in &p.ops {
+                    walk_block_exprs(&op.body, &mut visit);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// For each type imported via `uses` that's referenced in this file, emit:
@@ -1090,9 +1375,24 @@ fn emit_context_rebrands(
         return;
     }
     for name in &names {
+        // v0.174 (#592): a generic commons type keeps its parameters across the
+        // rebrand — `Paginated[T]` aliases as `Paginated<T> =
+        // __CommonsPaginated<T> & { … }`, not a bare `Paginated`, which would
+        // both drop the parameter and make every `Paginated<User>` reference in
+        // the context a "type is not generic" error.
+        let params: Vec<&str> = commons
+            .types
+            .get(name)
+            .map(|d| d.type_params.iter().map(|p| p.name.name.as_str()).collect())
+            .unwrap_or_default();
+        let generics = if params.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", params.join(", "))
+        };
         writeln!(
             out,
-            "export type {name} = __Commons{name} & {{ readonly __ctxBrand: \"{owning}\" }};",
+            "export type {name}{generics} = __Commons{name}{generics} & {{ readonly __ctxBrand: \"{owning}\" }};",
         )
         .unwrap();
         // v0.9.2: a commons refined/opaque type carries a value-side
@@ -1232,6 +1532,24 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
             CommonsItem::Actor(a) => {
                 if let Some(id) = &a.identity {
                     collect_refs_in_typeref(id, &local_to_file, ctx, &mut refs);
+                }
+            }
+            // `MessageEntry.code`/`.template` are plain string literals with
+            // no TypeRefs/exprs of their own to walk — but the generated
+            // `render` (emit_messages) has a signature and body that name
+            // `LocaleTag`/`Message`/`MessageArg` even though no expression in
+            // this file's *source* does, so those three are registered here
+            // by hand, the same way a real reference would be. `render`/
+            // `renderArg` are deliberately NOT registered this way —
+            // `render` collides with the generated function of the same
+            // name, and both are instead imported together under
+            // `emit_unit`'s (project.rs) hand-written, aliased extra import
+            // line, bypassing this dedup/merge path entirely (importing
+            // `renderArg` there too, alongside the aliased `render`, avoids a
+            // duplicate import of it from here).
+            CommonsItem::Messages(_) => {
+                for name in ["LocaleTag", "Message", "MessageArg"] {
+                    record_name_ref(name, &local_to_file, ctx, &mut refs);
                 }
             }
         }
@@ -1387,6 +1705,7 @@ fn collect_refs_in_expr(
         | ExprKind::None
         | ExprKind::UnitLit => {}
         // v0.43: a hole's expression may reference imported names.
+        ExprKind::Wire(inner) => collect_refs_in_expr(inner, local_to_file, commons, ctx, out),
         ExprKind::InterpStr(parts) => {
             for part in parts {
                 if let InterpPart::Hole(hole) = part {
@@ -1678,7 +1997,20 @@ fn emit_cross_context_namespace_imports(
         let import =
             cross_commons_import_specifier_for_path(&ctx.source_path, &target, ctx.import_ext);
         let ns = qualified_to_ns(q);
-        writeln!(out, "import * as {ns} from \"{import}\";").unwrap();
+        // #661: under `workers`, a consumed *context*'s module is imported for
+        // its **types only** — the caller now generates its own codecs
+        // (`emit_boundary_helpers`) and reaches the callee's types through this
+        // alias in type position (`deps: { Clock: platform_time.Clock }`,
+        // `Result<commerce_payment.AuthId, …>`). An `import type` is erased
+        // outright, so the callee's *module* — and its provider implementation —
+        // never enters the caller's Worker bundle. This does **not** apply to a
+        // consumed *adapter* (its binding namespace, e.g. `tokens`, is a real
+        // value import used by `compose.ts`) nor on `bundle` (contexts compile
+        // together, and the value uses in `compose.ts` are legitimate).
+        let type_only = matches!(ctx.target, BuildTarget::Workers)
+            && !ctx.consumed_adapters.contains(q.as_str());
+        let kw = if type_only { "import type" } else { "import" };
+        writeln!(out, "{kw} * as {ns} from \"{import}\";").unwrap();
     }
     writeln!(out).unwrap();
 }
@@ -2026,8 +2358,14 @@ fn write_header_single(
 /// v0.110 (ADR 0142): the `Bytes` runtime helpers, appended to a module's
 /// import list when the emitted body references them. `bytesEqual` backs `==`;
 /// the base64/UTF-8 helpers back the kernel and codec.
-const BYTES_RUNTIME_IMPORTS: &str =
+pub(crate) const BYTES_RUNTIME_IMPORTS: &str =
     ", __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8";
+
+/// message-bundles slice 3 (#878, Decision G): the ICU-formatting runtime
+/// helpers, appended to a module's import list when an emitted `messages`
+/// bundle's `render` references any of them (`emit_icu_placeholder`,
+/// `bynk-emit/src/emitter/emit.rs`).
+const MESSAGES_RUNTIME_IMPORTS: &str = ", selectPluralArm, formatIcuNumber, formatIcuDate";
 
 /// Emit the commons-level doc block (if any) at the current position.
 fn write_commons_doc(out: &mut String, commons: &TypedCommons) {
@@ -2137,6 +2475,49 @@ pub(crate) struct LowerCtx<'a> {
     /// where `service` is in this set lowers to `<service>.call(args, deps)`
     /// so the test wires its `deps` through.
     pub test_services: HashSet<String>,
+    /// v0.182 (#664): while lowering an `EffectLet` whose value addresses a
+    /// service handler, the call-site principal's identity expression (already
+    /// lowered), if the statement carries `by <Actor>(<identity>)`. The
+    /// address-call lowering reads it to build the handler's `deps.identity`.
+    /// `None` for a unit-identity actor or a non-principal statement.
+    pub call_site_identity: Option<String>,
+    /// #706: the call-site principal is `by Nobody` — drive the route with no
+    /// `Authorization` header so the real auth seam rejects it (`401` →
+    /// `Rejected(Unauthorized)`). Routes a `system` http address to the no-auth
+    /// driver. `false` for any other (or no) principal.
+    pub call_site_no_credential: bool,
+    /// v0.182 (#664): the ordered handler kinds of each test service, so a cron
+    /// (`svc.schedule("…")`) or queue (`svc.message(m)`) address can recover the
+    /// position index the emitted key encodes (`cron_<svc>_<i>` / `queue_…`).
+    /// http keys are a pure function of verb + path and need no lookup here.
+    pub test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
+    /// v0.182 (Slice B, #667): the target's http service names when lowering a
+    /// `system` case. An http address on one of these lowers to a driver call
+    /// (`__sysdrive_<svc>_<key>(args, sub)`) that drives a real `worker.fetch`
+    /// with a signed credential, instead of the unit-tier direct handler call.
+    /// Empty at the unit tier.
+    pub system_http_services: std::collections::HashSet<String>,
+    /// #707: the declared `(service, method, path)` http routes of the system
+    /// target. A `(method, path)` call whose method is absent here but whose path
+    /// is present is a **wrong-method** call — it drives the `405` fall-through
+    /// through the generic `__sysdrive_wrongmethod_<svc>` driver.
+    pub system_http_routes: std::collections::HashSet<(String, String, String)>,
+    /// #708: for each declared `(service, method, path)` route that has a body
+    /// param, the body's zero-based position among the route's positional call
+    /// args (i.e. within `args[1..]`, matching handler-param declaration order)
+    /// and its declared type. The raw driver (`__sysdrive_raw_*`, Slice C)
+    /// forwards every slot as a `string`; a `Wire(…)` arg already lowers to that
+    /// raw string, but a *typed* arg mixed into the same call must be converted:
+    /// the body slot serialises through the same wire codec the typed driver
+    /// uses (`JSON.stringify(serialise_expr_via(...))`), any other (path) slot
+    /// just coerces via `String(...)`. Absent for a bodyless route.
+    pub system_http_route_body:
+        HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
+    /// #708: the type namespace (`<target>.`) `serialise_expr_via` needs to
+    /// resolve a body param's custom codec when converting a typed arg for the
+    /// raw driver. Mirrors the `type_ns` `emit_system_http_support` computes
+    /// from the same suite target. Empty string outside system http lowering.
+    pub system_http_type_ns: String,
     /// v0.7: when lowering a test case body, the target context's local
     /// agent names. `<Agent>(<key>).method(args)` lowers to
     /// `new Agent(makeTestState(...)).method(args, {})`.
@@ -2199,6 +2580,16 @@ pub(crate) struct LowerCtx<'a> {
     /// click-through) rather than a bare byte offset. `None` for non-test
     /// emission, where `assert` doesn't appear.
     pub assert_loc: Option<AssertLoc>,
+    /// True when lowering **any** generated test-scaffold body (a test-case
+    /// body, or a `stub`/`where`/`requires` predicate value lowered via
+    /// `lower_block_to_async_body`) — distinct from `assert_loc`, which is
+    /// only ever `Some` for the first of those and carries an unrelated
+    /// payload (a diagnostic location). Set alongside `assert_loc` at each of
+    /// the lowering entry points below; kept as its own field (Locale
+    /// capability track, slice 1, #844 review) rather than overloading
+    /// `assert_loc.is_some()`, since that conflated "has a location" with
+    /// "is test scaffolding" for a caller that has no location to give.
+    pub test_scaffold: bool,
     /// Slice 1 (ADR 0103): the source-map builder for the file being emitted, if
     /// any. The deep lowering chain records `(generated offset → source span)`
     /// checkpoints here; `emit_project` owns the `RefCell` and threads a shared
@@ -2218,15 +2609,14 @@ pub(crate) struct AssertLoc {
 }
 
 impl<'a> LowerCtx<'a> {
-    /// True when lowering a **generated test-case body** (`tests/*.test.ts`), where
-    /// branded types are destructured into `any`-typed value bindings rather than
-    /// referenced as types. `assert_loc` is set only by the two test-body lowering
-    /// entry points and is `None` for all production emission, so it doubles as the
-    /// test-scaffold discriminator. Callers that emit a branded `as`-cast consult
-    /// this to pick `unchecked_construct_test` (→ `(v as any)`) over the production
+    /// True when lowering **generated test-scaffold** TypeScript (a test-case
+    /// body, or a `stub`/`where`/`requires` predicate value), where branded
+    /// types are destructured into `any`-typed value bindings rather than
+    /// referenced as types. Callers that emit a branded `as`-cast consult this
+    /// to pick `unchecked_construct_test` (→ `(v as any)`) over the production
     /// `(v as T)` form, which cannot resolve `T` in the test module's scope.
     pub(crate) fn in_test_scaffold(&self) -> bool {
-        self.assert_loc.is_some()
+        self.test_scaffold
     }
 
     fn new(
@@ -2255,6 +2645,13 @@ impl<'a> LowerCtx<'a> {
             cross_context,
             cross_context_used: false,
             test_services: HashSet::new(),
+            call_site_identity: None,
+            call_site_no_credential: false,
+            test_service_handlers: HashMap::new(),
+            system_http_services: std::collections::HashSet::new(),
+            system_http_routes: std::collections::HashSet::new(),
+            system_http_route_body: HashMap::new(),
+            system_http_type_ns: String::new(),
             test_agents: HashSet::new(),
             local_agents: HashSet::new(),
             agent_method_givens: HashMap::new(),
@@ -2269,6 +2666,7 @@ impl<'a> LowerCtx<'a> {
             deps_identity_binder: None,
             actor_sum_binder: None,
             assert_loc: None,
+            test_scaffold: false,
             source_map: None,
         }
     }
@@ -2472,7 +2870,7 @@ impl<'a> LowerCtx<'a> {
             Some(Ty::Named {
                 kind: NamedKind::Sum,
                 name,
-                ..
+                args,
             }) => {
                 let decl = self.commons.types.get(name)?;
                 let TypeBody::Sum(s) = &decl.body else {
@@ -2480,7 +2878,18 @@ impl<'a> LowerCtx<'a> {
                 };
                 let v = s.variants.iter().find(|v| v.name.name == variant)?;
                 let f = v.payload.get(idx)?;
-                bynk_check::checker::resolve_type_ref(&f.type_ref, &self.commons.types)
+                // #593: substitute the instantiation's type arguments into the
+                // payload field type — a bare type parameter (`Loaded(value: T)`)
+                // resolves to its concrete argument, exactly as the checker's
+                // `variants_of` does. Plain resolve for a non-generic sum (empty
+                // `args`), so a nested positional binding recovers the real field
+                // name instead of falling back to the generic `"value"`.
+                bynk_check::checker::instantiate_field_ty(
+                    decl,
+                    args,
+                    &f.type_ref,
+                    &self.commons.types,
+                )
             }
             _ => None,
         }
@@ -2546,19 +2955,43 @@ pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
 /// referenced fully qualified. Qualification recurses through generic
 /// arguments; base/unit types are unaffected.
 pub(crate) fn ts_type_ref_qualified(r: &TypeRef, scope: &HashSet<String>, ns: &str) -> String {
-    ts_type_ref_with(r, Some((scope, ns)))
+    ts_type_ref_with(
+        r,
+        Some(&|name| scope.contains(name).then(|| ns.to_string())),
+    )
 }
 
-/// Shared renderer behind `ts_type_ref` (`qualify = None`) and
-/// `ts_type_ref_qualified` (`qualify = Some((scope, ns))`). With `None` it is
-/// output-identical to the historic `ts_type_ref`; the only divergence is the
-/// `Named` arm, which qualifies in-scope names when `qualify` is set.
-fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> String {
+/// Like `ts_type_ref_qualified`, but each in-scope name can carry its *own*
+/// namespace rather than one shared `ns` — needed when a signature mixes
+/// names owned by the target unit with names reached only through a `uses`d
+/// commons (e.g. a stub class implementing an adapter-sourced capability
+/// whose return type lives in a commons the capability's own unit `uses`,
+/// never in the target context itself — Locale capability track, slice 1,
+/// #844). Qualifying such a name under the target's own namespace would
+/// reference an export `emit_context_rebrands` never emits (it only rebrands
+/// names the target's *own* lowered body references), so each name is
+/// qualified under the namespace that actually exports it.
+pub(crate) fn ts_type_ref_qualified_multi(
+    r: &TypeRef,
+    type_ns: &HashMap<String, String>,
+) -> String {
+    ts_type_ref_with(r, Some(&|name| type_ns.get(name).cloned()))
+}
+
+/// A name → owning-namespace lookup for `ts_type_ref_with`'s `qualify` arm.
+type QualifyFn<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+/// Shared renderer behind `ts_type_ref` (`qualify = None`) and the two
+/// `ts_type_ref_qualified*` helpers above (`qualify = Some(name -> namespace)`).
+/// With `None` it is output-identical to the historic `ts_type_ref`; the only
+/// divergence is the `Named`/`App` arms, which qualify in-scope names when
+/// `qualify` is set.
+fn ts_type_ref_with(r: &TypeRef, qualify: Option<QualifyFn<'_>>) -> String {
     match r {
         TypeRef::Base(b, _) => ts_base(*b).to_string(),
         TypeRef::Named(id) => {
-            if let Some((scope, ns)) = qualify
-                && scope.contains(&id.name)
+            if let Some(f) = qualify
+                && let Some(ns) = f(&id.name)
             {
                 format!("{ns}.{}", id.name)
             } else {
@@ -2609,8 +3042,8 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         // `Name<Arg, …>` — the generic record's interface is emitted with the
         // same type parameters (like a generic function's erased `<A, B>`).
         TypeRef::App { name, args, .. } => {
-            let head = if let Some((scope, ns)) = qualify
-                && scope.contains(&name.name)
+            let head = if let Some(f) = qualify
+                && let Some(ns) = f(&name.name)
             {
                 format!("{ns}.{}", name.name)
             } else {
@@ -2848,6 +3281,21 @@ mod runtime_tests {
         assert!(s.contains("\"target\": \"ES2022\""));
         assert!(s.contains("\"strict\": true"));
         assert!(s.contains("\"include\""));
+    }
+
+    #[test]
+    fn coverage_tsconfig_enables_source_maps() {
+        // #854: the coverage remap consumes tsc's `.js.map`s, so the variant must
+        // set `sourceMap` — a guard against a silent string-replace miss if the
+        // base config's `outDir` line is ever reworded. The default stays map-free
+        // so a normal `bynkc test` / deployment build ships no `.js.map`s.
+        let cov = emit_tsconfig_with_source_maps();
+        assert!(
+            cov.contains("\"sourceMap\": true"),
+            "coverage config: {cov}"
+        );
+        assert!(cov.contains("\"outDir\": \"../out-js\""));
+        assert!(!emit_tsconfig().contains("sourceMap"));
     }
 
     #[test]

@@ -26,7 +26,7 @@ export default {
         if ((method === "GET" || method === "HEAD") && __m) {
           const __raw_id = __m.params["id"];
           const __r_id = handlers.OrderId.of(__raw_id);
-          if (__r_id.tag === "Err") return new Response(JSON.stringify({ kind: "RefinementViolation", path: "path.id", violation: __r_id.error }), { status: 400, headers: { "content-type": "application/json" } });
+          if (__r_id.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify({ kind: "RefinementViolation", path: "path.id", violation: __r_id.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_api);
           const id = __r_id.value;
           const result = await surface.http_GET_orders_Param_id(id);
           const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __security_api);

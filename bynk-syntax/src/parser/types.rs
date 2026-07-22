@@ -170,6 +170,36 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse a variant / enum-tag name — an identifier that MUST be
+    /// capitalised, matching the grammar's `constant_name`
+    /// (`/[A-Z][A-Za-z0-9_]*/`). The `tree-sitter-bynk` grammar cannot lex a
+    /// lowercase name in variant position (`constant_name` fails and there is no
+    /// `identifier` alternative there), so it rejects `| active` at parse time;
+    /// this keeps the compiler parser in agreement rather than accepting a name
+    /// the editor grammar refuses (see the cross-parser conformance test).
+    fn expect_variant_name(&mut self, ctx: &str) -> Result<Ident, CompileError> {
+        let name = self.expect_ident(ctx)?;
+        if !name
+            .name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_uppercase())
+        {
+            return Err(CompileError::new(
+                "bynk.parse.variant_name_case",
+                name.span,
+                format!(
+                    "variant name `{}` must start with an uppercase letter",
+                    name.name
+                ),
+            )
+            .with_note(
+                "a sum-type or enum variant is a `constant_name` (`/[A-Z][A-Za-z0-9_]*/`)",
+            ));
+        }
+        Ok(name)
+    }
+
     /// Parse a pipe-form sum body: `| Variant | Variant(field, ...)`.
     /// The leading `|` is required (spec v0.2 §3.2).
     fn parse_sum_body_pipe(&mut self) -> Result<SumBody, CompileError> {
@@ -177,7 +207,7 @@ impl<'a> Parser<'a> {
         let mut span: Option<Span> = None;
         while self.peek_kind() == Some(TokenKind::Pipe) {
             let bar = self.bump().unwrap();
-            let name = self.expect_ident("after `|` in a sum variant")?;
+            let name = self.expect_variant_name("after `|` in a sum variant")?;
             let mut payload = Vec::new();
             let mut end_span = name.span;
             if self.peek_kind() == Some(TokenKind::LParen) {
@@ -238,7 +268,8 @@ impl<'a> Parser<'a> {
                 TokenKind::As,
                 "after the embedded type in an `embeds` clause",
             )?;
-            let variant = self.expect_ident("as the target variant of an `embeds` clause")?;
+            let variant =
+                self.expect_variant_name("as the target variant of an `embeds` clause")?;
             let span = source_type.span().merge(variant.span);
             embeds.push(EmbedsClause {
                 source_type,
@@ -258,7 +289,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "after `enum`")?;
         let mut variants = Vec::new();
         while self.peek_kind() != Some(TokenKind::RBrace) {
-            let name = self.expect_ident("as an enum tag name")?;
+            let name = self.expect_variant_name("as an enum tag name")?;
             let span = name.span;
             variants.push(Variant {
                 name,
@@ -335,12 +366,12 @@ impl<'a> Parser<'a> {
             None => Err(CompileError::new(
                 "bynk.parse.unexpected_eof",
                 self.eof_span(),
-                "expected `Int`, `String`, `Bool`, or `Float`, found end of file",
+                "expected `Int`, `String`, `Bool`, `Float`, `Duration`, `Instant`, or `Bytes`, found end of file",
             )),
         }
     }
 
-    fn parse_refinement(&mut self) -> Result<Refinement, CompileError> {
+    pub(crate) fn parse_refinement(&mut self) -> Result<Refinement, CompileError> {
         // #548: refinement predicates are joined by `&&`, the one conjunction
         // spelling shared with contracts/`expect` (was the `and` keyword before
         // the keyword-hygiene batch). The catalogue stays conjunction-only — no
@@ -555,6 +586,13 @@ impl<'a> Parser<'a> {
     /// type when empty and arrow-free. The disambiguation is deferred to the
     /// arrow peek, so no extra lookahead is needed.
     pub(crate) fn parse_type_ref(&mut self, ctx: &str) -> Result<TypeRef, CompileError> {
+        self.enter_recursion("this type")?;
+        let result = self.parse_type_ref_inner(ctx);
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_type_ref_inner(&mut self, ctx: &str) -> Result<TypeRef, CompileError> {
         enum Group {
             Unit(Span),
             Single(TypeRef, Span),
@@ -714,6 +752,15 @@ impl<'a> Parser<'a> {
                 TokenKind::Ident => {
                     self.bump();
                     let name = self.slice(t.span).to_string();
+                    // Built-in type-name dispatch. Each arm below uses the exact
+                    // `name == "<Name>"` idiom: the drift guard
+                    // `builtin_type_names_match_parser_dispatch`
+                    // (`bynkc/tests/keywords_reference.rs`) scans this file for
+                    // that idiom and asserts the set equals `BUILTIN_TYPE_NAMES`,
+                    // which also gates the `bynk.resolve.reserved_builtin_type`
+                    // redeclaration diagnostic. Keep new built-ins in this form,
+                    // and register them there.
+                    //
                     // v0.9: `HttpResult` is a predeclared built-in generic.
                     if name == "HttpResult" {
                         if self.peek_kind() != Some(TokenKind::LBracket) {

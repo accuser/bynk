@@ -1,0 +1,8 @@
+commons demo {
+  fn f(x: Int) -> String {
+    match x {
+      _ where InRange(1, 10) => "low"
+      _ where InRange(11, 20) => "high"
+    }
+  }
+}

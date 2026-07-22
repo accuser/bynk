@@ -76,6 +76,33 @@ a string, or a boolean. They are `match`-only: to test a single value elsewhere,
 use `==`. A refined type (`type Code = Int where …`) is matched against the same
 literals as its base.
 
+## Guard a primitive pattern with `where`
+
+`_ where predicate` dispatches on a *range* or *shape* instead of an exact
+value, reusing the same closed predicate vocabulary a refined type declares
+with (`InRange`, `Matches`, `NonEmpty`, …):
+
+```bynk
+fn classify(status: Int) -> String {
+  match status {
+    _ where InRange(200, 299) => "success"
+    _ where InRange(400, 499) => "client error"
+    _ where InRange(500, 599) => "server error"
+    _                         => "other"
+  }
+}
+```
+
+A refined pattern is a **guard, not a narrowing**: it does not change the
+static type of anything in the arm's body, and — like an `if` guard — an arm
+alone never satisfies exhaustiveness, since its predicate might fail at
+runtime. A refined-only arm set still needs a wildcard `_` arm. The inner form
+is always `_` — `31 where InRange(0, 10)` and other non-wildcard inners are
+rejected, since matching a specific value is already what a plain literal
+pattern does. Refined patterns are `match`-only, the same restriction as
+literal patterns: `is` already has its own refinement check over a *named*
+refined type ([Narrow and bind with `is`](/book/guides/type-system/narrow-with-is/)).
+
 ## Discriminate a nested payload
 
 A payload binding is itself a pattern, so you can look *inside* a variant's
@@ -134,9 +161,52 @@ commons routing {
 ```
 
 A guarded arm never counts toward exhaustiveness — the guard can fail at runtime
-— so the following unguarded `Get(path)` arm stays reachable. (For a guard drawn
-from the closed refinement vocabulary over a primitive, `where` is planned as the
-complementary form.)
+— so the following unguarded `Get(path)` arm stays reachable. `if` takes an
+arbitrary `Bool` expression; for a guard drawn from the closed refinement
+vocabulary over a primitive scrutinee, see [Guard a primitive pattern with
+`where`](#guard-a-primitive-pattern-with-where) above — the two compose (a
+pattern can carry both a `where` and a trailing `if`).
+
+## Match several patterns with `|`
+
+An **or-pattern** `p₁ | p₂` matches if either alternative matches — useful when
+several variants (or literals) share a body:
+
+```bynk
+fn small(n: Int) -> String {
+  match n {
+    1 | 2 | 3 => "small"
+    _         => "large"
+  }
+}
+```
+
+Every alternative must bind the **same set of names**, and a name shared across
+alternatives must have the **same type** in each — this is what lets the arm's
+body (and an optional trailing guard) see one consistent set of bindings
+regardless of which alternative matched:
+
+```bynk
+commons booking {
+  type State =
+    | Held(guest: String, room: Int, days: Int, rsv: Int)
+    | Confirmed(who: String, room: Int, days: Int, rsv: Int)
+    | Cancelled(reason: String)
+
+  fn roomOf(s: State) -> Int {
+    match s {
+      Held(_, r, _, rsv) | Confirmed(_, r, _, rsv) if rsv > 0 => r
+      Held(_, r, _, _)   | Confirmed(_, r, _, _)              => r
+      Cancelled(_)                                            => 0
+    }
+  }
+}
+```
+
+An or-pattern covers all its alternatives for exhaustiveness, and composes with
+`is` (see [Narrow and bind with `is`](/book/guides/type-system/narrow-with-is/)):
+`if state is (Held(_, r, ...) | Confirmed(_, r, ...)) { … r … }` narrows and
+binds `r` in the truthy branch.
 
 ## Related
 

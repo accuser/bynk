@@ -78,15 +78,7 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
     // with `"\n"` inserts one blank line between units and leaves a single-unit
     // file byte-identical.
     let units = parse_units(&tokens, source).map_err(|errors| FormatError { errors })?;
-    let parts: Vec<String> = units
-        .iter()
-        .map(|unit| {
-            let mut f = Formatter::new(opts);
-            f.format_unit(unit);
-            f.finish()
-        })
-        .collect();
-    let output = parts.join("\n");
+    let output = render_units(&units, opts);
     // #523 guard: trivia is only attached at declaration/statement
     // granularity, so a comment inside an expression subtree can be silently
     // dropped. Losing user text is worse than leaving a file unformatted —
@@ -97,7 +89,111 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
             errors: vec![error],
         });
     }
+    // #735 guard: the printer is hand-written and dodges several parse traps by
+    // convention (a tail `()` re-attaching as a call, a trailing comma making a
+    // param list unparseable). A shape the corpus misses that the printer
+    // mis-renders would otherwise be written straight over the user's file with
+    // exit 0. Before returning, re-parse the output and compare its *code*
+    // structure — every comment stripped from both sides, so trivia re-flow is
+    // ignored — against the input. When the output fails to re-parse, or a
+    // shape round-trips to a different AST, refuse rather than corrupt.
+    if let Some(error) = roundtrip_divergence(source, &output, opts) {
+        return Err(FormatError {
+            errors: vec![error],
+        });
+    }
     Ok(output)
+}
+
+/// Format every top-level unit and join with a blank line. A file may hold more
+/// than one top-level unit (v0.113, an atomic `commons` + `suite` file,
+/// DECISION S). Each unit's output already ends in exactly one newline, so
+/// joining with `"\n"` inserts one blank line between units and leaves a
+/// single-unit file byte-identical.
+fn render_units(units: &[SourceUnit], opts: &FormatOptions) -> String {
+    let parts: Vec<String> = units
+        .iter()
+        .map(|unit| {
+            let mut f = Formatter::new(opts);
+            f.format_unit(unit);
+            f.finish()
+        })
+        .collect();
+    parts.join("\n")
+}
+
+/// #735: the comment-free canonical rendering of `source` — every `Comment`
+/// token dropped before parsing, so the result carries no trivia and reflects
+/// only the code structure. Because the parser strips comments the same way
+/// ([`split_trivia`]), pre-filtering them changes nothing structural; it just
+/// leaves the trivia fields empty so the formatter emits pure code. Returns the
+/// parse errors when `source` does not tokenize or parse.
+fn code_only_canonical(source: &str, opts: &FormatOptions) -> Result<String, Vec<CompileError>> {
+    let tokens = tokenize(source).map_err(|e| vec![e])?;
+    let code: Vec<Token> = tokens
+        .into_iter()
+        .filter(|t| t.kind != TokenKind::Comment)
+        .collect();
+    let units = parse_units(&code, source)?;
+    Ok(render_units(&units, opts))
+}
+
+/// #735: refuse when the formatter's `output` does not round-trip to the same
+/// code as `source`. Both sides are reduced to their comment-free canonical
+/// form ([`code_only_canonical`]) and compared: the formatter only re-flows
+/// whitespace and trivia, so for a faithful render the two canonical strings
+/// are byte-identical. A mismatch means either the output no longer parses (the
+/// data-loss vector) or the printer altered the AST. `None` when the output is
+/// safe to write.
+///
+/// Note: this guard assumes the formatter is idempotent on comment-free code —
+/// i.e. `render(parse(strip(x)))` is a stable canonical form. That invariant is
+/// held by the corpus/property idempotency tests. Were a future formatter
+/// change to break it on some shape, this guard would *refuse* an otherwise
+/// valid file rather than corrupt it — it fails safe (file unchanged + a
+/// diagnostic), but the surprise would be a formatter bug to fix upstream.
+fn roundtrip_divergence(source: &str, output: &str, opts: &FormatOptions) -> Option<CompileError> {
+    // The output MUST re-parse to the same structure; a failure here is the
+    // core corruption vector this guard exists to stop.
+    let canon_out = match code_only_canonical(output, opts) {
+        Ok(canon) => canon,
+        Err(_) => {
+            return Some(roundtrip_error(
+                "the formatter produced output that no longer parses",
+            ));
+        }
+    };
+    // The input already tokenized and parsed in `format_source`, so its
+    // canonical form should always compute. If it unexpectedly does not, do not
+    // block a valid format on our own guard failing — leave the file writable.
+    let canon_in = code_only_canonical(source, opts).ok()?;
+    (canon_in != canon_out)
+        .then(|| roundtrip_error("the formatter's output does not round-trip to the same code"))
+}
+
+/// Build the `bynk.fmt.roundtrip` diagnostic shared by both failure modes of
+/// [`roundtrip_divergence`]. The span is deliberately `Span::default()` (the
+/// start of the file): the message points at neither the source nor the
+/// output — it is a generic "this is a formatter bug" — and the failing branch
+/// carries an *output*-relative span, which the caller renders against the
+/// *source* string. When the mis-rendered output is longer than the source,
+/// that span is out of range for the buffer ariadne is given (a misplaced
+/// caret, or a byte-index panic in the very formatter-bug path this guard
+/// exists to handle gracefully). A zero span is always in range and buys the
+/// message nothing to lose.
+fn roundtrip_error(what: &str) -> CompileError {
+    CompileError {
+        category: "bynk.fmt.roundtrip",
+        span: Span::default(),
+        message: format!("{what} — the file was left unchanged"),
+        labels: Vec::new(),
+        notes: vec![
+            "this is a formatter bug, not a problem with your source; please report it \
+             with the file that triggered it"
+                .to_string(),
+        ],
+        suggestions: Vec::new(),
+    }
 }
 
 /// #523: compare the comment population of `source` (already tokenized as
@@ -822,6 +918,36 @@ impl<'a> Formatter<'a> {
             CommonsItem::Service(s) => self.format_service(s),
             CommonsItem::Agent(a) => self.format_agent(a),
             CommonsItem::Actor(a) => self.format_actor(a),
+            CommonsItem::Messages(m) => self.format_messages(m),
+        }
+    }
+
+    fn format_messages(&mut self, m: &MessagesDecl) {
+        self.emit_leading_comments(&m.trivia.leading);
+        if let Some(doc) = &m.documentation {
+            self.emit_doc(doc);
+        }
+        self.push(&format!("messages {}", m.tag.name));
+        for ann in &m.annotations {
+            self.push(" ");
+            self.push(&annotation_to_string(ann));
+        }
+        self.push(" {");
+        self.newline();
+        self.indented(|f| {
+            for entry in &m.entries {
+                f.push(&format!(
+                    "\"{}\" => \"{}\"",
+                    escape_string(&entry.code),
+                    escape_string(&entry.template)
+                ));
+                f.newline();
+            }
+        });
+        self.push("}");
+        self.emit_trailing_comment(m.trivia.trailing.as_deref());
+        if m.trivia.trailing.is_none() {
+            self.newline();
         }
     }
 
@@ -1616,6 +1742,9 @@ impl<'a> Formatter<'a> {
                 }
                 self.push(" <- ");
                 self.format_expr(&l.value);
+                if let Some(p) = &l.principal {
+                    self.push(&format!(" {}", call_site_actor_src(p)));
+                }
             }
             Statement::Expect(a) => {
                 self.push("expect ");
@@ -1702,6 +1831,15 @@ fn by_clause_src(by: &ByClause) -> String {
     match &by.binder {
         Some(b) => format!("by {}: {actors}", b.name),
         None => format!("by {actors}"),
+    }
+}
+
+/// v0.182 (#664): render a call-site actor clause — `by User("bob")` or the
+/// unit-identity `by Visitor`.
+fn call_site_actor_src(p: &CallSiteActor) -> String {
+    match &p.identity {
+        Some(id) => format!("by {}({})", p.actor.name, expr_with_prec(id, 0)),
+        None => format!("by {}", p.actor.name),
     }
 }
 
@@ -2133,6 +2271,7 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
                 format!("Val[{t}]({a})")
             }
         }
+        ExprKind::Wire(inner) => format!("Wire({})", expr_with_prec(inner, 0)),
         ExprKind::Trace { cap, op } => format!("trace({}.{})", cap.name, op.name),
         ExprKind::Observation(o) => {
             let subject = format!("{}.{}", o.cap.name, o.op.name);
@@ -2171,6 +2310,15 @@ fn pattern_to_string(p: &Pattern) -> String {
             LiteralValue::Str(s) => format!("\"{}\"", escape_string(s)),
             LiteralValue::Bool(b) => b.to_string(),
         },
+        // #472: `p where predicate` — the inner pattern, then the predicate
+        // list rendered the same way a `type X = Base where P` refinement is.
+        Pattern::Refined {
+            inner, predicate, ..
+        } => format!(
+            "{} where {}",
+            pattern_to_string(inner),
+            refinement_to_string(predicate)
+        ),
         Pattern::Variant {
             type_name,
             variant,
@@ -2197,6 +2345,12 @@ fn pattern_to_string(p: &Pattern) -> String {
                 format!("{}({})", name_part, parts.join(", "))
             }
         }
+        // #474: an or-pattern renders as its alternatives joined by `|`.
+        Pattern::Or(alts, _) => alts
+            .iter()
+            .map(pattern_to_string)
+            .collect::<Vec<_>>()
+            .join(" | "),
     }
 }
 
@@ -2246,6 +2400,9 @@ fn stmt_to_string(s: &Statement) -> String {
                 out.push_str(&format!(": {}", type_ref_to_string(t)));
             }
             out.push_str(&format!(" <- {}", expr_with_prec(&l.value, 0)));
+            if let Some(p) = &l.principal {
+                out.push_str(&format!(" {}", call_site_actor_src(p)));
+            }
             out
         }
         Statement::Expect(a) => format!("expect {}", expr_with_prec(&a.value, 0)),
@@ -2379,6 +2536,88 @@ mod tests {
         let out = fmt(src);
         assert!(out.contains("-- TODO"));
         assert_eq!(out, fmt(&out));
+    }
+
+    // -- #735 round-trip guard --
+
+    #[test]
+    fn code_only_canonical_ignores_comments() {
+        // Two sources whose only difference is comments must reduce to the same
+        // comment-free canonical form — this is what lets the round-trip guard
+        // compare structure while the formatter re-flows trivia freely.
+        let opts = FormatOptions::default();
+        let bare = "commons x { type T = Int where Positive }";
+        let commented = "commons x {\n-- a note\ntype T = Int where Positive  -- trailing\n}";
+        assert_eq!(
+            code_only_canonical(bare, &opts).unwrap(),
+            code_only_canonical(commented, &opts).unwrap(),
+        );
+    }
+
+    #[test]
+    fn roundtrip_guard_accepts_faithful_output() {
+        // The formatter's own output over a real source must round-trip.
+        let opts = FormatOptions::default();
+        let src = "commons x { fn add(a: Int, b: Int) -> Int { a + b } }";
+        let out = format_source(src, &opts).unwrap();
+        assert!(roundtrip_divergence(src, &out, &opts).is_none());
+    }
+
+    #[test]
+    fn roundtrip_guard_rejects_non_parsing_output() {
+        // Simulate a printer that emitted garbage: the output no longer parses,
+        // so the guard must fire rather than let it be written. The output here
+        // is *longer* than the source and its parse error lands near its end —
+        // the error's span must nonetheless stay within the source, because the
+        // caller renders it against `source`, not the output (an out-of-range
+        // primary span misplaces the caret or panics ariadne). See
+        // `roundtrip_error`.
+        let opts = FormatOptions::default();
+        let src = "commons x { type T = Int where Positive }";
+        let corrupt = "commons x { type T = Int where Positive } fn f(a: Int) -> Int { a +";
+        assert!(
+            corrupt.len() > src.len(),
+            "output must be the longer buffer"
+        );
+        let err =
+            roundtrip_divergence(src, corrupt, &opts).expect("must reject non-parsing output");
+        assert_eq!(err.category, "bynk.fmt.roundtrip");
+        assert!(
+            err.span.end <= src.len(),
+            "roundtrip error span {:?} escapes the source it is rendered against (len {})",
+            err.span,
+            src.len(),
+        );
+    }
+
+    #[test]
+    fn roundtrip_guard_rejects_structural_divergence() {
+        // Simulate a printer that emitted parseable-but-wrong code: the output
+        // parses, but to a different AST than the input. The guard must catch it.
+        let opts = FormatOptions::default();
+        let src = "commons x { type T = Int where Positive }";
+        let wrong = "commons x { type T = Bool }";
+        let err =
+            roundtrip_divergence(src, wrong, &opts).expect("must reject structural divergence");
+        assert_eq!(err.category, "bynk.fmt.roundtrip");
+        assert!(err.span.end <= src.len(), "span escapes the source buffer");
+    }
+
+    #[test]
+    fn roundtrip_error_renders_against_source_without_panicking() {
+        // The guard's error is rendered against the *source* (`run_fmt` calls
+        // `print_errors(&e.errors, &source, …)`). ariadne uses a primary span
+        // unconditionally, so a span outside the source buffer misplaces the
+        // caret or panics — exactly in the formatter-bug path this guard must
+        // handle gracefully. Render the real diagnostic against a short source
+        // and assert it produces output without panicking.
+        let err = roundtrip_error("the formatter produced output that no longer parses");
+        let source = "commons x {}";
+        let rendered = bynk_render::render_errors(std::slice::from_ref(&err), source, "<test>");
+        assert!(
+            rendered.contains("bynk.fmt.roundtrip"),
+            "diagnostic did not render: {rendered}"
+        );
     }
 
     #[test]

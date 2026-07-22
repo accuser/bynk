@@ -20,7 +20,8 @@ Productions are written in EBNF:
   raw rules and the byte-exact grammar live in the
   [appendix](/book/reference/grammar-appendix/).
 - Every production on this page is **generated** from the `tree-sitter-bynk`
-  grammar, so it cannot drift from the parser.
+  grammar, so it cannot drift from that grammar; a cross-parser conformance test
+  keeps that grammar in agreement with the compiler's own parser.
 - A production says what *parses*. A **Static semantics** block lists the
   `bynk.*` diagnostics that constrain a construct beyond parsing; each links by
   code to the [diagnostic index](/book/reference/diagnostics/). A construct with no such
@@ -683,6 +684,30 @@ One operation in a capability: a name, parameters, and a return type (no body).
 **Static semantics.**
 {{#grammar-semantics capability_op}}
 
+### messages_decl {#rule-messages_decl}
+
+{{#grammar messages_decl}}
+
+A message bundle for one locale (message-bundles track, slice 1): `messages
+<tag> @reference { "code" => "template" ... }`. `tag` is a plain identifier —
+its `LocaleTag` refinement is a checker concern, not a grammar one.
+Annotations reuse the same `@name(args)` shape as a `store` field's
+(`store_annotation`); the parser stays permissive on their count (`@reference`
+appears zero or more times syntactically) — exactly one per bundle is a
+checker rule (`bynk.messages.missing_reference` / `multiple_reference`), not a
+parse error. Commons-only placement is likewise checked, not parsed: this rule
+is syntactically admitted inside a `context` or `adapter` body too, the same
+way `service_decl`/`agent_decl` are admitted inside an `adapter` — the checker
+reports `bynk.messages.outside_commons` precisely instead.
+
+### message_entry {#rule-message_entry}
+
+{{#grammar message_entry}}
+
+One `"code" => "template"` entry inside a `messages` block. Both sides are
+plain string literals — a template's `{name}` placeholders are resolved by a
+compile-time string scan during lowering, not parsed as expressions.
+
 ### provider_decl {#rule-provider_decl}
 
 {{#grammar provider_decl}}
@@ -1163,7 +1188,10 @@ match s {
 {{#grammar is_expr}}
 
 A refinement/variant check that also narrows the value's type in the `true`
-branch.
+branch. A variant pattern's **nested payload patterns are structural tests too**:
+`r is Rejected(RefinementViolation(_))` tests the outer tag *and* the inner one,
+the same tests a `match` arm applies. A payload bound to a plain name (`is Ok(x)`)
+or a wildcard (`is Ok(_)`) adds no nested test — it only narrows.
 
 **Static semantics.**
 {{#grammar-semantics is_expr}}
@@ -1311,6 +1339,17 @@ test bodies. Replaces the retired `Mock[T]` (v0.114).
 
 The pin arguments to a `Val[T]`: positional values or a record of field pins.
 
+### wire_expr {#rule-wire_expr}
+
+{{#grammar wire_expr}}
+
+`Wire(<String>)` — a raw, pre-validation argument to a `system`-tier service
+address (testing-the-boundary). The inner `String` is the wire form the boundary
+receives *unvalidated* — a body's JSON text or a path segment — so a `case` can
+drive the router with input the type system forbids and observe the rejection.
+Valid only as a service-address argument in a `system`-tier `case`; the router
+validates it, so no refined value is ever minted from a `Wire`.
+
 ### lambda_expr {#rule-lambda_expr}
 
 {{#grammar lambda_expr}}
@@ -1373,7 +1412,12 @@ The patterns used in `match` arms and `is` checks.
 
 One arm of a `match`: a pattern, an optional `if` guard over the pattern's
 bindings, `=>`, and a result expression. A guarded arm never satisfies
-exhaustiveness (its guard may fail at runtime).
+exhaustiveness (its guard may fail at runtime). `refined_pattern` (#472) is
+admitted only here — a match arm's top-level pattern — not through `pattern`
+generally, so it is never reachable from `is` or from a nested payload
+position; a match arm's pattern is always followed by a fixed terminator
+(`if`/`=>`), unlike an expression position, where `refinement`'s own
+`&&`-joined predicate list would be ambiguous with the surrounding grammar.
 
 **Static semantics.**
 {{#grammar-semantics match_arm}}
@@ -1384,7 +1428,10 @@ exhaustiveness (its guard may fail at runtime).
 
 {{#grammar _pattern}}
 
-A pattern: a wildcard or a variant pattern.
+A pattern: a wildcard, a literal, a binding, a variant pattern, an
+or-pattern, or a parenthesized pattern. A lowercase-led identifier is a
+binding (it matches anything and binds the value); an uppercase-led one is a
+nullary variant — in the concrete grammar both parse as `variant_pattern`.
 
 ### variant_pattern {#rule-variant_pattern}
 
@@ -1409,6 +1456,51 @@ Matches a primitive scrutinee (`Int`/`String`/`Bool`, or a refinement over one)
 by value equality — an integer (optionally negated), a string, or a boolean.
 A literal-pattern `match` needs a wildcard `_` arm to be exhaustive, except over
 `Bool`, which is complete once both `true` and `false` appear.
+
+### or_pattern {#rule-or_pattern}
+
+{{#grammar or_pattern}}
+
+`p₁ | p₂` — matches if either alternative matches, left-associative
+(`p₁ | p₂ | p₃` is `(p₁ | p₂) | p₃`). Every alternative must bind the same
+set of names, a name shared across alternatives must have the same type
+(including refinement) in each, and every alternative must match the same
+value type. `|` is a pattern-position operator only, distinct from boolean
+`||`.
+
+**Static semantics.**
+{{#grammar-semantics or_pattern}}
+
+**See also.** [Pattern-match with `match`](/book/guides/type-system/match/).
+
+### paren_pattern {#rule-paren_pattern}
+
+{{#grammar paren_pattern}}
+
+Parentheses around a pattern — transparent grouping, most useful around an
+or-pattern for readability (`is (Held(...) | Confirmed(...))`). Optional:
+`is` already parses one whole pattern, `|`-chain included, without them.
+Never admits a `refined_pattern` inside (#472) — see below.
+
+### refined_pattern {#rule-refined_pattern}
+
+{{#grammar refined_pattern}}
+
+`p 'where' predicate` (#472) — a runtime guard on a pattern, reusing the
+closed refinement-predicate catalogue a `type X = Base where P` declaration
+uses ([`refinement`](#rule-refinement)). v1 admits only `_ where predicate` —
+the compiler rejects any other inner form (`bynk.parse.refined_pattern_inner`).
+Admitted only against a literal-kind scrutinee (`Int`/`String`); a guard, not
+a narrowing — matching a refined arm does not change any static type. Like an
+`if` guard, a refined arm alone is never exhaustive, and it is `match`-only —
+one on the right of `is` is rejected (`bynk.types.is_refined_pattern`).
+Composes with an or-pattern only as the whole thing's outer wrapper —
+`(p₁ | p₂) where predicate` refines the alternation as a unit — never as one
+alternative among others (`match_arm`'s pattern field is a single
+`choice($._pattern, $.refined_pattern)`, not a repetition, so a refined
+pattern can never appear as one `|`-separated alternative alongside others).
+
+**See also.** [Pattern-match with `match`](/book/guides/type-system/match/).
 
 ### pattern_binding {#rule-_pattern_binding}
 
@@ -1457,10 +1549,22 @@ Binds a pure value: `let name = expr`.
 
 {{#grammar effect_let_stmt}}
 
-Binds the result of an effect: `let name <- effect`.
+Binds the result of an effect: `let name <- effect`. In a test `case` body it may
+carry a trailing [`call_site_actor`](#rule-call_site_actor) clause naming the
+principal the case acts as when the effect drives a service handler.
 
 **Static semantics.**
 {{#grammar-semantics effect_let_stmt}}
+
+### call_site_actor {#rule-call_site_actor}
+
+{{#grammar call_site_actor}}
+
+The test-body `by <Actor>(<identity>)` clause (v0.182): names the actor a `case`
+acts as when it drives a service handler, and supplies the identity value. Written
+`by User("bob")` for an identity-carrying actor, or `by Visitor` (no argument) for
+a unit-identity actor. Distinct from [`by_clause`](#rule-by_clause), the handler
+form, which binds an actor and admits a sum but carries no identity argument.
 
 ### effect_send_stmt {#rule-effect_send_stmt}
 

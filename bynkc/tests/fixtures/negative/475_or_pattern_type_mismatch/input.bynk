@@ -1,0 +1,10 @@
+commons demo
+
+type Score = Int where InRange(0, 100)
+type Grade = | HighScore(x: Score) | RawScore(x: Int)
+
+fn f(g: Grade) -> Int {
+  match g {
+    HighScore(x) | RawScore(x) => x
+  }
+}

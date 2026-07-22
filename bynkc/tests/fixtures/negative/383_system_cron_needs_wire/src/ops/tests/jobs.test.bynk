@@ -1,0 +1,6 @@
+suite ops.jobs as system {
+  case "cron has no serialisation edge" {
+    let r <- ticker.schedule("*/5 * * * *")
+    expect r is Ok(_)
+  }
+}

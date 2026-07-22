@@ -62,3 +62,59 @@ test("callService: stamps the caller context header", async () => {
   await callService(binding, "svc", null, deser<number, string>(), "ctx.Caller");
   assert.equal(seen, "ctx.Caller");
 });
+
+// v0.177 (#643): the contract seam.
+
+test("callService: a 409 ContractMismatch surfaces as the named error", async () => {
+  const binding = bindingReturning(
+    {
+      kind: "ContractMismatch",
+      service: "whoami",
+      expected: "317bdd3de84d2176",
+      actual: "0000000000000000",
+    },
+    { status: 409 },
+  );
+  await assert.rejects(
+    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "0000000000000000"),
+    (e: Error) => {
+      const be = (e as { boundaryError?: { kind: string; service?: string } }).boundaryError;
+      assert.equal(be?.kind, "ContractMismatch");
+      assert.equal(be?.service, "whoami");
+      return true;
+    },
+  );
+});
+
+// The body stream is consumed on first read, so reading it twice throws
+// `TypeError: Body is unusable`. A 409 that is *not* ours must still produce a
+// `Transport` error naming the status — replacing that with an opaque TypeError
+// from inside the runtime would bury exactly the diagnosis this seam exists to
+// give.
+test("callService: a 409 that is not a ContractMismatch stays a Transport error", async () => {
+  const binding = bindingReturning({ kind: "SomethingElse" }, { status: 409 });
+  await assert.rejects(
+    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "h"),
+    (e: Error) => {
+      const be = (e as { boundaryError?: { kind: string; status?: number } }).boundaryError;
+      assert.equal(be?.kind, "Transport", `got ${e.message}`);
+      assert.equal(be?.status, 409);
+      return true;
+    },
+  );
+});
+
+test("callService: a 409 with an unparseable body stays a Transport error", async () => {
+  const binding: ServiceBinding = {
+    fetch: async () => new Response("<html>gateway</html>", { status: 409 }),
+  };
+  await assert.rejects(
+    () => callService(binding, "whoami", null, deser<string, string>(), "app.a", "h"),
+    (e: Error) => {
+      const be = (e as { boundaryError?: { kind: string; details?: string } }).boundaryError;
+      assert.equal(be?.kind, "Transport", `got ${e.message}`);
+      assert.match(be?.details ?? "", /gateway/);
+      return true;
+    },
+  );
+});

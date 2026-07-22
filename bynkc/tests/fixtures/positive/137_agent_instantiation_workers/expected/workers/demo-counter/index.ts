@@ -18,6 +18,8 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "bump": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "fe378434d77b5d4d") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "bump", expected: "fe378434d77b5d4d", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_id = handlers.deserialise_CounterId(args, "$");
             if (__r_id.tag === "Err") return new Response(JSON.stringify(__r_id.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -27,6 +29,8 @@ export default {
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }
           case "read": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "ad739058d404e65d") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "read", expected: "ad739058d404e65d", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_id = handlers.deserialise_CounterId(args, "$");
             if (__r_id.tag === "Err") return new Response(JSON.stringify(__r_id.error), { status: 400, headers: { "content-type": "application/json" } });

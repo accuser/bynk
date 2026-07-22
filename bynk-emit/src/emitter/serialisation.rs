@@ -14,6 +14,25 @@ use std::fmt::Write as _;
 
 use bynk_syntax::ast::*;
 
+/// #661: a *type qualifier* — maps a callee-owned type name to the type-only
+/// namespace prefix (`"commerce_payment."`) the caller must use to *name* it,
+/// while the caller generates that type's codec **locally** under a bare name.
+///
+/// A name absent from the map (or mapped to `""`) is named bare: the owner's
+/// own module, a base/generic type, or a commons type the caller already
+/// declares or imports locally. Only a consumed context's *own* boundary types
+/// (`AuthId`, `PaymentError`) are qualified — the caller has no local
+/// declaration to name, so the codec's type positions reach through the
+/// `import type * as <ns>` alias. Codec *function* names are never qualified:
+/// the caller's `deserialise_AuthId` calls its own local `deserialise_*`, which
+/// is the whole point of the increment.
+type Qual = std::collections::HashMap<String, String>;
+
+/// The namespace prefix for a type name under `qual` (`""` when unqualified).
+fn qual_prefix(qual: &Qual, name: &str) -> String {
+    qual.get(name).cloned().unwrap_or_default()
+}
+
 /// Compute the set of type names (transitively reachable) that need
 /// serialise/deserialise helpers for this context: any type used in the
 /// argument or return position of a service handler exposed by this
@@ -31,6 +50,8 @@ pub fn collect_boundary_types(
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<String> = Vec::new();
     let mut stack: Vec<String> = Vec::new();
+    let recursive_set = recursive_generic_names(types);
+    let recursive = &recursive_set;
 
     let mut svc_names: Vec<&String> = services.keys().collect();
     svc_names.sort();
@@ -38,9 +59,9 @@ pub fn collect_boundary_types(
         let service = &services[name];
         for h in &service.handlers {
             for p in &h.params {
-                collect_type_names(&p.type_ref, &mut stack);
+                collect_type_names(&p.type_ref, &mut stack, types, recursive);
             }
-            collect_type_names(&h.return_type, &mut stack);
+            collect_type_names(&h.return_type, &mut stack, types, recursive);
         }
     }
 
@@ -49,7 +70,7 @@ pub fn collect_boundary_types(
     for name in agent_names {
         for f in &agents[name].store_fields {
             for arg in &f.kind.args {
-                collect_type_names(arg, &mut stack);
+                collect_type_names(arg, &mut stack, types, recursive);
             }
         }
     }
@@ -65,13 +86,13 @@ pub fn collect_boundary_types(
         match &decl.body {
             TypeBody::Record(r) => {
                 for f in &r.fields {
-                    collect_type_names(&f.type_ref, &mut stack);
+                    collect_type_names(&f.type_ref, &mut stack, types, recursive);
                 }
             }
             TypeBody::Sum(s) => {
                 for v in &s.variants {
                     for p in &v.payload {
-                        collect_type_names(&p.type_ref, &mut stack);
+                        collect_type_names(&p.type_ref, &mut stack, types, recursive);
                     }
                 }
             }
@@ -83,7 +104,28 @@ pub fn collect_boundary_types(
     out
 }
 
-fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
+/// v0.174 (#592): the set of generic-record names that are *recursive* — they
+/// transitively contain themselves, so they have no finite monomorphised codec
+/// (rejected at the boundary by the checker before emit). Precomputed once per
+/// collector so the per-`App` guard in the codec walks is an O(1) membership test
+/// rather than a fresh graph reachability walk at every occurrence.
+fn recursive_generic_names(
+    types: &std::collections::HashMap<String, TypeDecl>,
+) -> std::collections::HashSet<String> {
+    types
+        .iter()
+        .filter(|(_, d)| !d.type_params.is_empty())
+        .map(|(n, _)| n.clone())
+        .filter(|n| generic_record_is_recursive(n, types))
+        .collect()
+}
+
+fn collect_type_names(
+    t: &TypeRef,
+    stack: &mut Vec<String>,
+    types: &std::collections::HashMap<String, TypeDecl>,
+    recursive: &std::collections::HashSet<String>,
+) {
     match t {
         TypeRef::Named(id) => stack.push(id.name.clone()),
         // Query/Stream/Connection types carry no boundary-collectable user
@@ -91,24 +133,51 @@ fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
         TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..)
-        | TypeRef::App { .. } => {}
+        | TypeRef::History(..) => {}
+        // v0.174 (#592): a generic-record instantiation is boundary-serialisable
+        // through its monomorphised codec (`serialise_Paginated_User`). The
+        // *named* helpers that codec calls come from its concrete field types —
+        // the type arguments (`User`) and any non-parameter named field types
+        // (`Envelope[T] = { meta: Metadata, … }`) — so walk the substituted
+        // fields. A *recursive* generic record has no finite codec set and is
+        // rejected at the boundary before emit; the guard here is defence in
+        // depth so this walk can never fail to terminate.
+        TypeRef::App { name, args, .. } => {
+            if recursive.contains(&name.name) {
+                return;
+            }
+            // #593: a generic-sum instantiation's codec (`serialise_ApiResult_User`)
+            // likewise calls the named helpers of its *substituted variant
+            // payloads* (`serialise_User` for `Loaded(value: T)` at `T = User`),
+            // so walk those the same way records walk their fields.
+            if let Some(fields) = record_inst_fields(&name.name, args, types) {
+                for (_, ft) in &fields {
+                    collect_type_names(ft, stack, types, recursive);
+                }
+            } else if let Some(variants) = sum_inst_variants(&name.name, args, types) {
+                for (_, payload) in &variants {
+                    for (_, ft) in payload {
+                        collect_type_names(ft, stack, types, recursive);
+                    }
+                }
+            }
+        }
         // v0.20a: function types carry no user-named types to collect and are
         // rejected at boundaries anyway.
         TypeRef::Fn(..) => {}
         TypeRef::Result(a, b, _) => {
-            collect_type_names(a, stack);
-            collect_type_names(b, stack);
+            collect_type_names(a, stack, types, recursive);
+            collect_type_names(b, stack, types, recursive);
         }
-        TypeRef::Option(a, _) => collect_type_names(a, stack),
-        TypeRef::Effect(a, _) => collect_type_names(a, stack),
-        TypeRef::HttpResult(a, _) => collect_type_names(a, stack),
+        TypeRef::Option(a, _) => collect_type_names(a, stack, types, recursive),
+        TypeRef::Effect(a, _) => collect_type_names(a, stack, types, recursive),
+        TypeRef::HttpResult(a, _) => collect_type_names(a, stack, types, recursive),
         // v0.20b: collections serialise element-/entry-wise; their inner
         // named types need helpers.
-        TypeRef::List(a, _) => collect_type_names(a, stack),
+        TypeRef::List(a, _) => collect_type_names(a, stack, types, recursive),
         TypeRef::Map(k, v, _) => {
-            collect_type_names(k, stack);
-            collect_type_names(v, stack);
+            collect_type_names(k, stack, types, recursive);
+            collect_type_names(v, stack, types, recursive);
         }
         TypeRef::Base(_, _)
         | TypeRef::QueueResult(_)
@@ -116,6 +185,135 @@ fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
     }
+}
+
+/// v0.174 (#592): substitute a generic record's declared field type — replacing
+/// each type-parameter name with the concrete argument type-ref — so a
+/// per-instantiation codec sees fully concrete field types.
+/// `Paginated[User]`'s `items: List[T]` becomes `items: List[User]`.
+fn subst_type_ref(t: &TypeRef, subst: &std::collections::HashMap<String, TypeRef>) -> TypeRef {
+    match t {
+        TypeRef::Named(id) => match subst.get(&id.name) {
+            Some(replacement) => replacement.clone(),
+            None => t.clone(),
+        },
+        TypeRef::App { name, args, span } => TypeRef::App {
+            name: name.clone(),
+            args: args.iter().map(|a| subst_type_ref(a, subst)).collect(),
+            span: *span,
+        },
+        TypeRef::Result(a, b, s) => TypeRef::Result(
+            Box::new(subst_type_ref(a, subst)),
+            Box::new(subst_type_ref(b, subst)),
+            *s,
+        ),
+        TypeRef::Option(a, s) => TypeRef::Option(Box::new(subst_type_ref(a, subst)), *s),
+        TypeRef::Effect(a, s) => TypeRef::Effect(Box::new(subst_type_ref(a, subst)), *s),
+        TypeRef::HttpResult(a, s) => TypeRef::HttpResult(Box::new(subst_type_ref(a, subst)), *s),
+        TypeRef::List(a, s) => TypeRef::List(Box::new(subst_type_ref(a, subst)), *s),
+        TypeRef::Map(k, v, s) => TypeRef::Map(
+            Box::new(subst_type_ref(k, subst)),
+            Box::new(subst_type_ref(v, subst)),
+            *s,
+        ),
+        TypeRef::Query(a, s) => TypeRef::Query(Box::new(subst_type_ref(a, subst)), *s),
+        TypeRef::Stream(a, s) => TypeRef::Stream(Box::new(subst_type_ref(a, subst)), *s),
+        TypeRef::Connection(a, s) => TypeRef::Connection(Box::new(subst_type_ref(a, subst)), *s),
+        TypeRef::History(a, s) => TypeRef::History(Box::new(subst_type_ref(a, subst)), *s),
+        TypeRef::Fn(ps, r, s) => TypeRef::Fn(
+            ps.iter().map(|p| subst_type_ref(p, subst)).collect(),
+            Box::new(subst_type_ref(r, subst)),
+            *s,
+        ),
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => t.clone(),
+    }
+}
+
+/// v0.174 (#592): the concrete `(field-name, field-type)` list for a generic
+/// record instantiation `Name[args…]` — the declared fields with every type
+/// parameter substituted by the matching argument. Returns `None` if `name` is
+/// not a declared generic record or the arity does not match (both guaranteed
+/// impossible by the checker, so this is purely defensive).
+fn record_inst_fields(
+    name: &str,
+    args: &[TypeRef],
+    types: &std::collections::HashMap<String, TypeDecl>,
+) -> Option<Vec<(String, TypeRef)>> {
+    let decl = types.get(name)?;
+    let TypeBody::Record(r) = &decl.body else {
+        return None;
+    };
+    if decl.type_params.len() != args.len() {
+        return None;
+    }
+    let subst: std::collections::HashMap<String, TypeRef> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .zip(args.iter().cloned())
+        .collect();
+    Some(
+        r.fields
+            .iter()
+            .map(|f| (f.name.name.clone(), subst_type_ref(&f.type_ref, &subst)))
+            .collect(),
+    )
+}
+
+/// #593: the concrete `(variant-name, [(field-name, field-type)])` list for a
+/// generic sum instantiation `Name[args…]` — the declared variants with every
+/// type parameter substituted by the matching argument. The sum analogue of
+/// [`record_inst_fields`]; `None` (defensively) if `name` is not a declared
+/// generic sum or the arity does not match.
+#[allow(clippy::type_complexity)]
+fn sum_inst_variants(
+    name: &str,
+    args: &[TypeRef],
+    types: &std::collections::HashMap<String, TypeDecl>,
+) -> Option<Vec<(String, Vec<(String, TypeRef)>)>> {
+    let decl = types.get(name)?;
+    let TypeBody::Sum(s) = &decl.body else {
+        return None;
+    };
+    if decl.type_params.len() != args.len() {
+        return None;
+    }
+    let subst: std::collections::HashMap<String, TypeRef> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .zip(args.iter().cloned())
+        .collect();
+    Some(
+        s.variants
+            .iter()
+            .map(|v| {
+                (
+                    v.name.name.clone(),
+                    v.payload
+                        .iter()
+                        .map(|f| (f.name.name.clone(), subst_type_ref(&f.type_ref, &subst)))
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// v0.174 (#592): the monomorphised codec suffix for a generic-record
+/// instantiation — `Paginated[User]` → `Paginated_User`,
+/// `Pair[User, String]` → `Pair_User_String`. #593: shared with generic sums.
+fn app_ts_name(name: &str, args: &[TypeRef]) -> String {
+    let mut s = name.to_string();
+    for a in args {
+        s.push('_');
+        s.push_str(&inner_ts_name(a));
+    }
+    s
 }
 
 /// Emit `serialise_<T>` and `deserialise_<T>` for every named type the
@@ -126,7 +324,24 @@ pub fn emit_helpers_for_owner(
     out: &mut String,
     type_names: &[String],
     types: &std::collections::HashMap<String, TypeDecl>,
+    owner_qualified: &str,
+) {
+    emit_helpers_for_owner_qualified(out, type_names, types, owner_qualified, &Qual::new());
+}
+
+/// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
+/// `Qual`. With an empty qualifier this is the owner's own module (every
+/// type named bare, refined validation through `.of`). With a non-empty one it
+/// is a *consumer* generating its own view of another context's boundary
+/// types: the qualified names reach through the `import type * as <ns>` alias,
+/// and refined validation inlines (transparent) or casts structurally (opaque)
+/// because the owner's `.of` is not importable.
+pub fn emit_helpers_for_owner_qualified(
+    out: &mut String,
+    type_names: &[String],
+    types: &std::collections::HashMap<String, TypeDecl>,
     _owner_qualified: &str,
+    qual: &Qual,
 ) {
     // Only emit helpers for *named* types declared by this owner. Skip
     // unknown names — they belong to another module or to the runtime's
@@ -136,20 +351,27 @@ pub fn emit_helpers_for_owner(
         let Some(decl) = types.get(name) else {
             continue;
         };
+        // v0.174 (#592): a generic record has no single `serialise_<Name>` —
+        // each boundary instantiation gets its own monomorphised codec
+        // (`serialise_Paginated_User`) via `emit_generic_helpers`. Never emit a
+        // bare, un-parameterised helper for the declaration itself.
+        if !decl.type_params.is_empty() {
+            continue;
+        }
         emitted_any = true;
-        emit_one(out, name, decl);
+        emit_one(out, name, decl, qual);
     }
     if emitted_any {
         writeln!(out).unwrap();
     }
 }
 
-fn emit_one(out: &mut String, name: &str, decl: &TypeDecl) {
+fn emit_one(out: &mut String, name: &str, decl: &TypeDecl, qual: &Qual) {
     match &decl.body {
-        TypeBody::Refined { base, .. } => emit_refined(out, name, *base, decl),
-        TypeBody::Opaque { base, .. } => emit_refined(out, name, *base, decl),
-        TypeBody::Record(r) => emit_record(out, name, r),
-        TypeBody::Sum(s) => emit_sum(out, name, s),
+        TypeBody::Refined { base, .. } => emit_refined(out, name, *base, decl, qual),
+        TypeBody::Opaque { base, .. } => emit_refined(out, name, *base, decl, qual),
+        TypeBody::Record(r) => emit_record(out, name, r, qual),
+        TypeBody::Sum(s) => emit_sum(out, name, s, qual),
     }
 }
 
@@ -171,10 +393,11 @@ fn ts_base_for_serialisation(b: BaseType) -> &'static str {
 /// and decoded (rejecting a non-string or invalid-base64 wire value) on
 /// deserialise. There are no `Bytes` refinement predicates, so there is no
 /// `.of` re-validation to thread.
-fn emit_bytes_named_codec(out: &mut String, name: &str) {
+fn emit_bytes_named_codec(out: &mut String, name: &str, qual: &Qual) {
+    let ty = format!("{}{name}", qual_prefix(qual, name));
     writeln!(
         out,
-        "export function serialise_{name}(value: {name}): JsonValue {{"
+        "export function serialise_{name}(value: {ty}): JsonValue {{"
     )
     .unwrap();
     writeln!(
@@ -187,7 +410,7 @@ fn emit_bytes_named_codec(out: &mut String, name: &str) {
 
     writeln!(
         out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{name}, BoundaryError> {{"
+        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{ty}, BoundaryError> {{"
     )
     .unwrap();
     writeln!(out, "  if (typeof json !== \"string\") {{").unwrap();
@@ -205,17 +428,30 @@ fn emit_bytes_named_codec(out: &mut String, name: &str) {
     )
     .unwrap();
     writeln!(out, "  }}").unwrap();
-    writeln!(out, "  return Ok(__b.value as unknown as {name});").unwrap();
+    writeln!(out, "  return Ok(__b.value as unknown as {ty});").unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 }
 
-fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) {
+fn emit_refined(out: &mut String, name: &str, base: BaseType, decl: &TypeDecl, qual: &Qual) {
     // v0.110: a `Bytes`-based opaque/refined type has a bespoke base64 codec.
     if base == BaseType::Bytes {
-        emit_bytes_named_codec(out, name);
+        emit_bytes_named_codec(out, name, qual);
         return;
     }
+    // #661: a *consumed* type (one the caller qualifies through the callee's
+    // type-only namespace) has no importable `.of`, so its deserialiser cannot
+    // route validation through the owner's constructor. An **opaque** consumed
+    // type casts structurally after the base check (Decision C — its predicate
+    // is the owner's secret and is not re-checked, which is sound because the
+    // value was produced by the owner's typed code and skew is caught by the
+    // v0.177 contract hash). A **transparent refined** consumed type inlines
+    // its predicate checks (Decision D — the consumer knows the shape by
+    // declaration, so it validates, just not through `.of`).
+    let qprefix = qual_prefix(qual, name);
+    let ty = format!("{qprefix}{name}");
+    let consumed = !qprefix.is_empty();
+    let consumed_opaque = consumed && matches!(decl.body, TypeBody::Opaque { .. });
     let prim = ts_base_for_serialisation(base);
     let typeof_str = match base {
         BaseType::Int => "number",
@@ -228,7 +464,7 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
     };
     writeln!(
         out,
-        "export function serialise_{name}(value: {name}): JsonValue {{"
+        "export function serialise_{name}(value: {ty}): JsonValue {{"
     )
     .unwrap();
     writeln!(out, "  return value as unknown as {prim};").unwrap();
@@ -237,7 +473,7 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
 
     writeln!(
         out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{name}, BoundaryError> {{"
+        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{ty}, BoundaryError> {{"
     )
     .unwrap();
     writeln!(out, "  if (typeof json !== \"{typeof_str}\") {{").unwrap();
@@ -247,39 +483,169 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
     )
     .unwrap();
     writeln!(out, "  }}").unwrap();
-    // Re-validate via the type's own constructor (`.of`), which applies
-    // the refinement. If the type has no refinement, `.of` doesn't exist
-    // for refined-base types; fall back to a direct cast.
-    writeln!(
-        out,
-        "  const validated = (typeof ({name} as any).of === \"function\")"
-    )
-    .unwrap();
-    writeln!(out, "    ? ({name} as any).of(json)").unwrap();
-    writeln!(out, "    : Ok(json as unknown as {name});").unwrap();
-    writeln!(out, "  if (validated.tag === \"Err\") {{").unwrap();
-    writeln!(
-        out,
-        "    return Err({{ kind: \"RefinementViolation\", path, violation: validated.error }});"
-    )
-    .unwrap();
-    writeln!(out, "  }}").unwrap();
-    writeln!(out, "  return Ok(validated.value as {name});").unwrap();
+    if consumed_opaque {
+        // Decision C: structural cast only — never reach for the owner's `.of`,
+        // which would resurrect the value import this increment removes and leak
+        // the opaque predicate into the consumer.
+        writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
+    } else if consumed {
+        // Decision D: a transparent refined consumed type validates inline. The
+        // base-integrality / finiteness guards and the declared predicates, in
+        // the same order the owner's `.of` applies them, but wrapped as this
+        // codec's `BoundaryError` rather than a `ValidationError`.
+        let refinement = match &decl.body {
+            TypeBody::Refined { refinement, .. } => refinement.as_ref(),
+            // A consumed transparent type over a base with no `where` still
+            // reaches here (e.g. a bare alias); no predicates to inline.
+            _ => None,
+        };
+        emit_inline_refinement_checks(out, name, base, refinement);
+        writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
+    } else {
+        // Owner's own module: re-validate via the type's own constructor
+        // (`.of`), which applies the refinement. If the type has no refinement,
+        // `.of` doesn't exist for refined-base types; fall back to a direct cast.
+        writeln!(
+            out,
+            "  const validated = (typeof ({name} as any).of === \"function\")"
+        )
+        .unwrap();
+        writeln!(out, "    ? ({name} as any).of(json)").unwrap();
+        writeln!(out, "    : Ok(json as unknown as {name});").unwrap();
+        writeln!(out, "  if (validated.tag === \"Err\") {{").unwrap();
+        writeln!(
+            out,
+            "    return Err({{ kind: \"RefinementViolation\", path, violation: validated.error }});"
+        )
+        .unwrap();
+        writeln!(out, "  }}").unwrap();
+        writeln!(out, "  return Ok(validated.value as {name});").unwrap();
+    }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 }
 
-fn emit_record(out: &mut String, name: &str, body: &RecordBody) {
+/// #661 (Decision D): inline the base-type and refinement checks a consumed
+/// **transparent** refined type's deserialiser applies, reporting failures as
+/// this codec's `BoundaryError` (`RefinementViolation` wrapping the same
+/// `{ field, message, value }` the owner's `.of` would have produced). The
+/// `typeof` guard is emitted by the caller; these are the checks that run once
+/// the primitive type already matched. `json` is the value being validated.
+fn emit_inline_refinement_checks(
+    out: &mut String,
+    name: &str,
+    base: BaseType,
+    refinement: Option<&Refinement>,
+) {
+    let violation = |msg: &str| {
+        format!(
+            "return Err({{ kind: \"RefinementViolation\", path, violation: {{ field: \"{name}\", message: \"{msg}\", value: json }} }});"
+        )
+    };
+    // Base guards mirror `emit_refined_checks`: an `Int` is whole, a `Float`
+    // finite. (`Duration`/`Instant` are not exposed as named refined bases.)
+    if base == BaseType::Int {
+        writeln!(out, "  if (!Number.isInteger(json)) {{").unwrap();
+        writeln!(out, "    {}", violation("must be an integer")).unwrap();
+        writeln!(out, "  }}").unwrap();
+    }
+    if base == BaseType::Float {
+        writeln!(out, "  if (!Number.isFinite(json)) {{").unwrap();
+        writeln!(out, "    {}", violation("must be a finite number")).unwrap();
+        writeln!(out, "  }}").unwrap();
+    }
+    if let Some(r) = refinement {
+        for pred in &r.predicates {
+            emit_inline_pred_check(out, &pred.kind, &violation);
+        }
+    }
+}
+
+/// #661 (Decision D): one refinement predicate as an inline `if (!…) return
+/// Err(…)`, over the local `json` binding. The messages match
+/// `emit::emit_pred_check` so a consumer-side rejection reads identically to an
+/// owner-side one; only the error envelope differs (`BoundaryError` here,
+/// `ValidationError` there).
+fn emit_inline_pred_check(out: &mut String, pred: &PredKind, violation: &dyn Fn(&str) -> String) {
+    let mut check = |cond: &str, msg: String| {
+        writeln!(out, "  if (!({cond})) {{").unwrap();
+        writeln!(out, "    {}", violation(&msg)).unwrap();
+        writeln!(out, "  }}").unwrap();
+    };
+    match pred {
+        PredKind::NonNegative => check("json >= 0", "must be non-negative".to_string()),
+        PredKind::Positive => check("json > 0", "must be positive".to_string()),
+        PredKind::InRange(a, b) => {
+            let (a, b) = (a.value, b.value);
+            check(
+                &format!("json >= {a} && json <= {b}"),
+                format!("must be in range [{a}, {b}]"),
+            );
+        }
+        PredKind::InRangeF(a, b) => {
+            let (a, b) = (&a.lexeme, &b.lexeme);
+            check(
+                &format!("json >= {a} && json <= {b}"),
+                format!("must be in range [{a}, {b}]"),
+            );
+        }
+        PredKind::NonEmpty => check("json.length > 0", "must be non-empty".to_string()),
+        PredKind::MinLength(n) => check(
+            &format!("json.length >= {n}"),
+            format!("length must be at least {n}"),
+        ),
+        PredKind::MaxLength(n) => check(
+            &format!("json.length <= {n}"),
+            format!("length must be at most {n}"),
+        ),
+        PredKind::Length(n) => check(
+            &format!("json.length === {n}"),
+            format!("length must be exactly {n}"),
+        ),
+        PredKind::Matches(pat) => {
+            let escaped = super::escape_ts_string(pat);
+            check(
+                &format!("new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test(json)"),
+                format!("must match /{}/", super::escape_ts_string(pat)),
+            );
+        }
+    }
+}
+
+fn emit_record(out: &mut String, name: &str, body: &RecordBody, qual: &Qual) {
+    let fields: Vec<(String, TypeRef)> = body
+        .fields
+        .iter()
+        .map(|f| (f.name.name.clone(), f.type_ref.clone()))
+        .collect();
+    // #661: a consumed record's TS value type reaches through the type-only
+    // namespace (`commerce_payment.Receipt`); the codec function name stays
+    // bare and local. Its field codec calls are unqualified too — they resolve
+    // to the caller's own locally-generated helpers.
+    let ts_type = format!("{}{name}", qual_prefix(qual, name));
+    emit_record_codec(out, name, &ts_type, &fields);
+}
+
+/// v0.174 (#592): the shared record codec body. `fn_suffix` is the codec name
+/// suffix (`Order`, or the monomorphised `Paginated_User`); `ts_type` is the
+/// TypeScript value type the codec accepts / returns (`Order`, or the erased
+/// generic `Paginated<User>`). The two coincide for a non-generic record and
+/// diverge for a generic-record instantiation.
+fn emit_record_codec(
+    out: &mut String,
+    fn_suffix: &str,
+    ts_type: &str,
+    fields: &[(String, TypeRef)],
+) {
     // serialise
     writeln!(
         out,
-        "export function serialise_{name}(value: {name}): JsonValue {{"
+        "export function serialise_{fn_suffix}(value: {ts_type}): JsonValue {{"
     )
     .unwrap();
     writeln!(out, "  return {{").unwrap();
-    for f in &body.fields {
-        let fname = &f.name.name;
-        let expr = serialise_field_expr(&f.type_ref, &format!("value.{fname}"));
+    for (fname, type_ref) in fields {
+        let expr = serialise_field_expr(type_ref, &format!("value.{fname}"));
         writeln!(out, "    {fname}: {expr},").unwrap();
     }
     writeln!(out, "  }};").unwrap();
@@ -289,7 +655,7 @@ fn emit_record(out: &mut String, name: &str, body: &RecordBody) {
     // deserialise
     writeln!(
         out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{name}, BoundaryError> {{"
+        "export function deserialise_{fn_suffix}(json: JsonValue, path: string = \"$\"): Result<{ts_type}, BoundaryError> {{"
     )
     .unwrap();
     writeln!(
@@ -304,42 +670,72 @@ fn emit_record(out: &mut String, name: &str, body: &RecordBody) {
     .unwrap();
     writeln!(out, "  }}").unwrap();
     writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
-    for f in &body.fields {
-        let fname = &f.name.name;
+    for (fname, type_ref) in fields {
         let access = format!("obj[\"{fname}\"]");
         let sub_path = format!("`${{path}}.{fname}`");
-        emit_field_deserialise(out, fname, &f.type_ref, &access, &sub_path);
+        emit_field_deserialise(out, fname, type_ref, &access, &sub_path);
     }
     write!(out, "  return Ok({{ ").unwrap();
-    let parts: Vec<String> = body
-        .fields
+    let parts: Vec<String> = fields
         .iter()
-        .map(|f| format!("{}: __{}", f.name.name, f.name.name))
+        .map(|(fname, _)| format!("{fname}: __{fname}"))
         .collect();
     write!(out, "{}", parts.join(", ")).unwrap();
-    writeln!(out, " }} as {name});").unwrap();
+    writeln!(out, " }} as {ts_type});").unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 }
 
-fn emit_sum(out: &mut String, name: &str, body: &SumBody) {
+fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual) {
+    // #661: a consumed sum's TS value type is namespace-qualified; the codec
+    // function name and its per-variant codec calls stay bare and local. #593:
+    // the codec body is the shared `emit_sum_codec` (also reused, unqualified,
+    // for a generic-sum instantiation), so the qualified value type is threaded
+    // in as its `ts_type`.
+    let ty = format!("{}{name}", qual_prefix(qual, name));
+    let variants: Vec<(String, Vec<(String, TypeRef)>)> = body
+        .variants
+        .iter()
+        .map(|v| {
+            (
+                v.name.name.clone(),
+                v.payload
+                    .iter()
+                    .map(|f| (f.name.name.clone(), f.type_ref.clone()))
+                    .collect(),
+            )
+        })
+        .collect();
+    emit_sum_codec(out, name, &ty, &variants);
+}
+
+/// The serialise/deserialise pair for a sum type, over already-resolved variant
+/// payloads. `fn_suffix` names the emitted functions (`Opt` / `Opt_Int`),
+/// `ts_type` is their value type (`Opt` / `Opt<number>` / a namespace-qualified
+/// `shop.Opt`). The wire discriminant is `kind`; the in-memory discriminant is
+/// `tag`. #593: a generic-sum instantiation reuses this with substituted payload
+/// types, exactly as a generic record reuses [`emit_record_codec`].
+fn emit_sum_codec(
+    out: &mut String,
+    fn_suffix: &str,
+    ts_type: &str,
+    variants: &[(String, Vec<(String, TypeRef)>)],
+) {
     writeln!(
         out,
-        "export function serialise_{name}(value: {name}): JsonValue {{"
+        "export function serialise_{fn_suffix}(value: {ts_type}): JsonValue {{"
     )
     .unwrap();
     writeln!(out, "  switch (value.tag) {{").unwrap();
-    for v in &body.variants {
-        let vname = &v.name.name;
-        if v.payload.is_empty() {
+    for (vname, payload) in variants {
+        if payload.is_empty() {
             writeln!(out, "    case \"{vname}\":").unwrap();
             writeln!(out, "      return {{ kind: \"{vname}\" }};").unwrap();
         } else {
             writeln!(out, "    case \"{vname}\": {{").unwrap();
             write!(out, "      return {{ kind: \"{vname}\"").unwrap();
-            for f in &v.payload {
-                let fname = &f.name.name;
-                let expr = serialise_field_expr(&f.type_ref, &format!("(value as any).{fname}"));
+            for (fname, type_ref) in payload {
+                let expr = serialise_field_expr(type_ref, &format!("(value as any).{fname}"));
                 write!(out, ", {fname}: {expr}").unwrap();
             }
             writeln!(out, " }};").unwrap();
@@ -352,7 +748,7 @@ fn emit_sum(out: &mut String, name: &str, body: &SumBody) {
 
     writeln!(
         out,
-        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{name}, BoundaryError> {{"
+        "export function deserialise_{fn_suffix}(json: JsonValue, path: string = \"$\"): Result<{ts_type}, BoundaryError> {{"
     )
     .unwrap();
     writeln!(
@@ -369,25 +765,22 @@ fn emit_sum(out: &mut String, name: &str, body: &SumBody) {
     writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
     writeln!(out, "  const kind = obj[\"kind\"];").unwrap();
     writeln!(out, "  switch (kind) {{").unwrap();
-    for v in &body.variants {
-        let vname = &v.name.name;
-        if v.payload.is_empty() {
+    for (vname, payload) in variants {
+        if payload.is_empty() {
             writeln!(out, "    case \"{vname}\":").unwrap();
-            writeln!(out, "      return Ok({{ tag: \"{vname}\" }} as {name});").unwrap();
+            writeln!(out, "      return Ok({{ tag: \"{vname}\" }} as {ts_type});").unwrap();
         } else {
             writeln!(out, "    case \"{vname}\": {{").unwrap();
-            for f in &v.payload {
-                let fname = &f.name.name;
+            for (fname, type_ref) in payload {
                 let access = format!("obj[\"{fname}\"]");
                 let sub_path = format!("`${{path}}.{fname}`");
-                emit_field_deserialise(out, fname, &f.type_ref, &access, &sub_path);
+                emit_field_deserialise(out, fname, type_ref, &access, &sub_path);
             }
             write!(out, "      return Ok({{ tag: \"{vname}\"").unwrap();
-            for f in &v.payload {
-                let fname = &f.name.name;
+            for (fname, _) in payload {
                 write!(out, ", {fname}: __{fname}").unwrap();
             }
-            writeln!(out, " }} as {name});").unwrap();
+            writeln!(out, " }} as {ts_type});").unwrap();
             writeln!(out, "    }}").unwrap();
         }
     }
@@ -416,10 +809,22 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.157 (ADR 0183): a generic record is non-boundary — rejected
-        // upstream by `reject_fn_types` before any codec walk runs.
-        TypeRef::App { .. } => {
-            unreachable!("generic records are rejected at boundaries")
+        // v0.174 (#592): a generic-record instantiation delegates to its
+        // monomorphised codec (`deserialise_Paginated_User`), exactly like a
+        // named type delegates to its own `deserialise_<Name>`.
+        TypeRef::App {
+            name: app_name,
+            args,
+            ..
+        } => {
+            let inst = app_ts_name(&app_name.name, args);
+            writeln!(
+                out,
+                "  const __r_{name} = deserialise_{inst}({json}, {path_expr});"
+            )
+            .unwrap();
+            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
+            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
         }
         // v0.110 (ADR 0142 D5): a bare `Bytes` field is a base64 JSON string —
         // require a string, then decode (rejecting invalid base64), binding the
@@ -557,6 +962,15 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
 }
 
 fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
+    serialise_field_expr_via(t, value, "")
+}
+
+/// The same dispatch, reaching its helpers through `ns` — `""` for a
+/// module-local call, `"handlers."` from a Worker entry point that imports the
+/// context's handlers as a namespace. Threading the prefix (rather than each
+/// caller owning a parallel dispatch) is what keeps the boundary to **one**
+/// codec path.
+fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str) -> String {
     match t {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
@@ -568,10 +982,10 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.157 (ADR 0183): a generic record is non-boundary — rejected
-        // upstream by `reject_fn_types` before any codec walk runs.
-        TypeRef::App { .. } => {
-            unreachable!("generic records are rejected at boundaries")
+        // v0.174 (#592): a generic-record instantiation serialises through its
+        // monomorphised codec (`serialise_Paginated_User`).
+        TypeRef::App { name, args, .. } => {
+            format!("{ns}serialise_{}({value})", app_ts_name(&name.name, args))
         }
         // v0.21: serialising a non-finite `Float` is a contract violation
         // (`JSON.stringify(NaN)` would silently produce `null`); the guard is
@@ -585,21 +999,30 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
             format!("__bynkBytesToBase64({value}) as JsonValue")
         }
         TypeRef::Base(_, _) => format!("{value} as JsonValue"),
-        TypeRef::Named(id) => format!("serialise_{}({value})", id.name),
+        TypeRef::Named(id) => format!("{ns}serialise_{}({value})", id.name),
         TypeRef::Result(a, b, _) => format!(
-            "serialise_Result_{}_{}({value})",
+            "{ns}serialise_Result_{}_{}({value})",
             inner_ts_name(a),
             inner_ts_name(b)
         ),
-        TypeRef::Option(a, _) => format!("serialise_Option_{}({value})", inner_ts_name(a)),
-        TypeRef::List(a, _) => format!("serialise_List_{}({value})", inner_ts_name(a)),
+        TypeRef::Option(a, _) => format!("{ns}serialise_Option_{}({value})", inner_ts_name(a)),
+        TypeRef::List(a, _) => format!("{ns}serialise_List_{}({value})", inner_ts_name(a)),
         TypeRef::Map(k, v, _) => format!(
-            "serialise_Map_{}_{}({value})",
+            "{ns}serialise_Map_{}_{}({value})",
             inner_ts_name(k),
             inner_ts_name(v)
         ),
-        TypeRef::Effect(_, _)
-        | TypeRef::ValidationError(_)
+        // An `Effect` is stripped by the caller before it reaches a wire
+        // position; reaching one here means the payload, not the wrapper.
+        TypeRef::Effect(inner, _) => serialise_field_expr_via(inner, value, ns),
+        // The runtime-owned error types have no *generated* codec — they are
+        // declared by the runtime, not by a `TypeDecl` this emitter can walk, so
+        // there is no `serialise_ValidationError` to name. They keep the
+        // pass-through the whole boundary used before this increment; unifying
+        // the user-type paths does not reach them. Their JSON shape is fixed by
+        // the runtime (`errors.ts`), so the cast is not *wrong* — it is simply
+        // unchecked, and it is the one remaining unchecked arm at the boundary.
+        TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::HttpResult(_, _)
         | TypeRef::QueueResult(_) => {
@@ -622,11 +1045,9 @@ fn inner_ts_name(t: &TypeRef) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.157 (ADR 0183): a generic record is non-boundary — rejected
-        // upstream by `reject_fn_types` before any codec walk runs.
-        TypeRef::App { .. } => {
-            unreachable!("generic records are rejected at boundaries")
-        }
+        // v0.174 (#592): the codec suffix for a generic-record instantiation —
+        // `Paginated[User]` → `Paginated_User`.
+        TypeRef::App { name, args, .. } => app_ts_name(&name.name, args),
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),
         TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),
@@ -653,8 +1074,10 @@ pub fn collect_codec_closure(
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
     let mut stack: Vec<String> = Vec::new();
+    let recursive_set = recursive_generic_names(types);
+    let recursive = &recursive_set;
     for r in roots {
-        collect_type_names(r, &mut stack);
+        collect_type_names(r, &mut stack, types, recursive);
     }
     while let Some(name) = stack.pop() {
         if !seen.insert(name.clone()) {
@@ -667,13 +1090,13 @@ pub fn collect_codec_closure(
         match &decl.body {
             TypeBody::Record(r) => {
                 for f in &r.fields {
-                    collect_type_names(&f.type_ref, &mut stack);
+                    collect_type_names(&f.type_ref, &mut stack, types, recursive);
                 }
             }
             TypeBody::Sum(s) => {
                 for v in &s.variants {
                     for p in &v.payload {
-                        collect_type_names(&p.type_ref, &mut stack);
+                        collect_type_names(&p.type_ref, &mut stack, types, recursive);
                     }
                 }
             }
@@ -685,7 +1108,7 @@ pub fn collect_codec_closure(
     let mut insts: Vec<GenericInst> = Vec::new();
     let mut inst_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for r in roots {
-        walk_generic_inst(r, &mut insts, &mut inst_seen);
+        walk_generic_inst(r, &mut insts, &mut inst_seen, types, recursive);
     }
     for name in &names {
         let Some(decl) = types.get(name) else {
@@ -694,13 +1117,19 @@ pub fn collect_codec_closure(
         match &decl.body {
             TypeBody::Record(r) => {
                 for f in &r.fields {
-                    walk_generic_inst(&f.type_ref, &mut insts, &mut inst_seen);
+                    walk_generic_inst(&f.type_ref, &mut insts, &mut inst_seen, types, recursive);
                 }
             }
             TypeBody::Sum(s) => {
                 for v in &s.variants {
                     for p in &v.payload {
-                        walk_generic_inst(&p.type_ref, &mut insts, &mut inst_seen);
+                        walk_generic_inst(
+                            &p.type_ref,
+                            &mut insts,
+                            &mut inst_seen,
+                            types,
+                            recursive,
+                        );
                     }
                 }
             }
@@ -716,14 +1145,91 @@ pub fn serialise_expr(t: &TypeRef, value: &str) -> String {
     serialise_field_expr(t, value)
 }
 
+/// v0.176 (#642): the one serialise dispatch for the workers cross-context
+/// boundary, reaching helpers through `ns`. Replaces the two parallel
+/// dispatches this boundary used to carry — `emit.rs`'s `workers_serialise_expr`
+/// (which dropped `List`/`Map` to a bare `as JsonValue` cast) and
+/// `workers_entry.rs`'s `serialise_call` (which did the same to `Bytes`, the
+/// asymmetry that forced `bynk.types.bytes_at_workers_boundary`).
+pub fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str) -> String {
+    serialise_field_expr_via(t, value, ns)
+}
+
+/// v0.176 (#642): a deserialise **reference** for `ns`, shaped to
+/// `callService`'s `deserialiseResult` parameter. The inline arms become a
+/// lambda rather than the unvalidated `((j: any) => ({ tag: "Ok", value: j }))`
+/// identity the caller path used to fall back to.
+pub fn deserialise_ref_via(t: &TypeRef, ns: &str) -> String {
+    match strip_effect(t) {
+        TypeRef::Named(id) => format!("{ns}deserialise_{}", id.name),
+        t @ (TypeRef::Result(..)
+        | TypeRef::Option(..)
+        | TypeRef::List(..)
+        | TypeRef::Map(..)
+        | TypeRef::App { .. }) => format!("{ns}deserialise_{}", inner_ts_name(t)),
+        other => format!(
+            "(__j: JsonValue) => {}",
+            deserialise_expr_via(other, "__j", "$", ns)
+        ),
+    }
+}
+
+/// An `Effect[T]` in a handler signature wraps the *handler*, not the wire
+/// payload — the caller awaits the Promise, so the codec is `T`'s.
+fn strip_effect(t: &TypeRef) -> &TypeRef {
+    match t {
+        TypeRef::Effect(inner, _) => strip_effect(inner),
+        other => other,
+    }
+}
+
 /// v0.22b: an expression-form deserialise call for a codec target. Named
 /// types and generic instantiations go through their (module-local)
 /// helpers; bases inline the structural check.
 pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
+    deserialise_expr_via(t, json, path, "")
+}
+
+/// v0.176 (#642): the one deserialise dispatch for the workers cross-context
+/// boundary, reaching helpers through `ns`. Replaces `workers_entry.rs`'s
+/// `deserialise_call`; the `Json.decode` entry (`deserialise_expr`) is the same
+/// function with an empty prefix.
+///
+/// This carries two arms the `Json` codec path never needs, because the
+/// checker's codec-domain rule rejects them there but the cross-context
+/// boundary admits them: `Unit` (an `on call` may return `Effect[Result[(), E]]`)
+/// and the runtime-owned error types.
+pub fn deserialise_expr_via(t: &TypeRef, json: &str, path: &str, ns: &str) -> String {
     match t {
-        TypeRef::Named(id) => format!("deserialise_{}({json}, \"{path}\")", id.name),
-        TypeRef::Result(..) | TypeRef::Option(..) | TypeRef::List(..) | TypeRef::Map(..) => {
-            format!("deserialise_{}({json}, \"{path}\")", inner_ts_name(t))
+        TypeRef::Named(id) => format!("{ns}deserialise_{}({json}, \"{path}\")", id.name),
+        TypeRef::Result(..)
+        | TypeRef::Option(..)
+        | TypeRef::List(..)
+        | TypeRef::Map(..)
+        // v0.174 (#592): a generic-record instantiation decodes through its
+        // monomorphised codec (`deserialise_Paginated_User`).
+        | TypeRef::App { .. } => {
+            format!("{ns}deserialise_{}({json}, \"{path}\")", inner_ts_name(t))
+        }
+        TypeRef::Effect(inner, _) => deserialise_expr_via(inner, json, path, ns),
+        // A `()` carries no wire content — the wire slot is `null` and the value
+        // is `undefined`. Nothing to validate, so `Ok` is the honest answer here
+        // rather than an erosion.
+        //
+        // Reached only by a **bare** `()` in a wire position. A `Result`-wrapped
+        // one — `on call () -> Effect[Result[(), E]]`, the common shape — strips
+        // its `Effect` and then goes through `deserialise_Result_Unit_E`, whose
+        // generated body handles the `Unit` payload itself (`emit_generic_helpers`),
+        // so it never lands here. No fixture currently exercises this arm; it is
+        // defensive, and saying so is more useful than implying coverage.
+        TypeRef::Unit(_) => "Ok(undefined) as Result<void, BoundaryError>".to_string(),
+        // The runtime-owned error types: no generated codec to name (see
+        // `serialise_field_expr_via`). The one unchecked arm left at the boundary.
+        TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::HttpResult(_, _)
+        | TypeRef::QueueResult(_) => {
+            format!("Ok({json} as any) as Result<any, BoundaryError>")
         }
         // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 string; decode it
         // (rejecting a non-string or invalid base64) to a `Uint8Array`.
@@ -751,12 +1257,55 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
                 }
                 _ => "",
             };
+            // v0.176 (#642): report what was *required*, not just the `typeof`
+            // that was tested. For the arms carrying an `extra` predicate the two
+            // differ, and reporting the bare `typeof` makes the error useless in
+            // exactly the case the predicate exists to catch: a `3.5` for an `Int`
+            // would read `expected: "number", actual: "number"`.
+            let expected = match b {
+                BaseType::Int | BaseType::Duration | BaseType::Instant => "integer",
+                BaseType::Float => "finite number",
+                _ => typeof_str,
+            };
+            let err = |actual: &str| {
+                format!(
+                    "Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"{expected}\", actual: {actual} }} as BoundaryError)"
+                )
+            };
+            if extra.is_empty() {
+                return format!(
+                    "((__v) => typeof __v === \"{typeof_str}\" ? Ok(__v) : {})({json})",
+                    err("typeof __v")
+                );
+            }
+            // The two failure modes are **not** the same error, and collapsing
+            // them is what made both predecessors imprecise in opposite
+            // directions. The `Json` path reported `typeof` for both, losing the
+            // predicate failure's detail; the workers path reported
+            // `String(value)` for both, which echoes an arbitrary caller-supplied
+            // value into a 400 response body (an `Int` sent `"hunter2"` reported
+            // `actual: "hunter2"`) and violates the ADR 0107 discipline of never
+            // reporting the offending value.
+            //
+            // Split them and both problems go away. A wrong `typeof` reports the
+            // `typeof` — the value could be anything, so it is never echoed. A
+            // *failed predicate* means the `typeof` already matched, so the value
+            // is provably a **number**: `String(__v)` is `"3.5"` for a
+            // non-integer `Int`, and provably one of `"NaN"` / `"Infinity"` /
+            // `"-Infinity"` for a non-finite `Float` — a closed set. That is
+            // strictly more precise than either predecessor, with strictly less
+            // exposure.
+            let predicate = extra.trim_start_matches(" && ");
             format!(
-                "((__v) => typeof __v === \"{typeof_str}\"{extra} ? Ok(__v) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"{typeof_str}\", actual: typeof __v }} as BoundaryError))({json})"
+                "((__v) => typeof __v !== \"{typeof_str}\" ? {} : {predicate} ? Ok(__v) : {})({json})",
+                err("typeof __v"),
+                err("String(__v)")
             )
         }
-        // Everything else is rejected by the checker's codec-domain rule.
-        _ => unreachable!("non-codable type reached the Json codec lowering"),
+        // Everything else is rejected by the checker's codec-domain rule (the
+        // `Json` path) or by the boundary rules (the workers path). Shared by
+        // three callers, so the message names the type rather than one caller.
+        other => unreachable!("non-codable type reached a codec lowering: {other:?}"),
     }
 }
 
@@ -777,6 +1326,8 @@ pub fn collect_generic_instantiations(
 ) -> Vec<GenericInst> {
     let mut out: Vec<GenericInst> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let recursive_set = recursive_generic_names(types);
+    let recursive = &recursive_set;
     // Iterate services in name order: `HashMap::values()` order varies per
     // process, and the *emission order* of the specialised helpers follows
     // first-encounter order here. Surfaced by the first fixture with
@@ -788,9 +1339,9 @@ pub fn collect_generic_instantiations(
         let s = &services[name];
         for h in &s.handlers {
             for p in &h.params {
-                walk_generic_inst(&p.type_ref, &mut out, &mut seen);
+                walk_generic_inst(&p.type_ref, &mut out, &mut seen, types, recursive);
             }
-            walk_generic_inst(&h.return_type, &mut out, &mut seen);
+            walk_generic_inst(&h.return_type, &mut out, &mut seen, types, recursive);
         }
     }
     let mut agent_names: Vec<&String> = agents.keys().collect();
@@ -798,7 +1349,7 @@ pub fn collect_generic_instantiations(
     for name in agent_names {
         for f in &agents[name].store_fields {
             for arg in &f.kind.args {
-                walk_generic_inst(arg, &mut out, &mut seen);
+                walk_generic_inst(arg, &mut out, &mut seen, types, recursive);
             }
         }
     }
@@ -806,16 +1357,27 @@ pub fn collect_generic_instantiations(
         let Some(decl) = types.get(name) else {
             continue;
         };
+        // v0.174 (#592): never walk a *generic* declaration's own fields — they
+        // are the declared, unsubstituted body (`Paginated[T] = { items: List[T]
+        // }`), so walking `List[T]` would emit a bogus `serialise_List_T` over the
+        // unbound type variable `T`. The instantiations a generic record needs
+        // come from its *use* sites (`Paginated[User]`, a `TypeRef::App`), which
+        // `walk_generic_inst` expands with concrete arguments. This mirrors the
+        // `emit_helpers_for_owner` skip that keeps a bare `serialise_Paginated`
+        // from being emitted.
+        if !decl.type_params.is_empty() {
+            continue;
+        }
         match &decl.body {
             TypeBody::Record(r) => {
                 for f in &r.fields {
-                    walk_generic_inst(&f.type_ref, &mut out, &mut seen);
+                    walk_generic_inst(&f.type_ref, &mut out, &mut seen, types, recursive);
                 }
             }
             TypeBody::Sum(s) => {
                 for v in &s.variants {
                     for p in &v.payload {
-                        walk_generic_inst(&p.type_ref, &mut out, &mut seen);
+                        walk_generic_inst(&p.type_ref, &mut out, &mut seen, types, recursive);
                     }
                 }
             }
@@ -844,6 +1406,20 @@ pub enum GenericInst {
         key: TypeRef,
         val: TypeRef,
     },
+    /// v0.174 (#592): a generic user-record instantiation `Name[args…]` — a
+    /// monomorphised per-instantiation record codec (`serialise_Paginated_User`)
+    /// specialised to the concrete arguments (ADR 0183 Decision C's follow-on).
+    RecordInst {
+        name: String,
+        args: Vec<TypeRef>,
+    },
+    /// #593: a generic user-sum instantiation `Name[args…]` — a monomorphised
+    /// per-instantiation discriminated-union codec (`serialise_ApiResult_User`),
+    /// the sum analogue of [`GenericInst::RecordInst`].
+    SumInst {
+        name: String,
+        args: Vec<TypeRef>,
+    },
 }
 
 impl GenericInst {
@@ -859,6 +1435,8 @@ impl GenericInst {
             GenericInst::MapInst { key, val } => {
                 format!("Map_{}_{}", inner_ts_name(key), inner_ts_name(val))
             }
+            GenericInst::RecordInst { name, args } => app_ts_name(name, args),
+            GenericInst::SumInst { name, args } => app_ts_name(name, args),
         }
     }
 }
@@ -867,8 +1445,64 @@ fn walk_generic_inst(
     t: &TypeRef,
     out: &mut Vec<GenericInst>,
     seen: &mut std::collections::HashSet<String>,
+    types: &std::collections::HashMap<String, TypeDecl>,
+    recursive: &std::collections::HashSet<String>,
 ) {
     match t {
+        // v0.174 (#592): a generic-record instantiation needs a monomorphised
+        // codec, and so do the generic instantiations reachable through its
+        // concrete field types (`Paginated[User]` → `List[User]` →
+        // `serialise_List_User`, `Envelope[Box[User]]` → `Box[User]` →
+        // `serialise_Box_User`). Substitute the fields and walk them. A recursive
+        // generic record (no finite codec set) is rejected at the boundary before
+        // emit; the guard here is defence in depth so this walk always terminates
+        // (the `seen` dedup alone cannot bound *polymorphic* recursion, whose
+        // instantiations each carry a distinct name).
+        TypeRef::App { name, args, .. } => {
+            if recursive.contains(&name.name) {
+                return;
+            }
+            // #593: an `App` names a generic record OR a generic sum; dispatch on
+            // the declaration's body so the right monomorphised codec is emitted,
+            // and walk the reachable instantiations through its concrete member
+            // types (a sum's variant payloads, a record's fields).
+            let is_sum = matches!(
+                types.get(&name.name).map(|d| &d.body),
+                Some(TypeBody::Sum(_))
+            );
+            let inst = if is_sum {
+                GenericInst::SumInst {
+                    name: name.name.clone(),
+                    args: args.clone(),
+                }
+            } else {
+                GenericInst::RecordInst {
+                    name: name.name.clone(),
+                    args: args.clone(),
+                }
+            };
+            let key = inst.ts_name();
+            if !seen.insert(key) {
+                return;
+            }
+            out.push(inst);
+            for a in args {
+                walk_generic_inst(a, out, seen, types, recursive);
+            }
+            if is_sum {
+                if let Some(variants) = sum_inst_variants(&name.name, args, types) {
+                    for (_, payload) in &variants {
+                        for (_, ft) in payload {
+                            walk_generic_inst(ft, out, seen, types, recursive);
+                        }
+                    }
+                }
+            } else if let Some(fields) = record_inst_fields(&name.name, args, types) {
+                for (_, ft) in &fields {
+                    walk_generic_inst(ft, out, seen, types, recursive);
+                }
+            }
+        }
         TypeRef::Result(a, b, _) => {
             let inst = GenericInst::ResultInst {
                 ok: (**a).clone(),
@@ -878,8 +1512,8 @@ fn walk_generic_inst(
             if seen.insert(key) {
                 out.push(inst);
             }
-            walk_generic_inst(a, out, seen);
-            walk_generic_inst(b, out, seen);
+            walk_generic_inst(a, out, seen, types, recursive);
+            walk_generic_inst(b, out, seen, types, recursive);
         }
         TypeRef::Option(a, _) => {
             let inst = GenericInst::OptionInst {
@@ -889,10 +1523,10 @@ fn walk_generic_inst(
             if seen.insert(key) {
                 out.push(inst);
             }
-            walk_generic_inst(a, out, seen);
+            walk_generic_inst(a, out, seen, types, recursive);
         }
-        TypeRef::Effect(a, _) => walk_generic_inst(a, out, seen),
-        TypeRef::HttpResult(a, _) => walk_generic_inst(a, out, seen),
+        TypeRef::Effect(a, _) => walk_generic_inst(a, out, seen, types, recursive),
+        TypeRef::HttpResult(a, _) => walk_generic_inst(a, out, seen, types, recursive),
         TypeRef::List(a, _) => {
             let inst = GenericInst::ListInst {
                 elem: (**a).clone(),
@@ -901,7 +1535,7 @@ fn walk_generic_inst(
             if seen.insert(key) {
                 out.push(inst);
             }
-            walk_generic_inst(a, out, seen);
+            walk_generic_inst(a, out, seen, types, recursive);
         }
         TypeRef::Map(k, v, _) => {
             let inst = GenericInst::MapInst {
@@ -912,8 +1546,8 @@ fn walk_generic_inst(
             if seen.insert(key) {
                 out.push(inst);
             }
-            walk_generic_inst(k, out, seen);
-            walk_generic_inst(v, out, seen);
+            walk_generic_inst(k, out, seen, types, recursive);
+            walk_generic_inst(v, out, seen, types, recursive);
         }
         _ => {}
     }
@@ -921,14 +1555,82 @@ fn walk_generic_inst(
 
 /// Emit specialised helpers for each `Result<A, B>` / `Option<A>`
 /// instantiation. They delegate to the named-type serialisers for A and B.
-pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
+/// v0.174 (#592): also emits a monomorphised record codec per generic
+/// instantiation (`RecordInst`), which needs the declarations to substitute
+/// its type parameters.
+pub fn emit_generic_helpers(
+    out: &mut String,
+    insts: &[GenericInst],
+    types: &std::collections::HashMap<String, TypeDecl>,
+) {
+    emit_generic_helpers_qualified(out, insts, types, &Qual::new());
+}
+
+/// #661: as [`emit_generic_helpers`], but the value-type positions of each
+/// specialised helper are named through the type `Qual` — so a consumer's
+/// `deserialise_Result_AuthId_PaymentError` returns
+/// `Result<commerce_payment.AuthId, commerce_payment.PaymentError>` while its
+/// codec calls stay local. The codec *suffix* (`Result_AuthId_PaymentError`) is
+/// namespace-independent by construction, which is exactly what keeps the
+/// caller's and callee's names in agreement across the wire.
+pub fn emit_generic_helpers_qualified(
+    out: &mut String,
+    insts: &[GenericInst],
+    types: &std::collections::HashMap<String, TypeDecl>,
+    qual: &Qual,
+) {
     for inst in insts {
         match inst {
+            // v0.174 (#592): a generic-record instantiation `Paginated[User]`
+            // emits `serialise_Paginated_User` / `deserialise_Paginated_User`,
+            // its fields specialised to the concrete arguments. The value type
+            // is the erased generic `Paginated<User>`.
+            GenericInst::RecordInst { name, args } => {
+                let fn_suffix = app_ts_name(name, args);
+                let ts_type = format!(
+                    "{}{}<{}>",
+                    qual_prefix(qual, name),
+                    name,
+                    args.iter()
+                        .map(|a| ts_inner_type(a, qual))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                // `record_inst_fields` is `None` only for an unknown name, a
+                // non-record body, or an arity mismatch — all of which the
+                // resolver rejects (`generic_non_record` / `type_arg_count`)
+                // before a `RecordInst` is ever collected. Panic loudly rather
+                // than silently emit a call to an undefined codec (the file's
+                // convention for a checker-guaranteed invariant).
+                let fields = record_inst_fields(name, args, types).unwrap_or_else(|| {
+                    unreachable!("RecordInst `{name}` is not a resolved generic record")
+                });
+                emit_record_codec(out, &fn_suffix, &ts_type, &fields);
+            }
+            // #593: a generic-sum instantiation `ApiResult[User]` emits
+            // `serialise_ApiResult_User` / `deserialise_ApiResult_User`, its
+            // variant payloads specialised to the concrete arguments. The value
+            // type is the erased generic `ApiResult<User>`. Mirrors `RecordInst`.
+            GenericInst::SumInst { name, args } => {
+                let fn_suffix = app_ts_name(name, args);
+                let ts_type = format!(
+                    "{}<{}>",
+                    name,
+                    args.iter()
+                        .map(|a| ts_inner_type(a, qual))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                let variants = sum_inst_variants(name, args, types).unwrap_or_else(|| {
+                    unreachable!("SumInst `{name}` is not a resolved generic sum")
+                });
+                emit_sum_codec(out, &fn_suffix, &ts_type, &variants);
+            }
             GenericInst::ResultInst { ok, err } => {
                 let ok_ts = inner_ts_name(ok);
                 let err_ts = inner_ts_name(err);
-                let ok_inner = ts_inner_type(ok);
-                let err_inner = ts_inner_type(err);
+                let ok_inner = ts_inner_type(ok, qual);
+                let err_inner = ts_inner_type(err, qual);
                 let serialise_ok = serialise_field_expr(ok, "value.value");
                 let serialise_err = serialise_field_expr(err, "value.error");
                 writeln!(
@@ -983,7 +1685,7 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
             }
             GenericInst::OptionInst { inner } => {
                 let inner_ts = inner_ts_name(inner);
-                let inner_ty = ts_inner_type(inner);
+                let inner_ty = ts_inner_type(inner, qual);
                 let serialise_inner = serialise_field_expr(inner, "value.value");
                 writeln!(
                     out,
@@ -1025,7 +1727,7 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
             // v0.20b: `List[T]` — element-wise wire format (a JSON array).
             GenericInst::ListInst { elem } => {
                 let elem_ts = inner_ts_name(elem);
-                let elem_ty = ts_inner_type(elem);
+                let elem_ty = ts_inner_type(elem, qual);
                 let serialise_elem = serialise_field_expr(elem, "v");
                 writeln!(
                     out,
@@ -1070,8 +1772,8 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
             GenericInst::MapInst { key, val } => {
                 let key_ts = inner_ts_name(key);
                 let val_ts = inner_ts_name(val);
-                let key_ty = ts_inner_type(key);
-                let val_ty = ts_inner_type(val);
+                let key_ty = ts_inner_type(key, qual);
+                let val_ty = ts_inner_type(val, qual);
                 let serialise_key = serialise_field_expr(key, "k");
                 let serialise_val = serialise_field_expr(val, "v");
                 writeln!(
@@ -1124,7 +1826,7 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
     }
 }
 
-fn ts_inner_type(t: &TypeRef) -> String {
+fn ts_inner_type(t: &TypeRef, qual: &Qual) -> String {
     match t {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
@@ -1136,11 +1838,19 @@ fn ts_inner_type(t: &TypeRef) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.157 (ADR 0183): a generic record is non-boundary — rejected
-        // upstream by `reject_fn_types` before any codec walk runs.
-        TypeRef::App { .. } => {
-            unreachable!("generic records are rejected at boundaries")
-        }
+        // v0.174 (#592): a generic-record instantiation erases to the generic
+        // interface applied to its concrete arguments (`Paginated<User>`).
+        // #661: a consumed generic record and its callee-owned arguments are
+        // namespace-qualified.
+        TypeRef::App { name, args, .. } => format!(
+            "{}{}<{}>",
+            qual_prefix(qual, &name.name),
+            name.name,
+            args.iter()
+                .map(|a| ts_inner_type(a, qual))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TypeRef::Base(b, _) => match b {
             BaseType::Int => "number".to_string(),
             BaseType::String => "string".to_string(),
@@ -1150,14 +1860,24 @@ fn ts_inner_type(t: &TypeRef) -> String {
             // v0.110 (ADR 0142): `Bytes` erases to `Uint8Array`.
             BaseType::Bytes => "Uint8Array".to_string(),
         },
-        TypeRef::Named(id) => id.name.clone(),
-        TypeRef::Result(a, b, _) => format!("Result<{}, {}>", ts_inner_type(a), ts_inner_type(b)),
-        TypeRef::Option(a, _) => format!("Option<{}>", ts_inner_type(a)),
-        TypeRef::Effect(a, _) => format!("Promise<{}>", ts_inner_type(a)),
-        TypeRef::HttpResult(a, _) => format!("HttpResult<{}>", ts_inner_type(a)),
-        TypeRef::List(a, _) => format!("readonly {}[]", ts_inner_type(a)),
+        // #661: a callee-owned named type reaches through the type-only
+        // namespace; everything the caller already declares maps to `""`.
+        TypeRef::Named(id) => format!("{}{}", qual_prefix(qual, &id.name), id.name),
+        TypeRef::Result(a, b, _) => format!(
+            "Result<{}, {}>",
+            ts_inner_type(a, qual),
+            ts_inner_type(b, qual)
+        ),
+        TypeRef::Option(a, _) => format!("Option<{}>", ts_inner_type(a, qual)),
+        TypeRef::Effect(a, _) => format!("Promise<{}>", ts_inner_type(a, qual)),
+        TypeRef::HttpResult(a, _) => format!("HttpResult<{}>", ts_inner_type(a, qual)),
+        TypeRef::List(a, _) => format!("readonly {}[]", ts_inner_type(a, qual)),
         TypeRef::Map(k, v, _) => {
-            format!("ReadonlyMap<{}, {}>", ts_inner_type(k), ts_inner_type(v))
+            format!(
+                "ReadonlyMap<{}, {}>",
+                ts_inner_type(k, qual),
+                ts_inner_type(v, qual)
+            )
         }
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),

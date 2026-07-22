@@ -40,6 +40,7 @@ const MODULES = [
   "agent",
   "auth",
   "connection",
+  "messages",
 ];
 
 const HEADER = [

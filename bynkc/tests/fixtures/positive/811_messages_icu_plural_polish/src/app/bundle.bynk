@@ -1,0 +1,13 @@
+commons app.bundle
+
+uses bynk.locale
+
+---
+message-bundles slice 3 (#878): a `plural` placeholder over a real
+4-category CLDR plural rule (Polish: one/few/many/other) — proves category
+selection is delegated to the host `Intl.PluralRules`, not hardcoded to
+English's two categories.
+---
+messages pl @reference {
+  "cart.count" => "Masz {n, plural, one {# element} few {# elementy} many {# elementow} other {# elementu}} w koszyku"
+}

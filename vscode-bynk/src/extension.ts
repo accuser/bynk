@@ -15,7 +15,9 @@ import {
 } from "vscode-languageclient/node";
 
 import {
+  compareVersions,
   downloadServer,
+  parseVersion,
   readServerVersion,
   resolveExistingServer,
   serverVersion,
@@ -28,6 +30,9 @@ import { registerTesting } from "./testing";
 import { registerTestCodeLens } from "./testCodeLens";
 import { registerDebug } from "./debug";
 import { provideCodeLenses } from "./codelens";
+import { registerSequenceDiagram } from "./sequenceDiagram";
+import { registerDocumentationView } from "./documentationView";
+import { registerInlineDocRendering } from "./inlineDocRendering";
 
 let client: LanguageClient | undefined;
 let output: vscode.LogOutputChannel;
@@ -81,6 +86,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // v0.78: a `▷ Run | Debug` CodeLens above each test case (+ native gutter glyphs
   // from the eager discovery above).
   registerTestCodeLens(context, testApi);
+
+  // #846: "Show Sequence Diagram" — a closure over the module-level `client`
+  // (not the value at registration time) since the client isn't started yet
+  // here and is torn down/recreated on every `startServer` call.
+  registerSequenceDiagram(context, () => client);
+
+  // #847: "Show Documentation" — the file's declarations as a rendered
+  // reference page. Same client closure and shared webview substrate as the
+  // sequence view above.
+  registerDocumentationView(context, () => client);
+
+  // #849: in-editor doc-comment rendering — heading colour, bold, italic applied
+  // in place to `--- … ---` blocks. Client-side decorations only; independent of
+  // the language server, so it works even while the server is still starting.
+  registerInlineDocRendering(context);
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => updateProjectItem()),
@@ -139,15 +159,13 @@ async function startServer(
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "bynk" }],
     synchronize: {
-      // Forward both source edits and `bynk.toml` manifest edits to the server
-      // as `workspace/didChangeWatchedFiles`. The manifest watcher lets the
-      // server reload format/diagnostics settings and the source root live,
-      // without an LSP restart (the separate `tomlWatcher` above only drives
-      // the `bynk.hasProject` context key and does not reach the server).
-      fileEvents: [
-        vscode.workspace.createFileSystemWatcher("**/*.bynk"),
-        vscode.workspace.createFileSystemWatcher("**/bynk.toml"),
-      ],
+      // No client-side `fileEvents` here: since v0.183 (LSP foundations slice
+      // E) the server registers the `**/*.bynk` and `**/bynk.toml` watchers
+      // itself via `workspace/didChangeWatchedFiles` dynamic registration, so
+      // it is notified of source and manifest edits for *any* client. Keeping a
+      // client-side watcher too would double-notify the server. The separate
+      // `tomlWatcher` above is unrelated — it only drives the `bynk.hasProject`
+      // context key and never reaches the server.
       configurationSection: "bynk",
     },
     outputChannel: output,
@@ -199,7 +217,7 @@ async function startServer(
     return;
   }
 
-  checkVersionMatch(context, resolved.path);
+  checkVersionMatch(context, resolved);
   setServerItem("ok", `Bynk LSP (${resolved.source})`);
   updateProjectItem();
 }
@@ -275,18 +293,63 @@ async function reportNoServer(
   }
 }
 
-/** Warn (non-blocking) if the running server's version disagrees with the one
- *  this extension build expects. */
+/** Warn if the running server's version disagrees with the one this extension
+ *  build expects. A server *older* than expected (most likely a stale
+ *  `bynkc-lsp` on PATH — `resolveExistingServer` prefers PATH over the
+ *  pinned/downloaded copy without comparing versions, #484) gets an
+ *  actionable prompt, since it can silently mis-diagnose syntax the checker
+ *  already accepts. A newer or otherwise-differing server just gets a note. */
 function checkVersionMatch(
   context: vscode.ExtensionContext,
-  serverPath: string,
+  resolved: ResolvedServer,
 ): void {
-  const reported = readServerVersion(serverPath); // "bynkc-lsp 0.23.0"
+  const reported = readServerVersion(resolved.path); // "bynkc-lsp 0.23.0"
   const expected = serverVersion(context).replace(/^v/, ""); // "0.23.0"
-  if (reported && !reported.includes(expected)) {
-    output.appendLine(
-      `[server] version note: running "${reported}", extension expects ${expected}`,
-    );
+  if (!reported || reported.includes(expected)) return;
+
+  output.appendLine(
+    `[server] version note: running "${reported}" (${resolved.source}), extension expects ${expected}`,
+  );
+
+  const reportedVer = parseVersion(reported);
+  const expectedVer = parseVersion(expected);
+  const isStale =
+    reportedVer && expectedVer && compareVersions(reportedVer, expectedVer) < 0;
+
+  if (isStale && resolved.source === "setting") {
+    // Forcing a download here would silently paper over the pinned setting
+    // for this session only — it reverts (and re-warns) on the next reload,
+    // without ever telling the user the *setting* is what's stale. Point them
+    // at it instead.
+    void vscode.window
+      .showWarningMessage(
+        `Bynk: the language server pinned by \`bynk.executablePath\` is "${reported}", ` +
+          `older than the ${expected} this extension expects. It may flag valid syntax as errors.`,
+        "Open Settings",
+        "Ignore",
+      )
+      .then((pick) => {
+        if (pick === "Open Settings") {
+          void vscode.commands.executeCommand(
+            "workbench.action.openSettings",
+            "bynk.executablePath",
+          );
+        }
+      });
+  } else if (isStale) {
+    void vscode.window
+      .showWarningMessage(
+        `Bynk: language server is "${reported}" (${resolved.source}), older than the ` +
+          `${expected} this extension expects. It may flag valid syntax as errors.`,
+        "Download Matching Server",
+        "Ignore",
+      )
+      .then((pick) => {
+        if (pick === "Download Matching Server") {
+          void startServer(context, { interactive: true, forceDownload: true });
+        }
+      });
+  } else {
     void vscode.window.showWarningMessage(
       `Bynk: language server is "${reported}" but this extension expects ${expected}. ` +
         "Consider running “Bynk: Download Language Server”.",

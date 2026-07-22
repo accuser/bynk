@@ -24,10 +24,16 @@ bynk-emit.workspace = true
 bynk-strip.workspace = true
 bynk-check.workspace = true
 bynk-syntax.workspace = true
+# The pure completion logic (#808) — wasm-safe (no tower-lsp/tokio).
+bynk-ide.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
 
 # wasm-bindgen is only needed for the wasm32 entry point; native builds (tests,
-# clippy, the host toolchain) never pull it.
+# clippy, the host toolchain) never pull it. console_error_panic_hook installs a
+# panic hook that routes a Rust panic to `console.error` with a readable message
+# and location, so an internal panic on adversarial playground input surfaces as a
+# legible console error instead of an opaque `RuntimeError: unreachable` (#717).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"

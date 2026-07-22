@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "log": "d35a05f56e7920e1"
+  },
+  "expects": {
+    "shop.ledger": {
+      "authorise": "3042f1b7519e621d"
+    }
+  }
+}

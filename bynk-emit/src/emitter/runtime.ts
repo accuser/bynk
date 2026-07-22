@@ -194,7 +194,30 @@ export type BoundaryError =
     }
   | { readonly kind: "Transport"; readonly status: number; readonly details: string };
 
-export function boundaryError(error: BoundaryError): Error {
+// v0.177 (#643): the deployed callee's compiled contract is not the one this
+// caller was compiled against — a deploy skew, not a bad payload. The callee
+// reports it as a 409 *before* reading the body, since once the contracts
+// disagree the body's interpretation is exactly what is in doubt.
+//
+// Deliberately **not** a `BoundaryError` variant. `BoundaryError` is the
+// *codec's* error domain — what deserialising a payload can conclude — and a
+// codec can never produce this: it is decided from a header before any codec
+// runs. Widening `BoundaryError` would oblige every consumer of a codec result
+// (`Json.decode`'s error mapping among them) to narrow a case it can never
+// observe. The call surface is wider than the codec surface, so it gets its own
+// type.
+export interface ContractMismatch {
+  readonly kind: "ContractMismatch";
+  readonly service: string;
+  readonly expected: string;
+  readonly actual: string | null;
+}
+
+/// Everything a cross-context call can fail with: the codec's domain, plus the
+/// skew check that precedes it.
+export type CallError = BoundaryError | ContractMismatch;
+
+export function boundaryError(error: CallError): Error {
   const e = new Error(`BoundaryError: ${error.kind}`);
   (e as any).boundaryError = error;
   return e;
@@ -242,18 +265,48 @@ export async function callService<T, E>(
   // compile-time constant; the args body itself is unchanged. The `Internal`
   // channel trusts the binding, so this is identity, not authentication.
   callerContext: string = "",
+  // v0.177 (#643): this caller's compiled hash of the callee's contract. A
+  // compile-time constant, stamped beside the caller identity as metadata — the
+  // args body is untouched. The callee compares it against its own constant and
+  // fails closed on mismatch (409), which is what makes a `deploy --context`
+  // skew a loud, nameable failure instead of a silent misinterpretation.
+  contractHash: string = "",
 ): Promise<Result<T, E>> {
   const request = new Request(`http://internal/_bynk/call/${servicePath}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "X-Bynk-Caller": callerContext },
+    headers: {
+      "content-type": "application/json",
+      "X-Bynk-Caller": callerContext,
+      "X-Bynk-Contract": contractHash,
+    },
     body: JSON.stringify(argsJson),
   });
   const response = await binding.fetch(request);
   if (!response.ok) {
+    // Read the body **once**: the stream is consumed on first read, so a second
+    // read throws `TypeError: Body is unusable` — which would replace the very
+    // diagnosis this increment exists to give with an opaque failure from inside
+    // the runtime.
+    const raw = await response.text();
+    // v0.177 (#643): a 409 from the internal boundary is the callee refusing a
+    // skewed contract. Surface it as the named `ContractMismatch` rather than a
+    // generic transport failure — the whole point of failing closed is that the
+    // operator learns *what* is wrong, and "409 with an opaque body" would bury
+    // it. Anything else — including a 409 that is not ours, or one whose body
+    // does not parse — stays a `Transport`.
+    if (response.status === 409) {
+      let detail: ContractMismatch | null = null;
+      try {
+        detail = JSON.parse(raw) as ContractMismatch;
+      } catch {
+        // Not a Bynk 409; fall through to `Transport`.
+      }
+      if (detail && detail.kind === "ContractMismatch") throw boundaryError(detail);
+    }
     throw boundaryError({
       kind: "Transport",
       status: response.status,
-      details: await response.text(),
+      details: raw,
     });
   }
   let responseJson: JsonValue;
@@ -541,6 +594,169 @@ export function httpResultToResponse<T>(
 // (the body is never materialised — permitted, §9.3.2 "MAY").
 export function headResponse(response: Response): Response {
   return new Response(null, { status: response.status, headers: response.headers });
+}
+
+// testing-the-boundary Slice B: the inverse of `httpResultToResponse` for a
+// `system`-tier test. A case drives a route with a real `fetch` and asserts on
+// the returned `HttpResult[T]` (`expect item is Created(_)`), so the harness
+// decodes the `Response` back through this. Status is the discriminator: it
+// picks the canonical variant for each code (a 200 body decodes to `Ok`;
+// `Streaming`/`Raw` — both 200 — are not distinguished, since a test asserting
+// on those would use the unit tier). Value-bearing 2xx parse the JSON body
+// through `deserialiseValue`; error variants recover their `{ error }` message;
+// redirects recover the `Location` header; the rest are bodyless.
+const STATUS_TO_TAG: Record<number, HttpResult<unknown>["tag"]> = {
+  200: "Ok",
+  201: "Created",
+  202: "Accepted",
+  204: "NoContent",
+  301: "MovedPermanently",
+  302: "Found",
+  303: "SeeOther",
+  307: "TemporaryRedirect",
+  308: "PermanentRedirect",
+  400: "BadRequest",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "NotFound",
+  405: "MethodNotAllowed",
+  406: "NotAcceptable",
+  408: "RequestTimeout",
+  409: "Conflict",
+  410: "Gone",
+  411: "LengthRequired",
+  413: "PayloadTooLarge",
+  415: "UnsupportedMediaType",
+  422: "UnprocessableEntity",
+  429: "TooManyRequests",
+  451: "UnavailableForLegalReasons",
+  500: "ServerError",
+  501: "NotImplemented",
+  502: "BadGateway",
+  503: "ServiceUnavailable",
+  504: "GatewayTimeout",
+};
+
+export async function responseToHttpResult<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpResult<T>> {
+  const tag = STATUS_TO_TAG[response.status] ?? "ServerError";
+  switch (tag) {
+    case "Ok":
+    case "Created":
+    case "Accepted": {
+      const json = (await response.json()) as JsonValue;
+      const decoded = deserialiseValue(json);
+      const value = (decoded.tag === "Ok" ? decoded.value : (json as unknown)) as T;
+      return { tag, value };
+    }
+    case "MovedPermanently":
+    case "Found":
+    case "SeeOther":
+    case "TemporaryRedirect":
+    case "PermanentRedirect":
+      return { tag, location: response.headers.get("location") ?? "" };
+    case "BadRequest":
+    case "Conflict":
+    case "PayloadTooLarge":
+    case "UnsupportedMediaType":
+    case "UnprocessableEntity":
+    case "TooManyRequests":
+    case "UnavailableForLegalReasons":
+    case "ServerError":
+    case "NotImplemented":
+    case "BadGateway":
+    case "ServiceUnavailable":
+    case "GatewayTimeout": {
+      let message = "";
+      try {
+        const body = (await response.json()) as { error?: string };
+        message = body.error ?? "";
+      } catch {
+        message = "";
+      }
+      return { tag, message } as HttpResult<T>;
+    }
+    default:
+      // NoContent and the self-describing bodyless statuses.
+      return { tag } as HttpResult<T>;
+  }
+}
+
+// Slice C (testing-the-boundary): the outcome of a `system`-tier address driven
+// with a raw `Wire(…)` argument. A boundary rejection never produces an
+// `HttpResult` (the handler never ran), so a `Wire`-carrying call yields this
+// sum instead: `Rejected(detail)` when the router refused the input before the
+// handler, or `Handled(httpResult)` when it ran. The rejection `detail` carries a
+// `tag` mirroring the router's `BoundaryError.kind` (`RefinementViolation`,
+// `MalformedJson`, `StructuralMismatch`), so `expect r is Rejected(
+// RefinementViolation(_))` lowers to a plain `.tag` test — the value is decoded
+// here; the checker keeps the outcome loose (the runner recovers the shape).
+export type HttpOutcome<T> =
+  | { readonly tag: "Rejected"; readonly value: { readonly tag: string; readonly [k: string]: unknown } }
+  | { readonly tag: "Handled"; readonly value: HttpResult<T> };
+
+// The `BoundaryError.kind`s the router emits when it refuses input *before* the
+// handler — the only shapes that make an outcome `Rejected`. Kept in sync with
+// the router's rejection bodies in `workers_entry.rs`.
+const BOUNDARY_REJECTION_KINDS = new Set(["RefinementViolation", "MalformedJson", "StructuralMismatch"]);
+
+export async function responseToHttpOutcome<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpOutcome<T>> {
+  // Classify on the body's *shape*, not its status. A pre-handler rejection is a
+  // `400` whose body is a `BoundaryError` carrying a recognised `kind`. A
+  // handler that *ran* and returned `BadRequest(msg)` also yields a `400`, but
+  // its body is `{ error: msg }` with no `kind` — the handler produced it, so it
+  // is `Handled`, not `Rejected`. Reading `kind` (rather than the status) is what
+  // keeps "the handler never ran" — the whole meaning of `Rejected` — accurate.
+  if (response.status === 400) {
+    let body: { kind?: unknown } | null = null;
+    try {
+      body = (await response.clone().json()) as { kind?: unknown };
+    } catch {
+      body = null;
+    }
+    if (body && typeof body.kind === "string" && BOUNDARY_REJECTION_KINDS.has(body.kind)) {
+      return {
+        tag: "Rejected",
+        value: { ...(body as Record<string, unknown>), tag: body.kind },
+      };
+    }
+    // No boundary `kind` → the handler produced this `400`; fall through.
+  }
+  // #707: a `405` is `Rejected(MethodNotAllowed)` only when it is the router's
+  // *method fall-through* — a live path reached under a method it declares no
+  // handler for. Classify on shape, not status: the router synthesises that 405
+  // with an `Allow` header (`workers_entry.rs`), whereas a handler that ran and
+  // returned `HttpResult.MethodNotAllowed` yields a bodyless 405 with no `Allow`
+  // — the handler produced it, so it stays `Handled`. Same shape-vs-status care
+  // as the `400` (`kind` body) path.
+  if (response.status === 405 && response.headers.has("allow")) {
+    return { tag: "Rejected", value: { tag: "MethodNotAllowed" } };
+  }
+  const handled = await responseToHttpResult(response, deserialiseValue);
+  return { tag: "Handled", value: handled };
+}
+
+// #706: the outcome of driving a secured route with *no credential* (`by
+// Nobody`). A `401` here is the auth seam refusing the request before the
+// handler ran — `Rejected(Unauthorized)` — which is unambiguous *because the
+// caller sent no credential* (unlike the shared `responseToHttpOutcome`, where a
+// `401` could be a handler-returned `Unauthorized`, so it stays `Handled`). Any
+// other status is decoded normally: a route that is not actually secured lets
+// the request through, and the case observes `Handled` rather than a false
+// `Rejected`.
+export async function responseToUnauthOutcome<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpOutcome<T>> {
+  if (response.status === 401) {
+    return { tag: "Rejected", value: { tag: "Unauthorized" } };
+  }
+  return responseToHttpOutcome(response, deserialiseValue);
 }
 
 // v0.131 (ADR 0159): the cross-origin (CORS) policy a `from http` service carries
@@ -938,10 +1154,13 @@ export async function verifyBearerJwtHs256(
     return Err("malformed payload");
   }
   const now = Math.floor(Date.now() / 1000);
-  // RFC 7519: `exp`/`nbf` are NumericDate (a number). A present-but-non-number
-  // claim is malformed — reject rather than silently skip the time check.
-  if (payload.exp !== undefined && typeof payload.exp !== "number") return Err("malformed exp");
-  if (payload.exp !== undefined && (payload.exp as number) < now) return Err("token expired");
+  // RFC 7519: `exp`/`nbf` are NumericDate (a number). `exp` is required — a
+  // token with no expiry never ages out, so a leaked bearer cannot be revoked
+  // by time; parity with the OIDC seam below. A present-but-non-number `exp`
+  // (or `nbf`) is malformed — reject rather than silently skip the time check.
+  if (payload.exp === undefined) return Err("missing exp");
+  if (typeof payload.exp !== "number") return Err("malformed exp");
+  if ((payload.exp as number) < now) return Err("token expired");
   if (payload.nbf !== undefined && typeof payload.nbf !== "number") return Err("malformed nbf");
   if (payload.nbf !== undefined && (payload.nbf as number) > now) return Err("token not yet valid");
   if (typeof payload.sub !== "string" || payload.sub.length === 0) return Err("missing sub");
@@ -1342,4 +1561,51 @@ export function webSocketUpgradeResponse(client: WorkersWebSocket): Response {
   return new Response(null, { status: 101, webSocket: client } as ResponseInit & {
     webSocket: WorkersWebSocket;
   });
+}
+
+// message-bundles slice 3 (#878): ICU MessageFormat formatting helpers.
+// Delegate entirely to the host JS engine's own `Intl` object — no CLDR
+// data is bundled here (Decision A). Emitted `messages`-bundle code calls
+// these directly; see `bynk-emit/src/emitter/emit.rs`'s `emit_icu_placeholder`.
+
+/**
+ * Selects a plural category's arm using the host `Intl.PluralRules` for
+ * `tag`. Falls back to `"other"` if `Intl.PluralRules` selects a category
+ * `arms` doesn't declare — the checker (`bynk.messages.malformed_icu_syntax`)
+ * already guarantees every declared `plural` placeholder has an `other` arm,
+ * so `arms["other"]` is always defined; this is a real runtime fallback (a
+ * locale's actual CLDR category set can differ from the arms an author
+ * happened to write), not dead code.
+ */
+export function selectPluralArm(
+  tag: string,
+  n: number,
+  arms: Record<string, string>,
+): string {
+  const category = new Intl.PluralRules(tag).select(n);
+  return arms[category] ?? arms["other"];
+}
+
+export function formatIcuNumber(
+  tag: string,
+  n: number,
+  style?: "integer" | "percent",
+): string {
+  const options: Intl.NumberFormatOptions =
+    style === "integer"
+      ? { maximumFractionDigits: 0 }
+      : style === "percent"
+        ? { style: "percent" }
+        : {};
+  return new Intl.NumberFormat(tag, options).format(n);
+}
+
+export function formatIcuDate(
+  tag: string,
+  epochMillis: number,
+  style?: "short" | "medium" | "long" | "full",
+): string {
+  const options: Intl.DateTimeFormatOptions =
+    style !== undefined ? { dateStyle: style } : {};
+  return new Intl.DateTimeFormat(tag, options).format(new Date(epochMillis));
 }

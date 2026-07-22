@@ -21,7 +21,7 @@ use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::Url;
 
 /// The analysed round's tables, positioned at the cursor.
-pub(crate) struct HoverAnalysis<'a> {
+pub struct HoverAnalysis<'a> {
     pub index: &'a bynk_check::index::ProjectIndex,
     /// Project-relative path → the analysed text.
     pub snapshots: &'a HashMap<PathBuf, String>,
@@ -30,10 +30,16 @@ pub(crate) struct HoverAnalysis<'a> {
     /// The cursor's file (project-relative) and its offset **into the snapshot**.
     pub rel: &'a Path,
     pub offset: usize,
+    /// #848: the round's project root — resolves a doc-link's `SiteRef` into
+    /// a `file://` hover-Markdown target.
+    pub project_root: &'a Path,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order, for rung 1's doc-link rewrite.
+    pub doc_scope: &'a HashMap<String, Vec<String>>,
 }
 
 /// Everything the ladder reads.
-pub(crate) struct HoverInput<'a> {
+pub struct HoverInput<'a> {
     /// The analysed round; `None` when the file is outside it — the lexical
     /// rungs still answer from the live buffer.
     pub analysis: Option<HoverAnalysis<'a>>,
@@ -41,14 +47,17 @@ pub(crate) struct HoverInput<'a> {
     /// document is not open — the index rungs still answer from the snapshot.
     pub doc: Option<(&'a str, usize)>,
     pub uri: &'a Url,
-    pub src_root: Option<&'a Path>,
+    /// Slice A: the project's `.bynk` files from the compiler's discovery —
+    /// every `include` root, `exclude` honoured. Was a single source root the
+    /// hover ladder hand-walked.
+    pub files: Option<&'a [PathBuf]>,
 }
 
 /// The hover Markdown for the cursor, or `None` when no rung resolves it.
 ///
 /// The rung order is the contract; see the module doc. Each rung is tried in
 /// turn and the first `Some` wins.
-pub(crate) fn hover_content(input: &HoverInput<'_>) -> Option<String> {
+pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
     if let Some(a) = &input.analysis {
         // 1. v0.25: binding-index path — a resolved symbol reference, described
         //    from its *defining* file (names are unique per file, so the per-file
@@ -64,7 +73,16 @@ pub(crate) fn hover_content(input: &HoverInput<'_>) -> Option<String> {
             && let Some(def_text) = a.snapshots.get(&def.path)
             && let Some(content) = crate::symbols::describe_symbol(def_text, &key.name)
         {
-            return Some(content);
+            // #848: rewrite any resolvable intra-doc link in the rendered
+            // doc comment into a Markdown link, scoped to `key.unit` (the
+            // declaring unit doc-link resolution searches from).
+            return Some(crate::symbols::linkify_doc_links(
+                &content,
+                a.index,
+                a.doc_scope,
+                a.project_root,
+                &key.unit,
+            ));
         }
         // 2. #611 (gap C): a `store` field's operation (`items.put(…)`) — a
         //    structural match on the enclosing agent's declared field, so it
@@ -131,14 +149,14 @@ pub(crate) fn hover_content(input: &HoverInput<'_>) -> Option<String> {
     //    static — via the same path signature help uses, over the project and the
     //    embedded surface. Before the cross-file / first-party name scans.
     crate::symbols::qualified_callee_at(text, span)
-        .and_then(|callee| crate::signature_help::resolve_label(&callee, text, input.src_root))
+        .and_then(|callee| crate::signature_help::resolve_label(&callee, text, input.files))
         .map(|sig| format!("```bynk\n{sig}\n```"))
         // 8. A project-wide scan (v1.1), then 9. the embedded first-party sources
         //    (slice 9) — so `uses`/`consumes` names resolve across file
         //    boundaries (§3.4) and stdlib/surface symbols surface too.
         .or_else(|| {
             input
-                .src_root
+                .files
                 .and_then(|root| crate::symbols::describe_symbol_cross_file(root, input.uri, &name))
                 .map(|(_other_uri, desc)| desc)
         })

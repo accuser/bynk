@@ -1,0 +1,4 @@
+# #637 Gap C: declaring a compiler-known built-in type name must be rejected
+# at the declaration, not silently shadowed / failing at the reference.
+bynk.resolve.reserved_builtin_type `QueueResult` is a built-in type name and cannot be redeclared
+bynk.resolve.reserved_builtin_type `Query` is a built-in type name and cannot be redeclared

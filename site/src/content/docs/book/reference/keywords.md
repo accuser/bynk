@@ -2,12 +2,14 @@
 title: Keywords
 ---
 <!-- GENERATED FILE — do not edit by hand.
-     Source: bynkc/src/keywords.rs (`render_markdown`).
+     Source: bynk-syntax/src/keywords.rs (`render_markdown`).
      Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test keywords_reference -->
 
-Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
+Bynk reserves names in three tiers. The first two are lexer keywords; the third are compiler-known type names. Only the **hard keywords** can never be used as an identifier.
 
-There are **63** reserved keywords.
+## Hard keywords
+
+Reserved everywhere — these **60** words can never be used as an identifier.
 
 | Keyword | Meaning |
 |---|---|
@@ -34,7 +36,6 @@ There are **63** reserved keywords.
 | `binding` | Name an adapter's TypeScript binding module (`binding "<module>"`). |
 | `by` | Name the actor a handler consumes, after the return type — or a service-level default on the header (`… -> T by <name>: <Actor>`). |
 | `capability` | Declare a capability (a dependency interface) in a context. |
-| `case` | Declare a test case inside a `suite` (`case "…" { … }`). |
 | `commons` | Declare a pure, stateless module of types and functions. |
 | `consumes` | Declare a dependency on another context's services. |
 | `context` | Declare a deployable context (services, agents, capabilities). |
@@ -56,7 +57,6 @@ There are **63** reserved keywords.
 | `is` | Test a value against a variant pattern, yielding a `Bool`. |
 | `let` | Bind a local value (`let x = …`, or `let x <- …` for an effect). |
 | `match` | Pattern-match over a sum type, `Result`, or `Option`. |
-| `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`). |
 | `opaque` | Declare an opaque type, or export a type opaquely. |
 | `property` | Declare a generative test inside a `suite` (`property "…" { for all … }`). |
 | `protocol` | Reserved keyword (protocols are a closed, compiler-known set). |
@@ -67,10 +67,35 @@ There are **63** reserved keywords.
 | `self` | The current agent instance, inside a handler. |
 | `service` | Declare a service (a group of handlers) in a context. |
 | `stub` | Stub a consumed capability operation at a test seam (`stub Cap.op(…) returns <v>` / `fails`). |
-| `suite` | Declare a test suite targeting a unit (`suite <target> { case … }`). |
 | `transition` | Declare an agent step invariant over the `old`/`new` state pair (`transition <name>: …`). |
 | `transparent` | Export a type with its structure visible (`exports transparent { … }`). |
 | `true` | The boolean literal `true`. |
 | `type` | Declare a type: alias, record, sum, opaque, or refined. |
 | `uses` | Bring a commons into scope. |
 | `where` | Attach refinement predicates to a base type. |
+
+## Contextual keywords
+
+Reserved only in the one position named below; elsewhere (a field, parameter, or other identifier) they are ordinary names.
+
+| Keyword | Meaning |
+|---|---|
+| `case` | Declare a test case inside a `suite` (`case "…" { … }`). |
+| `messages` | Declare a message bundle for one locale (`messages <tag> { "code" => "template" }`), inside a commons. |
+| `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`). |
+| `suite` | Declare a test suite targeting a unit (`suite <target> { case … }`). |
+
+## Built-in type names
+
+Compiler-known type constructors. They are not lexer keywords — you may use them as an identifier in value position — but they are reserved in type position: a `type` declaration may not reuse one of these names (`bynk.resolve.reserved_builtin_type`).
+
+| Name | Meaning |
+|---|---|
+| `Connection` | A held WebSocket connection, `Connection[F]`. |
+| `History` | A generated call-history generator, `History[Agent]` (test-only). |
+| `HttpResult` | The HTTP handler result type, `HttpResult[T]`. |
+| `List` | The immutable list type, `List[T]`. |
+| `Map` | The immutable map type, `Map[K, V]`. |
+| `Query` | The lazy storage-read type, `Query[T]`. |
+| `QueueResult` | The queue handler result type (non-generic). |
+| `Stream` | The value-over-time primitive, `Stream[T]`. |

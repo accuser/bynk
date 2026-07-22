@@ -650,6 +650,15 @@ highest (`*`, `/`); the production order is the precedence order. `implies`
 (v0.80) is logical implication, right-associative, `P implies Q` ≡ `!P || Q`.
 Well-formedness: §5.
 
+v0.130 (ADR 0158): a `+`/`-` that begins a new line does **not** continue the
+additive chain — it starts a new construct instead, so a comma-less match arm
+beginning with a negative literal pattern (`10` ⏎ `-2 => …`) reads as two arms,
+not `10 - 2`. This applies only at the `+`/`-` level; `*` and `/` continue
+across a line break as usual. Like the same-line `[` rule for type application
+([§4.6.8](#468-method_call), [§4.6.10](#4610-call), [§4.6.21a](#4621a-list_literal)),
+this is a case where a line break is syntactically significant — see
+[§3.4](/book/spec/lexical-grammar/#34-trivia).
+
 ### §4.6.7 unary_expr
 
 {{#grammar unary_expr}}
@@ -819,14 +828,19 @@ arm separators are optional. Well-formedness: §5.
 
 {{#grammar _pattern}}
 
-A pattern: a wildcard or a variant pattern.
+A pattern: a wildcard, a literal, a binding, or a variant pattern. A
+lowercase-led identifier is a binding (it matches anything and binds the
+value); an uppercase-led one is a nullary variant — in the concrete grammar
+both parse as `variant_pattern`.
 
 ### §4.7.3 variant_pattern
 
 {{#grammar variant_pattern}}
 
-A constant name, optionally qualified, with an optional parenthesised list of
-bindings. Well-formedness: §5.
+A name, optionally qualified, with an optional parenthesised list of
+bindings. The name is an identifier, not a constant name: a lowercase-led
+identifier binds the value, an uppercase-led one discriminates a variant.
+Well-formedness: §5.
 
 ### §4.7.4 wildcard_pattern
 

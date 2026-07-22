@@ -5,7 +5,8 @@ The outcome of a fixed-window decision, as plain numbers and booleans: the next
 window to store (`windowStart`, `count`) and the caller's verdict (`allowed`,
 `remaining`, `resetAt`). Every field is a base type, so a `Decision` never has to
 cross a context boundary as a record — the agent reads these fields and builds
-its own `RateView` from them.
+its own `RateView` from them. Background:
+[fixed window rate limiting](https://en.wikipedia.org/wiki/Rate_limiting).
 ---
 type Decision = {
   windowStart: Int,

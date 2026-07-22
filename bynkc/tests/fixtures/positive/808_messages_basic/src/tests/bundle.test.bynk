@@ -1,0 +1,30 @@
+---
+Slice 1's own render, not bynk.locale's: substitution, a literal-only
+template, an unmatched placeholder left as literal text (totality), and
+the fallback to bynk.locale.render for a code this bundle never
+declares.
+---
+suite app.bundle {
+  case "substitutes a present placeholder" {
+    let msg = withText(message("greeting"), "name", "Ada")
+    expect render("en", msg) == "Hello, Ada!"
+  }
+
+  case "renders a literal-only template unchanged" {
+    expect render("en", message("farewell")) == "Bye"
+  }
+
+  case "leaves an unmatched placeholder as literal text" {
+    expect render("en", message("unmatched_placeholder")) == "Value: {oops}"
+  }
+
+  case "substitutes multiple typed placeholders" {
+    let msg = withNum(withWhole(message("quantity"), "count", 3), "price", 9.99)
+    expect render("en", msg) == "3 at 9.99"
+  }
+
+  case "falls back to bynk.locale.render for a code the bundle doesn't declare" {
+    let msg = withWhole(message("nope"), "x", 5)
+    expect render("en", msg) == "nope {x=5}"
+  }
+}

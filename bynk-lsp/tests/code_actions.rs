@@ -8,17 +8,17 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use bynk_lsp::{capability_fixes, code_actions, position};
 use tower_lsp::lsp_types::*;
 
 // The handler-side pure modules, included directly (bynk-lsp is a binary
 // crate). `code_actions` resolves `crate::position` against the include.
-#[allow(dead_code)]
-#[path = "../src/position.rs"]
-mod position;
 
-#[allow(dead_code)]
-#[path = "../src/code_actions.rs"]
-mod code_actions;
+/// A source string in fmt-canonical form, so a header-insertion fix applied to
+/// it can be asserted to round-trip through `fmt` unchanged (DECISION C).
+fn canon(src: &str) -> String {
+    bynk_fmt::format_source(src, &bynk_fmt::FormatOptions::default()).expect("source formats")
+}
 
 fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -171,6 +171,290 @@ fn firstBig(xs: List[Int]) -> Option[Int] {
   find(xs, (x) => x > 10)
 }
 ";
+
+// -- #852: capability-aware header quick-fixes --
+
+/// The `(title, first-edit-text, versioned document edits)` for a CodeAction.
+fn action_parts(a: &CodeActionOrCommand) -> (String, Vec<OneOf<TextEdit, AnnotatedTextEdit>>) {
+    let CodeActionOrCommand::CodeAction(action) = a else {
+        panic!("expected a CodeAction");
+    };
+    assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+    let Some(DocumentChanges::Edits(doc_edits)) = &action.edit.as_ref().unwrap().document_changes
+    else {
+        panic!("expected versioned document edits");
+    };
+    assert_eq!(
+        doc_edits[0].text_document.version,
+        Some(7),
+        "edit is versioned"
+    );
+    (action.title.clone(), doc_edits[0].edits.clone())
+}
+
+/// Overlay `fixed` on `rel` and assert the whole project re-diagnoses clean,
+/// and that the fixed buffer round-trips through `fmt` (#852's acceptance).
+fn assert_project_clean(root: &Path, rel: &str, fixed: &str) {
+    let abs = root.join(rel);
+    let canonical = abs.canonicalize().unwrap_or(abs);
+    let mut overlay = HashMap::new();
+    overlay.insert(canonical, fixed.to_string());
+    let post = bynk_ide::diagnose_project(root, &overlay);
+    assert!(
+        post.files.iter().all(|f| f.diagnostics.is_empty()),
+        "applied fix re-diagnoses clean; residual: {:?}",
+        post.files
+            .iter()
+            .flat_map(|f| f.diagnostics.iter().map(|d| d.error.category))
+            .collect::<Vec<_>>()
+    );
+    // DECISION C: a new clause is inserted in fmt-stable position, so the fixed
+    // buffer round-trips through the formatter unchanged.
+    let opts = bynk_fmt::FormatOptions::default();
+    let once = bynk_fmt::format_source(fixed, &opts).expect("fixed buffer formats");
+    assert_eq!(once, fixed, "fixed buffer is not fmt-canonical");
+}
+
+fn header_actions_for(
+    result: &bynk_ide::ProjectDiagnostics,
+    rel: &str,
+    category: &str,
+    root: &Path,
+) -> (String, Vec<CodeActionOrCommand>) {
+    let file = result
+        .files
+        .iter()
+        .find(|f| f.source_path == Path::new(rel))
+        .expect("file analysed");
+    let diag = file
+        .diagnostics
+        .iter()
+        .find(|d| d.error.category == category)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a `{category}` diagnostic; got {:?}",
+                file.diagnostics
+                    .iter()
+                    .map(|d| d.error.category)
+                    .collect::<Vec<_>>()
+            )
+        });
+    let uri = Url::from_file_path(root.join(rel)).unwrap();
+    let actions = capability_fixes::header_quick_fixes(
+        &file.text,
+        &file.diagnostics,
+        diag.error.span,
+        &uri,
+        Some(7),
+        &result.index,
+    );
+    (file.text.clone(), actions)
+}
+
+#[test]
+fn auto_uses_brings_a_commons_type_into_scope() {
+    let widget = canon("commons shared.widget\n\ntype Widget = { size: Int }\n");
+    let use_src = canon("commons app.use\n\nfn area(w: Widget) -> Int {\n  w.size\n}\n");
+    let root = setup_project(
+        "autouses",
+        &[
+            ("shared/widget.bynk", widget.as_str()),
+            ("app/use.bynk", use_src.as_str()),
+        ],
+    );
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let (text, actions) =
+        header_actions_for(&result, "app/use.bynk", "bynk.resolve.unknown_type", &root);
+    assert_eq!(actions.len(), 1, "one candidate commons → one `uses` fix");
+    let (title, edits) = action_parts(&actions[0]);
+    assert_eq!(title, "add `uses shared.widget`");
+    let fixed = apply_text_edits(&text, &edits);
+    assert!(
+        fixed.contains("uses shared.widget"),
+        "clause added:\n{fixed}"
+    );
+    assert_project_clean(&root, "app/use.bynk", &fixed);
+}
+
+#[test]
+fn auto_uses_offers_one_action_per_ambiguous_candidate() {
+    // `Widget` is declared in two commons — DECISION A: one action each, no guess.
+    let root = setup_project(
+        "ambiguous",
+        &[
+            ("a/w.bynk", "commons a.w\n\ntype Widget = { size: Int }\n"),
+            ("b/w.bynk", "commons b.w\n\ntype Widget = { size: Int }\n"),
+            (
+                "app/use.bynk",
+                "commons app.use\n\nfn area(w: Widget) -> Int {\n  w.size\n}\n",
+            ),
+        ],
+    );
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let (_text, actions) =
+        header_actions_for(&result, "app/use.bynk", "bynk.resolve.unknown_type", &root);
+    let mut titles: Vec<String> = actions.iter().map(|a| action_parts(a).0).collect();
+    titles.sort();
+    assert_eq!(
+        titles,
+        vec!["add `uses a.w`".to_string(), "add `uses b.w`".to_string()]
+    );
+}
+
+#[test]
+fn add_consumes_repairs_an_unconsumed_cross_context_call() {
+    let prov =
+        canon("context svc.prov\n\nservice thing {\n  on call() -> Effect[Int] {\n    1\n  }\n}\n");
+    let call = canon(
+        "context app.call\n\nservice caller {\n  on call() -> Effect[Int] {\n    let x <- svc.prov.thing()\n    x\n  }\n}\n",
+    );
+    let root = setup_project(
+        "consumes",
+        &[
+            ("svc/prov.bynk", prov.as_str()),
+            ("app/call.bynk", call.as_str()),
+        ],
+    );
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let (text, actions) = header_actions_for(
+        &result,
+        "app/call.bynk",
+        "bynk.resolve.unconsumed_context",
+        &root,
+    );
+    assert_eq!(actions.len(), 1);
+    let (title, edits) = action_parts(&actions[0]);
+    assert_eq!(title, "add `consumes svc.prov`");
+    let fixed = apply_text_edits(&text, &edits);
+    assert!(
+        fixed.contains("consumes svc.prov"),
+        "clause added:\n{fixed}"
+    );
+    assert_project_clean(&root, "app/call.bynk", &fixed);
+}
+
+#[test]
+fn add_consumes_builtin_capability_then_given_reaches_clean() {
+    // `Logger` used with neither `consumes bynk` nor `given` → the auto-consumes
+    // fix resolves the name; the existing add-`given` fix then reaches clean.
+    let relay = canon(
+        "context app.relay\n\nservice relay {\n  on call() -> Effect[Int] {\n    let _ <- Logger.info(\"hi\")\n    1\n  }\n}\n",
+    );
+    let root = setup_project("builtincap", &[("app/relay.bynk", relay.as_str())]);
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let (text, actions) = header_actions_for(
+        &result,
+        "app/relay.bynk",
+        "bynk.resolve.unknown_name",
+        &root,
+    );
+    let logger = actions
+        .iter()
+        .map(action_parts)
+        .find(|(t, _)| t == "add `consumes bynk { Logger }`")
+        .expect("consumes-bynk fix offered");
+    let consumed = apply_text_edits(&text, &logger.1);
+    assert!(
+        consumed.contains("consumes bynk { Logger }"),
+        "clause added:\n{consumed}"
+    );
+
+    // Re-diagnose the consumed buffer → now the `given` diagnostic, with its
+    // own machine-applicable fix. Applying it reaches clean.
+    let abs = root.join("app/relay.bynk");
+    let canonical = abs.canonicalize().unwrap_or(abs.clone());
+    let mut overlay = HashMap::new();
+    overlay.insert(canonical, consumed.clone());
+    let mid = bynk_ide::diagnose_project(&root, &overlay);
+    let file = mid
+        .files
+        .iter()
+        .find(|f| f.source_path == Path::new("app/relay.bynk"))
+        .unwrap();
+    let given = file
+        .diagnostics
+        .iter()
+        .find(|d| d.error.category == "bynk.given.undeclared_capability")
+        .expect("undeclared-capability now surfaces");
+    let uri = Url::from_file_path(&abs).unwrap();
+    let given_actions = code_actions::quick_fixes(
+        &consumed,
+        &file.diagnostics,
+        given.error.span,
+        &uri,
+        Some(8),
+    );
+    let CodeActionOrCommand::CodeAction(ga) = &given_actions[0] else {
+        panic!()
+    };
+    let Some(DocumentChanges::Edits(de)) = &ga.edit.as_ref().unwrap().document_changes else {
+        panic!()
+    };
+    let clean = apply_text_edits(&consumed, &de[0].edits);
+    assert_project_clean(&root, "app/relay.bynk", &clean);
+}
+
+#[test]
+fn add_consumes_capability_extends_an_existing_braced_clause() {
+    // DECISION C: `Fetch` used with `consumes bynk { Logger }` present → the
+    // capability is added into the existing brace list, not a new clause.
+    let root = setup_project(
+        "extendbrace",
+        &[(
+            "app/relay.bynk",
+            "context app.relay\n\nconsumes bynk { Logger }\n\nservice relay {\n  on call() -> Effect[Int] given Logger {\n    let r <- Fetch.send(\"u\")\n    1\n  }\n}\n",
+        )],
+    );
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let (text, actions) = header_actions_for(
+        &result,
+        "app/relay.bynk",
+        "bynk.resolve.unknown_name",
+        &root,
+    );
+    let (title, edits) = actions
+        .iter()
+        .map(action_parts)
+        .find(|(t, _)| t.contains("Fetch"))
+        .expect("Fetch fix offered");
+    assert_eq!(title, "add `Fetch` to `consumes bynk`");
+    let fixed = apply_text_edits(&text, &edits);
+    assert!(
+        fixed.contains("consumes bynk { Logger, Fetch }"),
+        "extended in place:\n{fixed}"
+    );
+}
+
+#[test]
+fn add_consumes_into_an_empty_braced_clause_is_canonical() {
+    // A `consumes bynk {  }` with non-canonical interior spacing → the clause is
+    // rebuilt canonically rather than braces-inserted (the review's cosmetic
+    // note). `Logger.info` needs the given too, but the clause edit is the point.
+    let root = setup_project(
+        "emptybrace",
+        &[(
+            "app/relay.bynk",
+            "context app.relay\n\nconsumes bynk {  }\n\nservice relay {\n  on call() -> Effect[Int] given Logger {\n    let _ <- Logger.info(\"hi\")\n    1\n  }\n}\n",
+        )],
+    );
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let (text, actions) = header_actions_for(
+        &result,
+        "app/relay.bynk",
+        "bynk.resolve.unknown_name",
+        &root,
+    );
+    let (_title, edits) = actions
+        .iter()
+        .map(action_parts)
+        .find(|(t, _)| t.contains("Logger"))
+        .expect("Logger fix offered");
+    let fixed = apply_text_edits(&text, &edits);
+    assert!(
+        fixed.contains("consumes bynk { Logger }") && !fixed.contains("{  }"),
+        "empty braces rebuilt canonically:\n{fixed}"
+    );
+}
 
 #[test]
 fn bynk_list_deprecation_quick_fix_rewrites_to_method() {

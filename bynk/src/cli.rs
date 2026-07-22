@@ -84,18 +84,39 @@ pub enum Command {
         /// as `--base-port` is (default 9229).
         #[arg(long, default_value_t = 9229)]
         inspect_port: u16,
+        /// Which `bynk.deploy.lock` environment `-- --remote` reads the KV id
+        /// from. `dev` never provisions, so this only selects among what
+        /// `bynk deploy --env NAME` already recorded — irrelevant without
+        /// `--remote`. Omit for today's single, unqualified default.
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        env: String,
         /// Arguments after `--`, forwarded to `wrangler dev` (e.g. `-- --remote`).
         /// Ports are the driver's to allocate: use `--base-port` / `--inspect-port`.
         #[arg(last = true)]
         wrangler_args: Vec<String>,
     },
-    /// Provision the Cloudflare KV namespace required by a single-context
-    /// project, then deploy its Worker. The generated configuration remains
-    /// disposable: Cloudflare ids live in the committed `bynk.deploy.lock`.
+    /// Provision each context's Cloudflare resources and deploy its Worker.
+    /// The whole project ships in one command, in Service-Binding dependency
+    /// order — Cloudflare rejects a Worker uploaded before a Worker it binds
+    /// to. The generated configuration remains disposable: Cloudflare ids live
+    /// in the committed `bynk.deploy.lock`.
     Deploy {
         /// Project directory to deploy from. Defaults to the current directory.
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Deploy this context alone, assuming the contexts it consumes are
+        /// already live; a dependency that has never been deployed is reported
+        /// rather than pushed into. Accepts the dotted name or its dasherised
+        /// worker-dir form. Omit to deploy the whole project in order.
+        #[arg(long, value_name = "NAME")]
+        context: Option<String>,
+        /// Target environment. Selects the `bynk.deploy.lock` section and,
+        /// for any value other than `default`, synthesises an environment-
+        /// scoped Wrangler config section (KV, queues, Service Bindings all
+        /// qualified) since Cloudflare does not inherit bindings into a named
+        /// environment. Omit to deploy today's single, unqualified default.
+        #[arg(long, default_value = "default", value_name = "NAME")]
+        env: String,
         /// Print the provisioning and deploy plan without changing Cloudflare
         /// or writing `bynk.deploy.lock`.
         #[arg(long, visible_alias = "plan")]
@@ -107,6 +128,28 @@ pub enum Command {
         /// publishing a Worker. Required for non-interactive automation.
         #[arg(long)]
         yes: bool,
+        /// Read secret values from a dotenv-style `NAME=value` file. Supplies
+        /// both names and values; never committed, never persisted. Values move
+        /// to `wrangler secret put` and are dropped.
+        #[arg(long, value_name = "PATH")]
+        secrets_file: Option<PathBuf>,
+        /// Set this named secret, taking its value from the environment (or a
+        /// prompt). Repeatable. Use for a `bynk.Secrets` name, whose spelling
+        /// the compiler cannot know — an actor's declared `auth` secret needs no
+        /// flag. The environment is never scanned for names.
+        #[arg(long = "secret", value_name = "NAME")]
+        secrets: Vec<String>,
+        /// Overwrite a secret that is already set. The default sets only the
+        /// missing ones, so a re-deploy does not cut a fresh Cloudflare secret
+        /// version for every secret every time.
+        #[arg(long)]
+        force: bool,
+        /// Delete every reported orphan — a KV namespace or queue the ledger
+        /// remembers that the current build no longer declares. Never
+        /// deletes a Worker. Prompts separately from the creation
+        /// confirmation unless --yes is also given; omit to report only.
+        #[arg(long)]
+        prune: bool,
         /// Arguments after `--`, forwarded to `wrangler deploy` verbatim.
         #[arg(last = true)]
         wrangler_args: Vec<String>,
@@ -198,6 +241,25 @@ pub enum Command {
         /// with `--no-run`.
         #[arg(long, value_name = "NAME")]
         case: Option<String>,
+        /// After the suite runs, report statement/line coverage attributed to
+        /// `.bynk` source (a rich summary table, or a `coverage` block in
+        /// `--format json`). Requires the `tsc → node` path: incompatible with
+        /// `--inspect` and `--no-run`, and errors if only `tsx` is available.
+        #[arg(long)]
+        coverage: bool,
+    },
+    /// Explain a diagnostic code — the longer-form "what the rule is, why it
+    /// exists, and how to fix it" behind a `bynk.*` error code (#853).
+    ///
+    /// Prints a curated blurb, a minimal before/after example, and a link to
+    /// the relevant Book concept page. The blurb is offline-complete, so the
+    /// substance is available without network. Codes without a curated
+    /// explanation report that gracefully; an unrecognised code exits non-zero.
+    /// The same explanations back the editor's clickable diagnostic-code links.
+    Explain {
+        /// The diagnostic code to explain, e.g. `bynk.resolve.unknown_type`.
+        #[arg(value_name = "CODE")]
+        code: String,
     },
 }
 

@@ -16,10 +16,12 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "whoami": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "317bdd3de84d2176") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "whoami", expected: "317bdd3de84d2176", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __caller = request.headers.get("X-Bynk-Caller");
             if (__caller === null || __caller === "") return new Response(JSON.stringify({ kind: "Unauthorized", details: "missing caller identity" }), { status: 401, headers: { "content-type": "application/json" } });
-            const __r_ping = (typeof args === "string" ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof args }) as Result<any, BoundaryError>);
+            const __r_ping = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_ping.tag === "Err") return new Response(JSON.stringify(__r_ping.error), { status: 400, headers: { "content-type": "application/json" } });
             const ping = __r_ping.value;
             const result = await surface.whoami(__caller, ping);

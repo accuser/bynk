@@ -136,12 +136,19 @@ fn target_is_nonempty(target: &Path) -> io::Result<bool> {
 }
 
 /// Create the directory tree and write the three files. Never overwrites: the
-/// clobber check has already cleared the target.
+/// clobber check has already cleared the target of everything except
+/// [`SCAFFOLD_IGNORES`] cruft. `.gitignore` is the one member of that set the
+/// scaffold also writes — a hand-written one (e.g. in a `git init`ed target)
+/// passes the clobber check, so we write ours only when none is present rather
+/// than clobbering the user's.
 fn write_scaffold(target: &Path, name: &str) -> io::Result<()> {
     let src_dir = target.join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(target.join("bynk.toml"), render(BYNK_TOML, name))?;
-    fs::write(target.join(".gitignore"), render(GITIGNORE, name))?;
+    let gitignore = target.join(".gitignore");
+    if !gitignore.exists() {
+        fs::write(gitignore, render(GITIGNORE, name))?;
+    }
     fs::write(src_dir.join(format!("{name}.bynk")), starter_source(name))?;
     Ok(())
 }

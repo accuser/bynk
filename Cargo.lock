@@ -162,7 +162,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "bynk"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-driver",
  "bynk-emit",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-check"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-syntax",
  "regress",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-driver"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-emit",
  "bynk-fmt",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-emit"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-check",
  "bynk-syntax",
@@ -204,31 +204,33 @@ dependencies = [
 
 [[package]]
 name = "bynk-fmt"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
+ "bynk-render",
  "bynk-syntax",
  "proptest",
 ]
 
 [[package]]
 name = "bynk-grammar"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "bynk-ide"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-check",
  "bynk-emit",
+ "bynk-fmt",
  "bynk-syntax",
 ]
 
 [[package]]
 name = "bynk-lsp"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-check",
  "bynk-fmt",
@@ -246,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-render"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "ariadne",
  "bynk-syntax",
@@ -254,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-strip"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-emit",
  "oxc",
@@ -262,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-syntax"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "ariadne",
  "logos",
@@ -271,12 +273,14 @@ dependencies = [
 
 [[package]]
 name = "bynk-wasm"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-check",
  "bynk-emit",
+ "bynk-ide",
  "bynk-strip",
  "bynk-syntax",
+ "console_error_panic_hook",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -284,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "bynkc"
-version = "0.169.0"
+version = "0.230.0"
 dependencies = [
  "bynk-check",
  "bynk-driver",
@@ -318,6 +322,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cc"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89588d05638b5b4594a3348a2d6c20277e43a7f5c5202b05cc56888475a47b8"
+dependencies = [
+ "find-msvc-tools",
+ "shlex",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -325,9 +339,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "clap"
-version = "4.6.1"
+version = "4.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ddb117e43bbf7dacf0a4190fef4d345b9bad68dfc649cb349e7d17d28428e51"
+checksum = "dd059f9da4f5c36b3787f65d38ccaab1cc315f07b01f89abc8359ee6a8205011"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -335,9 +349,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.0"
+version = "4.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714a53001bf66416adb0e2ef5ac857140e7dc3a0c48fb28b2f10762fc4b5069f"
+checksum = "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
 dependencies = [
  "anstream",
  "anstyle",
@@ -390,6 +404,16 @@ dependencies = [
  "rustversion",
  "ryu",
  "static_assertions",
+]
+
+[[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -491,6 +515,12 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
+
+[[package]]
+name = "find-msvc-tools"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fnv"
@@ -1600,9 +1630,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0e75113e14dc5acb068cd0786884f214f1312650a3d36d269f5c4f3cdee8a2"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1612,9 +1642,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.14"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
+checksum = "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1782,6 +1812,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "shlex"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
 name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1825,6 +1861,12 @@ name = "str_indices"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d08889ec5408683408db66ad89e0e1f93dff55c73a4ccc71c427d5b277ee47e6"
+
+[[package]]
+name = "streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "strsim"
@@ -1956,9 +1998,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.52.3"
+version = "1.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
+checksum = "d988bcd52dbe076d3d46903332f58c912b87a2c49b1428419a5845154762ffee"
 dependencies = [
  "pin-project-lite",
  "tokio-macros",
@@ -2162,6 +2204,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af1c71c1c4cc0920b20d6b0f6572e7682cd07a6a2faec71067a31fa394c586df"
+dependencies = [
+ "cc",
+ "regex",
+ "regex-syntax",
+ "serde_json",
+ "streaming-iterator",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-bynk"
+version = "0.230.0"
+dependencies = [
+ "bynk-syntax",
+ "cc",
+ "tree-sitter",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-language"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
+
+[[package]]
 name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2338,6 +2410,10 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
+
+[[package]]
+name = "xtask"
+version = "0.230.0"
 
 [[package]]
 name = "yansi"

@@ -1,0 +1,7 @@
+commons bundle
+
+uses bynk.locale
+
+messages en @reference {
+  "cart.count" => "{n, plural, one {a} one {b} other {c}}"
+}

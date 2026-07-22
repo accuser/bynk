@@ -1,0 +1,16 @@
+suite app.bundle {
+  case "bare number: default decimal grouping" {
+    let msg = withNum(message("price"), "n", 1234.5)
+    expect render("en", msg) == "1,234.5"
+  }
+
+  case "integer style rounds to zero fraction digits" {
+    let msg = withNum(message("quantity"), "n", 1234.5)
+    expect render("en", msg) == "1,235"
+  }
+
+  case "percent style" {
+    let msg = withNum(message("discount"), "n", 0.42)
+    expect render("en", msg) == "42%"
+  }
+}

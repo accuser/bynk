@@ -261,6 +261,17 @@ shape is preserved and its brand is changed to the receiver's. A mismatch is
 `bynk.boundary.structural_mismatch`. This projection is what lets a `commons`
 type be shared across contexts without a shared nominal identity.
 
+Two **refinements** match when their predicate *sets* are equal (v0.177). A
+refinement is a conjunction of side-effect-free predicates, so their order
+carries no meaning: `String where NonEmpty && MaxLength(10)` and
+`String where MaxLength(10) && NonEmpty` are the same type and MUST match.
+(Before v0.177 they were compared positionally and spuriously failed to.)
+Duplicates are idempotent. The comparison is otherwise unchanged and remains
+conservative: a *more* restrictive sending side is admitted into a more permissive
+receiving one, but not the reverse. The same canonical form backs the
+cross-context contract hash ([emission §7.3.4c](/book/spec/emission/#734c-the-contract-seam-v0177)),
+so the matcher and the hash cannot disagree about what "the same refinement" is.
+
 A context's `exports` clause controls what the boundary reveals: an
 `exports transparent` type shares its structure with consumers — including
 field-level construction — whereas an `exports opaque` type exposes only an

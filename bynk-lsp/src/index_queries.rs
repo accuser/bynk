@@ -248,6 +248,79 @@ pub fn type_definitions_named<'a>(index: &'a ProjectIndex, name: &str) -> Vec<&'
     defs
 }
 
+/// #848: the flat compound-name member kinds (`"Owner.member"`, built by
+/// `bynk-emit`'s `assemble_index`). A dotted doc-link name matches these
+/// verbatim — never split into owner/member.
+const DOC_LINK_MEMBER_KINDS: &[SymbolKind] = &[
+    SymbolKind::Field,
+    SymbolKind::Method,
+    SymbolKind::CapabilityOp,
+    SymbolKind::Handler,
+];
+
+/// #848: the top-level kinds a *bare* doc-link name matches.
+const DOC_LINK_BARE_KINDS: &[SymbolKind] = &[
+    SymbolKind::Type,
+    SymbolKind::Fn,
+    SymbolKind::Capability,
+    SymbolKind::Service,
+    SymbolKind::Agent,
+    SymbolKind::Provider,
+    SymbolKind::Actor,
+];
+
+/// #848: resolve one intra-doc-link candidate name (from
+/// `bynk_ide::symbols::scan_doc_link_candidates`) against `owner_unit`'s
+/// doc-link scope order in `doc_scope` — the unit itself, then its `uses`
+/// targets, then its `consumes` targets (mirrors
+/// `bynk_check::index::IndexBuilder::qualify_with`'s bare-name
+/// qualification).
+///
+/// A `name` containing `.` matches the flat compound member kinds
+/// (`DOC_LINK_MEMBER_KINDS`, private below) verbatim; otherwise it matches the
+/// bare top-level kinds (`DOC_LINK_BARE_KINDS`). The **first** scope-order unit
+/// with any match decides the answer: more than one candidate there is
+/// unresolved (no `kind@` disambiguation in this increment — convention-only
+/// resolution) rather than a guess, even if a later unit in scope order would
+/// answer unambiguously. Synthetic (first-party) units are never in
+/// `index.symbols` (their defs are dropped at assembly), so a name that only
+/// matches through one — e.g. `Clock.now` — naturally comes back `None`,
+/// exactly like any other unresolved name.
+pub fn resolve_doc_link<'a>(
+    index: &'a ProjectIndex,
+    doc_scope: &HashMap<String, Vec<String>>,
+    owner_unit: &str,
+    name: &str,
+) -> Option<&'a SiteRef> {
+    let kinds: &[SymbolKind] = if name.contains('.') {
+        DOC_LINK_MEMBER_KINDS
+    } else {
+        DOC_LINK_BARE_KINDS
+    };
+    let scope = doc_scope.get(owner_unit)?;
+    for unit in scope {
+        let mut hit: Option<&SiteRef> = None;
+        let mut count = 0usize;
+        for &kind in kinds {
+            let key = SymbolKey {
+                unit: unit.clone(),
+                kind,
+                name: name.to_string(),
+            };
+            if let Some(def) = index.symbols.get(&key).and_then(|e| e.def.as_ref()) {
+                count += 1;
+                hit = Some(def);
+            }
+        }
+        match count {
+            0 => continue,
+            1 => return hit,
+            _ => return None, // ambiguous in the first matching unit — never guess
+        }
+    }
+    None
+}
+
 /// The user-declared type a value's type points at, for go-to-type-definition:
 /// a `Named` directly, or the element of a single-parameter container
 /// (`Option`/`Effect`/`List`/`HttpResult`) unwrapped to it. Built-in, function,
@@ -456,6 +529,10 @@ pub fn semantic_tokens_legend() -> tower_lsp::lsp_types::SemanticTokensLegend {
             // argument labels). Appended at index 10. Standard LSP type — VS Code
             // themes `decorator` by default.
             SemanticTokenType::DECORATOR,
+            // message-bundles slice 1: `messages <tag> { ... }` bundles.
+            // Appended at index 11 (never reordered). Custom type — the VS
+            // Code extension declares it in package.json.
+            SemanticTokenType::new("messages"),
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -482,6 +559,10 @@ fn token_type_index(kind: SymbolKind) -> u32 {
         SymbolKind::Field => 8,
         // v0.45: actors append `actor` at 9.
         SymbolKind::Actor => 9,
+        // #304: agent handlers reuse `method` (7), same as capability ops.
+        SymbolKind::Handler => 7,
+        // message-bundles slice 1: `messages` bundles append `messages` at 11.
+        SymbolKind::Messages => 11,
     }
 }
 
@@ -570,9 +651,13 @@ pub fn semantic_tokens(
     // sort fully determines the protocol's relative encoding.
     raw.sort_by_key(|(span, _, _)| (span.start, span.end));
     let mut data = Vec::with_capacity(raw.len());
+    // One line index for the whole snapshot: a `semanticTokens/full` request
+    // emits a position per token, so scanning from byte 0 each time is O(n²)
+    // (#732). Build it once and binary-search per token instead.
+    let positions = crate::position::PositionMap::new(text);
     let (mut prev_line, mut prev_start) = (0u32, 0u32);
     for (span, token_type, token_modifiers_bitset) in raw {
-        let pos = crate::position::offset_to_position(text, span.start);
+        let pos = positions.position(span.start);
         let delta_line = pos.line - prev_line;
         let delta_start = if delta_line == 0 {
             pos.character - prev_start
@@ -854,6 +939,7 @@ mod tests {
                 "property",  // v0.36 (ADR 0069, slice 2): record fields — appended
                 "actor",     // v0.45: actor declarations — appended
                 "decorator", // v0.140 (ADR 0163): handler annotations — appended
+                "messages",  // message-bundles slice 1 (#859): messages bundles — appended
             ]
         );
         let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();
@@ -1138,6 +1224,127 @@ mod tests {
         );
         // An unknown type name yields nothing.
         assert!(type_definitions_named(&index, "Nope").is_empty());
+    }
+
+    fn doc_scope_with(entries: Vec<(&str, Vec<&str>)>) -> HashMap<String, Vec<String>> {
+        entries
+            .into_iter()
+            .map(|(unit, scope)| {
+                (
+                    unit.to_string(),
+                    scope.into_iter().map(String::from).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn resolve_doc_link_finds_a_bare_local_hit() {
+        let index = index_with(vec![(
+            key("ratelimit", SymbolKind::Agent, "Limiter"),
+            site("ratelimit.bynk", 10, 17),
+            vec![],
+        )]);
+        let scope = doc_scope_with(vec![("ratelimit", vec!["ratelimit"])]);
+        let def = resolve_doc_link(&index, &scope, "ratelimit", "Limiter").unwrap();
+        assert_eq!(def.path, PathBuf::from("ratelimit.bynk"));
+    }
+
+    #[test]
+    fn resolve_doc_link_finds_a_dotted_local_hit() {
+        let index = index_with(vec![(
+            key("ratelimit", SymbolKind::Field, "RateView.remaining"),
+            site("ratelimit.bynk", 20, 29),
+            vec![],
+        )]);
+        let scope = doc_scope_with(vec![("ratelimit", vec!["ratelimit"])]);
+        let def = resolve_doc_link(&index, &scope, "ratelimit", "RateView.remaining").unwrap();
+        assert_eq!(def.path, PathBuf::from("ratelimit.bynk"));
+    }
+
+    #[test]
+    fn resolve_doc_link_follows_the_uses_chain() {
+        // `decide` isn't declared in `ratelimit`, only in `window`, which
+        // `ratelimit` `uses` — the scope order (built the same way
+        // `doc_scope` is assembled) puts `window` after the local unit.
+        let index = index_with(vec![(
+            key("window", SymbolKind::Fn, "decide"),
+            site("window.bynk", 5, 11),
+            vec![],
+        )]);
+        let scope = doc_scope_with(vec![("ratelimit", vec!["ratelimit", "window"])]);
+        let def = resolve_doc_link(&index, &scope, "ratelimit", "decide").unwrap();
+        assert_eq!(def.path, PathBuf::from("window.bynk"));
+    }
+
+    #[test]
+    fn resolve_doc_link_follows_the_consumes_chain_after_uses() {
+        let index = index_with(vec![(
+            key("platform", SymbolKind::Capability, "Clock"),
+            site("platform.bynk", 0, 5),
+            vec![],
+        )]);
+        // `uses` targets come before `consumes` targets in scope order; a name
+        // only found via `consumes` still resolves, just later in the search.
+        let scope = doc_scope_with(vec![("ratelimit", vec!["ratelimit", "window", "platform"])]);
+        let def = resolve_doc_link(&index, &scope, "ratelimit", "Clock").unwrap();
+        assert_eq!(def.path, PathBuf::from("platform.bynk"));
+    }
+
+    #[test]
+    fn resolve_doc_link_is_none_when_nothing_in_scope_matches() {
+        let index = index_with(vec![(
+            key("ratelimit", SymbolKind::Agent, "Limiter"),
+            site("ratelimit.bynk", 10, 17),
+            vec![],
+        )]);
+        let scope = doc_scope_with(vec![("ratelimit", vec!["ratelimit"])]);
+        assert!(resolve_doc_link(&index, &scope, "ratelimit", "Nope").is_none());
+    }
+
+    #[test]
+    fn resolve_doc_link_is_none_for_a_synthetic_unit_never_in_scope() {
+        // A synthetic (first-party) unit's symbols never make it into
+        // `index.symbols` at all (their defs are dropped at assembly), so a
+        // name that only exists through one comes back unresolved even
+        // though `bynk` is a `consumes` target in scope.
+        let index = ProjectIndex::default();
+        let scope = doc_scope_with(vec![("ratelimit", vec!["ratelimit", "bynk"])]);
+        assert!(resolve_doc_link(&index, &scope, "ratelimit", "Clock.now").is_none());
+    }
+
+    #[test]
+    fn resolve_doc_link_is_none_when_the_owner_unit_has_no_scope_entry() {
+        let index = ProjectIndex::default();
+        let scope = doc_scope_with(vec![]);
+        assert!(resolve_doc_link(&index, &scope, "ratelimit", "Limiter").is_none());
+    }
+
+    #[test]
+    fn resolve_doc_link_never_guesses_an_ambiguous_first_matching_unit() {
+        // Two different candidate kinds share the bare name `Order` in the
+        // *first* scope-order unit — even though a later unit in scope order
+        // would resolve unambiguously, the ambiguity in the first matching
+        // unit wins: unresolved, never a guess.
+        let index = index_with(vec![
+            (
+                key("ratelimit", SymbolKind::Type, "Order"),
+                site("ratelimit.bynk", 10, 15),
+                vec![],
+            ),
+            (
+                key("ratelimit", SymbolKind::Fn, "Order"),
+                site("ratelimit.bynk", 40, 45),
+                vec![],
+            ),
+            (
+                key("window", SymbolKind::Type, "Order"),
+                site("window.bynk", 0, 5),
+                vec![],
+            ),
+        ]);
+        let scope = doc_scope_with(vec![("ratelimit", vec!["ratelimit", "window"])]);
+        assert!(resolve_doc_link(&index, &scope, "ratelimit", "Order").is_none());
     }
 
     #[test]

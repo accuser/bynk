@@ -16,8 +16,10 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "ordering": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "5936c1010679f67c") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "ordering", expected: "5936c1010679f67c", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
-            const __r_sku = (typeof args === "string" ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof args }) as Result<any, BoundaryError>);
+            const __r_sku = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_sku.tag === "Err") return new Response(JSON.stringify(__r_sku.error), { status: 400, headers: { "content-type": "application/json" } });
             const sku = __r_sku.value;
             const result = await surface.ordering(sku);

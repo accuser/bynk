@@ -150,6 +150,58 @@
     {
       "code": "bynk.suite.duplicate_case_name",
       "summary": "Two `case`s share a description."
+    },
+    {
+      "code": "bynk.test.actor_identity_required",
+      "summary": "A call-site `by <Actor>` omits the identity an identity-carrying actor requires."
+    },
+    {
+      "code": "bynk.test.actor_no_identity",
+      "summary": "A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`."
+    },
+    {
+      "code": "bynk.test.credential_needs_system",
+      "summary": "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it."
+    },
+    {
+      "code": "bynk.test.nobody_needs_secured_route",
+      "summary": "A case drives `by Nobody` at a route that is not Bearer-secured (e.g. a public `Visitor` route) — there is no auth seam to reject the missing credential."
+    },
+    {
+      "code": "bynk.test.principal_identity_mismatch",
+      "summary": "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor."
+    },
+    {
+      "code": "bynk.test.principal_on_wrong_method",
+      "summary": "A wrong-method `405` test carries a `by <Actor>` clause; it reaches no handler, so a principal is meaningless."
+    },
+    {
+      "code": "bynk.test.principal_required",
+      "summary": "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`."
+    },
+    {
+      "code": "bynk.test.service_bad_address",
+      "summary": "A test body addresses a service the wrong way for its protocol (e.g. an http route without a leading path string)."
+    },
+    {
+      "code": "bynk.test.service_call_arity",
+      "summary": "A test body's `svc.call(...)` passes the wrong number of arguments for the service's `on call` handler."
+    },
+    {
+      "code": "bynk.test.service_no_call_handler",
+      "summary": "A test body invokes `svc.call(...)` on a service with no `on call` handler (a `from http`/`cron`/`queue` service)."
+    },
+    {
+      "code": "bynk.test.service_unknown_route",
+      "summary": "A test body addresses an http route / cron schedule / queue message the service does not declare."
+    },
+    {
+      "code": "bynk.test.unknown_actor",
+      "summary": "A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor."
+    },
+    {
+      "code": "bynk.test.wire_needs_system",
+      "summary": "A `Wire(...)` raw argument is used outside a `system`-tier service address; `Wire` hands pre-validation input to the boundary and is meaningless at `unit` or in any other position."
     }
   ],
   "consumes_decl": [
@@ -276,6 +328,12 @@
       "summary": "A `~>` send targets an operation whose reply is not `Effect[()]`."
     }
   ],
+  "enum_type": [
+    {
+      "code": "bynk.parse.variant_name_case",
+      "summary": "A sum-type or enum variant name is not capitalised."
+    }
+  ],
   "err_expr": [
     {
       "code": "bynk.types.err_value_mismatch",
@@ -369,7 +427,7 @@
   "fn_decl": [
     {
       "code": "bynk.generics.method_on_generic_type",
-      "summary": "A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183)."
+      "summary": "A *static* method is attached to a generic type; static methods on generic types are deferred (they have no receiver to supply the type's parameters). Instance methods on generic types are supported (#594)."
     },
     {
       "code": "bynk.generics.no_bounds",
@@ -518,8 +576,20 @@
       "summary": "`is` was applied to a value that is not a sum type."
     },
     {
+      "code": "bynk.types.is_refined_pattern",
+      "summary": "A refined (`where`) pattern was used on the right of `is`; refined patterns are `match`-only."
+    },
+    {
       "code": "bynk.types.is_unknown_variant",
       "summary": "`is` names a variant the type does not have."
+    },
+    {
+      "code": "bynk.types.or_pattern_binding_mismatch",
+      "summary": "An or-pattern's alternatives don't all bind the same set of names."
+    },
+    {
+      "code": "bynk.types.or_pattern_type_mismatch",
+      "summary": "An or-pattern's alternatives give a shared binding different types (or refinements)."
     }
   ],
   "lambda_expr": [
@@ -572,6 +642,14 @@
     {
       "code": "bynk.types.match_arm_mismatch",
       "summary": "A `match` arm has a different type from the others."
+    },
+    {
+      "code": "bynk.types.or_pattern_binding_mismatch",
+      "summary": "An or-pattern's alternatives don't all bind the same set of names."
+    },
+    {
+      "code": "bynk.types.or_pattern_type_mismatch",
+      "summary": "An or-pattern's alternatives give a shared binding different types (or refinements)."
     },
     {
       "code": "bynk.types.unreachable_arm",
@@ -776,6 +854,12 @@
       "summary": "A record directly contains a field of its own type."
     }
   ],
+  "refined_pattern": [
+    {
+      "code": "bynk.parse.refined_pattern_inner",
+      "summary": "A refined pattern's inner form is something other than `_`."
+    }
+  ],
   "refined_type": [
     {
       "code": "bynk.refine.literal_violates",
@@ -786,6 +870,10 @@
     {
       "code": "bynk.parse.expected_predicate",
       "summary": "Expected a refinement predicate."
+    },
+    {
+      "code": "bynk.types.catastrophic_regex",
+      "summary": "A `Matches` predicate nests unbounded quantifiers, risking catastrophic backtracking (ReDoS)."
     },
     {
       "code": "bynk.types.empty_refinement",
@@ -886,6 +974,10 @@
       "summary": "An invalid escape sequence in a string literal."
     },
     {
+      "code": "bynk.lex.interpolation_too_deep",
+      "summary": "A string interpolation `\\(…)` nests deeper than the lexer's fixed limit."
+    },
+    {
       "code": "bynk.lex.unterminated_interpolation",
       "summary": "An interpolation hole `\\(…)` is not closed on its line."
     },
@@ -910,14 +1002,28 @@
       "summary": "A sum type declares a variant twice."
     }
   ],
+  "sum_variant": [
+    {
+      "code": "bynk.parse.variant_name_case",
+      "summary": "A sum-type or enum variant name is not capitalised."
+    }
+  ],
   "type_decl": [
     {
       "code": "bynk.generics.generic_non_record",
-      "summary": "A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183)."
+      "summary": "A `type` declaration carries type parameters on a refined or opaque body; only a record (`type Name[T] = { … }`) or sum (`type Name[T] = | … | …`) body may be generic (v0.157/#593, ADRs 0183/0197)."
+    },
+    {
+      "code": "bynk.generics.generic_sum_embeds",
+      "summary": "A generic sum type carries an `embeds` clause; embedding into a generic sum is not supported (#593)."
     },
     {
       "code": "bynk.resolve.duplicate_type",
       "summary": "Two types share a name."
+    },
+    {
+      "code": "bynk.resolve.reserved_builtin_type",
+      "summary": "A type declaration reuses a compiler-known built-in type name."
     }
   ],
   "uses_decl": [

@@ -59,10 +59,10 @@ export default {
           try {
             __body_json = (await request.json()) as JsonValue;
           } catch {
-            return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
+            return applySecurityHeaders(applyCors(new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } }), __cors_api, request.headers.get("origin")), __security_api);
           }
-          const __r_body = (typeof __body_json === "string" ? Ok(__body_json) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __body_json }) as Result<any, BoundaryError>);
-          if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
+          const __r_body = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(__body_json);
+          if (__r_body.tag === "Err") return applySecurityHeaders(applyCors(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __cors_api, request.headers.get("origin")), __security_api);
           const body = __r_body.value;
           const result = await surface.http_POST_items(body);
           return applySecurityHeaders(applyCors(httpResultToResponse(result, (v: any) => v as JsonValue), __cors_api, request.headers.get("origin")), __security_api);

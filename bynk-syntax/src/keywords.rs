@@ -136,6 +136,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Pattern-match over a sum type, `Result`, or `Option`.",
     ),
     k(
+        "messages",
+        "Declare a message bundle for one locale (`messages <tag> { \"code\" => \"template\" }`), inside a commons.",
+    ),
+    k(
         "on",
         "Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`).",
     ),
@@ -209,29 +213,135 @@ pub const CONTEXTUAL_KEYWORDS: &[KeywordInfo] = &[
     k("store", "A persisted agent-state field."),
 ];
 
+/// The reserved lexer tokens the parser deliberately re-admits as identifiers
+/// outside their one keyword position (`expect_ident`, ADR-tracked at
+/// `parser.rs`). Unlike [`CONTEXTUAL_KEYWORDS`] these words *are* real
+/// `#[token]`s and *are* members of [`KEYWORDS`] (so the lexer↔registry drift
+/// guard sees them) — they simply are not rejected in identifier position. The
+/// keyword reference renders them as a distinct tier so the page no longer
+/// claims, falsely, that every listed word is unusable as an identifier.
+///
+/// Single source of truth: the `expect_ident` exemption arm (via
+/// [`is_reserved_contextual`]) and the
+/// `is_reserved_keyword_covers_every_lexer_keyword` drift guard both defer to
+/// this list, so adding a word here is enough to make the parser admit it.
+pub const RESERVED_CONTEXTUAL: &[&str] = &["case", "messages", "on", "suite"];
+
+/// True when `word` is a [reserved contextual keyword](RESERVED_CONTEXTUAL) —
+/// a reserved token `expect_ident` re-admits as an identifier. Because each of
+/// these words lexes only to its own dedicated token, matching on the source
+/// text is equivalent to matching the token kind, but keeps the exemption
+/// single-sourced against [`RESERVED_CONTEXTUAL`].
+pub fn is_reserved_contextual(word: &str) -> bool {
+    RESERVED_CONTEXTUAL.contains(&word)
+}
+
+/// Built-in type names — compiler-known type constructors the parser dispatches
+/// on by identifier text in `parser/types.rs`, *outside* the keyword/token
+/// system entirely (they are lexed as ordinary `Ident`s, so they are absent
+/// from both the lexer's `#[token]`s and [`KEYWORDS`]). They are nonetheless
+/// reserved in type position: a `type` declaration may not reuse one of these
+/// names (`bynk.resolve.reserved_builtin_type`), because the parser would
+/// otherwise intercept every later reference and the user's alias would be
+/// silently shadowed or fail incoherently.
+///
+/// Single source of truth: [`is_builtin_type_name`] gates the resolver's
+/// redeclaration diagnostic, and a drift guard
+/// (`bynkc/tests/keywords_reference.rs`) asserts this list equals the set of
+/// names the type parser dispatches on. Keep it sorted.
+pub const BUILTIN_TYPE_NAMES: &[KeywordInfo] = &[
+    k(
+        "Connection",
+        "A held WebSocket connection, `Connection[F]`.",
+    ),
+    k(
+        "History",
+        "A generated call-history generator, `History[Agent]` (test-only).",
+    ),
+    k(
+        "HttpResult",
+        "The HTTP handler result type, `HttpResult[T]`.",
+    ),
+    k("List", "The immutable list type, `List[T]`."),
+    k("Map", "The immutable map type, `Map[K, V]`."),
+    k("Query", "The lazy storage-read type, `Query[T]`."),
+    k(
+        "QueueResult",
+        "The queue handler result type (non-generic).",
+    ),
+    k("Stream", "The value-over-time primitive, `Stream[T]`."),
+];
+
+/// True when `name` is a compiler-known [built-in type name](BUILTIN_TYPE_NAMES).
+/// Used by the resolver to reject `type <name> = …` redeclarations.
+pub fn is_builtin_type_name(name: &str) -> bool {
+    BUILTIN_TYPE_NAMES.iter().any(|b| b.word == name)
+}
+
 const fn k(word: &'static str, meaning: &'static str) -> KeywordInfo {
     KeywordInfo { word, meaning }
 }
 
-/// Render the keyword list as a Markdown reference page.
+/// Render the keyword reference page — three tiers, each with prose that is
+/// true of *that* tier (the page used to make one blanket claim that was false
+/// of two of them).
 pub fn render_markdown() -> String {
     let mut out = String::new();
     out.push_str("# Keywords\n\n");
     out.push_str(
         "<!-- GENERATED FILE — do not edit by hand.\n     \
-         Source: bynkc/src/keywords.rs (`render_markdown`).\n     \
+         Source: bynk-syntax/src/keywords.rs (`render_markdown`).\n     \
          Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test keywords_reference -->\n\n",
     );
     out.push_str(
-        "Every reserved keyword, with a one-line description. Reserved words cannot \
-         be used as identifiers.\n\n",
+        "Bynk reserves names in three tiers. The first two are lexer keywords; the \
+         third are compiler-known type names. Only the **hard keywords** can never \
+         be used as an identifier.\n\n",
     );
+
+    // Tier 1 — hard keywords: every reserved token except the contextual ones.
+    let hard: Vec<&KeywordInfo> = KEYWORDS
+        .iter()
+        .filter(|k| !RESERVED_CONTEXTUAL.contains(&k.word))
+        .collect();
+    out.push_str("## Hard keywords\n\n");
     out.push_str(&format!(
-        "There are **{}** reserved keywords.\n\n",
-        KEYWORDS.len()
+        "Reserved everywhere — these **{}** words can never be used as an \
+         identifier.\n\n",
+        hard.len()
     ));
     out.push_str("| Keyword | Meaning |\n|---|---|\n");
-    for info in KEYWORDS {
+    for info in hard {
+        out.push_str(&format!("| `{}` | {} |\n", info.word, info.meaning));
+    }
+
+    // Tier 2 — contextual keywords: reserved tokens the parser re-admits as
+    // identifiers outside their one keyword position.
+    let contextual: Vec<&KeywordInfo> = RESERVED_CONTEXTUAL
+        .iter()
+        .filter_map(|w| KEYWORDS.iter().find(|k| &k.word == w))
+        .collect();
+    out.push_str("\n## Contextual keywords\n\n");
+    out.push_str(
+        "Reserved only in the one position named below; elsewhere (a field, \
+         parameter, or other identifier) they are ordinary names.\n\n",
+    );
+    out.push_str("| Keyword | Meaning |\n|---|---|\n");
+    for info in contextual {
+        out.push_str(&format!("| `{}` | {} |\n", info.word, info.meaning));
+    }
+
+    // Tier 3 — built-in type names: not lexer keywords at all, but reserved in
+    // type position (a `type` declaration may not reuse one).
+    out.push_str("\n## Built-in type names\n\n");
+    out.push_str(
+        "Compiler-known type constructors. They are not lexer keywords — you may \
+         use them as an identifier in value position — but they are reserved in \
+         type position: a `type` declaration may not reuse one of these names \
+         (`bynk.resolve.reserved_builtin_type`).\n\n",
+    );
+    out.push_str("| Name | Meaning |\n|---|---|\n");
+    for info in BUILTIN_TYPE_NAMES {
         out.push_str(&format!("| `{}` | {} |\n", info.word, info.meaning));
     }
     out

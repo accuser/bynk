@@ -18,9 +18,9 @@ context_decl ::= "context" qualified_name ("{" context_body_item* "}" | context_
 adapter_decl ::= "adapter" qualified_name ("{" adapter_body_item* "}" | adapter_body_item*)
 suite_decl ::= "suite" qualified_name ("as" ("unit" | "integration" | "system"))? ("{" test_body_item* "}" | test_body_item*)
 qualified_name ::= identifier ("." identifier)*
-commons_body_item ::= uses_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
-context_body_item ::= uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
-adapter_body_item ::= binding_decl | uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
+commons_body_item ::= uses_decl | type_decl | fn_decl | messages_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
+context_body_item ::= uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl | messages_decl
+adapter_body_item ::= binding_decl | uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl | messages_decl
 test_body_item ::= uses_decl | consumes_decl | stub_clause | case | property_decl
 uses_decl ::= "uses" qualified_name
 consumes_decl ::= "consumes" qualified_name ("as" identifier | "{" (identifier ("," identifier)*)? ","? "}")?
@@ -42,13 +42,13 @@ refinement_pred ::= pred_call | predicate_name
 pred_call ::= predicate_name "(" (pred_arg ("," pred_arg)*)? ")"
 predicate_name ::= "Matches" | "InRange" | "MinLength" | "MaxLength" | "Length" | "NonNegative" | "Positive" | "NonEmpty"
 pred_arg ::= number_literal | float_literal | string_literal
-base_type ::= "Int" | "String" | "Bool" | "Float" | "Duration" | "Instant"
+base_type ::= "Int" | "String" | "Bool" | "Float" | "Duration" | "Instant" | "Bytes"
 type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier
 applied_type_ref ::= identifier "[" type_ref ("," type_ref)* "]"
 function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
 unit_type ::= "(" ")"
 validation_error_type ::= "ValidationError"
-generic_type_ref ::= ("Result" | "Option" | "Effect" | "HttpResult" | "List" | "Map" | "Stream" | "Query" | "Connection" | "History") "[" type_ref ("," type_ref)* "]"
+generic_type_ref ::= ("Option" | "Effect" | "HttpResult" | "List" | "Stream" | "Query" | "Connection" | "History") "[" type_ref "]" | ("Result" | "Map") "[" type_ref "," type_ref "]"
 fn_decl ::= "fn" (method_name | identifier) ("[" identifier ("," identifier)* "]")? "(" params? ")" "->" type_ref requires_clause* ensures_clause* block
 method_name ::= identifier "." identifier
 requires_clause ::= "requires" identifier ":" expression
@@ -58,6 +58,8 @@ self_param ::= "self"
 param ::= identifier ":" type_ref
 capability_decl ::= "capability" identifier "{" capability_op* "}"
 capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref
+messages_decl ::= "messages" identifier store_annotation* "{" message_entry* "}"
+message_entry ::= string_literal "=>" string_literal ","?
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
 service_decl ::= "service" identifier service_protocol? by_clause? given_clause? "{" cors_policy? security_policy? limits_policy? handler* "}"
@@ -98,7 +100,8 @@ for_all_binding ::= identifier ":" type_ref
 block ::= "{" statement* expression? "}"
 statement ::= let_stmt | effect_let_stmt | effect_send_stmt | do_stmt | assign_stmt | expect_expr
 let_stmt ::= "let" binding_name (":" type_ref)? "=" expression
-effect_let_stmt ::= "let" binding_name (":" type_ref)? "<-" expression
+effect_let_stmt ::= "let" binding_name (":" type_ref)? "<-" expression call_site_actor?
+call_site_actor ::= "by" identifier ("(" expression ")")?
 effect_send_stmt ::= "~>" expression
 do_stmt ::= "do" expression
 assign_stmt ::= identifier ":=" expression
@@ -109,8 +112,11 @@ observation_expr ::= identifier "." identifier ("called" ("once" | number_litera
 trace_expr ::= "trace" "(" identifier "." identifier ")"
 if_expr ::= "if" expression block ("else" (if_expr | block))?
 match_expr ::= "match" expression "{" match_arm* "}"
-match_arm ::= pattern ("if" expression)? "=>" expression ","?
-pattern ::= wildcard_pattern | literal_pattern | variant_pattern
+match_arm ::= (pattern | refined_pattern) ("if" expression)? "=>" expression ","?
+refined_pattern ::= pattern "where" refinement
+pattern ::= wildcard_pattern | literal_pattern | variant_pattern | or_pattern | paren_pattern
+or_pattern ::= pattern "|" pattern
+paren_pattern ::= "(" pattern ")"
 wildcard_pattern ::= "_"
 literal_pattern ::= "-"? number_literal | string_literal | boolean_literal
 variant_pattern ::= (identifier ".")? identifier ("(" (pattern_binding ("," pattern_binding)*)? ","? ")")?
@@ -119,7 +125,7 @@ named_binding ::= identifier ":" pattern
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "implies" expression | expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | trace_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | wire_expr | trace_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 lambda_expr ::= "(" (lambda_param ("," lambda_param)*)? ")" "=>" (expression | block)
 lambda_param ::= identifier (":" type_ref)?
 paren_expr ::= "(" expression ")"
@@ -138,6 +144,7 @@ none_expr ::= "None"
 effect_pure_expr ::= "Effect" "." "pure" "(" expression ")"
 val_expr ::= "Val" "[" type_ref "]" val_arg?
 val_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
+wire_expr ::= "Wire" "(" expression ")"
 self_expr ::= "self"
 identifier ::= /[A-Za-z][A-Za-z0-9_]*/
 constant_name ::= /[A-Z][A-Za-z0-9_]*/

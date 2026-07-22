@@ -517,6 +517,7 @@ pub fn check_handler_body(
         locals,
         requirements,
         scopes: vec![param_scope],
+        is_binding_cache: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span,
         effectful,
@@ -531,7 +532,8 @@ pub fn check_handler_body(
             given_anchor,
         },
         in_test_body: false,
-        test_services: HashSet::new(),
+        test_services: HashMap::new(),
+        test_actors: HashMap::new(),
         type_vars: HashSet::new(),
         store_cells,
         store_maps,
@@ -708,6 +710,7 @@ pub fn check_invariants(
             locals,
             requirements,
             scopes: vec![field_scope.clone()],
+            is_binding_cache: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: inv.predicate.span,
             // A predicate is a pure expression — effectful operations (capability
@@ -724,7 +727,8 @@ pub fn check_invariants(
                 given_anchor: None,
             },
             in_test_body: false,
-            test_services: HashSet::new(),
+            test_services: HashMap::new(),
+            test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -848,6 +852,7 @@ pub fn check_contracts(
             locals,
             requirements,
             scopes: vec![scope],
+            is_binding_cache: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: c.predicate.span,
             effectful: false,
@@ -862,7 +867,8 @@ pub fn check_contracts(
                 given_anchor: None,
             },
             in_test_body: false,
-            test_services: HashSet::new(),
+            test_services: HashMap::new(),
+            test_actors: HashMap::new(),
             type_vars: type_vars.clone(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -1066,6 +1072,7 @@ pub fn check_transitions(
             locals,
             requirements,
             scopes: vec![scope.clone()],
+            is_binding_cache: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: tr.predicate.span,
             effectful: false,
@@ -1080,7 +1087,8 @@ pub fn check_transitions(
                 given_anchor: None,
             },
             in_test_body: false,
-            test_services: HashSet::new(),
+            test_services: HashMap::new(),
+            test_actors: HashMap::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
@@ -1234,6 +1242,42 @@ pub struct CapabilityCtx {
     pub given_anchor: Option<Span>,
 }
 
+/// v0.178 (Slice 0, #662) / v0.182 (Slice A, #664): the shape a test body needs
+/// to resolve a service invocation. Built by the project test pass from the
+/// target unit's service declarations, so the checker can resolve the addressed
+/// handler (`svc.call(...)` on an `on call` service, or — Slice A —
+/// `svc.GET("/x")` / `svc.schedule("…")` / `svc.message(m)` on a `from http` /
+/// `cron` / `queue` service) and check its arity, argument types, and principal.
+#[derive(Debug, Clone)]
+pub struct TestServiceSig {
+    /// The service's protocol as an author-facing word (`"http"`, `"cron"`,
+    /// `"queue"`, `"websocket"`), or `None` for a plain `service X { on call }`.
+    pub protocol: Option<String>,
+    /// Every handler the service declares, so the branch can resolve any address
+    /// form. Slice 0 only reads the `on call` entry.
+    pub handlers: Vec<TestHandler>,
+}
+
+/// One service handler, as a test body sees it (v0.178 / v0.182).
+#[derive(Debug, Clone)]
+pub struct TestHandler {
+    pub kind: bynk_syntax::ast::HandlerKind,
+    pub params: Vec<bynk_syntax::ast::Param>,
+    /// The handler's declared `by <Actor>` clause, if any — the actor a call-site
+    /// principal is checked against. `None` inherits the protocol default actor.
+    pub by_clause: Option<bynk_syntax::ast::ByClause>,
+    pub span: Span,
+}
+
+impl TestServiceSig {
+    /// The `on call` handler, if the service declares one.
+    pub fn call_handler(&self) -> Option<&TestHandler> {
+        self.handlers
+            .iter()
+            .find(|h| matches!(h.kind, bynk_syntax::ast::HandlerKind::Call))
+    }
+}
+
 pub struct Ctx<'a> {
     pub input: &'a ResolvedCommons,
     pub expr_types: &'a mut HashMap<Span, Ty>,
@@ -1258,6 +1302,14 @@ pub struct Ctx<'a> {
     pub requirements: &'a mut RequirementSink,
     /// Stack of in-scope name → type frames.
     pub scopes: Vec<HashMap<String, Ty>>,
+    /// Memoised `is`-pattern bindings, keyed by the condition sub-expression's
+    /// span. `collect_is_bindings` runs at every `&&`/`implies` node and, for a
+    /// left-nested `&&` chain, would otherwise re-walk each lhs subtree once per
+    /// enclosing node — O(N²) for an N-term chain. Because the collector is a
+    /// pure read over `expr_types` (already populated by the time it runs) and
+    /// spans are unique per body, caching each node's result collapses the walk
+    /// to a single pass.
+    pub is_binding_cache: HashMap<Span, Vec<(String, Ty)>>,
     pub return_ty: Ty,
     pub return_ty_span: Span,
     /// True if the enclosing function/handler returns `Effect[T]` (v0.5).
@@ -1275,11 +1327,20 @@ pub struct Ctx<'a> {
     /// True when the body being checked is a test case body. Permits
     /// `expect` statements (v0.7; renamed from `assert` in v0.112).
     pub in_test_body: bool,
-    /// The target unit's service names, populated for test case bodies
-    /// (v0.25). `svc.call(args)` in a test invokes the target's service —
-    /// the emitter wires it from the same set; the checker records the
-    /// binding edge here so test-file references index.
-    pub test_services: HashSet<String>,
+    /// The target unit's services, populated for test case bodies (v0.25).
+    /// `svc.call(args)` in a test invokes the target's service; the checker
+    /// resolves the service's `on call` handler here to check the call's
+    /// arity and argument types, and records the binding edge so test-file
+    /// references index. A service with no `on call` handler (a `from http`
+    /// / `cron` / `queue` service) carries `None` for `call_handler`, which
+    /// makes `svc.call(...)` a diagnostic rather than a silent runtime crash.
+    pub test_services: HashMap<String, TestServiceSig>,
+    /// v0.182 (Slice A, #664): the target unit's actor declarations, so a
+    /// call-site `by <Actor>(<identity>)` can resolve the actor and type the
+    /// identity value against its declared identity type. Prelude actors
+    /// (`Visitor`, `Caller`, …) are resolved separately. Empty outside test
+    /// bodies.
+    pub test_actors: HashMap<String, bynk_syntax::ast::ActorDecl>,
     /// v0.20a: the enclosing function's type parameters (rigid vars), so
     /// nested explicit type arguments (`identity[A](x)` inside a generic
     /// body) resolve. Empty outside generic fn bodies.
@@ -1760,6 +1821,101 @@ pub fn record_type_refs(
     }
 }
 
+/// #712: resolve a type reference that appears in an *expression* position the
+/// resolver does not walk for handler bodies — explicit call type arguments
+/// (`identity[T](x)`), `Json.decode[T]`, and lambda parameter annotations
+/// (`(x: T) => …`). On failure the reference is silently dropped by the bare
+/// `resolve_type_ref_in`, so an unknown type in a handler body would compile
+/// clean; this reports `bynk.resolve.unknown_type` instead, and records the
+/// resolved type's references for the IDE on success. The resolver still covers
+/// `fn`/method bodies, and the checker runs only after the resolver returns Ok
+/// (`bynk-emit`'s pipeline sequences `resolve(..)?` then `check(..)`), so this
+/// never double-reports.
+pub(crate) fn resolve_expr_type_ref(r: &TypeRef, ctx: &mut Ctx) -> Option<Ty> {
+    match resolve_type_ref_in(r, &ctx.input.types, &ctx.type_vars) {
+        Some(ty) => {
+            record_type_refs(r, &ctx.input.types, &ctx.type_vars, ctx.refs);
+            Some(ty)
+        }
+        None => {
+            ctx.errors.push(unresolved_type_ref_error(
+                r,
+                &ctx.input.types,
+                &ctx.type_vars,
+            ));
+            None
+        }
+    }
+}
+
+/// #712: the diagnostic for a type reference that fails to resolve. Points at
+/// the exact offending name when one can be identified (`identity[Missing](5)`
+/// → the `Missing` span), falling back to the whole reference otherwise.
+fn unresolved_type_ref_error(
+    r: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    vars: &HashSet<String>,
+) -> CompileError {
+    match first_unresolved_type_name(r, types, vars) {
+        Some(id) => CompileError::new(
+            "bynk.resolve.unknown_type",
+            id.span,
+            format!("unknown type `{}`", id.name),
+        )
+        .with_note(
+            "only base types (Int, String, Bool), types declared in this commons, \
+             `Result[T, E]`, `Option[T]`, and `ValidationError` are in scope",
+        ),
+        None => CompileError::new(
+            "bynk.resolve.unknown_type",
+            r.span(),
+            "this type does not resolve",
+        ),
+    }
+}
+
+/// #712: the first type name in `r` that names neither a declared type nor an
+/// in-scope type variable — the reason `resolve_type_ref_in` returned `None`.
+fn first_unresolved_type_name<'a>(
+    r: &'a TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    vars: &HashSet<String>,
+) -> Option<&'a Ident> {
+    match r {
+        TypeRef::Named(id) => {
+            (!types.contains_key(&id.name) && !vars.contains(&id.name)).then_some(id)
+        }
+        TypeRef::App { name, args, .. } => {
+            if !types.contains_key(&name.name) && !vars.contains(&name.name) {
+                return Some(name);
+            }
+            args.iter()
+                .find_map(|a| first_unresolved_type_name(a, types, vars))
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            first_unresolved_type_name(a, types, vars)
+                .or_else(|| first_unresolved_type_name(b, types, vars))
+        }
+        TypeRef::Option(t, _)
+        | TypeRef::Effect(t, _)
+        | TypeRef::HttpResult(t, _)
+        | TypeRef::List(t, _)
+        | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _)
+        | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _) => first_unresolved_type_name(t, types, vars),
+        TypeRef::Fn(params, ret, _) => params
+            .iter()
+            .find_map(|p| first_unresolved_type_name(p, types, vars))
+            .or_else(|| first_unresolved_type_name(ret, types, vars)),
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => None,
+    }
+}
+
 /// v0.154 (ADR 0178): the declared error embedding that converts `source_err`
 /// into `target_err`, if one exists. When `target_err` is a sum declaring
 /// `embeds E as V` with `E` compatible with `source_err`, returns
@@ -2064,6 +2220,11 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                 // The expected type for the RHS is `Effect[annot]` if annot present.
                 let rhs_expected = annot_ty.as_ref().map(|t| Ty::Effect(Box::new(t.clone())));
                 let rhs_ty = type_of(&l.value, rhs_expected.as_ref(), ctx);
+                // v0.182 (#664): validate the call-site principal against the
+                // addressed handler — including the *absent* case, where an
+                // identity-carrying handler driven with no `by` would silently
+                // drop the identity.
+                calls::check_effect_let_principal(&l.value, l.principal.as_ref(), ctx);
                 let inner_ty = match rhs_ty {
                     Some(Ty::Effect(t)) => Some((*t).clone()),
                     Some(other) => {
@@ -2330,7 +2491,17 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
     }
     let ty = type_of(&block.tail, expected, ctx);
     let ty = maybe_auto_lift(ty, expected);
-    if let Some(ty) = &ty {
+    // A synthetic single-expression block (e.g. a `stub … returns <value>`
+    // rhs) has `block.span == block.tail.span` — recording the auto-lifted
+    // (possibly Effect-wrapped) type there would clobber the tail
+    // expression's own, more specific entry that `type_of` already recorded
+    // (e.g. a bare refined-literal admission the emitter's brand-cast lookup
+    // depends on — Locale capability track, slice 1, #844). A genuine `{ … }`
+    // block's span always strictly contains its tail's, so this only ever
+    // skips the redundant case.
+    if let Some(ty) = &ty
+        && block.span != block.tail.span
+    {
         ctx.expr_types.insert(block.span, ty.clone());
     }
     ctx.pop_scope();
@@ -2520,24 +2691,35 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // surrounding type implies it; otherwise defer to fn/user-variant
             // resolution and only fall back to HttpResult when nothing else
             // owns the name.
-            let user_owners: usize = ctx
-                .input
-                .types
-                .values()
-                .filter(|t| {
-                    matches!(&t.body, TypeBody::Sum(s)
-                        if s.variants.iter().any(|v| v.name.name == name.name))
-                })
-                .count();
-            let http_implied = expected
-                .map(|t| peel_to_http_result(t).is_some())
-                .unwrap_or(false)
-                || peel_to_http_result(&ctx.return_ty).is_some();
-            let unowned = !ctx.input.fns.contains_key(&name.name) && user_owners == 0;
-            if let Some(v) = http_variant(&name.name)
-                && (http_implied || unowned)
-            {
-                check_http_variant(expr.span, v, args, expected, ctx)
+            //
+            // `http_variant`/`queue_variant` are cheap keyword lookups; gate
+            // the expensive context peel and — above all — the O(types×variants)
+            // scan for user sum-variant owners behind them. The common case is
+            // an ordinary function call whose name is neither keyword, so it
+            // must not pay for either. The owner scan is further deferred behind
+            // `http_implied`, since `unowned` only matters when the surrounding
+            // type does not already imply HttpResult.
+            if let Some(v) = http_variant(&name.name) {
+                let http_implied = expected
+                    .map(|t| peel_to_http_result(t).is_some())
+                    .unwrap_or(false)
+                    || peel_to_http_result(&ctx.return_ty).is_some();
+                let owned_elsewhere = || {
+                    ctx.input.fns.contains_key(&name.name)
+                        || ctx.input.types.values().any(|t| {
+                            matches!(&t.body, TypeBody::Sum(s)
+                                if s.variants.iter().any(|var| var.name.name == name.name))
+                        })
+                };
+                if http_implied || !owned_elsewhere() {
+                    check_http_variant(expr.span, v, args, expected, ctx)
+                } else {
+                    // Falling straight to `check_call` (rather than the
+                    // `queue_variant` else-if below) relies on the http and
+                    // queue variant keyword sets being disjoint, so an http
+                    // name could never have taken the queue branch anyway.
+                    check_call(name, type_args, args, expr.span, expected, ctx)
+                }
             } else if let Some(qv) = queue_variant(&name.name)
                 && (expected.is_some_and(peel_to_queue_result)
                     || peel_to_queue_result(&ctx.return_ty))
@@ -2545,7 +2727,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                 // v0.44: a QueueResult variant call (`Retry(reason)`).
                 check_queue_variant(expr.span, qv, args, ctx)
             } else {
-                check_call(name, type_args, args, expr.span, ctx)
+                check_call(name, type_args, args, expr.span, expected, ctx)
             }
         }
         ExprKind::UnaryOp(op, inner) => check_unary(*op, inner, expr.span, ctx),
@@ -2589,7 +2771,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                     None
                 }
             } else {
-                check_static_call(type_name, method, args, expr.span, ctx)
+                check_static_call(type_name, method, args, expr.span, expected, ctx)
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
@@ -2623,7 +2805,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                     None
                 }
             } else {
-                check_field_access(receiver, field, ctx)
+                check_field_access(receiver, field, expected, ctx)
             }
         }
         ExprKind::MethodCall {
@@ -2736,6 +2918,25 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
         ExprKind::Val { type_ref, args } => check_val(type_ref, args, expr.span, ctx),
         ExprKind::Observation(o) => check_observation(o, expr.span, ctx),
         ExprKind::Trace { cap, op } => check_trace(cap, op, expr.span, ctx),
+        // Slice C: a `Wire(<String>)` reached through the ordinary expression
+        // checker is *misplaced* — a valid `Wire` is intercepted by the service-
+        // address argument checker (`check_address_args`), which validates the
+        // inner and the `system` tier. Anywhere else it is an error. The inner is
+        // still typed so a mistake inside it is reported too.
+        ExprKind::Wire(inner) => {
+            let _ = type_of(inner, Some(&Ty::Base(BaseType::String)), ctx);
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.test.wire_needs_system",
+                    expr.span,
+                    "`Wire(...)` may only be passed as an argument to a service address in a `system`-tier case",
+                )
+                .with_note(
+                    "`Wire` hands raw, pre-validation input to the boundary; there is no wire to be raw about at `unit`, and it is meaningless outside a service address",
+                ),
+            );
+            None
+        }
     };
     if let Some(ty) = &ty {
         ctx.expr_types.insert(expr.span, ty.clone());
@@ -3096,44 +3297,37 @@ fn structural_compare_named(
     }
 }
 
+/// v0.177 (#643): two refinements match when their **canonical forms** are
+/// equal — a *set* comparison, not a positional one.
+///
+/// This retires the v0.6 §4.3 foot-gun the status doc named: predicates were
+/// compared by `zip`, so `String where NonEmpty, MaxLen(10)` and
+/// `String where MaxLen(10), NonEmpty` — the same type — spuriously failed to
+/// match. Predicates are conjunctive and side-effect-free, so their order
+/// carries no meaning and comparing it was always accidental.
+///
+/// The comparison routes through `contract::canon_refinement`, the same function
+/// that feeds the cross-context contract hash, and deliberately so: if the
+/// matcher and the hash disagreed about what "the same refinement" is, a
+/// contract could type-check at compile time and 409 at runtime — the worst
+/// failure available to this increment. One normal form, two consumers.
+///
+/// The asymmetry is unchanged: a *more* restrictive sending side is admitted
+/// into a more permissive receiving one, but not the reverse.
+///
+/// One behavioural consequence of sharing the form: it de-duplicates, so
+/// `where NonEmpty, NonEmpty` now matches `where NonEmpty`. That is correct — a
+/// conjunction is idempotent, so they are the same type — and it must hold on
+/// the hash side regardless, or two contexts spelling the same type differently
+/// would fail closed against each other.
 fn refinements_match(a: Option<&Refinement>, b: Option<&Refinement>) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(_), None) => true, // sending side is more restrictive — receiving is more permissive
         (None, Some(_)) => false,
         (Some(a), Some(b)) => {
-            if a.predicates.len() != b.predicates.len() {
-                return false;
-            }
-            // Exact match required (per spec §4.3 conservative rule).
-            // Predicate order matters here; refinements are conventionally
-            // written in a fixed order.
-            for (pa, pb) in a.predicates.iter().zip(b.predicates.iter()) {
-                if !predicate_eq(&pa.kind, &pb.kind) {
-                    return false;
-                }
-            }
-            true
+            crate::contract::canon_refinement(Some(a)) == crate::contract::canon_refinement(Some(b))
         }
-    }
-}
-
-fn predicate_eq(a: &PredKind, b: &PredKind) -> bool {
-    match (a, b) {
-        (PredKind::Matches(x), PredKind::Matches(y)) => x == y,
-        (PredKind::InRange(a1, a2), PredKind::InRange(b1, b2)) => {
-            a1.value == b1.value && a2.value == b2.value
-        }
-        (PredKind::InRangeF(a1, a2), PredKind::InRangeF(b1, b2)) => {
-            a1.value == b1.value && a2.value == b2.value
-        }
-        (PredKind::MinLength(a), PredKind::MinLength(b)) => a == b,
-        (PredKind::MaxLength(a), PredKind::MaxLength(b)) => a == b,
-        (PredKind::Length(a), PredKind::Length(b)) => a == b,
-        (PredKind::NonNegative, PredKind::NonNegative) => true,
-        (PredKind::Positive, PredKind::Positive) => true,
-        (PredKind::NonEmpty, PredKind::NonEmpty) => true,
-        _ => false,
     }
 }
 
@@ -3142,7 +3336,7 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
         Ty::Named {
             kind: NamedKind::Sum,
             name,
-            ..
+            args,
         } => {
             let decl = types.get(name)?;
             if let TypeBody::Sum(s) = &decl.body {
@@ -3155,7 +3349,14 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
                                 .payload
                                 .iter()
                                 .map(|f| {
-                                    let t = resolve_type_ref(&f.type_ref, types)
+                                    // #593: for a generic sum, substitute the
+                                    // instantiation's arguments into each payload
+                                    // type (`Some(v: T)` over `Opt[Int]` ⇒ `Int`),
+                                    // exactly as a generic record's fields are read
+                                    // at an instantiation. `instantiate_field_ty`
+                                    // degrades to a plain resolve for a non-generic
+                                    // sum (empty `args`).
+                                    let t = instantiate_field_ty(decl, args, &f.type_ref, types)
                                         .unwrap_or(Ty::Base(BaseType::Int));
                                     (f.name.name.clone(), t)
                                 })

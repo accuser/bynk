@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Merge queue: the full cross-OS test matrix runs here (see the `test` job's
+  # dynamic matrix). This trigger is currently DORMANT — no merge queue is
+  # enabled on the repo — so today the cross-OS matrix first runs on the
+  # post-merge push to `main`, not before a PR lands (see the `test_os` note).
+  # Wiring it now means that if a merge queue is ever enabled, cross-OS coverage
+  # moves pre-land with no further workflow change.
+  merge_group:
   # Weekly health check: re-run the full pipeline so dependency/advisory drift
   # (a freshly published RUSTSEC advisory, a bitrotted dep) is caught even when
   # no one has opened a PR. Mondays 07:00 UTC.
@@ -24,8 +31,12 @@ permissions:
 
 # The toolchain version lives in rust-toolchain.toml; the dtolnay ref below is
 # pinned to match so the runner installs exactly one toolchain (with the
-# rustfmt/clippy components the gates need). The `msrv` job deliberately uses a
-# different (older) toolchain to verify the declared rust-version.
+# rustfmt/clippy components the gates need). The `msrv` job installs the
+# toolchain named by the *declared* `rust-version`; today that equals the pin
+# (1.95), so it verifies the declared floor still builds. A tripwire in that job
+# fails if `rust-version` and the pinned channel ever diverge — at which point
+# the MSRV genuinely differs from the dev toolchain and the leg must go back to
+# running on every code PR (see the job for details).
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -50,10 +61,26 @@ jobs:
       extension: ${{ steps.filter.outputs.extension }}
       grammar: ${{ steps.filter.outputs.grammar }}
       decisions: ${{ steps.filter.outputs.decisions }}
+      pending: ${{ steps.filter.outputs.pending }}
       runtime: ${{ steps.filter.outputs.runtime }}
       playground: ${{ steps.filter.outputs.playground }}
       site: ${{ steps.filter.outputs.site }}
       all: ${{ steps.all.outputs.value }}
+      # JSON array of OSes for the `test` matrix. PRs run Linux-only (fast,
+      # cheap — macOS is billed at 10x and Windows at 2x Linux minutes); every
+      # other event (push to main, merge_group, the weekly schedule) runs the
+      # full three-OS matrix.
+      #
+      # Honest statement of the trade: with no merge queue enabled today, the
+      # per-PR gate is Linux-only, so a macOS/Windows-only regression (a path
+      # separator, a line ending, the `bynkc test` runner's Unix-centric bits)
+      # is NOT caught before merge — it first surfaces on the post-merge `main`
+      # build and is fixed forward. The saving is large (macOS+Windows are ~95%
+      # of the test leg's billed minutes); the cost is that cross-OS breakage
+      # lands on main rather than being blocked at the PR. Enable a merge queue
+      # (the merge_group trigger is already wired) to get the pre-land guarantee
+      # back without losing the per-PR saving.
+      test_os: ${{ steps.test-os.outputs.value }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
@@ -87,6 +114,12 @@ jobs:
             decisions:
               - *global
               - 'design/decisions/**'
+            pending:
+              # Pending-increment files (increment-allocation track). A change
+              # here that touches no Rust would skip the `test` job, so the
+              # `drift` job runs the xtask validator in exactly that case.
+              - *global
+              - 'design/pending/**'
             runtime:
               # The @bynk/runtime sources and the single bundled file bynk-emit
               # embeds via include_str!. The bundled file is a `.ts`, so it is
@@ -117,6 +150,15 @@ jobs:
             echo "value=true" >> "$GITHUB_OUTPUT"
           else
             echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Decide the `test` job's OS matrix from the event: Linux-only on PRs,
+      # all three OSes on everything else (push/main, merge_group, schedule).
+      - id: test-os
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo 'value=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'value=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
   fmt:
@@ -180,12 +222,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Linux-only on PRs, all three OSes on push/merge_group/schedule — see
+        # the `test_os` output on the `changes` job.
+        os: ${{ fromJSON(needs.changes.outputs.test_os) }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      # nextest runs one process pool across every test binary at once (the
+      # fixture corpus is dozens of separate binaries `cargo test` would run
+      # serially), cutting this leg's wall-clock. Prebuilt binary — no compile.
+      # Pinned to the 0.9 line (like typescript@5 / wasm-bindgen-cli): this now
+      # gates every test run, so a future 0.10 with changed behaviour must not
+      # turn CI red with no repo change.
+      - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2
+        with:
+          tool: nextest@0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
       # `tsc` is needed by the tsc-verify stage and the `bynkc test` fixtures.
@@ -193,7 +246,8 @@ jobs:
       # major with no repo change, and the tsc_verify fallback already pins @5.
       - name: Install TypeScript
         run: npm install -g typescript@5
-      # `cargo test --workspace` runs every crate's suite. bynkc's includes:
+      # `cargo nextest run --workspace` runs every crate's suite (no rustdoc
+      # doctests exist in the tree, so nextest loses nothing). bynkc's includes:
       #   - doc_examples        — the example-compilation gate (the Book)
       #   - diagnostics_registry / keywords_reference / cli_reference / grammar_reference
       #     — assert the generated reference pages are up to date
@@ -203,7 +257,7 @@ jobs:
       # --locked: fail if Cargo.lock would change (no silent lockfile drift).
       # BYNK_REQUIRE_TSC makes a missing `tsc` a hard failure rather than a skip.
       - name: Run tests
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked --profile ci
         env:
           BYNK_REQUIRE_TSC: "1"
           # The workerd smoke (#518) must actually run somewhere: required on
@@ -223,7 +277,14 @@ jobs:
     # rust-version, so a future drop below what the code needs goes red here.
     name: MSRV (cargo check on declared rust-version)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
+    # Gated on `all` rather than the broad `rust` filter: this leg's job is to
+    # verify the *declared* rust-version, which only moves via a manifest edit.
+    # `all` is true exactly when a global file changed (Cargo.toml / Cargo.lock /
+    # rust-toolchain.toml / a workflow) or the event isn't a PR — so a new or
+    # bumped dependency (which touches Cargo.lock) still re-checks the MSRV,
+    # while a plain `**/*.rs` PR no longer pays for a redundant full-workspace
+    # build (the main 1.95 legs already compile that code on the same toolchain).
+    if: needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -238,6 +299,26 @@ jobs:
           version="$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           test -n "$version" || { echo "::error::no rust-version in Cargo.toml"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Tripwire for the `all`-only gate above. That gate is only sound while the
+      # declared rust-version equals the pinned dev channel: when they're equal,
+      # the main legs already build this code on the same toolchain, so a code-only
+      # PR needn't re-run MSRV. The moment they diverge — the normal healthy state
+      # once the MSRV is intentionally set below the dev toolchain — a `**/*.rs` PR
+      # can start using features newer than the floor with nothing catching it,
+      # because MSRV no longer runs on code-only PRs. Fail here (this step runs on
+      # exactly the manifest/toolchain PR that would introduce the divergence) with
+      # instructions to restore the broad `rust` gate, so the optimisation cannot
+      # silently outlive its precondition. Compare on major.minor (rust-version may
+      # omit the patch, e.g. "1.95" vs the channel's "1.95.0").
+      - name: Guard — declared MSRV still equals the pinned dev toolchain
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n1)"
+          test -n "$channel" || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          mm() { echo "$1" | cut -d. -f1-2; }
+          if [ "$(mm "${{ steps.msrv.outputs.version }}")" != "$(mm "$channel")" ]; then
+            echo "::error::declared rust-version (${{ steps.msrv.outputs.version }}) no longer matches the pinned toolchain ($channel). The MSRV now differs from the dev toolchain, so a code-only PR can use features newer than the floor undetected. Re-gate the msrv job on 'needs.changes.outputs.rust == true || needs.changes.outputs.all == true' so it runs on every code PR again."
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0 (rev only; toolchain comes from `with`)
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
@@ -261,8 +342,11 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+      # Prebuilt binary — avoids recompiling cargo-llvm-cov from source on every
+      # run (minutes of pure build cost on a report-only, continue-on-error job).
+      - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2
+        with:
+          tool: cargo-llvm-cov
       - name: Coverage summary
         run: cargo llvm-cov --workspace --locked --summary-only
 
@@ -305,10 +389,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+      - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2
         with:
           tool: wasm-bindgen-cli@0.2.126
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
       - name: Install deps
@@ -337,7 +421,7 @@ jobs:
         working-directory: site
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "22"
       - name: Install deps
@@ -346,10 +430,6 @@ jobs:
       # sidebar.json drifts from it.
       - name: Check the generated sidebar is current
         run: node scripts/generate-sidebar.mjs --check
-      # llms-full.txt inlines the Book (directives expanded from the committed
-      # generated JSON); fail if it drifts. No build needed — reads markdown + JSON.
-      - name: Check llms-full.txt is up to date
-        run: node scripts/build-llms-full.mjs --check
       # llms.txt is hand-authored; verify its /book/ links still resolve.
       - name: Check llms.txt links resolve
         run: node scripts/check-llms-links.mjs
@@ -374,7 +454,7 @@ jobs:
         working-directory: vscode-bynk
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
       - name: Install deps
@@ -386,7 +466,7 @@ jobs:
       - name: Smoke — no unbundled external requires
         run: node scripts/check-bundle.mjs
       - name: Package the VSIX
-        run: npx --yes @vscode/vsce package --no-dependencies --skip-license
+        run: npx --yes @vscode/vsce@3.9.2 package --no-dependencies --skip-license
 
   extension-tests:
     # Launch a real VS Code instance with the extension + a fixture workspace
@@ -412,11 +492,12 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Build the language server + compiler
-        # `bynkc-lsp` for the LSP tests; `bynkc` for the debug provider test
-        # (`bynkc test --inspect`) — both land on PATH via runTest.ts (DECISION D).
-        run: cargo build --release -p bynk-lsp -p bynkc
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Build the language server + compiler + driver
+        # `bynkc-lsp` for the LSP tests; `bynkc` + `bynk` for the check/test/debug
+        # paths, which now shell `bynk` rather than `bynkc` directly (#486) — all
+        # three land on PATH via runTest.ts (DECISION D).
+        run: cargo build --release -p bynk-lsp -p bynkc -p bynk
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           # ≥ 22.6 for the debug paths — the emitted `.ts` runs under Node's
           # TypeScript type-stripping (`--experimental-strip-types`).
@@ -448,7 +529,7 @@ jobs:
         working-directory: tree-sitter-bynk
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
       - name: Install deps
@@ -475,7 +556,7 @@ jobs:
         working-directory: bynk-emit/runtime
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           # ≥ 22 so `node --test` runs the `.ts` suite directly under TypeScript
           # type-stripping, matching the emitted runtime's own execution model.
@@ -500,6 +581,8 @@ jobs:
     #     `extension` input) and asserts the semantic-token legend names match.
     #   - bynkc/tests/decisions_index.rs reads design/decisions/**.md (a
     #     `decisions` input) and asserts decisions/README.md indexes every ADR.
+    #   - xtask validates design/pending/**.md (a `pending` input) against the
+    #     pending-increment format (increment-allocation track).
     # This job runs them exactly when `test` would NOT but a drift input changed,
     # so a guard can never be skipped — and there is no duplicate run when `test`
     # already executes them (the `if` is the complement of `test`'s gate). The
@@ -508,7 +591,7 @@ jobs:
     needs: changes
     if: >-
       (needs.changes.outputs.grammar == 'true' || needs.changes.outputs.extension == 'true'
-        || needs.changes.outputs.decisions == 'true')
+        || needs.changes.outputs.decisions == 'true' || needs.changes.outputs.pending == 'true')
       && needs.changes.outputs.rust != 'true'
       && needs.changes.outputs.all != 'true'
     runs-on: ubuntu-latest
@@ -516,12 +599,18 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # Left on `cargo test` (not nextest): each guard is a single test binary,
+      # so nextest's cross-binary parallelism buys nothing here, and adding its
+      # install step would only tax the cheap grammar/extension/decisions PRs
+      # this job exists for.
       - name: Grammar appendix ↔ tree-sitter grammar
         run: cargo test -p bynkc --test grammar_reference
       - name: LSP legend ↔ extension package.json
         run: cargo test -p bynk-lsp --test legend_drift
       - name: Decision-record index ↔ ADR files
         run: cargo test -p bynkc --test decisions_index
+      - name: Pending-increment files ↔ format
+        run: cargo test -p xtask
 
   audit:
     # Scans Cargo.lock against the RustSec advisory database. Only the lockfile
@@ -538,7 +627,7 @@ jobs:
       # trigger an implicit download when `cargo audit` dispatches in-repo).
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       # Prebuilt binary — avoids compiling cargo-audit from source on every run.
-      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+      - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2
         with:
           tool: cargo-audit
       - name: Audit dependencies
@@ -554,29 +643,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
 
   npm-audit:
-    # Audit the two npm packages' dependency trees against the npm advisory DB —
+    # Audit every npm package's dependency tree against the npm advisory DB —
     # the JS-side parallel of `cargo audit`, closing the un-audited dependency
     # surface. Reads the committed lockfiles (no install). A high-severity
-    # advisory gates; low/moderate are signal, not a blocker.
+    # advisory gates; low/moderate are signal, not a blocker. Covers all five
+    # trees with committed lockfiles, including playground/site whose deploy jobs
+    # hold the Cloudflare token.
     name: Security audit (npm)
     needs: changes
-    if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.grammar == 'true' || needs.changes.outputs.all == 'true'
+    if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.grammar == 'true' || needs.changes.outputs.runtime == 'true' || needs.changes.outputs.playground == 'true' || needs.changes.outputs.site == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        package: [vscode-bynk, tree-sitter-bynk]
+        package: [vscode-bynk, tree-sitter-bynk, bynk-emit/runtime, playground, site]
     defaults:
       run:
         working-directory: ${{ matrix.package }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
       - name: Audit

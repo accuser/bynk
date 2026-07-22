@@ -19,6 +19,124 @@ Case descriptions within a suite must be unique
 (`bynk.suite.unknown_target`). Test files live under the project's `tests/` tree —
 see [Lay out a project](/book/guides/projects-build-and-deployment/layout/).
 
+A case drives the target's services by their natural surface — resolved against
+the declared handler and checked for arity and argument types:
+
+| service | address |
+|---|---|
+| `on call` | `svc.call(args)` |
+| `from http` | `svc.GET("/path")`, `svc.POST("/path", body)` — the path is the route **pattern**, then the handler's params (path params, then body) |
+| `from cron` | `svc.schedule("<expr>")` — matched to the handler with that schedule |
+| `from queue` | `svc.message(msg)` |
+
+A route/schedule the service does not declare is `bynk.test.service_unknown_route`;
+`svc.call(...)` on a service with no `on call` handler is
+`bynk.test.service_no_call_handler`.
+
+### Acting as an actor — `by <Actor>(<identity>)` {#call-site-by}
+
+A handler guarded by an actor (`by u: User`) runs as a verified identity. A case
+supplies that identity with a call-site `by` clause on the effect-let:
+
+```bynk
+case "each owner's list is private" {
+  let _    <- api.POST("/todos", AddRequest { title: "bob's" }) by User("bob")
+  let mine <- api.GET("/todos")                                 by User("carol")
+  expect mine is Ok(_)
+}
+```
+
+- `by User("bob")` — the actor and the identity value. The value is typed against
+  the actor's identity type, so `by User("")` fails `UserId`'s refinement.
+- `by Visitor` — a unit-identity actor takes **no** argument
+  (`bynk.test.actor_no_identity` if one is given; `bynk.test.actor_identity_required`
+  if an identity-carrying actor is written bare).
+- cron and queue run as their internal actor and need no `by`.
+
+At the `unit` tier the identity is *given*, not verified — the handler runs
+in-process against fresh, per-case agent state. **Promote the same case to `as
+system`** and the identical body drives the *deployable* Worker: the address
+becomes a real `fetch` into the public route table, `by User("bob")` is signed
+into a JWT the real auth seam verifies, and the `HttpResult` is decoded from the
+`Response`. The developer writes no auth — the framework signs a valid credential
+from the `by` clause; *proper* auth (real IdPs, expired/forged tokens) is an
+end-to-end concern, not the system tier's. A single-context `from http` service
+qualifies for `as system` (it has a real serialisation edge); a `cron`-only target
+does not (`bynk.tier.system_needs_wire`).
+
+### Driving a rejection with `Wire`
+
+A typed argument is valid by construction, so the boundary can never reject it. To
+test the *rejection* path — the part the boundary exists for — a `system`-tier case
+passes a raw `Wire(<String>)` argument: the string reaches the router
+**unvalidated**, exactly as an over-the-wire request would, so a refinement
+violation or malformed JSON is refused *before the handler runs*.
+
+```bynk
+case "an empty sku is rejected at the boundary" as system {
+  let r <- api.POST("/cart", Wire("{\"sku\": \"\"}")) by User("alice")
+  expect r is Rejected(_)
+}
+```
+
+A `Wire`-carrying call yields `Rejected(kind) | Handled(_)` instead of an
+`HttpResult`: `Rejected` when the router refused the input before the handler,
+`Handled` when it ran (a valid raw body promotes to the handler, so
+`expect r is Handled(_)`). The rejection's *kind* is discriminable — the nested
+pattern tests it:
+
+```bynk
+expect r is Rejected(_)                       -- any boundary rejection
+expect r is Rejected(RefinementViolation(_))  -- specifically a refinement violation
+expect r is Rejected(MalformedJson(_))        -- specifically malformed JSON
+```
+
+The kinds are `RefinementViolation`, `MalformedJson`, and `StructuralMismatch`.
+The outcome is checked at runtime, not statically typed, so a mistyped kind
+name is a case that *fails* (the pattern never matches) rather than a compile
+error. `Wire` is legal **only** as a service-address argument in a `system`-tier
+case — there is no wire to be raw about at `unit`
+(`bynk.test.wire_needs_system`) — and no refined value is ever built from it: the
+router validates the raw string, which is the whole point.
+
+### Testing the auth seam with `by Nobody`
+
+`by User("bob")` presents a valid, framework-signed credential the real seam
+verifies. To test the *rejection* — an unauthenticated request — a `system`-tier
+case drives the route as **`by Nobody`**: the request carries no `Authorization`
+header, so the seam refuses it before the handler runs.
+
+```bynk
+case "no credential is rejected at the seam" as system {
+  let r <- api.POST("/cart", Item { sku: "widget" }) by Nobody
+  expect r is Rejected(Unauthorized)
+}
+```
+
+`by Nobody` yields the same `Rejected(_) | Handled(_)` outcome as a `Wire` call:
+a `401` from the seam is `Rejected(Unauthorized)`. It presents no identity
+(`by Nobody(...)` is an error), and is meaningful only at `system`, where the
+real seam exists (`bynk.test.credential_needs_system`). A validly-signed but
+expired or forged credential is an end-to-end concern, not the system tier's.
+
+### Testing the wrong method — the `405` fall-through
+
+Address an **existing path with a method it declares no handler for** to test the
+router's method fall-through. The path must be a declared route (a genuinely
+unknown path is still `bynk.test.service_unknown_route`); the wrong method drives
+the `405`:
+
+```bynk
+case "DELETE is not allowed on /cart" as system {
+  let r <- api.DELETE("/cart")           -- /cart is declared for POST, not DELETE
+  expect r is Rejected(MethodNotAllowed)
+}
+```
+
+No handler runs, so the call takes no arguments and no `by` clause. Like the
+other boundary refusals it yields the `Rejected(_) | Handled(_)` outcome — a
+`405` is `Rejected(MethodNotAllowed)`.
+
 ## `expect`
 
 `expect <bool-predicate>` checks a predicate. It exists in both statement form (a
@@ -67,9 +185,13 @@ A case's effective tier is `case.tier ?? suite.tier ?? unit`. Promotion changes
 - **Participants are inferred**, not listed: `integration` / `system` derive their
   real/wired collaborator set from the unit under test's transitive `consumes`
   graph. There is no `wires` clause.
-- **`system` needs a wire**: a `system` case whose inferred set is fewer than two
-  contexts is `bynk.tier.system_needs_wire`. `integration` carries no such rule —
-  it is real collaborators within one context, no wire.
+- **`system` needs a serialisation edge**: a `system` suite must cross a real
+  serialise → JSON → deserialise boundary — either two or more wired contexts, **or**
+  a single target that exposes an `http` service (its public boundary). A target
+  with neither is `bynk.tier.system_needs_wire`. (A `queue` service serialises its
+  message too, but driving a queue over a real wire at `system` is a later slice, so
+  a queue-only target does not yet qualify.) `integration` carries no such rule — it
+  is real collaborators within one context, no wire.
 - Tiers are **`case`-only**: a `property` generates and does not promote, so a
   suite-level `as` binds its `case` members only; an `as` on a `property` header is
   `bynk.tier.property_has_tier`.

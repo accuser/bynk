@@ -13,7 +13,7 @@ export function compose(env: Env) {
   const Payments = new handlers.StripePayments({ Http, Logger });
   const deps = { Http, Logger, Payments };
   return {
-    async authorise(amount: any) {
+    async authorise(amount: number) {
       return handlers.authorise.call(amount, deps);
     },
   };

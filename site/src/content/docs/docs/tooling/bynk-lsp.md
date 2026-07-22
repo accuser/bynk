@@ -22,8 +22,8 @@ backed by a request handler.
 
 | Capability | What it does |
 |---|---|
-| Diagnostics | Recovering compilation surfaced as squiggles — live by default (debounced, ~200–300 ms) and re-run when watched files change. With a project root diagnostics are project-wide: the whole bundle is analysed, open buffers overlaid on disk, so an error in one file shows on the file that owns it. |
-| Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition — a name-match fallback answers only where the index does not resolve. Works on a name's *uses*, not just its declaration: inside an agent handler body, a `store`/`key` field reference describes the field, a record-construction label (`Stored { title: … }`) describes the type's field, and a store operation (`items.put(…)`) describes the operation over the field's declared kind. Every kind the index carries is described: an actor (`by u: User`), a method — the one the call *binds* to, so `g.bump()` describes `Gauge.bump` and not a same-named `Counter.bump` — and a capability operation, attributed to the capability that declares it, including where a project declares one whose name a built-in shares. |
+| Diagnostics | Recovering compilation surfaced as squiggles — live by default (debounced at the configured `diagnostics_debounce_ms`, default 300 ms) and re-run when watched files change. With a project root diagnostics are project-wide: the whole bundle is analysed, open buffers overlaid on disk, so an error in one file shows on the file that owns it. Each diagnostic carries its `bynk.*` code; for the curated, highest-traffic codes the code is rendered as a **clickable link** (`codeDescription`) to its explanation in the Book — the same explanation `bynk explain <code>` prints. Codes without a curated explanation carry no link (graceful fallback, not an error). |
+| Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition — a name-match fallback answers only where the index does not resolve. Works on a name's *uses*, not just its declaration: inside an agent handler body, a `store`/`key` field reference describes the field, a record-construction label (`Stored { title: … }`) describes the type's field, and a store operation (`items.put(…)`) describes the operation over the field's declared kind. Every kind the index carries is described: an actor (`by u: User`), a method — the one the call *binds* to, so `g.bump()` describes `Gauge.bump` and not a same-named `Counter.bump` — and a capability operation, attributed to the capability that declares it, including where a project declares one whose name a built-in shares. A `[Name]`/`[Owner.member]` intra-doc link inside the rendered doc comment becomes a clickable link when it resolves the same way document links do; unresolved names render as plain text. |
 | Go-to-definition | Jumps to the declaration of types, functions, capabilities, services, agents, providers, and actors (a handler's `by u: User` clause) — cross-file, via the project index. Local bindings resolve scope-correctly; `uses`/`consumes` unit segments jump to the unit's source. |
 | Go-to-type-definition | From a value to the declaration of its inferred type. Reads the value's type from the round's expression types and lands on the named type's declaration. |
 | Find references | Project-wide occurrences from the binding index, including clause lists and test units. Local bindings return their definition plus uses within the file. |
@@ -33,18 +33,23 @@ backed by a request handler.
 | Document symbols | The file outline for the editor's symbol view and quick-open. |
 | Completion | Scope- and context-aware: units after `consumes `, capabilities inside `consumes U { … }` and after `given `, in-scope locals at keyword and expression positions, and members after `.` on a typed value receiver. Documentation is resolved lazily on the focused item so the initial list stays cheap. |
 | Signature help | The active parameter of the call being typed, triggered on `(` and `,`. Covers named callees and value-receiver methods. |
-| Code lens | A reference-count lens above each top-level definition, clickable to peek the references. |
+| Code lens | A reference-count lens above each top-level definition, clickable to peek the references, plus a "Show Sequence" lens above every handler. |
+| Sequence diagram | `bynk/sequenceModel` — a custom (non-standard) request, advertised via `ServerCapabilities.experimental` rather than a dedicated provider field — classifies the handler under the cursor's calls into runtime-participant lifelines (consumed capabilities, consumed contexts, agents) for the VS Code extension's "Bynk: Show Sequence Diagram" webview. Served from the committed round; re-issued fresh by the client on each invocation (no refresh-push mechanism). |
+| Documentation view | `bynk/documentationModel` — a second custom request (same `experimental` advertisement) — aggregates the whole file's declarations into a rendered reference page for the VS Code extension's "Bynk: Show Documentation" webview: each declaration's heading, signature, and doc comment rendered as Markdown, in outline order and hierarchy, with undocumented declarations shown as a coverage signal (toggle to hide). Reuses hover's signature/doc assembly so the page agrees with hover. Served from the committed round; re-issued on each invocation. |
 | Call hierarchy | Incoming and outgoing calls over the binding index's call graph. |
 | Implementation | From a capability to its providers (the reverse direction, provider to capability, is served by go-to-definition). |
-| Document links | `uses`/`consumes` unit names — and a test file's `suite <target>` header — become clickable links to the unit's source file. |
+| Document links | `uses`/`consumes` unit names — and a test file's `suite <target>` header — become clickable links to the unit's source file. Inside doc comments, a `[Name]`/`[Owner.member]` intra-doc link also becomes clickable when it resolves against the declaring unit's scope (itself, its `uses`, its `consumes`); an unresolved one renders as plain text. |
+| File rename awareness | Renaming or moving a `.bynk` file rewrites its own declaration name and every other file's `uses`/`consumes` reference that pointed at it. Single-file rename only — a suite or a folder move is left untouched. |
 | Document highlight | The matching binding's occurrences highlighted across the active file. |
 | Folding ranges | Structural folds and comment runs, driven by the recovered AST (no analysis round needed). |
 | Selection ranges | Expand-selection by syntactic nesting — the enclosing-node chain for each position. |
-| Code actions | Quick-fixes built from the structured suggestions carried on diagnostics, served from the cached round so they agree with the squiggles on screen. |
+| Code actions | Quick-fixes built from the structured suggestions carried on diagnostics, served from the cached round so they agree with the squiggles on screen. **Capability-aware fixes** turn boundary/resolution errors into one click: fill a record construction's missing field(s) with a typed default, add a missing `consumes` for an unconsumed cross-context call, and — Bynk's analogue of auto-import — add the `uses <commons>` or `consumes <context> { … }` that brings an unresolved name into scope (one action per resolving candidate; a braced `consumes` is extended in place). Plus two refactors over the same selection: extract-variable binds the smallest covering expression node to a fresh `let`; extract-function lifts it — a single expression, or a contiguous run of full statements (optionally including the block's tail) — into a new top-level `fn`, threading its free identifiers as parameters — offered only when the selection uses no capability (a plain `fn` has no `given` clause) and, for a statement run, introduces no binding still used afterward and contains no `store`-field write. |
 | Inlay hints | Inferred-type hints for the visible range, plus materialisable ghost `given` hints for uncovered capability requirements. |
 | Semantic tokens | Resolution-aware highlighting (full document and range), additive over the client's syntactic layer, read from the cached index. |
-| Workspace symbols | Project-wide symbol search across the index's definitions, filtered by query. |
-| File watching | Re-checks diagnostics when `.bynk` files change on disk; workspace folders are supported. |
+| Workspace symbols | Symbol search across the index's definitions, filtered by query — aggregated over **every** open project (the one cross-project query in a multi-root window). |
+| File watching | Re-checks diagnostics when `.bynk` files change on disk, and reloads a project's `bynk.toml` when the manifest changes. The server **registers the watchers itself** (dynamic `didChangeWatchedFiles`), so any client is notified — not just those that supply watchers client-side. |
+| Startup analysis | On activation the server discovers and analyses every project under the workspace folders, so diagnostics appear **before any file is opened**. Folders added later are warmed the same way. |
+| Workspace folders | Real multi-root support: several projects open at once, each analysed independently; a file routes to its nearest `bynk.toml`. Adding or removing a folder adds or prunes its projects. |
 
 ## Build
 
@@ -63,16 +68,21 @@ server blocking on stdin.
 
 ## Architecture
 
-The `Backend` holds the mutable project state behind a `tokio::sync::RwLock`:
+The `Backend` holds the mutable server state behind a `tokio::sync::RwLock`:
 
-- the **project root** (the directory containing `bynk.toml`, or `None` in
-  single-file mode),
-- the parsed **configuration** loaded from `bynk.toml`, and
-- the **open documents**, keyed by URI, each with its current text and version.
+- a **map of projects** keyed by discovered root — one editor window may hold
+  several. Each entry carries its own parsed **configuration**, analysis round,
+  freshness generation, and published-diagnostics set (so two projects analyse
+  and publish independently),
+- the **workspace-folder seeds** — where projects are discovered and pruned, not
+  how requests route, and
+- the **open documents**, keyed by URI, each with its current text and version —
+  a client-global set; each doc routes to its project by its nearest `bynk.toml`.
 
-A document change runs `recompile_and_publish`. In single-file mode that
-diagnoses the one buffer directly; with a project root it schedules a debounced
-project-wide round. Hover and go-to-definition first consult the binding index,
+A document change runs `recompile_and_publish`, which routes the URI to its
+project. In single-file mode (no manifest) that diagnoses the one buffer
+directly; in a project it schedules that project's debounced project-wide round.
+Hover and go-to-definition first consult the binding index,
 falling back to a re-parse of the AST under the cursor for kinds the index does
 not carry; formatting delegates to `bynk-fmt`.
 
@@ -87,40 +97,69 @@ live buffer, which may already have moved on. A round carries:
   workspace symbols all read;
 - per-file analysed **snapshots** — the exact text each span is an offset into;
   every span-to-position conversion uses these;
-- the **open-document versions** captured when the overlay was built, so rename
-  can emit versioned edits against precisely those versions;
+- the **open-document versions** captured when the overlay was built — the
+  freshness contract gates on these (below), rename emits versioned edits
+  against them, and published diagnostics carry them so a client can drop a
+  range its buffer has moved past;
 - the full **diagnostics** per file, including the structured suggestions that
   code actions ride on (clean files retain an empty entry);
 - **inferred-type hints** and the **capability-requirement ledger** that drive
   the two kinds of inlay hint;
 - **local bindings with scope ranges**, for scope-correct local navigation;
 - **expression types**, which back go-to-type-definition; and
-- a **unit-name-to-source map**, which backs document links.
+- a **unit-name-to-source map** and a **doc-link scope map**, which back
+  document links (including intra-doc links inside doc comments) and hover's
+  doc-link rendering.
 
-Because reads convert against the retained snapshots, a request that arrives
-mid-edit still resolves consistently against the last completed round rather
-than against a buffer the analysis never checked.
+**The freshness contract.** An index-backed request always answers against the
+buffer the client currently holds. Each analysed file records the document
+version it was analysed at; when a request arrives for a file whose buffer has
+moved past the last round, the server refreshes — runs a round over the current
+buffers — before answering, so a position is never resolved against text the
+user has already edited past. When it cannot reach the requested version (a file
+outside the project, or a concurrent edit that raced the refresh) it returns
+nothing rather than a stale answer. A round is fast (single-digit milliseconds
+for a typical project), and concurrent requests after one edit share a single
+refresh.
+
+The requests the editor re-fires on *every* keystroke — semantic tokens, inlay
+hints, code lenses, document links, and code actions — take a lighter path.
+Because they resolve nothing against your live cursor (each decoration's ranges
+are computed against the snapshot the round analysed), they are served from the
+last committed round as-is, without forcing a fresh round on every keystroke.
+The decorations may lag your typing by at most one debounce cycle; when the
+debounced round commits, the server asks the editor to re-pull them, so they
+catch up on their own. This keeps typing responsive on large projects, where
+forcing a whole-project round per keystroke grew slower with project size.
 
 ## Project discovery and performance
 
-On initialise the server walks upward from the workspace folder (or the first
-opened file) looking for a `bynk.toml`; the directory containing it becomes the
-project root. That single fact decides the feature set:
+The server resolves each file to its project by walking upward from the file to
+the nearest `bynk.toml` (the same attribution `bynkc` gives it) — so several
+projects across one window's workspace folders each analyse independently, and a
+file's workspace folder does not decide its project. Whether a file resolves to
+a project decides its feature set:
 
-- **With a project root** — cross-file lookups, project-wide diagnostics,
+- **In a project** — cross-file lookups, project-wide diagnostics,
   workspace symbols, rename, and the index-backed navigation features all apply.
-  The source directory is taken from the manifest's `[paths].src`.
+  The files analysed are **exactly the files `bynkc` compiles**: every tree in
+  the manifest's [`[paths] include`](/docs/manifest/), with `exclude` honoured,
+  read through the compiler's own discovery. A conventional project needs no
+  `[paths]` at all — `src/` and, when present, `tests/` are picked up; a flat
+  project (`.bynk` at the root) works as-is.
 - **Single-file mode (no manifest)** — each buffer is analysed on its own and
   the workspace features are unavailable; diagnostics still work per buffer.
 
-Diagnostics are debounced (~200–300 ms), configurable via the
-[`[lsp]` key](/docs/manifest/) `diagnostics_debounce_ms` in `bynk.toml`. A
-generation counter guards the debounce: every change bumps it, and a scheduled
-round runs only if it is still the latest when the delay elapses, so a burst of
-keystrokes coalesces into a single analysis. The analysis itself runs off the
-async runtime. There is a real, if narrow, window between analysing a round and
-publishing it — which is exactly why positions convert against the analysed
-snapshots rather than the live buffer.
+Diagnostics are debounced at `diagnostics_debounce_ms` (the
+[`[lsp]` key](/docs/manifest/) in `bynk.toml`, default 300 ms) — one
+generation-based debounce over both project and single-file mode. Every change
+bumps a generation, and a scheduled round runs only if it is still the latest
+when the delay elapses, so a burst of keystrokes coalesces into a single
+analysis. The analysis itself runs off the async runtime; a round already in
+flight when a newer edit arrives runs to completion but has its result discarded
+(never published) rather than being cancelled. There is a real, if narrow,
+window between analysing a round and publishing it — which is exactly why
+positions convert against the analysed snapshots rather than the live buffer.
 
 ## Internals
 
@@ -128,7 +167,8 @@ The crate is split into focused modules:
 
 | Module | Role |
 |---|---|
-| `main.rs` | Server entry point, `Backend` state, request dispatch, advertised capabilities. |
+| `lib.rs` | The server: `Backend`, the per-project state map, the `LanguageServer` impl, request dispatch, advertised capabilities, and `run()`. |
+| `main.rs` | Thin binary entry point — `bynk_lsp::run().await`. |
 | `position.rs` | Byte-offset ↔ LSP position conversion. |
 | `symbols.rs` | Symbol lookups for hover and go-to-definition. |
 | `hover.rs` | Hover's resolution ladder — the order the lookups are tried in, as one pure function the handler and its tests share. |
@@ -137,11 +177,15 @@ The crate is split into focused modules:
 | `signature_help.rs` | Call-context detection and signature labels. |
 | `inlay_hints.rs` | Inferred-type and ghost `given` hint rendering. |
 | `code_actions.rs` | Quick-fixes from diagnostics' structured suggestions. |
+| `capability_fixes.rs` | Capability-aware header fixes: add `consumes`, and auto-`uses`/`consumes` for an unresolved name (from the binding index + a fresh reparse). |
+| `extract.rs` | Extract-variable: smallest covering expression node, insertion-point tracking through nested blocks, collision-avoiding placeholder naming. Extract-function: same selection, lifted to a new top-level `fn` with free-identifier parameters, capability-free-only. |
 | `locals_nav.rs` | Scope-correct navigation for local bindings. |
 | `structure.rs` | Folding and selection ranges from the recovered AST. |
 | `document_symbols.rs` | The document-symbol outline. |
 | `publish.rs` | The pure publish plan (which files to publish, which to clear). |
 | `project.rs` | `bynk.toml` project configuration. |
+| `sequence_request.rs` | `bynk/sequenceModel`: the enclosing-handler-at-cursor lookup, the "Show Sequence" CodeLens site list, and the wire-shape conversion from `bynk_ide::sequence::SequenceModel`. |
+| `documentation_request.rs` | `bynk/documentationModel`: the whole-file model builder and the wire-shape conversion from `bynk_ide::documentation::DocModel`. |
 
 ## Logging
 

@@ -16,13 +16,15 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "quotes": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "945fd6bb919f61b9") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "quotes", expected: "945fd6bb919f61b9", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             if (typeof args !== "object" || args === null || Array.isArray(args)) return new Response(JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: JsonValue };
-            const __r_sku = (typeof argsObj["sku"] === "string" ? Ok(argsObj["sku"]) : Err({ kind: "StructuralMismatch", path: "$.sku", expected: "string", actual: typeof argsObj["sku"] }) as Result<any, BoundaryError>);
+            const __r_sku = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$.sku", expected: "string", actual: typeof __v } as BoundaryError))(argsObj["sku"]);
             if (__r_sku.tag === "Err") return new Response(JSON.stringify(__r_sku.error), { status: 400, headers: { "content-type": "application/json" } });
             const sku = __r_sku.value;
-            const __r_price = (typeof argsObj["price"] === "number" && Number.isFinite(argsObj["price"]) ? Ok(argsObj["price"]) : Err({ kind: "StructuralMismatch", path: "$.price", expected: "finite number", actual: String(argsObj["price"]) }) as Result<any, BoundaryError>);
+            const __r_price = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$.price", expected: "finite number", actual: typeof __v } as BoundaryError) : Number.isFinite(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$.price", expected: "finite number", actual: String(__v) } as BoundaryError))(argsObj["price"]);
             if (__r_price.tag === "Err") return new Response(JSON.stringify(__r_price.error), { status: 400, headers: { "content-type": "application/json" } });
             const price = __r_price.value;
             const result = await surface.quotes(sku, price);

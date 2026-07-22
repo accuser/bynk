@@ -94,6 +94,16 @@
     ],
     "description": "A function with a `requires`/`ensures` contract."
   },
+  "match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:scrutinee} {",
+      "  ${2:Variant}(${3:value}) => ${4:value},",
+      "  _ => ${0:fallback},",
+      "}"
+    ],
+    "description": "A match expression over variant/binding patterns, with a wildcard fallback."
+  },
   "capability": {
     "prefix": "capability",
     "body": [
@@ -125,6 +135,15 @@
       "actor ${1:Name} { auth = ${2:Bearer(secret = \"AUTH_JWT_SECRET\")}, identity = ${3:UserId} }"
     ],
     "description": "An actor (a request-boundary contract consumed via `by`)."
+  },
+  "messages": {
+    "prefix": "messages",
+    "body": [
+      "messages ${1:en} @reference {",
+      "  \"${2:code}\" => \"${3:template}\"",
+      "}$0"
+    ],
+    "description": "A message bundle for one locale."
   },
   "service": {
     "prefix": "service",

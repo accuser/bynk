@@ -14,6 +14,7 @@
 //! commons.
 
 pub mod cli;
+pub mod coverage;
 pub mod test_json;
 
 // The syntax foundation now lives in the `bynk-syntax` leaf crate (slice 1 of
@@ -44,7 +45,10 @@ pub use bynk_emit::{emitter, project};
 // the non-bailing single-file and project diagnostics. Re-export them so
 // `bynkc`'s public API and its index/diagnose integration tests resolve
 // unchanged (the binary itself does not use this surface).
-pub use bynk_ide::{Diagnostic, FileDiagnostics, ProjectDiagnostics, diagnose, diagnose_project};
+pub use bynk_ide::{
+    AnalysisRoots, Diagnostic, FileDiagnostics, ProjectDiagnostics, diagnose, diagnose_project,
+    diagnose_project_with, discover_files,
+};
 
 // The formatter moved down into the `bynk-fmt` leaf (slice 2). Re-export it as
 // `bynkc::fmt` so the `bynkc fmt` command and existing `bynkc::fmt::…` consumers

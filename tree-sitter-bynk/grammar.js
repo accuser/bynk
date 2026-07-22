@@ -182,6 +182,7 @@ module.exports = grammar({
         $.uses_decl,
         $.type_decl,
         $.fn_decl,
+        $.messages_decl,
         // Permissive: capability/service/etc. can syntactically appear
         // anywhere — the LSP reports semantic placement errors.
         $.capability_decl,
@@ -203,6 +204,7 @@ module.exports = grammar({
         $.service_decl,
         $.agent_decl,
         $.actor_decl,
+        $.messages_decl,
       ),
 
     // v0.17: adapter items — a binding clause, capabilities, boundary types,
@@ -223,6 +225,7 @@ module.exports = grammar({
         $.service_decl,
         $.agent_decl,
         $.actor_decl,
+        $.messages_decl,
       ),
 
     _test_body_item: ($) =>
@@ -412,7 +415,8 @@ module.exports = grammar({
     _pred_arg: ($) => choice($.number_literal, $.float_literal, $.string_literal),
 
     _base_type: ($) => $.base_type,
-    base_type: () => choice("Int", "String", "Bool", "Float", "Duration", "Instant"),
+    base_type: () =>
+      choice("Int", "String", "Bool", "Float", "Duration", "Instant", "Bytes"),
 
     _type_ref: ($) =>
       choice(
@@ -461,31 +465,54 @@ module.exports = grammar({
 
     unit_type: () => seq("(", ")"),
     validation_error_type: () => "ValidationError",
+    // Each built-in generic has a fixed arity, which the compiler parser
+    // (`bynk-syntax`) enforces at parse time with a `bynk.parse.*` diagnostic.
+    // The production therefore states that arity directly — a unary built-in
+    // takes exactly one argument, a binary one exactly two — rather than
+    // over-generating with `sep1` and deferring. This keeps the grammar in
+    // agreement with the parser (see the cross-parser conformance test).
     generic_type_ref: ($) =>
-      seq(
-        field(
-          "name",
-          choice(
-            alias("Result", $.builtin_type),
-            alias("Option", $.builtin_type),
-            alias("Effect", $.builtin_type),
-            // v0.9: HTTP result type.
-            alias("HttpResult", $.builtin_type),
-            // v0.20b: the built-in collection types.
-            alias("List", $.builtin_type),
-            alias("Map", $.builtin_type),
-            // v0.100/v0.92/v0.102: stream, lazy storage query, held connection.
-            alias("Stream", $.builtin_type),
-            alias("Query", $.builtin_type),
-            alias("Connection", $.builtin_type),
-            // v0.119 (testing track slice 7): `History[Agent]` — a generated,
-            // driven call-history (test-only generator).
-            alias("History", $.builtin_type),
+      choice(
+        // Unary built-ins — `Name[T]`.
+        seq(
+          field(
+            "name",
+            choice(
+              alias("Option", $.builtin_type),
+              alias("Effect", $.builtin_type),
+              // v0.9: HTTP result type.
+              alias("HttpResult", $.builtin_type),
+              // v0.20b: the built-in list collection.
+              alias("List", $.builtin_type),
+              // v0.100/v0.92/v0.102: stream, lazy storage query, held connection.
+              alias("Stream", $.builtin_type),
+              alias("Query", $.builtin_type),
+              alias("Connection", $.builtin_type),
+              // v0.119 (testing track slice 7): `History[Agent]` — a generated,
+              // driven call-history (test-only generator).
+              alias("History", $.builtin_type),
+            ),
           ),
+          "[",
+          field("arg", $._type_ref),
+          "]",
         ),
-        "[",
-        sep1(field("arg", $._type_ref), ","),
-        "]",
+        // Binary built-ins — `Name[K, V]`.
+        seq(
+          field(
+            "name",
+            choice(
+              alias("Result", $.builtin_type),
+              // v0.20b: the built-in map collection.
+              alias("Map", $.builtin_type),
+            ),
+          ),
+          "[",
+          field("arg", $._type_ref),
+          ",",
+          field("arg", $._type_ref),
+          "]",
+        ),
       ),
 
     // -- Function declarations --
@@ -552,6 +579,33 @@ module.exports = grammar({
         ")",
         "->",
         field("return_type", $._type_ref),
+      ),
+
+    // message-bundles track, slice 1 (#859): `messages <tag> @reference {
+    // "code" => "template" ... }` — a commons item declaring one locale's
+    // message bundle. `tag` is a plain identifier (its `LocaleTag`
+    // refinement is a checker concern); annotations reuse `store_annotation`
+    // (the same general `@name(args)` shape, ADR 0111) — the parser stays
+    // permissive on cardinality, same as the Rust side. Legality
+    // (commons-only) is a checker concern too, so this rule is admitted in
+    // `_context_body_item`/`_adapter_body_item` as well, mirroring
+    // `service_decl`/`agent_decl`'s existing permissive placement there.
+    messages_decl: ($) =>
+      seq(
+        "messages",
+        field("tag", $.identifier),
+        repeat(field("annotation", $.store_annotation)),
+        "{",
+        repeat($.message_entry),
+        "}",
+      ),
+    // A trailing comma is permitted but not required (mirrors match_arm).
+    message_entry: ($) =>
+      seq(
+        field("code", $.string_literal),
+        "=>",
+        field("template", $.string_literal),
+        optional(","),
       ),
 
     provider_decl: ($) =>
@@ -1044,6 +1098,22 @@ module.exports = grammar({
         optional(seq(":", field("type", $._type_ref))),
         "<-",
         field("value", $._expression),
+        // v0.182 (#664): an optional call-site actor clause — the test-body form
+        // `let x <- <service address> by <Actor>(<identity>)`. Distinct from
+        // `by_clause` (the handler form): the identity is an argument, not a
+        // binder, and there is no actor sum.
+        optional(field("principal", $.call_site_actor)),
+      ),
+    // v0.182 (#664): `by <Actor>` (unit identity) or `by <Actor>(<identity>)`.
+    // `prec.right` so an immediately-following `(` is taken as the identity
+    // argument rather than starting a fresh token sequence.
+    call_site_actor: ($) =>
+      prec.right(
+        seq(
+          "by",
+          field("actor", $.identifier),
+          optional(seq("(", field("identity", $._expression), ")")),
+        ),
       ),
     // v0.79: `~> expr` — an asynchronous fire-and-forget send (no binder).
     effect_send_stmt: ($) => seq("~>", field("value", $._expression)),
@@ -1146,7 +1216,17 @@ module.exports = grammar({
     match_arm: ($) =>
       prec.right(
         seq(
-          field("pattern", $._pattern),
+          // #472: `refined_pattern` is admitted only here — the top-level
+          // pattern of a match arm — not through `_pattern` generally, so it
+          // stays unreachable from `is_expr` and from nested payload
+          // positions (`_pattern_binding`). Both of those sit in
+          // expression-continuable contexts (`&&`, `(`, …) where
+          // `refinement`'s own `&&`-joined predicate list becomes ambiguous
+          // with the surrounding expression grammar; a match arm's pattern is
+          // always followed by a fixed terminator (`if`/`=>`), so no such
+          // ambiguity exists here. This also matches the semantic scope
+          // (v1: no nested/`is`-position refined patterns).
+          field("pattern", choice($._pattern, $.refined_pattern)),
           // v0.145 (ADR 0169): an optional trailing `if <Bool-expr>` guard,
           // between the pattern and `=>`, gating the arm over its bindings. The
           // `if` reuses the existing keyword token (already highlighted).
@@ -1158,9 +1238,31 @@ module.exports = grammar({
           optional(","),
         ),
       ),
+    refined_pattern: ($) =>
+      seq(field("inner", $._pattern), "where", field("predicate", $.refinement)),
 
     _pattern: ($) =>
-      choice($.wildcard_pattern, $.literal_pattern, $.variant_pattern),
+      choice(
+        $.wildcard_pattern,
+        $.literal_pattern,
+        $.variant_pattern,
+        $.or_pattern,
+        $.paren_pattern,
+      ),
+    // #474 §2.3.4: `p₁ | p₂ | … | pₙ` — an or-pattern, left-associative;
+    // matches if any alternative matches. `|` is a pattern-position operator
+    // only — not a valid expression operator, and lexically distinct from
+    // boolean `||` — so there is no ambiguity with the surrounding
+    // `is`/match-arm productions.
+    or_pattern: ($) => prec.left(1, seq($._pattern, "|", $._pattern)),
+    // #474 §2.3.6: parentheses around a pattern are transparent grouping —
+    // `is (Held(...) | Confirmed(...))` — recommended for readability around
+    // an or-pattern but not otherwise meaningful; `is` already greedily
+    // parses one whole pattern, `|`-chain included, with or without them.
+    // #472: also never admits `refined_pattern` inside (mirrors `is_expr` —
+    // a refined pattern can only ever be a match arm's outermost pattern,
+    // never nested, parenthesized, or one alternative of an outer `|`-chain).
+    paren_pattern: ($) => seq("(", $._pattern, ")"),
     wildcard_pattern: () => "_",
     // v0.130 §2.3.4: a literal pattern — an integer (optionally negated), a
     // string, or a boolean. A closed set (ADR 0001); no `Float`, no `()`.
@@ -1244,6 +1346,7 @@ module.exports = grammar({
         $.none_expr,
         $.effect_pure_expr,
         $.val_expr,
+        $.wire_expr,
         $.trace_expr,
         $.list_literal,
         $.block,
@@ -1390,6 +1493,12 @@ module.exports = grammar({
         seq("(", sep1(field("pin", $._expression), ","), optional(","), ")"),
         seq("{", optional(sep1($.field_init, ",")), optional(","), "}"),
       ),
+
+    // Slice C: `Wire(<String>)` — a raw, pre-validation argument to a
+    // `system`-tier service address. `prec.right` resolves the `(` against an
+    // ordinary call. The test-context and `system`-tier restrictions are
+    // semantic, left to the checker.
+    wire_expr: ($) => prec.right(seq("Wire", "(", field("input", $._expression), ")")),
 
     self_expr: () => "self",
 

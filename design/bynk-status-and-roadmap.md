@@ -49,7 +49,7 @@ not broken.
 | Area | State | One-line verdict |
 |---|---|---|
 | **Compiler `bynkc`** (~42k LOC) | Feature-complete for v0–v0.54 | Whole language wired end-to-end; ~216 positive + ~40 negative fixtures; `tsc --strict` verifies every project fixture's emitted TypeScript. |
-| **Driver `bynk`** (v0.46–v0.58) | Growing | Thin orchestrator over `bynkc` (override → PATH → sibling resolution). `bynk doctor` — environment check with a pinned output/exit contract (ADRs 0083–0084). `bynk new` (v0.58) — scaffold a complete, runnable project served by `dev` unmodified; offline file-writing, compile-tested template (ADR 0097). `bynk dev` (v0.57) — build + serve locally via `wrangler dev` in local mode; watch/rebuild on save (#524) and **multi-context local dev** (v0.167, ADR 0192) have both landed, so a multi-context project runs locally with live cross-context Service Bindings between its workers. The `doctor → new → dev` on-ramp arc is complete. Next intent: `new`'s `init`/`--template` follow-ups, multi-context `deploy` (it still ships one Worker at a time), and the optional first-party `workerd` dev server. |
+| **Driver `bynk`** (v0.46–v0.58) | Growing | Thin orchestrator over `bynkc` (override → PATH → sibling resolution). `bynk doctor` — environment check with a pinned output/exit contract (ADRs 0083–0084). `bynk new` (v0.58) — scaffold a complete, runnable project served by `dev` unmodified; offline file-writing, compile-tested template (ADR 0097). `bynk dev` (v0.57) — build + serve locally via `wrangler dev` in local mode; watch/rebuild on save (#524) and **multi-context local dev** (v0.167, ADR 0192) have both landed, so a multi-context project runs locally with live cross-context Service Bindings between its workers. `bynk deploy` **shipped and retired** (v0.154–v0.220.2, all six slices — provisioning-state model + KV MVP, DO/queue provisioning, multi-context Service-Binding ordering, secrets, environments, and reconciliation maturity + `--prune`; closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). The `doctor → new → dev → deploy` driver arc is complete. Next intent: `new`'s `init`/`--template` follow-ups, the state-migrations track (now the front of the adoption-blocker line — see [`bynk-adoption-sequencing.md`](bynk-adoption-sequencing.md)), and the optional first-party `workerd` dev server. |
 | **Actors track** (v0.45–v0.54) | ✅ Complete & closed | `actor` contracts, the `by` clause, BearerToken (JWT/HS256), Signature (HMAC-SHA256), multi-actor sum dispatch, authorisation invariants, cross-context `CallerId`. Q8 (replay/ordering) deferred to a future Events track. |
 | **`bynk-fmt`** | Strong | Full formatter contract incl. comment preservation; idempotent, round-trip-tested over the corpus. |
 | **`bynk-lsp`** | Rich | Diagnostics, hover, definition, completion, signature help, inlay hints, semantic tokens, codeLens, call hierarchy, implementation nav, folding/selection, workspace symbols, rename/references (v0.24–v0.43). The completion overhaul + editor polish shipped (ADRs 0093–0095, [`bynk-lsp-spec.md`](bynk-lsp-spec.md)); remaining: editor-agnostic setup docs + marketplace publishing ([#257](https://github.com/accuser/bynk/issues/257)/[#258](https://github.com/accuser/bynk/issues/258)). |
@@ -151,18 +151,31 @@ increments.
 - **`Int` precision.** `Int` literals validate as `i64` at lex time but emit to a
   JS `number`, so values beyond 2^53 lose precision at runtime. Decide: narrow
   to safe-integer range, or emit `bigint`.
-- **Workers-edge type safety.** The `bundle` path is fully typed; `workers`-mode
-  boundary emission leans on `any` plus runtime serialisation helpers, so static
-  guarantees are weakest exactly at the edge. `Bytes` (ADR 0142 D8) makes this
-  concrete: a value that does not round-trip through raw JSON (it must be
-  base64-encoded) mis-encodes on the erased wire, so a bare `Bytes` in a
-  `workers` cross-context signature is diagnosed as not-yet-supported
-  (`bynk.types.bytes_at_workers_boundary`) rather than silently corrupted —
-  pending the typed cross-context boundary fix that would lift the restriction.
-- **Brittle cross-context structural matching.** Refinement predicates are
-  compared positionally; two structurally identical types whose predicates are
-  written in a different order spuriously fail to match. Documented as
-  conservative, but a foot-gun.
+- **Workers-edge type safety** — *closed in v0.176 (#642)*. The `workers` boundary
+  carried its own codec dispatch, separate from the one the `bundle` and `Json`
+  paths use, and it leaned on `as JsonValue` casts and an unvalidated identity
+  deserialiser. All wire positions now route through the single generated-codec
+  path, so the edge's static guarantees match the bundle path's. `Bytes` was the
+  concrete casualty and is the concrete proof: it mis-round-tripped because the
+  boundary cast it outbound while decoding it inbound, so ADR 0142 D8 diagnosed a
+  bare `Bytes` rather than corrupt it; with one symmetric dispatch the
+  restriction is retired and the diagnostic withdrawn. One bounded residue is
+  named in `emission.md` §7.3.4b: the runtime-owned error types
+  (`ValidationError`, `JsonError`, `HttpResult`, `QueueResult`) still pass through
+  uncoded. The other — a context reaching a callee-owned type's codec through the
+  callee's *module* rather than generating its own — is **closed in #661**: each
+  Worker now generates its own cross-context codecs and imports no sibling
+  context's module as a value. (ADR 0199 Decision G called that a prerequisite for
+  the cross-context contract hash; ADR 0200 Decision H recorded the correction —
+  the hash shipped in v0.177 without it.)
+- **Brittle cross-context structural matching** — *closed in v0.177 (#643)*.
+  Refinement predicates were compared positionally, so two structurally identical
+  types whose predicates were written in a different order spuriously failed to
+  match. They now compare as a **set**, through the same canonical normal form
+  that backs the cross-context contract hash (ADR 0200) — so the matcher and the
+  hash cannot disagree about what "the same refinement" is. The fix was not
+  merely adjacent to the hash but a precondition for it: hashing source order
+  would have 409'd two contexts that agree.
 - **Open ADR.** ADR 0020 (adapter npm-dependency trust policy) is the one ADR
   still marked **Open**.
 
@@ -235,12 +248,14 @@ adoption until a team can ship, evolve stored state, and share code.
 
 The forward plan lives in dedicated, domain-scoped docs:
 
-- **Adoption blockers (first)** — **deploy** ([`tracks/deploy.md`](tracks/deploy.md),
-  spine [#558](https://github.com/accuser/bynk/issues/558)); a **state-migrations**
-  track (to be opened); an **ecosystem/packaging** track (to be written). Deploy
-  and migrations gate 1.0 ([`bynk-1.0-definition.md`](bynk-1.0-definition.md),
-  §7(4): 1.0 = Foundations stability + deploy + state migrations; ecosystem is
-  1.0-optional).
+- **Adoption blockers (first)** — **deploy**, shipped and retired (spine
+  [#558](https://github.com/accuser/bynk/issues/558), closing summary in
+  [`archive/retired-tracks.md`](archive/retired-tracks.md)); a
+  **state-migrations** track (to be opened, now the front of the line); an
+  **ecosystem/packaging** track (to be written). Deploy and migrations gate 1.0
+  ([`bynk-1.0-definition.md`](bynk-1.0-definition.md), §7(4): 1.0 = Foundations
+  stability + deploy + state migrations; ecosystem is 1.0-optional) — **Gate 2
+  (`deploy`) is now satisfied.**
 - **Language vision (deferred behind the blockers)** — the next feature tracks,
   in rough order: an **Events** track (pub-sub + the deferred actors Q8
   replay/ordering), then **sagas/compensation**, the **query algebra + rich
@@ -258,8 +273,8 @@ The forward plan lives in dedicated, domain-scoped docs:
 
 1. Add the implementation-status banner to `bynk-type-system.md` (Float vs
    Decimal; which primitives ship).
-2. Resolve the `Int`-precision and workers-edge `any` issues before Bynk handles
-   large integers or where boundary type-safety is load-bearing.
+2. Resolve the `Int`-precision issue before Bynk handles large integers. (The
+   workers-edge `any` half of this item closed in v0.176, #642.)
 3. Bring `tree-sitter-bynk` up to the current surface (see engineering roadmap).
 4. Close or re-scope the one **Open** ADR (0020, adapter dependency trust).
 

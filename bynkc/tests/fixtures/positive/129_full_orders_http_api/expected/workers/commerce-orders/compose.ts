@@ -14,7 +14,7 @@ export function compose(env: Env) {
     async http_POST_orders(body: any) {
       return handlers.orders.http_POST_orders(body, deps);
     },
-    async placement(total: any) {
+    async placement(total: handlers.Money) {
       return handlers.placement.call(total, deps);
     },
   };

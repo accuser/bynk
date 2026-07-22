@@ -1,0 +1,8 @@
+commons bundle
+
+uses bynk.locale
+
+messages en @reference {
+  "a" => "b"
+  "a" => "c"
+}

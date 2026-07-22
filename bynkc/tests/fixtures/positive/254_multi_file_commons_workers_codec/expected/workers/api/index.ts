@@ -16,10 +16,12 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "check": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "fbe47bd0bcac1408") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "check", expected: "fbe47bd0bcac1408", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_c = handlers.deserialise_Cents(args, "$");
             if (__r_c.tag === "Err") return new Response(JSON.stringify(__r_c.error), { status: 400, headers: { "content-type": "application/json" } });
-            const c = __r_c.value;
+            const c = __r_c.value as unknown as handlers.Cents;
             const result = await surface.check(c);
             const body = result as JsonValue;
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });

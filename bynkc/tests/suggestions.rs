@@ -310,6 +310,134 @@ fn refined_raw_quick_fix_drops_dot_raw() {
     assert_clean("app/refine.bynk", &fixed);
 }
 
+// -- #852: add missing record field(s) --
+
+/// Overlay for `app/refine.bynk`: a `Point { x: Int, y: Int }` record plus an
+/// `fn mk()` whose tail expression is `body` (a `Point { … }` literal).
+fn point_commons(body: &str) -> String {
+    format!(
+        "commons app.refine\n\ntype Point = {{ x: Int, y: Int }}\n\nfn mk() -> Point {{\n  {body}\n}}\n"
+    )
+}
+
+/// The suggestions on the first `bynk.resolve.missing_field` diagnostic.
+fn missing_field_suggestions(diags: &[bynkc::Diagnostic]) -> Vec<Suggestion> {
+    diags
+        .iter()
+        .find(|d| d.error.category == "bynk.resolve.missing_field")
+        .map(|d| d.error.suggestions.clone())
+        .unwrap_or_default()
+}
+
+/// A fixed buffer must format without error and be fmt-idempotent (#852's
+/// "round-trips through fmt" acceptance condition).
+fn assert_fmt_roundtrips(fixed: &str) {
+    let opts = bynkc::fmt::FormatOptions::default();
+    let once = bynkc::fmt::format_source(fixed, &opts).expect("fixed buffer formats");
+    let twice = bynkc::fmt::format_source(&once, &opts).expect("fmt is idempotent");
+    assert_eq!(once, twice, "fmt not idempotent on the fixed buffer");
+}
+
+#[test]
+fn add_single_missing_record_field_appends_after_the_last() {
+    let text = point_commons("Point { x: 1 }");
+    let s = sole_suggestion(
+        &diagnose_with("app/refine.bynk", &text),
+        "bynk.resolve.missing_field",
+    );
+    assert_eq!(s.message, "add field `y`");
+    let fixed = apply(&text, &s);
+    assert_eq!(fixed, point_commons("Point { x: 1, y: 0 }"));
+    assert_clean("app/refine.bynk", &fixed);
+    assert_fmt_roundtrips(&fixed);
+}
+
+#[test]
+fn add_all_missing_record_fields_into_an_empty_literal() {
+    let text = point_commons("Point {}");
+    let diags = diagnose_with("app/refine.bynk", &text);
+    // Two missing fields → two diagnostics, each keyed on the type name.
+    let missing = diags
+        .iter()
+        .filter(|d| d.error.category == "bynk.resolve.missing_field")
+        .count();
+    assert_eq!(missing, 2);
+    let sugs = missing_field_suggestions(&diags);
+    // The first diagnostic carries a single-field fix *and* the all-missing one.
+    assert!(sugs.iter().any(|s| s.message == "add field `x`"));
+    let all = sugs
+        .iter()
+        .find(|s| s.message == "add all missing fields")
+        .expect("all-missing fix on the first diagnostic");
+    let fixed = apply(&text, all);
+    assert_eq!(fixed, point_commons("Point { x: 0, y: 0 }"));
+    assert_clean("app/refine.bynk", &fixed);
+    assert_fmt_roundtrips(&fixed);
+}
+
+#[test]
+fn empty_literal_fix_is_canonical_despite_interior_spacing() {
+    // A non-canonical empty literal (`Point {  }`) — the fix replaces the whole
+    // ` { … }` tail, so the result is fmt-canonical regardless of the original
+    // interior spacing (the review's cosmetic-idempotency note).
+    let text = point_commons("Point {  }");
+    let all = missing_field_suggestions(&diagnose_with("app/refine.bynk", &text))
+        .into_iter()
+        .find(|s| s.message == "add all missing fields")
+        .expect("all-missing fix");
+    let fixed = apply(&text, &all);
+    // The spaced `{  }` collapses to the canonical record region — the
+    // wrapper is identical on both sides, so this pins the fix's own output.
+    assert_eq!(fixed, point_commons("Point { x: 0, y: 0 }"));
+    assert_clean("app/refine.bynk", &fixed);
+    assert_fmt_roundtrips(&fixed);
+}
+
+#[test]
+fn add_field_defaults_cover_option_and_list() {
+    // `Option` defaults to `None`, `List` to `[]`; both re-check clean.
+    let text = "commons app.refine\n\ntype Bag = { tag: Option[String], items: List[Int] }\n\nfn mk() -> Bag {\n  Bag {}\n}\n";
+    let diags = diagnose_with("app/refine.bynk", text);
+    let all = missing_field_suggestions(&diags)
+        .into_iter()
+        .find(|s| s.message == "add all missing fields")
+        .expect("all-missing fix");
+    let fixed = apply(text, &all);
+    assert!(
+        fixed.contains("Bag { tag: None, items: [] }"),
+        "defaults filled: {fixed:?}"
+    );
+    assert_clean("app/refine.bynk", &fixed);
+    assert_fmt_roundtrips(&fixed);
+}
+
+#[test]
+fn missing_field_of_a_named_type_offers_no_autofix() {
+    // A named type (here a refined `Age`) has no synthesised default: the
+    // single missing field's diagnostic stands with no machine-applicable fix,
+    // and — since the set is not wholly defaultable — no all-missing fix is
+    // offered on the sibling `note` diagnostic either.
+    let text = "commons app.refine\n\ntype Age = Int where InRange(0, 120)\n\ntype P = { age: Age, note: String }\n\nfn mk() -> P {\n  P {}\n}\n";
+    let diags = diagnose_with("app/refine.bynk", text);
+    let age = diags
+        .iter()
+        .find(|d| {
+            d.error.category == "bynk.resolve.missing_field" && d.error.message.contains("`age`")
+        })
+        .expect("the `age` missing-field diagnostic");
+    assert!(
+        age.error.suggestions.is_empty(),
+        "no autofix for a named-typed field"
+    );
+    assert!(
+        diags
+            .iter()
+            .flat_map(|d| &d.error.suggestions)
+            .all(|s| s.message != "add all missing fields"),
+        "no all-missing fix when part of the set is non-defaultable"
+    );
+}
+
 #[test]
 fn refined_field_access_carries_the_widen_note_without_an_autofix() {
     // A non-`.raw` field on a refined value still gets the prescriptive note,

@@ -13,7 +13,7 @@ export function compose(env: Env) {
   const Jwt = new tokens__binding.StubJwt({ Log: new logging__binding.ConsoleLog() });
   const deps = { Jwt };
   return {
-    async login(sub: any) {
+    async login(sub: string) {
       return handlers.login.call(sub, deps);
     },
   };

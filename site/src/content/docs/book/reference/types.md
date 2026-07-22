@@ -356,17 +356,59 @@ Generic records emit an **erased** TypeScript generic interface — `type
 Paginated[T]` becomes `export interface Paginated<T>` — exactly as a generic
 function erases to `function f<A>(…)`.
 
-### Generic records are internal values (v0.157)
+### Generic records at the boundary (v0.174)
 
-In this version a generic record is a **non-boundary** value: it can be
-constructed, passed between functions, returned, and bound to locals, but it
-cannot appear in a serialised position — a field of another record, a sum
-payload, a service or agent handler signature, agent state, or a
-`Json.encode`/`Json.decode` target (`bynk.generics.generic_record_at_boundary`).
-Use a concrete (non-generic) type for a boundary payload; a boundary story for
-generic records is a later increment. Methods on a generic type are likewise not
-yet supported (`bynk.generics.method_on_generic_type`) — write a free function
-taking the generic value instead.
+A generic-record instantiation is **serialisable** — it may appear in a field of
+another record, a sum payload, a service or agent handler signature, agent
+state, or a `Json.encode`/`Json.decode` target — exactly when its type arguments
+are. The compiler generates a **monomorphised codec** per instantiation: a
+`Paginated[User]` boundary emits `serialise_Paginated_User` /
+`deserialise_Paginated_User`, specialised to the concrete arguments and
+delegating to their codecs (`serialise_List_User`, `serialise_Option_String`).
+The emitted TypeScript interface stays the erased `Paginated<T>`; only the codec
+is per-instantiation, matching how `List`/`Map`/`Result` already specialise.
+
+```bynk
+fn save(page: Paginated[User]) -> String {
+  Json.encode(page)                          -- serialise_Paginated_User
+}
+
+fn load(s: String) -> Result[Paginated[User], JsonError] {
+  Json.decode[Paginated[User]](s)            -- deserialise_Paginated_User
+}
+```
+
+A **non-serialisable argument** is still rejected, at the argument: a function,
+`Query`, `Stream`, or `Connection` type inside the instantiation
+(`Paginated[Int -> Int]`) draws that type's own boundary error
+(`bynk.types.function_at_boundary`, …), and an uncodable `Json` target draws
+`bynk.types.json_uncodable`.
+
+A **recursive** generic record — one that transitively contains itself, whether
+directly, through another record, or through an `Option`/`List` wrapper
+(`type Node[T] = { value: T, next: Option[Node[T]] }`) — has no finite set of
+monomorphised codecs, so it is rejected with
+`bynk.generics.recursive_generic_at_boundary`. Because a record field is itself a
+boundary position, the self-referential field makes such a type **undeclarable**,
+not merely unusable at a boundary — the error fires at the declaration. (A
+*non-generic* recursive record is unaffected: its single codec is
+self-referential and terminates on the data, so it declares and serialises as
+before; only the per-instantiation generic form is deferred.) Use a concrete
+recursive type, or break the cycle.
+
+A generic type may carry **instance methods**. A method whose receiver is a
+generic type sees the type's own parameters in scope alongside any it declares
+itself, so `fn Box.map[U](self, f: A -> U) -> Box[U]` reads `A` from the receiver
+`Box[A]` and infers `U` from the argument. It erases to a generic
+namespace-object method — `map<A, U>(self: Box<A>, f: (a: A) => U): Box<U>` — the
+type's parameters threaded onto each method (the namespace object itself cannot
+carry them). The type arguments are inferred from the receiver and the argument
+types; the explicit `x.map[U](…)` form is a later increment. **Static** methods
+on a generic type stay deferred (`bynk.generics.method_on_generic_type`) — they
+have no receiver to supply the type's parameters. A refined or opaque body cannot
+be generic (its base is a fixed primitive); only a record or **sum** body may be
+(`bynk.generics.generic_non_record`), and generic sums are described under
+[Sum types](#sum-types).
 
 ## Sum types
 
@@ -418,6 +460,37 @@ converts a `Result[T, E]` into `Result[_, F]` only when `F` declares `E`
 directly. Mapping a domain error to an *HTTP* status stays an explicit `match`
 in the handler — by design, not an embedding.
 
+### Generic sums
+
+A sum body may carry `[A, B]` type parameters, exactly as a record body does. A
+parameter is an unconstrained, bound-free name resolved as a rigid variable
+inside the variant payloads:
+
+```bynk
+type ApiResult[T] =
+  | Loaded(value: T)
+  | Failed(message: String)
+```
+
+A reference applies concrete arguments (`ApiResult[User]`). **Construction**
+infers the arguments argument-directed from the variant's payload
+(`Loaded(user)` is `ApiResult[User]` because `user : User`); a variant whose
+payload cannot determine a parameter — a payload-less variant, or one that does
+not mention it (`Failed`) — leans on the binding's expected type as the pressure
+valve (`let r: ApiResult[User] = Failed("...")`), and reports
+`bynk.generics.uninferable_type_arg` when neither grounds it. **`match`**
+substitutes the arguments into each arm's payload binding (`Loaded(v)` binds `v :
+User`). Emission is **erased** TypeScript generics — one
+`export type ApiResult<T>` discriminated union, with each payload constructor a
+generic arrow (`Loaded: <T>(value: T): ApiResult<T> => …`).
+
+Like a generic record, a generic-sum instantiation is **serialisable** exactly
+when its type arguments are, through a monomorphised codec per instantiation
+(`serialise_ApiResult_User` / `deserialise_ApiResult_User`); a recursive generic
+sum has no finite codec set and is rejected at a boundary with
+`bynk.generics.recursive_generic_at_boundary`. A generic sum may not carry an
+`embeds` clause (`bynk.generics.generic_sum_embeds`).
+
 ## Opaque types
 
 An opaque type is backed by another type but is nominally distinct:
@@ -449,4 +522,5 @@ match s {
 ```
 
 A `match` must be exhaustive (`bynk.types.non_exhaustive_match`); a `match` is an
-expression whose arms must share a type (`bynk.types.match_arm_mismatch`).
+expression whose arms must join to a common type — their least upper bound, so a
+refined type and its base agree at the base (`bynk.types.match_arm_mismatch`).

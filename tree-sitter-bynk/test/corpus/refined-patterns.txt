@@ -1,0 +1,92 @@
+==========================
+refined pattern — Int InRange dispatch
+==========================
+
+commons d {
+	fn classify(code: Int) -> String {
+		match code {
+			_ where InRange(200, 299) => "success"
+			_ where InRange(400, 499) => "client error"
+			_ => "other"
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (refined_pattern
+              inner: (wildcard_pattern)
+              predicate: (refinement
+                (pred_call
+                  name: (predicate_name)
+                  (number_literal)
+                  (number_literal))))
+            body: (string_literal))
+          (match_arm
+            pattern: (refined_pattern
+              inner: (wildcard_pattern)
+              predicate: (refinement
+                (pred_call
+                  name: (predicate_name)
+                  (number_literal)
+                  (number_literal))))
+            body: (string_literal))
+          (match_arm
+            pattern: (wildcard_pattern)
+            body: (string_literal)))))))
+
+==========================
+refined pattern — String, multiple `&&`-joined predicates
+==========================
+
+commons d {
+	fn label(s: String) -> Int {
+		match s {
+			_ where Matches("^[a-z]+$") && NonEmpty => 1
+			_ => 0
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (refined_pattern
+              inner: (wildcard_pattern)
+              predicate: (refinement
+                (pred_call
+                  name: (predicate_name)
+                  (string_literal))
+                (pred_atom
+                  (predicate_name))))
+            body: (number_literal))
+          (match_arm
+            pattern: (wildcard_pattern)
+            body: (number_literal)))))))

@@ -8,14 +8,42 @@ The project, its toolchain, and its in-language surface were renamed from
 ### Toolchain
 
 - The compiler binary `karnc` is now **`bynkc`**; the driver `karn` is now
-  **`bynk`** (e.g. `bynk build`, `bynk test`, `bynk doctor`). The language
+  **`bynk`** (e.g. `bynk dev`, `bynk test`, `bynk doctor`). The language
   server `karnc-lsp` is now **`bynkc-lsp`**.
 - The project manifest `karn.toml` is now **`bynk.toml`**.
 - The source file extension `.karn` is now **`.bynk`**.
-- `bynk deploy` provisions the KV namespace required by a single-context
-  Cloudflare Worker, stores its id in committed `bynk.deploy.lock`, and pushes
-  through Wrangler. It supports a non-mutating `--dry-run` plan, JSON output,
-  confirmation / `--yes`, and idempotent re-deploys (#583).
+- `bynk deploy` provisions the KV namespace required by a Cloudflare Worker,
+  stores its id in committed `bynk.deploy.lock`, and pushes through Wrangler. It
+  supports a non-mutating `--dry-run` plan, JSON output, confirmation / `--yes`,
+  and idempotent re-deploys (#583).
+- `bynk deploy` ships **every** context of a project, ordered so that each
+  Worker is uploaded after the Workers it binds to — Cloudflare resolves a
+  Service Binding at upload and rejects one whose target does not yet exist, so
+  the order is a correctness requirement. It previously refused any project with
+  more than one context. `--context NAME` re-pushes one context and reports
+  (rather than pushes into) a dependency that was never deployed. A failure
+  stops the run and keeps what landed; a re-run resumes in the same order
+  (#601). **Breaking (pre-1.0):** `--format json` describes every context, so
+  the top-level `worker`, `kv`, and `deploy` fields are replaced by a `contexts`
+  array alongside the resolved `order` — read `.contexts[0].worker` for
+  `.worker`, and `.contexts[0].action` (`deploy` or `redeploy`) for `.deploy`,
+  which was always `true`.
+- `bynk deploy` provisions **every** Cloudflare resource a context declares, not
+  only KV. A `service … from queue("n")` has its queue created — by name, before
+  the push, because `wrangler deploy` will not create one for you — it checks
+  and fails with "To create it, run: wrangler queues create" — and an `agent`'s
+  Durable Object migration is applied by `wrangler deploy`. Each queue is
+  checked against Cloudflare before every deploy and created only if absent, so
+  a queue deleted outside Bynk comes back on the next one. Migration state is **Cloudflare's**, and `bynk.deploy.lock` records
+  none of it, so the plan's `migration <tag>` line states what the push will ask
+  for and is marked advisory; `bynk deploy` correspondingly cannot report
+  migration drift. The plan gains `queue create|reuse <name>` and
+  `migration <tag>` lines (in `--format json`, a `queues` array and a
+  `migration` object per context). The lock file gains
+  `environments.<env>.queues`, a list of created queue names, **additively** —
+  an existing lock file loads unchanged, and the version stays `1`. CI's refusal
+  to create an unrecorded resource still covers KV alone: a queue is addressed
+  by the name in your source, so CI creating one strands nothing (#600).
 - `bynk dev` serves **every** context of a multi-context project at once, with
   the Cloudflare Service Bindings between them wired, so cross-context calls
   resolve locally — one `wrangler dev` per context, connected through wrangler's

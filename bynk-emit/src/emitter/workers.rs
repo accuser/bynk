@@ -9,6 +9,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::emitter::http_handler_method_name;
+use crate::emitter::ts_ident;
 use crate::emitter::wrangler::{agent_binding_name, consumed_binding_name};
 use crate::project::UnitTable;
 use bynk_syntax::ast::*;
@@ -379,18 +380,51 @@ fn worker_cross_caps(
     out
 }
 
+/// v0.176 (#642, Decision E): an `on call` wrapper's parameters carry their real
+/// TS type instead of `any`. This is what makes the boundary's type-safety
+/// *checkable*: with `any` here, a wrong codec still type-checks, so the only
+/// guard against regression would be the goldens. Named types are qualified
+/// against the `handlers` namespace this file already imports — `compose.ts`
+/// imports no type names of its own.
+///
+/// Scoped to `on call` deliberately. The other wrappers keep `: any` because
+/// their parameters are not all codec-produced: an HTTP or WebSocket wrapper
+/// mixes a deserialised `body` with route/query params the entry lifts from the
+/// URL as raw strings, so typing them against the *declared* type would assert a
+/// coercion that seam does not perform. Those are separate boundaries with their
+/// own extraction rules, and they are not what this increment fixed.
 fn emit_call_wrapper(
     out: &mut String,
     sname: &str,
     h: &Handler,
     actors: &HashMap<String, ActorDecl>,
 ) {
+    // Qualify *every* named type in the signature, not a subset. The wrapper
+    // forwards to `handlers.{sname}.call(...)`, whose parameter `handlers.ts`
+    // types with this same name in its own scope — so `handlers.<Name>` resolves
+    // by construction, for a context-declared type and for a `uses`-imported
+    // commons type alike (the latter is re-exported rebranded, and is exactly
+    // the case a `table.types`-derived scope would miss).
+    let scope: HashSet<String> = h
+        .params
+        .iter()
+        .flat_map(|p| named_types_in(&p.type_ref))
+        .collect();
+    // The wrapper forwards positionally, so the binder and the forwarded argument
+    // must agree — route both through `ts_ident` so a reserved-word param name
+    // (`class`, `void`, …) doesn't emit an invalid TS binding (#723).
     let mut param_decls: Vec<String> = h
         .params
         .iter()
-        .map(|p| format!("{}: any", p.name.name))
+        .map(|p| {
+            format!(
+                "{}: {}",
+                ts_ident(&p.name.name),
+                crate::emitter::ts_type_ref_qualified(&p.type_ref, &scope, "handlers")
+            )
+        })
         .collect();
-    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
     // v0.54: a `by c: Caller` handler's wrapper takes the caller's context name
     // (read from the header in the entry dispatch) and threads it into `deps`
     // as the `CallerId` identity — mirroring the Bearer identity threading.
@@ -417,9 +451,9 @@ fn emit_cron_wrapper(out: &mut String, sname: &str, cron_idx: usize, h: &Handler
     let param_decls: Vec<String> = h
         .params
         .iter()
-        .map(|p| format!("{}: any", p.name.name))
+        .map(|p| format!("{}: any", ts_ident(&p.name.name)))
         .collect();
-    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
     let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
     let _ = writeln!(
         out,
@@ -436,9 +470,9 @@ fn emit_queue_wrapper(out: &mut String, sname: &str, queue_idx: usize, h: &Handl
     let param_decls: Vec<String> = h
         .params
         .iter()
-        .map(|p| format!("{}: any", p.name.name))
+        .map(|p| format!("{}: any", ts_ident(&p.name.name)))
         .collect();
-    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
     let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
     let _ = writeln!(
         out,
@@ -471,7 +505,11 @@ fn emit_websocket_upgrade(
     // The route params (e.g. `roomId`) ride as wrapper arguments — the entry
     // extracts them from the upgrade URL's query string and passes them through.
     let mut decls: Vec<String> = vec!["request: Request".to_string()];
-    decls.extend(h.params.iter().map(|p| format!("{}: any", p.name.name)));
+    decls.extend(
+        h.params
+            .iter()
+            .map(|p| format!("{}: any", ts_ident(&p.name.name))),
+    );
     let _ = writeln!(out, "    async ws_{sname}_open({}) {{", decls.join(", "));
     // Require an actual WebSocket upgrade before anything else.
     let _ = writeln!(
@@ -579,12 +617,16 @@ fn emit_websocket_upgrade(
     // on-open body. A malformed value must never reach the DO typed as though it had
     // satisfied its refinement. (Validation runs after auth, so an unauthenticated
     // client still sees only `401`.)
+    // `validated` is keyed by the Bynk param name (so the `key` lookup and the
+    // arg walk below match) but its *value* is the JS expression to forward —
+    // which references the `ts_ident`-renamed wrapper binder, not the raw name.
     let mut validated: HashMap<String, String> = HashMap::new();
     for p in &h.params {
         let pn = &p.name.name;
+        let jn = ts_ident(pn);
         match &p.type_ref {
             TypeRef::Named(id) => {
-                let _ = writeln!(out, "      const __r_{pn} = handlers.{}.of({pn});", id.name);
+                let _ = writeln!(out, "      const __r_{pn} = handlers.{}.of({jn});", id.name);
                 let _ = writeln!(
                     out,
                     "      if (__r_{pn}.tag === \"Err\") return new Response(JSON.stringify({{ kind: \"RefinementViolation\", path: \"param.{pn}\", violation: __r_{pn}.error }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
@@ -594,7 +636,7 @@ fn emit_websocket_upgrade(
             // A plain `String` param (or a shape the static check already rejected)
             // passes through unchanged.
             _ => {
-                validated.insert(pn.clone(), pn.clone());
+                validated.insert(pn.clone(), jn);
             }
         }
     }
@@ -606,7 +648,7 @@ fn emit_websocket_upgrade(
             validated
                 .get(&p.name.name)
                 .cloned()
-                .unwrap_or_else(|| p.name.name.clone())
+                .unwrap_or_else(|| ts_ident(&p.name.name))
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -636,7 +678,9 @@ fn emit_http_wrapper(
     seam: Option<&bynk_check::actors::BearerSeam>,
 ) {
     let method_key = http_handler_method_name(method, path);
-    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    // Route params (and the `body`) forward positionally; `ts_ident` keeps a
+    // reserved-word param name from emitting an invalid binder (#723).
+    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
 
     // v0.47: a Bearer handler's wrapper takes the request, runs the fail-closed
     // verification seam, mints the identity, and threads it into `deps`. The
@@ -645,7 +689,11 @@ fn emit_http_wrapper(
     // the entry's `httpResultToResponse` maps. The body never runs unverified.
     if let Some(seam) = seam {
         let mut decls: Vec<String> = vec!["request: Request".to_string()];
-        decls.extend(h.params.iter().map(|p| format!("{}: any", p.name.name)));
+        decls.extend(
+            h.params
+                .iter()
+                .map(|p| format!("{}: any", ts_ident(&p.name.name))),
+        );
         let secret = crate::emitter::escape_ts_string(&seam.secret);
         let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
         let _ = writeln!(
@@ -717,7 +765,7 @@ fn emit_http_wrapper(
     let param_decls: Vec<String> = h
         .params
         .iter()
-        .map(|p| format!("{}: any", p.name.name))
+        .map(|p| format!("{}: any", ts_ident(&p.name.name)))
         .collect();
     let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
     let _ = writeln!(
@@ -745,13 +793,17 @@ fn emit_http_oidc_wrapper(
     seam: &bynk_check::actors::OidcSeam,
 ) {
     let method_key = http_handler_method_name(method, path);
-    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
     let issuer = crate::emitter::escape_ts_string(&seam.issuer);
     let audience = crate::emitter::escape_ts_string(&seam.audience);
     let jwks = crate::emitter::escape_ts_string(&seam.jwks);
 
     let mut decls: Vec<String> = vec!["request: Request".to_string()];
-    decls.extend(h.params.iter().map(|p| format!("{}: any", p.name.name)));
+    decls.extend(
+        h.params
+            .iter()
+            .map(|p| format!("{}: any", ts_ident(&p.name.name))),
+    );
     let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
     let _ = writeln!(
         out,
@@ -829,11 +881,13 @@ fn emit_http_sum_wrapper(
     // The wrapper takes the request first (it reads the body / headers), then
     // the path params (parsed in the entry and passed through); the `body`
     // param is parsed here, not passed in.
-    let path_params: Vec<&String> = h
+    // `ts_ident`-renamed so a reserved-word path param forwards as a valid binder
+    // (#723); the wrapper's decl and its forwarded arg both read from this list.
+    let path_params: Vec<String> = h
         .params
         .iter()
-        .map(|p| &p.name.name)
-        .filter(|n| *n != "body")
+        .filter(|p| p.name.name != "body")
+        .map(|p| ts_ident(&p.name.name))
         .collect();
     let has_body = h.params.iter().any(|p| p.name.name == "body");
     let mut decls = vec!["request: Request".to_string()];
@@ -956,4 +1010,37 @@ fn emit_http_sum_wrapper(
         if call_args.is_empty() { "" } else { ", " },
     );
     let _ = writeln!(out, "    }},");
+}
+
+/// v0.176 (#642): the user-named types appearing anywhere in a type-ref, including
+/// through generic arguments — the set a compose wrapper qualifies against the
+/// `handlers` namespace.
+fn named_types_in(r: &TypeRef) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(r: &TypeRef, out: &mut Vec<String>) {
+        match r {
+            TypeRef::Named(id) => out.push(id.name.clone()),
+            TypeRef::App { name, args, .. } => {
+                out.push(name.name.clone());
+                for a in args {
+                    walk(a, out);
+                }
+            }
+            TypeRef::Result(a, b, _) => {
+                walk(a, out);
+                walk(b, out);
+            }
+            TypeRef::Map(k, v, _) => {
+                walk(k, out);
+                walk(v, out);
+            }
+            TypeRef::Option(a, _)
+            | TypeRef::List(a, _)
+            | TypeRef::Effect(a, _)
+            | TypeRef::HttpResult(a, _) => walk(a, out),
+            _ => {}
+        }
+    }
+    walk(r, &mut out);
+    out
 }

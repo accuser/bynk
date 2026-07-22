@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "../../runtime.js";
 
-import * as demo_counter from "../demo-counter/handlers.js";
+import type * as demo_counter from "../demo-counter/handlers.js";
 
 export type ApiError =
     { readonly tag: "Failed" };
@@ -14,7 +14,7 @@ export const ApiError = {
 
 export const tick = {
   async call(id: string, deps: { env: { DEMO_COUNTER: ServiceBinding } }): Promise<Result<number, ApiError>> {
-    const r = await callService(deps.env.DEMO_COUNTER, "bump", id as JsonValue, demo_counter.deserialise_Result_Int_CounterError, "demo.api");
+    const r = await callService(deps.env.DEMO_COUNTER, "bump", id as JsonValue, deserialise_Result_Int_CounterError, "demo.api", "259d4828f5facab5");
     switch (r.tag) {
       case "Ok": {
         const n = r.value;
@@ -74,6 +74,56 @@ export function deserialise_Result_Int_ApiError(json: JsonValue, path: string = 
   if (__r_e.tag === "Err") return __r_e;
   const __e = __r_e.value;
     return Ok(Err(__e) as Result<number, ApiError>);
+  }
+  return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
+}
+
+export function serialise_CounterError(value: demo_counter.CounterError): JsonValue {
+  switch (value.tag) {
+    case "Overflow":
+      return { kind: "Overflow" };
+  }
+}
+
+export function deserialise_CounterError(json: JsonValue, path: string = "$"): Result<demo_counter.CounterError, BoundaryError> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  const kind = obj["kind"];
+  switch (kind) {
+    case "Overflow":
+      return Ok({ tag: "Overflow" } as demo_counter.CounterError);
+    default:
+      return Err({ kind: "StructuralMismatch", path, expected: "sum variant kind", actual: String(kind) });
+  }
+}
+
+
+export function serialise_Result_Int_CounterError(value: Result<number, demo_counter.CounterError>): JsonValue {
+  if (value.tag === "Ok") return { kind: "Ok", value: value.value as JsonValue };
+  return { kind: "Err", error: serialise_CounterError(value.error) };
+}
+
+export function deserialise_Result_Int_CounterError(json: JsonValue, path: string = "$"): Result<Result<number, demo_counter.CounterError>, BoundaryError> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  if (obj["kind"] === "Ok") {
+  if (typeof obj["value"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "number", actual: typeof obj["value"] });
+  }
+  if (!Number.isInteger(obj["value"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.value`, expected: "integer", actual: String(obj["value"]) });
+  }
+  const __v = obj["value"];
+    return Ok(Ok(__v) as Result<number, demo_counter.CounterError>);
+  } else if (obj["kind"] === "Err") {
+  const __r_e = deserialise_CounterError(obj["error"], `${path}.error`);
+  if (__r_e.tag === "Err") return __r_e;
+  const __e = __r_e.value;
+    return Ok(Err(__e) as Result<number, demo_counter.CounterError>);
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Ok | Err", actual: String(obj["kind"]) });
 }

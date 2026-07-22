@@ -1,4 +1,5 @@
-import type { JsonValue } from "./boundary.ts";
+import type { JsonValue, BoundaryError } from "./boundary.ts";
+import type { Result } from "./result.ts";
 
 // v0.9: HttpResult — the built-in HTTP-result sum.
 
@@ -272,6 +273,169 @@ export function httpResultToResponse<T>(
 // (the body is never materialised — permitted, §9.3.2 "MAY").
 export function headResponse(response: Response): Response {
   return new Response(null, { status: response.status, headers: response.headers });
+}
+
+// testing-the-boundary Slice B: the inverse of `httpResultToResponse` for a
+// `system`-tier test. A case drives a route with a real `fetch` and asserts on
+// the returned `HttpResult[T]` (`expect item is Created(_)`), so the harness
+// decodes the `Response` back through this. Status is the discriminator: it
+// picks the canonical variant for each code (a 200 body decodes to `Ok`;
+// `Streaming`/`Raw` — both 200 — are not distinguished, since a test asserting
+// on those would use the unit tier). Value-bearing 2xx parse the JSON body
+// through `deserialiseValue`; error variants recover their `{ error }` message;
+// redirects recover the `Location` header; the rest are bodyless.
+const STATUS_TO_TAG: Record<number, HttpResult<unknown>["tag"]> = {
+  200: "Ok",
+  201: "Created",
+  202: "Accepted",
+  204: "NoContent",
+  301: "MovedPermanently",
+  302: "Found",
+  303: "SeeOther",
+  307: "TemporaryRedirect",
+  308: "PermanentRedirect",
+  400: "BadRequest",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "NotFound",
+  405: "MethodNotAllowed",
+  406: "NotAcceptable",
+  408: "RequestTimeout",
+  409: "Conflict",
+  410: "Gone",
+  411: "LengthRequired",
+  413: "PayloadTooLarge",
+  415: "UnsupportedMediaType",
+  422: "UnprocessableEntity",
+  429: "TooManyRequests",
+  451: "UnavailableForLegalReasons",
+  500: "ServerError",
+  501: "NotImplemented",
+  502: "BadGateway",
+  503: "ServiceUnavailable",
+  504: "GatewayTimeout",
+};
+
+export async function responseToHttpResult<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpResult<T>> {
+  const tag = STATUS_TO_TAG[response.status] ?? "ServerError";
+  switch (tag) {
+    case "Ok":
+    case "Created":
+    case "Accepted": {
+      const json = (await response.json()) as JsonValue;
+      const decoded = deserialiseValue(json);
+      const value = (decoded.tag === "Ok" ? decoded.value : (json as unknown)) as T;
+      return { tag, value };
+    }
+    case "MovedPermanently":
+    case "Found":
+    case "SeeOther":
+    case "TemporaryRedirect":
+    case "PermanentRedirect":
+      return { tag, location: response.headers.get("location") ?? "" };
+    case "BadRequest":
+    case "Conflict":
+    case "PayloadTooLarge":
+    case "UnsupportedMediaType":
+    case "UnprocessableEntity":
+    case "TooManyRequests":
+    case "UnavailableForLegalReasons":
+    case "ServerError":
+    case "NotImplemented":
+    case "BadGateway":
+    case "ServiceUnavailable":
+    case "GatewayTimeout": {
+      let message = "";
+      try {
+        const body = (await response.json()) as { error?: string };
+        message = body.error ?? "";
+      } catch {
+        message = "";
+      }
+      return { tag, message } as HttpResult<T>;
+    }
+    default:
+      // NoContent and the self-describing bodyless statuses.
+      return { tag } as HttpResult<T>;
+  }
+}
+
+// Slice C (testing-the-boundary): the outcome of a `system`-tier address driven
+// with a raw `Wire(…)` argument. A boundary rejection never produces an
+// `HttpResult` (the handler never ran), so a `Wire`-carrying call yields this
+// sum instead: `Rejected(detail)` when the router refused the input before the
+// handler, or `Handled(httpResult)` when it ran. The rejection `detail` carries a
+// `tag` mirroring the router's `BoundaryError.kind` (`RefinementViolation`,
+// `MalformedJson`, `StructuralMismatch`), so `expect r is Rejected(
+// RefinementViolation(_))` lowers to a plain `.tag` test — the value is decoded
+// here; the checker keeps the outcome loose (the runner recovers the shape).
+export type HttpOutcome<T> =
+  | { readonly tag: "Rejected"; readonly value: { readonly tag: string; readonly [k: string]: unknown } }
+  | { readonly tag: "Handled"; readonly value: HttpResult<T> };
+
+// The `BoundaryError.kind`s the router emits when it refuses input *before* the
+// handler — the only shapes that make an outcome `Rejected`. Kept in sync with
+// the router's rejection bodies in `workers_entry.rs`.
+const BOUNDARY_REJECTION_KINDS = new Set(["RefinementViolation", "MalformedJson", "StructuralMismatch"]);
+
+export async function responseToHttpOutcome<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpOutcome<T>> {
+  // Classify on the body's *shape*, not its status. A pre-handler rejection is a
+  // `400` whose body is a `BoundaryError` carrying a recognised `kind`. A
+  // handler that *ran* and returned `BadRequest(msg)` also yields a `400`, but
+  // its body is `{ error: msg }` with no `kind` — the handler produced it, so it
+  // is `Handled`, not `Rejected`. Reading `kind` (rather than the status) is what
+  // keeps "the handler never ran" — the whole meaning of `Rejected` — accurate.
+  if (response.status === 400) {
+    let body: { kind?: unknown } | null = null;
+    try {
+      body = (await response.clone().json()) as { kind?: unknown };
+    } catch {
+      body = null;
+    }
+    if (body && typeof body.kind === "string" && BOUNDARY_REJECTION_KINDS.has(body.kind)) {
+      return {
+        tag: "Rejected",
+        value: { ...(body as Record<string, unknown>), tag: body.kind },
+      };
+    }
+    // No boundary `kind` → the handler produced this `400`; fall through.
+  }
+  // #707: a `405` is `Rejected(MethodNotAllowed)` only when it is the router's
+  // *method fall-through* — a live path reached under a method it declares no
+  // handler for. Classify on shape, not status: the router synthesises that 405
+  // with an `Allow` header (`workers_entry.rs`), whereas a handler that ran and
+  // returned `HttpResult.MethodNotAllowed` yields a bodyless 405 with no `Allow`
+  // — the handler produced it, so it stays `Handled`. Same shape-vs-status care
+  // as the `400` (`kind` body) path.
+  if (response.status === 405 && response.headers.has("allow")) {
+    return { tag: "Rejected", value: { tag: "MethodNotAllowed" } };
+  }
+  const handled = await responseToHttpResult(response, deserialiseValue);
+  return { tag: "Handled", value: handled };
+}
+
+// #706: the outcome of driving a secured route with *no credential* (`by
+// Nobody`). A `401` here is the auth seam refusing the request before the
+// handler ran — `Rejected(Unauthorized)` — which is unambiguous *because the
+// caller sent no credential* (unlike the shared `responseToHttpOutcome`, where a
+// `401` could be a handler-returned `Unauthorized`, so it stays `Handled`). Any
+// other status is decoded normally: a route that is not actually secured lets
+// the request through, and the case observes `Handled` rather than a false
+// `Rejected`.
+export async function responseToUnauthOutcome<T>(
+  response: Response,
+  deserialiseValue: (json: JsonValue) => Result<T, BoundaryError>,
+): Promise<HttpOutcome<T>> {
+  if (response.status === 401) {
+    return { tag: "Rejected", value: { tag: "Unauthorized" } };
+  }
+  return responseToHttpOutcome(response, deserialiseValue);
 }
 
 // v0.131 (ADR 0159): the cross-origin (CORS) policy a `from http` service carries

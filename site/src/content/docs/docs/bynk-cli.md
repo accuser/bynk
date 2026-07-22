@@ -25,10 +25,11 @@ bynk <command> [options]
 | [`bynk doctor`](#bynk-doctor) | Check whether your machine is ready to compile, test, and deploy. |
 | [`bynk new`](#bynk-new) | Scaffold a new, runnable project. |
 | [`bynk dev`](#bynk-dev) | Build the project and serve it locally with `wrangler dev`. |
-| [`bynk deploy`](#bynk-deploy) | Provision the required KV namespace and deploy one Worker to Cloudflare. |
+| [`bynk deploy`](#bynk-deploy) | Provision each context's Cloudflare resources and deploy every Worker, in dependency order. |
 | [`bynk check`](#bynk-check) | Type-check a file or project without writing output. |
 | [`bynk fmt`](#bynk-fmt) | Format `.bynk` source files in place. |
 | [`bynk test`](#bynk-test) | Discover and run a project's tests. |
+| [`bynk explain`](#bynk-explain) | Explain a diagnostic code — what the rule is, why it exists, how to fix it. |
 
 ---
 
@@ -139,33 +140,94 @@ build failure exits non-zero before serving.
 
 ## `bynk deploy`
 
-Provision a KV namespace when needed and deploy a single-context Worker to
-Cloudflare. See [Deploy to Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
+Provision the Cloudflare resources each context declares — KV namespaces, queues,
+and Durable Object migrations — set its secrets, and deploy every context's
+Worker, in Service-Binding dependency order. See [Deploy to
+Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
 for the workflow.
 
 ```text
-bynk deploy [PATH] [--dry-run] [--format short|json] [--yes] [-- <wrangler args>]
+bynk deploy [PATH] [--context NAME] [--dry-run] [--format short|json] [--yes]
+            [--secrets-file PATH] [--secret NAME]... [--force] [-- <wrangler args>]
 ```
 
 | Argument | Default | Meaning |
 |---|---|---|
 | `PATH` | `.` | A directory inside the project. The root is found by walking up for `bynk.toml`. |
-| `--dry-run`, `--plan` | off | Print the KV and deploy plan and exit without changing Cloudflare or `bynk.deploy.lock`. |
+| `--context NAME` | every context | Deploy this context alone, assuming the contexts it consumes are already live. A dependency that has never been deployed is named and refused rather than pushed into — as is one that is live but no longer provides the contract this context was compiled against (`bynk.deploy.contract_skew`, since v0.177; see [Contract skew](/book/guides/projects-build-and-deployment/contract-skew/)). Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
+| `--dry-run`, `--plan` | off | Print the per-context plan and resolved order, then exit without changing Cloudflare or `bynk.deploy.lock`. Works offline — it never authenticates. |
 | `--format FORMAT` | `short` | Plan output: line-oriented `short` or machine-readable `json`. |
-| `--yes` | off | Skip the confirmation required before a namespace is created or a Worker is published. Required for non-interactive calls. |
-| `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler deploy` verbatim. |
+| `--yes` | off | Skip the confirmation required before a resource is created or a Worker is published. Required for non-interactive calls. |
+| `--secrets-file PATH` | — | Read secret **names and values** from a dotenv-style `NAME=value` file. Never committed, never persisted: values move to `wrangler secret put` and are dropped. |
+| `--secret NAME` | — | Set this named secret, taking its **value** from the environment (or a prompt). Repeatable. Needed only for a `bynk.Secrets` name — an actor's declared `auth` secret needs no flag. |
+| `--force` | off | Overwrite a secret that is already set. The default sets only the missing ones, so a re-deploy does not cut a fresh Cloudflare secret version for every secret every time. |
+| `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler deploy` verbatim, for every context deployed. |
 
 **Behaviour** — the command pre-flights Node and Wrangler, compiles into
-`.bynk/deploy/`, reads the generated KV declaration, prints a plan, checks
-Wrangler authentication, and then provisions, materialises, and deploys. The
-Cloudflare id is recorded in the committed, secret-free `bynk.deploy.lock` at
-the project root. A recorded id is reused on later deploys. CI refuses to
-create an unrecorded namespace; provision it locally and commit the lock file
-first.
+`.bynk/deploy/`, reads what each context declares from its generated
+`wrangler.toml`, **topologically sorts the Service-Binding graph so every binding
+target is uploaded before the Worker that binds to it**, prints a per-context
+plan carrying that order, checks Wrangler authentication, and then provisions,
+materialises, sets secrets, and deploys each context in turn. The order is a
+correctness requirement, not a nicety: Cloudflare resolves a Service Binding at
+upload and rejects a Worker whose target does not yet exist. A `consumes` cycle
+cannot arise — the compiler rejects one before emit.
 
-**Exit code** — `0` on a successful plan or deploy; non-zero for missing tools
-or authentication, declined confirmation, compilation failures, an unrecorded
-CI resource, or a Wrangler failure.
+**Secrets** — `deploy` sets three kinds, and the plan marks which is which:
+
+- **`declared`** — an `actor`'s `auth` secret (`Bearer(secret = "…")`,
+  `Signature(secret = "…")`). Supply only its value; you never name it. A
+  declared secret with no value is a **hard error**, because deploying without it
+  would answer every request `401`.
+- **`read`** — a literal `bynk.Secrets` name (`Secrets.get("X")`). The compiler
+  sees it, but `get` returns `Option`, so a missing value is a **warning**, not
+  an error: the program already handles `None`.
+- **`supplied`** — anything you name with `--secrets-file` or `--secret` that the
+  compiler did not find itself.
+
+A `Secrets.get` call with a **computed** name cannot be planned. The compiler
+warns (`bynk.secrets.computed_name`), and the plan says so rather than
+under-reporting — `secrets incomplete <worker>`, or `secrets_complete: false` on
+the context in `--format json`. **A short `read` list with `secrets_complete:
+false` is not a census** — see [the deploy
+guide](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/).
+
+Values are read from `--secrets-file` first, then the environment, then a prompt
+when a terminal is attached; without one, a missing value is an error naming the
+secret rather than a silent blank. The environment supplies **values only** — it
+is never scanned for names. A secret value never reaches `bynk.deploy.lock`,
+generated config, or the plan, in any format.
+
+Per context, the plan carries one line per resource it declares:
+
+| Plan line | Meaning |
+|---|---|
+| `kv create\|reuse <namespace>` | A KV namespace is created, or its recorded id reused. |
+| `queue create\|reuse <name>` | A queue is provisioned before the push, which `wrangler deploy` will not do for you. `reuse` forecasts that it already exists; existence is checked against Cloudflare at provision time regardless, so a queue deleted out-of-band is restored. |
+| `migration <tag> (advisory — wrangler deploy applies it)` | The Durable Object migration the push will apply. **Advisory**: Cloudflare owns the applied-migration record and `bynk` keeps none, so this states what will be asked for, never what is already applied. In `--format json` it is `{"tag": …, "applied_by": "wrangler deploy"}`. |
+| `deploy\|redeploy <worker>` | The Worker is pushed; `redeploy` when the ledger has pushed it before. |
+
+Each context's Cloudflare ids and its deployed state are recorded in the
+committed, secret-free `bynk.deploy.lock` at the project root, written as each
+resource lands. A recorded id is reused on later deploys. CI refuses to create an
+unrecorded namespace; provision it locally and commit the lock file first. That
+refusal covers KV alone — a queue is addressed by the name in your source, so CI
+creating one strands nothing.
+
+A run is **resumable, not transactional**: a failure stops the run, keeps and
+records what already landed (there is no rollback), and names what did not. A
+re-run re-pushes in the same order — it does not skip contexts already live, so
+a changed context always ships; the plan reports those as `redeploy`.
+
+**Exit code** — `0` on a successful plan or deploy, and on a clean Ctrl-C stop.
+A Wrangler failure exits with **Wrangler's own exit code** — the first one to
+fail, since the run stops there — so a CI job reads the same code it would from
+`wrangler deploy` directly. The driver's own failures exit `1`: missing tools or
+authentication, declined confirmation, compilation failures, an unrecorded CI
+resource, a `--context` whose dependency was never deployed, and a `--context`
+whose live dependency has drifted from the contract it was compiled against
+(`bynk.deploy.contract_skew`) — deploying that would ship a caller its callee
+rejects on every call.
 
 ---
 
@@ -223,7 +285,7 @@ Discover and run a project's test declarations — the same behaviour as
 Node.js) or `tsx` on `PATH`, exactly as `bynkc test`.
 
 ```text
-bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--seed HEX] [--case NAME]
+bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--seed HEX] [--case NAME] [--coverage]
 ```
 
 | Argument | Default | Meaning |
@@ -235,9 +297,39 @@ bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--see
 | `--inspect` | off | Launch the runner under Node's inspector (`node --inspect-brk`) and print the inspector URL. Requires Node ≥ 22.18 (or ≥ 23.6 unflagged). Does not run `tsc`. |
 | `--seed HEX` | random | Root seed for generative `property` tests (e.g. `0x5f3a`). A failing property prints the seed it used; re-running with `--seed <hex>` reproduces the run byte-for-byte. |
 | `--case NAME` | — | Run only test cases whose name matches `NAME` — the filter behind the editor's per-case *▷ Run Test* lens. No effect with `--no-run`. |
+| `--coverage` | off | After the run, report statement/line coverage attributed to `.bynk` source (rich table, or a `coverage` block under `--format json`). Requires the `tsc → node` path — incompatible with `--inspect` and `--no-run`. |
 
 **Exit code** — follows the runner's own process status: `0` when every case
 passed, non-zero on a failing case, a compile error, or a missing runner.
+
+---
+
+## `bynk explain`
+
+Explain a diagnostic code — the longer-form answer behind a `bynk.*` error, the
+analogue of `rustc --explain`. When you hit an error like
+`bynk.resolve.unknown_type`, `bynk explain bynk.resolve.unknown_type` prints
+what the rule is, *why* it exists, a minimal before/after example, and a link to
+the relevant [Book](/book/) concept page. Runs entirely in-process — it shells
+nothing and reads no network, so the blurb is the complete, offline answer.
+
+```text
+bynk explain <CODE>
+```
+
+| Argument | Meaning |
+|---|---|
+| `CODE` | The diagnostic code to explain, e.g. `bynk.resolve.unknown_type`. |
+
+The explanations are curated highest-traffic-first, so coverage grows over time:
+a recognised code that is not yet curated prints its one-line summary and a
+pointer to the [diagnostic index](/book/reference/diagnostics/) rather than a
+full explanation. The same compiler-owned mapping powers the editor's clickable
+diagnostic-code links (`codeDescription`), so the CLI and the editor never
+disagree.
+
+**Exit code** — `0` for any code the compiler recognises (explained or not);
+non-zero for an unrecognised code.
 
 ---
 

@@ -313,6 +313,87 @@ handler's `deps` as the `CallerId` identity, so `<binder>.identity` lowers to
 channel-based — no crypto — and a binder-less `on call` reads no header and is
 byte-unchanged.
 
+### §7.3.4b The cross-context boundary codec (v0.176)
+
+Every value crossing a `workers` cross-context boundary is encoded and decoded by
+a **generated codec** — the same `serialise_*` / `deserialise_*` helpers
+[§7.2](#72-targets) requires, monomorphised per instantiation. No wire position
+asserts a value with an `as JsonValue` cast, and no return type decodes through an
+unvalidated identity function.
+
+The boundary is therefore **symmetric by construction**: the same dispatch names
+the serialiser and the deserialiser, so a type cannot be encoded one way and
+decoded another. This is what admits a bare `Bytes` in a cross-context signature
+— it base64-encodes outbound and base64-decodes (with validation) inbound. Before
+v0.176 the boundary carried its own codec dispatch, which cast a `Bytes` outbound
+while decoding it inbound; the resulting mis-encode was diagnosed rather than
+emitted (ADR 0142 D8). With one dispatch, the asymmetry — and so the restriction
+— is gone.
+
+Each Worker is **self-contained**: a context generates its *own* codecs for the
+contracts it participates in and imports no sibling context's module as a value
+(#661, discharging ADR 0199 Decision G). A caller reaches its callee's codecs
+through local `serialise_*` / `deserialise_*` helpers it emits itself; the callee
+module is imported for **types only** (`import type * as <ns>`), which is erased
+outright, so the caller's bundle never carries the callee's provider
+implementation. Only the callee's own exported types reachable from the services
+the caller actually *calls* are generated — commons types the caller already holds
+are left alone, and an uncalled service contributes nothing.
+
+A caller-side codec for a callee-owned type cannot route through the owner's `.of`
+constructor (it lives in the owner's module), so validation follows the export
+visibility: an **opaque** type validates its base and casts — its refinement is
+the owner's secret and is not re-checked, which is sound because the value came
+from the owner's typed code and a *skewed* owner is caught by the §7.3.4c contract
+hash — while a **transparent** refined type inlines its predicate, since the
+consumer knows the shape by declaration. This applies to consumed *contexts* under
+`workers` only: a consumed *adapter*'s binding namespace is a real value import
+used by the composition root, and on `bundle` the contexts compile together.
+
+One position remains deliberately *not* codec-checked, stated here rather than
+left to be discovered: the **runtime-owned error types** (`ValidationError`,
+`JsonError`, `HttpResult`, `QueueResult`) pass through uncoded. They are declared
+by the runtime rather than by a type declaration the emitter can walk, so there is
+no helper to generate; their JSON shape is fixed by the runtime, so the
+pass-through is unchecked rather than wrong.
+
+### §7.3.4c The contract seam (v0.177)
+
+A cross-context call carries a **contract hash** beside the caller identity: a
+reserved `X-Bynk-Contract` header holding a compile-time constant, exactly as
+[§7.3.4a](#734a-actors--the-verification-seam-v045)'s `X-Bynk-Caller` does. The
+args body is unchanged.
+
+The constant is the **canonical normal form** of the callee's `on call` contract,
+hashed. The form is deterministic and order-insensitive where the wire is:
+refinement predicates canonicalise as a *set*, and record fields and sum variants
+sort by name — a JSON object is unordered and a sum carries a `kind`
+discriminant, so their order is not wire-observable and MUST NOT change the hash.
+Field *presence*, field types, parameter names, parameter order, and the return
+type all MUST change it. An **opaque** type contributes its representation but
+**not** its predicate: a consumer cannot observe that predicate, so it is not
+part of the contract between them.
+
+Caller and callee canonicalise the callee's contract **in the callee's own
+namespace**, from the callee's own type table. A caller MUST NOT canonicalise a
+consumed type in its own namespace, where rebranding would render the same type
+differently.
+
+The callee compares the header against its own constant **before reading the
+request body** — and so before the caller check — and on mismatch answers `409`
+with a `ContractMismatch` body naming the service, the expected hash, and what
+arrived. Once the contracts disagree the body's interpretation is precisely what
+is in doubt, so validating it first would misreport the fault. An **absent or
+empty** header is a mismatch: a Bynk caller always stamps one.
+
+`ContractMismatch` is not a `BoundaryError` — a codec cannot produce it — so the
+call surface is typed `CallError = BoundaryError | ContractMismatch`
+([§7.4](/book/spec/runtime-library/)).
+
+Each Worker also emits `bynk-contracts.json` beside its `wrangler.toml`, carrying
+what the context **provides** per service and what it **expects** of each
+dependency. This is a driver artifact, not part of the wire.
+
 ### §7.3.5 Tests
 
 Each test unit emits a per-target test module; an aggregating runner

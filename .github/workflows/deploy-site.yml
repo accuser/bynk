@@ -32,20 +32,32 @@ jobs:
   deploy:
     name: Build + deploy to Cloudflare Pages
     runs-on: ubuntu-latest
-    # Secrets flow in as env so the deploy step can both hand wrangler its
-    # credentials and gate on their presence: before the maintainer adds the
-    # Cloudflare secrets, the build still runs and the upload skips, so the
-    # workflow is green rather than red on the first push.
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     defaults:
       run:
         working-directory: site
     steps:
+      # Gate on the secrets' presence in one tiny step whose env holds the token,
+      # exposing only a boolean output. The credentials themselves are attached
+      # step-level to the wrangler step that needs them (below) — never job-level,
+      # so `npm ci` install scripts, the cargo doc build, and the Chromium install
+      # never see the token. Before the maintainer adds the Cloudflare secrets, the
+      # build still runs and the upload skips, so the workflow is green rather than
+      # red on the first push.
+      - name: Check for Cloudflare secrets
+        id: gate
+        working-directory: ${{ github.workspace }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Node 22: Astro 7 floors Node at 22.12.
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "22"
       - name: Install deps
@@ -78,8 +90,11 @@ jobs:
       # content, not a code-execution surface). `--branch=main` publishes to the
       # project's production deployment.
       - name: Deploy to the bynk-lang.org apex
-        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
-        run: npx --yes wrangler@4 pages deploy dist --project-name=bynk-lang --branch=main
+        if: steps.gate.outputs.present == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4.112.0 pages deploy dist --project-name=bynk-lang --branch=main
       - name: Note when deploy was skipped
-        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        if: steps.gate.outputs.present == 'false'
         run: echo "::notice::Cloudflare secrets not set — built site/dist but skipped the upload. See site/README.md."

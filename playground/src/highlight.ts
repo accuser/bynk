@@ -11,21 +11,32 @@ import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/
 import { tags as t } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
+// Lower-cased keywords, mirroring the lexer's `#[token(...)]` set
+// (`bynk-syntax/src/lexer.rs`). Base-type keywords (`Int`, `String`, …) start
+// uppercase and fall through to `TYPES`/the capitalised-identifier rule; the
+// constructor/literal keywords (`true`, `Ok`, …) live in `ATOMS` below.
 const KEYWORDS = new Set([
-  "context", "commons", "adapter", "agent", "service", "test", "integration",
-  "capability", "type", "enum", "fn", "let", "match", "store", "from", "on",
-  "consumes", "uses", "exports", "provides", "given", "binding", "by", "where",
-  "transparent", "return", "if", "else", "for", "in", "as",
+  "commons", "type", "fn", "where", "let", "if", "else", "enum", "match",
+  "record", "self", "is", "opaque", "uses", "context", "consumes", "exports",
+  "transparent", "as", "expect", "suite", "case", "stub", "property",
+  "adapter", "binding", "agent", "capability", "do", "given", "on", "http",
+  "cron", "queue", "from", "protocol", "provides", "service", "actor", "by",
+  "invariant", "implies", "requires", "ensures", "transition",
 ]);
 
 // Built-in type / kind names and well-known constructors.
 const TYPES = new Set([
-  "String", "Int", "Float", "Bool", "Effect", "Result", "Option", "Query",
-  "Stream", "List", "Map", "Set", "Instant", "Duration", "Uuid", "Connection",
-  "Request", "Response", "Method", "FetchError", "ValidationError",
+  "String", "Int", "Float", "Bool", "Bytes", "Effect", "Result", "Option",
+  "Query", "Stream", "List", "Map", "Set", "Instant", "Duration", "Uuid",
+  "Connection", "Request", "Response", "Method", "FetchError",
+  "ValidationError", "JsonError",
 ]);
+// Constructors, boolean literals, and HTTP verbs. The verbs are upper-cased to
+// match the grammar's `http_method` choice (`GET`/`POST`/`PUT`/`PATCH`/`DELETE`,
+// `tree-sitter-bynk/grammar.js`).
 const ATOMS = new Set([
-  "Ok", "Err", "Some", "None", "true", "false", "Get", "Post", "Put", "Delete",
+  "Ok", "Err", "Some", "None", "true", "false",
+  "GET", "POST", "PUT", "PATCH", "DELETE",
 ]);
 
 const bynk = StreamLanguage.define({
@@ -34,13 +45,20 @@ const bynk = StreamLanguage.define({
   token(stream) {
     if (stream.eatSpace()) return null;
 
-    // Line + block comments.
-    if (stream.match("//")) {
+    // Doc blocks are delimited by `---` lines; highlight those markers line-wise.
+    // Check before the `--` line comment since `---` starts with `--`.
+    if (stream.sol() && stream.match(/^---\s*$/)) return "comment";
+    // A `--` line comment (Bynk uses `--`, not `//`). Mirror the lexer rule
+    // (`bynk-syntax/src/lexer.rs`): a `--` opens a comment only at the start of
+    // the line or when preceded by whitespace, so `a--b` stays subtraction
+    // rather than being swallowed as a comment.
+    if (
+      (stream.sol() || /\s/.test(stream.string.charAt(stream.pos - 1))) &&
+      stream.match("--")
+    ) {
       stream.skipToEnd();
       return "comment";
     }
-    // Doc blocks delimited by `---` lines are highlighted as comments line-wise.
-    if (stream.sol() && stream.match(/^---\s*$/)) return "comment";
 
     // Strings (double-quoted, with escapes).
     if (stream.match(/^"(?:[^"\\]|\\.)*"/)) return "string";

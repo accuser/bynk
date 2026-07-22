@@ -15,6 +15,12 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      codeql-workflow:
+        patterns:
+          - "github/codeql-action/init"
+          - "github/codeql-action/autobuild"
+          - "github/codeql-action/analyze"
 
   # The npm-published tree-sitter grammar (a planned release channel).
   - package-ecosystem: npm
@@ -25,5 +31,23 @@ updates:
   # The VS Code extension's toolchain deps.
   - package-ecosystem: npm
     directory: "/vscode-bynk"
+    schedule:
+      interval: weekly
+
+  # The @bynk/runtime package bundled into the compiler via include_str!.
+  - package-ecosystem: npm
+    directory: "/bynk-emit/runtime"
+    schedule:
+      interval: weekly
+
+  # The in-browser playground (REPL). Its deploy job holds the Cloudflare token.
+  - package-ecosystem: npm
+    directory: "/playground"
+    schedule:
+      interval: weekly
+
+  # The Astro/Starlight docs site. Its deploy job holds the Cloudflare token.
+  - package-ecosystem: npm
+    directory: "/site"
     schedule:
       interval: weekly

@@ -17,12 +17,13 @@ use bynk_syntax::span::Span;
 use std::collections::HashSet;
 use tower_lsp::lsp_types::*;
 
-use crate::position::{offset_to_position, span_to_range};
+use crate::position::PositionMap;
 
 /// The hints whose anchor falls inside the requested range. `text` is the
 /// analysed snapshot the spans are offsets into; `hints` is one file's
 /// harvested [`Hint`] set.
 pub fn inlay_hints(text: &str, hints: &[Hint], requested: Span) -> Vec<InlayHint> {
+    let positions = PositionMap::new(text);
     hints
         .iter()
         .filter_map(|h| {
@@ -36,7 +37,7 @@ pub fn inlay_hints(text: &str, hints: &[Hint], requested: Span) -> Vec<InlayHint
                     HintKind::Parameter => (InlayHintKind::PARAMETER, Some(true)),
                 };
                 InlayHint {
-                    position: offset_to_position(text, anchor),
+                    position: positions.position(anchor),
                     label: InlayHintLabel::String(h.label.clone()),
                     kind: Some(kind),
                     text_edits: None,
@@ -61,6 +62,7 @@ pub fn inlay_hints(text: &str, hints: &[Hint], requested: Span) -> Vec<InlayHint
 /// The ghost is positioned where the clause would be inserted, so accepting it
 /// reads naturally (`given Clock`, or `, Clock` after an existing clause).
 pub fn given_hints(text: &str, requirements: &[Requirement], requested: Span) -> Vec<InlayHint> {
+    let positions = PositionMap::new(text);
     let mut seen: HashSet<(usize, String)> = HashSet::new();
     let mut out = Vec::new();
     for req in requirements {
@@ -80,11 +82,11 @@ pub fn given_hints(text: &str, requirements: &[Requirement], requested: Span) ->
         // `, Clock` → `, Clock`); `padding_left` restores the leading space.
         let label = m.edit_text.trim_start().to_string();
         out.push(InlayHint {
-            position: offset_to_position(text, anchor),
+            position: positions.position(anchor),
             label: InlayHintLabel::String(label),
             kind: Some(InlayHintKind::TYPE),
             text_edits: Some(vec![TextEdit {
-                range: span_to_range(text, m.edit_span),
+                range: positions.range(m.edit_span),
                 new_text: m.edit_text.clone(),
             }]),
             tooltip: Some(InlayHintTooltip::String(format!(

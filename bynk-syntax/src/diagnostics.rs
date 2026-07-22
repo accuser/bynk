@@ -30,6 +30,161 @@ pub struct DiagnosticInfo {
     pub grammar_symbol: &'static [&'static str],
 }
 
+/// The hosted Book, the stable target for `codeDescription` links (#853,
+/// DECISION C). No trailing slash — an [`Explain::page`] path (which begins
+/// with `/`) is appended directly.
+pub const BOOK_BASE_URL: &str = "https://bynk-lang.org";
+
+/// A curated, offline-complete explanation of a diagnostic code (#853).
+///
+/// This is the compiler-owned `code → { blurb, href }` table (DECISION A): the
+/// `blurb`/`example` are the offline answer `bynk explain` prints, while
+/// `page`/`anchor` compose the hosted-Book href the LSP hangs off the code as a
+/// clickable `codeDescription` link (DECISION C). Only the highest-traffic,
+/// newcomer-facing codes are curated; every other code simply has no entry and
+/// falls back gracefully — no link, no error (DECISION B).
+///
+/// The mapping points at *existing* Book concept pages rather than duplicating
+/// their prose; the reference-page generator ([`render_markdown`]) links every
+/// explained code at its `page`/`anchor` as an in-site link, so
+/// `astro build`'s link checker fails if a page moves or an anchor is renamed —
+/// the doc-drift guard the rest of the site already relies on.
+pub struct Explain {
+    /// The diagnostic code this explains. Must be a real [`REGISTRY`] code
+    /// (enforced by `tests/diagnostics_registry.rs`).
+    pub code: &'static str,
+    /// A longer-form paragraph: what the rule is and, crucially, *why* it
+    /// exists. This is the offline-complete answer — useful without network.
+    pub blurb: &'static str,
+    /// A minimal example of the violation and its fix.
+    pub example: &'static str,
+    /// The target Book page as a site-root-relative path, no extension and no
+    /// trailing slash, e.g. `/book/reference/types`. Used verbatim as an
+    /// in-site link by [`render_markdown`] (so the site link checker guards it)
+    /// and prefixed with [`BOOK_BASE_URL`] for the hosted `codeDescription`.
+    pub page: &'static str,
+    /// The in-page heading anchor (slug), or `""` for the page top.
+    pub anchor: &'static str,
+}
+
+impl Explain {
+    /// The hosted-Book URL for this explanation: [`BOOK_BASE_URL`] + the page
+    /// (Starlight serves pages with a trailing slash) + `#anchor` when set.
+    pub fn href(&self) -> String {
+        let mut url = format!("{BOOK_BASE_URL}{}/", self.page);
+        if !self.anchor.is_empty() {
+            url.push('#');
+            url.push_str(self.anchor);
+        }
+        url
+    }
+
+    /// The site-root-relative link used inside the generated reference page,
+    /// e.g. `/book/reference/types/#record-types`. Same shape as [`href`], sans
+    /// the host, so the in-site link checker resolves it.
+    ///
+    /// [`href`]: Explain::href
+    pub fn in_site_link(&self) -> String {
+        let mut link = format!("{}/", self.page);
+        if !self.anchor.is_empty() {
+            link.push('#');
+            link.push_str(self.anchor);
+        }
+        link
+    }
+}
+
+/// The curated explanations, keyed by code (DECISION B: highest-traffic,
+/// newcomer-facing codes first). Kept sorted by code; every `code` must be a
+/// real [`REGISTRY`] entry and every `page` an existing Book page — both
+/// enforced by `tests/diagnostics_registry.rs`.
+pub const EXPLANATIONS: &[Explain] = &[
+    Explain {
+        code: "bynk.given.undeclared_capability",
+        blurb: "A handler may only use a capability it has itself declared with \
+                `given`. Effects in Bynk are explicit: the `given` clause is the \
+                handler's honest, checkable statement of every capability it \
+                reaches for, so a reader (and the compiler) can see a handler's \
+                full reach from its signature alone. Using a capability that is \
+                not in `given` is the missing half of that contract.",
+        example: "on get \"/now\" -> Text {           // ✗ uses Clock without declaring it\n    \
+                    Clock.now()\n}\n\n\
+                  on get \"/now\" given Clock -> Text { // ✓ declared, then used\n    \
+                    Clock.now()\n}",
+        page: "/book/guides/effects-and-capabilities/understand-the-capability-model",
+        anchor: "",
+    },
+    Explain {
+        code: "bynk.given.unknown_capability",
+        blurb: "A `given` clause names a capability that no provider declares. A \
+                capability is a typed interface to the outside world; it has to be \
+                *declared* (as a `capability`, or brought in from a consumed \
+                context) before a handler can ask for it. This usually means a \
+                typo in the capability name, or a missing `uses`/`consumes` that \
+                would bring the capability into scope.",
+        example: "on get \"/\" given Clok -> Text { … }  // ✗ no capability named `Clok`\n\n\
+                  on get \"/\" given Clock -> Text { … }  // ✓ matches the declared capability",
+        page: "/book/reference/capabilities",
+        anchor: "declaring-a-capability",
+    },
+    Explain {
+        code: "bynk.resolve.missing_field",
+        blurb: "A record must be constructed with every one of its fields. Bynk \
+                records have no defaults and no partial construction: a value of a \
+                record type is only valid once all its fields are present, so a \
+                downstream reader never has to wonder whether a field was set. \
+                Omitting a field is therefore an error, not a fill-in-later.",
+        example: "type User = { name: Text, age: Int }\n\n\
+                  User { name: \"Ada\" }            // ✗ missing `age`\n\
+                  User { name: \"Ada\", age: 36 }   // ✓ every field present",
+        page: "/book/reference/types",
+        anchor: "record-types",
+    },
+    Explain {
+        code: "bynk.resolve.unknown_field",
+        blurb: "A field access names a field the record type does not have. A \
+                record's fields are fixed by its type declaration; only those \
+                names exist on the value. This is usually a typo in the field \
+                name, or an access meant for a different type.",
+        example: "type User = { name: Text }\n\n\
+                  user.nmae   // ✗ no field `nmae`\n\
+                  user.name   // ✓ the declared field",
+        page: "/book/reference/types",
+        anchor: "record-types",
+    },
+    Explain {
+        code: "bynk.resolve.unknown_name",
+        blurb: "A name was referenced that is not in scope. Every name in Bynk \
+                must be introduced before use — as a `let` binding, a parameter, \
+                a `fn`, a type, or a member brought in through `uses`/`consumes`. \
+                An unknown name is typically a typo, a missing declaration, or a \
+                reference to something defined in a module that has not been \
+                brought into scope.",
+        example: "let greeting = \"hi\"\n\
+                  greetng          // ✗ no name `greetng` in scope\n\
+                  greeting         // ✓ the bound name",
+        page: "/book/guides/program-structure/how-a-program-is-shaped",
+        anchor: "",
+    },
+    Explain {
+        code: "bynk.resolve.unknown_type",
+        blurb: "A type name was referenced that does not exist. Types must be \
+                declared (with `type`), be one of Bynk's built-in types, or be \
+                brought into scope from another module before they can be named. \
+                An unknown type is usually a typo or a missing declaration/import.",
+        example: "fn greet(u: Usr) -> Text { … }   // ✗ no type `Usr`\n\
+                  fn greet(u: User) -> Text { … }  // ✓ the declared type",
+        page: "/book/reference/types",
+        anchor: "",
+    },
+];
+
+/// The curated explanation for a diagnostic `code`, or `None` when the code has
+/// no explanation yet (the designed graceful-fallback state, DECISION B).
+pub fn explain(code: &str) -> Option<&'static Explain> {
+    EXPLANATIONS.iter().find(|e| e.code == code)
+}
+
 /// Every diagnostic code the compiler emits, sorted by code.
 pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
@@ -424,23 +579,33 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.generics.generic_non_record",
-        "A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183).",
+        "A `type` declaration carries type parameters on a refined or opaque body; only a record (`type Name[T] = { … }`) or sum (`type Name[T] = | … | …`) body may be generic (v0.157/#593, ADRs 0183/0197).",
         &["type_decl"],
     ),
     dg(
         "bynk.generics.generic_record_at_boundary",
-        "A generic record instantiation appears in a serialised position (handler signature, agent store, record field, or codec target), or a `Val[…]` fabricates a value of a generic type; generic records are non-boundary in v0.157 (ADR 0183).",
+        "A `Val[…]` fabricates a value of a generic type; per-instantiation value fabrication is not yet wired (ADR 0197). Since v0.174 a generic-record instantiation may otherwise cross a boundary through its monomorphised codec.",
         &[],
     ),
     dg(
+        "bynk.generics.generic_sum_embeds",
+        "A generic sum type carries an `embeds` clause; embedding into a generic sum is not supported (#593).",
+        &["type_decl"],
+    ),
+    dg(
         "bynk.generics.method_on_generic_type",
-        "A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183).",
+        "A *static* method is attached to a generic type; static methods on generic types are deferred (they have no receiver to supply the type's parameters). Instance methods on generic types are supported (#594).",
         &["fn_decl"],
     ),
     dg(
         "bynk.generics.no_bounds",
         "A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a.",
         &["fn_decl"],
+    ),
+    dg(
+        "bynk.generics.recursive_generic_at_boundary",
+        "A recursive generic record (one that transitively contains itself, through any wrapper or generic argument) appears at a boundary; it has no finite set of monomorphised codecs, so it is not yet boundary-serialisable (ADR 0197).",
+        &[],
     ),
     dg(
         "bynk.generics.type_arg_count",
@@ -487,7 +652,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.held.leak",
-        "A held value (`Connection[F]`) is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns (§2.9.1, real-time track slice 2).",
+        "A held value (`Connection[F]`) is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler or function returns (§2.9.1, real-time track slice 2).",
     ),
     d(
         "bynk.held.query_accessor_on_held_map",
@@ -701,6 +866,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An integer literal is out of range.",
         &["number_literal"],
     ),
+    dg(
+        "bynk.lex.interpolation_too_deep",
+        "A string interpolation `\\(…)` nests deeper than the lexer's fixed limit.",
+        &["string_literal"],
+    ),
     d(
         "bynk.lex.unclosed_doc_block",
         "A documentation block is not closed.",
@@ -722,6 +892,38 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.list.deprecated_function",
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
+    ),
+    d(
+        "bynk.messages.format_mismatch",
+        "A code's placeholder is formatted as a different ICU kind (plain/plural/select/number/date) across declared locales.",
+    ),
+    d(
+        "bynk.messages.incomplete",
+        "A locale is missing a code the reference locale declares.",
+    ),
+    d(
+        "bynk.messages.malformed_icu_syntax",
+        "A message template's ICU placeholder syntax is invalid — unbalanced arm braces, an unknown format keyword, `#` outside a plural arm, a missing mandatory `other` arm, or an explicitly out-of-scope construct (`selectordinal`, `offset:`/`=N`, a CLDR skeleton).",
+    ),
+    d(
+        "bynk.messages.missing_locale_dependency",
+        "A commons declaring `messages` doesn't `uses bynk.locale`, which its generated `render`'s fallback needs.",
+    ),
+    d(
+        "bynk.messages.missing_reference",
+        "A message bundle has no `@reference` block.",
+    ),
+    d(
+        "bynk.messages.multiple_reference",
+        "A message bundle has more than one `@reference` block.",
+    ),
+    d(
+        "bynk.messages.outside_commons",
+        "A `messages` declaration appears outside a commons.",
+    ),
+    d(
+        "bynk.messages.placeholder_mismatch",
+        "A locale's template for a code uses a different set of `{name}` placeholders than the reference locale's.",
     ),
     d(
         "bynk.namespace.reserved",
@@ -878,6 +1080,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A float literal is missing a digit on one side of the `.` (`1.`, `.5`).",
         &["float_literal"],
     ),
+    d(
+        "bynk.parse.nesting_too_deep",
+        "An expression or type nests deeper than the parser's fixed limit.",
+    ),
     dg(
         "bynk.parse.non_associative",
         "A non-associative operator was chained (e.g. `a == b == c`).",
@@ -886,6 +1092,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.parse.orphan_doc_block",
         "A documentation block is not attached to a declaration (warning).",
+    ),
+    dg(
+        "bynk.parse.refined_pattern_inner",
+        "A refined pattern's inner form is something other than `_`.",
+        &["refined_pattern"],
     ),
     dg(
         "bynk.parse.reserved_keyword",
@@ -942,6 +1153,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.uses_after_decls",
         "`uses` appears after other declarations.",
         &["uses_decl"],
+    ),
+    dg(
+        "bynk.parse.variant_name_case",
+        "A sum-type or enum variant name is not capitalised.",
+        &["sum_variant", "enum_type"],
     ),
     d(
         "bynk.project.file_and_directory",
@@ -1101,6 +1317,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Two functions share a name.",
         &["fn_decl"],
     ),
+    d(
+        "bynk.resolve.duplicate_message_code",
+        "A message bundle declares the same code twice in one block.",
+    ),
+    d(
+        "bynk.resolve.duplicate_message_locale",
+        "Two `messages` blocks in one bundle declare the same locale tag.",
+    ),
     dg(
         "bynk.resolve.duplicate_method",
         "Two methods share a name.",
@@ -1179,6 +1403,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["record_type"],
     ),
     dg(
+        "bynk.resolve.reserved_builtin_type",
+        "A type declaration reuses a compiler-known built-in type name.",
+        &["type_decl"],
+    ),
+    dg(
         "bynk.resolve.self_outside_method",
         "`self` referenced outside a method or handler.",
         &["self_expr"],
@@ -1219,6 +1448,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.resolve.unknown_type",
         "Referenced a type that does not exist.",
+    ),
+    d(
+        "bynk.secrets.computed_name",
+        "A `bynk.Secrets` read names its secret with a computed expression rather than a literal, so `bynk deploy` cannot plan it (warning).",
     ),
     dg(
         "bynk.send.in_pure_context",
@@ -1356,6 +1589,71 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A deployment unit uses a platform-native capability but the build selects another `--platform`.",
         &["consumes_decl"],
     ),
+    dg(
+        "bynk.test.actor_identity_required",
+        "A call-site `by <Actor>` omits the identity an identity-carrying actor requires.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.actor_no_identity",
+        "A call-site `by <Actor>(x)` supplies an identity to an actor that takes none — a unit-identity actor (e.g. `Visitor`) or `Nobody`.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.credential_needs_system",
+        "A case drives `by Nobody` (the no-credential principal, which tests the auth seam's 401) outside a `system`-tier case, where there is no real seam to reject it.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.nobody_needs_secured_route",
+        "A case drives `by Nobody` at a route that is not Bearer-secured (e.g. a public `Visitor` route) — there is no auth seam to reject the missing credential.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.principal_identity_mismatch",
+        "A call-site `by <Actor>` acts as an actor whose identity is incompatible with the addressed handler's actor.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.principal_on_wrong_method",
+        "A wrong-method `405` test carries a `by <Actor>` clause; it reaches no handler, so a principal is meaningless.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.principal_required",
+        "A test drives an identity-carrying handler with no call-site `by <Actor>(<identity>)`.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.service_bad_address",
+        "A test body addresses a service the wrong way for its protocol (e.g. an http route without a leading path string).",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.service_call_arity",
+        "A test body's `svc.call(...)` passes the wrong number of arguments for the service's `on call` handler.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.service_no_call_handler",
+        "A test body invokes `svc.call(...)` on a service with no `on call` handler (a `from http`/`cron`/`queue` service).",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.service_unknown_route",
+        "A test body addresses an http route / cron schedule / queue message the service does not declare.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.unknown_actor",
+        "A call-site `by <Actor>` names an actor the target context does not declare and that is not a prelude actor.",
+        &["case"],
+    ),
+    dg(
+        "bynk.test.wire_needs_system",
+        "A `Wire(...)` raw argument is used outside a `system`-tier service address; `Wire` hands pre-validation input to the boundary and is meaningless at `unit` or in any other position.",
+        &["case"],
+    ),
     d(
         "bynk.tier.property_has_tier",
         "A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance.",
@@ -1393,10 +1691,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A function argument has the wrong type.",
         &["call"],
     ),
-    d(
-        "bynk.types.bytes_at_workers_boundary",
-        "A bare `Bytes` appears in a `workers` wire signature — the erased cross-context boundary does not base64-encode it, so v1 diagnoses it rather than mis-encode. The typed paths (`bundle` calls, `store`/record fields) round-trip a `Bytes` fine (ADR 0142 D8).",
-    ),
     dg(
         "bynk.types.call_arity",
         "A function value was applied with the wrong number of arguments.",
@@ -1410,6 +1704,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.types.cannot_infer_result_type_params",
         "The type parameters of a `Result` could not be inferred.",
+    ),
+    dg(
+        "bynk.types.catastrophic_regex",
+        "A `Matches` predicate nests unbounded quantifiers, risking catastrophic backtracking (ReDoS).",
+        &["refinement"],
     ),
     d(
         "bynk.types.constructor_arity",
@@ -1529,6 +1828,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["is_expr"],
     ),
     dg(
+        "bynk.types.is_refined_pattern",
+        "A refined (`where`) pattern was used on the right of `is`; refined patterns are `match`-only.",
+        &["is_expr"],
+    ),
+    dg(
         "bynk.types.is_unknown_variant",
         "`is` names a variant the type does not have.",
         &["is_expr"],
@@ -1622,6 +1926,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.types.opaque_unsafe_outside",
         "`.unsafe` on an opaque type was used outside its defining context.",
         &["field_access"],
+    ),
+    dg(
+        "bynk.types.or_pattern_binding_mismatch",
+        "An or-pattern's alternatives don't all bind the same set of names.",
+        &["match_arm", "is_expr"],
+    ),
+    dg(
+        "bynk.types.or_pattern_type_mismatch",
+        "An or-pattern's alternatives give a shared binding different types (or refinements).",
+        &["match_arm", "is_expr"],
     ),
     dg(
         "bynk.types.pattern_arity",
@@ -1862,6 +2176,7 @@ fn category_title(cat: &str) -> &'static str {
         "given" => "Given capabilities",
         "http" => "HTTP",
         "lex" => "Lexer",
+        "messages" => "Message bundles",
         "mock" => "Mocks (collaborators)",
         "observe" => "Observation",
         "parse" => "Parser",
@@ -1928,9 +2243,17 @@ pub fn render_markdown() -> String {
                 .map(|sym| format!("[`{sym}`](grammar.md#rule-{sym})"))
                 .collect::<Vec<_>>()
                 .join(", ");
+            // A curated (`bynk explain`-able) code links to its Book concept
+            // page; the in-site link is validated by the site's link checker,
+            // so a moved page or renamed anchor fails the build (#853). Codes
+            // without an explanation render as plain inline code.
+            let code_cell = match explain(info.code) {
+                Some(e) => format!("[`{}`]({})", info.code, e.in_site_link()),
+                None => format!("`{}`", info.code),
+            };
             out.push_str(&format!(
-                "| `{}` | {} | {} |\n",
-                info.code, info.summary, construct
+                "| {} | {} | {} |\n",
+                code_cell, info.summary, construct
             ));
         }
     }

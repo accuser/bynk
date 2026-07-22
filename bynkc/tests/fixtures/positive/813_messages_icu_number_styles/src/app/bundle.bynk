@@ -1,0 +1,14 @@
+commons app.bundle
+
+uses bynk.locale
+
+---
+message-bundles slice 3 (#878): `number` placeholders, bare (default
+decimal) and both fixed styles (`integer`, `percent`) — all delegated to
+the host `Intl.NumberFormat`.
+---
+messages en @reference {
+  "price" => "{n, number}"
+  "quantity" => "{n, number, integer}"
+  "discount" => "{n, number, percent}"
+}

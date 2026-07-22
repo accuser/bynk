@@ -25,6 +25,7 @@ fn sources() -> Vec<(&'static str, &'static str)> {
         ("bynk.list", bynkc::firstparty::BYNK_LIST_SRC),
         ("bynk.map", bynkc::firstparty::BYNK_MAP_SRC),
         ("bynk.string", bynkc::firstparty::BYNK_STRING_SRC),
+        ("bynk.locale", bynkc::firstparty::BYNK_LOCALE_SRC),
         ("bynk", bynkc::firstparty::BYNK_ADAPTER_SRC),
         ("bynk.cloudflare", bynkc::firstparty::CLOUDFLARE_ADAPTER_SRC),
     ]

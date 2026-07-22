@@ -38,6 +38,18 @@ export default {
         }
       }
       {
+        const __m = matchPath("/admin/item/:code", path);
+        if ((method === "GET" || method === "HEAD") && __m) {
+          const __raw_code = __m.params["code"];
+          const __r_code = handlers.ShortCode.of(__raw_code);
+          if (__r_code.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify({ kind: "RefinementViolation", path: "path.code", violation: __r_code.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_admin);
+          const code = __r_code.value;
+          const result = await surface.http_GET_admin_item_Param_code(code);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __security_admin);
+          return method === "HEAD" ? headResponse(__response) : __response;
+        }
+      }
+      {
         const __m = matchPath("/products/:id", path);
         if ((method === "GET" || method === "HEAD") && __m) {
           const __raw_id = __m.params["id"];
@@ -46,6 +58,23 @@ export default {
           const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __security_store);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
+      }
+      {
+        const __m = matchPath("/store/:code", path);
+        if ((method === "GET" || method === "HEAD") && __m) {
+          const __raw_code = __m.params["code"];
+          const __r_code = handlers.ShortCode.of(__raw_code);
+          if (__r_code.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify({ kind: "RefinementViolation", path: "path.code", violation: __r_code.error }), { status: 400, headers: { "content-type": "application/json" } }), __security_store);
+          const code = __r_code.value;
+          const result = await surface.http_GET_store_Param_code(code);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __security_store);
+          return method === "HEAD" ? headResponse(__response) : __response;
+        }
+      }
+      if (matchPath("/admin/item/:code", path) !== null) {
+        const __status = method === "OPTIONS" ? 204 : 405;
+        const __res = new Response(null, { status: __status, headers: { allow: "GET, HEAD, OPTIONS" } });
+        return applySecurityHeaders(__res, __security_admin);
       }
       if (path === "/admin/stats") {
         const __status = method === "OPTIONS" ? 204 : 405;
@@ -58,6 +87,11 @@ export default {
         return applySecurityHeaders(__res, __security_health);
       }
       if (matchPath("/products/:id", path) !== null) {
+        const __status = method === "OPTIONS" ? 204 : 405;
+        const __res = new Response(null, { status: __status, headers: { allow: "GET, HEAD, OPTIONS" } });
+        return applySecurityHeaders(__res, __security_store);
+      }
+      if (matchPath("/store/:code", path) !== null) {
         const __status = method === "OPTIONS" ? 204 : 405;
         const __res = new Response(null, { status: __status, headers: { allow: "GET, HEAD, OPTIONS" } });
         return applySecurityHeaders(__res, __security_store);

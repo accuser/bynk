@@ -1,0 +1,32 @@
+context billing
+
+type OrderError = enum { AlreadyPlaced }
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    Effect.pure(42)
+  }
+}
+
+agent Order {
+  key id: String
+  store items: Cell[Int]
+
+  on call addItem(quantity: Int) -> Effect[Result[(), OrderError]] {
+    let cur = items
+    items := cur + quantity
+    Ok(())
+  }
+}
+
+service api {
+  on call(qty: Int) -> Effect[Result[(), OrderError]] given Clock {
+    let n <- Clock.now()
+    let _ <- Order("o1").addItem(n)
+    Ok(())
+  }
+}

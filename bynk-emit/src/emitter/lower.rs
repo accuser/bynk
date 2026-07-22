@@ -10,7 +10,15 @@ use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use super::*;
 
 /// Lower a block to a sequence of TypeScript statements suitable for use as
-/// an async function body. Used by v0.7 mock-operation emission.
+/// an async function body. Used by v0.7 mock-operation emission — today
+/// exclusively test/property/contract scaffolding (`stub` rhs values, `where`
+/// predicates, contract `requires` guards), never real production provider
+/// bodies, so `test_scaffold` is set unconditionally (nothing here emits an
+/// `assert`, so `assert_loc` stays `None`) purely to mark test-scaffold mode
+/// for `in_test_scaffold()` — otherwise a refined-literal admitted here (e.g.
+/// a `stub Cap.op() returns "lit"` rhs) brands via the production `(v as T)`
+/// cast, which cannot resolve `T` in a stub class's `any`-typed destructure
+/// (Locale capability track, slice 1, #844).
 pub fn lower_block_to_async_body(
     block: &Block,
     return_type: &TypeRef,
@@ -23,6 +31,7 @@ pub fn lower_block_to_async_body(
     let smb = RefCell::new(SourceMapBuilder::new());
     {
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
+        cx.test_scaffold = true;
         let async_tail = is_effectful_return(return_type);
         emit_block_as_function_body_with_return(
             &mut out,
@@ -45,6 +54,7 @@ pub fn lower_test_case_body(
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
     test_services: HashSet<String>,
+    test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
     test_agents: HashSet<String>,
     source: &str,
     rel_path: &str,
@@ -54,6 +64,7 @@ pub fn lower_test_case_body(
     {
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
         cx.test_services = test_services;
+        cx.test_service_handlers = test_service_handlers;
         cx.local_agents = test_agents.clone();
         cx.test_agents = test_agents;
         // v0.117: observations and `trace` in the body read the per-case recorded
@@ -63,6 +74,7 @@ pub fn lower_test_case_body(
             source: source.to_string(),
             rel_path: rel_path.to_string(),
         });
+        cx.test_scaffold = true;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -87,10 +99,15 @@ pub fn lower_test_case_body(
 /// deps.env.<BINDING>, …)` over the real wire. The harness root declares no
 /// local services/agents, so those scoped sets stay empty; `cross_context`
 /// carries every participant's service surface.
+#[allow(clippy::too_many_arguments)]
 pub fn lower_integration_case_body(
     block: &Block,
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
+    system_http_services: std::collections::HashSet<String>,
+    system_http_routes: std::collections::HashSet<(String, String, String)>,
+    system_http_route_body: HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
+    system_http_type_ns: String,
     source: &str,
     rel_path: &str,
 ) -> (String, SourceMapBuilder) {
@@ -99,10 +116,15 @@ pub fn lower_integration_case_body(
     {
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
         cx.target = BuildTarget::Workers;
+        cx.system_http_services = system_http_services;
+        cx.system_http_routes = system_http_routes;
+        cx.system_http_route_body = system_http_route_body;
+        cx.system_http_type_ns = system_http_type_ns;
         cx.assert_loc = Some(crate::emitter::AssertLoc {
             source: source.to_string(),
             rel_path: rel_path.to_string(),
         });
+        cx.test_scaffold = true;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -319,7 +341,31 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
         Statement::EffectLet(l) => {
             // `let x <- expr` → `const x = await expr;`
             let mut stmts = Vec::new();
+            // v0.182 (#664): a call-site `by <Actor>(<identity>)` supplies the
+            // identity the addressed handler reads as `deps.identity`. Lower it
+            // (a test-only brand cast, like an agent key) and stash it for the
+            // address-call lowering to fold into that call's deps.
+            let saved_identity = cx.call_site_identity.take();
+            let saved_no_credential = cx.call_site_no_credential;
+            cx.call_site_no_credential = false;
+            if let Some(principal) = &l.principal {
+                // #706: `by Nobody` drives the route with no credential (the 401
+                // path); it names no identity. Any other principal supplies its
+                // identity — the *raw* lowered value (`"bob"`), which unit deps
+                // folds with an `as any` brand cast and the system driver passes
+                // as the JWT `sub` verbatim.
+                if principal.actor.name == "Nobody" {
+                    cx.call_site_no_credential = true;
+                } else {
+                    cx.call_site_identity = principal
+                        .identity
+                        .as_ref()
+                        .map(|id| lower_expr(id, &mut stmts, cx));
+                }
+            }
             let value = lower_expr(&l.value, &mut stmts, cx);
+            cx.call_site_identity = saved_identity;
+            cx.call_site_no_credential = saved_no_credential;
             for s in &stmts {
                 write_line(out, indent, s);
             }
@@ -580,6 +626,10 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
     }
     match &e.kind {
         ExprKind::IntLit { value: n, .. } => n.to_string(),
+        // Slice C: `Wire(<String>)` in a generic position lowers to its raw inner
+        // string. The system-http driver site intercepts `Wire` args before this
+        // to route them raw (no serialisation) and switch to the outcome decoder.
+        ExprKind::Wire(inner) => lower_expr(inner, stmts, cx),
         // v0.21: the stored lexeme verbatim — `1e10` must not normalise.
         ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
         // v0.86 (ADR 0112): a `Duration` literal lowers to its constant
@@ -1409,14 +1459,165 @@ fn lower_method_call(
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         return format!("{}.{}({})", id.name, method.name, args_lowered.join(", "));
     }
-    // v0.7: local service call inside a test case body.
-    // `serviceName.method(args)` → `serviceName.method(args, deps)`.
+    // v0.7 / v0.182: local service call inside a test case body. `svc.call(args)`
+    // lowers to `svc.call(args, deps)`. An http address `svc.<VERB>("/path", …)`
+    // (#664) lowers to the emitted handler key `svc.http_<VERB>_<path>(<rest>,
+    // <deps>)`, where `<deps>` folds in the call-site identity when present.
+    // Slice B: a `system`-tier http address drives a real `worker.fetch` through
+    // a driver (`__sysdrive_<svc>_<key>(rest, sub)`), not a direct handler call.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.system_http_services.contains(&id.name)
+        && let Some(verb) = bynk_syntax::ast::HttpMethod::from_ident(&method.name)
+        && let Some(first) = args.first()
+        && let ExprKind::StrLit(path) = &first.kind
+    {
+        // #707: a `(method, path)` whose path is a declared route but whose
+        // method has no handler is a **wrong-method** call — drive the generic
+        // `405` driver. The checker has already rejected a path that is not
+        // declared for any method, so an absent route here means wrong method.
+        let route_declared = cx.system_http_routes.contains(&(
+            id.name.clone(),
+            verb.as_str().to_string(),
+            path.clone(),
+        ));
+        if !route_declared {
+            return format!(
+                "__sysdrive_wrongmethod_{}({:?}, {:?})",
+                id.name,
+                verb.as_str(),
+                path
+            );
+        }
+        let key = crate::emitter::http_handler_method_name(verb, path);
+        let sub = cx
+            .call_site_identity
+            .clone()
+            .unwrap_or_else(|| "\"\"".to_string());
+        // #706: `by Nobody` drives the *no-auth* driver — no `Authorization`
+        // header, so the real seam rejects it (`401` → `Rejected(Unauthorized)`);
+        // it takes precedence over the body form (the seam rejects before the
+        // body is read). Otherwise — Slice C: a `Wire(…)` argument drives the
+        // *raw* driver (input sent unvalidated, result decodes to an
+        // `HttpOutcome`); a fully typed call keeps the serialising driver.
+        // #821: the two axes are independent — a `Wire(…)` argument combined
+        // with `by Nobody` drives the raw *and* no-auth driver together, so
+        // the missing-credential rejection and the unvalidated body both
+        // apply, rather than one silently discarding the other.
+        let has_wire = args[1..]
+            .iter()
+            .any(|a| matches!(&a.kind, ExprKind::Wire(_)));
+        let driver = match (cx.call_site_no_credential, has_wire) {
+            (true, true) => "__sysdrive_rawnoauth",
+            (true, false) => "__sysdrive_noauth",
+            (false, true) => "__sysdrive_raw",
+            (false, false) => "__sysdrive",
+        };
+        let is_raw = driver == "__sysdrive_raw" || driver == "__sysdrive_rawnoauth";
+        // #708/#821: the raw (and raw+no-auth) driver's every slot is a
+        // `string`. `lower_expr` already lowers a `Wire(s)` to its raw inner
+        // string, but a *typed* arg mixed into the same raw call must be
+        // converted to that `string` slot: the body param serialises through
+        // the same wire codec the typed driver uses (so a hand-typed body
+        // matches a `Wire`d one byte-for-byte); any other (path) param just
+        // coerces via `String(...)`.
+        let body_info = if is_raw {
+            cx.system_http_route_body
+                .get(&(id.name.clone(), verb.as_str().to_string(), path.clone()))
+                .cloned()
+        } else {
+            None
+        };
+        let rest: Vec<String> = args[1..]
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let lowered = lower_expr(a, stmts, cx);
+                if !is_raw || matches!(&a.kind, ExprKind::Wire(_)) {
+                    return lowered;
+                }
+                match &body_info {
+                    // A named type's typed literal is unbranded in test-scaffold
+                    // code (the checker already validated it against the
+                    // handler's declared type — Slice A), the same reason
+                    // `driver_param_ty` types a named driver param `any` rather
+                    // than the branded type. Cast through `any` here too, so
+                    // `serialise_<Name>` (which expects the branded shape)
+                    // accepts the plain object literal.
+                    Some((body_idx, ty)) if *body_idx == i => format!(
+                        "JSON.stringify({})",
+                        crate::emitter::serialisation::serialise_expr_via(
+                            ty,
+                            &format!("({lowered} as any)"),
+                            &cx.system_http_type_ns
+                        )
+                    ),
+                    _ => format!("String({lowered})"),
+                }
+            })
+            .collect();
+        let mut all = rest;
+        all.push(sub);
+        return format!("{}_{}_{}({})", driver, id.name, key, all.join(", "));
+    }
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.test_services.contains(&id.name)
     {
+        let deps_expr = match cx.call_site_identity.clone() {
+            Some(identity) => format!("{{ ...deps, identity: ({identity} as any) }}"),
+            None => "deps".to_string(),
+        };
+        use bynk_syntax::ast::HandlerKind as HK;
+        // http address: the method is an HTTP verb and the first argument is the
+        // route pattern string. The key is a pure function of verb + path; the
+        // remaining args are the handler's positional params.
+        if let Some(verb) = bynk_syntax::ast::HttpMethod::from_ident(&method.name)
+            && let Some(first) = args.first()
+            && let ExprKind::StrLit(path) = &first.kind
+        {
+            let key = crate::emitter::http_handler_method_name(verb, path);
+            let rest: Vec<String> = args[1..].iter().map(|a| lower_expr(a, stmts, cx)).collect();
+            let mut all = rest;
+            all.push(deps_expr);
+            return format!("{}.{}({})", id.name, key, all.join(", "));
+        }
+        // cron/queue address: the emitted key is position-indexed among the
+        // service's same-kind handlers, so recover the index from the handler
+        // list. cron drops the leading schedule string; queue passes the message.
+        if let Some(handlers) = cx.test_service_handlers.get(&id.name) {
+            if method.name == "schedule"
+                && let Some(ExprKind::StrLit(expr)) = args.first().map(|a| &a.kind)
+            {
+                let mut idx = 0usize;
+                for h in handlers {
+                    if let HK::Cron { expr: e } = h {
+                        if e == expr {
+                            break;
+                        }
+                        idx += 1;
+                    }
+                }
+                let key = crate::emitter::cron_handler_method_name(&id.name, idx);
+                let rest: Vec<String> =
+                    args[1..].iter().map(|a| lower_expr(a, stmts, cx)).collect();
+                let mut all = rest;
+                all.push(deps_expr);
+                return format!("{}.{}({})", id.name, key, all.join(", "));
+            }
+            if method.name == "message" && handlers.iter().any(|h| matches!(h, HK::Message)) {
+                // A `from queue` service binds exactly one queue and declares one
+                // `on message` handler, so the position index is 0.
+                let key = crate::emitter::queue_handler_method_name(&id.name, 0);
+                let args_lowered: Vec<String> =
+                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+                let mut all = args_lowered;
+                all.push(deps_expr);
+                return format!("{}.{}({})", id.name, key, all.join(", "));
+            }
+        }
+        // `svc.call(args)` and other (non-http) forms: pass args through with deps.
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         let mut all = args_lowered;
-        all.push("deps".to_string());
+        all.push(deps_expr);
         return format!("{}.{}({})", id.name, method.name, all.join(", "));
     }
     // v0.9.2: inline agent invocation. Source form is
@@ -1856,6 +2057,60 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                         }
                     }
                 }
+            }
+            // #474 §2.3.6: an or-pattern's shared names can live at different
+            // structural paths per alternative (`Held`'s field 2 vs
+            // `Confirmed`'s field 4), so — like the `match` if-chain's
+            // `emit_pattern_bindings` — declare each name once with `let`,
+            // then dispatch per alternative. Still depth-1 only (the same
+            // existing `is` limitation as the `Variant` case above): an
+            // alternative that isn't itself a flat `Variant` contributes no
+            // bindings, only its tag test.
+            if let Pattern::Or(alts, _) = pattern {
+                let names = pattern.bound_names();
+                if names.is_empty() {
+                    return;
+                }
+                let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
+                out.push(format!("let {};", decl.join(", ")));
+                let last = alts.len() - 1;
+                for (i, alt) in alts.iter().enumerate() {
+                    let (tag, pairs) = match alt {
+                        Pattern::Variant {
+                            variant, bindings, ..
+                        } => {
+                            let mut pairs = Vec::new();
+                            for (j, b) in bindings.iter().enumerate() {
+                                let Pattern::Binding(name) = b.pattern() else {
+                                    continue;
+                                };
+                                let field = match &b.kind {
+                                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                                    PatternBindingKind::Positional { .. } => {
+                                        cx.positional_field_name(disc_ty.as_ref(), &variant.name, j)
+                                    }
+                                };
+                                pairs.push((ts_ident(&name.name), format!("{value_text}.{field}")));
+                            }
+                            (Some(variant.name.clone()), pairs)
+                        }
+                        _ => (None, Vec::new()),
+                    };
+                    if i == last {
+                        out.push("} else {".to_string());
+                    } else {
+                        let cond = tag
+                            .as_ref()
+                            .map(|t| format!("{value_text}.tag === \"{t}\""))
+                            .unwrap_or_else(|| "true".to_string());
+                        let kw = if i == 0 { "if" } else { "} else if" };
+                        out.push(format!("{kw} ({cond}) {{"));
+                    }
+                    for (name, path) in &pairs {
+                        out.push(format!("  {name} = {path};"));
+                    }
+                }
+                out.push("}".to_string());
             }
         }
         ExprKind::BinOp(BinOp::And, l, r) => {
@@ -3035,21 +3290,32 @@ fn cond_contains_is(e: &Expr) -> bool {
 /// non-wildcard binding. Walks through `&&`, `||`, and parens.
 fn cond_has_is_bindings(e: &Expr, cx: &LowerCtx) -> bool {
     match &e.kind {
-        ExprKind::Is {
-            value,
-            pattern: Pattern::Variant {
-                variant, bindings, ..
-            },
+        ExprKind::Is { value, pattern } => pattern_is_has_bindings(pattern, value, cx),
+        ExprKind::BinOp(BinOp::And, l, r) | ExprKind::BinOp(BinOp::Or, l, r) => {
+            cond_has_is_bindings(l, cx) || cond_has_is_bindings(r, cx)
+        }
+        ExprKind::Paren(inner) => cond_has_is_bindings(inner, cx),
+        _ => false,
+    }
+}
+
+/// The per-pattern-kind check `cond_has_is_bindings` delegates to (#474: split
+/// out so an or-pattern can recurse into its alternatives).
+fn pattern_is_has_bindings(pattern: &Pattern, value: &Expr, cx: &LowerCtx) -> bool {
+    match pattern {
+        Pattern::Variant {
+            variant, bindings, ..
         } => {
             bindings.iter().any(|b| !b.is_wildcard())
                 // v0.13: a refined `is`-narrowing introduces a (shadow) binding
                 // even though the pattern carries none.
                 || (bindings.is_empty() && cx.is_refined_is_check(value, &variant.name))
         }
-        ExprKind::BinOp(BinOp::And, l, r) | ExprKind::BinOp(BinOp::Or, l, r) => {
-            cond_has_is_bindings(l, cx) || cond_has_is_bindings(r, cx)
-        }
-        ExprKind::Paren(inner) => cond_has_is_bindings(inner, cx),
+        // #474: Rule 1 guarantees every alternative binds the same names, so
+        // any one alternative having bindings means the whole pattern does.
+        Pattern::Or(alts, _) => alts
+            .iter()
+            .any(|alt| pattern_is_has_bindings(alt, value, cx)),
         _ => false,
     }
 }
@@ -3837,6 +4103,23 @@ fn literal_case_label(value: &LiteralValue) -> String {
     }
 }
 
+/// #472: the `Int`/`String`/`Bool` base of a literal-kind type, or `None` for
+/// anything else. Mirrors the checker's `literal_base_of` (and the
+/// per-variant logic in [`is_literal_match`]) — used to feed
+/// [`refined_check_as_bool`] the base a `_ where predicate` pattern's
+/// scrutinee actually has.
+fn literal_base_of_ty(ty: &Ty) -> Option<BaseType> {
+    let base = match ty {
+        Ty::Base(b) => *b,
+        Ty::Named {
+            kind: NamedKind::Refined(b),
+            ..
+        } => *b,
+        _ => return None,
+    };
+    matches!(base, BaseType::Int | BaseType::String | BaseType::Bool).then_some(base)
+}
+
 /// Whether an expression lowers to a stable reference TypeScript can narrow
 /// across a `switch` (a variable or a property path rooted in one). Calls and
 /// other computed expressions are not narrowable and must be bound to a temp.
@@ -3945,6 +4228,12 @@ fn emit_match_case(
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
+        // #472: a refined arm always trips `match_needs_if_chain`, so the
+        // switch path (this function) never sees one in practice — a
+        // predicate has no `case`-label lowering, unlike a literal or a tag.
+        Pattern::Refined { .. } => {
+            unreachable!("a Pattern::Refined arm always routes through emit_match_if_chain")
+        }
         Pattern::Variant {
             variant, bindings, ..
         } => {
@@ -3972,6 +4261,49 @@ fn emit_match_case(
                     indent + INDENT_STEP,
                     &format!("const {local} = {disc_var}.{field};"),
                 );
+            }
+            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
+        // #474: a bindingless or-pattern (guaranteed by `match_needs_if_chain`
+        // routing — a bound/guarded one takes the if-chain path instead) lowers
+        // to one fall-through `case` label per alternative, sharing one body —
+        // *unless* an alternative is `_`/a bare binding (#825 review): that
+        // alone already matches everything (`Pending | _` is exactly as
+        // irrefutable as a bare `_`, per `Pattern::is_irrefutable`), and JS
+        // `switch` has no `case _:` form, only `default:`. Emitting case
+        // labels for the other (now-redundant) alternatives and dropping the
+        // wildcard produced malformed, `tsc`-rejected output.
+        Pattern::Or(alts, _) => {
+            if arm.pattern.is_irrefutable() {
+                write_line(out, indent, "default: {");
+                emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+                write_line(out, indent, "}");
+                return;
+            }
+            let last = alts.len() - 1;
+            for (i, alt) in alts.iter().enumerate() {
+                let label = match alt {
+                    Pattern::Literal { value, .. } => literal_case_label(value),
+                    Pattern::Variant { variant, .. } => format!("\"{}\"", variant.name),
+                    Pattern::Wildcard(_) | Pattern::Binding(_) => unreachable!(
+                        "pattern.is_irrefutable() is false, so no alternative is a wildcard or binding"
+                    ),
+                    Pattern::Or(..) => unreachable!("an Or's alternatives are always leaves"),
+                    // #472/#474: the parser only ever wraps a *whole*,
+                    // already-folded `|`-chain in `Refined` (never the other
+                    // way — see `parse_pattern_where_suffix`), so an `Or`'s
+                    // alternatives (built from `parse_pattern_base`) can never
+                    // themselves be `Refined`.
+                    Pattern::Refined { .. } => {
+                        unreachable!("an Or's alternatives are never a Refined pattern")
+                    }
+                };
+                if i == last {
+                    write_line(out, indent, &format!("case {label}: {{"));
+                } else {
+                    write_line(out, indent, &format!("case {label}:"));
+                }
             }
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
@@ -4004,8 +4336,11 @@ fn emit_match_body(
 /// neither. Flat, unguarded matches keep the `switch` (zero churn to existing
 /// output).
 fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
-    arms.iter()
-        .any(|a| a.guard.is_some() || pattern_has_nested_test(&a.pattern))
+    arms.iter().any(|a| {
+        a.guard.is_some()
+            || pattern_has_nested_test(&a.pattern)
+            || matches!(a.pattern, Pattern::Refined { .. })
+    })
 }
 
 /// True when `pat` carries a payload sub-pattern that is itself refutable (a
@@ -4016,6 +4351,23 @@ fn pattern_has_nested_test(pat: &Pattern) -> bool {
             let sp = b.pattern();
             !sp.is_irrefutable() || pattern_has_nested_test(sp)
         }),
+        // #472: a refined pattern is never a top-level irrefutable/nested
+        // payload today (the parser admits only `_` as `inner`, and only at a
+        // match arm's top level), but keep this exhaustive and correct for
+        // when nesting is admitted. (An `Or`'s alternatives can never
+        // themselves be `Refined` — #472/#474's merged parser design only
+        // ever wraps a *whole*, already-folded `|`-chain in `Refined`, never
+        // the other way around — so this arm only matters nested under a
+        // payload, e.g. a hypothetical `Some(_ where P)`.)
+        Pattern::Refined { inner, .. } => !inner.is_irrefutable() || pattern_has_nested_test(inner),
+        // #474: a bindingless, non-nested or-pattern (`1 | 2 | 3`,
+        // `Pending | Cancelled(_, _)`) stays on the flat switch — it lowers to
+        // fall-through `case` labels sharing one body. One with bindings or a
+        // nested refutable payload needs the if-chain (a `switch` can't bind
+        // different alternatives' fields to the same name).
+        Pattern::Or(alts, _) => alts
+            .iter()
+            .any(|p| !p.bound_names().is_empty() || pattern_has_nested_test(p)),
         _ => false,
     }
 }
@@ -4035,6 +4387,28 @@ fn pattern_match_tests(
         Pattern::Literal { value, .. } => {
             tests.push(format!("{path} === {}", literal_case_label(value)));
         }
+        // #472: `p where predicate` — the inner pattern's own tests, then the
+        // predicate as a boolean guard over the runtime value at `path`,
+        // reusing `refined_check_as_bool` verbatim (the same helper `value is
+        // RefinedType` lowers through).
+        Pattern::Refined {
+            inner, predicate, ..
+        } => {
+            pattern_match_tests(path, path_ty, inner, cx, tests);
+            // The checker (`check_pattern`) already rejected any scrutinee
+            // that isn't literal-kind before this point, so `path_ty` is
+            // always `Int` or `String` here for a well-typed program — a
+            // silent fallback would mask a real bug (wrong predicate codegen
+            // against the wrong base) rather than surfacing it loudly, the
+            // same posture as `emit_match_case`'s `Pattern::Refined` arm.
+            let base = path_ty.and_then(literal_base_of_ty).unwrap_or_else(|| {
+                panic!(
+                    "a refined pattern's scrutinee must be literal-kind (Int/String), got {:?}",
+                    path_ty
+                )
+            });
+            tests.push(refined_check_as_bool(path, base, Some(predicate)));
+        }
         Pattern::Variant {
             variant, bindings, ..
         } => {
@@ -4053,6 +4427,26 @@ fn pattern_match_tests(
                 let field_ty = cx.payload_field_ty(path_ty, &variant.name, i);
                 pattern_match_tests(&format!("{path}.{field}"), field_ty.as_ref(), sp, cx, tests);
             }
+        }
+        // #474: an or-pattern matches `path` when any alternative does — AND
+        // each alternative's own tests, then OR the alternatives together, and
+        // push the whole disjunction as a single combined test (so a caller
+        // AND-joining `tests` composes it correctly with sibling tests, e.g. a
+        // nested `Some(1 | 2)`'s outer `.tag === "Some"` test).
+        Pattern::Or(alts, _) => {
+            let terms: Vec<String> = alts
+                .iter()
+                .map(|alt| {
+                    let mut t = Vec::new();
+                    pattern_match_tests(path, path_ty, alt, cx, &mut t);
+                    if t.is_empty() {
+                        "true".to_string()
+                    } else {
+                        t.join(" && ")
+                    }
+                })
+                .collect();
+            tests.push(format!("({})", terms.join(" || ")));
         }
     }
 }
@@ -4076,6 +4470,11 @@ fn emit_pattern_bindings(
                 &format!("const {} = {path};", ts_ident(&id.name)),
             );
         }
+        // #472: a refined pattern binds only what its inner pattern binds
+        // (`_ where P` binds nothing today).
+        Pattern::Refined { inner, .. } => {
+            emit_pattern_bindings(out, indent, path, path_ty, inner, cx);
+        }
         Pattern::Variant {
             variant, bindings, ..
         } => {
@@ -4097,6 +4496,99 @@ fn emit_pattern_bindings(
                 );
             }
         }
+        // #474: different alternatives can bind the same name at different
+        // structural paths (`Held`'s field 2 vs `Confirmed`'s field 4), so a
+        // single `const` can't express it. Declare each shared name once with
+        // `let`, then dispatch per alternative — only the (small) binding
+        // resolution is duplicated per alternative, not the arm body that
+        // follows. Alternatives are mutually exclusive at runtime (a value has
+        // exactly one tag, or a literal one value), so a plain if/else-if/else
+        // chain is exhaustive over them once the caller's own combined test
+        // (built by `pattern_match_tests`) has already passed.
+        Pattern::Or(alts, _) => {
+            let names = pattern.bound_names();
+            if names.is_empty() {
+                return;
+            }
+            let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
+            write_line(out, indent, &format!("let {};", decl.join(", ")));
+            let last = alts.len() - 1;
+            for (i, alt) in alts.iter().enumerate() {
+                if i == last {
+                    write_line(out, indent, "} else {");
+                } else {
+                    let mut t = Vec::new();
+                    pattern_match_tests(path, path_ty, alt, cx, &mut t);
+                    let cond = if t.is_empty() {
+                        "true".to_string()
+                    } else {
+                        t.join(" && ")
+                    };
+                    let kw = if i == 0 { "if" } else { "} else if" };
+                    write_line(out, indent, &format!("{kw} ({cond}) {{"));
+                }
+                let mut pairs = Vec::new();
+                pattern_binding_paths(path, path_ty, alt, cx, &mut pairs);
+                for (name, p) in &pairs {
+                    write_line(
+                        out,
+                        indent + INDENT_STEP,
+                        &format!("{} = {p};", ts_ident(name)),
+                    );
+                }
+            }
+            write_line(out, indent, "}");
+        }
+    }
+}
+
+/// Collect `(name, runtime-path)` pairs for the names `pattern` binds from
+/// `path`, recursing through nested payloads — the same traversal as
+/// `emit_pattern_bindings`, but returning the resolved paths instead of
+/// writing `const` declarations, so an or-pattern's per-alternative dispatch
+/// (above) can assign a shared `let` from whichever alternative matched.
+fn pattern_binding_paths(
+    path: &str,
+    path_ty: Option<&Ty>,
+    pattern: &Pattern,
+    cx: &LowerCtx,
+    out: &mut Vec<(String, String)>,
+) {
+    match pattern {
+        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
+        Pattern::Binding(id) => out.push((id.name.clone(), path.to_string())),
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            for (i, b) in bindings.iter().enumerate() {
+                let field = match &b.kind {
+                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Positional { .. } => {
+                        cx.positional_field_name(path_ty, &variant.name, i)
+                    }
+                };
+                let field_ty = cx.payload_field_ty(path_ty, &variant.name, i);
+                pattern_binding_paths(
+                    &format!("{path}.{field}"),
+                    field_ty.as_ref(),
+                    b.pattern(),
+                    cx,
+                    out,
+                );
+            }
+        }
+        // Never reached from the parser (an `Or`'s alternatives are always
+        // leaves), but recurse into the first alternative defensively rather
+        // than panic, mirroring `gather_pattern_bindings`'s checker-side choice.
+        Pattern::Or(alts, _) => {
+            if let Some(first) = alts.first() {
+                pattern_binding_paths(path, path_ty, first, cx, out);
+            }
+        }
+        // #472: binds only what its inner pattern binds (`_ where P` binds
+        // nothing today) — same recursion as `emit_pattern_bindings`'s
+        // `Refined` arm.
+        Pattern::Refined { inner, .. } => pattern_binding_paths(path, path_ty, inner, cx, out),
     }
 }
 
@@ -4190,8 +4682,59 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
         Pattern::Literal { value, .. } => {
             format!("{v} === {}", literal_case_label(value))
         }
-        Pattern::Variant { variant, .. } => {
-            format!("{v}.tag === \"{}\"", variant.name)
+        // #472: the checker rejects a refined pattern on the RHS of `is`
+        // (D5), so this is unreachable for a well-typed program; lower it
+        // defensively via the same `pattern_match_tests` a `match` arm uses
+        // (which already handles `Pattern::Refined` — inner tests plus the
+        // predicate via `refined_check_as_bool`).
+        Pattern::Refined { .. } => {
+            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let mut tests = Vec::new();
+            pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
+            if tests.is_empty() {
+                "true".to_string()
+            } else {
+                tests.join(" && ")
+            }
+        }
+        // #705: a variant pattern lowers to its full structural test — the outer
+        // tag *and* any nested refutable payload patterns, so
+        // `r is Rejected(RefinementViolation(_))` checks both levels (the same
+        // tests a `match` arm emits, via `pattern_match_tests`). A plain
+        // `is Ok(_)` / `is Rejected(_)` still yields a single `.tag` test (the
+        // `_` payload is irrefutable). For a loose scrutinee — the `Wire`-call
+        // outcome — the single-field `"value"` fallback matches the runtime
+        // `{ tag, value }` shape, so the nested test lands without a static type.
+        Pattern::Variant { .. } => {
+            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let mut tests = Vec::new();
+            // For a loose scrutinee, a *multi*-payload nested pattern would map
+            // every positional field to the single-field `"value"` fallback; that
+            // is unreachable today (the only loose variant sums — the `Wire`
+            // outcome's rejection kinds — are single-field) and is shared with
+            // `match`'s lowering. Precise for any typed scrutinee.
+            pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
+            // `pattern_match_tests` always pushes the outer `.tag` test for a
+            // variant pattern, so a variant `is` is never vacuously `true` — a
+            // silently-passing `expect` is exactly the failure this reuse removes.
+            debug_assert!(
+                !tests.is_empty(),
+                "a variant `is` pattern must emit at least its outer tag test"
+            );
+            if tests.is_empty() {
+                "true".to_string()
+            } else {
+                tests.join(" && ")
+            }
+        }
+        // #474 §2.3.6: an or-pattern is legal after `is`. `pattern_match_tests`
+        // already knows how to OR its alternatives together (pushing one
+        // combined `(...) || (...)` term), so this is a thin wrapper.
+        Pattern::Or(..) => {
+            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let mut tests = Vec::new();
+            pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
+            tests.join(" && ")
         }
     }
 }

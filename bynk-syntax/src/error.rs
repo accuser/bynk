@@ -71,7 +71,10 @@ impl Severity {
             | "bynk.given.unused_capability"
             | "bynk.list.deprecated_function"
             | "bynk.index.missing"
-            | "bynk.index.unused" => Severity::Warning,
+            | "bynk.index.unused"
+            // A computed secret name is legal and sometimes reasonable; the
+            // program is correct, `deploy` simply cannot see it (ADR 0196 D1).
+            | "bynk.secrets.computed_name" => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -100,6 +103,24 @@ impl CompileError {
         }
     }
 
+    /// Shift every span in this diagnostic — the primary span, secondary
+    /// labels, and suggestion edits — right by `delta` bytes. Used to rebase a
+    /// diagnostic produced against a substring (e.g. an interpolation hole
+    /// re-lexed on its own) into the full source, so the location is correct
+    /// and every span stays a valid char boundary. (#716.)
+    pub fn offset_spans(mut self, delta: usize) -> Self {
+        self.span = self.span.offset(delta);
+        for (span, _) in &mut self.labels {
+            *span = span.offset(delta);
+        }
+        for suggestion in &mut self.suggestions {
+            for (span, _) in &mut suggestion.edits {
+                *span = span.offset(delta);
+            }
+        }
+        self
+    }
+
     pub fn with_label(mut self, span: Span, label: impl Into<String>) -> Self {
         self.labels.push((span, label.into()));
         self
@@ -126,52 +147,55 @@ impl CompileError {
         self
     }
 
-    /// Build an [`ariadne::Report`] for this error, anchored to the given
-    /// filename. Colour is on (for the CLI and human-facing test output).
-    pub fn report<'a>(
-        &'a self,
-        filename: &'a str,
-    ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        self.report_for(filename, usize::MAX)
-    }
-
-    /// [`Self::report`], bounded by the rendered source's byte length: a label
-    /// whose span lies past the end of the source belongs to *another* file
-    /// (e.g. a `uses`-imported callee's "declared here"), and rendering it
-    /// against this file would underline unrelated text. Such labels are
-    /// demoted to notes so the information survives without the misplacement.
+    /// Build an [`ariadne::Report`] for this error, rendered against `source`
+    /// (labelled `filename`). Colour is on (for the CLI and human-facing test
+    /// output).
+    ///
+    /// A **secondary** label whose span does not sit cleanly within `source`
+    /// belongs to *another* file — a cross-file "declared here" pointing at a
+    /// `uses`-imported callee, or (#696) at a sibling file in a multi-file unit.
+    /// Rendering it here would underline unrelated text, and a byte span that
+    /// lands mid-codepoint would panic ariadne's byte→char mapping (#716). Such a
+    /// label is demoted to a note so the information survives without the
+    /// misplacement or the panic. The demotion test is deliberately conservative:
+    /// out-of-bounds **or** not on a char boundary of `source`. It cannot catch a
+    /// cross-file span that happens to be in-bounds and boundary-aligned — those
+    /// labels still need per-label file identity (a follow-up); the always
+    /// cross-file diagnostics (`kind_conflict`, `inconsistent_commons_name`)
+    /// avoid the ambiguity by carrying their cross-file provenance as a note.
     pub fn report_for<'a>(
         &'a self,
         filename: &'a str,
-        source_len: usize,
+        source: &str,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        self.report_with_config(filename, Config::default(), source_len)
+        self.report_with_config(filename, Config::default(), source)
     }
 
-    /// Build a colourless [`ariadne::Report`], for transcripts committed to the
-    /// repo — no ANSI escape codes, so the output is byte-stable across machines.
-    pub fn report_plain<'a>(
-        &'a self,
-        filename: &'a str,
-    ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        self.report_plain_for(filename, usize::MAX)
-    }
-
-    /// [`Self::report_plain`], bounded by the source length — see
-    /// [`Self::report_for`].
+    /// [`Self::report_for`] with colour disabled, for transcripts committed to
+    /// the repo — no ANSI escape codes, so the output is byte-stable across
+    /// machines.
     pub fn report_plain_for<'a>(
         &'a self,
         filename: &'a str,
-        source_len: usize,
+        source: &str,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        self.report_with_config(filename, Config::default().with_color(false), source_len)
+        self.report_with_config(filename, Config::default().with_color(false), source)
+    }
+
+    /// True when `span` sits cleanly inside `source` — in-bounds and on char
+    /// boundaries at both ends — so ariadne can underline it without misplacing
+    /// the caret or panicking on a byte offset that splits a codepoint (#716).
+    fn label_fits(span: &Span, source: &str) -> bool {
+        span.end <= source.len()
+            && source.is_char_boundary(span.start)
+            && source.is_char_boundary(span.end)
     }
 
     fn report_with_config<'a>(
         &'a self,
         filename: &'a str,
         config: Config,
-        source_len: usize,
+        source: &str,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
         let primary_span = (filename, self.span.range());
         // Spans are byte offsets into the UTF-8 source; ariadne 0.6 defaults
@@ -188,9 +212,10 @@ impl CompileError {
             );
 
         for (span, label) in &self.labels {
-            if span.end > source_len {
-                // The label's span lies in another file — demote to a note
-                // rather than underlining unrelated text in this one.
+            if !Self::label_fits(span, source) {
+                // The label's span does not fit this file's source — demote to a
+                // note rather than underlining unrelated text (or panicking on a
+                // mid-codepoint offset).
                 builder = builder.with_note(label);
                 continue;
             }

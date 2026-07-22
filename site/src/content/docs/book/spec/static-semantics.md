@@ -64,7 +64,9 @@ call MUST supply the right number of arguments (`bynk.resolve.arity_mismatch`,
 its type (`bynk.types.field_value_mismatch`), and every required field MUST be
 supplied (`bynk.resolve.missing_field`).
 
-An `if` condition MUST be a `Bool` and both branches MUST share a type
+An `if` condition MUST be a `Bool` and both branches MUST **join** to a common
+type — their least upper bound, so a refined type and its base (or two refined
+types over one base) agree at the base, but unrelated types do not
 (`bynk.types.if_non_bool_cond`, `bynk.types.if_branch_mismatch`). The payloads of
 `Ok`, `Err`, `Some`, and the like MUST match the expected component type (the
 `bynk.types.*_value_mismatch` codes). Where a constructor is ambiguous between
@@ -326,9 +328,13 @@ an `Int` is rejected (`bynk.types.predicate_base_mismatch`) — and MUST be
 internally consistent: an `InRange` MUST NOT be inverted
 (`bynk.types.inverted_range`), a length MUST NOT be negative
 (`bynk.types.negative_length`), a `Matches` regex MUST be valid
-(`bynk.types.invalid_regex`), and the predicates together MUST admit at least one
-value (`bynk.types.empty_refinement` — on `Float`, `Positive` excludes the
-lower endpoint `0.0`, so `InRange(-1.0, 0.0) && Positive` is empty).
+(`bynk.types.invalid_regex`) and MUST NOT nest unbounded quantifiers — a repeated
+group that itself contains `*`, `+`, or `{n,}`, such as `(a+)+`, is rejected
+(`bynk.types.catastrophic_regex`) because the emitted boundary check runs under a
+backtracking `RegExp` where that shape is exponential on crafted input — and the
+predicates together MUST admit at least one value (`bynk.types.empty_refinement`
+— on `Float`, `Positive` excludes the lower endpoint `0.0`, so
+`InRange(-1.0, 0.0) && Positive` is empty).
 
 `InRange` bounds MUST match the numeric base (v0.21): integer bounds on
 `Int`, float bounds on `Float`. A bound of the other numeric type, or a
@@ -577,7 +583,9 @@ the same dependency-cycle check.
 A `match` MUST be **exhaustive** — every variant of the scrutinised sum,
 `Result`, or `Option` covered (`bynk.types.non_exhaustive_match`) — and its
 scrutinee MUST be a sum type (`bynk.types.match_non_sum_discriminant`). Its arms
-MUST share a result type (`bynk.types.match_arm_mismatch`), MUST NOT repeat a
+MUST **join** to a common result type — their least upper bound, so a refined
+type and its base agree at the base (`bynk.types.match_arm_mismatch`), MUST NOT
+repeat a
 variant (`bynk.types.duplicate_variant_arm`), and MUST NOT be unreachable
 (`bynk.types.unreachable_arm`).
 

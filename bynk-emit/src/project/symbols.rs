@@ -64,13 +64,18 @@ pub(crate) fn assemble_index(
                         &a.name.name,
                         symbol_modifiers(&unit, None),
                     ),
+                    CommonsItem::Messages(m) => (
+                        SymbolKind::Messages,
+                        &m.tag.name,
+                        symbol_modifiers(&unit, None),
+                    ),
                 };
                 builder.add_first_party_def(&unit, kind, name, modifiers);
             }
             continue;
         }
         let site = |id: &Ident| SiteRef {
-            path: pf.source_path.clone(),
+            path: pf.identity_path.clone(),
             span: id.span,
         };
         for item in pf.items() {
@@ -119,7 +124,7 @@ pub(crate) fn assemble_index(
                         // v0.36 (ADR 0069): a method is a first-class symbol
                         // keyed by the compound `"Type.method"` name, and (as
                         // before) an attribution owner for call-hierarchy.
-                        builder.add_owner(&unit, &f.name.display(), &pf.source_path);
+                        builder.add_owner(&unit, &f.name.display(), &pf.identity_path);
                         builder.add_def(
                             &unit,
                             SymbolKind::Method,
@@ -166,6 +171,22 @@ pub(crate) fn assemble_index(
                         site(&a.name),
                         symbol_modifiers(&unit, None),
                     );
+                    // #304: an agent handler is a first-class symbol keyed by
+                    // the compound `"Agent.handler"` name, mirroring the
+                    // v0.36 (ADR 0069) method/field/op convention. Service
+                    // handlers have no per-handler name (`method_name` is
+                    // always `None`), so this is naturally agent-only.
+                    for h in &a.handlers {
+                        if let Some(name) = &h.method_name {
+                            builder.add_def(
+                                &unit,
+                                SymbolKind::Handler,
+                                &format!("{}.{}", a.name.name, name.name),
+                                site(name),
+                                symbol_modifiers(&unit, None),
+                            );
+                        }
+                    }
                 }
                 CommonsItem::Provider(p) => {
                     builder.add_def(
@@ -182,6 +203,15 @@ pub(crate) fn assemble_index(
                         SymbolKind::Actor,
                         &a.name.name,
                         site(&a.name),
+                        symbol_modifiers(&unit, None),
+                    );
+                }
+                CommonsItem::Messages(m) => {
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Messages,
+                        &m.tag.name,
+                        site(&m.tag),
                         symbol_modifiers(&unit, None),
                     );
                 }
@@ -236,18 +266,24 @@ pub struct UnitTable {
     pub exported_capabilities: std::collections::HashSet<String>,
 }
 
+/// #696: each table-construction diagnostic is attributed to the project-relative
+/// `identity_path` of the file whose item produced it. Every error-producing loop
+/// below iterates `for &i in indices`, so it shadows a local `errors` vec and
+/// drains it into `out`, tagged with `parsed[i].identity_path`, at the end of each
+/// file's pass — leaving the many inner `errors.push(…)` sites untouched.
 pub(crate) fn build_unit_table(
     _name: &str,
     kind: UnitKind,
     indices: &[usize],
     parsed: &[ParsedFile],
-    errors: &mut Vec<CompileError>,
+    out: &mut Vec<(PathBuf, CompileError)>,
 ) -> UnitTable {
     let mut table = UnitTable {
         kind: Some(kind),
         ..UnitTable::default()
     };
     for &i in indices {
+        let mut errors: Vec<CompileError> = Vec::new();
         for item in parsed[i].items() {
             if let CommonsItem::Type(t) = item {
                 if let Some(prev) = table.types.get(&t.name.name) {
@@ -265,6 +301,11 @@ pub(crate) fn build_unit_table(
                 }
             }
         }
+        out.extend(
+            errors
+                .into_iter()
+                .map(|e| (parsed[i].identity_path.clone(), e)),
+        );
     }
     // v0.15: collect the names a context exports as capabilities.
     // v0.17: adapters export capabilities too.
@@ -281,6 +322,7 @@ pub(crate) fn build_unit_table(
     }
     // v0.5: collect capabilities, providers, services, agents.
     for &i in indices {
+        let mut errors: Vec<CompileError> = Vec::new();
         for item in parsed[i].items() {
             match item {
                 CommonsItem::Capability(c) => {
@@ -441,8 +483,14 @@ pub(crate) fn build_unit_table(
                 _ => {}
             }
         }
+        out.extend(
+            errors
+                .into_iter()
+                .map(|e| (parsed[i].identity_path.clone(), e)),
+        );
     }
     for &i in indices {
+        let mut errors: Vec<CompileError> = Vec::new();
         for item in parsed[i].items() {
             let CommonsItem::Fn(f) = item else { continue };
             match &f.name {
@@ -516,8 +564,111 @@ pub(crate) fn build_unit_table(
                 }
             }
         }
+        out.extend(
+            errors
+                .into_iter()
+                .map(|e| (parsed[i].identity_path.clone(), e)),
+        );
+    }
+    // message-bundles slice 1 (#859): a commons declaring at least one
+    // `messages` block also gets a synthetic `render(tag: LocaleTag, msg:
+    // Message) -> String` in its own local function table — not just emitted
+    // TS. Without this, a Bynk-source `render(...)` call has no local
+    // declaration to resolve to and silently falls through to `bynk.locale`'s
+    // *imported* `render` (same signature, wrong — bundle-free — behaviour):
+    // resolution would "type-check" while quietly calling the wrong function.
+    // Registering it here, in the same local `table.fns` a real `CommonsItem::Fn`
+    // would populate, makes ordinary lexical precedence (local beats
+    // `uses`-imported, `compose_unit_symbols`) and call-site type-checking
+    // (`fns.get(name)`, never touching `.body`) work with no changes anywhere
+    // else. The body is a placeholder — nothing ever type-checks it, since
+    // body-checking walks `commons.items` (real AST items) directly, and this
+    // entry is never added there.
+    if kind == UnitKind::Commons
+        && let Some(m) = indices.iter().find_map(|&i| {
+            parsed[i].items().iter().find_map(|item| match item {
+                CommonsItem::Messages(m) => Some(m),
+                _ => None,
+            })
+        })
+    {
+        if let Some(prev) = table.fns.get("render") {
+            out.push((
+                parsed[indices[0]].identity_path.clone(),
+                CompileError::new(
+                    "bynk.resolve.duplicate_fn",
+                    m.span,
+                    "function `render` is already declared",
+                )
+                .with_label(prev.name.ident().span, "previously declared here")
+                .with_note(
+                    "a `messages` block in this commons implicitly declares its own \
+                     `render(tag, msg) -> String` — name it something else",
+                ),
+            ));
+        } else {
+            table
+                .fns
+                .insert("render".to_string(), synthetic_render_fn());
+        }
     }
     table
+}
+
+/// The synthetic `FnDecl` [`build_unit_table`] registers for a messages-bearing
+/// commons. Its body is never checked (see the call site's comment) — it
+/// exists only so `Param`/`TypeRef`/`FnDecl` construction has somewhere to put
+/// a syntactically valid placeholder.
+fn synthetic_render_fn() -> FnDecl {
+    let span = Span::default();
+    FnDecl {
+        type_params: Vec::new(),
+        name: FnName::Free(Ident {
+            name: "render".to_string(),
+            span,
+        }),
+        params: vec![
+            Param {
+                name: Ident {
+                    name: "tag".to_string(),
+                    span,
+                },
+                type_ref: TypeRef::Named(Ident {
+                    name: "LocaleTag".to_string(),
+                    span,
+                }),
+                span,
+            },
+            Param {
+                name: Ident {
+                    name: "msg".to_string(),
+                    span,
+                },
+                type_ref: TypeRef::Named(Ident {
+                    name: "Message".to_string(),
+                    span,
+                }),
+                span,
+            },
+        ],
+        return_type: TypeRef::Base(BaseType::String, span),
+        requires: Vec::new(),
+        ensures: Vec::new(),
+        body: Block {
+            statements: Vec::new(),
+            tail: Box::new(Expr {
+                kind: ExprKind::StrLit(String::new()),
+                span,
+            }),
+            span,
+            tail_leading_comments: Vec::new(),
+            implicit_tail: false,
+        },
+        has_self: false,
+        documentation: None,
+        span,
+        trivia: Trivia::default(),
+    }
 }
 
 /// For each name declared in the unit (type, fn, method), record which
@@ -529,6 +680,13 @@ pub struct FileDeclIndex {
     pub methods: HashMap<String, HashMap<String, PathBuf>>,
 }
 
+/// **Tree-relative, deliberately.** This is an *emit* structure, not an index:
+/// `record_name_ref` compares these paths against `ctx.source_path`
+/// (`emitter.rs`), which is the file's `include`-root-relative path. Keying it
+/// by `identity_path` (ADR 0198) makes `path != &ctx.source_path` always true
+/// for a split project, so a name declared in the *same* file is emitted as a
+/// sibling import of itself — the module then cannot load, and a workers
+/// runtime test hangs rather than fails. See ADR 0201 (E).
 pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDeclIndex {
     let mut idx = FileDeclIndex {
         types: HashMap::new(),
@@ -565,18 +723,27 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
                 | CommonsItem::Provider(_)
                 | CommonsItem::Service(_)
                 | CommonsItem::Agent(_)
-                | CommonsItem::Actor(_) => {}
+                | CommonsItem::Actor(_)
+                // `messages` bundles aren't cross-file-imported by name in
+                // slice 1 (no multi-file bundle merge yet).
+                | CommonsItem::Messages(_) => {}
             }
         }
     }
     idx
 }
 
-pub(crate) fn uses_span_of(parsed: &[ParsedFile], indices: &[usize], target: &str) -> Option<Span> {
+/// #696: returns the `parsed` index of the owning file alongside the `uses`
+/// clause span, so the caller can attribute the diagnostic to that file.
+pub(crate) fn uses_span_of(
+    parsed: &[ParsedFile],
+    indices: &[usize],
+    target: &str,
+) -> Option<(usize, Span)> {
     for &i in indices {
         for u in parsed[i].uses() {
             if u.target.joined() == target {
-                return Some(u.span);
+                return Some((i, u.span));
             }
         }
     }
@@ -815,7 +982,15 @@ pub(crate) fn resolve_given_cap_ref(
 /// types of every commons it `uses`. Used by cross-context resolution so we
 /// can resolve a consumed context's service signatures against that context's
 /// own view of types (v0.6 §4.5).
-fn combined_types_for(
+/// v0.177 (#643): the callee's own type namespace — its local declarations plus
+/// the commons types it `uses`.
+///
+/// Shared deliberately. The **caller** reaches this table through
+/// `consumed_types[callee]` and the **callee** builds it for itself; both must
+/// canonicalise the callee's contract from the *same* table or their hashes
+/// diverge and every call 409s. Routing both through one function makes that
+/// agreement structural rather than a thing to keep in step by hand.
+pub(crate) fn combined_types_for(
     unit: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
@@ -838,32 +1013,36 @@ fn combined_types_for(
     out
 }
 
+/// #696: returns the `parsed` index of the owning file alongside the `consumes`
+/// clause span, so the caller can attribute the diagnostic to that file.
 pub(crate) fn consumes_span_of(
     parsed: &[ParsedFile],
     indices: &[usize],
     target: &str,
-) -> Option<Span> {
+) -> Option<(usize, Span)> {
     for &i in indices {
         for c in parsed[i].consumes() {
             if c.target.joined() == target {
-                return Some(c.span);
+                return Some((i, c.span));
             }
         }
     }
     None
 }
 
+/// #696: returns the `parsed` index of the owning file alongside the alias span,
+/// so the caller can attribute the diagnostic to that file.
 pub(crate) fn parsed_alias_span(
     parsed: &[ParsedFile],
     indices: &[usize],
     alias: &str,
-) -> Option<Span> {
+) -> Option<(usize, Span)> {
     for &i in indices {
         for c in parsed[i].consumes() {
             if let Some(a) = &c.alias
                 && a.name == alias
             {
-                return Some(a.span);
+                return Some((i, a.span));
             }
         }
     }

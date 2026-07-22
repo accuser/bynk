@@ -313,6 +313,22 @@ struct Parser<'a> {
     /// Line-comment trivia separated from the token stream. See
     /// [`TriviaTable`].
     trivia: TriviaTable,
+    /// Live recursion depth of the three self-recursive parse entry points
+    /// (`parse_expr`, `parse_type_ref`, `parse_pattern`). Incremented on entry
+    /// and decremented on exit by [`Parser::enter_recursion`] so it tracks the
+    /// current stack depth; when it exceeds [`crate::MAX_NESTING_DEPTH`] the
+    /// parser reports a bounded-depth diagnostic instead of overflowing its
+    /// stack (#713).
+    depth: usize,
+    /// When true, a bare `ident {` on the *spine* of the current expression is
+    /// an identifier followed by an unrelated block, never a record
+    /// construction — so an `if`/`match` condition that ends in a bare
+    /// identifier does not swallow the branch/arm block as `Ident { field }`
+    /// (#636). Set only around the condition parse (see [`parse_cond_expr`]);
+    /// `parse_expr` clears it, so the restriction is lifted inside any
+    /// delimited sub-expression (parentheses, call arguments, list, record
+    /// field). Mirrors Rust's `NO_STRUCT_LITERAL` restriction.
+    no_record_literal: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -330,7 +346,113 @@ impl<'a> Parser<'a> {
             recover_mode: false,
             recovered_errors: Vec::new(),
             trivia,
+            depth: 0,
+            no_record_literal: false,
         }
+    }
+
+    /// Enter a self-recursive parse step, bumping the live recursion depth and
+    /// failing with a bounded-depth diagnostic if it would exceed
+    /// [`crate::MAX_NESTING_DEPTH`]. The caller pairs a successful entry with a
+    /// matching `self.depth -= 1` on the way out (see `parse_expr` /
+    /// `parse_type_ref`); on the error path the depth is restored here so a
+    /// recovering caller is not left mis-counted. `what` names the construct
+    /// for the message (e.g. "this expression", "this type"). See #713.
+    fn enter_recursion(&mut self, what: &str) -> Result<(), CompileError> {
+        self.depth += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            self.depth -= 1;
+            let span = self
+                .peek()
+                .map(|t| t.span)
+                .unwrap_or_else(|| self.eof_span());
+            return Err(self.nesting_too_deep(span, what));
+        }
+        Ok(())
+    }
+
+    /// The bounded-depth diagnostic shared by [`enter_recursion`] and
+    /// [`enter_chain_fold`].
+    fn nesting_too_deep(&self, span: Span, what: &str) -> CompileError {
+        CompileError::new(
+            "bynk.parse.nesting_too_deep",
+            span,
+            format!(
+                "{what} nests more than {} levels deep",
+                crate::MAX_NESTING_DEPTH
+            ),
+        )
+        .with_note(
+            "deeply nested source is rejected to keep the parser from overflowing its \
+             stack and aborting; flatten or split the construct",
+        )
+    }
+
+    /// The bounded-depth diagnostic for the *iteratively*-built spines —
+    /// associative operator chains ([`enter_chain_fold`]) and postfix receiver
+    /// chains ([`deepen_spine`]). Same code as [`nesting_too_deep`] (one budget,
+    /// one diagnostic) but phrased for a flat chain, which is long rather than
+    /// *nested*, and points at the idiomatic fix.
+    fn expression_too_long(&self, span: Span) -> CompileError {
+        CompileError::new(
+            "bynk.parse.nesting_too_deep",
+            span,
+            format!(
+                "this expression is more than {} levels deep",
+                crate::MAX_NESTING_DEPTH
+            ),
+        )
+        .with_note(
+            "a long operator or member chain is rejected to keep the compiler from overflowing \
+             its stack; split it across `let` bindings, or reduce a sequence with \
+             `.sum()`/`.fold(...)`",
+        )
+    }
+
+    /// Count one more operand folded onto an associative operator chain against
+    /// the same recursion budget as [`enter_recursion`] (#714).
+    ///
+    /// Associative chains (`+`, `*`, `&&`, `||`) are built *iteratively* in the
+    /// precedence ladder, so — unlike parentheses, calls, or `implies` — they
+    /// never re-enter `parse_expr` and thus slip past the `enter_recursion`
+    /// guard. Yet each fold deepens the left-nested `Expr` tree by one level,
+    /// and a long flat chain (`1 + 1 + … + 1`) overflows every *recursive*
+    /// consumer of that tree downstream — the checker's `type_of`, the
+    /// formatter, the emitter, and the AST's own recursive `Drop` — exactly as
+    /// deeply nested source overflows the parser. Counting each fold on the
+    /// shared `depth` budget bounds the whole expression's height, and because
+    /// it is the *same* budget it composes with the ambient nesting depth, so a
+    /// chain buried inside deeply nested source cannot exceed the bound either.
+    ///
+    /// The caller accumulates `folds` and subtracts them from `depth` before it
+    /// returns, so the live count unwinds as a recursive descent would; on the
+    /// overflow path the whole chain's contribution is restored here so a
+    /// recovering caller is not left mis-counted.
+    fn enter_chain_fold(&mut self, folds: &mut usize, span: Span) -> Result<(), CompileError> {
+        self.depth += 1;
+        *folds += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            self.depth -= *folds;
+            *folds = 0;
+            return Err(self.expression_too_long(span));
+        }
+        Ok(())
+    }
+
+    /// Count one more level of an iteratively-built postfix receiver spine
+    /// (`a.b.c…`, `f()?.g()…`) against the shared budget (#714). Like
+    /// [`enter_chain_fold`], postfix loops rather than recurses, so a long spine
+    /// escapes [`enter_recursion`] yet grows an arbitrarily deep receiver tree
+    /// that the downstream walks recurse through. `parse_postfix` restores
+    /// `depth` wholesale on the way out (its many error paths make a
+    /// save/restore wrapper cleaner than per-fold unwinding), so this only bumps
+    /// and checks.
+    fn deepen_spine(&mut self, span: Span) -> Result<(), CompileError> {
+        self.depth += 1;
+        if self.depth > crate::MAX_NESTING_DEPTH {
+            return Err(self.expression_too_long(span));
+        }
+        Ok(())
     }
 
     /// Comments immediately preceding the current peek position. Consumed
@@ -382,6 +504,7 @@ impl<'a> Parser<'a> {
             match t.kind {
                 TokenKind::Type
                 | TokenKind::Fn
+                | TokenKind::Messages
                 | TokenKind::Uses
                 | TokenKind::Consumes
                 | TokenKind::Exports
@@ -524,7 +647,13 @@ impl<'a> Parser<'a> {
             // v0.7 / v0.112: `suite` and `case` are contextual too — they
             // introduce the suite declaration and its cases, but are perfectly
             // valid commons/context/field names otherwise.
-            Some(t) if matches!(t.kind, TokenKind::On | TokenKind::Suite | TokenKind::Case) => {
+            //
+            // The tier is single-sourced in `keywords::RESERVED_CONTEXTUAL`:
+            // this arm defers to it rather than hardcoding the token kinds, so
+            // extending that list is enough to admit a new contextual keyword
+            // here. Each of these words lexes only to its own token, so matching
+            // the source text is equivalent to matching the kind.
+            Some(t) if crate::keywords::is_reserved_contextual(self.slice(t.span)) => {
                 self.bump();
                 Ok(Ident {
                     name: self.slice(t.span).to_string(),
@@ -866,6 +995,43 @@ mod tests {
     }
 
     #[test]
+    fn interpolation_hole_lex_error_span_is_rebased() {
+        // #716: a lex error inside a `\(…)` hole once carried a span relative to
+        // the hole substring — never rebased by `hole.start` — so it pointed at
+        // the file's opening bytes and could split a multibyte char, tripping
+        // the char-boundary invariant. The error must land on the offending
+        // bytes within the hole and stay on char boundaries.
+        let cases = [
+            // `$` is not a valid token; the error should point at it, not byte 0.
+            "commons x\n\nfn f() -> String {\n  \"a \\($)\"\n}\n",
+            // Integer overflow — the reported span must cover the literal itself.
+            "commons x\n\nfn f() -> String {\n  \"n = \\(99999999999999999999)\"\n}\n",
+            // A multibyte char before the hole means an un-rebased span could
+            // land inside the `é`; the rebased span must not.
+            "commons x\n\nfn f() -> String {\n  \"é \\($)\"\n}\n",
+        ];
+        for src in cases {
+            let errs = parse_str(src).unwrap_err();
+            assert!(!errs.is_empty(), "expected a lex error for {src:?}");
+            for e in &errs {
+                assert!(
+                    src.is_char_boundary(e.span.start) && src.is_char_boundary(e.span.end),
+                    "span {:?} splits a codepoint in {src:?}",
+                    e.span,
+                );
+                // The error must point inside the interpolation hole, not at the
+                // header text that precedes it.
+                let hole_start = src.find("\\(").expect("case has a hole") + 2;
+                assert!(
+                    e.span.start >= hole_start,
+                    "span {:?} precedes the hole (starts at {hole_start}) in {src:?}",
+                    e.span,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn fragment_form_parses() {
         let c = parse_str("commons x.y\n\ntype T = Int where NonNegative\n").unwrap();
         assert_eq!(c.form, CommonsForm::Fragment);
@@ -974,6 +1140,94 @@ mod tests {
         let errs = parse_str("commons x { fn f(a: Int, b: Int, c: Int) -> Bool { a == b == c } }")
             .unwrap_err();
         assert_eq!(errs[0].category, "bynk.parse.non_associative");
+    }
+
+    /// Run `f` on a thread with a generous stack. The depth-guard tests build
+    /// source that, *without* the guard, overflows — so if the guard ever
+    /// regressed we want a clean assertion failure, not a `SIGABRT` that takes
+    /// the whole test binary down. A large stack also absorbs the fat frames a
+    /// debug build spends per recursion level (production release frames are
+    /// ~9 KB/level, so `MAX_NESTING_DEPTH = 64` sits well inside a 1 MB stack;
+    /// a debug frame is several times larger and would overflow libtest's
+    /// default 2 MB test thread near the limit even though the guard fires).
+    fn on_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn deeply_nested_parens_are_bounded_not_overflowed() {
+        // Without a depth guard the parenthesised-expression recursion
+        // (`parse_primary` -> `parse_expr` -> …) overflows the stack and aborts
+        // the process (#713). Well past the limit it must instead report a
+        // bounded-depth diagnostic. The nesting is left open so the guard, not
+        // a later `)`, is what stops the descent.
+        let errs = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH + 8;
+            let src = format!(
+                "commons x {{ fn f() -> Int {{ {}0{} }} }}",
+                "(".repeat(depth),
+                ")".repeat(depth),
+            );
+            parse_str(&src).unwrap_err()
+        });
+        assert_eq!(errs[0].category, "bynk.parse.nesting_too_deep");
+    }
+
+    #[test]
+    fn deeply_nested_types_are_bounded_not_overflowed() {
+        // The type parser self-recurses through generic type arguments
+        // (`parse_type_ref` -> `parse_type_atom` -> `parse_type_ref`); the same
+        // guard bounds it (#713). A right-nested `Result[Int, …]` in parameter
+        // position drives that recursion.
+        let errs = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH + 8;
+            let src = format!(
+                "commons x {{ fn f(x: {}Int{}) -> Int {{ 0 }} }}",
+                "Result[Int, ".repeat(depth),
+                "]".repeat(depth),
+            );
+            parse_str(&src).unwrap_err()
+        });
+        assert_eq!(errs[0].category, "bynk.parse.nesting_too_deep");
+    }
+
+    #[test]
+    fn deeply_nested_patterns_are_bounded_not_overflowed() {
+        // Variant patterns are a third self-recursive descent (`parse_pattern`
+        // -> `parse_pattern_binding` -> `parse_pattern`) that routes through
+        // neither `parse_expr` nor `parse_type_ref`; without its own guard a
+        // nested `Ok(Ok(…))` match arm reproduces the #713 crash.
+        let errs = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH + 8;
+            let src = format!(
+                "commons x {{ fn f(n: Int) -> Int {{ match n {{ {}n{} => 0 }} }} }}",
+                "Ok(".repeat(depth),
+                ")".repeat(depth),
+            );
+            parse_str(&src).unwrap_err()
+        });
+        assert_eq!(errs[0].category, "bynk.parse.nesting_too_deep");
+    }
+
+    #[test]
+    fn nesting_below_the_limit_still_parses() {
+        // The guard must not reject ordinary well-nested source: a paren-nested
+        // expression comfortably under the limit still parses cleanly.
+        let ok = on_big_stack(|| {
+            let depth = crate::MAX_NESTING_DEPTH - 8;
+            let src = format!(
+                "commons x {{ fn f() -> Int {{ {}0{} }} }}",
+                "(".repeat(depth),
+                ")".repeat(depth),
+            );
+            parse_str(&src).is_ok()
+        });
+        assert!(ok, "well-nested source under the limit should parse");
     }
 
     #[test]
@@ -1162,6 +1416,83 @@ mod tests {
     }
 
     #[test]
+    fn messages_keyword_does_not_collide_with_a_commons_name_segment() {
+        // `messages` is RESERVED_CONTEXTUAL (like `case`/`on`/`suite`), not a
+        // hard keyword: `commons app.messages { ... }` — the design's own
+        // natural naming choice for a bundle commons — must still parse.
+        // (Caught during slice-1 implementation: a first pass made `messages`
+        // a plain hard keyword and this exact name broke.)
+        let src = "commons app.messages {\ntype T = Int where Positive\n}";
+        let c = parse_str(src).unwrap();
+        assert_eq!(c.name.joined(), "app.messages");
+    }
+
+    #[test]
+    fn messages_decl_parses_tag_annotation_and_entries() {
+        // message-bundles slice 1 (#859): the construct + doc/trivia wiring.
+        let src = "commons app.messages {\n\
+                   -- intro\n\
+                   ---\n\
+                   docs\n\
+                   ---\n\
+                   messages en @reference {\n\
+                   \"greeting\" => \"Hello, {name}!\"\n\
+                   \"farewell\" => \"Bye\"\n\
+                   } -- trailing\n\
+                   }";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Messages(m) = &c.items[0] else {
+            panic!("expected a messages item, got {:?}", c.items[0]);
+        };
+        assert_eq!(m.tag.name, "en");
+        assert_eq!(m.annotations.len(), 1);
+        assert_eq!(m.annotations[0].name.name, "reference");
+        assert!(m.annotations[0].args.is_empty());
+        assert_eq!(m.entries.len(), 2);
+        assert_eq!(m.entries[0].code, "greeting");
+        assert_eq!(m.entries[0].template, "Hello, {name}!");
+        assert_eq!(m.entries[1].code, "farewell");
+        assert_eq!(m.entries[1].template, "Bye");
+        assert_eq!(m.trivia.leading, vec![" intro".to_string()]);
+        assert_eq!(m.documentation.as_deref(), Some("docs"));
+        assert_eq!(m.trivia.trailing.as_deref(), Some(" trailing"));
+    }
+
+    #[test]
+    fn messages_decl_parses_with_no_annotation_and_no_entries() {
+        // The parser stays permissive on annotation cardinality (zero-or-more)
+        // — "exactly one `@reference`" is a checker concern (validate.rs), not
+        // a parse error.
+        let src = "commons app.messages {\nmessages en {\n}\n}";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Messages(m) = &c.items[0] else {
+            panic!("expected a messages item, got {:?}", c.items[0]);
+        };
+        assert_eq!(m.tag.name, "en");
+        assert!(m.annotations.is_empty());
+        assert!(m.entries.is_empty());
+    }
+
+    #[test]
+    fn messages_decl_parses_syntactically_inside_a_context_too() {
+        // Commons-only legality is a checker concern (bynk.messages.outside_commons
+        // in bynk-emit's project validation), not a parser rejection — mirrors
+        // how `service`/`agent` already parse syntactically inside `adapter`
+        // bodies for the same reason.
+        let src = "context app.svc {\nmessages en @reference {\n\"a\" => \"b\"\n}\n}";
+        let toks = tokenize(src).unwrap();
+        let (unit, errors) = parse_unit_with_recovery(&toks, src);
+        assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
+        let Some(SourceUnit::Context(ctx)) = unit else {
+            panic!("expected a context")
+        };
+        let CommonsItem::Messages(m) = &ctx.items[0] else {
+            panic!("expected a messages item, got {:?}", ctx.items[0]);
+        };
+        assert_eq!(m.tag.name, "en");
+    }
+
+    #[test]
     fn comment_before_let_statement_attaches() {
         let src = "commons x {\nfn f(n: Int) -> Int {\n-- pick a value\nlet y = n + 1\ny\n}\n}";
         let c = parse_str(src).unwrap();
@@ -1182,6 +1513,29 @@ mod tests {
             panic!()
         };
         assert_eq!(f.body.tail_leading_comments, vec![" result".to_string()],);
+    }
+
+    /// #637 Gap A: the contextual keywords `on` / `suite` / `case` are lexer
+    /// tokens but `expect_ident` admits them as identifiers outside their one
+    /// keyword position, so they are valid record-field and parameter names.
+    /// The keyword reference now renders them as a distinct "contextual" tier
+    /// rather than claiming (falsely) that they cannot be used as identifiers.
+    #[test]
+    fn contextual_keywords_are_valid_identifiers() {
+        // Record field names.
+        let c = parse_str("commons demo {\n  type R = { on: Int, suite: String, case: Bool }\n}")
+            .expect("`on`/`suite`/`case` are valid field names");
+        let CommonsItem::Type(_) = &c.items[0] else {
+            panic!("expected a type decl")
+        };
+
+        // Function parameter names (the other `expect_ident` position).
+        parse_str("commons demo {\n  fn f(on: Int, case: Int) -> Int { 0 }\n}")
+            .expect("`on`/`case` are valid parameter names");
+
+        // `suite` too, as a field name.
+        parse_str("commons demo {\n  type R = { suite: Int }\n}")
+            .expect("`suite` is a valid field name");
     }
 
     /// Drift guard: every alphabetic keyword the lexer declares must be
@@ -1210,13 +1564,14 @@ mod tests {
             "keyword extraction looks broken: only {} words",
             words.len()
         );
-        // Contextual keywords double as identifiers (see `expect_ident`).
-        const CONTEXTUAL: &[&str] = &["on", "suite", "case"];
+        // Contextual keywords double as identifiers (see `expect_ident`); the
+        // tier is single-sourced in `keywords::RESERVED_CONTEXTUAL`.
+        use crate::keywords::RESERVED_CONTEXTUAL;
         let mut unclassified = Vec::new();
         for word in &words {
             let tokens = crate::lexer::tokenize(word).expect("keyword lexes");
             let kind = tokens.first().expect("keyword yields a token").kind;
-            if !is_reserved_keyword(kind) && !CONTEXTUAL.contains(&word.as_str()) {
+            if !is_reserved_keyword(kind) && !RESERVED_CONTEXTUAL.contains(&word.as_str()) {
                 unclassified.push(word.clone());
             }
         }
@@ -1256,5 +1611,179 @@ mod tests {
         let src = "commons x\n\ntype T = Int where Positive\n-- afterword\n";
         let c = parse_str(src).unwrap();
         assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
+    }
+
+    // ---- #636: `if`/`match` condition vs record construction ----
+
+    /// Parse `body` as the tail expression of a fn and return its kind.
+    fn body_tail(body: &str) -> ExprKind {
+        let src = format!("commons x\n\nfn f() -> Int {{\n  {body}\n}}\n");
+        let c = parse_str(&src).unwrap_or_else(|e| panic!("parse failed for {body:?}: {e:?}"));
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("expected fn, got {:?}", c.items[0]);
+        };
+        f.body.tail.kind.clone()
+    }
+
+    fn body_err(body: &str) -> Vec<CompileError> {
+        let src = format!("commons x\n\nfn f() -> Int {{\n  {body}\n}}\n");
+        parse_str(&src).expect_err(&format!("expected a parse error for {body:?}"))
+    }
+
+    #[test]
+    fn if_condition_ending_in_ident_does_not_swallow_a_single_ident_branch() {
+        // #636: `ready { result }` shares its shape with a shorthand-field
+        // record construction. In condition position the branch must win.
+        for src in [
+            "if ready { result } else { fallback }",
+            "if ready { fallback } else { result }",
+            "if !ready { result } else { fallback }",
+            "if a == b { result } else { fallback }",
+            "if a && b { result } else { fallback }",
+        ] {
+            let ExprKind::If {
+                then_block,
+                else_block,
+                ..
+            } = body_tail(src)
+            else {
+                panic!("expected If for {src:?}, got {:?}", body_tail(src));
+            };
+            // Both branches carry a bare-identifier tail — proof the `{ … }`
+            // was read as a block, not consumed as a record by the condition.
+            assert!(
+                matches!(&then_block.tail.kind, ExprKind::Ident(_)),
+                "then-branch tail not an ident for {src:?}: {:?}",
+                then_block.tail.kind,
+            );
+            assert!(
+                matches!(&else_block.tail.kind, ExprKind::Ident(_)),
+                "else-branch tail not an ident for {src:?}: {:?}",
+                else_block.tail.kind,
+            );
+        }
+    }
+
+    #[test]
+    fn else_less_if_with_single_ident_branch_parses() {
+        // The no-`else` reproduction: previously errored `found `}``.
+        let ExprKind::If { then_block, .. } = body_tail("if ready { result }") else {
+            panic!("expected If");
+        };
+        assert!(matches!(&then_block.tail.kind, ExprKind::Ident(_)));
+    }
+
+    #[test]
+    fn record_construction_still_parses_in_value_position() {
+        // The restriction is confined to condition spines — an ordinary value
+        // position still constructs records, including the shorthand tail form.
+        assert!(matches!(
+            body_tail("Point { x }"),
+            ExprKind::RecordConstruction { .. }
+        ));
+        assert!(matches!(
+            body_tail("Point { x: 1, y: 2 }"),
+            ExprKind::RecordConstruction { .. }
+        ));
+        assert!(matches!(
+            body_tail("Empty {}"),
+            ExprKind::RecordConstruction { .. }
+        ));
+    }
+
+    #[test]
+    fn parenthesised_record_is_allowed_in_condition_head() {
+        // A delimiter lifts the restriction: `(ready { result })` constructs a
+        // record even in condition position (mirrors Rust's paren escape).
+        let ExprKind::If { cond, .. } =
+            body_tail("if (ready { result }) { branch } else { other }")
+        else {
+            panic!("expected If");
+        };
+        let ExprKind::Paren(inner) = &cond.kind else {
+            panic!("expected a parenthesised condition, got {:?}", cond.kind);
+        };
+        assert!(
+            matches!(&inner.kind, ExprKind::RecordConstruction { .. }),
+            "parenthesised record in condition head should still construct: {:?}",
+            inner.kind,
+        );
+    }
+
+    #[test]
+    fn record_in_call_arg_within_condition_still_constructs() {
+        // The restriction is lifted through a call-argument delimiter, so a
+        // record literal passed to a predicate in the condition still parses.
+        let ExprKind::If { cond, .. } = body_tail("if check(Point { x: 1 }) { a } else { b }")
+        else {
+            panic!("expected If");
+        };
+        let ExprKind::Call { args, .. } = &cond.kind else {
+            panic!("expected Call in condition, got {:?}", cond.kind);
+        };
+        assert!(matches!(&args[0].kind, ExprKind::RecordConstruction { .. }));
+    }
+
+    #[test]
+    fn safe_condition_shapes_are_unaffected() {
+        // Cases the issue lists as already-safe must stay safe.
+        assert!(matches!(
+            body_tail("if ready == true { result } else { fallback }"),
+            ExprKind::If { .. }
+        ));
+        assert!(matches!(
+            body_tail("if (ready) { result } else { fallback }"),
+            ExprKind::If { .. }
+        ));
+        assert!(matches!(
+            body_tail("if ready { \"a\" } else { \"b\" }"),
+            ExprKind::If { .. }
+        ));
+    }
+
+    #[test]
+    fn empty_match_reports_its_own_diagnostic() {
+        // #636: `match result {}` once parsed `result {}` as an empty record,
+        // masking `bynk.parse.empty_match`. The intended diagnostic is now
+        // reachable.
+        let errs = body_err("match result {}");
+        assert!(
+            errs.iter().any(|e| e.category == "bynk.parse.empty_match"),
+            "expected empty_match; got {errs:?}",
+        );
+    }
+
+    #[test]
+    fn match_discriminant_ending_in_ident_parses() {
+        // A `match` over a bare-identifier discriminant reaches its arm list.
+        assert!(matches!(
+            body_tail("match ready { x => x }"),
+            ExprKind::Match { .. }
+        ));
+    }
+
+    #[test]
+    fn unparenthesised_record_in_condition_head_now_errors() {
+        // #636 narrowing (matches Rust): a record literal in condition *head*
+        // position must be parenthesised. Unparenthesised, `Point` reads as the
+        // discriminant and `{ x: 1 }` as the arm list, whose first "arm" `x: 1`
+        // is not an arm — so the parse fails. Pinned so the divergence from the
+        // (still-accepting) tree-sitter grammar is deliberate, not a bug.
+        assert!(
+            !body_err("match Point { x: 1 } { p => p }").is_empty(),
+            "unparenthesised record discriminant should not parse",
+        );
+        // Parenthesised, the record is the discriminant and the match parses.
+        let ExprKind::Match { discriminant, .. } = body_tail("match (Point { x: 1 }) { p => p }")
+        else {
+            panic!("expected Match for the parenthesised form");
+        };
+        let ExprKind::Paren(inner) = &discriminant.kind else {
+            panic!(
+                "expected a parenthesised discriminant, got {:?}",
+                discriminant.kind
+            );
+        };
+        assert!(matches!(&inner.kind, ExprKind::RecordConstruction { .. }));
     }
 }

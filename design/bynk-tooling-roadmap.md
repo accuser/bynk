@@ -37,10 +37,11 @@ being *felt*.
 
 ## 1. LSP — current state
 
-Implemented (`bynk-lsp`, advertised in `main.rs`):
+Implemented (`bynk-lsp`, advertised in `lib.rs`'s `server_capabilities()`):
 
-- **Live diagnostics** — recompiles via `bynkc::diagnose` on change and publishes; these
-  are the compiler's *authoritative* diagnostics, a genuine strength.
+- **Live diagnostics** — a debounced project-wide round (`bynk_ide::diagnose_project_with`,
+  open buffers overlaid on disk) on change, single-file `diagnose` for a rootless buffer;
+  these are the compiler's *authoritative* diagnostics, a genuine strength.
 - **Hover** — signatures.
 - **Go‑to‑definition.**
 - **References, rename/prepareRename** (v0.25); **code actions** from diagnostics (v0.26);
@@ -54,7 +55,13 @@ Implemented (`bynk-lsp`, advertised in `main.rs`):
   ceiling. **The surface contract is ADR 0093 (the ceiling lift, ADR 0094); the
   as-built spec lives at [`bynk-lsp-spec.md`](bynk-lsp-spec.md) §3.15.**
 - **Formatting** — document + range.
-- **Document symbols**; **workspace folders.**
+- **Document symbols.**
+- **Document links** (§3.21); **go-to-type-definition** (v0.35).
+- **The foundation under the surface** (LSP foundations track, ADRs 0198/0201/0202/0204):
+  one project model shared with `bynkc`, a freshness contract, **real multi-root
+  workspace folders** (not just the advertised flag — implemented v0.182), startup
+  analysis + server-registered file watchers (v0.183), and one diagnostics scheduler
+  (v0.184).
 
 ---
 
@@ -77,7 +84,12 @@ do it first.
   are unusually **prescriptive** — they already say "add `X` to the `given` clause", "add
   a `consumes` for `B`", "construct via `T.of(...)`". Turning those notes into one‑click
   quick fixes is nearly free (the suggestion text exists) and makes Bynk feel *more*
-  polished than languages with vaguer diagnostics.
+  polished than languages with vaguer diagnostics. **Shipped:** the `given`-clause
+  fixes (v0.26), the InRange-swap (v0.40), and — #852 — the **capability-aware** set:
+  fill missing record field(s), add a missing `consumes` for an unconsumed cross-context
+  call, and auto-`uses`/`consumes` an unresolved name (the Bynk analogue of auto-import).
+  Follow-ups: snippet-placeholder field fills, remove/rename fixes for unknown/duplicate
+  fields, and remove-unused-`consumes`.
 - **Find references** and **rename** (`prepareRename` + `rename`) — the two refactor
   table‑stakes; both ride A‑0.
 - **Comprehensive completion** — today `consumes`/`given` only. Extend to: types, fns,
@@ -206,11 +218,25 @@ orchestration lives in the driver. The arc is **`doctor` → `new` → `dev`**:
   first-party `workerd` dev-server overlap noted in
   `bynk-status-and-roadmap.md` — now an optimisation (one front door, unified
   logs) rather than the price of cross-context calls, which the registry already
-  delivers. Provisioning + remote deploy are `deploy`'s problem; `deploy` remains
-  single-context.
+  delivers. Provisioning + remote deploy are `deploy`'s problem — and `deploy` is
+  no longer single-context either (slice 2, v0.170, ADR 0193), nor KV-only
+  (slice 1, v0.171, ADR 0194: queues and DO migrations).
 
 With `doctor` (v0.46), `new` (v0.58), and `dev` (v0.57) shipped, the on-ramp arc
 is complete; `deploy` (provisioning + remote) follows.
+
+## 5.2 The test runner
+
+`bynkc test` (and its `bynk test` pass-through) already owns discovery, rich/JSON
+output (ADR 0098), seeded `property` tests, per-case filtering, and an inspector
+path (ADR 0104). **Coverage** now sits on top: `bynkc test --coverage` reports
+**statement/line** coverage attributed to `.bynk` source — a rich summary table
+or a `coverage` block under `--format json` — collected via V8's
+`NODE_V8_COVERAGE` and remapped through the emitted source maps ([ADR 0103](decisions/0103-source-map-contract.md)),
+scoped to user source (the `tests/` tree and workers scaffold excluded), on the
+`tsc → node` path only (#854, closes it). **Follow-ups:** per-**branch** coverage
+in `.bynk` terms (a coarser-than-JS notion of a Bynk branch), and widening
+`--coverage` beyond `tsc → node` (the `tsx`/`--inspect` paths).
 
 ## 6. Suggested sequencing
 
