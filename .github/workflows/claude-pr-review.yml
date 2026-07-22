@@ -49,26 +49,29 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review this pull request and post your findings as PR review
-            comments. Read `design/` for our conventions before reviewing.
+            comments. Work primarily from the diff you are given.
 
             Focus on:
             - Correctness: logic errors, edge cases, and boundary conditions
               that the changed code could get wrong.
             - Security and safety of the change.
-            - Fit with our release discipline: does a non-trivial code change
-              carry the increment artefact it needs (a single
-              `design/pending/<slug>.md` with a `level` + `changelog`, per
-              `design/bynk-release-discipline.md`)? Flag if it is missing, or if
-              a pure docs/infra change added one unnecessarily. Do NOT pick a
-              version or ADR number — those are assigned by the merge-time stamp.
             - Test coverage: is the edge where the change could be wrong actually
               exercised, not just the happy path?
+            - Release discipline: a non-trivial code change should carry exactly
+              one `design/pending/<slug>.md` increment file (a `level` plus a
+              `changelog`). Flag if it is missing, or if a pure docs/infra change
+              added one needlessly. Do NOT pick a version or ADR number — those
+              are assigned by the merge-time stamp. Consult
+              `design/bynk-release-discipline.md` ONLY if you need to confirm this
+              rule.
 
-            Prioritise real, actionable findings over stylistic nits. If the
+            Work efficiently: review the diff directly and open a repo file only
+            when a specific finding requires it. Do NOT browse `design/` or the
+            tree exhaustively — that burns the turn budget before you can post.
+            Prioritise real, actionable findings over stylistic nits; if the
             change looks sound, say so briefly rather than inventing concerns.
           # Opus for the deepest correctness/edge-case rigour on code changes.
-          # A workflow-aware review spends turns browsing design/ + the diff
-          # before it posts, so the ceiling must be generous — 10 hit the limit
-          # (error_max_turns) before any comment landed. Each turn adds usage
-          # cost, so raise only as far as reviews actually need.
-          claude_args: "--max-turns 30 --model claude-opus-4-8"
+          # The diff is already in context; the prompt keeps Claude from browsing
+          # design/ (that exhausted 30 turns on a 12-file PR without posting).
+          # 40 is headroom above a focused diff review; each turn adds usage cost.
+          claude_args: "--max-turns 40 --model claude-opus-4-8"
