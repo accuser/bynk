@@ -283,7 +283,18 @@ pub fn emit_project(
                 smb.borrow_mut().record(out.len(), a.span);
                 emit_agent(&mut out, a, commons, ctx, Some(&smb));
             }
-            CommonsItem::Messages(m) => {
+            // message-bundles slice 1 (#859): multiple `messages` blocks per
+            // commons are legal (forward-compatible with slice 2's
+            // multi-locale model — only one may carry `@reference`), but
+            // slice 1's generated lookup/`render` reads only the reference
+            // locale (§4.2 of the track doc) and there must be exactly one
+            // `export function render` per file. A non-reference block is
+            // checker-validated (duplicate-code, legality) but emits nothing
+            // — `check_messages_bundles` already guarantees at most one
+            // `@reference` block reaches emission at all.
+            CommonsItem::Messages(m)
+                if m.annotations.iter().any(|a| a.name.name == "reference") =>
+            {
                 smb.borrow_mut().record(out.len(), m.span);
                 emit_messages(&mut out, m);
             }

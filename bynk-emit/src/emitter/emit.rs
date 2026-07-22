@@ -863,6 +863,10 @@ enum TemplateSegment<'a> {
 /// grammar; `{name}` is resolved by this Rust-side scan during lowering, not
 /// parsed as an expression). A `{` with no matching `}`, or an empty `{}`, is
 /// just literal text — malformed-placeholder checking is out of scope here.
+/// The name is taken verbatim, with no whitespace trimming: `{ name }` is a
+/// placeholder literally named `" name "`, which will never match a `params`
+/// key and so always renders as literal text (PR #872 review) — a real rough
+/// edge, left for a future slice rather than guessed at here.
 fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
     let mut segments = Vec::new();
     let mut literal_start = 0;
