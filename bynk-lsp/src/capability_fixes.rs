@@ -254,15 +254,13 @@ impl<'a> Header<'a> {
                 return None; // already listed
             }
             let (at, insert) = match selected.last() {
+                // Non-empty list: append `, cap` after the last selected name.
                 Some(last) => (Span::new(last.span.end, last.span.end), format!(", {cap}")),
-                // `consumes unit { }` — insert inside the empty braces.
-                None => (
-                    Span::new(
-                        dec.span.end.saturating_sub(1),
-                        dec.span.end.saturating_sub(1),
-                    ),
-                    format!(" {cap} "),
-                ),
+                // `consumes unit { }` — the interior spacing is unknown, so
+                // **replace** the whole clause with a canonical one (its only
+                // content is the target and the new capability), rather than
+                // inserting into braces of unknown width.
+                None => (dec.span, format!("consumes {unit} {{ {cap} }}")),
             };
             return Some(action(
                 format!("add `{cap}` to `consumes {unit}`"),

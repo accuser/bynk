@@ -376,6 +376,24 @@ fn add_all_missing_record_fields_into_an_empty_literal() {
 }
 
 #[test]
+fn empty_literal_fix_is_canonical_despite_interior_spacing() {
+    // A non-canonical empty literal (`Point {  }`) — the fix replaces the whole
+    // ` { … }` tail, so the result is fmt-canonical regardless of the original
+    // interior spacing (the review's cosmetic-idempotency note).
+    let text = point_commons("Point {  }");
+    let all = missing_field_suggestions(&diagnose_with("app/refine.bynk", &text))
+        .into_iter()
+        .find(|s| s.message == "add all missing fields")
+        .expect("all-missing fix");
+    let fixed = apply(&text, &all);
+    // The spaced `{  }` collapses to the canonical record region — the
+    // wrapper is identical on both sides, so this pins the fix's own output.
+    assert_eq!(fixed, point_commons("Point { x: 0, y: 0 }"));
+    assert_clean("app/refine.bynk", &fixed);
+    assert_fmt_roundtrips(&fixed);
+}
+
+#[test]
 fn add_field_defaults_cover_option_and_list() {
     // `Option` defaults to `None`, `List` to `[]`; both re-check clean.
     let text = "commons app.refine\n\ntype Bag = { tag: Option[String], items: List[Int] }\n\nfn mk() -> Bag {\n  Bag {}\n}\n";

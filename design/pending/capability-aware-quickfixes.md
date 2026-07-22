@@ -32,9 +32,12 @@ the information the fix needs actually exists:
     inline refinement, or whose type is user-named (itself possibly refined, a
     sum, or opaque), has no synthesised default and is simply not offered; the
     "add all missing" convenience is withheld unless the whole missing set is
-    defaultable. The insertion anchor is a fmt-stable zero-width span after the
-    last provided field, or just inside the literal's closing brace when it is
-    empty.
+    defaultable. With existing fields the edit appends `, field: default` after
+    the last one; an **empty** literal has no field span to anchor to and its
+    interior spacing is unknown, so the whole ` { … }` tail (type-name end
+    through the closing brace) is instead **replaced** with a canonical
+    ` { … }` — fmt-stable however the empty braces were spelled (`{}`/`{ }`/
+    `{  }`), both spans being available without the source text.
 
 - **Computed in the LSP (`capability_fixes`), keyed on the diagnostic category,
   from the committed binding index and a fresh reparse of the buffer:** these
@@ -62,7 +65,13 @@ the information the fix needs actually exists:
   line under the unit name (before any `uses`, the conventional consumes-first
   header order) — so the edited buffer round-trips through `fmt` unchanged. When
   a braced `consumes <unit> { … }` for the same target already exists, the
-  capability is added into that brace list in place rather than as a new clause.
+  capability is appended after the last listed one; an **empty** such clause
+  (`{ }`/`{}`, interior spacing unknown) is instead **rebuilt** canonically from
+  its target and the new capability, so the result is fmt-stable either way. The
+  one residual is a non-empty literal/clause the author wrote with a trailing
+  comma — the fix leaves that pre-existing comma in place (removing it needs the
+  source text the checker does not hold), and `fmt` reconciles it exactly as it
+  would the unfixed buffer.
 
 Every fix is a **versioned `WorkspaceEdit`** (rejects a drifted buffer, like the
 seed fixes); a fix is offered only when it is sound and not a no-op (a candidate

@@ -426,6 +426,37 @@ fn add_consumes_capability_extends_an_existing_braced_clause() {
 }
 
 #[test]
+fn add_consumes_into_an_empty_braced_clause_is_canonical() {
+    // A `consumes bynk {  }` with non-canonical interior spacing → the clause is
+    // rebuilt canonically rather than braces-inserted (the review's cosmetic
+    // note). `Logger.info` needs the given too, but the clause edit is the point.
+    let root = setup_project(
+        "emptybrace",
+        &[(
+            "app/relay.bynk",
+            "context app.relay\n\nconsumes bynk {  }\n\nservice relay {\n  on call() -> Effect[Int] given Logger {\n    let _ <- Logger.info(\"hi\")\n    1\n  }\n}\n",
+        )],
+    );
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let (text, actions) = header_actions_for(
+        &result,
+        "app/relay.bynk",
+        "bynk.resolve.unknown_name",
+        &root,
+    );
+    let (_title, edits) = actions
+        .iter()
+        .map(action_parts)
+        .find(|(t, _)| t.contains("Logger"))
+        .expect("Logger fix offered");
+    let fixed = apply_text_edits(&text, &edits);
+    assert!(
+        fixed.contains("consumes bynk { Logger }") && !fixed.contains("{  }"),
+        "empty braces rebuilt canonically:\n{fixed}"
+    );
+}
+
+#[test]
 fn bynk_list_deprecation_quick_fix_rewrites_to_method() {
     // ADR 0116 D6 / v0.91: the `bynk.list` free functions are deprecated with a
     // machine-applicable rewrite to the method form. Project mode (the only

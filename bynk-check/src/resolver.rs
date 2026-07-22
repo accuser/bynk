@@ -1079,20 +1079,21 @@ pub(crate) fn check_record_field_set(
         .iter()
         .filter(|f| !provided.contains_key(f.name.name.as_str()))
         .collect();
-    // Insertion anchor: an empty zero-width span after the last provided field
-    // (so a new entry appends as `, x: v`), or — with no provided fields — just
-    // inside the record literal's closing brace (its final byte).
-    let (anchor, needs_leading_sep) = match fields.iter().map(|f| f.span.end).max() {
-        Some(end) => (end, true),
-        None => (construction_span.end.saturating_sub(1), false),
-    };
-    let field_edit = |piece: &str| -> (Span, String) {
-        let text = if needs_leading_sep {
-            format!(", {piece}")
-        } else {
-            format!(" {piece} ")
-        };
-        (Span::new(anchor, anchor), text)
+    // The edit for a `body` of one or more `name: default` entries. With
+    // existing fields it appends `, body` right after the last one. With an
+    // *empty* literal there is no field span to anchor to and the interior
+    // spacing/trailing punctuation is unknown, so instead the whole ` { … }`
+    // tail (from the end of the type name through the closing brace) is
+    // **replaced** with a canonical ` { body }` — fmt-stable regardless of how
+    // the empty braces were originally spelled (`{}`, `{ }`, `{  }`).
+    let field_edit = |body: &str| -> (Span, String) {
+        match fields.iter().map(|f| f.span.end).max() {
+            Some(end) => (Span::new(end, end), format!(", {body}")),
+            None => (
+                Span::new(type_name.span.end, construction_span.end),
+                format!(" {{ {body} }}"),
+            ),
+        }
     };
     // Defaultable missing fields, in declaration order, as `name: default`.
     let defaultable: Vec<String> = missing
