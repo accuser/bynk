@@ -48,8 +48,11 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
-            Review this pull request and post your findings as PR review
-            comments. Work primarily from the diff you are given.
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request. The PR branch is checked out in the
+            working directory; work primarily from the diff.
 
             Focus on:
             - Correctness: logic errors, edge cases, and boundary conditions
@@ -68,10 +71,22 @@ jobs:
             Work efficiently: review the diff directly and open a repo file only
             when a specific finding requires it. Do NOT browse `design/` or the
             tree exhaustively — that burns the turn budget before you can post.
-            Prioritise real, actionable findings over stylistic nits; if the
-            change looks sound, say so briefly rather than inventing concerns.
+
+            Post your findings ONLY as GitHub comments — do NOT emit the review
+            as a chat message (that goes nowhere):
+            - `gh pr comment` for the top-level summary.
+            - `mcp__github_inline_comment__create_inline_comment` (with
+              `confirmed: true`) for line-specific issues.
+            Prioritise real, actionable findings over stylistic nits. If the
+            change looks sound, still post a brief approving summary comment.
           # Opus for the deepest correctness/edge-case rigour on code changes.
           # The diff is already in context; the prompt keeps Claude from browsing
           # design/ (that exhausted 30 turns on a 12-file PR without posting).
           # 40 is headroom above a focused diff review; each turn adds usage cost.
-          claude_args: "--max-turns 40 --model claude-opus-4-8"
+          # --allowedTools is REQUIRED: without it Claude's post attempts are
+          # denied (a run finished with 11 permission denials and posted nothing).
+          # The action does not auto-publish the review; Claude must call these.
+          claude_args: >-
+            --max-turns 40
+            --model claude-opus-4-8
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
