@@ -76,12 +76,17 @@ impl CoverageReport {
     }
 }
 
-/// Coverage percentage of `covered`/`total`, rounded; `total == 0` → 100.
+/// Coverage percentage of `covered`/`total`, rounded; `total == 0` → 100. Only a
+/// genuinely complete run reads 100%: round-half-up would report `995/1000` as
+/// `100%` while lines are still uncovered — self-contradicting in the table and
+/// a false green for a CI gate keyed on the JSON `percent` — so a run with any
+/// uncovered line is clamped to at most 99.
 pub fn percent(covered: u32, total: u32) -> u32 {
-    if total == 0 {
+    if total == 0 || covered >= total {
         100
     } else {
-        ((covered as u64 * 100 + total as u64 / 2) / total as u64) as u32
+        let rounded = (covered as u64 * 100 + total as u64 / 2) / total as u64;
+        (rounded as u32).min(99)
     }
 }
 
@@ -300,20 +305,32 @@ fn innermost_range(off: usize, ranges: &[V8Range]) -> Option<(usize, i64)> {
     best
 }
 
-/// For each generated line, the byte offset of its first non-whitespace char —
-/// the position sampled against the V8 ranges. `None` for a blank line (nothing
-/// to attribute; such lines carry no mapping anyway).
+/// For each generated line, the **UTF-16 offset** of its first non-whitespace
+/// char — the position sampled against the V8 ranges. `None` for a blank line
+/// (nothing to attribute; such lines carry no mapping anyway).
+///
+/// V8 coverage `startOffset`/`endOffset` index the source as a JS string, i.e.
+/// in UTF-16 code units, not UTF-8 bytes (the same space `v8-to-istanbul`/`c8`
+/// use). For ASCII-only output the two coincide, but a single non-ASCII char
+/// earlier in the file (a Unicode `.bynk` string literal carried into the `.js`)
+/// shifts every later byte offset relative to V8's counting, which would select
+/// the wrong range. So offsets are accumulated in UTF-16 units to match.
 fn line_representatives(text: &str) -> Vec<Option<usize>> {
     let mut out = Vec::new();
-    let mut off = 0usize;
+    let mut u16_off = 0usize;
     for line in text.split_inclusive('\n') {
-        let trimmed_lead = line.len() - line.trim_start().len();
-        if line.trim().is_empty() {
-            out.push(None);
-        } else {
-            out.push(Some(off + trimmed_lead));
+        let mut rep = None;
+        let mut o = u16_off;
+        for c in line.chars() {
+            if c.is_whitespace() {
+                o += c.len_utf16();
+            } else {
+                rep = Some(o);
+                break;
+            }
         }
-        off += line.len();
+        out.push(rep);
+        u16_off += line.chars().map(char::len_utf16).sum::<usize>();
     }
     out
 }
@@ -657,6 +674,21 @@ mod tests {
     }
 
     #[test]
+    fn line_representatives_count_utf16_units_not_bytes() {
+        // An em-dash (`—`, U+2014: 3 UTF-8 bytes, 1 UTF-16 unit) on line 0 must
+        // not shift line 1's offset — V8 counts UTF-16 units, so a byte-based
+        // accumulator would report 9 (7 + 2) here and mis-sample the ranges.
+        let reps = line_representatives("a — b\nx");
+        assert_eq!(reps[0], Some(0)); // "a — b"
+        // "a — b\n" = 6 UTF-16 units (byte length would be 8: '—' is 3 bytes).
+        assert_eq!(reps[1], Some(6)); // "x" at UTF-16 offset 6, not byte 8
+        // An astral char (`🎉`, 2 UTF-16 units) shifts by 2, matching V8.
+        let reps = line_representatives("🎉\ny");
+        assert_eq!(reps[0], Some(0));
+        assert_eq!(reps[1], Some(3)); // 🎉(2) + '\n'(1) = 3
+    }
+
+    #[test]
     fn format_ranges_compresses_runs() {
         assert_eq!(format_ranges(&[6, 7, 8, 51]), "6-8, 51");
         assert_eq!(format_ranges(&[3]), "3");
@@ -670,6 +702,16 @@ mod tests {
         assert_eq!(percent(42, 49), 86);
         assert_eq!(percent(2, 5), 40);
         assert_eq!(percent(11, 11), 100);
+    }
+
+    #[test]
+    fn percent_never_reports_100_for_an_incomplete_run() {
+        // Round-half-up would give 100 here; a run with any uncovered line must
+        // read at most 99 so the table and the JSON `percent` never falsely green.
+        assert_eq!(percent(995, 1000), 99);
+        assert_eq!(percent(199, 200), 99);
+        assert_eq!(percent(1000, 1000), 100); // genuinely complete
+        assert_eq!(percent(0, 5), 0);
     }
 
     #[test]
