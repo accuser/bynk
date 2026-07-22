@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Doc comments resolve `[Name]`/`[Owner.member]` links against the project's binding index, navigable via document links and hover
----
+# 0257 — Intra-doc links resolve by naming convention, not a `kind@` prefix
 
-## ADR: intra-doc-links
-title: Intra-doc links resolve by naming convention, not a `kind@` prefix
-summary: Bare/dotted bracket names in doc comments become navigable links, resolved by scope order with no disambiguation syntax
+- **Status:** Accepted (v0.222)
 
 **Context.** Bynk doc comments (`--- … ---`) are Markdown, but had no way to
 reference another declaration — `[Limiter]`, `[RateView.remaining]` rendered

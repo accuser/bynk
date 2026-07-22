@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.221**.
+written against **v0.222**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.222.0** | Doc comments resolve `[Name]`/`[Owner.member]` links against the project's binding index, navigable via document links and hover |
 | **v0.221.0** | Add the `Locale` capability (fixed `"en"` on every platform) and a `bynk.locale` commons providing `LocaleTag`, `Message`/`MessageArg`, and a bundle-free `render` |
 | **v0.220.2** | "`bynk deploy` reports orphaned resources and prunes them with `--prune`; a deleted KV namespace self-heals like a deleted queue already does" |
 | **v0.220.1** | "`bynk deploy --env NAME` for independent multi-environment provisioning and deploy; `bynk dev -- --remote` reads the matching environment" |
