@@ -1,0 +1,5 @@
+commons bundle
+
+messages en @reference {
+  "a" => "b"
+}

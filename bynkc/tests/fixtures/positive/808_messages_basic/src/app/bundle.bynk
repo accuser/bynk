@@ -1,0 +1,15 @@
+commons app.bundle
+
+uses bynk.locale
+
+---
+message-bundles track, slice 1 (#859): a single-locale bundle wired to
+`bynk.locale`'s bundle-free `render` (ADR 0256) as its fallback for a
+code this bundle doesn't declare.
+---
+messages en @reference {
+  "greeting" => "Hello, {name}!"
+  "farewell" => "Bye"
+  "unmatched_placeholder" => "Value: {oops}"
+  "quantity" => "{count} at {price}"
+}
