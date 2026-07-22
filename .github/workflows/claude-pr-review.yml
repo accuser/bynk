@@ -36,8 +36,15 @@ permissions:
 
 jobs:
   review:
-    # Skip drafts; a real review runs once the PR is marked ready.
-    if: github.event.pull_request.draft == false
+    # Only review ready (non-draft) PRs, and never Dependabot's. The draft
+    # guard is what scopes reviews to code, not branch churn: open PRs as
+    # drafts, let base merges / fixups land while draft (all skipped), then
+    # mark ready for the first review — later code pushes re-trigger via
+    # `synchronize`. Dependabot PRs are dependency bumps we don't want reviewed
+    # (and they run with a read-only token that couldn't post anyway).
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
