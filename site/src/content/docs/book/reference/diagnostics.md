@@ -114,8 +114,8 @@ There are **419** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `bynk.given.cross_context_unknown_capability` | `given B.Cap` names a capability the consumed context does not export. | [`given_clause`](/book/reference/grammar/#rule-given_clause) |
-| `bynk.given.undeclared_capability` | A handler uses a capability it did not declare with `given`. | [`given_clause`](/book/reference/grammar/#rule-given_clause) |
-| `bynk.given.unknown_capability` | `given` names a capability that does not exist. | [`given_clause`](/book/reference/grammar/#rule-given_clause) |
+| [`bynk.given.undeclared_capability`](/book/guides/effects-and-capabilities/understand-the-capability-model/) | A handler uses a capability it did not declare with `given`. | [`given_clause`](/book/reference/grammar/#rule-given_clause) |
+| [`bynk.given.unknown_capability`](/book/reference/capabilities/#declaring-a-capability) | `given` names a capability that does not exist. | [`given_clause`](/book/reference/grammar/#rule-given_clause) |
 | `bynk.given.unused_capability` | A `given` capability is never used (warning). | [`given_clause`](/book/reference/grammar/#rule-given_clause) |
 
 ## HTTP
@@ -421,7 +421,7 @@ There are **419** codes in total.
 | `bynk.resolve.let_shadows_fn` | A `let` binding shadows a function. | [`let_stmt`](/book/reference/grammar/#rule-let_stmt) |
 | `bynk.resolve.let_shadows_type` | A `let` binding shadows a type. | [`let_stmt`](/book/reference/grammar/#rule-let_stmt) |
 | `bynk.resolve.method_unknown_type` | A method is defined on an unknown type. |  |
-| `bynk.resolve.missing_field` | A record construction omits a required field. | [`record_construction`](/book/reference/grammar/#rule-record_construction) |
+| [`bynk.resolve.missing_field`](/book/reference/types/#record-types) | A record construction omits a required field. | [`record_construction`](/book/reference/grammar/#rule-record_construction) |
 | `bynk.resolve.name_conflict` | Two declarations share a name. |  |
 | `bynk.resolve.not_a_record_type` | Record syntax was used on a non-record type. | [`record_construction`](/book/reference/grammar/#rule-record_construction) |
 | `bynk.resolve.opaque_record_construction` | An opaque type was constructed with record syntax. | [`record_construction`](/book/reference/grammar/#rule-record_construction) |
@@ -432,11 +432,11 @@ There are **419** codes in total.
 | `bynk.resolve.type_as_function` | A type name was called as if it were a function. | [`call`](/book/reference/grammar/#rule-call) |
 | `bynk.resolve.type_in_expr` | A type name was used where a value is expected. |  |
 | `bynk.resolve.unconsumed_context` | A context's service was called without a `consumes` declaration. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
-| `bynk.resolve.unknown_field` | Accessed a field the record does not have. | [`field_access`](/book/reference/grammar/#rule-field_access) |
+| [`bynk.resolve.unknown_field`](/book/reference/types/#record-types) | Accessed a field the record does not have. | [`field_access`](/book/reference/grammar/#rule-field_access) |
 | `bynk.resolve.unknown_function` | Called a function that does not exist. | [`call`](/book/reference/grammar/#rule-call) |
-| `bynk.resolve.unknown_name` | Referenced a name that is not in scope. |  |
+| [`bynk.resolve.unknown_name`](/book/guides/program-structure/how-a-program-is-shaped/) | Referenced a name that is not in scope. |  |
 | `bynk.resolve.unknown_static_member` | Referenced an unknown static member (e.g. `T.x`). | [`field_access`](/book/reference/grammar/#rule-field_access) |
-| `bynk.resolve.unknown_type` | Referenced a type that does not exist. |  |
+| [`bynk.resolve.unknown_type`](/book/reference/types/) | Referenced a type that does not exist. |  |
 
 ## Services
 

@@ -98,6 +98,7 @@ fn main() -> ExitCode {
             seed,
             case,
         }),
+        Command::Explain { code } => bynk::explain::run(&code),
     }
 }
 
