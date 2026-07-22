@@ -47,7 +47,7 @@ pub use wrangler::emit_wrangler_toml;
 mod lower;
 pub(crate) mod source_map;
 pub(crate) use lower::*;
-mod emit;
+pub(crate) mod emit;
 pub(crate) use emit::*;
 pub(crate) mod websocket;
 
@@ -276,6 +276,29 @@ pub fn emit_project(
             emit_free_fn(&mut out, f, commons, Some(&smb), ctx.contracts);
         }
     }
+    // message-bundles slice 2 (#874): every `messages` block in the commons
+    // is emitted together, once, as a single multi-locale bundle — not
+    // per-item like the other behavioural kinds below — so the generated
+    // `render` can dispatch across every declared locale's own table rather
+    // than reading only the `@reference` one (slice 1's scope). Recorded at
+    // the `@reference` block's own span, matching how a single-item emission
+    // records at that item's span elsewhere in this loop.
+    let messages_blocks: Vec<&MessagesDecl> = commons
+        .commons
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            CommonsItem::Messages(m) => Some(m),
+            _ => None,
+        })
+        .collect();
+    if let Some(reference) = messages_blocks
+        .iter()
+        .find(|m| m.annotations.iter().any(|a| a.name.name == "reference"))
+    {
+        smb.borrow_mut().record(out.len(), reference.span);
+        emit_messages_bundle(&mut out, &messages_blocks);
+    }
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {
         match item {
@@ -294,21 +317,6 @@ pub fn emit_project(
             CommonsItem::Agent(a) => {
                 smb.borrow_mut().record(out.len(), a.span);
                 emit_agent(&mut out, a, commons, ctx, Some(&smb));
-            }
-            // message-bundles slice 1 (#859): multiple `messages` blocks per
-            // commons are legal (forward-compatible with slice 2's
-            // multi-locale model — only one may carry `@reference`), but
-            // slice 1's generated lookup/`render` reads only the reference
-            // locale (§4.2 of the track doc) and there must be exactly one
-            // `export function render` per file. A non-reference block is
-            // checker-validated (duplicate-code, legality) but emits nothing
-            // — `check_messages_bundles` already guarantees at most one
-            // `@reference` block reaches emission at all.
-            CommonsItem::Messages(m)
-                if m.annotations.iter().any(|a| a.name.name == "reference") =>
-            {
-                smb.borrow_mut().record(out.len(), m.span);
-                emit_messages(&mut out, m);
             }
             _ => {}
         }

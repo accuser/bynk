@@ -18,8 +18,17 @@ const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) =>
   "quantity": (params: ReadonlyMap<string, MessageArg>): string => (params.get("count") !== undefined ? renderArg(params.get("count") as MessageArg) : "{count}") + " at " + (params.get("price") !== undefined ? renderArg(params.get("price") as MessageArg) : "{price}"),
 };
 
+const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
+  "en": __messages_en,
+};
+
+export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;
+export const messagesLocales: readonly LocaleTag[] = [("en" as string) as LocaleTag];
+
 export function render(tag: LocaleTag, msg: Message): string {
-  const __entry = __messages_en[msg.code];
+  const __localeTable = messagesByLocale[tag];
+  const __referenceTable = messagesByLocale[messagesReferenceLocale];
+  const __entry = (__localeTable !== undefined ? __localeTable[msg.code] : undefined) ?? __referenceTable[msg.code];
   if (__entry !== undefined) {
     return __entry(msg.params);
   }
