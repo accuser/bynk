@@ -66,17 +66,19 @@ each track's spine issue; this table is deliberately just the map.
 | Track doc | Spine issue | Phase | Theme |
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
-| [`locale-capability.md`](locale-capability.md) | [#838](https://github.com/accuser/bynk/issues/838) | Settling — no slice authorised | The `Locale` capability: ambient locale reads and a pure render seam for user-facing text, Bynk's first i18n surface |
+| [`locale-capability.md`](locale-capability.md) | [#838](https://github.com/accuser/bynk/issues/838) | Slicing (slice 1 shipped) | The `Locale` capability: ambient locale reads and a pure render seam for user-facing text, Bynk's first i18n surface |
+| [`message-bundles.md`](message-bundles.md) | [#857](https://github.com/accuser/bynk/issues/857) | Settling — no slice authorised | The `messages` construct, the checked catalogue, and the bundle lookup that turns the shipped, bundle-free `render` (ADR 0256) into a real localiser |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
 was opened retroactively. `lsp-foundations.md` (now retired) was the first
 track to run the ADR 0167 flow from the start — spine issue first, doc via a
 settling draft PR; `testing-the-boundary.md` (now retired) was the second;
-`locale-capability.md` is the third. `agent-capability-encapsulation.md` is a
-committed Draft that appears in neither this table nor `retired-tracks.md`;
-it predates this row's addition and needs a spine issue or a retirement —
-tracked separately, not by this table.)
+`locale-capability.md` is the third; `message-bundles.md` is the fourth.
+`agent-capability-encapsulation.md` is a committed Draft that appears in
+neither this table nor `retired-tracks.md`; it predates this row's addition
+and needs a spine issue or a retirement — tracked separately, not by this
+table.)
 
 ## Retired tracks
 

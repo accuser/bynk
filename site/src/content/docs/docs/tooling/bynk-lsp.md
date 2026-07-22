@@ -23,7 +23,7 @@ backed by a request handler.
 | Capability | What it does |
 |---|---|
 | Diagnostics | Recovering compilation surfaced as squiggles — live by default (debounced at the configured `diagnostics_debounce_ms`, default 300 ms) and re-run when watched files change. With a project root diagnostics are project-wide: the whole bundle is analysed, open buffers overlaid on disk, so an error in one file shows on the file that owns it. |
-| Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition — a name-match fallback answers only where the index does not resolve. Works on a name's *uses*, not just its declaration: inside an agent handler body, a `store`/`key` field reference describes the field, a record-construction label (`Stored { title: … }`) describes the type's field, and a store operation (`items.put(…)`) describes the operation over the field's declared kind. Every kind the index carries is described: an actor (`by u: User`), a method — the one the call *binds* to, so `g.bump()` describes `Gauge.bump` and not a same-named `Counter.bump` — and a capability operation, attributed to the capability that declares it, including where a project declares one whose name a built-in shares. |
+| Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition — a name-match fallback answers only where the index does not resolve. Works on a name's *uses*, not just its declaration: inside an agent handler body, a `store`/`key` field reference describes the field, a record-construction label (`Stored { title: … }`) describes the type's field, and a store operation (`items.put(…)`) describes the operation over the field's declared kind. Every kind the index carries is described: an actor (`by u: User`), a method — the one the call *binds* to, so `g.bump()` describes `Gauge.bump` and not a same-named `Counter.bump` — and a capability operation, attributed to the capability that declares it, including where a project declares one whose name a built-in shares. A `[Name]`/`[Owner.member]` intra-doc link inside the rendered doc comment becomes a clickable link when it resolves the same way document links do; unresolved names render as plain text. |
 | Go-to-definition | Jumps to the declaration of types, functions, capabilities, services, agents, providers, and actors (a handler's `by u: User` clause) — cross-file, via the project index. Local bindings resolve scope-correctly; `uses`/`consumes` unit segments jump to the unit's source. |
 | Go-to-type-definition | From a value to the declaration of its inferred type. Reads the value's type from the round's expression types and lands on the named type's declaration. |
 | Find references | Project-wide occurrences from the binding index, including clause lists and test units. Local bindings return their definition plus uses within the file. |
@@ -37,7 +37,7 @@ backed by a request handler.
 | Sequence diagram | `bynk/sequenceModel` — a custom (non-standard) request, advertised via `ServerCapabilities.experimental` rather than a dedicated provider field — classifies the handler under the cursor's calls into runtime-participant lifelines (consumed capabilities, consumed contexts, agents) for the VS Code extension's "Bynk: Show Sequence Diagram" webview. Served from the committed round; re-issued fresh by the client on each invocation (no refresh-push mechanism). |
 | Call hierarchy | Incoming and outgoing calls over the binding index's call graph. |
 | Implementation | From a capability to its providers (the reverse direction, provider to capability, is served by go-to-definition). |
-| Document links | `uses`/`consumes` unit names — and a test file's `suite <target>` header — become clickable links to the unit's source file. |
+| Document links | `uses`/`consumes` unit names — and a test file's `suite <target>` header — become clickable links to the unit's source file. Inside doc comments, a `[Name]`/`[Owner.member]` intra-doc link also becomes clickable when it resolves against the declaring unit's scope (itself, its `uses`, its `consumes`); an unresolved one renders as plain text. |
 | File rename awareness | Renaming or moving a `.bynk` file rewrites its own declaration name and every other file's `uses`/`consumes` reference that pointed at it. Single-file rename only — a suite or a folder move is left untouched. |
 | Document highlight | The matching binding's occurrences highlighted across the active file. |
 | Folding ranges | Structural folds and comment runs, driven by the recovered AST (no analysis round needed). |
@@ -106,7 +106,9 @@ live buffer, which may already have moved on. A round carries:
   the two kinds of inlay hint;
 - **local bindings with scope ranges**, for scope-correct local navigation;
 - **expression types**, which back go-to-type-definition; and
-- a **unit-name-to-source map**, which backs document links.
+- a **unit-name-to-source map** and a **doc-link scope map**, which back
+  document links (including intra-doc links inside doc comments) and hover's
+  doc-link rendering.
 
 **The freshness contract.** An index-backed request always answers against the
 buffer the client currently holds. Each analysed file records the document

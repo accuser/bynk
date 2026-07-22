@@ -168,6 +168,10 @@ pub struct ProjectDiagnostics {
     /// tables the sequence-diagram query classifies handler calls against.
     /// See `bynk_emit::project::ProjectAnalysis::sequence_info`.
     pub sequence_info: HashMap<String, ContextSequenceInfo>,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order — itself first, then its `uses` targets, then its `consumes`
+    /// targets. See `bynk_emit::project::diagnostics::ProjectAnalysis::doc_scope`.
+    pub doc_scope: HashMap<String, Vec<String>>,
 }
 
 /// Slice A: which trees a project's analysis walks.
@@ -285,5 +289,6 @@ pub fn diagnose_project_with(
         locals: analysis.locals,
         unit_sources: analysis.unit_sources,
         sequence_info: analysis.sequence_info,
+        doc_scope: analysis.doc_scope,
     }
 }

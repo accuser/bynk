@@ -5,7 +5,7 @@ consumes bynk { Clock }
 
 ---
 Who is being limited — a non-empty client/API-key identifier. Each distinct
-`ClientId` keys its own `Limiter` instance (a Cloudflare Durable Object), so
+`ClientId` keys its own [Limiter] instance (a Cloudflare Durable Object), so
 limits never bleed across clients.
 ---
 type ClientId = String where NonEmpty
@@ -14,7 +14,9 @@ type ClientId = String where NonEmpty
 The verdict returned to the caller. On the allow path it is the `200` body:
 `allowed` is the decision, `remaining` the budget left in the window, and
 `resetAt` when the window rolls over. When the window is exhausted the handler
-returns `429 TooManyRequests` instead, with the reset time in the message.
+returns `429 TooManyRequests` instead, with the reset time in the message. See
+[decide] for how the window rolls over; the [`RateView.remaining`] field is
+never negative.
 ---
 type RateView = {
   allowed:   Bool,
@@ -30,7 +32,7 @@ The agent holds no policy of its own: the windowing decision is the pure
 `decide` function from `commons window`, so this handler is a thin shell that
 reads state, applies the decision, commits the new window, and returns the view.
 The policy is unit-tested in `tests/window.bynk`; the agent just wires it to
-persistent state.
+persistent state. Reached through the [api] service's `GET /check/:client` route.
 ---
 agent Limiter {
   key client: ClientId
@@ -46,6 +48,11 @@ agent Limiter {
   }
 }
 
+---
+The public HTTP surface. The handler below calls [Clock.now] for the current
+time — a reference to a first-party capability op, which intra-doc links do
+not resolve (renders as plain text, since it has no on-disk declaration).
+---
 service api from http {
   -- 10 requests per 60s per client. The agent has no clock of its own, so the
   -- handler reads `Clock.now()` and passes it in — keeping the limiter a pure

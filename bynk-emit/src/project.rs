@@ -733,6 +733,8 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
             unit_sources: HashMap::new(),
             // #846: same bail rule as `unit_sources` — nothing was resolved.
             sequence_info: HashMap::new(),
+            // #848: no parsed tree on the bail path either.
+            doc_scope: HashMap::new(),
         },
         RunChecks::Checked {
             errors,
@@ -803,6 +805,19 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
                     },
                 );
             }
+            // #848: doc_scope reuses unit_sources' key set (production units —
+            // the only files a doc comment can live in) and the
+            // unit_uses/unit_consumes already destructured above for
+            // assemble_index — itself first, then its `uses` targets, then
+            // its `consumes` targets, mirroring IndexBuilder::qualify_with's
+            // bare-name search order.
+            let mut doc_scope: HashMap<String, Vec<String>> = HashMap::new();
+            for name in unit_sources.keys() {
+                let mut scope = vec![name.clone()];
+                scope.extend(unit_uses.get(name).cloned().unwrap_or_default());
+                scope.extend(unit_consumes.get(name).cloned().unwrap_or_default());
+                doc_scope.insert(name.clone(), scope);
+            }
             ProjectAnalysis {
                 snapshots,
                 errors: errors.into_all(),
@@ -813,6 +828,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
                 requirements: requirements.take_files(),
                 unit_sources,
                 sequence_info,
+                doc_scope,
             }
         }
     }

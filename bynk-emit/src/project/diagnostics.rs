@@ -137,6 +137,16 @@ pub struct ProjectAnalysis {
     /// `methods`, which the classifier never needs). Only contexts/adapters
     /// have an entry; empty when the pipeline bails before the checker.
     pub sequence_info: HashMap<String, ContextSequenceInfo>,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order — itself first, then its `uses` targets, then its `consumes`
+    /// targets, in that order (mirrors `IndexBuilder::qualify_with`'s
+    /// bare-name qualification, `bynk-check/src/index.rs` — the index itself
+    /// retains no scope past assembly, so this is assembled here from the
+    /// same `unit_uses`/`unit_consumes` phase outputs `unit_sources` is built
+    /// alongside). A synthetic unit never owns a doc comment, so it's never a
+    /// key here, though it may still appear as a scope target; empty when the
+    /// pipeline bails before the checker.
+    pub doc_scope: HashMap<String, Vec<String>>,
 }
 
 /// #846: the per-unit slice of resolution the sequence-diagram classifier

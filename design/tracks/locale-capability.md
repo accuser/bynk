@@ -1,7 +1,9 @@
 # The `Locale` capability — ambient locale reads and a pure render seam for user-facing text
 
-- **Status:** Settling. Direction not yet merged; no slice authorised. Live state
-  on the track's **spine issue**, [#838](https://github.com/accuser/bynk/issues/838)
+- **Status:** Slicing — slice 1 (the `Locale` capability, `LocaleTag`, `Message`/
+  `MessageArg`, and a bundle-free `render`, #844) shipped; slices 2–3 follow, each
+  cut as a proposal sub-issue of the track's **spine issue**,
+  [#838](https://github.com/accuser/bynk/issues/838)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** Bynk's first i18n requirement — a handler-authored or
   boundary-surfaced validation message reaching a caller in their own language
@@ -349,10 +351,14 @@ later slices build on the negotiation/formatting surface, not on each other's
 internals.
 
 - **Slice 1 — the `Locale` capability, `LocaleTag`, `Message`, and a pure,
-  total `render`.** The `FixedLocale` test provider; per-platform providers
-  including the settled browser stance (§4.2). Explicitly **excludes**
-  automatic boundary-codec integration (Q0) — a handler calls `render`
-  manually. Lands the capability-shape ADR.
+  total `render`.** Shipped v0.221.0 (#844, PR #845, ADR 0256). Ships as a
+  `message`/`withText`/`withWhole`/`withNum`/`withMoment` builder API rather
+  than the `FixedLocale` test provider named above — the shipped `stub`
+  test-double mechanism already covers overriding `Locale.current()` with no
+  new provider surface. Per-platform providers ship including the settled
+  browser stance (§4.2), all returning a fixed `"en"` this slice (real
+  `Accept-Language` negotiation is slice 2). Explicitly **excludes** automatic
+  boundary-codec integration (Q0) — a handler calls `render` manually.
 - **Slice 2 — locale negotiation & fallback.** The default provider resolves
   `Accept-Language` → `LocaleTag` against the bundle's declared locales, RFC
   4647 basic filtering, fallback chain to the reference locale (§4.4).
