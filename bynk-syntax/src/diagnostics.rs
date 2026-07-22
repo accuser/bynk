@@ -30,6 +30,161 @@ pub struct DiagnosticInfo {
     pub grammar_symbol: &'static [&'static str],
 }
 
+/// The hosted Book, the stable target for `codeDescription` links (#853,
+/// DECISION C). No trailing slash — an [`Explain::page`] path (which begins
+/// with `/`) is appended directly.
+pub const BOOK_BASE_URL: &str = "https://bynk-lang.org";
+
+/// A curated, offline-complete explanation of a diagnostic code (#853).
+///
+/// This is the compiler-owned `code → { blurb, href }` table (DECISION A): the
+/// `blurb`/`example` are the offline answer `bynk explain` prints, while
+/// `page`/`anchor` compose the hosted-Book href the LSP hangs off the code as a
+/// clickable `codeDescription` link (DECISION C). Only the highest-traffic,
+/// newcomer-facing codes are curated; every other code simply has no entry and
+/// falls back gracefully — no link, no error (DECISION B).
+///
+/// The mapping points at *existing* Book concept pages rather than duplicating
+/// their prose; the reference-page generator ([`render_markdown`]) links every
+/// explained code at its `page`/`anchor` as an in-site link, so
+/// `astro build`'s link checker fails if a page moves or an anchor is renamed —
+/// the doc-drift guard the rest of the site already relies on.
+pub struct Explain {
+    /// The diagnostic code this explains. Must be a real [`REGISTRY`] code
+    /// (enforced by `tests/diagnostics_registry.rs`).
+    pub code: &'static str,
+    /// A longer-form paragraph: what the rule is and, crucially, *why* it
+    /// exists. This is the offline-complete answer — useful without network.
+    pub blurb: &'static str,
+    /// A minimal example of the violation and its fix.
+    pub example: &'static str,
+    /// The target Book page as a site-root-relative path, no extension and no
+    /// trailing slash, e.g. `/book/reference/types`. Used verbatim as an
+    /// in-site link by [`render_markdown`] (so the site link checker guards it)
+    /// and prefixed with [`BOOK_BASE_URL`] for the hosted `codeDescription`.
+    pub page: &'static str,
+    /// The in-page heading anchor (slug), or `""` for the page top.
+    pub anchor: &'static str,
+}
+
+impl Explain {
+    /// The hosted-Book URL for this explanation: [`BOOK_BASE_URL`] + the page
+    /// (Starlight serves pages with a trailing slash) + `#anchor` when set.
+    pub fn href(&self) -> String {
+        let mut url = format!("{BOOK_BASE_URL}{}/", self.page);
+        if !self.anchor.is_empty() {
+            url.push('#');
+            url.push_str(self.anchor);
+        }
+        url
+    }
+
+    /// The site-root-relative link used inside the generated reference page,
+    /// e.g. `/book/reference/types/#record-types`. Same shape as [`href`], sans
+    /// the host, so the in-site link checker resolves it.
+    ///
+    /// [`href`]: Explain::href
+    pub fn in_site_link(&self) -> String {
+        let mut link = format!("{}/", self.page);
+        if !self.anchor.is_empty() {
+            link.push('#');
+            link.push_str(self.anchor);
+        }
+        link
+    }
+}
+
+/// The curated explanations, keyed by code (DECISION B: highest-traffic,
+/// newcomer-facing codes first). Kept sorted by code; every `code` must be a
+/// real [`REGISTRY`] entry and every `page` an existing Book page — both
+/// enforced by `tests/diagnostics_registry.rs`.
+pub const EXPLANATIONS: &[Explain] = &[
+    Explain {
+        code: "bynk.given.undeclared_capability",
+        blurb: "A handler may only use a capability it has itself declared with \
+                `given`. Effects in Bynk are explicit: the `given` clause is the \
+                handler's honest, checkable statement of every capability it \
+                reaches for, so a reader (and the compiler) can see a handler's \
+                full reach from its signature alone. Using a capability that is \
+                not in `given` is the missing half of that contract.",
+        example: "on get \"/now\" -> Text {           // ✗ uses Clock without declaring it\n    \
+                    Clock.now()\n}\n\n\
+                  on get \"/now\" given Clock -> Text { // ✓ declared, then used\n    \
+                    Clock.now()\n}",
+        page: "/book/guides/effects-and-capabilities/understand-the-capability-model",
+        anchor: "",
+    },
+    Explain {
+        code: "bynk.given.unknown_capability",
+        blurb: "A `given` clause names a capability that no provider declares. A \
+                capability is a typed interface to the outside world; it has to be \
+                *declared* (as a `capability`, or brought in from a consumed \
+                context) before a handler can ask for it. This usually means a \
+                typo in the capability name, or a missing `uses`/`consumes` that \
+                would bring the capability into scope.",
+        example: "on get \"/\" given Clok -> Text { … }  // ✗ no capability named `Clok`\n\n\
+                  on get \"/\" given Clock -> Text { … }  // ✓ matches the declared capability",
+        page: "/book/reference/capabilities",
+        anchor: "declaring-a-capability",
+    },
+    Explain {
+        code: "bynk.resolve.missing_field",
+        blurb: "A record must be constructed with every one of its fields. Bynk \
+                records have no defaults and no partial construction: a value of a \
+                record type is only valid once all its fields are present, so a \
+                downstream reader never has to wonder whether a field was set. \
+                Omitting a field is therefore an error, not a fill-in-later.",
+        example: "type User = { name: Text, age: Int }\n\n\
+                  User { name: \"Ada\" }            // ✗ missing `age`\n\
+                  User { name: \"Ada\", age: 36 }   // ✓ every field present",
+        page: "/book/reference/types",
+        anchor: "record-types",
+    },
+    Explain {
+        code: "bynk.resolve.unknown_field",
+        blurb: "A field access names a field the record type does not have. A \
+                record's fields are fixed by its type declaration; only those \
+                names exist on the value. This is usually a typo in the field \
+                name, or an access meant for a different type.",
+        example: "type User = { name: Text }\n\n\
+                  user.nmae   // ✗ no field `nmae`\n\
+                  user.name   // ✓ the declared field",
+        page: "/book/reference/types",
+        anchor: "record-types",
+    },
+    Explain {
+        code: "bynk.resolve.unknown_name",
+        blurb: "A name was referenced that is not in scope. Every name in Bynk \
+                must be introduced before use — as a `let` binding, a parameter, \
+                a `fn`, a type, or a member brought in through `uses`/`consumes`. \
+                An unknown name is typically a typo, a missing declaration, or a \
+                reference to something defined in a module that has not been \
+                brought into scope.",
+        example: "let greeting = \"hi\"\n\
+                  greetng          // ✗ no name `greetng` in scope\n\
+                  greeting         // ✓ the bound name",
+        page: "/book/guides/program-structure/how-a-program-is-shaped",
+        anchor: "",
+    },
+    Explain {
+        code: "bynk.resolve.unknown_type",
+        blurb: "A type name was referenced that does not exist. Types must be \
+                declared (with `type`), be one of Bynk's built-in types, or be \
+                brought into scope from another module before they can be named. \
+                An unknown type is usually a typo or a missing declaration/import.",
+        example: "fn greet(u: Usr) -> Text { … }   // ✗ no type `Usr`\n\
+                  fn greet(u: User) -> Text { … }  // ✓ the declared type",
+        page: "/book/reference/types",
+        anchor: "",
+    },
+];
+
+/// The curated explanation for a diagnostic `code`, or `None` when the code has
+/// no explanation yet (the designed graceful-fallback state, DECISION B).
+pub fn explain(code: &str) -> Option<&'static Explain> {
+    EXPLANATIONS.iter().find(|e| e.code == code)
+}
+
 /// Every diagnostic code the compiler emits, sorted by code.
 pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
@@ -2047,9 +2202,17 @@ pub fn render_markdown() -> String {
                 .map(|sym| format!("[`{sym}`](grammar.md#rule-{sym})"))
                 .collect::<Vec<_>>()
                 .join(", ");
+            // A curated (`bynk explain`-able) code links to its Book concept
+            // page; the in-site link is validated by the site's link checker,
+            // so a moved page or renamed anchor fails the build (#853). Codes
+            // without an explanation render as plain inline code.
+            let code_cell = match explain(info.code) {
+                Some(e) => format!("[`{}`]({})", info.code, e.in_site_link()),
+                None => format!("`{}`", info.code),
+            };
             out.push_str(&format!(
-                "| `{}` | {} | {} |\n",
-                info.code, info.summary, construct
+                "| {} | {} | {} |\n",
+                code_cell, info.summary, construct
             ));
         }
     }

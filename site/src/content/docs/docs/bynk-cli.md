@@ -29,6 +29,7 @@ bynk <command> [options]
 | [`bynk check`](#bynk-check) | Type-check a file or project without writing output. |
 | [`bynk fmt`](#bynk-fmt) | Format `.bynk` source files in place. |
 | [`bynk test`](#bynk-test) | Discover and run a project's tests. |
+| [`bynk explain`](#bynk-explain) | Explain a diagnostic code — what the rule is, why it exists, how to fix it. |
 
 ---
 
@@ -300,6 +301,35 @@ bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--see
 
 **Exit code** — follows the runner's own process status: `0` when every case
 passed, non-zero on a failing case, a compile error, or a missing runner.
+
+---
+
+## `bynk explain`
+
+Explain a diagnostic code — the longer-form answer behind a `bynk.*` error, the
+analogue of `rustc --explain`. When you hit an error like
+`bynk.resolve.unknown_type`, `bynk explain bynk.resolve.unknown_type` prints
+what the rule is, *why* it exists, a minimal before/after example, and a link to
+the relevant [Book](/book/) concept page. Runs entirely in-process — it shells
+nothing and reads no network, so the blurb is the complete, offline answer.
+
+```text
+bynk explain <CODE>
+```
+
+| Argument | Meaning |
+|---|---|
+| `CODE` | The diagnostic code to explain, e.g. `bynk.resolve.unknown_type`. |
+
+The explanations are curated highest-traffic-first, so coverage grows over time:
+a recognised code that is not yet curated prints its one-line summary and a
+pointer to the [diagnostic index](/book/reference/diagnostics/) rather than a
+full explanation. The same compiler-owned mapping powers the editor's clickable
+diagnostic-code links (`codeDescription`), so the CLI and the editor never
+disagree.
+
+**Exit code** — `0` for any code the compiler recognises (explained or not);
+non-zero for an unrecognised code.
 
 ---
 

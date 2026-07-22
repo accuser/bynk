@@ -30,6 +30,9 @@ import { registerTesting } from "./testing";
 import { registerTestCodeLens } from "./testCodeLens";
 import { registerDebug } from "./debug";
 import { provideCodeLenses } from "./codelens";
+import { registerSequenceDiagram } from "./sequenceDiagram";
+import { registerDocumentationView } from "./documentationView";
+import { registerInlineDocRendering } from "./inlineDocRendering";
 
 let client: LanguageClient | undefined;
 let output: vscode.LogOutputChannel;
@@ -83,6 +86,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // v0.78: a `▷ Run | Debug` CodeLens above each test case (+ native gutter glyphs
   // from the eager discovery above).
   registerTestCodeLens(context, testApi);
+
+  // #846: "Show Sequence Diagram" — a closure over the module-level `client`
+  // (not the value at registration time) since the client isn't started yet
+  // here and is torn down/recreated on every `startServer` call.
+  registerSequenceDiagram(context, () => client);
+
+  // #847: "Show Documentation" — the file's declarations as a rendered
+  // reference page. Same client closure and shared webview substrate as the
+  // sequence view above.
+  registerDocumentationView(context, () => client);
+
+  // #849: in-editor doc-comment rendering — heading colour, bold, italic applied
+  // in place to `--- … ---` blocks. Client-side decorations only; independent of
+  // the language server, so it works even while the server is still starting.
+  registerInlineDocRendering(context);
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => updateProjectItem()),

@@ -100,6 +100,7 @@ fn main() -> ExitCode {
             case,
             coverage,
         }),
+        Command::Explain { code } => bynk::explain::run(&code),
     }
 }
 

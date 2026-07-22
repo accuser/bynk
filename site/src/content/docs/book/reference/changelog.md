@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.222**.
+written against **v0.225**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,10 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.225.0** | VS Code documentation view — a file's doc comments as a rendered reference page (`bynk/documentationModel` + webview) |
+| **v0.224.0** | Diagnostic codes are teachable — curated codes carry a `codeDescription` link to their Book explanation in the editor, and `bynk explain <code>` prints the offline-complete blurb, an example, and the link |
+| **v0.223.1** | The VS Code extension renders doc comments (`--- … ---`) in place — heading colour, bold, italic — via editor decorations, toggled by `bynk.inlineDocRendering.enable` |
+| **v0.223.0** | "Bynk: Show Sequence Diagram" (VS Code command + per-handler CodeLens) renders a Mermaid sequence diagram for the handler under the cursor, via a new `bynk/sequenceModel` LSP query |
 | **v0.222.0** | Doc comments resolve `[Name]`/`[Owner.member]` links against the project's binding index, navigable via document links and hover |
 | **v0.221.0** | Add the `Locale` capability (fixed `"en"` on every platform) and a `bynk.locale` commons providing `LocaleTag`, `Message`/`MessageArg`, and a bundle-free `render` |
 | **v0.220.2** | "`bynk deploy` reports orphaned resources and prunes them with `--prune`; a deleted KV namespace self-heals like a deleted queue already does" |
