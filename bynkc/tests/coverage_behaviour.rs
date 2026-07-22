@@ -175,6 +175,8 @@ fn coverage_rejects_inspect_and_no_run() {
     // `--no-run` are rejected with an actionable message rather than silently
     // producing nothing.
     let out_root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("cov-guard/out");
+
+    // `--coverage --inspect` — the two run models are exclusive.
     let inspect = Command::new(env!("CARGO_BIN_EXE_bynkc"))
         .args(["test"])
         .arg(fixture("coverage_partial"))
@@ -187,6 +189,23 @@ fn coverage_rejects_inspect_and_no_run() {
     let msg = String::from_utf8_lossy(&inspect.stderr);
     assert!(
         msg.contains("--inspect"),
+        "the error names the offending flag, got:\n{msg}"
+    );
+
+    // `--coverage --no-run` — there is no run to measure. A distinct early-return
+    // with its own message, so exercise it separately.
+    let no_run = Command::new(env!("CARGO_BIN_EXE_bynkc"))
+        .args(["test"])
+        .arg(fixture("coverage_partial"))
+        .arg("--output")
+        .arg(&out_root)
+        .args(["--coverage", "--no-run"])
+        .output()
+        .expect("run");
+    assert!(!no_run.status.success(), "coverage + no-run fails");
+    let msg = String::from_utf8_lossy(&no_run.stderr);
+    assert!(
+        msg.contains("--no-run"),
         "the error names the offending flag, got:\n{msg}"
     );
 }
