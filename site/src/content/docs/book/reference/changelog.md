@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.229.2** | The sequence-diagram view links each participant's click-to-code to its own box — Mermaid 11 emits several `.actor` nodes per participant, so the previous `.actor` index zip mislinked (or failed to link) participant boxes |
 | **v0.229.1** | Sequence diagrams show the handler's `by` principal as an actor that originates the request and receives the replies; return-gating branches no longer collapse to an empty `alt` |
 | **v0.229.0** | A second, non-reference `messages` locale now actually renders — completeness and cross-locale placeholder-agreement checking, plus the bundle's declared-locale set exported for Locale's own negotiation |
 | **v0.228.0** | The `messages` construct compiles a locale's message bundle to a lookup and a bundle-aware `render`, wired to `bynk.locale`'s bundle-free `render` (ADR 0256) as its fallback |
