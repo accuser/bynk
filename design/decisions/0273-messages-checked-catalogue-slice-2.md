@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A second, non-reference `messages` locale now actually renders — completeness and cross-locale placeholder-agreement checking, plus the bundle's declared-locale set exported for Locale's own negotiation
----
+# 0273 — The checked-catalogue model, slice 2 — multi-locale bundles, completeness, and placeholder agreement
 
-## ADR: messages-checked-catalogue-slice-2
-title: The checked-catalogue model, slice 2 — multi-locale bundles, completeness, and placeholder agreement
-summary: Reference-bundle coverage, cross-locale placeholder-set agreement, and the multi-locale render-dispatch/export surface
+- **Status:** Accepted (v0.229)
 
 **Context.** [Message bundles](../tracks/message-bundles.md) (spine
 [#857](https://github.com/accuser/bynk/issues/857)), slice 2
