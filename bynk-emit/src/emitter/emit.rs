@@ -1093,9 +1093,9 @@ fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str) -> String {
 /// `__bynkLocaleRender` — `emit_unit`, project.rs — since this file's own
 /// `render` would otherwise collide with the imported name) for any code no
 /// declared locale covers. Also exports the bundle's declared-locale set and
-/// reference tag (message-bundles slice 2, #874) — the precondition Locale's
-/// own slice 2 (negotiation) needs before it can start (design/tracks/
-/// message-bundles.md §9).
+/// reference tag (message-bundles slice 2, #874, ADR 0273) — the
+/// precondition Locale's own slice 2 (negotiation) needs before it can
+/// start.
 ///
 /// `blocks` is every `CommonsItem::Messages` in the commons, in source
 /// order; `reference` is the one block among them carrying `@reference` —

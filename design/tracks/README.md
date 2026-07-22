@@ -67,7 +67,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`locale-capability.md`](locale-capability.md) | [#838](https://github.com/accuser/bynk/issues/838) | Slicing (slice 1 shipped) | The `Locale` capability: ambient locale reads and a pure render seam for user-facing text, Bynk's first i18n surface |
-| [`message-bundles.md`](message-bundles.md) | [#857](https://github.com/accuser/bynk/issues/857) | All slices shipped (1–3) — retirement candidate | The `messages` construct, the checked catalogue, and the bundle lookup that turns the shipped, bundle-free `render` (ADR 0256) into a real localiser |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -86,6 +85,13 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`message-bundles.md`** — the `messages` construct, the checked catalogue,
+  and the bundle lookup that turned the shipped, bundle-free `render` (ADR
+  0256) into a real localiser — the sibling `locale-capability.md` named but
+  left unfiled. All three slices shipped: the construct + a single-reference
+  bundle, multi-locale completeness + placeholder agreement, and ICU
+  MessageFormat (`plural`/`select`/`number`/`date`, host-`Intl` delegation,
+  no CLDR data bundled); shipped v0.228.0–v0.230.0 (ADRs 0272–0273, 0276).
 - **`deploy.md`** — the `bynk deploy` verb: provisioning + remote deploy, and
   the load-bearing provisioning-state model (`bynk.deploy.lock`); the first
   driver command with irreversible, outward-facing side effects. All six

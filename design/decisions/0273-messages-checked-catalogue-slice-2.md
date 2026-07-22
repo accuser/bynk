@@ -2,8 +2,9 @@
 
 - **Status:** Accepted (v0.229)
 
-**Context.** [Message bundles](../tracks/message-bundles.md) (spine
-[#857](https://github.com/accuser/bynk/issues/857)), slice 2
+**Context.** Message bundles (spine
+[#857](https://github.com/accuser/bynk/issues/857), track retired — see
+[`../archive/retired-tracks.md`](../archive/retired-tracks.md)), slice 2
 ([#874](https://github.com/accuser/bynk/issues/874)): slice 1
 ([#859](https://github.com/accuser/bynk/issues/859), [ADR 0272](0272-messages-construct-slice-1.md))
 shipped the `messages` construct with exactly one consulted locale (the
@@ -52,11 +53,11 @@ calls `emit_messages_bundle` once, rather than once per block.
 messagesReferenceLocale: LocaleTag` — deliberately without the
 double-underscore prefix this file's other internals use (`__messages_en`,
 `__bynkLocaleRender`), since these two are the concrete form of "the
-bundle's declared locales" the track doc names as the precondition Locale's
-own slice 2 (negotiation) needs before it can start (design/tracks/
-message-bundles.md §9) — they are meant to be imported by that future work,
-not treated as private. Wiring them into Locale's own negotiation provider
-is that track's proposal to cut, not this one's.
+bundle's declared locales" the (now-retired) track doc named as the
+precondition Locale's own slice 2 (negotiation) needs before it can start —
+they are meant to be imported by that future work, not treated as private.
+Wiring them into Locale's own negotiation provider is that track's proposal
+to cut, not this one's.
 
 **Decision — two blocks declaring the same locale tag are rejected
 (`bynk.resolve.duplicate_message_locale`), not last-write-wins (PR #875

@@ -2,8 +2,9 @@
 
 - **Status:** Accepted (v0.228)
 
-**Context.** [Message bundles](../tracks/message-bundles.md) (spine
-[#857](https://github.com/accuser/bynk/issues/857)), slice 1
+**Context.** Message bundles (spine
+[#857](https://github.com/accuser/bynk/issues/857), track retired — see
+[`../archive/retired-tracks.md`](../archive/retired-tracks.md)), slice 1
 ([#859](https://github.com/accuser/bynk/issues/859)): the Locale capability's
 shipped, bundle-free `render` ([ADR 0256](../decisions/0256-locale-capability-slice-1.md))
 accepts `tag` but has never consulted it — there was nothing to look a
