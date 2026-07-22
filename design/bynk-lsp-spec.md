@@ -643,6 +643,16 @@ The query itself, `bynk_ide::sequence::sequence_model`, classifies each call in 
 
 The Mermaid diagram text itself is generated **client-side** (`vscode-bynk/src/webview/mermaid-gen.ts`) from the structured `SequenceModel` JSON — `bynk-check`/`bynk-ide`/`bynk-lsp` stay Mermaid-agnostic; the extension's first webview owns rendering, CSP (vendored Mermaid, no CDN, per the documentation track's convention), and click-to-code (a DOM-order zip against the rendered SVG, not Mermaid's inconsistent `click`-directive support for sequence diagrams).
 
+### 3.24 Documentation view (#847)
+
+`bynk/documentationModel` — the server's **second custom request**, wired the same way as §3.23 (`LspService::build(...).custom_method("bynk/documentationModel", Backend::documentation_model)`, advertised through `ServerCapabilities.experimental` as `{"documentationModel": true}`). Unlike `bynk/sequenceModel` it carries **no cursor position**: a documentation page is the *whole file's* declarations (Tier 1 is file-scoped — see the design ADR), so the params are a bare `textDocument`; the response is a `DocModel | null` (`null` for a non-project file, a `suite` unit, or a file with no committed round).
+
+Backs the VS Code extension's **"Bynk: Show Documentation"** command. Served from the **committed round** through the non-refreshing decoration gate (§3.2.1, #733), on-demand with **no refresh nudge** (same reasoning as §3.23 — a custom method has no generic refresh in the spec; the client re-issues the request each time the command fires).
+
+The query, `bynk_ide::documentation::documentation_model`, aggregates every declaration in the file into an ordered, hierarchical page — for each: a heading name, a short kind label, its nesting `depth` (a top-level declaration is `0`; a capability's ops and a service/agent's handlers are `1`), its rendered Markdown, a `documented` flag, and the name span each heading links back to. It reuses two things rather than re-deriving them: the traversal shape is `document_symbols`' exhaustive `CommonsItem` walk (a new declaration kind is a compile error, not a silently-missed row — §3.7), and each entry's Markdown (a fenced `bynk` signature followed by its doc-comment prose) is produced by **hover's own `describe_*` assembly** (§3.3), so the page cannot drift from hover. An **undocumented** declaration still renders its signature, flagged for the "no documentation" coverage placeholder the webview shows (with a toggle to hide it for a clean reading page).
+
+Markdown is rendered **client-side** (`vscode-bynk/src/webview/doc-render.ts`, vendored `markdown-it`) with **HTML disabled** — a doc comment's raw `<script>`/`<img>` never reaches the DOM as markup — under the same `default-src 'none'` webview CSP #846 established (now factored into a shared `webviewHost.ts` substrate this view and the sequence view both consume). A link written `[text](url)` (or a `<url>` autolink) renders as an anchor, but a click is gated through an **http(s) allow-list** before the host opens it externally — the security posture holds whatever markdown-it turns into a link; a *bare* URL is not auto-linkified. Click-to-code posts a `{uri, range}` reveal, hydrated host-side into a real editor navigation (the DOM is built element-by-element here, so each heading holds its own span directly — no SVG-order zip).
+
 ---
 
 ## 4. Implementation architecture
@@ -732,6 +742,7 @@ Custom (non-standard) requests — no `LanguageServer` trait slot, registered vi
 
 ```
 bynk/sequenceModel               (#846, §3.23; served from the committed round, no refresh nudge)
+bynk/documentationModel          (#847, §3.24; whole-file, served from the committed round, no refresh nudge)
 ```
 
 Not declared (genuinely out of scope so far):

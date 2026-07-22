@@ -31,6 +31,7 @@
 pub mod code_actions;
 pub mod completion;
 mod document_symbols;
+pub mod documentation_request;
 mod extract;
 pub mod hover;
 pub mod index_queries;
@@ -1688,6 +1689,32 @@ impl Backend {
             .and_then(|(name, _)| analysis.sequence_info.get(&name));
         let model = sequence_request::sequence_model_at(text, offset, info);
         Ok(model.map(|m| sequence_request::to_wire(&m, text)))
+    }
+
+    /// #847: `bynk/documentationModel` — the documentation-view query for the
+    /// whole file under the request. This server's second custom request,
+    /// registered via `custom_method` in [`run`] (like `sequence_model`).
+    /// Served from the committed round (#733), on-demand: no cursor position
+    /// (the page is the whole file, Decision A) and no refresh nudge (Decision
+    /// D — see the `documentation_request` module doc, and #846's for why a
+    /// custom method needs none). A non-project file / no committed round →
+    /// `None` (empty page).
+    async fn documentation_model(
+        &self,
+        params: documentation_request::DocumentationModelParams,
+    ) -> JsonRpcResult<Option<documentation_request::WireDocModel>> {
+        let uri = params.text_document.uri;
+        let Some(analysis) = self.committed_analysis(&uri).await else {
+            return Ok(None);
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
+            return Ok(None);
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Ok(None);
+        };
+        let model = documentation_request::documentation_model_at(text);
+        Ok(model.map(|m| documentation_request::to_wire(&m, text)))
     }
 }
 
@@ -3418,10 +3445,13 @@ fn server_capabilities() -> ServerCapabilities {
                 ..Default::default()
             }),
         }),
-        // #846: no standard `ServerCapabilities` field exists for a custom
+        // #846/#847: no standard `ServerCapabilities` field exists for a custom
         // request — `experimental` is the only feature-detection surface a
-        // client has for `bynk/sequenceModel`.
-        experimental: Some(serde_json::json!({ "sequenceModel": true })),
+        // client has for `bynk/sequenceModel` and `bynk/documentationModel`.
+        experimental: Some(serde_json::json!({
+            "sequenceModel": true,
+            "documentationModel": true,
+        })),
         ..Default::default()
     }
 }
@@ -4068,6 +4098,7 @@ pub async fn run() {
     // the builder's `custom_method` instead.
     let (service, socket) = LspService::build(Backend::new)
         .custom_method("bynk/sequenceModel", Backend::sequence_model)
+        .custom_method("bynk/documentationModel", Backend::documentation_model)
         .finish();
     Server::new(stdin, stdout, socket).serve(service).await;
 }

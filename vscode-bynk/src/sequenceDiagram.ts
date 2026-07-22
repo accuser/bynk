@@ -13,6 +13,7 @@
 import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 
+import { getNonce, renderWebviewHtml, revealLocation } from "./webviewHost";
 import type { RevealMessage, SequenceModel, SequencePayload } from "./webview/types";
 
 interface SequenceModelParams {
@@ -110,21 +111,6 @@ function showPanel(context: vscode.ExtensionContext, payload: SequencePayload): 
   panel.reveal(vscode.ViewColumn.Beside, true);
 }
 
-async function revealLocation(uriStr: string, range: RevealMessage["range"]): Promise<void> {
-  const uri = vscode.Uri.parse(uriStr);
-  const vsRange = new vscode.Range(
-    new vscode.Position(range.start.line, range.start.character),
-    new vscode.Position(range.end.line, range.end.character),
-  );
-  const doc = await vscode.workspace.openTextDocument(uri);
-  const editor = await vscode.window.showTextDocument(doc, {
-    viewColumn: vscode.ViewColumn.One,
-    preserveFocus: false,
-  });
-  editor.selection = new vscode.Selection(vsRange.start, vsRange.start);
-  editor.revealRange(vsRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-}
-
 function renderHtml(
   webview: vscode.Webview,
   context: vscode.ExtensionContext,
@@ -133,34 +119,12 @@ function renderHtml(
   const scriptUri = webview.asWebviewUri(
     vscode.Uri.joinPath(context.extensionUri, "out", "webview.js"),
   );
-  const nonce = getNonce();
-  // `<` -> `<` so a `</script>`-shaped label/name in the model can't
-  // break out of the embedding `<script>` tag.
-  const modelJson = JSON.stringify(payload).replace(/</g, "\\u003c");
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
-<title>Bynk Sequence Diagram</title>
-<style>
-  body { font-family: var(--vscode-font-family, sans-serif); color: var(--vscode-foreground); padding: 8px; }
-  #root svg { max-width: 100%; }
-</style>
-</head>
-<body>
-<div id="root">Loading…</div>
-<script nonce="${nonce}">window.__BYNK_SEQUENCE_MODEL__ = ${modelJson};</script>
-<script nonce="${nonce}" src="${scriptUri.toString()}"></script>
-</body>
-</html>`;
-}
-
-function getNonce(): string {
-  const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
-  for (let i = 0; i < 32; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
-  }
-  return text;
+  return renderWebviewHtml({
+    webview,
+    scriptUri,
+    nonce: getNonce(),
+    title: "Bynk Sequence Diagram",
+    globalName: "__BYNK_SEQUENCE_MODEL__",
+    payload,
+  });
 }

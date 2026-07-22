@@ -107,7 +107,15 @@ pub fn handler_lens_sites(text: &str) -> Vec<bynk_syntax::span::Span> {
 /// The `bynk/sequenceModel` request payload — the same two-field
 /// text-document + cursor-position shape every other cursor-anchored request
 /// in this server uses (`HoverParams`, `SignatureHelpParams`, …).
+///
+/// #847: `rename_all = "camelCase"` added — the client sends the LSP wire names
+/// `textDocument`/`position`, so the params must deserialize from camelCase.
+/// Without it the request failed with a missing-field error the moment a real
+/// client called it (the #846 in-crate tests drive `sequence_model_at` directly
+/// and never deserialize these params, and the live VS Code path was not run —
+/// so the mismatch shipped latent).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SequenceModelParams {
     pub text_document: tower_lsp::lsp_types::TextDocumentIdentifier,
     pub position: tower_lsp::lsp_types::Position,

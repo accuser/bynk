@@ -45,6 +45,16 @@ reference.
   stable (style-in-place, not conceal-and-reveal). The `[Name]` links inside a
   doc comment are clickable via [document links](/docs/tooling/bynk-lsp/#capabilities).
   Toggle with `bynk.inlineDocRendering.enable`.
+- **Show Documentation** — the **Bynk: Show Documentation** command opens a
+  webview rendering the current file's declarations as a reference page ("live
+  rustdoc for Bynk"): each declaration's heading, signature, and doc comment
+  rendered as Markdown, in outline order and hierarchy, each heading clickable
+  back to its source. Undocumented declarations appear with a *No documentation*
+  note so the page doubles as a doc-coverage view (a toggle hides them for a
+  clean read). Doc-comment Markdown is rendered with HTML disabled; the page
+  reads the source's own doc comments, distinct from this documentation site.
+  (Served by the language server's
+  [`bynk/documentationModel`](/docs/tooling/bynk-lsp/#capabilities) request.)
 - A **Get Started with Bynk** walkthrough (Welcome page → Help → walkthroughs)
   that sets up a project and a first context.
 - A **`bynkc: check` build task** (Terminal → Run Task) that type-checks the
@@ -86,6 +96,10 @@ The extension needs `bynkc-lsp` available — build it with
 | `src/inlineDoc.ts` | Pure doc-comment Markdown tokenizer → heading/bold/italic ranges. |
 | `src/inlineDocRendering.ts` | Applies those ranges as in-editor decorations (the `inlineDoc.ts` consumer). |
 | `src/scaffold.ts` | The **New Project** / **New Context** command handlers. |
+| `src/webviewHost.ts` | The shared webview substrate: CSP + per-render nonce, the payload-embedding HTML shell, and `postMessage`→reveal click-to-code — built once, consumed by both webviews below. |
+| `src/sequenceDiagram.ts` | The **Show Sequence Diagram** command + panel (`bynk/sequenceModel`). |
+| `src/documentationView.ts` | The **Show Documentation** command + panel (`bynk/documentationModel`). |
+| `src/webview/` | The browser-context webview bundles: `main.ts`/`mermaid-gen.ts` (sequence, vendored Mermaid) and `docview.ts`/`doc-render.ts` (documentation, vendored markdown-it). |
 | `src/tasks.ts` | The `bynkc: check` build-task provider. |
 | `snippets/bynk.json` | Construct scaffolds, wired via `contributes.snippets`. |
 | `walkthroughs/*.md` | The getting-started walkthrough steps. |
