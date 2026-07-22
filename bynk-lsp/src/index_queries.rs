@@ -939,6 +939,7 @@ mod tests {
                 "property",  // v0.36 (ADR 0069, slice 2): record fields — appended
                 "actor",     // v0.45: actor declarations — appended
                 "decorator", // v0.140 (ADR 0163): handler annotations — appended
+                "messages",  // message-bundles slice 1 (#859): messages bundles — appended
             ]
         );
         let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();
