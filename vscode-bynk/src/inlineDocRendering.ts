@@ -82,17 +82,25 @@ export function registerInlineDocRendering(
   };
 
   // Debounce recompute on edits (one pass per edit-burst, no per-keystroke
-  // flicker). Editor-switch and config changes apply immediately — those are
-  // one-shot, not bursty.
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  // flicker). The timer is keyed by document URI, not shared: with two visible
+  // `.bynk` editors, an edit to one must not cancel the other's pending
+  // recompute (which a single module-scoped timer would). Editor-switch and
+  // config changes apply immediately — those are one-shot, not bursty.
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const scheduleForDocument = (doc: vscode.TextDocument): void => {
     if (!isBynk(doc)) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      for (const editor of vscode.window.visibleTextEditors) {
-        if (editor.document === doc) apply(editor);
-      }
-    }, DEBOUNCE_MS);
+    const key = doc.uri.toString();
+    const pending = timers.get(key);
+    if (pending) clearTimeout(pending);
+    timers.set(
+      key,
+      setTimeout(() => {
+        timers.delete(key);
+        for (const editor of vscode.window.visibleTextEditors) {
+          if (editor.document === doc) apply(editor);
+        }
+      }, DEBOUNCE_MS),
+    );
   };
 
   context.subscriptions.push(
@@ -103,10 +111,22 @@ export function registerInlineDocRendering(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor) apply(editor);
     }),
-    // The feature toggle and the heading colour both take effect on the next
-    // apply; re-decorate everything so flipping the setting is instant.
+    // The feature toggle takes effect on the next apply, so re-decorate
+    // everything when it flips. (The heading colour needs no handler here — it
+    // is a `ThemeColor` contribution resolved live by VS Code, not read at
+    // apply time.)
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("bynk.inlineDocRendering")) applyAllVisible();
+    }),
+    // Drop a document's pending timer when it closes, so a queued recompute
+    // doesn't fire against a gone buffer.
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      const key = doc.uri.toString();
+      const pending = timers.get(key);
+      if (pending) {
+        clearTimeout(pending);
+        timers.delete(key);
+      }
     }),
   );
 
