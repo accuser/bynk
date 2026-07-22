@@ -1,0 +1,65 @@
+# Automated first-pass review of increment proposals.
+#
+# Proposals are GitHub issues carrying the `proposal` label (the sign-off
+# artefact before build; `accepted` = approved to build). This posts a single
+# analysis comment when a proposal is opened *or* the label is added later —
+# proposals are often labelled after creation, so `labeled` is required to
+# catch those, and the `if:` guard keeps the job from firing on every issue.
+#
+# Requires the Claude GitHub App installed on the repo and a
+# `CLAUDE_CODE_OAUTH_TOKEN` secret — a Claude Pro/Max subscription token from
+# `claude setup-token` (or wired up by `/install-github-app`). Runs draw on the
+# subscription's usage limits, not metered API billing.
+name: Claude Proposal Review
+
+on:
+  issues:
+    types: [opened, labeled]
+
+# One run per issue; a re-label while a run is in flight supersedes it.
+concurrency:
+  group: claude-proposal-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+# Least privilege: read the tree for context, write only the issue comment.
+# `id-token: write` lets the action mint its GitHub token from the Claude App
+# via OIDC — required by claude-code-action@v1 regardless of the Anthropic auth.
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    # Only proposals — matches whether the label was present at open or added later.
+    if: contains(github.event.issue.labels.*.name, 'proposal')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+
+      - uses: anthropics/claude-code-action@fa7e2f0a29a126f0b81cdcf360561b36e44cf608 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            This issue is an increment proposal — the sign-off artefact reviewed
+            before any implementation begins (label `proposal`; `accepted` means
+            approved to build).
+
+            Read the conventions in `design/` first — especially
+            `design/README.md`, `design/bynk-release-discipline.md`,
+            `design/feature-implementation-checklist.md`, the existing
+            `design/proposals/` and `design/decisions/` (ADRs), and any active
+            `design/tracks/` — then post ONE issue comment covering:
+
+            1. Summary of what is being proposed and its scope/level
+               (patch / minor / major).
+            2. Whether it fits our proposals lifecycle and ADR conventions, and
+               what durable record (ADR) it would eventually need.
+            3. Interactions or conflicts with in-flight tracks and recent ADRs.
+            4. Open questions the author should resolve before this can move to
+               `accepted`.
+
+            Be concise and specific. Do NOT open pull requests or modify files —
+            this is a review comment only.
+          # Sonnet suits the higher-level analysis a proposal review needs.
+          claude_args: "--max-turns 6 --model claude-sonnet-5"
