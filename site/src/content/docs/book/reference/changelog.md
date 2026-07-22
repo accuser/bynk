@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.223.1** | The VS Code extension renders doc comments (`--- … ---`) in place — heading colour, bold, italic — via editor decorations, toggled by `bynk.inlineDocRendering.enable` |
 | **v0.223.0** | "Bynk: Show Sequence Diagram" (VS Code command + per-handler CodeLens) renders a Mermaid sequence diagram for the handler under the cursor, via a new `bynk/sequenceModel` LSP query |
 | **v0.222.0** | Doc comments resolve `[Name]`/`[Owner.member]` links against the project's binding index, navigable via document links and hover |
 | **v0.221.0** | Add the `Locale` capability (fixed `"en"` on every platform) and a `bynk.locale` commons providing `LocaleTag`, `Message`/`MessageArg`, and a bundle-free `render` |

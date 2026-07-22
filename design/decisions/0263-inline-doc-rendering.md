@@ -1,11 +1,6 @@
----
-level: patch
-changelog: The VS Code extension renders doc comments (`--- … ---`) in place — heading colour, bold, italic — via editor decorations, toggled by `bynk.inlineDocRendering.enable`
----
+# 0263 — In-editor doc-comment rendering is style-in-place client decorations over a client-side Markdown tokenizer
 
-## ADR: inline-doc-rendering
-title: In-editor doc-comment rendering is style-in-place client decorations over a client-side Markdown tokenizer
-summary: The VS Code extension decorates doc-comment Markdown in the source buffer (heading colour + bold, bold, italic) without concealing markers, tokenized client-side
+- **Status:** Accepted (v0.223.1)
 
 **Context.** Bynk doc comments (`--- … ---`, `bynk-syntax/src/lexer.rs`) are
 Markdown, but in the source buffer they render as flat, comment-coloured text: a
