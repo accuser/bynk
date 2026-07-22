@@ -85,6 +85,18 @@ pub fn emit_tsconfig() -> String {
     TSCONFIG_JSON.to_string()
 }
 
+/// The `bynkc test --coverage` variant (#854): the same config with `sourceMap`
+/// enabled, so `tsc` emits the `.js.map`s the coverage remap consumes (hop 1,
+/// `.js` → emitted `.ts`). Kept coverage-only rather than folded into the
+/// default so a normal `bynkc test` / deployment `tsc` run ships no `.js.map`s.
+/// The runner overwrites the default `out/tsconfig.json` with this before `tsc`.
+pub fn emit_tsconfig_with_source_maps() -> String {
+    TSCONFIG_JSON.replace(
+        "\"outDir\": \"../out-js\",",
+        "\"sourceMap\": true,\n    \"outDir\": \"../out-js\",",
+    )
+}
+
 const TSCONFIG_JSON: &str = r#"{
   "compilerOptions": {
     "target": "ES2022",
@@ -3219,6 +3231,21 @@ mod runtime_tests {
         assert!(s.contains("\"target\": \"ES2022\""));
         assert!(s.contains("\"strict\": true"));
         assert!(s.contains("\"include\""));
+    }
+
+    #[test]
+    fn coverage_tsconfig_enables_source_maps() {
+        // #854: the coverage remap consumes tsc's `.js.map`s, so the variant must
+        // set `sourceMap` — a guard against a silent string-replace miss if the
+        // base config's `outDir` line is ever reworded. The default stays map-free
+        // so a normal `bynkc test` / deployment build ships no `.js.map`s.
+        let cov = emit_tsconfig_with_source_maps();
+        assert!(
+            cov.contains("\"sourceMap\": true"),
+            "coverage config: {cov}"
+        );
+        assert!(cov.contains("\"outDir\": \"../out-js\""));
+        assert!(!emit_tsconfig().contains("sourceMap"));
     }
 
     #[test]

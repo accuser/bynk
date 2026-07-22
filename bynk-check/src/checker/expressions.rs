@@ -2277,7 +2277,6 @@ pub(crate) fn check_record_construction(
     let TypeBody::Record(r) = &decl.body else {
         return None;
     };
-    let _ = span;
     // Collect declared fields.
     let declared: HashMap<&str, &RecordField> =
         r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
@@ -2297,6 +2296,7 @@ pub(crate) fn check_record_construction(
         fields,
         r,
         decl.name.span,
+        span,
         |n| scopes.iter().rev().any(|s| s.contains_key(n)),
         ctx.errors,
     );

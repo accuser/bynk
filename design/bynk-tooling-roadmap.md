@@ -84,7 +84,12 @@ do it first.
   are unusually **prescriptive** — they already say "add `X` to the `given` clause", "add
   a `consumes` for `B`", "construct via `T.of(...)`". Turning those notes into one‑click
   quick fixes is nearly free (the suggestion text exists) and makes Bynk feel *more*
-  polished than languages with vaguer diagnostics.
+  polished than languages with vaguer diagnostics. **Shipped:** the `given`-clause
+  fixes (v0.26), the InRange-swap (v0.40), and — #852 — the **capability-aware** set:
+  fill missing record field(s), add a missing `consumes` for an unconsumed cross-context
+  call, and auto-`uses`/`consumes` an unresolved name (the Bynk analogue of auto-import).
+  Follow-ups: snippet-placeholder field fills, remove/rename fixes for unknown/duplicate
+  fields, and remove-unused-`consumes`.
 - **Find references** and **rename** (`prepareRename` + `rename`) — the two refactor
   table‑stakes; both ride A‑0.
 - **Comprehensive completion** — today `consumes`/`given` only. Extend to: types, fns,
@@ -219,6 +224,19 @@ orchestration lives in the driver. The arc is **`doctor` → `new` → `dev`**:
 
 With `doctor` (v0.46), `new` (v0.58), and `dev` (v0.57) shipped, the on-ramp arc
 is complete; `deploy` (provisioning + remote) follows.
+
+## 5.2 The test runner
+
+`bynkc test` (and its `bynk test` pass-through) already owns discovery, rich/JSON
+output (ADR 0098), seeded `property` tests, per-case filtering, and an inspector
+path (ADR 0104). **Coverage** now sits on top: `bynkc test --coverage` reports
+**statement/line** coverage attributed to `.bynk` source — a rich summary table
+or a `coverage` block under `--format json` — collected via V8's
+`NODE_V8_COVERAGE` and remapped through the emitted source maps ([ADR 0103](decisions/0103-source-map-contract.md)),
+scoped to user source (the `tests/` tree and workers scaffold excluded), on the
+`tsc → node` path only (#854, closes it). **Follow-ups:** per-**branch** coverage
+in `.bynk` terms (a coarser-than-JS notion of a Bynk branch), and widening
+`--coverage` beyond `tsc → node` (the `tsx`/`--inspect` paths).
 
 ## 6. Suggested sequencing
 

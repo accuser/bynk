@@ -14,6 +14,7 @@
 //! commons.
 
 pub mod cli;
+pub mod coverage;
 pub mod test_json;
 
 // The syntax foundation now lives in the `bynk-syntax` leaf crate (slice 1 of

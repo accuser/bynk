@@ -60,7 +60,7 @@ bynkc fmt [INPUTS] [--check]
 Discover and run test declarations in a project. Compiles the project (including all generated `tests/*.test.ts` modules), then invokes Node.js on the aggregated runner script. Requires `tsc` and `node` to be on PATH
 
 ```text
-bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>] [--inspect] [--seed <SEED>] [--case <NAME>]
+bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>] [--inspect] [--seed <SEED>] [--case <NAME>] [--coverage]
 ```
 
 | Argument | Required | Default | Description |
@@ -72,3 +72,4 @@ bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>] [--inspect
 | `--inspect` | no | — | Compile a debug build and launch the test runner under Node's inspector (`node --inspect-brk`), printing the inspector URL for a JavaScript debugger to attach (slice 2, ADR 0104). The emitted `.ts` runs directly under Node's line-preserving type-stripping, so source maps resolve breakpoints back to `.bynk`. Requires Node ≥ 22.18 (or ≥ 23.6 unflagged). Does not run `tsc` |
 | `--seed` | no | — | v0.114: the root seed for generative `property` tests, as hex (e.g. `0x5f3a`). A failing property prints the seed it used; re-running with `--seed <hex>` reproduces that run byte-for-byte. Omitted, each run draws a fresh random seed |
 | `--case` | no | — | v0.127 (editor-currency slice 6): run only test cases whose name matches `<name>`, skipping the rest — the filter behind the editor's per-case `▷ Run Test` lens. Matches by exact case name across suites; omitted, every case runs. No effect with `--no-run` (discovery lists all cases regardless) |
+| `--coverage` | no | — | #854: after the suite runs, report statement/line coverage attributed to `.bynk` source (a rich summary table, or a `coverage` block in `--format json`). Collected via V8's `NODE_V8_COVERAGE` and remapped through the emitted source maps, so the generated TypeScript is invisible. Requires the `tsc → node` path: incompatible with `--inspect` and `--no-run`, and errors if only `tsx` is available |

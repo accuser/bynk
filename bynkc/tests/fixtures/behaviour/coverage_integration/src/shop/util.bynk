@@ -1,0 +1,10 @@
+commons shop.util
+
+fn tax(cents: Int) -> Int {
+  cents / 10
+}
+
+fn discount(cents: Int) -> Int {
+  let d = cents / 5
+  cents - d
+}

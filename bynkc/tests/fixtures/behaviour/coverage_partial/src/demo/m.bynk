@@ -1,0 +1,10 @@
+commons demo.m
+
+fn double(n: Int) -> Int {
+  n * 2
+}
+
+fn triple(n: Int) -> Int {
+  let a = n + n
+  a + n
+}
