@@ -168,17 +168,29 @@ fn slug(heading: &str) -> String {
 }
 
 /// The `##`-level (and deeper) heading slugs present in a Markdown page.
+/// Content inside fenced code blocks is skipped, so a `#`-led line in an example
+/// (a shell comment, say) is never mistaken for a heading and can't mask a
+/// stale anchor by slugging to the same value.
 fn heading_slugs(markdown: &str) -> BTreeSet<String> {
-    markdown
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim_start();
-            trimmed
-                .starts_with('#')
-                .then(|| slug(trimmed.trim_start_matches('#')))
-        })
-        .filter(|s| !s.is_empty())
-        .collect()
+    let mut slugs = BTreeSet::new();
+    let mut in_fence = false;
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            let s = slug(trimmed.trim_start_matches('#'));
+            if !s.is_empty() {
+                slugs.insert(s);
+            }
+        }
+    }
+    slugs
 }
 
 #[test]
