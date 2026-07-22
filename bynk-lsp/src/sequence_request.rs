@@ -43,6 +43,9 @@ pub fn sequence_model_at(
                     return Some(sequence::sequence_model(
                         h,
                         HandlerOwner::Service(&s.name.name),
+                        // v0.155: a handler with no `given` of its own inherits
+                        // the service-level default. See `sequence_model`.
+                        &s.default_given,
                         info,
                     ));
                 }
@@ -52,6 +55,8 @@ pub fn sequence_model_at(
                     return Some(sequence::sequence_model(
                         h,
                         HandlerOwner::Agent(&a.name.name),
+                        // Agents have no service-level `given` default.
+                        &[],
                         info,
                     ));
                 }

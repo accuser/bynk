@@ -132,12 +132,27 @@ struct BlockCtx {
     branch: u32,
 }
 
+/// `default_given` is the owning service's service-level `given` default
+/// (v0.155, `ServiceDecl.default_given`) — a handler that declares no `given`
+/// of its own inherits it. This classifier walks a freshly-parsed AST that
+/// has *not* been through `bynk-emit`'s `inject_service_defaults`
+/// normalization pass (which is what mutates `handler.given` in the compile
+/// pipeline), so the fallback has to be applied here or a handler relying on
+/// the service default would drop every capability lifeline. Pass `&[]` when
+/// there is no default (always the case for `HandlerOwner::Agent` — agents
+/// have no service-level `given`).
 pub fn sequence_model(
     handler: &Handler,
     owner: HandlerOwner<'_>,
+    default_given: &[CapRef],
     info: Option<&ContextSequenceInfo>,
 ) -> SequenceModel {
-    let mut b = Builder::new(entry_label(handler, owner), &handler.given, info);
+    let given = if handler.given.is_empty() {
+        default_given
+    } else {
+        &handler.given
+    };
+    let mut b = Builder::new(entry_label(handler, owner), given, info);
     b.walk_block(&handler.body, None, 0);
     b.finish()
 }
@@ -617,7 +632,12 @@ service api from http {
         let svc = find_service(&ctx, "api");
         let handler = &svc.handlers[0];
 
-        let model = sequence_model(handler, HandlerOwner::Service("api"), Some(info));
+        let model = sequence_model(
+            handler,
+            HandlerOwner::Service("api"),
+            &svc.default_given,
+            Some(info),
+        );
 
         let kinds: Vec<(ParticipantKind, &str)> = model
             .participants
@@ -693,7 +713,12 @@ service api {
         let ctx = parse_context(CONSUMER_SRC);
         let svc = find_service(&ctx, "api");
         let handler = &svc.handlers[0];
-        let model = sequence_model(handler, HandlerOwner::Service("api"), Some(info));
+        let model = sequence_model(
+            handler,
+            HandlerOwner::Service("api"),
+            &svc.default_given,
+            Some(info),
+        );
 
         assert_eq!(model.participants.len(), 2, "Entry + the consumed context");
         assert_eq!(model.participants[1].kind, ParticipantKind::Context);
@@ -766,7 +791,12 @@ service nestedService {
         let ctx = parse_context(MISC_SRC);
         let svc = find_service(&ctx, "fireService");
         let handler = &svc.handlers[0];
-        let model = sequence_model(handler, HandlerOwner::Service("fireService"), Some(&info));
+        let model = sequence_model(
+            handler,
+            HandlerOwner::Service("fireService"),
+            &svc.default_given,
+            Some(&info),
+        );
 
         assert_eq!(model.participants.len(), 2);
         assert_eq!(model.participants[1].kind, ParticipantKind::Capability);
@@ -784,7 +814,12 @@ service nestedService {
         let ctx = parse_context(MISC_SRC);
         let svc = find_service(&ctx, "localService");
         let handler = &svc.handlers[0];
-        let model = sequence_model(handler, HandlerOwner::Service("localService"), Some(&info));
+        let model = sequence_model(
+            handler,
+            HandlerOwner::Service("localService"),
+            &svc.default_given,
+            Some(&info),
+        );
 
         assert_eq!(model.participants.len(), 1);
         assert_eq!(model.participants[0].kind, ParticipantKind::Entry);
@@ -801,7 +836,12 @@ service nestedService {
         let ctx = parse_context(MISC_SRC);
         let svc = find_service(&ctx, "nestedService");
         let handler = &svc.handlers[0];
-        let model = sequence_model(handler, HandlerOwner::Service("nestedService"), Some(&info));
+        let model = sequence_model(
+            handler,
+            HandlerOwner::Service("nestedService"),
+            &svc.default_given,
+            Some(&info),
+        );
 
         // Depth 0 (`n > 0`) and depth 1 (`n > 10`) render as real blocks;
         // depth 2 (`n > 100`) is past `MAX_BLOCK_DEPTH` and collapses instead
@@ -825,5 +865,65 @@ service nestedService {
         assert_eq!(model.blocks[1].parent_branch, Some(0));
         assert_eq!(model.blocks[2].parent, Some(1));
         assert_eq!(model.blocks[2].parent_branch, Some(0));
+    }
+
+    // -- Fixture 6 (#861 review): a service declares a service-level `given`
+    // -- default (v0.155) and the handler omits its own `given`, inheriting it.
+    // -- The classifier walks a freshly-parsed AST that never ran
+    // -- `inject_service_defaults`, so it must apply the fallback itself — or
+    // -- the Clock capability lifeline is silently dropped.
+    const SERVICE_GIVEN_SRC: &str = r#"context svcgiven
+
+consumes bynk { Clock }
+
+service api from http by Visitor given Clock {
+  on GET("/now") () -> Effect[HttpResult[Int]] {
+    let now <- Clock.now()
+    Ok(now.toEpochMillis())
+  }
+}
+"#;
+
+    #[test]
+    fn service_level_given_default_is_inherited_by_a_handler_without_its_own() {
+        let root = setup_project("svcgiven", &[("svcgiven.bynk", SERVICE_GIVEN_SRC)]);
+        let diag = crate::diagnose_project(&root, &Map::new());
+        let info = diag
+            .sequence_info
+            .get("svcgiven")
+            .expect("sequence_info entry for svcgiven");
+
+        let ctx = parse_context(SERVICE_GIVEN_SRC);
+        let svc = find_service(&ctx, "api");
+        let handler = &svc.handlers[0];
+        // Precondition: the freshly-parsed handler carries no `given` of its
+        // own — it relies entirely on the service-level default.
+        assert!(
+            handler.given.is_empty(),
+            "fixture handler must omit its own `given`"
+        );
+        assert_eq!(svc.default_given.len(), 1, "service-level `given Clock`");
+
+        let model = sequence_model(
+            handler,
+            HandlerOwner::Service("api"),
+            &svc.default_given,
+            Some(info),
+        );
+
+        let kinds: Vec<(ParticipantKind, &str)> = model
+            .participants
+            .iter()
+            .map(|p| (p.kind, p.name.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (ParticipantKind::Entry, "api GET /now"),
+                (ParticipantKind::Capability, "Clock"),
+            ],
+            "Clock must classify as a capability lifeline via the inherited \
+             service-level `given` — with only `handler.given` it would be dropped"
+        );
     }
 }
