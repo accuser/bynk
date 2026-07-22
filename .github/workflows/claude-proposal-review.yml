@@ -45,11 +45,7 @@ jobs:
             before any implementation begins (label `proposal`; `accepted` means
             approved to build).
 
-            Read the conventions in `design/` first — especially
-            `design/README.md`, `design/bynk-release-discipline.md`,
-            `design/feature-implementation-checklist.md`, the existing
-            `design/proposals/` and `design/decisions/` (ADRs), and any active
-            `design/tracks/` — then post ONE issue comment covering:
+            Post ONE issue comment covering:
 
             1. Summary of what is being proposed and its scope/level
                (patch / minor / major).
@@ -59,9 +55,13 @@ jobs:
             4. Open questions the author should resolve before this can move to
                `accepted`.
 
-            Be concise and specific. Do NOT open pull requests or modify files —
-            this is a review comment only.
+            For the conventions, consult only the files you actually need —
+            primarily `design/bynk-release-discipline.md` (levels/increments) and
+            existing `design/decisions/` ADRs for precedent; skim `design/tracks/`
+            only to check for conflicts. Do NOT read `design/` exhaustively — that
+            burns the turn budget before you can post. Be concise and specific.
+            Do NOT open pull requests or modify files — this is a comment only.
           # Sonnet suits the higher-level analysis a proposal review needs.
-          # Reading design/ conventions + the issue before commenting spends
-          # several turns, so keep the ceiling well above the read budget.
+          # The prompt keeps reads targeted (not a full design/ browse), so 20
+          # turns is comfortable headroom above the read budget.
           claude_args: "--max-turns 20 --model claude-sonnet-5"
