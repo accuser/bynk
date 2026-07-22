@@ -62,4 +62,6 @@ jobs:
             Be concise and specific. Do NOT open pull requests or modify files —
             this is a review comment only.
           # Sonnet suits the higher-level analysis a proposal review needs.
-          claude_args: "--max-turns 6 --model claude-sonnet-5"
+          # Reading design/ conventions + the issue before commenting spends
+          # several turns, so keep the ceiling well above the read budget.
+          claude_args: "--max-turns 20 --model claude-sonnet-5"
