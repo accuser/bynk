@@ -51,10 +51,15 @@ for the coverage run, kept coverage-only so a normal `bynkc test` or deployment
 
 **(D) Measured scope — user `.bynk` source only.** The measured set excludes the
 `tests/` tree and the generated workers scaffold (the second, workers-mode
-compile a project with integration suites triggers), filtered on the emitted
-`out-js` path before the maps are consulted, and again on the resolved `.bynk`
-path. So an integration suite that runs its participants as real Workers
-attributes nothing to that scaffold; a unit suite over a commons is what lands.
+compile a project with integration suites triggers). This is filtered **once**,
+authoritatively, on the emitted tree: the executed `.js`'s `out-js`-relative path
+whose leading component is `tests/` or `workers/` is dropped before the maps are
+consulted. The resolved `.bynk` side is deliberately **not** re-filtered — a user
+source that merely lives under a directory named `tests`/`workers` (e.g.
+`src/workers/helpers.bynk`) is real code whose `.js` already passed the emitted
+filter, so re-filtering by name would silently omit it. So an integration suite
+that runs its participants as real Workers attributes nothing to that scaffold; a
+unit suite over a commons is what lands.
 
 **The remap** is the one genuinely new piece of logic. `tsc` does *not* chain
 input source maps, so attribution is a two-hop, line-level compose: V8 gives byte

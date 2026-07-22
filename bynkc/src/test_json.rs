@@ -28,9 +28,9 @@ pub struct TestRun {
     pub suites: Option<Vec<Suite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<TestError>,
-    /// v0.223 (#854): the optional coverage block, present only for a
-    /// `--coverage` run that produced attributable lines. Last field, so every
-    /// existing document's byte layout is unchanged when it is absent.
+    /// #854: the optional coverage block, present only for a `--coverage` run
+    /// that produced attributable lines. Last field, so every existing
+    /// document's byte layout is unchanged when it is absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage: Option<Coverage>,
 }
