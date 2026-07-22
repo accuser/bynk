@@ -4334,11 +4334,30 @@ fn emit_test_scope_setup(
         }
     }
     // Bring in `uses` commons names too — the target's body can use them.
+    // message-bundles slice 1 (#859): a name the target itself already
+    // declares must be excluded here — the same local-shadows-`uses`
+    // precedence `compose_unit_symbols` already applies to production
+    // emission (project.rs's `combined_fns`/`combined_types`), which this
+    // test-scaffold path builds independently and had never applied. Never
+    // exercised before this slice: no prior commons declared a name also
+    // present in something it `uses`. Without the filter, a target with its
+    // own `render` (a messages block's synthetic one) *and* `uses
+    // bynk.locale` (which also declares `render`) destructured both into one
+    // scope — `Cannot redeclare block-scoped variable 'render'` under `tsc`.
+    let target_local: std::collections::HashSet<&String> = unit_tables
+        .get(target_name)
+        .map(|t| t.types.keys().chain(t.fns.keys()).collect())
+        .unwrap_or_default();
     if let Some(used) = unit_uses.get(target_name) {
         for u in used {
             let ns = u.replace('.', "_");
             if let Some(table) = unit_tables.get(u) {
-                let mut names: Vec<&String> = table.types.keys().chain(table.fns.keys()).collect();
+                let mut names: Vec<&String> = table
+                    .types
+                    .keys()
+                    .chain(table.fns.keys())
+                    .filter(|n| !target_local.contains(n))
+                    .collect();
                 names.sort();
                 names.dedup();
                 if !names.is_empty() {

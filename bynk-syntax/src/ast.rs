@@ -477,6 +477,11 @@ pub enum CommonsItem {
     /// `actor Name { auth = Scheme, identity = T }` (v0.45). A nominal boundary
     /// contract consumed by a handler's `by` clause; not a runnable entity.
     Actor(ActorDecl),
+    /// `messages <tag> @reference { "code" => "template" ... }` — a message
+    /// bundle for one locale. Commons-only (checker-enforced, not grammar);
+    /// legal syntactically wherever any `CommonsItem` is, per the existing
+    /// `Service`/`Agent`-in-`adapter` precedent.
+    Messages(MessagesDecl),
 }
 
 impl CommonsItem {
@@ -489,8 +494,38 @@ impl CommonsItem {
             CommonsItem::Service(s) => &s.name,
             CommonsItem::Agent(a) => &a.name,
             CommonsItem::Actor(a) => &a.name,
+            CommonsItem::Messages(m) => &m.tag,
         }
     }
+}
+
+/// One locale's message bundle (v0.222+): `messages <tag> @reference { ... }`.
+/// `tag` is a plain identifier at the grammar level — its `LocaleTag`
+/// refinement (`bynk.locale`) is checked later, not lexed as a string.
+#[derive(Debug, Clone)]
+pub struct MessagesDecl {
+    pub tag: Ident,
+    /// Every `@`-annotation attached to this block. The parser stays
+    /// permissive (zero or more, same as `store` field annotations); cardinality
+    /// (exactly one `@reference` per bundle, counted across every `Messages`
+    /// item in the commons) is a checker concern, not a parse error.
+    pub annotations: Vec<Annotation>,
+    pub entries: Vec<MessageEntry>,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// One `"code" => "template"` entry inside a `messages` block. Both sides are
+/// plain string literals — a template's `{name}` placeholders are resolved by
+/// a compile-time string scan during lowering, not parsed as expressions.
+#[derive(Debug, Clone)]
+pub struct MessageEntry {
+    pub code: String,
+    pub code_span: Span,
+    pub template: String,
+    pub template_span: Span,
+    pub span: Span,
 }
 
 /// A capability declaration (v0.5 §3.3). Capabilities are interface-like

@@ -1,0 +1,14 @@
+---
+Regression for PR #872's review finding: a second (non-reference)
+`messages` block must not emit a second `export function render` —
+proven here by the fact that this fixture compiles at all (a
+duplicate declaration is a `tsc` error the e2e harness would catch),
+plus asserting `render` still answers from the reference locale's own
+entries.
+---
+suite app.bundle {
+  case "render still answers from the reference block when a second, non-reference block exists" {
+    let msg = withText(message("greeting"), "name", "Ada")
+    expect render("en", msg) == "Hello, Ada!"
+  }
+}

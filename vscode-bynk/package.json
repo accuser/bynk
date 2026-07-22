@@ -70,6 +70,11 @@
         "id": "actor",
         "superType": "type",
         "description": "A Bynk actor (a boundary contract consumed by a handler's `by` clause)."
+      },
+      {
+        "id": "messages",
+        "superType": "struct",
+        "description": "A Bynk message bundle (`messages <tag> { ... }`)."
       }
     ],
     "semanticTokenModifiers": [

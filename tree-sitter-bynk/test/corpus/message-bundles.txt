@@ -1,0 +1,76 @@
+==========================
+messages block with @reference and entries
+==========================
+
+commons app.bundle
+uses bynk.locale
+
+messages en @reference {
+  "greeting" => "Hello, {name}!"
+  "farewell" => "Bye"
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (uses_decl
+      target: (qualified_name
+        (identifier)
+        (identifier)))
+    (messages_decl
+      tag: (identifier)
+      annotation: (store_annotation
+        name: (identifier))
+      (message_entry
+        code: (string_literal)
+        template: (string_literal))
+      (message_entry
+        code: (string_literal)
+        template: (string_literal)))))
+
+==========================
+messages parses syntactically inside a context too (legality is a checker concern)
+==========================
+
+context app.ctx {
+  messages en @reference {
+    "a" => "b"
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (messages_decl
+      tag: (identifier)
+      annotation: (store_annotation
+        name: (identifier))
+      (message_entry
+        code: (string_literal)
+        template: (string_literal)))))
+
+==========================
+messages block with no annotation and no entries (the parser stays permissive)
+==========================
+
+commons app.bundle
+messages en {
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (messages_decl
+      tag: (identifier))))

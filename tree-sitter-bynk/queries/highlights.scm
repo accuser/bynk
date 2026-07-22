@@ -54,6 +54,7 @@
   "transition"
   "requires"
   "ensures"
+  "messages"
 ] @keyword.declaration
 
 [

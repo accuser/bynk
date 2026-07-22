@@ -43,6 +43,9 @@ pub enum SymbolKind {
     /// name `"Agent.handler"`. Service handlers have no per-handler name
     /// (`Handler.method_name` is `None`) so only agent dispatch is covered.
     Handler,
+    /// A `messages <tag> { ... }` bundle, keyed by its `tag` (message-bundles
+    /// track, slice 1).
+    Messages,
 }
 
 impl SymbolKind {
@@ -59,6 +62,7 @@ impl SymbolKind {
             SymbolKind::CapabilityOp => "operation",
             SymbolKind::Actor => "actor",
             SymbolKind::Handler => "handler",
+            SymbolKind::Messages => "messages",
         }
     }
 }

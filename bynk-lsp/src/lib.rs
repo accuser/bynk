@@ -3953,6 +3953,7 @@ fn lsp_symbol_kind(kind: bynk_check::index::SymbolKind) -> SymbolKind {
         bynk_check::index::SymbolKind::Field => SymbolKind::FIELD,
         bynk_check::index::SymbolKind::Actor => SymbolKind::INTERFACE,
         bynk_check::index::SymbolKind::Handler => SymbolKind::METHOD,
+        bynk_check::index::SymbolKind::Messages => SymbolKind::STRUCT,
     }
 }
 

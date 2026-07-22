@@ -182,6 +182,7 @@ module.exports = grammar({
         $.uses_decl,
         $.type_decl,
         $.fn_decl,
+        $.messages_decl,
         // Permissive: capability/service/etc. can syntactically appear
         // anywhere — the LSP reports semantic placement errors.
         $.capability_decl,
@@ -203,6 +204,7 @@ module.exports = grammar({
         $.service_decl,
         $.agent_decl,
         $.actor_decl,
+        $.messages_decl,
       ),
 
     // v0.17: adapter items — a binding clause, capabilities, boundary types,
@@ -223,6 +225,7 @@ module.exports = grammar({
         $.service_decl,
         $.agent_decl,
         $.actor_decl,
+        $.messages_decl,
       ),
 
     _test_body_item: ($) =>
@@ -576,6 +579,33 @@ module.exports = grammar({
         ")",
         "->",
         field("return_type", $._type_ref),
+      ),
+
+    // message-bundles track, slice 1 (#859): `messages <tag> @reference {
+    // "code" => "template" ... }` — a commons item declaring one locale's
+    // message bundle. `tag` is a plain identifier (its `LocaleTag`
+    // refinement is a checker concern); annotations reuse `store_annotation`
+    // (the same general `@name(args)` shape, ADR 0111) — the parser stays
+    // permissive on cardinality, same as the Rust side. Legality
+    // (commons-only) is a checker concern too, so this rule is admitted in
+    // `_context_body_item`/`_adapter_body_item` as well, mirroring
+    // `service_decl`/`agent_decl`'s existing permissive placement there.
+    messages_decl: ($) =>
+      seq(
+        "messages",
+        field("tag", $.identifier),
+        repeat(field("annotation", $.store_annotation)),
+        "{",
+        repeat($.message_entry),
+        "}",
+      ),
+    // A trailing comma is permitted but not required (mirrors match_arm).
+    message_entry: ($) =>
+      seq(
+        field("code", $.string_literal),
+        "=>",
+        field("template", $.string_literal),
+        optional(","),
       ),
 
     provider_decl: ($) =>

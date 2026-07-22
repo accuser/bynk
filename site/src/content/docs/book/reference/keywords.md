@@ -81,6 +81,7 @@ Reserved only in the one position named below; elsewhere (a field, parameter, or
 | Keyword | Meaning |
 |---|---|
 | `case` | Declare a test case inside a `suite` (`case "…" { … }`). |
+| `messages` | Declare a message bundle for one locale (`messages <tag> { "code" => "template" }`), inside a commons. |
 | `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`). |
 | `suite` | Declare a test suite targeting a unit (`suite <target> { case … }`). |
 

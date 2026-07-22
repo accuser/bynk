@@ -1,0 +1,21 @@
+commons app.bundle
+
+uses bynk.locale
+
+---
+message-bundles track, slice 1 (#859): multiple `messages` blocks in one
+commons are legal (forward-compatible with slice 2's multi-locale
+model) as long as exactly one carries `@reference`. Slice 1 emits
+exactly one `export function render`, built only from the reference
+block's entries — a non-reference block is checker-validated but
+contributes nothing to codegen yet (review finding on PR #872: a
+second block used to emit a second, colliding `export function
+render`).
+---
+messages en @reference {
+  "greeting" => "Hello, {name}!"
+}
+
+messages fr {
+  "greeting" => "Bonjour, {name}!"
+}

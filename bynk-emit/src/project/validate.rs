@@ -164,6 +164,118 @@ pub(crate) fn check_platform_lock(
     }
 }
 
+/// message-bundles slice 1 (#859): per-commons validation for `messages`
+/// blocks — commons-only legality, exactly one `@reference` annotation
+/// across every `messages` block in the commons, a within-block duplicate
+/// `code`, and (since nothing in this compiler auto-injects a `uses`
+/// clause) that a commons declaring `messages` also `uses bynk.locale` —
+/// the generated bundle-scoped `render`'s fallback needs it in scope.
+pub(crate) fn check_messages_bundles(
+    parsed: &[ParsedFile],
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        let mut first_messages: Option<(usize, Span)> = None;
+        let mut reference_sites: Vec<(usize, Span)> = Vec::new();
+        for &i in indices {
+            for item in parsed[i].items() {
+                let CommonsItem::Messages(m) = item else {
+                    continue;
+                };
+                if first_messages.is_none() {
+                    first_messages = Some((i, m.span));
+                }
+                if kinds.get(name) != Some(&UnitKind::Commons) {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.messages.outside_commons",
+                            m.span,
+                            "`messages` declarations are only allowed inside a commons, not a context or adapter",
+                        ),
+                    );
+                    continue;
+                }
+                for ann in &m.annotations {
+                    if ann.name.name == "reference" {
+                        reference_sites.push((i, ann.span));
+                    }
+                }
+                let mut seen: HashMap<&str, Span> = HashMap::new();
+                for entry in &m.entries {
+                    if let Some(prev) = seen.get(entry.code.as_str()) {
+                        errors.push_for(
+                            Some(&parsed[i].identity_path),
+                            CompileError::new(
+                                "bynk.resolve.duplicate_message_code",
+                                entry.code_span,
+                                format!(
+                                    "message code \"{}\" is already declared in this block",
+                                    entry.code
+                                ),
+                            )
+                            .with_label(*prev, "previously declared here"),
+                        );
+                    } else {
+                        seen.insert(entry.code.as_str(), entry.code_span);
+                    }
+                }
+            }
+        }
+        let Some((first_i, first_span)) = first_messages else {
+            continue;
+        };
+        if kinds.get(name) != Some(&UnitKind::Commons) {
+            // Already reported above (outside_commons) for every block;
+            // cardinality/uses checks don't apply to a non-commons unit.
+            continue;
+        }
+        match reference_sites.len() {
+            0 => {
+                errors.push_for(
+                    Some(&parsed[first_i].identity_path),
+                    CompileError::new(
+                        "bynk.messages.missing_reference",
+                        first_span,
+                        "a message bundle must have exactly one `@reference` block; none found",
+                    ),
+                );
+            }
+            1 => {}
+            _ => {
+                let (_, first_ref_span) = reference_sites[0];
+                for &(i, span) in &reference_sites[1..] {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.messages.multiple_reference",
+                            span,
+                            "a message bundle must have exactly one `@reference` block; found more than one",
+                        )
+                        .with_label(first_ref_span, "first `@reference` here"),
+                    );
+                }
+            }
+        }
+        let has_locale_uses = unit_uses
+            .get(name)
+            .is_some_and(|targets| targets.iter().any(|t| t == "bynk.locale"));
+        if !has_locale_uses {
+            errors.push_for(
+                Some(&parsed[first_i].identity_path),
+                CompileError::new(
+                    "bynk.messages.missing_locale_dependency",
+                    first_span,
+                    "a commons declaring `messages` must also `uses bynk.locale`",
+                ),
+            );
+        }
+    }
+}
+
 /// Enforce v0.4 construction rules: types owned by a consumed context can be
 /// referenced (held, passed, read for transparent exports) but cannot be
 /// constructed. This catches `OtherType { ... }`, `OtherType.of(...)`,
@@ -3975,7 +4087,9 @@ pub fn check_function_type_boundary_items(
                         reject_fn_types(id, "an actor identity type", types, errors);
                     }
                 }
-                CommonsItem::Fn(_) | CommonsItem::Provider(_) => {}
+                // slice 1: `MessageEntry.code`/`.template` are plain string
+                // literals, no fn-type-bearing fields to reject here.
+                CommonsItem::Fn(_) | CommonsItem::Provider(_) | CommonsItem::Messages(_) => {}
             }
         }
     }

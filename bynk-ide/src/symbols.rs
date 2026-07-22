@@ -831,6 +831,10 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
         // ladder, is where these were missing. `by u: User` resolved here and
         // rendered nothing.
         CommonsItem::Actor(a) if a.name.name == name => Some(describe_actor(a)),
+        // message-bundles slice 1 (#859): a messages block, keyed by its tag —
+        // the same top-level, plain-name convention as Capability/Service/
+        // Agent above.
+        CommonsItem::Messages(m) if m.tag.name == name => Some(describe_messages(m)),
         // #611 (gap B): a record field, keyed `"Type.field"` by the index — the
         // checker records construction labels and field accesses as `Field` refs,
         // so hover resolves the key but had no arm to render it and fell through
@@ -1162,6 +1166,30 @@ pub(crate) fn describe_capability(c: &CapabilityDecl) -> String {
     }
     out.push_str("}\n```\n");
     if let Some(doc) = &c.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
+}
+
+/// message-bundles slice 1 (#859): a message bundle's tag, its annotations
+/// (`@reference`, unresolved cardinality shown as-is — that's a checker
+/// concern, not hover's), and its declared codes.
+pub(crate) fn describe_messages(m: &MessagesDecl) -> String {
+    let mut out = String::new();
+    out.push_str("```bynk\nmessages ");
+    out.push_str(&m.tag.name);
+    for ann in &m.annotations {
+        out.push(' ');
+        out.push_str(&bynk_fmt::annotation_to_string(ann));
+    }
+    out.push_str(" {\n");
+    for entry in &m.entries {
+        out.push_str(&format!("\t\"{}\" => …\n", entry.code));
+    }
+    out.push_str("}\n```\n");
+    if let Some(doc) = &m.documentation {
         out.push('\n');
         out.push_str(doc);
         out.push('\n');
@@ -2209,6 +2237,27 @@ mod tests {
         // An unknown op, and an op read against the wrong owner, yield none.
         assert!(describe_symbol(src, "Logger.nope").is_none());
         assert!(describe_symbol(src, "Clock.info").is_none());
+    }
+
+    #[test]
+    fn describe_symbol_renders_a_messages_bundle() {
+        // message-bundles slice 1 (#859): describe_item's Messages arm — a
+        // silent hover gap before this slice (the wildcard fell through to
+        // "no hover" for a construct that didn't exist yet).
+        let src = "commons app.bundle\n\n\
+            ---\n\
+            The English reference bundle.\n\
+            ---\n\
+            messages en @reference {\n\
+            \x20 \"greeting\" => \"Hello, {name}!\"\n\
+            \x20 \"farewell\" => \"Bye\"\n\
+            }\n";
+
+        let info = describe_symbol(src, "en").expect("hover on the `en` messages tag");
+        assert!(info.contains("messages en @reference {"), "{info}");
+        assert!(info.contains("\"greeting\" => …"), "{info}");
+        assert!(info.contains("\"farewell\" => …"), "{info}");
+        assert!(info.contains("The English reference bundle."), "{info}");
     }
 
     /// v0.166 (#616, ADR 0191 D2): a bare key names a *free* function. Matching a

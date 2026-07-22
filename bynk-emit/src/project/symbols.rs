@@ -64,6 +64,11 @@ pub(crate) fn assemble_index(
                         &a.name.name,
                         symbol_modifiers(&unit, None),
                     ),
+                    CommonsItem::Messages(m) => (
+                        SymbolKind::Messages,
+                        &m.tag.name,
+                        symbol_modifiers(&unit, None),
+                    ),
                 };
                 builder.add_first_party_def(&unit, kind, name, modifiers);
             }
@@ -198,6 +203,15 @@ pub(crate) fn assemble_index(
                         SymbolKind::Actor,
                         &a.name.name,
                         site(&a.name),
+                        symbol_modifiers(&unit, None),
+                    );
+                }
+                CommonsItem::Messages(m) => {
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Messages,
+                        &m.tag.name,
+                        site(&m.tag),
                         symbol_modifiers(&unit, None),
                     );
                 }
@@ -556,7 +570,105 @@ pub(crate) fn build_unit_table(
                 .map(|e| (parsed[i].identity_path.clone(), e)),
         );
     }
+    // message-bundles slice 1 (#859): a commons declaring at least one
+    // `messages` block also gets a synthetic `render(tag: LocaleTag, msg:
+    // Message) -> String` in its own local function table — not just emitted
+    // TS. Without this, a Bynk-source `render(...)` call has no local
+    // declaration to resolve to and silently falls through to `bynk.locale`'s
+    // *imported* `render` (same signature, wrong — bundle-free — behaviour):
+    // resolution would "type-check" while quietly calling the wrong function.
+    // Registering it here, in the same local `table.fns` a real `CommonsItem::Fn`
+    // would populate, makes ordinary lexical precedence (local beats
+    // `uses`-imported, `compose_unit_symbols`) and call-site type-checking
+    // (`fns.get(name)`, never touching `.body`) work with no changes anywhere
+    // else. The body is a placeholder — nothing ever type-checks it, since
+    // body-checking walks `commons.items` (real AST items) directly, and this
+    // entry is never added there.
+    if kind == UnitKind::Commons
+        && let Some(m) = indices.iter().find_map(|&i| {
+            parsed[i].items().iter().find_map(|item| match item {
+                CommonsItem::Messages(m) => Some(m),
+                _ => None,
+            })
+        })
+    {
+        if let Some(prev) = table.fns.get("render") {
+            out.push((
+                parsed[indices[0]].identity_path.clone(),
+                CompileError::new(
+                    "bynk.resolve.duplicate_fn",
+                    m.span,
+                    "function `render` is already declared",
+                )
+                .with_label(prev.name.ident().span, "previously declared here")
+                .with_note(
+                    "a `messages` block in this commons implicitly declares its own \
+                     `render(tag, msg) -> String` — name it something else",
+                ),
+            ));
+        } else {
+            table
+                .fns
+                .insert("render".to_string(), synthetic_render_fn());
+        }
+    }
     table
+}
+
+/// The synthetic `FnDecl` [`build_unit_table`] registers for a messages-bearing
+/// commons. Its body is never checked (see the call site's comment) — it
+/// exists only so `Param`/`TypeRef`/`FnDecl` construction has somewhere to put
+/// a syntactically valid placeholder.
+fn synthetic_render_fn() -> FnDecl {
+    let span = Span::default();
+    FnDecl {
+        type_params: Vec::new(),
+        name: FnName::Free(Ident {
+            name: "render".to_string(),
+            span,
+        }),
+        params: vec![
+            Param {
+                name: Ident {
+                    name: "tag".to_string(),
+                    span,
+                },
+                type_ref: TypeRef::Named(Ident {
+                    name: "LocaleTag".to_string(),
+                    span,
+                }),
+                span,
+            },
+            Param {
+                name: Ident {
+                    name: "msg".to_string(),
+                    span,
+                },
+                type_ref: TypeRef::Named(Ident {
+                    name: "Message".to_string(),
+                    span,
+                }),
+                span,
+            },
+        ],
+        return_type: TypeRef::Base(BaseType::String, span),
+        requires: Vec::new(),
+        ensures: Vec::new(),
+        body: Block {
+            statements: Vec::new(),
+            tail: Box::new(Expr {
+                kind: ExprKind::StrLit(String::new()),
+                span,
+            }),
+            span,
+            tail_leading_comments: Vec::new(),
+            implicit_tail: false,
+        },
+        has_self: false,
+        documentation: None,
+        span,
+        trivia: Trivia::default(),
+    }
 }
 
 /// For each name declared in the unit (type, fn, method), record which
@@ -611,7 +723,10 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
                 | CommonsItem::Provider(_)
                 | CommonsItem::Service(_)
                 | CommonsItem::Agent(_)
-                | CommonsItem::Actor(_) => {}
+                | CommonsItem::Actor(_)
+                // `messages` bundles aren't cross-file-imported by name in
+                // slice 1 (no multi-file bundle merge yet).
+                | CommonsItem::Messages(_) => {}
             }
         }
     }

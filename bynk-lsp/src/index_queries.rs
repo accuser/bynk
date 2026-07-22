@@ -529,6 +529,10 @@ pub fn semantic_tokens_legend() -> tower_lsp::lsp_types::SemanticTokensLegend {
             // argument labels). Appended at index 10. Standard LSP type — VS Code
             // themes `decorator` by default.
             SemanticTokenType::DECORATOR,
+            // message-bundles slice 1: `messages <tag> { ... }` bundles.
+            // Appended at index 11 (never reordered). Custom type — the VS
+            // Code extension declares it in package.json.
+            SemanticTokenType::new("messages"),
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -557,6 +561,8 @@ fn token_type_index(kind: SymbolKind) -> u32 {
         SymbolKind::Actor => 9,
         // #304: agent handlers reuse `method` (7), same as capability ops.
         SymbolKind::Handler => 7,
+        // message-bundles slice 1: `messages` bundles append `messages` at 11.
+        SymbolKind::Messages => 11,
     }
 }
 
@@ -933,6 +939,7 @@ mod tests {
                 "property",  // v0.36 (ADR 0069, slice 2): record fields — appended
                 "actor",     // v0.45: actor declarations — appended
                 "decorator", // v0.140 (ADR 0163): handler annotations — appended
+                "messages",  // message-bundles slice 1 (#859): messages bundles — appended
             ]
         );
         let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();

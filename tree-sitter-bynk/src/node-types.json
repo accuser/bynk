@@ -257,6 +257,10 @@
           "named": true
         },
         {
+          "type": "messages_decl",
+          "named": true
+        },
+        {
           "type": "provider_decl",
           "named": true
         },
@@ -1790,6 +1794,10 @@
           "named": true
         },
         {
+          "type": "messages_decl",
+          "named": true
+        },
+        {
           "type": "provider_decl",
           "named": true
         },
@@ -1885,6 +1893,10 @@
         },
         {
           "type": "fn_decl",
+          "named": true
+        },
+        {
+          "type": "messages_decl",
           "named": true
         },
         {
@@ -5762,6 +5774,68 @@
     }
   },
   {
+    "type": "message_entry",
+    "named": true,
+    "fields": {
+      "code": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
+      "template": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "messages_decl",
+    "named": true,
+    "fields": {
+      "annotation": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "store_annotation",
+            "named": true
+          }
+        ]
+      },
+      "tag": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "message_entry",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "method_call",
     "named": true,
     "fields": {
@@ -8495,6 +8569,10 @@
           "named": true
         },
         {
+          "type": "messages_decl",
+          "named": true
+        },
+        {
           "type": "provider_decl",
           "named": true
         },
@@ -10923,6 +11001,10 @@
   },
   {
     "type": "message",
+    "named": false
+  },
+  {
+    "type": "messages",
     "named": false
   },
   {

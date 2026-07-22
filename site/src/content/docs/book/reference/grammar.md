@@ -684,6 +684,30 @@ One operation in a capability: a name, parameters, and a return type (no body).
 **Static semantics.**
 {{#grammar-semantics capability_op}}
 
+### messages_decl {#rule-messages_decl}
+
+{{#grammar messages_decl}}
+
+A message bundle for one locale (message-bundles track, slice 1): `messages
+<tag> @reference { "code" => "template" ... }`. `tag` is a plain identifier —
+its `LocaleTag` refinement is a checker concern, not a grammar one.
+Annotations reuse the same `@name(args)` shape as a `store` field's
+(`store_annotation`); the parser stays permissive on their count (`@reference`
+appears zero or more times syntactically) — exactly one per bundle is a
+checker rule (`bynk.messages.missing_reference` / `multiple_reference`), not a
+parse error. Commons-only placement is likewise checked, not parsed: this rule
+is syntactically admitted inside a `context` or `adapter` body too, the same
+way `service_decl`/`agent_decl` are admitted inside an `adapter` — the checker
+reports `bynk.messages.outside_commons` precisely instead.
+
+### message_entry {#rule-message_entry}
+
+{{#grammar message_entry}}
+
+One `"code" => "template"` entry inside a `messages` block. Both sides are
+plain string literals — a template's `{name}` placeholders are resolved by a
+compile-time string scan during lowering, not parsed as expressions.
+
 ### provider_decl {#rule-provider_decl}
 
 {{#grammar provider_decl}}

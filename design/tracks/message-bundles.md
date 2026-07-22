@@ -1,7 +1,9 @@
 # Message bundles — the `messages` construct, the checked catalogue, and the bundle `render` consumes
 
-- **Status:** Settling. Direction not yet merged; no slice authorised. Live state
-  on the track's **spine issue**, [#857](https://github.com/accuser/bynk/issues/857)
+- **Status:** Slicing — slice 1 (the `messages` construct, a single
+  `@reference` bundle, and render wiring, #859) shipped; slices 2–3 follow,
+  each cut as a proposal sub-issue of the track's **spine issue**,
+  [#857](https://github.com/accuser/bynk/issues/857)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** the Locale capability track's own unfiled sibling — its
   [§2 non-goal and Q0](locale-capability.md#7-open-questions-settle-before-slicing)
@@ -390,14 +392,24 @@ issue opened as a sub-issue of this track's spine
 ([#857](https://github.com/accuser/bynk/issues/857)) citing this doc and its
 ADRs; accepting the proposal authorises the build.
 
-- **Slice 1 — the `messages` construct, a single `@reference` bundle, and
-  render wiring.** Parse/lower `messages <tag> { code => template }` as a
-  commons item; the `@reference` annotation and its exactly-one-per-bundle
-  check; compile to a `(tag, code) -> template` lookup; generate the
-  bundle-scoped `render` composing with `bynk.locale.render` per §4.2's
-  fallback chain. Positional templates only, one locale (the reference).
-  Lands the construct/lookup-contract ADR. **Makes `render` actually emit
-  declared text for the reference locale.**
+- **Slice 1 — shipped (#859).** The `messages` construct, a single
+  `@reference` bundle, and render wiring: `messages <tag> @reference { "code"
+  => "template" }` as a commons item (`messages` is a contextual keyword, not
+  a hard one — a hard keyword broke `commons app.messages { ... }`, this
+  doc's own example name); the `@reference` annotation and its
+  exactly-one-per-bundle check (`bynk.messages.missing_reference`/
+  `multiple_reference`), counted across every `messages` block in the commons
+  (multiple blocks are allowed — forward-compatible with slice 2); a
+  within-block duplicate code (`bynk.resolve.duplicate_message_code`); a
+  `code -> renderer` lookup and a generated, bundle-scoped `render` composing
+  with `bynk.locale.render` per §4.2's fallback chain, with a real checker-
+  visible signature (not just emitted TS — resolving a Bynk-source
+  `render(...)` call to the bundle-aware implementation, not a same-signature
+  `bynk.locale` import, needed a synthetic function-table entry, ADR
+  `messages-construct-slice-1`). `uses bynk.locale` is required
+  (`bynk.messages.missing_locale_dependency`) since nothing auto-injects it.
+  Positional templates only, one locale (the reference). **Makes `render`
+  actually emit declared text for the reference locale.**
 - **Slice 2 — multi-locale bundles, reference-bundle completeness, and
   cross-locale placeholder agreement.** Additional non-reference `messages`
   blocks in the same bundle; `bynk.messages.incomplete` reference-coverage

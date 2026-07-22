@@ -77,6 +77,19 @@ service api {
 }
 "#;
 
+/// message-bundles slice 1 (#859): `messages` is commons-only
+/// (`bynk.messages.outside_commons` otherwise), so it can't live inside
+/// [`EVERY_KIND`]'s single `context demo.every` unit — a second unit, written
+/// to its own file by [`analysed`].
+const MESSAGES_BUNDLE: &str = r#"commons app.bundle
+
+uses bynk.locale
+
+messages en @reference {
+  "greeting" => "Hi"
+}
+"#;
+
 /// The name [`EVERY_KIND`] declares for `kind`.
 ///
 /// **This `match` is the tooth.** It is exhaustive over `SymbolKind`, so a new
@@ -101,13 +114,15 @@ fn declared_name(kind: SymbolKind) -> &'static str {
         SymbolKind::Actor => "User",
         // #304: an agent handler, keyed `"Agent.handler"`.
         SymbolKind::Handler => "Todos.bump",
+        // message-bundles slice 1 (#859): a messages block, keyed by its tag.
+        SymbolKind::Messages => "en",
     }
 }
 
 /// Every variant, so the fixture's coverage is asserted rather than assumed.
 /// `declared_name`'s exhaustive `match` is what forces this list to be extended
 /// in practice: a new kind fails to compile there first.
-const ALL_KINDS: [SymbolKind; 11] = [
+const ALL_KINDS: [SymbolKind; 12] = [
     SymbolKind::Type,
     SymbolKind::Fn,
     SymbolKind::Capability,
@@ -119,6 +134,7 @@ const ALL_KINDS: [SymbolKind; 11] = [
     SymbolKind::CapabilityOp,
     SymbolKind::Actor,
     SymbolKind::Handler,
+    SymbolKind::Messages,
 ];
 
 /// [`EVERY_KIND`] analysed under its own root. `test_name` is what keeps the
@@ -138,6 +154,10 @@ fn analysed(test_name: &str) -> (bynk_ide::ProjectDiagnostics, HashMap<PathBuf, 
     let unit_dir = root.join("demo");
     fs::create_dir_all(&unit_dir).expect("create test root");
     fs::write(unit_dir.join("every.bynk"), EVERY_KIND).expect("write fixture");
+    // `commons app.bundle` → `app/bundle.bynk`, same name/path convention.
+    let bundle_dir = root.join("app");
+    fs::create_dir_all(&bundle_dir).expect("create test root");
+    fs::write(bundle_dir.join("bundle.bynk"), MESSAGES_BUNDLE).expect("write fixture");
     let r = bynk_ide::diagnose_project(&root, &HashMap::new());
     let _ = fs::remove_dir_all(&root);
 

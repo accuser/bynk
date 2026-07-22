@@ -136,6 +136,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Pattern-match over a sum type, `Result`, or `Option`.",
     ),
     k(
+        "messages",
+        "Declare a message bundle for one locale (`messages <tag> { \"code\" => \"template\" }`), inside a commons.",
+    ),
+    k(
         "on",
         "Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`).",
     ),
@@ -221,7 +225,7 @@ pub const CONTEXTUAL_KEYWORDS: &[KeywordInfo] = &[
 /// [`is_reserved_contextual`]) and the
 /// `is_reserved_keyword_covers_every_lexer_keyword` drift guard both defer to
 /// this list, so adding a word here is enough to make the parser admit it.
-pub const RESERVED_CONTEXTUAL: &[&str] = &["case", "on", "suite"];
+pub const RESERVED_CONTEXTUAL: &[&str] = &["case", "messages", "on", "suite"];
 
 /// True when `word` is a [reserved contextual keyword](RESERVED_CONTEXTUAL) —
 /// a reserved token `expect_ident` re-admits as an identifier. Because each of

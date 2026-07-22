@@ -894,6 +894,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
     ),
     d(
+        "bynk.messages.missing_locale_dependency",
+        "A commons declaring `messages` doesn't `uses bynk.locale`, which its generated `render`'s fallback needs.",
+    ),
+    d(
+        "bynk.messages.missing_reference",
+        "A message bundle has no `@reference` block.",
+    ),
+    d(
+        "bynk.messages.multiple_reference",
+        "A message bundle has more than one `@reference` block.",
+    ),
+    d(
+        "bynk.messages.outside_commons",
+        "A `messages` declaration appears outside a commons.",
+    ),
+    d(
         "bynk.namespace.reserved",
         "A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain.",
     ),
@@ -1284,6 +1300,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.resolve.duplicate_fn",
         "Two functions share a name.",
         &["fn_decl"],
+    ),
+    d(
+        "bynk.resolve.duplicate_message_code",
+        "A message bundle declares the same code twice in one block.",
     ),
     dg(
         "bynk.resolve.duplicate_method",
@@ -2136,6 +2156,7 @@ fn category_title(cat: &str) -> &'static str {
         "given" => "Given capabilities",
         "http" => "HTTP",
         "lex" => "Lexer",
+        "messages" => "Message bundles",
         "mock" => "Mocks (collaborators)",
         "observe" => "Observation",
         "parse" => "Parser",

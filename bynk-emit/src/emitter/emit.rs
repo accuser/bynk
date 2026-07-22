@@ -850,6 +850,121 @@ fn sanitise_path_segment(s: &str) -> String {
     out
 }
 
+// -- message-bundles slice 1 (#859) --
+
+/// A `{name}` placeholder or a run of literal text inside a message template.
+enum TemplateSegment<'a> {
+    Literal(&'a str),
+    Placeholder(&'a str),
+}
+
+/// Compile-time string scan splitting a template into literal/placeholder
+/// segments (Decision D, message-bundles slice 1 — no new lexer/parser
+/// grammar; `{name}` is resolved by this Rust-side scan during lowering, not
+/// parsed as an expression). A `{` with no matching `}`, or an empty `{}`, is
+/// just literal text — malformed-placeholder checking is out of scope here.
+/// The name is taken verbatim, with no whitespace trimming: `{ name }` is a
+/// placeholder literally named `" name "`, which will never match a `params`
+/// key and so always renders as literal text (PR #872 review) — a real rough
+/// edge, left for a future slice rather than guessed at here.
+fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
+    let mut segments = Vec::new();
+    let mut literal_start = 0;
+    let mut i = 0;
+    while i < template.len() {
+        if template.as_bytes()[i] == b'{'
+            && let Some(rel_end) = template[i + 1..].find('}')
+        {
+            let name = &template[i + 1..i + 1 + rel_end];
+            if !name.is_empty() && !name.contains('{') {
+                if literal_start < i {
+                    segments.push(TemplateSegment::Literal(&template[literal_start..i]));
+                }
+                segments.push(TemplateSegment::Placeholder(name));
+                i = i + 1 + rel_end + 1;
+                literal_start = i;
+                continue;
+            }
+        }
+        // Advance by one char (not one byte) to stay on UTF-8 boundaries.
+        i += template[i..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(1);
+    }
+    if literal_start < template.len() || segments.is_empty() {
+        segments.push(TemplateSegment::Literal(&template[literal_start..]));
+    }
+    segments
+}
+
+/// One message entry's TS renderer: `(params) => <expr>`. A literal-only
+/// template collapses to a plain string; a template with placeholders becomes
+/// a `+`-concatenation, each placeholder substituted from `params` via
+/// `renderArg` (imported from `bynk.locale`, never duplicated here) when
+/// present, else left as the literal `{name}` token — total, never throws,
+/// matching `render`'s own totality contract.
+fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry) {
+    write!(out, "(params: ReadonlyMap<string, MessageArg>): string => ").unwrap();
+    let segments = split_template(&entry.template);
+    let parts: Vec<String> = segments
+        .iter()
+        .map(|s| match s {
+            TemplateSegment::Literal(lit) => format!("\"{}\"", escape_ts_string(lit)),
+            TemplateSegment::Placeholder(name) => {
+                let key = format!("\"{}\"", escape_ts_string(name));
+                let fallback = format!("\"{{{}}}\"", escape_ts_string(name));
+                format!(
+                    "(params.get({key}) !== undefined ? renderArg(params.get({key}) as MessageArg) : {fallback})"
+                )
+            }
+        })
+        .collect();
+    if parts.is_empty() {
+        write!(out, "\"\"").unwrap();
+    } else {
+        write!(out, "{}", parts.join(" + ")).unwrap();
+    }
+}
+
+/// Compiles a `messages` block's entries into a `code -> renderer` lookup,
+/// plus a generated, bundle-scoped `render(tag, msg)` that looks up
+/// `msg.code`, substitutes placeholders, and falls back to `bynk.locale`'s
+/// own `render` (imported under the private alias `__bynkLocaleRender` —
+/// `emit_unit`, project.rs — since this file's own `render` would otherwise
+/// collide with the imported name) for any code the bundle doesn't declare.
+/// `tag` is accepted but, like ADR 0256's own slice 1, not yet consulted —
+/// there is only the one (reference) locale until slice 2.
+pub(crate) fn emit_messages(out: &mut String, m: &MessagesDecl) {
+    emit_doc_block(out, m.documentation.as_deref(), 0);
+    let table = format!("__messages_{}", ts_ident(&m.tag.name));
+    writeln!(
+        out,
+        "const {table}: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {{"
+    )
+    .unwrap();
+    for entry in &m.entries {
+        write!(out, "  \"{}\": ", escape_ts_string(&entry.code)).unwrap();
+        emit_message_entry_renderer(out, entry);
+        writeln!(out, ",").unwrap();
+    }
+    writeln!(out, "}};").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "export function render(tag: LocaleTag, msg: Message): string {{"
+    )
+    .unwrap();
+    writeln!(out, "  const __entry = {table}[msg.code];").unwrap();
+    writeln!(out, "  if (__entry !== undefined) {{").unwrap();
+    writeln!(out, "    return __entry(msg.params);").unwrap();
+    writeln!(out, "  }}").unwrap();
+    writeln!(out, "  return __bynkLocaleRender(tag, msg);").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+}
+
 // -- v0.5 emission --
 
 pub(crate) fn emit_capability(out: &mut String, c: &CapabilityDecl) {
@@ -3379,5 +3494,70 @@ mod doc_block_tests {
             );
             assert!(out.trim_end().ends_with("*/"), "input {body:?}: {out}");
         }
+    }
+}
+
+#[cfg(test)]
+mod messages_template_tests {
+    use super::{TemplateSegment, split_template};
+
+    fn kinds(template: &str) -> Vec<(&str, &str)> {
+        split_template(template)
+            .into_iter()
+            .map(|s| match s {
+                TemplateSegment::Literal(l) => ("lit", l),
+                TemplateSegment::Placeholder(p) => ("ph", p),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn literal_only_template_is_one_segment() {
+        assert_eq!(kinds("Bye"), vec![("lit", "Bye")]);
+    }
+
+    #[test]
+    fn empty_template_is_one_empty_literal_segment() {
+        // emit_message_entry_renderer's `parts.is_empty()` guard exists
+        // specifically because split_template never returns zero segments —
+        // this pins that invariant.
+        assert_eq!(kinds(""), vec![("lit", "")]);
+    }
+
+    #[test]
+    fn single_placeholder_with_surrounding_literal_text() {
+        assert_eq!(
+            kinds("Hello, {name}!"),
+            vec![("lit", "Hello, "), ("ph", "name"), ("lit", "!")],
+        );
+    }
+
+    #[test]
+    fn placeholder_at_the_very_start_or_end() {
+        assert_eq!(kinds("{name}!"), vec![("ph", "name"), ("lit", "!")]);
+        assert_eq!(kinds("Hi, {name}"), vec![("lit", "Hi, "), ("ph", "name")]);
+    }
+
+    #[test]
+    fn back_to_back_placeholders() {
+        assert_eq!(kinds("{a}{b}"), vec![("ph", "a"), ("ph", "b")],);
+    }
+
+    #[test]
+    fn unmatched_brace_and_empty_braces_are_literal_text() {
+        // No closing `}` at all.
+        assert_eq!(kinds("a {b"), vec![("lit", "a {b")]);
+        // Empty `{}` names nothing, so it's not a placeholder either.
+        assert_eq!(kinds("a {} b"), vec![("lit", "a {} b")]);
+    }
+
+    #[test]
+    fn multibyte_literal_text_around_a_placeholder() {
+        // A non-ASCII literal must not panic the byte-index scan and must
+        // round-trip intact (UTF-8 char-boundary safety, not just byte count).
+        assert_eq!(
+            kinds("caf\u{e9} {name} \u{1f980}"),
+            vec![("lit", "caf\u{e9} "), ("ph", "name"), ("lit", " \u{1f980}")],
+        );
     }
 }
