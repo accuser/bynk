@@ -603,6 +603,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
         }),
         RunChecks::Checked {
             errors,
+            parsed,
             compiled,
             runnable_tests,
             integration_outputs,
@@ -620,6 +621,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             ..
         } => {
             let mut out = build_output(
+                parsed,
                 compiled,
                 runnable_tests,
                 integration_outputs,
@@ -3274,6 +3276,18 @@ fn run_checks(
     //         because it needs `unit_uses`, resolved just above.
     check_messages_bundles(&parsed, &groups, &kinds, &unit_uses, &mut errors);
 
+    // -- 6a''. Locale capability track, slice 2 (#882): a context reaching
+    //          two or more message-bundle commons while consuming `Locale`
+    //          has no single bundle to negotiate against.
+    check_locale_bundle_ambiguity(
+        &parsed,
+        &groups,
+        &kinds,
+        &unit_uses,
+        &unit_flattened,
+        &mut errors,
+    );
+
     // -- 6b. Validate exports clauses (each name is a locally-declared type;
     //         no duplicates within or across opaque/transparent). --
     let exports_visibility = phase_validate_type_exports(
@@ -3539,6 +3553,7 @@ fn run_checks(
 /// reads are now bound from the `Checked` variant.
 #[allow(clippy::too_many_arguments)]
 fn build_output(
+    parsed: Vec<ParsedFile>,
     mut compiled: Vec<CompiledFile>,
     mut runnable_tests: Vec<RunnableTest>,
     integration_outputs: Vec<CompiledFile>,
@@ -3650,7 +3665,6 @@ fn build_output(
                 let own_types =
                     crate::project::symbols::combined_types_for(ctx_name, &unit_tables, &unit_uses);
                 let own_contracts = own_contract_hashes(table, &own_types);
-                let entry_ts = emitter::emit_worker_entry(ctx_name, table, &own_contracts);
                 let binding_modules: HashMap<String, String> = adapter_bindings
                     .iter()
                     .map(|(n, b)| {
@@ -3666,7 +3680,32 @@ fn build_output(
                 let needs_kv = context_native
                     .get(ctx_name)
                     .is_some_and(|n| n.values().any(|u| u == firstparty::CLOUDFLARE_UNIT));
-                let compose_ts = emitter::emit_worker_compose(
+                // Locale capability track, slice 2 (#882, Decision A): real
+                // negotiation is Cloudflare-only — `BuildTarget::Workers`
+                // isn't itself restricted to `Platform::Cloudflare`, so a
+                // hypothetical `--target workers --platform node` project
+                // must not try to pass 3 args to Node's still-0-arg
+                // `LocaleProvider`.
+                let is_cloudflare_binding = adapter_bindings
+                    .get(firstparty::BYNK_UNIT)
+                    .is_some_and(|b| {
+                        b.output_path.file_name()
+                            == Some(std::ffi::OsStr::new(
+                                firstparty::Platform::Cloudflare.bynk_binding_filename(),
+                            ))
+                    });
+                let bundle = crate::project::symbols::detect_context_message_bundle(
+                    ctx_name, &unit_uses, &groups, &kinds, &parsed,
+                );
+                let locale_bundle_info = match &bundle {
+                    crate::project::symbols::ContextMessageBundle::One(info)
+                        if is_cloudflare_binding =>
+                    {
+                        Some(info)
+                    }
+                    _ => None,
+                };
+                let (compose_ts, needs_locale_request) = emitter::emit_worker_compose(
                     ctx_name,
                     table,
                     &consumes_targets,
@@ -3678,6 +3717,14 @@ fn build_output(
                     &unit_consumes_aliases,
                     &unit_flattened,
                     needs_kv,
+                    locale_bundle_info,
+                    import_ext,
+                );
+                let entry_ts = emitter::emit_worker_entry(
+                    ctx_name,
+                    table,
+                    &own_contracts,
+                    needs_locale_request,
                 );
                 // Adapters are not Workers, so they get no Service Binding in
                 // the consumer's wrangler config — drop them from the list.
@@ -3933,6 +3980,7 @@ fn native_platforms_of_context(
             unit_flattened,
             false,
             None,
+            None,
             &mut referenced,
         );
     }
@@ -3948,6 +3996,7 @@ fn native_platforms_of_context(
             unit_consumes_aliases,
             unit_flattened,
             false,
+            None,
             None,
             &mut referenced,
         );
@@ -4038,6 +4087,7 @@ fn plan_agent_given_deps(
                     &unit_flattened,
                     true,
                     Some("env"),
+                    None,
                     &mut referenced,
                 );
                 format!("{key}: {expr}")
@@ -4085,11 +4135,29 @@ fn plan_agent_given_deps(
 /// namespace the expression references is recorded in `referenced_units` so
 /// the caller can emit the matching imports (the transitive given-closure).
 ///
+/// Locale capability track, slice 2 (#882, Decision C): the three extra
+/// constructor arguments `LocaleProvider` receives when its composing
+/// context has a uniquely-detected message bundle — the JS expressions
+/// themselves (an identifier for `request`, and the two cross-commons-
+/// imported bundle constants), not raw data, since they're spliced directly
+/// into the generated `new bynk__binding.LocaleProvider(...)` call.
+pub(crate) struct LocaleNegotiationArgs {
+    pub(crate) request_expr: String,
+    pub(crate) declared_locales_expr: String,
+    pub(crate) reference_locale_expr: String,
+}
+
 /// `workers_ns` selects the namespace convention: a bodied provider's class
 /// lives in `{ns}` under the bundle root but `handlers_{ns}` in a Worker
 /// compose; external (binding) classes are `{ns}__binding` in both. When
 /// `env_ident` is set (workers), env-taking first-party providers receive it
 /// as a constructor argument.
+///
+/// Locale capability track, slice 2 (#882): `locale_negotiation`, when
+/// `Some`, is threaded to exactly the `(bynk, LocaleProvider)` pair, the same
+/// way `env_ident` is threaded to `provider_takes_env`'s pairs — a small,
+/// closed set of first-party providers that need ambient, request-scoped
+/// construction data no ordinary `given` clause could express.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn instantiate_provider_expr(
     provider_ctx: &str,
@@ -4100,6 +4168,7 @@ pub(crate) fn instantiate_provider_expr(
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     workers_ns: bool,
     env_ident: Option<&str>,
+    locale_negotiation: Option<&LocaleNegotiationArgs>,
     referenced_units: &mut BTreeSet<String>,
 ) -> String {
     let ns = provider_ctx.replace('.', "_");
@@ -4149,6 +4218,7 @@ pub(crate) fn instantiate_provider_expr(
                     unit_flattened,
                     workers_ns,
                     env_ident,
+                    locale_negotiation,
                     referenced_units,
                 );
                 format!("{}: {}", g.key(), expr)
@@ -4165,6 +4235,19 @@ pub(crate) fn instantiate_provider_expr(
         && let Some(env) = env_ident
     {
         args.push(env.to_string());
+    }
+    // Locale capability track, slice 2 (#882, Decision C): only the
+    // `(bynk, LocaleProvider)` pair ever receives these — every other
+    // provider's construction is unaffected since every other call site
+    // passes `None`.
+    if provider.external
+        && provider_ctx == bynk_check::firstparty::BYNK_UNIT
+        && provider.provider_name.name == "LocaleProvider"
+        && let Some(loc) = locale_negotiation
+    {
+        args.push(loc.request_expr.clone());
+        args.push(loc.declared_locales_expr.clone());
+        args.push(loc.reference_locale_expr.clone());
     }
     let class = &provider.provider_name.name;
     let args = args.join(", ");
@@ -4320,6 +4403,7 @@ fn emit_composition_root(
                         unit_flattened,
                         false,
                         env_ident,
+                        None, // Bundle mode has no inbound request (Decision A)
                         &mut referenced_units,
                     )
                 )
@@ -4352,6 +4436,7 @@ fn emit_composition_root(
                         unit_flattened,
                         false,
                         env_ident,
+                        None, // Bundle mode has no inbound request (Decision A)
                         &mut referenced_units,
                     )
                 ));

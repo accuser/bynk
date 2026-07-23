@@ -894,6 +894,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
     ),
     d(
+        "bynk.locale.multiple_message_bundles",
+        "A context consumes `Locale` but its direct `uses` reaches two or more message-bundle commons — there is no single bundle to negotiate against.",
+    ),
+    d(
         "bynk.messages.format_mismatch",
         "A code's placeholder is formatted as a different ICU kind (plain/plural/select/number/date) across declared locales.",
     ),

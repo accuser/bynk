@@ -1,0 +1,7 @@
+commons msgs_b
+
+uses bynk.locale
+
+messages en @reference {
+  "farewell" => "Bye"
+}

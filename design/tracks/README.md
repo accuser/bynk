@@ -66,7 +66,7 @@ each track's spine issue; this table is deliberately just the map.
 | Track doc | Spine issue | Phase | Theme |
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
-| [`locale-capability.md`](locale-capability.md) | [#838](https://github.com/accuser/bynk/issues/838) | Slicing (slice 1 shipped) | The `Locale` capability: ambient locale reads and a pure render seam for user-facing text, Bynk's first i18n surface |
+| [`locale-capability.md`](locale-capability.md) | [#838](https://github.com/accuser/bynk/issues/838) | All named slices resolved — retirement candidate | The `Locale` capability: ambient locale reads and a pure render seam for user-facing text, Bynk's first i18n surface |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue

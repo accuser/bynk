@@ -4,7 +4,7 @@ import type { Clock, Fetch, Locale, Logger, Random, Secrets } from "./bynk.js";
 import type { Request as FetchRequest, Response as FetchResponse } from "./bynk.js";
 import { FetchError, Uuid } from "./bynk.js";
 import { LocaleTag } from "./bynk/locale.js";
-import { Err, None, Ok, Some, type Option, type Result } from "./runtime.js";
+import { Err, None, Ok, Some, negotiateLocale, type Option, type Result } from "./runtime.js";
 
 export class ClockProvider implements Clock {
   async now(): Promise<number> {
@@ -77,11 +77,45 @@ export class SecretsProvider implements Secrets {
   }
 }
 
+// Locale capability track, slice 2 (#882): real Accept-Language negotiation
+// on the one platform with an inbound request to negotiate from. `request`/
+// `declaredLocales`/`referenceLocale` are threaded in by the emitter only
+// when this Worker's context has a uniquely-detected message bundle
+// (`bynk-emit/src/project.rs`, `detect_context_message_bundle`); every other
+// construction site (Bundle mode, a bundle-less Workers context) still calls
+// `new LocaleProvider()`, which behaves exactly as slice 1 shipped it.
 export class LocaleProvider implements Locale {
+  // De-sugared from a constructor parameter property (declared field +
+  // assigning constructor instead): a parameter property isn't
+  // strip-removable — it implicitly declares *and* assigns a field, which
+  // breaks both `--inspect` debug sessions and the in-browser eval path
+  // (`bynkc/tests/tsc_verify.rs`'s `all_emitted_typescript_strips_under_node`
+  // gate catches this class of construct).
+  private request?: Request;
+  private declaredLocales: readonly string[];
+  private referenceLocale: string;
+
+  constructor(
+    request?: Request,
+    declaredLocales: readonly string[] = [],
+    referenceLocale: string = "en",
+  ) {
+    this.request = request;
+    this.declaredLocales = declaredLocales;
+    this.referenceLocale = referenceLocale;
+  }
+
   async current(): Promise<LocaleTag> {
-    const r = LocaleTag.of("en");
+    const negotiated = negotiateLocale(
+      this.request?.headers.get("accept-language"),
+      this.declaredLocales,
+      this.referenceLocale,
+    );
+    const r = LocaleTag.of(negotiated);
     if (r.tag === "Err") {
-      throw new Error("unreachable: 'en' is a valid LocaleTag");
+      throw new Error(
+        "unreachable: negotiateLocale returns only already-valid declared/reference tags",
+      );
     }
     return r.value;
   }

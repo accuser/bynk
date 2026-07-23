@@ -1013,6 +1013,327 @@ pub(crate) fn combined_types_for(
     out
 }
 
+/// Locale capability track, slice 2 (#882): the message bundle a context's
+/// `Locale.current()` negotiates against, auto-detected from the context's
+/// *direct* `uses` (one level, not transitive — see [`combined_types_for`]
+/// just above, the precedent for this rule). `None`/`One`/`Many` drive three
+/// different behaviours: unchanged fixed-default `Locale`, real negotiation
+/// wiring, or (when the context also consumes `Locale`)
+/// `bynk.messages.multiple_message_bundles` — see `check_locale_bundle_ambiguity`
+/// (`bynk-emit/src/project/validate.rs`) and the per-Worker composition loop
+/// (`bynk-emit/src/project.rs`).
+// `pub`, not `pub(crate)`: `MessageBundleInfo` appears in `emit_worker_compose`'s
+// public signature (`bynk-emit/src/emitter/workers.rs`), which must expose
+// types at least as visible as itself (matching `UnitTable`'s own `pub`).
+pub enum ContextMessageBundle {
+    /// No directly-`uses`d commons declares a `messages` block.
+    None,
+    /// Exactly one — the negotiable case.
+    One(MessageBundleInfo),
+    /// Two or more (each commons's own qualified name, for the diagnostic).
+    Many(Vec<String>),
+}
+
+pub struct MessageBundleInfo {
+    /// The commons's qualified unit name (e.g. `"app.msgs"`).
+    pub commons: String,
+    /// Project-relative path of the file carrying the `@reference` block —
+    /// the import target for `messagesLocales`/`messagesReferenceLocale`.
+    /// (A bundle genuinely split across multiple files, per the track doc's
+    /// own §4.1, is not correctly merged by `emit_messages_bundle` today —
+    /// each file emits independently, `bynk-emit/src/project.rs`'s per-file
+    /// `emit_items` loop — this detection mirrors that same file-scoped
+    /// reality rather than a wider, currently-unimplemented merge.)
+    pub source_path: PathBuf,
+}
+
+/// Walks `ctx`'s own direct `uses` list for commons declaring a `messages`
+/// bundle with exactly one `@reference` block (a bundle missing or
+/// duplicating its own reference is already diagnosed by
+/// `check_messages_bundles` — this function simply doesn't count it as
+/// "found", rather than compounding an already-reported error).
+pub(crate) fn detect_context_message_bundle(
+    ctx: &str,
+    unit_uses: &HashMap<String, Vec<String>>,
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    parsed: &[ParsedFile],
+) -> ContextMessageBundle {
+    let mut found: Vec<MessageBundleInfo> = Vec::new();
+    for target in unit_uses.get(ctx).into_iter().flatten() {
+        if kinds.get(target) != Some(&UnitKind::Commons) {
+            continue;
+        }
+        let Some(indices) = groups.get(target) else {
+            continue;
+        };
+        for &i in indices {
+            let has_reference = parsed[i].items().iter().any(|item| {
+                matches!(item, CommonsItem::Messages(m) if m.annotations.iter().any(|a| a.name.name == "reference"))
+            });
+            if has_reference {
+                found.push(MessageBundleInfo {
+                    commons: target.clone(),
+                    source_path: parsed[i].source_path.clone(),
+                });
+                break;
+            }
+        }
+    }
+    match found.len() {
+        0 => ContextMessageBundle::None,
+        1 => ContextMessageBundle::One(found.pop().expect("len == 1")),
+        _ => ContextMessageBundle::Many(found.into_iter().map(|b| b.commons).collect()),
+    }
+}
+
+#[cfg(test)]
+mod detect_context_message_bundle_tests {
+    use super::*;
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            name: name.to_string(),
+            span: Span::default(),
+        }
+    }
+
+    fn qualified(name: &str) -> QualifiedName {
+        QualifiedName {
+            parts: name.split('.').map(ident).collect(),
+            span: Span::default(),
+        }
+    }
+
+    /// A commons `ParsedFile` declaring one `messages <tag>` block, its
+    /// `@reference` annotation present or not. `source_path` is derived from
+    /// `name` so each test bundle gets a distinct, recognisable import
+    /// target — real content doesn't matter, only that a path exists.
+    fn commons_with_messages(name: &str, tag: &str, is_reference: bool) -> ParsedFile {
+        let annotations = if is_reference {
+            vec![Annotation {
+                name: ident("reference"),
+                args: Vec::new(),
+                span: Span::default(),
+            }]
+        } else {
+            Vec::new()
+        };
+        let messages = MessagesDecl {
+            tag: ident(tag),
+            annotations,
+            entries: Vec::new(),
+            documentation: None,
+            span: Span::default(),
+            trivia: Trivia::default(),
+        };
+        ParsedFile {
+            source_path: PathBuf::from(format!("{}.bynk", name.replace('.', "/"))),
+            identity_path: PathBuf::from(format!("src/{}.bynk", name.replace('.', "/"))),
+            abs_path: None,
+            source: String::new(),
+            unit: SourceUnit::Commons(Commons {
+                name: qualified(name),
+                items: vec![CommonsItem::Messages(messages)],
+                uses: Vec::new(),
+                documentation: None,
+                form: CommonsForm::Brace,
+                span: Span::default(),
+                trivia: Trivia::default(),
+                trailing_comments: Vec::new(),
+            }),
+            kind: UnitKind::Commons,
+            synthetic: false,
+        }
+    }
+
+    /// A minimal context `ParsedFile` with no items of its own — only its
+    /// `uses` list matters for this function.
+    fn context_using(name: &str, targets: &[&str]) -> ParsedFile {
+        ParsedFile {
+            source_path: PathBuf::from(format!("{}.bynk", name.replace('.', "/"))),
+            identity_path: PathBuf::from(format!("src/{}.bynk", name.replace('.', "/"))),
+            abs_path: None,
+            source: String::new(),
+            unit: SourceUnit::Context(Context {
+                name: qualified(name),
+                uses: targets
+                    .iter()
+                    .map(|t| UsesDecl {
+                        target: qualified(t),
+                        span: Span::default(),
+                        trivia: Trivia::default(),
+                    })
+                    .collect(),
+                consumes: Vec::new(),
+                exports: Vec::new(),
+                items: Vec::new(),
+                documentation: None,
+                form: CommonsForm::Brace,
+                span: Span::default(),
+                trivia: Trivia::default(),
+                trailing_comments: Vec::new(),
+            }),
+            kind: UnitKind::Context,
+            synthetic: false,
+        }
+    }
+
+    /// The four tables `detect_context_message_bundle`'s real callers
+    /// already build — bundled here so [`scenario`] doesn't need a
+    /// clippy-unfriendly four-tuple return type.
+    struct Scenario {
+        parsed: Vec<ParsedFile>,
+        groups: HashMap<String, Vec<usize>>,
+        kinds: HashMap<String, UnitKind>,
+        unit_uses: HashMap<String, Vec<String>>,
+    }
+
+    /// Assembles a [`Scenario`] from a context plus its bundle files.
+    fn scenario(ctx_name: &str, ctx_uses: &[&str], bundles: Vec<(&str, ParsedFile)>) -> Scenario {
+        let mut parsed = vec![context_using(ctx_name, ctx_uses)];
+        let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut kinds: HashMap<String, UnitKind> = HashMap::new();
+        groups.insert(ctx_name.to_string(), vec![0]);
+        kinds.insert(ctx_name.to_string(), UnitKind::Context);
+        for (name, pf) in bundles {
+            let idx = parsed.len();
+            parsed.push(pf);
+            groups.entry(name.to_string()).or_default().push(idx);
+            kinds.insert(name.to_string(), UnitKind::Commons);
+        }
+        let mut unit_uses: HashMap<String, Vec<String>> = HashMap::new();
+        unit_uses.insert(
+            ctx_name.to_string(),
+            ctx_uses.iter().map(|s| s.to_string()).collect(),
+        );
+        Scenario {
+            parsed,
+            groups,
+            kinds,
+            unit_uses,
+        }
+    }
+
+    #[test]
+    fn zero_bundles_when_uses_reaches_no_messages_commons() {
+        let Scenario {
+            parsed,
+            groups,
+            kinds,
+            unit_uses,
+        } = scenario("app.web", &["app.other"], vec![]);
+        assert!(matches!(
+            detect_context_message_bundle("app.web", &unit_uses, &groups, &kinds, &parsed),
+            ContextMessageBundle::None
+        ));
+    }
+
+    #[test]
+    fn zero_bundles_when_uses_is_empty() {
+        let Scenario {
+            parsed,
+            groups,
+            kinds,
+            unit_uses,
+        } = scenario("app.web", &[], vec![]);
+        assert!(matches!(
+            detect_context_message_bundle("app.web", &unit_uses, &groups, &kinds, &parsed),
+            ContextMessageBundle::None
+        ));
+    }
+
+    #[test]
+    fn one_bundle_is_found_by_its_reference_block() {
+        let bundle = commons_with_messages("app.msgs", "en", true);
+        let Scenario {
+            parsed,
+            groups,
+            kinds,
+            unit_uses,
+        } = scenario("app.web", &["app.msgs"], vec![("app.msgs", bundle)]);
+        let found = detect_context_message_bundle("app.web", &unit_uses, &groups, &kinds, &parsed);
+        let ContextMessageBundle::One(info) = found else {
+            panic!("expected exactly one bundle");
+        };
+        assert_eq!(info.commons, "app.msgs");
+        assert_eq!(info.source_path, PathBuf::from("app/msgs.bynk"));
+    }
+
+    #[test]
+    fn a_bundle_missing_its_reference_block_is_not_counted() {
+        // Not a `@reference` block — already diagnosed elsewhere
+        // (`bynk.messages.missing_reference`); this function simply doesn't
+        // count it, rather than compounding an already-reported error.
+        let bundle = commons_with_messages("app.msgs", "en", false);
+        let Scenario {
+            parsed,
+            groups,
+            kinds,
+            unit_uses,
+        } = scenario("app.web", &["app.msgs"], vec![("app.msgs", bundle)]);
+        assert!(matches!(
+            detect_context_message_bundle("app.web", &unit_uses, &groups, &kinds, &parsed),
+            ContextMessageBundle::None
+        ));
+    }
+
+    #[test]
+    fn two_bundles_report_both_commons_names() {
+        let a = commons_with_messages("app.msgs_a", "en", true);
+        let b = commons_with_messages("app.msgs_b", "en", true);
+        let Scenario {
+            parsed,
+            groups,
+            kinds,
+            unit_uses,
+        } = scenario(
+            "app.web",
+            &["app.msgs_a", "app.msgs_b"],
+            vec![("app.msgs_a", a), ("app.msgs_b", b)],
+        );
+        let found = detect_context_message_bundle("app.web", &unit_uses, &groups, &kinds, &parsed);
+        let ContextMessageBundle::Many(names) = found else {
+            panic!("expected two bundles");
+        };
+        let mut names = names;
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["app.msgs_a".to_string(), "app.msgs_b".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_commons_reached_only_transitively_is_not_counted() {
+        // `app.web` uses `app.mid`, which itself uses the bundle — `uses` is
+        // one level, not transitive (message-bundles' own established rule),
+        // so this must still report `None`.
+        let bundle = commons_with_messages("app.msgs", "en", true);
+        let mut mid = context_using("app.mid", &["app.msgs"]);
+        // `app.mid` needs to be a commons for this scenario to be legal, but
+        // `context_using` builds a Context — for this narrow test only the
+        // `uses` *resolution* (does app.web's own direct list reach the
+        // bundle) matters, and app.web's own list never names `app.msgs`
+        // directly, so the unit kind of the intermediate is irrelevant.
+        mid.kind = UnitKind::Commons;
+        let Scenario {
+            mut parsed,
+            mut groups,
+            mut kinds,
+            unit_uses,
+        } = scenario("app.web", &["app.mid"], vec![("app.msgs", bundle)]);
+        let mid_idx = parsed.len();
+        parsed.push(mid);
+        groups.insert("app.mid".to_string(), vec![mid_idx]);
+        kinds.insert("app.mid".to_string(), UnitKind::Commons);
+        assert!(matches!(
+            detect_context_message_bundle("app.web", &unit_uses, &groups, &kinds, &parsed),
+            ContextMessageBundle::None
+        ));
+    }
+}
+
 /// #696: returns the `parsed` index of the owning file alongside the `consumes`
 /// clause span, so the caller can attribute the diagnostic to that file.
 pub(crate) fn consumes_span_of(
