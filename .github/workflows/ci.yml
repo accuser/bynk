@@ -65,6 +65,7 @@ jobs:
       runtime: ${{ steps.filter.outputs.runtime }}
       playground: ${{ steps.filter.outputs.playground }}
       site: ${{ steps.filter.outputs.site }}
+      book: ${{ steps.filter.outputs.book }}
       all: ${{ steps.all.outputs.value }}
       # JSON array of OSes for the `test` matrix. PRs run Linux-only (fast,
       # cheap — macOS is billed at 10x and Windows at 2x Linux minutes); every
@@ -141,6 +142,12 @@ jobs:
               - *global
               - 'site/**'
               - 'vscode-bynk/syntaxes/bynk.tmLanguage.json'
+            book:
+              # The print manuscript is independent of the online Book. Its
+              # wrapper owns the pinned Typst acquisition as well as compilation.
+              - *global
+              - 'book/**'
+              - 'scripts/build-book.sh'
       # Collapse "not a PR" (push/schedule) and "a global file changed" into one
       # boolean the downstream `if:`s can OR against. Pinned to the `global`
       # output so a lockfile/toolchain/workflow change fans out to everything.
@@ -440,6 +447,26 @@ jobs:
       - name: Build (astro build — render + Pagefind + link-check)
         run: npm run build
 
+  book:
+    # Compile the print manuscript with the same wrapper used locally. The
+    # wrapper verifies the vendored Source fonts, downloads only the pinned
+    # Typst release when needed, and ignores runner-installed fonts.
+    name: Print book (Typst)
+    needs: changes
+    if: needs.changes.outputs.book == 'true' || needs.changes.outputs.all == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Build the manuscript
+        run: ./scripts/build-book.sh
+      - name: Upload the manuscript PDF
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bynk-manuscript
+          path: output/pdf/bynk-manuscript.pdf
+          if-no-files-found: error
+          retention-days: 14
+
   extension:
     # Build, type-check, bundle, and package the VS Code extension, then assert
     # the bundle has no unresolved external `require` other than `vscode`. This
@@ -707,6 +734,7 @@ jobs:
       - wasm
       - playground
       - site
+      - book
       - extension
       - extension-tests
       - grammar
