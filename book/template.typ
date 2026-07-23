@@ -8,7 +8,7 @@
 #let body-font = "Source Serif 4 SmText"
 #let body-size = 10.1pt
 #let body-leading = 0.80em
-#let body-spacing = 1.35em
+#let body-spacing = 1.05em
 #let display-font = "Source Serif 4 Display"
 #let small-font = "Source Serif 4 Caption"
 #let sans-font = "Source Sans 3"
@@ -104,6 +104,9 @@
     spacing: body-spacing,
     first-line-indent: 0pt,
   )
+  // Bynk has no built-in syntect grammar; load a book-scoped one so `.bynk`
+  // listings highlight alongside the TypeScript blocks (which Typst knows).
+  set raw(syntaxes: "syntaxes/bynk.sublime-syntax")
 
   show heading.where(level: 1): it => {
     if it.supplement == [Part] {
@@ -140,8 +143,8 @@
   }
 
   show heading.where(level: 2): it => block(
-    above: 1.8em,
-    below: 0.7em,
+    above: 2.0em,
+    below: 0.9em,
     text(font: sans-font, size: 15pt, weight: "semibold", it.body),
   )
 

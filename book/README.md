@@ -23,6 +23,9 @@ while the manuscript finds its shape.
 - `frontmatter/`, `chapters/`, and `backmatter/` contain publishable text.
 - `notes/` contains editorial planning and source maps, not manuscript prose.
 - `snippets/` contains book-specific Bynk programs and fragments.
+- `syntaxes/` contains the Bynk highlighting grammar the template loads for
+  `.bynk` listings (a presentation aid scoped to what the book prints, mirroring
+  the editor grammar and keyword registry; not a parser).
 - `figures/` contains original book artwork.
 - `fonts/` contains the fixed, licensed Source faces used for typesetting.
 - `build/` is ignored local output.
@@ -63,8 +66,17 @@ Optional environment overrides:
   build-script commit.
 
 CI runs the same command when manuscript, font, or build-script inputs change.
-The resulting PDF is available from the workflow run as the
-`bynk-manuscript` artifact.
+The resulting PDF is uploaded to the workflow run as the `bynk-manuscript`
+artifact (14-day retention). To download and open the newest CI-built PDF for
+your branch without hunting through the Actions UI:
+
+```sh
+./scripts/fetch-book-pdf.sh          # newest build for the current branch (or main)
+./scripts/fetch-book-pdf.sh --watch  # wait for an in-flight run to finish first
+```
+
+It needs the GitHub CLI (`gh auth login`). The PDF is a CI artifact only — it is
+not published to a public URL.
 
 ### Source fonts
 

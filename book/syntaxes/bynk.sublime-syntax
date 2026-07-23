@@ -1,0 +1,83 @@
+%YAML 1.2
+---
+# Syntax highlighting for Bynk source in the print manuscript.
+#
+# Typst's `raw` highlighter (syntect) has no built-in Bynk grammar, so `.bynk`
+# listings would otherwise render as plain monospace while the TypeScript blocks
+# highlight. This definition is scoped to the constructs the book's listings use
+# and mirrors the token categories in the maintained editor grammar
+# (vscode-bynk/syntaxes/bynk.tmLanguage.json) and the keyword registry
+# (bynk-syntax/src/keywords.rs). It is loaded by template.typ via
+# `set raw(syntaxes: …)`. It is a presentation aid, not a parser: it need only
+# cover the surface the manuscript prints.
+name: Bynk
+file_extensions:
+  - bynk
+scope: source.bynk
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: numbers
+    - include: keywords
+    - include: constants
+    - include: builtin-types
+    - include: user-types
+    - include: operators
+
+  comments:
+    - match: '--.*$'
+      scope: comment.line.double-dash.bynk
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.bynk
+      push: string-body
+
+  string-body:
+    - meta_scope: string.quoted.double.bynk
+    - match: '"'
+      scope: punctuation.definition.string.end.bynk
+      pop: true
+    - match: '\\[nt"\\]'
+      scope: constant.character.escape.bynk
+    - match: '\\\('
+      scope: punctuation.definition.template-expression.begin.bynk
+      push: interpolation
+
+  interpolation:
+    - meta_scope: meta.interpolation.bynk
+    - match: '\)'
+      scope: punctuation.definition.template-expression.end.bynk
+      pop: true
+    - include: main
+
+  numbers:
+    - match: '\b[0-9]+(_[0-9]+)*(\.[0-9]+(_[0-9]+)*)?\b'
+      scope: constant.numeric.bynk
+
+  # Hard and contextual keywords (bynk-syntax/src/keywords.rs), plus the small
+  # test-DSL words the book's `suite`/`property`/`stub` listings use.
+  keywords:
+    - match: '\b(actor|adapter|agent|as|binding|by|capability|case|commons|consumes|context|cron|do|else|ensures|enum|exports|expect|fails|fn|for|from|given|http|if|implies|invariant|is|key|let|match|messages|on|opaque|property|protocol|provides|queue|record|requires|returns|self|service|store|stub|suite|transition|transparent|type|uses|where)\b'
+      scope: keyword.control.bynk
+
+  # Value-level literals and the Result/Option constructors — matched before the
+  # capitalised catch-all so they read as constants, not types.
+  constants:
+    - match: '\b(true|false|Ok|Err|Some|None)\b'
+      scope: constant.language.bynk
+
+  builtin-types:
+    - match: '\b(Bool|Bytes|Duration|Effect|Float|Instant|Int|JsonError|Option|Result|String|ValidationError|Connection|History|HttpResult|List|Map|Query|QueueResult|Stream)\b'
+      scope: storage.type.bynk
+
+  # Any other capitalised name reads as a user-defined type or sum variant.
+  user-types:
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: entity.name.type.bynk
+
+  operators:
+    - match: '->|<-|~>|:=|=>|==|!=|<=|>=|&&|\|\||[+\-*/=<>!?]'
+      scope: keyword.operator.bynk
