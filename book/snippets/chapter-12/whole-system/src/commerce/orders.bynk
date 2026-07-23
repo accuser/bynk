@@ -1,13 +1,13 @@
-context shop.orders
+context commerce.orders
 
-uses shop.values
-consumes shop.inventory as Inventory
-consumes shop.payments as Payments
+uses commerce.values
+consumes commerce.inventory as Inventory
+consumes commerce.payments as Payments
 exports transparent { OrderError, OrderView }
 
 actor Customer { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = CustomerId }
 
-type OrderStatus = enum { Open, Paid, Rejected }
+type OrderStatus = enum { Draft, Placed, Paid, Rejected }
 
 type OrderError = enum { OutOfStock, PaymentFailed, AlreadySubmitted }
 
@@ -17,22 +17,27 @@ agent Order {
 	key id: OrderId
 
 	store owner: Cell[Option[CustomerId]]
-	store status: Cell[OrderStatus] = Open
+	store status: Cell[OrderStatus] = Draft
 	store reserved: Cell[Bool]
 	store paymentRef: Cell[Option[String]]
 
-	invariant paid_is_complete:
-		status is Paid implies reserved && paymentRef.isSome()
+	invariant paid_has_payment_ref:
+		status == Paid implies paymentRef.isSome()
+
+	invariant paid_has_reservation:
+		status == Paid implies reserved
 
 	transition paid_is_terminal:
 		old.status is Paid implies new.status is Paid
 
 	on call begin(customer: CustomerId) -> Effect[Result[(), OrderError]] {
 		match status {
-			Open => {
+			Draft => {
 				owner := Some(customer)
+				status := Placed
 				Ok(())
 			},
+			Placed => Err(AlreadySubmitted),
 			Paid => Err(AlreadySubmitted),
 			Rejected => Err(AlreadySubmitted),
 		}

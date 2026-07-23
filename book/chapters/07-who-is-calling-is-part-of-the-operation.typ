@@ -41,7 +41,7 @@ Consider a conventional TypeScript route written with some care:
   lang: "typescript",
 )
 
-`requireUser` prevents the body from receiving an unauthenticated request. The
+`requireCustomer` prevents the body from receiving an unauthenticated request. The
 route also checks a `basket:read` claim. Its handler type makes the principal
 available without an optional-value dance. This is substantially better than
 casting an augmented request or assuming that earlier middleware ran.
@@ -50,7 +50,7 @@ The route is still wrong.
 
 It loads `request.params.owner`, not `request.principal.id`. Any authenticated
 principal with the claim can ask for another owner's basket by changing the
-path. TypeScript accepts the program because `UserId` is only an alias for
+path. TypeScript accepts the program because `CustomerId` is only an alias for
 `string`, and because neither authentication nor a general permission answers
 the object-level question.
 
@@ -89,25 +89,25 @@ basket context declares two:
   lang: "bynk",
 )
 
-`User` says how an incoming HTTP request establishes a user and which type that
+`Customer` says how an incoming HTTP request establishes a customer and which type that
 identity has. The `Bearer` scheme verifies the token with the secret named by
-`AUTH_JWT_SECRET`; a successful token's subject is admitted as `UserId`. Failure
+`AUTH_JWT_SECRET`; a successful token's subject is admitted as `CustomerId`. Failure
 stops at the boundary with an unauthorised response. The handler body does not
 run.
 
-This does more than put a helpful type annotation on a string. `UserId` belongs
+This does more than put a helpful type annotation on a string. `CustomerId` belongs
 to the context, and the value is sealed at the boundary. Downstream code
 receives the identity that the actor contract minted; it cannot construct an
 actor value and claim to be somebody else.
 
-`Admin` refines `User`. It uses the same authenticated identity but additionally
+`Admin` refines `Customer`. It uses the same authenticated identity but additionally
 requires the `admin` claim. A missing or invalid bearer credential fails
-authentication. A valid user without the claim fails authorisation. The
+authentication. A valid customer without the claim fails authorisation. The
 distinction between an unauthenticated caller and a forbidden one is part of
 the boundary behaviour rather than a branch the handler must remember to
 write.
 
-The agent below those declarations is keyed by `UserId`. Identity therefore
+The agent below those declarations is keyed by `CustomerId`. Identity therefore
 connects two architectural decisions: who crossed the boundary and which
 stateful owner receives the call.
 
@@ -116,7 +116,7 @@ stateful owner receives the call.
 The HTTP service makes that connection at each handler:
 
 #code-listing(
-  [Public, user, and administrator entry contracts are visible at the routes],
+  [Public, customer, and administrator entry contracts are visible at the routes],
   source-lines(
     "../snippets/chapter-07/declared/src/commerce/baskets/basket.bynk",
     22,
@@ -128,19 +128,19 @@ The HTTP service makes that connection at each handler:
 The health route says `by Visitor`. Public access is not the absence of a
 security decision; it is the explicit decision that no principal is required.
 
-The ordinary basket route says `by u: User`. Before its body begins, the runtime
-must have discharged the `User` contract. Inside the body, `u.identity` is the
-sealed `UserId` produced by that check. The route has no owner parameter to
+The ordinary basket route says `by u: Customer`. Before its body begins, the runtime
+must have discharged the `Customer` contract. Inside the body, `u.identity` is the
+sealed `CustomerId` produced by that check. The route has no owner parameter to
 confuse with it. `Basket(u.identity)` addresses the state owned by the caller.
 
 This is a small piece of code, but it closes the gap in the TypeScript example.
 The identity that grants entry is the identity that selects the agent. A caller
-cannot edit a URL to substitute a second `UserId`, because the operation does
+cannot edit a URL to substitute a second `CustomerId`, because the operation does
 not accept one.
 
 The administrator route is deliberately different. An admin is allowed to name
 an owner in the path, so the handler addresses `Basket(owner)`. The actor
-contract proves an authenticated user with the required claim; it does not
+contract proves an authenticated customer with the required claim; it does not
 prove that the selected basket is appropriate for the administrative task.
 
 That is not an accidental hole in the actor model. It is its boundary.
@@ -190,7 +190,7 @@ but it can prevent silence from masquerading as one.
 This rule also improves change review. Moving a route between router groups or
 reordering middleware cannot silently change the caller contract, because the
 contract is attached to the handler. A diff that changes `by Visitor` to
-`by u: User` is visibly a change in the operation, not an incidental deployment
+`by u: Customer` is visibly a change in the operation, not an incidental deployment
 edit.
 
 == Identity crosses internal boundaries too

@@ -1,0 +1,21 @@
+# Expected non-clean outcomes for the print book's Bynk snippet projects.
+# Any project NOT listed here must `bynkc check` cleanly (a valid program).
+# Columns (tab-separated): <path under book/snippets>	<pass|fail|warn>	<bynk code>
+#
+# The "fail" rows are the deliberately-rejected listings whose refusal is the
+# evidence a chapter discusses; the code must match what that chapter quotes.
+chapter-01/undeclared	fail	bynk.resolve.unconsumed_context
+chapter-02/swapped	fail	bynk.types.argument_mismatch
+chapter-02/invalid-quantity	fail	bynk.refine.literal_violates
+chapter-03/non-exhaustive	fail	bynk.types.non_exhaustive_match
+chapter-04/undeclared	fail	bynk.given.undeclared_capability
+chapter-05/non-zeroable	fail	bynk.agents.non_zeroable_state_field
+chapter-06/misclassified	fail	bynk.transition.no_step_reference
+chapter-07/missing-actor	fail	bynk.actor.missing_by_on_http
+chapter-08/wrong-verdict	fail	bynk.queue.return_not_queue_result
+chapter-09/not-a-seam	fail	bynk.stub.not_a_seam
+chapter-10/cycle	fail	bynk.context.consumes_cycle
+chapter-10/undeclared-edge	fail	bynk.resolve.unconsumed_context
+chapter-10/warning	warn	bynk.given.unused_capability
+# chapter-11/platform-lock passes `check`; its bynk.target.vendor_required
+# refusal is specific to `compile --platform node` and is exercised separately.

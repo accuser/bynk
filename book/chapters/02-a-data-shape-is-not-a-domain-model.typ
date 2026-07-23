@@ -113,7 +113,7 @@ The order vocabulary can be declared like this:
 
 #code-listing(
   [Identity and validity inside the order shape],
-  read("../snippets/chapter-02/declared/src/commerce/order_values/types.bynk"),
+  read("../snippets/chapter-02/declared/src/commerce/values/types.bynk"),
   lang: "bynk",
 )
 ]
@@ -146,7 +146,7 @@ produces a compiler error:
 
 #code-listing(
   [The same representation is not the same type],
-  read("../snippets/chapter-02/swapped/src/commerce/order_values.bynk"),
+  read("../snippets/chapter-02/swapped/src/commerce/values.bynk"),
   lang: "bynk",
 )
 
@@ -219,7 +219,7 @@ The order commons gives those checked constructors names suited to its own API:
 
 #code-listing(
   [Known values and runtime values enter differently],
-  read("../snippets/chapter-02/declared/src/commerce/order_values/admission.bynk"),
+  read("../snippets/chapter-02/declared/src/commerce/values/admission.bynk"),
   lang: "bynk",
 )
 
@@ -237,7 +237,7 @@ Change the literal to zero and compilation stops:
 
 #code-listing(
   [A known-invalid default],
-  read("../snippets/chapter-02/invalid-quantity/src/commerce/order_values.bynk"),
+  read("../snippets/chapter-02/invalid-quantity/src/commerce/values.bynk"),
   lang: "bynk",
 )
 

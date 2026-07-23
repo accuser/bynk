@@ -172,3 +172,99 @@ plain TypeScript by design.
    `Gateway`). ← confirm
 6. **Canonical `Order` agent** (Draft/Placed/Paid/Rejected + `reserved`) pinned
    above, introduced in ch 6, assembled in ch 12. ← confirm
+
+## Part II execution notes (what actually shipped, ch 4–8)
+
+Two refinements to the plan above were made during the re-thread; both serve the
+same "one system" goal at lower risk. Flagged for review.
+
+1. **`Order` is introduced small in ch 6 and *extended* in ch 12, not stamped
+   whole in ch 6.** Ch 6 keeps its focused lifecycle (`Draft | Placed | Paid`,
+   `paymentRef`, the two contracts) because that is what teaches invariant vs
+   transition cleanly, and because expanding it would break the chapter's
+   `source-lines` ranges. Ch 12 grows the same agent to the canonical shape
+   (adds `Rejected`, `reserved`, `customer`, and `paid_has_reservation`). This
+   reads as the system evolving between chapters rather than as a seam — but it
+   means ch 12 must present `Order` as an *extension* of ch 6's, keeping every
+   ch 6 field and contract intact.
+
+2. **The five core types are defined consistently in-context, not threaded
+   through a single imported `commerce.values` everywhere.** `commerce.values`
+   remains the showcased commons in ch 2–3 (where shared vocabulary is the
+   topic). Elsewhere each context defines the types it uses with the *same*
+   definitions (`CustomerId`/`Sku`/`OrderId` = `opaque String where NonEmpty`,
+   `Quantity` = `Int where InRange(1, 100)`, `Cents` = `Int where Positive`).
+   Rationale: a print reader cannot click through to a commons defined chapters
+   earlier, so self-contained-but-identical definitions read better than a bare
+   `uses`. Open to reverting to pure shared-commons if preferred.
+
+Also settled during execution:
+
+- **`Basket` key field is named `owner`** (`key owner: CustomerId`) in ch 5 and
+  ch 7, matching the chapter title "state needs an owner".
+- **`CustomerId` is `opaque` everywhere**, including as an actor identity, HTTP
+  path parameter, agent key, and `Map` key — confirmed to compile in ch 7/8.
+  Ch 12's prose still calls it "a refined `CustomerId`"; that wording must
+  change to "opaque" when Part IV is re-threaded.
+- Ch 4 needed no changes (already consistent: `Bank`/`Audit`/`Log`, `Cents`).
+
+## Part III execution notes (ch 9–11)
+
+- **`Stock` lives in `commerce.inventory`** (ch 9 was `commerce.stock`). The
+  compiler enforces path/name matching (`bynk.project.inconsistent_commons_name`),
+  so the file was renamed `stock.bynk` → `inventory.bynk`. This matches ch 10
+  and ch 12. As with `Order`, `Stock` is introduced small in ch 9
+  (`available`, `receive`/`ship`, `nonnegative`) and extended in ch 12
+  (`reserved`, `reserve`).
+- **Stock movement amounts are `Amount = Int where Positive`, not `Quantity`.**
+  The basket `Quantity` is `InRange(1, 100)`; a stock receipt/shipment isn't
+  bounded that way, so reusing the name would have been a false consistency.
+- **Ch 11 `support.*` → `commerce.*`**: `support.dashboard` → `commerce.catalog`
+  (normalises a product label, increments a view counter), `support.counters` →
+  `commerce.metrics` (the `Counter` agent), `support.cache` → `commerce.cache`
+  (the vendor-lock example). The `text.normalise` adapter stays as-is — it is a
+  deliberately domain-neutral utility adapter, and the only non-`commerce`,
+  non-`bynk` namespace left, which reads as intended.
+- Ch 10 needed no changes (already `commerce.inventory`/`commerce.returns`).
+
+## Part IV execution notes (ch 12–13) — the payoff
+
+- **`shop.*` → `commerce.*`** across all four whole-system files; `src/shop/` →
+  `src/commerce/`; `system-tree.txt` updated.
+- **`Order` reconciled to extend ch 6.** Status is now
+  `Draft | Placed | Paid | Rejected` (was `Open | Paid | Rejected`), so ch 12 is
+  visibly ch 6's agent grown, not a different one. `begin` now does
+  `Draft → Placed`. The single `paid_is_complete` invariant was split into the
+  two the book already names: `paid_has_payment_ref` (carried from ch 6) and
+  `paid_has_reservation` (new with the `reserved` field). Transition
+  `paid_is_terminal` unchanged. Prose "snapshot invariant says" → "invariants
+  say".
+- **`Stock`**: invariant renamed `quantities_are_nonnegative` → `nonnegative` to
+  match ch 9 (extended to cover `reserved`).
+- **Payment**: `Gateway` → `Bank`, `DemonstrationGateway` → `DemonstrationBank`
+  (bible decision #5, matching ch 4).
+- **`commerce.values`**: `OrderId`/`CustomerId`/`Sku` are now
+  `opaque String where NonEmpty` (were `String where NonEmpty && MaxLength(64)`);
+  `Quantity` is `InRange(1, 100)`. Prose "refined `Sku`/`CustomerId`" → "opaque".
+- **Opacity caught a real defect during the reconcile:** the payment stub
+  interpolated `\(customer)` into its reference string, which an opaque
+  `CustomerId` rightly refuses (`bynk.types.interpolation_non_scalar`) — no
+  string form outside its owning commons. Fixed the stub to a fixed reference.
+  This is the opacity guarantee from ch 2 doing its job in the payoff chapter.
+- **`source-lines` ranges recomputed** for the rewritten `orders.bynk`
+  (POST `57,87` → `62,92`; GET `88,92` → `93,97`; header `0,14` unchanged).
+  `inventory`/`payments` edits were line-preserving, so their ranges held.
+- **Ch 13 unchanged** — the plugin host is a deliberately generic TypeScript
+  counterexample (open-by-design systems), and its references to ch 12's
+  findings remain accurate.
+
+## Status: re-thread complete (Parts I–IV)
+
+Every snippet is one `commerce` system; ch 12 opens the accumulated, extended
+codebase. Gate: 26/26. Manuscript builds. The one remaining "purer" option not
+taken — threading a single imported `commerce.values` through every chapter
+rather than consistent in-context definitions — is recorded under Part II notes.
+- **Minor, noted for later:** ch 9's `Stock` is `key sku: String` and its
+  payment stub takes `amount: Int` (not `Sku`/`Cents`), because ch 9 is a
+  testing-focused minimal example. Left as primitives; revisit only if the
+  ch 9↔ch 12 seam reads badly.

@@ -46,15 +46,15 @@ The first pass does not read handler bodies. It reads unit headers:
 #code-listing(
   [The orders header names its vocabulary, outgoing edges, exports, and caller],
   source-lines(
-    "../snippets/chapter-12/whole-system/src/shop/orders.bynk",
+    "../snippets/chapter-12/whole-system/src/commerce/orders.bynk",
     0,
     14,
   ),
   lang: "bynk",
 )
 
-`uses shop.values` shares types but creates no runtime edge.
-`consumes shop.inventory as Inventory` and `consumes shop.payments as Payments`
+`uses commerce.values` shares types but creates no runtime edge.
+`consumes commerce.inventory as Inventory` and `consumes commerce.payments as Payments`
 do. Before reading an expression, we know that orders may call inventory and
 payments, that neither callee calls back, and that the dependency graph is
 acyclic.
@@ -78,10 +78,10 @@ latency and remote failure can enter.
         text(weight: "semibold")[Owns or declares],
         text(weight: "semibold")[Depends on],
       ),
-      [`shop.orders`], [`Order`, HTTP API, `Customer`], [`shop.inventory`, `shop.payments`],
-      [`shop.inventory`], [`Stock`, reservation service], [Shared values only],
-      [`shop.payments`], [`Gateway`, charge service], [Shared values only],
-      [`shop.values`], [Domain vocabulary], [Nothing],
+      [`commerce.orders`], [`Order`, HTTP API, `Customer`], [`commerce.inventory`, `commerce.payments`],
+      [`commerce.inventory`], [`Stock`, reservation service], [Shared values only],
+      [`commerce.payments`], [`Bank`, charge service], [Shared values only],
+      [`commerce.values`], [Domain vocabulary], [Nothing],
     )
   ],
   caption: [A first reading recovers topology without following control flow.],
@@ -99,12 +99,12 @@ of the system.
 == Read the edge as a contract
 
 The HTTP service accepts `POST /orders/:id`. The path value is an `OrderId`; the
-body contains a refined `Sku`, positive `Quantity`, and positive `Cents`. Invalid
+body contains an opaque `Sku`, a bounded `Quantity`, and a positive `Cents`. Invalid
 input is rejected during admission rather than discovered halfway through
 reservation.
 
 The handler also says `by customer: Customer`. `Customer` is a bearer-authenticated
-actor whose sealed identity is a refined `CustomerId`. The body does not parse a
+actor whose sealed identity is an opaque `CustomerId`. The body does not parse a
 user ID and trust it. The edge establishes the caller, and the handler passes
 that verified identity into the order owner.
 
@@ -124,9 +124,9 @@ The second HTTP handler is more revealing:
 #code-listing(
   [The read authenticates a customer but does not use customer identity],
   source-lines(
-    "../snippets/chapter-12/whole-system/src/shop/orders.bynk",
-    88,
-    92,
+    "../snippets/chapter-12/whole-system/src/commerce/orders.bynk",
+    93,
+    97,
   ),
   lang: "bynk",
 )
@@ -148,9 +148,9 @@ Only now do we read the main handler:
 #code-listing(
   [Order submission crosses two contexts and commits state between them],
   source-lines(
-    "../snippets/chapter-12/whole-system/src/shop/orders.bynk",
-    57,
-    87,
+    "../snippets/chapter-12/whole-system/src/commerce/orders.bynk",
+    62,
+    92,
   ),
   lang: "bynk",
 )
@@ -189,7 +189,7 @@ Inventory owns one `Stock` agent per `Sku`:
 #code-listing(
   [A stock reservation is atomic inside one owner],
   source-lines(
-    "../snippets/chapter-12/whole-system/src/shop/inventory.bynk",
+    "../snippets/chapter-12/whole-system/src/commerce/inventory.bynk",
     9,
     25,
   ),
@@ -212,7 +212,7 @@ claim spans agents and time.
 
 The `Order` agent is similarly precise and similarly local. It records an owner,
 status, reservation flag, and optional payment reference. Its snapshot
-invariant says that a paid order has both a reservation and a payment reference.
+invariants say that a paid order has both a reservation and a payment reference.
 Its transition says that paid is terminal.
 
 Notice what remains legal: a rejected order may have `reserved == true`. That
@@ -225,17 +225,17 @@ which suspicious states it still permits.
 
 == Trace effects through both layers
 
-Payments is a context boundary and `Gateway` is a capability boundary inside
+Payments is a context boundary and `Bank` is a capability boundary inside
 that context:
 
 #code-listing(
   [The payment service may use only the capability named in its contract],
   source-lines(
-    "../snippets/chapter-12/whole-system/src/shop/payments.bynk",
+    "../snippets/chapter-12/whole-system/src/commerce/payments.bynk",
     0,
     10,
   ) + "\n\n" + source-lines(
-    "../snippets/chapter-12/whole-system/src/shop/payments.bynk",
+    "../snippets/chapter-12/whole-system/src/commerce/payments.bynk",
     15,
     18,
   ),
@@ -243,8 +243,8 @@ that context:
 )
 
 Orders can call only the exported `charge` service. The service can perform the
-external effect only because its handler declares `given Gateway`. The
-complete source supplies a local, deterministic `DemonstrationGateway`; a
+external effect only because its handler declares `given Bank`. The
+complete source supplies a local, deterministic `DemonstrationBank`; a
 production implementation could sit behind an adapter without changing the
 orders context.
 
@@ -283,7 +283,7 @@ questions:
       [Caller], [POST and GET require `Customer`], [Whether GET must enforce ownership],
       [State], [`Order` by ID; `Stock` by SKU], [Retention, deletion, and migration policy],
       [Failure], [Named stock, payment, and HTTP outcomes], [Whether mappings preserve enough meaning],
-      [Effects], [Charging requires `Gateway`], [Provider trust, timeout, and retry policy],
+      [Effects], [Charging requires `Bank`], [Provider trust, timeout, and retry policy],
       [Consistency], [Atomic commits within each agent], [Compensation across owners],
     )
   ],

@@ -67,12 +67,12 @@ The default artefact remains typed TypeScript; a build can also emit the same
 modules with their types stripped when deployable JavaScript is more useful
 than running `tsc`.
 
-Consider a dashboard context that normalises a label and calls a counter
+Consider a catalog context that normalises a product label and calls a counter
 service:
 
 #code-listing(
   [The source names one library seam and one architectural dependency],
-  read("../snippets/chapter-11/declared/src/support/dashboard.bynk"),
+  read("../snippets/chapter-11/declared/src/commerce/catalog.bynk"),
   lang: "bynk",
 )
 
@@ -117,8 +117,8 @@ fork the build artefact.
 == Topology is a build choice
 
 The same source can be emitted for two topologies. The default `bundle` target
-places the contexts in one TypeScript tree. `support.dashboard` reaches
-`support.counters` through an ordinary in-process dependency, and the `Counter`
+places the contexts in one TypeScript tree. `commerce.catalog` reaches
+`commerce.metrics` through an ordinary in-process dependency, and the `Counter`
 agent uses an in-memory state registry.
 
 The `workers` target produces this shape:
@@ -129,11 +129,11 @@ The `workers` target produces this shape:
   lang: "text",
 )
 
-The dashboard's generated environment contains a `SUPPORT_COUNTERS` Service
+The catalog's generated environment contains a `COMMERCE_METRICS` Service
 Binding. Its call to `increment` becomes a JSON request across that binding,
 with generated serialisation and structural validation on the other side. The
 counter context's generated `wrangler.toml` declares a Durable Object class for
-`Counter`; the dashboard configuration declares the service binding.
+`Counter`; the catalog configuration declares the service binding.
 
 #figure(
   block(width: 100%)[
@@ -183,7 +183,7 @@ Bynk build emits a strict `tsconfig.json`, and the generated tree must pass
 produces an impossible interface implementation, a mismatched dependency, or
 an inconsistent runtime call, the target language can expose the defect.
 
-The same boundary admits existing code deliberately. The dashboard uses a
+The same boundary admits existing code deliberately. The catalog uses a
 `Slug` capability declared in a Bynk adapter. Its implementation is ordinary
 TypeScript:
 
@@ -231,7 +231,7 @@ Cloudflare KV:
 
 #code-listing(
   [The dependency names the vendor whose semantics the program requires],
-  read("../snippets/chapter-11/platform-lock/src/support/cache.bynk"),
+  read("../snippets/chapter-11/platform-lock/src/commerce/cache.bynk"),
   lang: "bynk",
 )
 
@@ -239,7 +239,7 @@ Building it for Node is refused:
 
 #compiler-message[
 [bynk.target.vendor_required]
-context `support.cache` uses the platform-native capabilities of
+context `commerce.cache` uses the platform-native capabilities of
 `bynk.cloudflare`, which run only on the `cloudflare` platform,
 but the build selects `--platform node`
 

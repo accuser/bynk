@@ -1,7 +1,7 @@
 context commerce.tracking
 
 type TrackingId = String where NonEmpty
-type UserId = String where NonEmpty
+type CustomerId = opaque String where NonEmpty
 
 type ClientFrame = {
   command: String,
@@ -11,7 +11,7 @@ type ServerFrame = {
   status: String,
 }
 
-actor Subscriber { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+actor Subscriber { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = CustomerId }
 
 service TrackingGateway from websocket(in: ClientFrame, out: ServerFrame) {
   on open (trackingId: TrackingId) -> Effect[()] by user: Subscriber {
@@ -34,18 +34,18 @@ service TrackingGateway from websocket(in: ClientFrame, out: ServerFrame) {
 agent Tracking {
   key id: TrackingId
 
-  store connections: Map[UserId, Connection[ServerFrame]]
+  store connections: Map[CustomerId, Connection[ServerFrame]]
 
-  on call join(user: UserId, conn: Connection[ServerFrame]) -> Effect[()] {
+  on call join(user: CustomerId, conn: Connection[ServerFrame]) -> Effect[()] {
     let _ <- connections.put(user, conn)
     ()
   }
 
-  on call received(user: UserId, frame: ClientFrame) -> Effect[()] {
+  on call received(user: CustomerId, frame: ClientFrame) -> Effect[()] {
     ()
   }
 
-  on call leave(user: UserId) -> Effect[()] {
+  on call leave(user: CustomerId) -> Effect[()] {
     let _ <- connections.remove(user)
     ()
   }

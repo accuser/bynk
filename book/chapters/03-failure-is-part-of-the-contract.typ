@@ -84,9 +84,9 @@ not initialised, or failed without detail. Bynk instead uses `Option[T]`, whose
 two cases are `Some(value)` and `None`. There is no `null` value that can appear
 inside an unrelated type.
 
-The order example keeps the `OrderId` and `Cents` vocabulary from Chapter 2.
-Its small lookup stands in for persistence so we can concentrate on the
-outcomes:
+The order example keeps the `OrderId` vocabulary from Chapter 2 and adds `Cents`
+for a money amount. Its small lookup stands in for persistence so we can
+concentrate on the outcomes:
 
 #code-listing(
   [An optional lookup becomes an error only when the operation requires it],

@@ -1,6 +1,6 @@
-context shop.inventory
+context commerce.inventory
 
-uses shop.values
+uses commerce.values
 exports transparent { StockError, StockView }
 
 type StockError = enum { InsufficientStock }
@@ -13,7 +13,7 @@ agent Stock {
 	store available: Cell[Int] = 10
 	store reserved: Cell[Int]
 
-	invariant quantities_are_nonnegative:
+	invariant nonnegative:
 		available >= 0 && reserved >= 0
 
 	on call hold(quantity: Quantity) -> Effect[Result[(), StockError]] {

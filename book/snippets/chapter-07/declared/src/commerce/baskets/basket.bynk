@@ -1,16 +1,16 @@
 context commerce.baskets
 
-type UserId = String where NonEmpty
+type CustomerId = opaque String where NonEmpty
 
 type BasketView = {
   itemCount: Int,
 }
 
-actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
-actor Admin = User where hasClaim("admin")
+actor Customer { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = CustomerId }
+actor Admin = Customer where hasClaim("admin")
 
 agent Basket {
-  key owner: UserId
+  key owner: CustomerId
 
   store lines: Map[String, Int]
 
@@ -25,12 +25,12 @@ service api from http {
     Ok("healthy")
   }
 
-  on GET("/basket") () -> Effect[HttpResult[BasketView]] by u: User {
+  on GET("/basket") () -> Effect[HttpResult[BasketView]] by u: Customer {
     let basket <- Basket(u.identity).view()
     Ok(basket)
   }
 
-  on GET("/admin/baskets/:owner") (owner: UserId) -> Effect[HttpResult[BasketView]] by Admin {
+  on GET("/admin/baskets/:owner") (owner: CustomerId) -> Effect[HttpResult[BasketView]] by Admin {
     let basket <- Basket(owner).view()
     Ok(basket)
   }

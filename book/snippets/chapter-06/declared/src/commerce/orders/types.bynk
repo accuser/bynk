@@ -1,6 +1,6 @@
 context commerce.orders
 
-type OrderId = opaque String
+type OrderId = opaque String where NonEmpty
 type PaymentRef = opaque String
 
 type OrderStatus = enum { Draft, Placed, Paid }
