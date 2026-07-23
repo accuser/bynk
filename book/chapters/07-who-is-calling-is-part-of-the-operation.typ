@@ -227,7 +227,7 @@ operations tend to inherit the authority of the most privileged caller or
 grow ad hoc flags such as `fromAdmin`. A boundary identity lets the callee make
 the distinction without trusting a caller-supplied story about itself.
 
-== Could TypeScript do this?
+== Could a framework do this?
 
 Yes. A well-designed web framework can make authenticated requests a distinct
 type. Route builders can require a security policy. Branded identifiers can

@@ -261,7 +261,7 @@ Whether a future version could prove some of these statically, rather than
 checking them at the commit, is an open question the language has not yet
 answered.
 
-== A useful refusal
+== When a transition names no step
 
 The difference between a snapshot and a step also appears in the declaration
 rules. Consider a `transition` that mentions only the current field name:

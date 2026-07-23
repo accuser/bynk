@@ -40,9 +40,9 @@ and costs of making those decisions compiler-visible.
 
 ## Working title
 
-**The architecture is the program**
+**Architecture that compiles**
 
-*Why services become hard to reason about - and Bynk's answer*
+*Why services become hard to reason about — and Bynk's answer*
 
 Both are provisional.
 

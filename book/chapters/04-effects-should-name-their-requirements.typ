@@ -142,7 +142,7 @@ right design. The important constraint remains: availability is declared. A
 capability does not become ambient merely because more than one context needs
 it.
 
-== A useful refusal
+== The authority a signature can't omit
 
 Suppose the authorisation handler calls `Bank.charge` but omits `Bank` from its
 `given` clause:
