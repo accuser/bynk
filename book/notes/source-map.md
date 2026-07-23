@@ -205,3 +205,15 @@ for its own argument and reading rhythm.
   manuscript-specific TypeScript comparison. It passes strict TypeScript
   checking and represents a genuinely runtime-defined graph, illustrating a
   case where Bynk's compile-visible dependency graph is not the desired model.
+
+### Epilogue: The program should not be able to forget
+
+- The epilogue synthesises the manuscript's existing argument and returns to
+  the four-box service introduced in the prologue. It adds no new language
+  claims or source examples.
+- The closing distinction---a language can preserve a decision but cannot make
+  it wise---is grounded in the deliberately valid design defects examined in
+  Chapter 12 and the constraint accounting in Chapter 13.
+- The final test is intentionally portable beyond Bynk: identify important
+  architectural facts that the implementation medium repeatedly erases, then
+  choose a proportionate representation and enforcement mechanism.
