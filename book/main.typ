@@ -6,8 +6,16 @@
 #title-page(book-meta)
 #rights-page(book-meta)
 
-#counter(page).update(1)
+#set page(numbering: "i")
 
+#include "frontmatter/contents.typ"
+
+#recto-break()
+#include "frontmatter/preface.typ"
+
+#recto-break()
+#counter(page).update(1)
+#set page(numbering: "1")
 #include "chapters/00-prologue.typ"
 
 #part-page(1, [Saying what the system means])
@@ -57,3 +65,6 @@
 #recto-break()
 #set heading(numbering: none)
 #include "chapters/14-epilogue.typ"
+
+#recto-break()
+#include "backmatter/index.typ"

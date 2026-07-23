@@ -21,5 +21,23 @@ clear separation between narrative and structural material.
 - Choose static versus variable font files and record exact versions.
 - Decide whether fonts should be vendored or fetched reproducibly.
 - Retain the SIL Open Font License alongside any distributed font files.
-- Revisit running heads, folios, optical margin alignment, and widow/orphan
-  policy once several chapters exist.
+- Revisit optical margin alignment and widow/orphan policy during copy-editing.
+
+## Publication-apparatus proof
+
+The current proof establishes a provisional page-furniture system:
+
+- running heads use Source Sans 3 at 7.7 pt, with the book title on versos and
+  the current chapter or matter title on rectos;
+- a fine rule separates running heads from the text block;
+- Arabic and Roman folios sit at the outside edge of the footer;
+- opening, part-title, and intentionally blank pages suppress both running
+  heads and visible folios while remaining part of the page count;
+- the contents uses chapter-level entries only, with part entries acting as
+  visual groups and subordinate chapter entries inset;
+- the subject-index proof uses Source Serif 4 Small Text at 8.55 pt in two
+  columns with Source Sans 3 alphabet headings.
+
+These are proof decisions rather than settled production specifications. They
+should be judged again after the contents, preface, and editorial index have
+their final extent.
