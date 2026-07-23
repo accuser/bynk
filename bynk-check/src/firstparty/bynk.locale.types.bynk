@@ -1,0 +1,20 @@
+commons bynk.locale.types {
+	---
+	A validated locale identifier: `language[-Script][-REGION]`
+	(e.g. `en`, `pt-BR`, `zh-Hans-CN`).
+	---
+	type LocaleTag = String where Matches("[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?")
+
+	---
+	One value substitutable into a rendered message.
+	---
+	type MessageArg = | Text(value: String)
+	| Whole(value: Int)
+	| Num(value: Float)
+	| Moment(value: Instant)
+
+	---
+	A message to render: a lookup code plus its named substitution values.
+	---
+	type Message = { code: String, params: Map[String, MessageArg] }
+}

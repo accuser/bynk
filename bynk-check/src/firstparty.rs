@@ -129,19 +129,33 @@ pub const STRING_UNIT: &str = "bynk.string";
 /// yet" from "first element was empty").
 pub const BYNK_STRING_SRC: &str = include_str!("firstparty/bynk.string.bynk");
 
+/// Inside the reserved `bynk.*` prefix; injected when `uses`-imported by
+/// application code (a message-bundle commons, ADR 0272) — never directly by
+/// the `bynk` adapter itself any more (see [`LOCALE_TYPES_UNIT`]).
+pub const LOCALE_UNIT: &str = "bynk.locale";
+
+/// `bynk.locale` — the bundle-free `render`/`renderArg` helpers and the
+/// `message`/`withText`/`withWhole`/`withNum`/`withMoment` builder API
+/// (slice 1: `render` formats `code` plus a deterministic sorted-by-key
+/// rendering of `params`; no lookup, no locale-dependent behaviour). `uses
+/// bynk.locale.types` for the types its own signatures name.
+pub const BYNK_LOCALE_SRC: &str = include_str!("firstparty/bynk.locale.bynk");
+
 /// Inside the reserved `bynk.*` prefix; injected when `uses`-imported. Also
 /// `uses`-imported by the `bynk` adapter itself, to give `capability Locale`'s
 /// `current() -> Effect[LocaleTag]` a type to name (an adapter may `uses` a
-/// commons; a commons cannot in turn reference an adapter, which is why
-/// `LocaleTag`/`Message`/`MessageArg`/`render` live here rather than in
-/// `bynk.bynk` alongside `Locale` — Locale capability track, slice 1, #844).
-pub const LOCALE_UNIT: &str = "bynk.locale";
+/// commons; a commons cannot in turn reference an adapter). Split out of
+/// `bynk.locale` (locale-negotiation-slice-2 follow-up, #886) specifically so
+/// a context can reach `LocaleTag` without also pulling in `bynk.locale`'s
+/// own `render` — which previously collided with a message-bundle commons's
+/// own synthesised `render` (ADR 0272) the moment a context needed both.
+pub const LOCALE_TYPES_UNIT: &str = "bynk.locale.types";
 
-/// `bynk.locale` — the locale value types (`LocaleTag`, `MessageArg`,
-/// `Message`) and the bundle-free `render` helper (slice 1: formats `code`
-/// plus a deterministic sorted-by-key rendering of `params`; no lookup, no
-/// locale-dependent behaviour).
-pub const BYNK_LOCALE_SRC: &str = include_str!("firstparty/bynk.locale.bynk");
+/// `bynk.locale.types` — `LocaleTag`, `MessageArg`, `Message`: a
+/// dependency-free leaf (no `uses` of its own) so any consumer, including
+/// the `bynk` adapter itself, can reach these types without also reaching
+/// `bynk.locale`'s value-level API.
+pub const BYNK_LOCALE_TYPES_SRC: &str = include_str!("firstparty/bynk.locale.types.bynk");
 
 /// The reserved `bynk` conformance-surface adapter (env-free core). It has no
 /// `binding` clause — the toolchain supplies one per platform (see

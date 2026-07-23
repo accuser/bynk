@@ -1,5 +1,5 @@
 adapter bynk {
-	uses bynk.locale
+	uses bynk.locale.types
 	exports capability { Clock, Random, Logger, Fetch, Secrets, Locale }
 	exports transparent { Uuid, Method, FetchError, Request, Response }
 

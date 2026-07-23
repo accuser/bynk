@@ -5,6 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import * as app_greet from "./../app/greet.js";
 import * as bynk from "./../bynk.js";
 import * as bynk_locale from "./../bynk/locale.js";
+import * as bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -33,7 +34,7 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
 }
 
 class __Stub_Locale {
-  async current(): Promise<bynk_locale.LocaleTag> {
+  async current(): Promise<bynk_locale_types.LocaleTag> {
     if (true) {
       return ("en" as any);
     }
@@ -50,7 +51,8 @@ async function test_no_params_renders_just_the_code() {
   try {
     const deps = makeTestDeps();
     const { greeting, greetingWithCountAndName, greetingWithName } = app_greet as any;
-    const { LocaleTag, Message, MessageArg, message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const { FetchError, Method, Request, Response, Uuid } = bynk as any;
     const g = await greeting.call(deps);
     if (!(g === "hello")) { throw __bynkExpectFailure("tests/greet.test.bynk:12:12", 428, 440, "expect g == \"hello\"\n  expected: g == \"hello\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("hello"))); }
@@ -68,7 +70,8 @@ async function test_one_param_renders_code_plus_the_substitution() {
   try {
     const deps = makeTestDeps();
     const { greeting, greetingWithCountAndName, greetingWithName } = app_greet as any;
-    const { LocaleTag, Message, MessageArg, message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const { FetchError, Method, Request, Response, Uuid } = bynk as any;
     const g = await greetingWithName.call("Ada", deps);
     if (!(g === "greeting {name=Ada}")) { throw __bynkExpectFailure("tests/greet.test.bynk:17:12", 555, 581, "expect g == \"greeting {name=Ada}\"\n  expected: g == \"greeting {name=Ada}\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("greeting {name=Ada}"))); }
@@ -86,7 +89,8 @@ async function test_multiple_params_render_sorted_by_key__not_call_order() {
   try {
     const deps = makeTestDeps();
     const { greeting, greetingWithCountAndName, greetingWithName } = app_greet as any;
-    const { LocaleTag, Message, MessageArg, message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const { FetchError, Method, Request, Response, Uuid } = bynk as any;
     const g = await greetingWithCountAndName.call("Ada", 3, deps);
     if (!(g === "greeting {count=3, name=Ada}")) { throw __bynkExpectFailure("tests/greet.test.bynk:22:12", 715, 750, "expect g == \"greeting {count=3, name=Ada}\"\n  expected: g == \"greeting {count=3, name=Ada}\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("greeting {count=3, name=Ada}"))); }

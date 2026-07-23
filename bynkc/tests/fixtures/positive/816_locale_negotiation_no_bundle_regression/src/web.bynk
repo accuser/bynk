@@ -9,6 +9,7 @@ context web
 -- regression guard for Decision B's "silent, not a regression" case.
 consumes bynk { Locale }
 uses bynk.locale
+uses bynk.locale.types
 
 service api from http {
   on GET("/greet") () -> Effect[HttpResult[String]] by v: Visitor given Locale {

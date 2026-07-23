@@ -1,6 +1,7 @@
 commons app.bundle
 
 uses bynk.locale
+uses bynk.locale.types
 
 ---
 message-bundles track, slice 2 (#874): a real second locale — `render`

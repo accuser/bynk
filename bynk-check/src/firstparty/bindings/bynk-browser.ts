@@ -4,7 +4,7 @@ import type { Clock, Fetch, Locale, Logger, Random, Secrets } from "./bynk.js";
 import type { Request as FetchRequest, Response as FetchResponse } from "./bynk.js";
 import type { FetchError } from "./bynk.js";
 import { Uuid } from "./bynk.js";
-import { LocaleTag } from "./bynk/locale.js";
+import { LocaleTag } from "./bynk/locale/types.js";
 import type { Option, Result } from "./runtime.js";
 
 // Clock, Random, and Logger are identical to the Node binding: `Date.now()`,

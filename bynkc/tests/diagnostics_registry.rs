@@ -50,8 +50,15 @@ fn collect(dir: &Path, re: &regex::Regex, out: &mut BTreeSet<String>) {
             collect(&path, re, out);
         } else if path.extension().is_some_and(|e| e == "rs") {
             // The registry module deliberately lists every code; skip it so the
-            // comparison reflects actual emit sites.
-            if path.file_name().is_some_and(|n| n == "diagnostics.rs") {
+            // comparison reflects actual emit sites. `firstparty.rs` is also
+            // skipped: its `LOCALE_TYPES_UNIT` constant ("bynk.locale.types")
+            // is a firstparty commons name, not a diagnostic code, but
+            // happens to share the two-dot "bynk.x.y" shape this regex uses
+            // as its heuristic for one.
+            if path
+                .file_name()
+                .is_some_and(|n| n == "diagnostics.rs" || n == "firstparty.rs")
+            {
                 continue;
             }
             let text = fs::read_to_string(&path).unwrap();

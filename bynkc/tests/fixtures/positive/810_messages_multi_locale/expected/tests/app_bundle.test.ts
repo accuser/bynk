@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as app_bundle from "./../app/bundle.js";
 import * as bynk_locale from "./../bynk/locale.js";
+import * as bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -35,7 +36,8 @@ async function test_the_reference_locale_still_renders_its_own_translation() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withWhole(withText(message("greeting"), "name", "Ada"), "age", 30);
     if (!(render(("en" as any), msg) === "Hello, Ada, you are 30")) { throw __bynkExpectFailure("tests/bundle.test.bynk:10:12", 421, 466, "expect render(\"en\", msg) == \"Hello, Ada, you are 30\"\n  expected: render(\"en\", msg) == \"Hello, Ada, you are 30\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("Hello, Ada, you are 30"))); }
     return { pass: true };
@@ -52,7 +54,8 @@ async function test_a_second__declared_locale_renders_its_own_translation() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withWhole(withText(message("greeting"), "name", "Ada"), "age", 30);
     if (!(render(("fr" as any), msg) === "30 ans, bonjour Ada")) { throw __bynkExpectFailure("tests/bundle.test.bynk:15:12", 629, 671, "expect render(\"fr\", msg) == \"30 ans, bonjour Ada\"\n  expected: render(\"fr\", msg) == \"30 ans, bonjour Ada\"\n  actual:   " + __bynkShow((render(("fr" as any), msg))) + " == " + __bynkShow(("30 ans, bonjour Ada"))); }
     return { pass: true };
@@ -69,7 +72,8 @@ async function test_a_locale_not_declared_in_the_bundle_falls_back_to_the_refere
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withWhole(withText(message("greeting"), "name", "Ada"), "age", 30);
     if (!(render(("de" as any), msg) === "Hello, Ada, you are 30")) { throw __bynkExpectFailure("tests/bundle.test.bynk:20:12", 844, 889, "expect render(\"de\", msg) == \"Hello, Ada, you are 30\"\n  expected: render(\"de\", msg) == \"Hello, Ada, you are 30\"\n  actual:   " + __bynkShow((render(("de" as any), msg))) + " == " + __bynkShow(("Hello, Ada, you are 30"))); }
     return { pass: true };
@@ -86,7 +90,8 @@ async function test_a_code_no_locale_declares_falls_back_to_bynk_locale_render_s
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withWhole(message("nope"), "x", 5);
     if (!(render(("fr" as any), msg) === "nope {x=5}")) { throw __bynkExpectFailure("tests/bundle.test.bynk:25:12", 1033, 1066, "expect render(\"fr\", msg) == \"nope {x=5}\"\n  expected: render(\"fr\", msg) == \"nope {x=5}\"\n  actual:   " + __bynkShow((render(("fr" as any), msg))) + " == " + __bynkShow(("nope {x=5}"))); }
     return { pass: true };

@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as app_bundle from "./../app/bundle.js";
 import * as bynk_locale from "./../bynk/locale.js";
+import * as bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -35,7 +36,8 @@ async function test_render_still_answers_from_the_reference_block_when_a_second_
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withText(message("greeting"), "name", "Ada");
     if (!(render(("en" as any), msg) === "Hello, Ada!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:12:12", 540, 574, "expect render(\"en\", msg) == \"Hello, Ada!\"\n  expected: render(\"en\", msg) == \"Hello, Ada!\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("Hello, Ada!"))); }
     return { pass: true };
