@@ -217,3 +217,13 @@ for its own argument and reading rhythm.
 - The final test is intentionally portable beyond Bynk: identify important
   architectural facts that the implementation medium repeatedly erases, then
   choose a proportionate representation and enforcement mechanism.
+
+### Publication apparatus
+
+- The preface synthesises the editorial brief and the manuscript's established
+  relationship with the online Bynk Book. It introduces no new language claims.
+- Contents entries, running heads, Roman and Arabic matter numbering, and index
+  locators are generated from semantic headings and live document locations.
+- The subject index is a typography and navigation proof, not a completed
+  editorial index. Its chapter-level locators and coverage must be replaced by
+  significant-discussion markers during the revision pass.
