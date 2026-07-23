@@ -1,0 +1,7 @@
+bynk.toml
+src/
+  shop/
+    values.bynk
+    inventory.bynk
+    orders.bynk
+    payments.bynk

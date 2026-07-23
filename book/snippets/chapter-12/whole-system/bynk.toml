@@ -1,0 +1,4 @@
+# Compiler-tested source for chapter 12.
+[project]
+name = "chapter-12-whole-system"
+version = "0.1.0"

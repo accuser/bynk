@@ -172,3 +172,36 @@ for its own argument and reading rhythm.
 - The platform-lock project passes under the default Cloudflare platform and is
   retained to exercise `bynk.target.vendor_required` when the same source is
   built for Node.
+
+### Chapter 12: Reading a whole system
+
+- The whole-system reading method was checked against the current project
+  structure, actors, agents, effects, entry-point, compilation, and deployment
+  documentation. The chapter applies those facts to one new manuscript case
+  study rather than reusing the documentation's prose or example projects.
+- The manuscript-specific order system under
+  `book/snippets/chapter-12/whole-system/` contains shared domain values and
+  three contexts. It passes `bynkc check` and compiles for both the Node bundle
+  and Cloudflare workers targets; both emitted TypeScript trees pass strict
+  TypeScript checking.
+- The case study deliberately retains two design questions for analysis. A
+  failed payment leaves stock reserved because no compensation edge exists,
+  and the authenticated order read does not compare caller identity with the
+  stored owner. These are valid programs, not compiler-negative fixtures: the
+  chapter distinguishes architecture the language can preserve from policy the
+  team has not expressed.
+
+### Chapter 13: The cost of stronger constraints
+
+- The costs of acyclic context dependencies, explicit capabilities, keyed state
+  ownership, closed failure vocabulary, actor-bearing edges, validated
+  boundaries, adapters, and TypeScript emission were checked against the
+  current static semantics, reference, and project/deployment guides.
+- The chapter distinguishes intrinsic trade-offs from temporary feature gaps.
+  In particular, atomic agent commits do not imply cross-agent transactions,
+  adapters bound what Bynk can inspect, and the JavaScript/Workers target brings
+  operational and organisational dependencies alongside its ecosystem reach.
+- The open plugin host under `book/snippets/chapter-13/` is a new
+  manuscript-specific TypeScript comparison. It passes strict TypeScript
+  checking and represents a genuinely runtime-defined graph, illustrating a
+  case where Bynk's compile-visible dependency graph is not the desired model.
