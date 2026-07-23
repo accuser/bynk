@@ -54,6 +54,14 @@ downloads the official release, verifies its SHA-256 digest, and caches the
 binary under `book/build/toolchain/`. Set `BYNK_TYPST_BIN` to use an exact Typst
 0.15.0 executable on another platform.
 
+Optional environment overrides:
+
+- `BYNK_TYPST_BIN` selects an exact Typst 0.15.0 executable.
+- `BYNK_BOOK_OUTPUT` changes the generated PDF path.
+- `SOURCE_DATE_EPOCH` sets the PDF creation timestamp. When omitted in a Git
+  checkout, the build derives a stable timestamp from the latest manuscript or
+  build-script commit.
+
 CI runs the same command when manuscript, font, or build-script inputs change.
 The resulting PDF is available from the workflow run as the
 `bynk-manuscript` artifact.

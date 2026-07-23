@@ -457,6 +457,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # The wrapper derives a stable PDF timestamp from the last book or
+          # build-script commit, so it needs path history rather than shallow HEAD.
+          fetch-depth: 0
+      - name: Cache the pinned Typst toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: book/build/toolchain
+          # Hashing the wrapper keys the cache on its Typst version and platform
+          # digests without duplicating those values in this workflow.
+          key: typst-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-book.sh') }}
       - name: Build the manuscript
         run: ./scripts/build-book.sh
       - name: Upload the manuscript PDF

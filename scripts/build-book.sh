@@ -3,6 +3,7 @@
 set -euo pipefail
 
 readonly TYPST_VERSION="0.15.0"
+readonly EXPECTED_FONT_COUNT=10
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 readonly FONT_DIR="$REPO_ROOT/book/fonts"
@@ -74,6 +75,9 @@ verify_typst() {
 
 bootstrap_typst() {
   local platform asset checksum
+  # Release-asset SHA-256 digests come from:
+  # https://github.com/typst/typst/releases/tag/v0.15.0
+  # Update TYPST_VERSION and every platform digest together.
   case "$(uname -s):$(uname -m)" in
     Darwin:arm64 | Darwin:aarch64)
       platform="aarch64-apple-darwin"
@@ -124,7 +128,6 @@ bootstrap_typst() {
   tar -xJf "$archive" -C "$temporary_dir"
   mkdir -p "$tool_dir"
   install -m 0755 "$temporary_dir/typst-$platform/typst" "$binary"
-  verify_typst "$binary"
   cleanup
   temporary_dir=""
   log "Installed Typst in book/build/toolchain."
@@ -133,7 +136,6 @@ bootstrap_typst() {
 
 resolve_typst() {
   if [[ -n "${BYNK_TYPST_BIN:-}" ]]; then
-    verify_typst "$BYNK_TYPST_BIN"
     printf '%s\n' "$BYNK_TYPST_BIN"
     return
   fi
@@ -154,11 +156,27 @@ resolve_typst() {
 verify_fonts() {
   [[ -f "$FONT_MANIFEST" ]] || die "font checksum manifest not found: $FONT_MANIFEST"
 
-  local expected filename actual count=0
-  while read -r expected filename; do
+  local expected filename actual listed font_path found
+  local count=0
+  local directory_count=0
+  local -a manifest_fonts=()
+
+  while read -r expected filename || [[ -n "${expected:-}${filename:-}" ]]; do
     [[ -n "$expected" ]] || continue
     [[ "$expected" == \#* ]] && continue
-    [[ -n "$filename" ]] || die "invalid entry in $FONT_MANIFEST"
+    [[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] ||
+      die "invalid checksum in $FONT_MANIFEST: $expected"
+    [[ -n "$filename" && "$filename" == *.otf && "$filename" != */* ]] ||
+      die "invalid font filename in $FONT_MANIFEST: ${filename:-<missing>}"
+
+    if [[ "$count" -gt 0 ]]; then
+      for listed in "${manifest_fonts[@]}"; do
+        [[ "$listed" != "$filename" ]] ||
+          die "duplicate font entry in $FONT_MANIFEST: $filename"
+      done
+    fi
+    manifest_fonts+=("$filename")
+
     [[ -f "$FONT_DIR/$filename" ]] || die "vendored font not found: book/fonts/$filename"
 
     actual="$(sha256_file "$FONT_DIR/$filename")"
@@ -167,7 +185,33 @@ verify_fonts() {
     count=$((count + 1))
   done <"$FONT_MANIFEST"
 
-  [[ "$count" -gt 0 ]] || die "no fonts listed in $FONT_MANIFEST"
+  [[ "$count" -eq "$EXPECTED_FONT_COUNT" ]] ||
+    die "$FONT_MANIFEST must list exactly $EXPECTED_FONT_COUNT fonts; found $count"
+
+  for font_path in "$FONT_DIR"/*; do
+    [[ -f "$font_path" ]] || continue
+    filename="${font_path##*/}"
+    case "$filename" in
+      *.otf | *.OTF)
+        directory_count=$((directory_count + 1))
+        found=false
+        for listed in "${manifest_fonts[@]}"; do
+          if [[ "$listed" == "$filename" ]]; then
+            found=true
+            break
+          fi
+        done
+        [[ "$found" == true ]] ||
+          die "unverified font in book/fonts: $filename"
+        ;;
+      *.ttf | *.TTF | *.ttc | *.TTC | *.otc | *.OTC | *.woff | *.WOFF | *.woff2 | *.WOFF2)
+        die "unverified font in book/fonts: $filename"
+        ;;
+    esac
+  done
+
+  [[ "$directory_count" -eq "$EXPECTED_FONT_COUNT" ]] ||
+    die "book/fonts must contain exactly $EXPECTED_FONT_COUNT OpenType fonts; found $directory_count"
 }
 
 command="${1:-build}"
@@ -194,6 +238,13 @@ if [[ -z "$creation_timestamp" ]] && command -v git >/dev/null 2>&1; then
     git -C "$REPO_ROOT" log -1 --format=%ct -- \
       book scripts/build-book.sh 2>/dev/null || true
   )"
+  # Archives and shallow clones may not contain the last path-specific commit.
+  # HEAD is still deterministic and preferable to Typst's build-time default.
+  if [[ -z "$creation_timestamp" ]]; then
+    creation_timestamp="$(
+      git -C "$REPO_ROOT" log -1 --format=%ct HEAD 2>/dev/null || true
+    )"
+  fi
 fi
 
 common_args=(
