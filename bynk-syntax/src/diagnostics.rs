@@ -911,7 +911,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.messages.missing_locale_dependency",
-        "A commons declaring `messages` doesn't `uses bynk.locale`, which its generated `render`'s fallback needs.",
+        "A commons declaring `messages` doesn't `uses bynk.locale` and/or `uses bynk.locale.types`, which its generated `render` and the types its signature names need.",
     ),
     d(
         "bynk.messages.missing_reference",
