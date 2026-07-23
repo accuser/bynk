@@ -53,3 +53,7 @@
 
 #recto-break()
 #include "chapters/13-the-cost-of-stronger-constraints.typ"
+
+#recto-break()
+#set heading(numbering: none)
+#include "chapters/14-epilogue.typ"
