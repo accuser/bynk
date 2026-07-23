@@ -1,0 +1,33 @@
+commons greeter.messages
+
+uses bynk.locale.types
+uses bynk.locale
+
+---
+The reference locale — every code here must appear, with the same
+placeholders, in every other declared locale below.
+---
+messages en @reference {
+  "greeting" => "Hello, {name}!"
+  "farewell" => "Goodbye, {name}!"
+}
+
+messages fr {
+  "greeting" => "Bonjour, {name} !"
+  "farewell" => "Au revoir, {name} !"
+}
+
+messages es {
+  "greeting" => "¡Hola, {name}!"
+  "farewell" => "¡Adiós, {name}!"
+}
+
+---
+Renders `code` for `tag` with `name` substituted. `uses bynk.locale`
+(for `render`/`message`/`withText`) stays local to this commons — a
+caller only ever needs `bynk.locale.types`, for `LocaleTag` itself (see
+`greeter.web`).
+---
+fn greet(tag: LocaleTag, code: String, name: String) -> String {
+  render(tag, withText(message(code), "name", name))
+}
