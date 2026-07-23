@@ -1,0 +1,4 @@
+# Compiler-tested source for chapter 9.
+[project]
+name = "chapter-09-declared"
+version = "0.1.0"

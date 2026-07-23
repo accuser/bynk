@@ -1,0 +1,4 @@
+# Compiler-tested warning source for chapter 10.
+[project]
+name = "chapter-10-warning"
+version = "0.1.0"

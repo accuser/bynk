@@ -1,0 +1,28 @@
+context commerce.baskets
+
+agent Basket {
+  key id: BasketId
+
+  store lines: Map[Sku, Quantity]
+  store note: Cell[Option[String]]
+  store revision: Cell[Int]
+
+  on call setLine(sku: Sku, quantity: Quantity) -> Effect[()] {
+    do lines.put(sku, quantity)
+    do revision.update((n) => n + 1)
+  }
+
+  on call leaveNote(message: String) -> Effect[()] {
+    note := Some(message)
+    ()
+  }
+
+  on call snapshot() -> Effect[BasketSnapshot] {
+    let lineCount <- lines.size()
+    BasketSnapshot {
+      lineCount: lineCount,
+      revision: revision,
+      note: note,
+    }
+  }
+}

@@ -1,0 +1,25 @@
+context commerce.pricing
+
+capability Rates {
+	fn lookup(code: String) -> Effect[Int]
+}
+
+capability Audit {
+	fn note(message: String) -> Effect[()]
+}
+
+provides Rates = LiveRates {
+	fn lookup(code: String) -> Effect[Int] { Effect.pure(3) }
+}
+
+provides Audit = LiveAudit {
+	fn note(message: String) -> Effect[()] { Effect.pure(()) }
+}
+
+service quote {
+	on call(amount: Int, currency: String) -> Effect[Int] given Rates, Audit {
+		let rate <- Rates.lookup(currency)
+		let _ <- Audit.note("quoted \(currency)")
+		Effect.pure(amount * rate)
+	}
+}

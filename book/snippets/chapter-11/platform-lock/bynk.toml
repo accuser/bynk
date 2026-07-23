@@ -1,0 +1,4 @@
+# Deliberately rejected source for chapter 11.
+[project]
+name = "chapter-11-platform-lock"
+version = "0.1.0"

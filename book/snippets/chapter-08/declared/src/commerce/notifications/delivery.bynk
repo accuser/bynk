@@ -1,0 +1,53 @@
+context commerce.notifications
+
+type UserId = String where NonEmpty
+type EmailAddress = String where NonEmpty
+
+type EmailJob = {
+  to: EmailAddress,
+  subject: String,
+}
+
+type SendError = enum { Temporary, Permanent }
+
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+capability Mailer {
+  fn send(job: EmailJob) -> Effect[Result[(), SendError]]
+}
+
+service api from http {
+  on POST("/emails") (body: EmailJob) -> Effect[HttpResult[String]] by User given Mailer {
+    let outcome <- Mailer.send(body)
+    match outcome {
+      Ok(_) => NoContent
+      Err(Temporary) => ServiceUnavailable("mailer temporarily unavailable")
+      Err(Permanent) => UnprocessableEntity("recipient cannot accept mail")
+    }
+  }
+}
+
+service outbox from queue("outbound-email") {
+  on message(message: EmailJob) -> Effect[QueueResult] given Mailer {
+    let outcome <- Mailer.send(message)
+    match outcome {
+      Ok(_) => Ack
+      Err(Temporary) => Retry("mailer temporarily unavailable")
+      Err(Permanent) => Ack
+    }
+  }
+}
+
+service digest from cron {
+  on schedule("0 8 * * *") (at: Int) -> Effect[Result[(), String]] given Mailer {
+    let job = EmailJob {
+      to: "ops@example.com",
+      subject: "Daily digest \(at)",
+    }
+    let outcome <- Mailer.send(job)
+    match outcome {
+      Ok(_) => Ok(())
+      Err(_) => Err("daily digest was not sent")
+    }
+  }
+}

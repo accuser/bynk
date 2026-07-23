@@ -1,0 +1,37 @@
+context commerce.baskets
+
+type UserId = String where NonEmpty
+
+type BasketView = {
+  itemCount: Int,
+}
+
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+actor Admin = User where hasClaim("admin")
+
+agent Basket {
+  key owner: UserId
+
+  store lines: Map[String, Int]
+
+  on call view() -> Effect[BasketView] {
+    let itemCount <- lines.size()
+    BasketView { itemCount: itemCount }
+  }
+}
+
+service api from http {
+  on GET("/health") () -> Effect[HttpResult[String]] by Visitor {
+    Ok("healthy")
+  }
+
+  on GET("/basket") () -> Effect[HttpResult[BasketView]] by u: User {
+    let basket <- Basket(u.identity).view()
+    Ok(basket)
+  }
+
+  on GET("/admin/baskets/:owner") (owner: UserId) -> Effect[HttpResult[BasketView]] by Admin {
+    let basket <- Basket(owner).view()
+    Ok(basket)
+  }
+}

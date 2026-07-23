@@ -1,0 +1,14 @@
+context commerce.returns
+
+consumes commerce.inventory as Inventory
+
+service eligible {
+	on call(sku: String) -> Effect[Bool] { sku != "" }
+}
+
+service accept {
+	on call(sku: String) -> Effect[Bool] {
+		let released <- Inventory.release(sku)
+		released
+	}
+}

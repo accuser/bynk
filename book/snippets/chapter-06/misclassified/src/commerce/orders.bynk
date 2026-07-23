@@ -1,0 +1,17 @@
+context commerce.orders
+
+type OrderStatus = enum { Draft, Paid }
+
+agent Order {
+  key id: String
+
+  store status: Cell[OrderStatus] = Draft
+
+  transition has_known_status:
+    status is Draft || status is Paid
+
+  on call markPaid() -> Effect[()] {
+    status := Paid
+    ()
+  }
+}

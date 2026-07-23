@@ -1,0 +1,4 @@
+# Deliberately rejected source for chapter 10.
+[project]
+name = "chapter-10-cycle"
+version = "0.1.0"

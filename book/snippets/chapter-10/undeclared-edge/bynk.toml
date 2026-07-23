@@ -1,0 +1,4 @@
+# Deliberately rejected source for chapter 10.
+[project]
+name = "chapter-10-undeclared-edge"
+version = "0.1.0"

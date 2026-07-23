@@ -1,0 +1,13 @@
+context commerce.returns
+
+capability Audit {
+	fn note(sku: String) -> Effect[()]
+}
+
+provides Audit = QuietAudit {
+	fn note(sku: String) -> Effect[()] { () }
+}
+
+service accept {
+	on call(sku: String) -> Effect[Bool] given Audit { sku != "" }
+}

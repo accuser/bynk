@@ -39,6 +39,56 @@ function wireClickable(el: Element, uri: string, range: SequencePayload["model"]
   (el as HTMLElement).style.cursor = "pointer";
 }
 
+/** Read a `--vscode-*` custom property off the live document — VS Code injects
+ *  the current colour theme's palette this way (see `documentationView.ts` for
+ *  the same convention used in plain CSS). Read fresh on every render rather
+ *  than hardcoded, so this tracks whatever theme (light, dark, high-contrast,
+ *  or a user's custom one) is actually active, not just a light/dark guess. */
+function vscodeCssVar(name: string, fallback: string): string {
+  const value = getComputedStyle(document.body).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+/** Mermaid's built-in "default" theme is a light palette baked into the
+ *  rendered SVG's inline styles (fixed hex fills/strokes, no CSS variables) —
+ *  it never adapts to VS Code's theme, which is why this looked fine in a
+ *  light theme and unreadable in a dark one (dark text on boxes that stayed
+ *  light, or vice versa). `theme: "base"` lets every colour be overridden, so
+ *  this maps the sequence-diagram-relevant variables onto the editor's own
+ *  `--vscode-*` custom properties instead of a hardcoded palette. */
+function mermaidThemeVariables(): Record<string, string> {
+  const editorBg = vscodeCssVar("--vscode-editor-background", "#1e1e1e");
+  const editorFg = vscodeCssVar("--vscode-editor-foreground", "#cccccc");
+  const panelBorder = vscodeCssVar("--vscode-panel-border", editorFg);
+  const selectionBg = vscodeCssVar("--vscode-editor-inactiveSelectionBackground", editorBg);
+  const noteBg = vscodeCssVar("--vscode-textCodeBlock-background", editorBg);
+
+  return {
+    background: editorBg,
+    primaryColor: selectionBg,
+    primaryTextColor: editorFg,
+    primaryBorderColor: panelBorder,
+    lineColor: editorFg,
+    textColor: editorFg,
+    actorBkg: selectionBg,
+    actorBorder: panelBorder,
+    actorTextColor: editorFg,
+    actorLineColor: panelBorder,
+    signalColor: editorFg,
+    signalTextColor: editorFg,
+    labelBoxBkgColor: selectionBg,
+    labelBoxBorderColor: panelBorder,
+    labelTextColor: editorFg,
+    loopTextColor: editorFg,
+    noteBkgColor: noteBg,
+    noteBorderColor: panelBorder,
+    noteTextColor: editorFg,
+    activationBorderColor: panelBorder,
+    activationBkgColor: selectionBg,
+    sequenceNumberColor: editorBg,
+  };
+}
+
 async function main(): Promise<void> {
   const root = document.getElementById("root");
   const payload = (window as unknown as { __BYNK_SEQUENCE_MODEL__?: SequencePayload })
@@ -49,7 +99,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "base",
+    themeVariables: mermaidThemeVariables(),
+  });
 
   const { text, participantOrder, messageOrder, noteOrder } = toMermaid(payload.model);
   let svg: string;

@@ -1,0 +1,14 @@
+context commerce.notifications
+
+type EmailJob = {
+  to: String,
+  subject: String,
+}
+
+type SendError = enum { Temporary, Permanent }
+
+service outbox from queue("outbound-email") {
+  on message(message: EmailJob) -> Effect[Result[(), SendError]] {
+    Ok(())
+  }
+}

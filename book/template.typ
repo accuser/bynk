@@ -193,6 +193,36 @@
   #v(8%)
 ]
 
+#let part-page(number, title) = {
+  set page(numbering: none)
+  pagebreak(weak: true, to: "odd")
+  align(center)[
+    #set align(center)
+    #set par(justify: false, leading: 1.08em)
+    #set text(hyphenate: false)
+    #v(28%)
+    #text(
+      font: sans-font,
+      size: 9.4pt,
+      weight: "semibold",
+      tracking: 0.13em,
+      fill: accent,
+      smallcaps[Part #number],
+    )
+    #v(1.15em)
+    #text(font: display-font, size: 26pt, weight: "regular", fill: ink)[
+      #title
+    ]
+    #v(1fr)
+  ]
+  pagebreak(to: "odd")
+}
+
+#let recto-break() = {
+  set page(numbering: none)
+  pagebreak(weak: true, to: "odd")
+}
+
 #let rights-page(meta) = page(numbering: none)[
   #v(1fr)
   #set text(font: sans-font, size: 8.7pt, fill: quiet)

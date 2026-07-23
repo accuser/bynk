@@ -1,0 +1,10 @@
+suite commerce.pricing {
+	case "a quote uses the declared rate and records the interaction" {
+		stub Rates.lookup("GBP") returns 2
+		stub Audit.note(_) returns ()
+		let total <- quote.call(50, "GBP")
+		expect total == 100
+		expect Rates.lookup called once with code == "GBP"
+		expect Audit.note called once with message == "quoted GBP"
+	}
+}

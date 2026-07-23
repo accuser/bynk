@@ -1,0 +1,8 @@
+suite commerce.pricing {
+	stub Exchange.lookup(_) returns 2
+
+	case "a test cannot invent a dependency" {
+		let total <- fixedPrice.call(50)
+		expect total == 50
+	}
+}

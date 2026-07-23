@@ -1,0 +1,6 @@
+suite commerce.orders as system {
+	case "a large order is rejected across the real context boundary" {
+		let result <- commerce.orders.checkout(20000)
+		expect result is Err(_)
+	}
+}

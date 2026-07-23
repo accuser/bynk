@@ -1,0 +1,15 @@
+context commerce.orders
+
+consumes commerce.payment as Payment
+
+type OrderError = enum { Rejected }
+
+service checkout {
+	on call(amount: Int) -> Effect[Result[(), OrderError]] {
+		let payment <- Payment.authorise(amount)
+		match payment {
+			Ok(_) => Ok(()),
+			Err(_) => Err(Rejected),
+		}
+	}
+}
