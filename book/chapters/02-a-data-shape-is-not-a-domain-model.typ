@@ -156,6 +156,13 @@ argument 1 to `reserve` has type `CustomerId`,
 but parameter `orderId` expects `OrderId`
 ]
 
+Nothing about that error is subtle, and that is the point. The reversed call in
+the opening scenario compiled, passed review, and surfaced only weeks later as a
+reservation booked against the wrong customer. Here the same mistake never
+becomes a running program at all. The cost has moved from a production incident
+to a red underline, paid by the person best placed to fix it, at the moment they
+wrote it.
+
 The compiler does not need to recognise the names `order` and `customer` as
 special domain language. It only needs to preserve the distinction the author
 declared. Even though both types are backed by non-empty strings, neither is a

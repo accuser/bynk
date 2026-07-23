@@ -137,7 +137,7 @@ visible. A production system would usually turn it into a domain time or
 period type before using it. An epoch integer is precise transport information,
 not yet a rich model of business time.
 
-== A useful refusal
+== The verdict a queue insists on
 
 The protocol distinction becomes clearest when a queue handler returns an
 ordinary domain result:

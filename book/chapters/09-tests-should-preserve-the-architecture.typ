@@ -177,7 +177,7 @@ secrets, bindings, network policy, or a particular deployment are correct.
 Those concerns still require deployment checks and, where warranted, tests
 against the deployed system.
 
-== A useful refusal
+== The seam a test can't invent
 
 The seam rule has force. Suppose a test attempts to introduce an exchange-rate
 collaborator that the target context neither declares nor reaches:
@@ -253,7 +253,7 @@ proof of unbounded liveness. Histories currently cover one agent, not a protocol
 across several owners or contexts. Their value is adversarial exploration of
 reachable paths, with an honest ceiling.
 
-== Could TypeScript do this?
+== Could existing tooling do this?
 
 Yes. Dependency injection can make production seams available to test doubles.
 Mock libraries can restrict replacement to interfaces. Spies can observe calls.

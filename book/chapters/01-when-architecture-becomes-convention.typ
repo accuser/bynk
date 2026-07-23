@@ -221,7 +221,7 @@ This is a small addition to the source and a large change in status. The
 dependency is no longer only a fact we can discover. It is a declaration the
 compiler can require.
 
-== A useful refusal
+== The edge that must be declared
 
 Remove the `consumes` clause and call the payment service by its full name. The
 reader can still understand the intention. The target exists, the operation
