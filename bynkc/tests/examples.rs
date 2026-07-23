@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 /// order. Adding an example here gates it and lets the gallery extract it.
 const EXAMPLES: &[&str] = &[
     "hello-world",
+    "greeter-i18n",
     "link-shortener",
     "feature-flags",
     "todo",

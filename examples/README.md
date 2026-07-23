@@ -12,6 +12,7 @@ language; the middle four lead with the **agent storage kinds** (`Map`, `Cache`,
 | Example | Leads with | Entry points | Capabilities | Tests |
 |---|---|---|---|---|
 | [`hello-world`](hello-world/) | refined types, capabilities, typed HTTP | http | `Logger` | greeting + `Subject` boundary |
+| [`greeter-i18n`](greeter-i18n/) | the `Locale` capability, negotiated `Accept-Language`, a message bundle | http | `Locale` | the bundle's `greet` wrapper |
 | [`link-shortener`](link-shortener/) | KV persistence with TTL, random ids | http | `Random`, `Kv` | `Slug`/`Url` boundary + key helper |
 | [`feature-flags`](feature-flags/) | public vs. authorised routes, KV listing | http | `Kv` | `FlagKey` boundary + key round-trip |
 | [`todo`](todo/) | an agent keyed by the caller's identity; a storage `Map` + `Query[T]` | http | — | the agent (add / complete / `pendingCount`) |
@@ -32,7 +33,8 @@ the aggregates `count`/`sum`, the joins `joinOn`/`leftJoin`, and `groupBy`
 (`orders`), plus the storage annotations `@indexed`/`@ttl`/`@retain` and the
 `Instant`/`Duration` time primitives (`sessions`, `event-log`). They also cover
 every actor scheme (`Visitor`, `Bearer`, an authorisation refinement, `Signature`)
-and the outbound-`Fetch` + JSON-codec story.
+and the outbound-`Fetch` + JSON-codec story. `greeter-i18n` covers the `Locale`
+capability, real `Accept-Language` negotiation, and a message bundle.
 
 ## The shared workflow
 
