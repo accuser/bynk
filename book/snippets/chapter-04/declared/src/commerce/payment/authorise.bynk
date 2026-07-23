@@ -1,0 +1,11 @@
+context commerce.payment
+
+service authorise {
+  on call(cents: Cents) -> Effect[Result[String, PaymentError]]
+      given Bank, Audit {
+    let outcome <- Bank.charge(cents)
+    let reference = outcome?
+    do Audit.authorised(reference)
+    Ok(reference)
+  }
+}

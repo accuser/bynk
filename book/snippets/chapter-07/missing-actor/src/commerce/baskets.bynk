@@ -1,0 +1,7 @@
+context commerce.baskets
+
+service api from http {
+  on GET("/basket") () -> Effect[HttpResult[String]] {
+    Ok("basket")
+  }
+}

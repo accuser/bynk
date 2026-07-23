@@ -1,0 +1,4 @@
+# Intentionally rejected source for chapter 7.
+[project]
+name = "chapter-07-missing-actor"
+version = "0.1.0"

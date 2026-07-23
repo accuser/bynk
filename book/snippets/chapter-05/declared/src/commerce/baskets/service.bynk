@@ -1,0 +1,19 @@
+context commerce.baskets
+
+service setBasketLine {
+  on call(
+    id: BasketId,
+    sku: Sku,
+    quantity: Quantity
+  ) -> Effect[()] {
+    do Basket(id).setLine(sku, quantity)
+  }
+}
+
+service basketSnapshot {
+  on call(id: BasketId) -> Effect[BasketSnapshot] {
+    let basket = Basket(id)
+    let view <- basket.snapshot()
+    view
+  }
+}

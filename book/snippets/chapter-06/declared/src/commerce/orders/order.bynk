@@ -1,0 +1,56 @@
+context commerce.orders
+
+agent Order {
+  key id: OrderId
+
+  store status: Cell[OrderStatus] = Draft
+  store paymentRef: Cell[Option[PaymentRef]]
+
+  invariant paid_has_payment_ref:
+    status == Paid implies paymentRef.isSome()
+
+  transition paid_is_terminal:
+    old.status is Paid implies new.status is Paid
+
+  on call place() -> Effect[Result[(), OrderError]] {
+    match status {
+      Draft => {
+        status := Placed
+        Ok(())
+      }
+      Placed => Err(ExpectedDraft)
+      Paid => Err(AlreadyPaid)
+    }
+  }
+
+  on call pay(ref: PaymentRef) -> Effect[Result[(), OrderError]] {
+    match status {
+      Placed => {
+        status := Paid
+        paymentRef := Some(ref)
+        Ok(())
+      }
+      Draft => Err(ExpectedPlaced)
+      Paid => Err(AlreadyPaid)
+    }
+  }
+
+  on call reopenForReview() -> Effect[()] {
+    match status {
+      Paid => {
+        status := Placed
+        ()
+      }
+      _ => ()
+    }
+  }
+
+  on call forgetPaymentReference() -> Effect[()] {
+    paymentRef := None
+    ()
+  }
+
+  on call snapshot() -> Effect[OrderSnapshot] {
+    OrderSnapshot { status: status, paymentRef: paymentRef }
+  }
+}
