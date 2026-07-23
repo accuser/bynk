@@ -14,7 +14,7 @@ held most of the system still while one architectural decision came into focus.
 Real programs do not offer that courtesy. Their meaning lives in the
 arrangement of all those decisions, including the decisions nobody made.
 
-Part IV therefore begins with a code-reading exercise. The system is an order
+This chapter is a code-reading exercise. The system is an order
 endpoint small enough to print and complete enough to compile. It accepts an
 authenticated request, reserves stock, charges a payment provider, and records
 the order. It has shared domain values, three contexts, two agents, one

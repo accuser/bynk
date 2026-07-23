@@ -52,11 +52,11 @@
 #recto-break()
 #include "chapters/10-a-compiler-refusal-can-teach-the-design.typ"
 
-#recto-break()
-#include "chapters/11-a-new-language-should-not-require-a-new-universe.typ"
-
 #part-page(4, [The argument tested])
 
+#include "chapters/11-a-new-language-should-not-require-a-new-universe.typ"
+
+#recto-break()
 #include "chapters/12-reading-a-whole-system.typ"
 
 #recto-break()

@@ -218,6 +218,49 @@ handler must violate an invariant merely by inspecting its source. The invalid
 maintenance handlers compile. Enforcement happens wherever the commit runs, in
 production as well as tests.
 
+== The guarantee is weaker here, and worth admitting
+
+This book's recurring claim is that Bynk moves architectural facts into the
+program, where the compiler can refuse a contradiction before the code runs. The
+state contract is the one place where that claim must be qualified.
+
+An invariant or transition is not tested when the program is compiled. It is
+tested when a handler tries to commit, wherever that commit happens to run. A
+violation is not a compile error a reviewer meets in a diff; it is a runtime
+fault in production, on a channel a caller cannot currently pattern-match. That
+is close to the situation Chapter 3 objected to. There, a domain failure hidden
+in a thrown exception was a promise the contract did not make. Here, an
+invariant breach surfaces as an internal fault that the type system did not
+force any caller to anticipate.
+
+The discomfort is real, and smoothing it over would be dishonest. So why does
+the book still count this as progress?
+
+Because the alternative in a conventional service is not a compile-time proof.
+It is the same rule living in a reducer, a database trigger, a review comment,
+or nobody's memory, upheld only by the discipline of whoever writes the next
+handler. Placing it on the agent that owns the state changes three things even
+without a static proof. The rule is written once, beside the state it governs,
+instead of being repeated at every mutation site. It is enforced against every
+handler, including the one added next year by someone who never read the
+others. And when it fails, the report names the specific contract that refused
+the commit, at the owner where the state lives, rather than appearing as corrupt
+data discovered three systems downstream.
+
+That is a weaker guarantee than an unrepresentable state or an exhaustive match,
+and a stronger one than a convention. Where a rule can be encoded so that a bad
+state cannot be constructed at all---the discriminated identities of Chapter 2,
+the closed sums of Chapter 3---that remains the better tool, because it fails at
+compile time and needs no runtime check. The invariant is for the rules that
+genuinely resist that treatment: relationships between fields, and relationships
+between one commit and the next. For those, a checked contract on the owner is
+the most the current language can honestly offer, and more than most systems
+keep anywhere at all.
+
+Whether a future version could prove some of these statically, rather than
+checking them at the commit, is an open question the language has not yet
+answered.
+
 == A useful refusal
 
 The difference between a snapshot and a step also appears in the declaration
