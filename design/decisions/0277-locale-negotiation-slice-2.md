@@ -1,11 +1,6 @@
----
-level: minor
-changelog: The Cloudflare `Locale` provider negotiates Accept-Language against a context's message bundle (RFC 4647 basic filtering)
----
+# 0277 — Cloudflare Accept-Language negotiation, slice 2 — RFC 4647 basic filtering against a context's message bundle
 
-## ADR: locale-negotiation-slice-2
-title: Cloudflare Accept-Language negotiation, slice 2 — RFC 4647 basic filtering against a context's message bundle
-summary: The default Locale provider on Cloudflare Workers negotiates a real request header instead of returning a fixed tag, wired by the emitter with no new language surface
+- **Status:** Accepted (v0.231)
 
 **Context.** [Locale capability](../tracks/locale-capability.md) (spine
 [#838](https://github.com/accuser/bynk/issues/838)), slice 2 (#882): slice 1

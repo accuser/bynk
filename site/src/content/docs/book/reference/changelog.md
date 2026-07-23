@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.230**.
+written against **v0.231**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.231.0** | The Cloudflare `Locale` provider negotiates Accept-Language against a context's message bundle (RFC 4647 basic filtering) |
 | **v0.230.0** | "`messages` templates gain ICU `plural`/`select`/`number`/`date` placeholders, formatted via the host `Intl`" |
 | **v0.229.2** | The sequence-diagram view links each participant's click-to-code to its own box — Mermaid 11 emits several `.actor` nodes per participant, so the previous `.actor` index zip mislinked (or failed to link) participant boxes |
 | **v0.229.1** | Sequence diagrams show the handler's `by` principal as an actor that originates the request and receives the replies; return-gating branches no longer collapse to an empty `alt` |
