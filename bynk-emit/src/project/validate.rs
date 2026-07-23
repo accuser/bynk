@@ -406,6 +406,68 @@ pub(crate) fn check_messages_bundles(
     }
 }
 
+/// Locale capability track, slice 2 (#882): a context whose direct `uses`
+/// reaches two or more message-bundle commons has no principled single
+/// answer for what `Locale.current()` should negotiate against — but this
+/// is only worth diagnosing when the context actually `consumes bynk {
+/// Locale }` at all; a context with 2+ bundles that never touches `Locale`
+/// has nothing ambiguous to resolve.
+pub(crate) fn check_locale_bundle_ambiguity(
+    parsed: &[ParsedFile],
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        if kinds.get(name) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let symbols::ContextMessageBundle::Many(bundles) =
+            symbols::detect_context_message_bundle(name, unit_uses, groups, kinds, parsed)
+        else {
+            continue;
+        };
+        let consumes_locale = unit_flattened
+            .get(name)
+            .and_then(|m| m.get("Locale"))
+            .is_some_and(|owner| owner == bynk_check::firstparty::BYNK_UNIT);
+        if !consumes_locale {
+            continue;
+        }
+        for &i in indices {
+            for c in parsed[i].consumes() {
+                if c.target.joined() != bynk_check::firstparty::BYNK_UNIT {
+                    continue;
+                }
+                let Some(locale_ident) = c.selected.iter().flatten().find(|id| id.name == "Locale")
+                else {
+                    continue;
+                };
+                let mut err = CompileError::new(
+                    "bynk.locale.multiple_message_bundles",
+                    locale_ident.span,
+                    format!(
+                        "context `{name}` uses {} message bundles ({}) — `Locale.current()` has no single bundle to negotiate against",
+                        bundles.len(),
+                        bundles.join(", "),
+                    ),
+                );
+                for &j in indices {
+                    for u in parsed[j].uses() {
+                        if bundles.contains(&u.target.joined()) {
+                            err = err
+                                .with_label(u.span, format!("`{}` used here", u.target.joined()));
+                        }
+                    }
+                }
+                errors.push_for(Some(&parsed[i].identity_path), err);
+            }
+        }
+    }
+}
+
 /// message-bundles slice 3 (#878): reports `bynk.messages.malformed_icu_syntax`
 /// for every ICU-dispatch placeholder in `entry.template` that fails to
 /// parse (unbalanced arm braces, an unknown format keyword, `#` outside a

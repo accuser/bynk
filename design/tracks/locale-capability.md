@@ -1,10 +1,13 @@
 # The `Locale` capability — ambient locale reads and a pure render seam for user-facing text
 
-- **Status:** Slicing — slice 1 (the `Locale` capability, `LocaleTag`, `Message`/
-  `MessageArg`, and a bundle-free `render`, #844) shipped; slices 2–3 follow, each
-  cut as a proposal sub-issue of the track's **spine issue**,
-  [#838](https://github.com/accuser/bynk/issues/838)
-  ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
+- **Status:** All named slices resolved — slice 1 (the `Locale` capability,
+  `LocaleTag`, `Message`/`MessageArg`, and a bundle-free `render`, #844)
+  shipped; slice 2 (Cloudflare `Accept-Language` negotiation, #882) shipped;
+  slice 3 (ICU MessageFormat, L4) retired in favour of message-bundles' own
+  slice 3 (§7 L4). §8 names no further slice; the track is a candidate for
+  retirement (see the spine issue,
+  [#838](https://github.com/accuser/bynk/issues/838) —
+  [ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** Bynk's first i18n requirement — a handler-authored or
   boundary-surfaced validation message reaching a caller in their own language
   with no handler code. No prior design-notes section; a stub lands with the
@@ -336,10 +339,15 @@ identifier, an implementation detail phrased carelessly into the message).
   compile-time *addition* on top of this runtime fallback, not a replacement
   for it — the runtime must stay total regardless of what compile-time
   completeness checking is layered on.
-- **L4 — the ICU/CLDR runtime dependency. Recommended: adopt ICU
-  MessageFormat (§4.5), deferred to slice 3** — a data-format choice that
-  commits the runtime to CLDR data, justified by `Money`/`Instant`/`Duration`
-  needing locale-aware formatting eventually; not new language surface.
+- **L4 — the ICU/CLDR runtime dependency. Resolved — subsumed by
+  message-bundles' slice 3** ([#878](https://github.com/accuser/bynk/issues/878),
+  [ADR 0276](../decisions/0276-messages-icu-format-slice-3.md), that track
+  now retired — see
+  [`../archive/retired-tracks.md`](../archive/retired-tracks.md)): host
+  `Intl` delegation (`Intl.PluralRules`/`Intl.NumberFormat`/`Intl.DateTimeFormat`),
+  no CLDR data bundled in the compiler. This track's own slice 3 (§8) is
+  retired in favour of that work — no separate ICU/CLDR decision remains
+  open here.
 
 ## 8. Slice decomposition (ordered)
 
@@ -359,12 +367,28 @@ internals.
   browser stance (§4.2), all returning a fixed `"en"` this slice (real
   `Accept-Language` negotiation is slice 2). Explicitly **excludes** automatic
   boundary-codec integration (Q0) — a handler calls `render` manually.
-- **Slice 2 — locale negotiation & fallback.** The default provider resolves
-  `Accept-Language` → `LocaleTag` against the bundle's declared locales, RFC
-  4647 basic filtering, fallback chain to the reference locale (§4.4).
-- **Slice 3 — ICU MessageFormat.** Plurals, gender, and locale-aware
-  number/date/currency formatting (§4.5), landing the ICU/CLDR dependency
-  decision.
+- **Slice 2 — shipped (#882).** Cloudflare-only real `Accept-Language`
+  negotiation: the default provider resolves `Accept-Language` → `LocaleTag`
+  against a context's uniquely-detected message bundle's declared locales
+  (RFC 4647 basic filtering — exact match, then successive rightmost-subtag
+  truncation), falling back to the reference locale (§4.4). Node/Browser are
+  unchanged (neither platform has an inbound-HTTP-request entry point in
+  this compiler). **A real, named limitation, not silently swept under**:
+  the pre-existing `uses`-clause name-conflict check (no aliasing support)
+  means a context can never simultaneously `uses bynk.locale` (required to
+  call `Locale.current()` at all) and `uses` a message-bundle commons (whose
+  synthesised `render` always collides with `bynk.locale`'s own) — so the
+  negotiation wiring this slice ships is verified at the unit level
+  (`negotiateLocale`, `detect_context_message_bundle`) and cannot yet be
+  exercised end-to-end by any compiling program. Fixing that is a separate,
+  general `uses`-aliasing feature, not scoped to this slice.
+- **Slice 3 — retired in favour of message-bundles' slice 3.** Shipped as
+  part of that track instead
+  ([#878](https://github.com/accuser/bynk/issues/878),
+  [ADR 0276](../decisions/0276-messages-icu-format-slice-3.md)): `plural`/
+  `select`/`number`/`date` placeholders over `Message.params`' `MessageArg`
+  values, resolving the ICU/CLDR dependency decision (L4) for both tracks.
+  This track has no further slice.
 
 ## 9. Risks
 

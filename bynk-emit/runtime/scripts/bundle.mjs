@@ -41,6 +41,7 @@ const MODULES = [
   "auth",
   "connection",
   "messages",
+  "locale",
 ];
 
 const HEADER = [

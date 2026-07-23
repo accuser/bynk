@@ -1,0 +1,7 @@
+commons msgs_a
+
+uses bynk.locale
+
+messages en @reference {
+  "greeting" => "Hello"
+}

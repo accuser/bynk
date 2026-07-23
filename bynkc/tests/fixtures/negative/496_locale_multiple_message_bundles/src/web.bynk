@@ -1,0 +1,12 @@
+context web
+
+consumes bynk { Locale }
+uses msgs_a
+uses msgs_b
+
+service api {
+  on call() -> Effect[String] given Locale {
+    let tag <- Locale.current()
+    Effect.pure(tag)
+  }
+}
