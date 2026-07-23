@@ -432,3 +432,51 @@ imposed; entries keep the order they were retired in.
   `message`/`withWhole`-family constructors (both export a symbol named
   `render`) — no fixture across any slice exercises cross-context bundle
   consumption, only a bundle testing its own commons.
+- **`locale-capability.md`** — Bynk's first i18n surface: an ambient `Locale`
+  capability (`current() -> Effect[LocaleTag]`) paired with a pure, total
+  `render(tag, msg) -> String` — the runtime seam a validation message needs
+  to become localised text, without touching predicate purity. All three
+  named slices resolved: **1** (v0.221.0,
+  [ADR 0256](../decisions/0256-locale-capability-slice-1.md),
+  [#844](https://github.com/accuser/bynk/issues/844), PR #845) — the
+  capability, `LocaleTag`/`Message`/`MessageArg`, and a bundle-free `render`
+  (a fixed `"en"` on every platform this slice, `tag` accepted but unused),
+  plus the `message`/`withText`/`withWhole`/`withNum`/`withMoment` builder
+  API, living in a new firstparty commons `bynk.locale` (a plain `fn` inside
+  an `adapter` has no export mechanism, forcing this placement); **2**
+  (v0.231.0, [ADR 0277](../decisions/0277-locale-negotiation-slice-2.md),
+  [#882](https://github.com/accuser/bynk/issues/882), PR #884) — Cloudflare-
+  only real `Accept-Language` negotiation via RFC 4647 basic filtering
+  against a context's uniquely-detected message bundle, shipped with a real,
+  named limitation: a `uses`-clause name collision meant the shipped wiring
+  could never be exercised end-to-end, verified only at the unit level;
+  **closed by** (v0.232.0,
+  [ADR 0278](../decisions/0278-locale-types-split.md),
+  [#886](https://github.com/accuser/bynk/issues/886), PR #888) — splitting
+  `bynk.locale` into a dependency-free leaf, `bynk.locale.types`
+  (`LocaleTag`/`MessageArg`/`Message`), so a context calling
+  `Locale.current()` no longer collides with a message-bundle commons's own
+  synthesised `render` — closing the exact rough edge the sibling
+  message-bundles track's own retirement summary above names, and verified
+  end-to-end this time, not just at the unit level
+  (`bynkc/tests/fixtures/positive/817_locale_bundle_wrapper_e2e`); **3** —
+  retired in favour of message-bundles' own slice 3
+  ([#878](https://github.com/accuser/bynk/issues/878),
+  [ADR 0276](../decisions/0276-messages-icu-format-slice-3.md)): ICU
+  MessageFormat resolved the ICU/CLDR dependency decision (L4) for both
+  tracks. Surface lives in `bynk-check/src/firstparty/bynk.locale.bynk` /
+  `bynk.locale.types.bynk`, the three platform bindings
+  (`bynk-check/src/firstparty/bindings/bynk-{node,browser,cloudflare}.ts`),
+  and `bynk-emit/runtime/src/locale.ts` (`negotiateLocale`). **Deferred
+  follow-on, named not silently assumed away — the track's own stated payoff
+  never shipped:** spine issue #838 framed this track's payoff as "a
+  validation error escaping a boundary reaches the caller in their language
+  with no handler code" — automatic boundary-codec integration, turning a
+  refinement failure directly into a localised `Message`. That depends on a
+  `predicate`-declaration language change (turning `ValidationError.message`
+  from a free-text string into a `Message { code, params }` descriptor)
+  which was never filed, has no design-notes section, and does not exist as
+  of this retirement — every `render` call across all three slices is
+  manual, handler-authored. A future track picking this up starts from the
+  `predicate`-declaration gap named here, not from `Locale` itself (which is
+  complete).

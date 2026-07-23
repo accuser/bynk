@@ -66,14 +66,14 @@ each track's spine issue; this table is deliberately just the map.
 | Track doc | Spine issue | Phase | Theme |
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
-| [`locale-capability.md`](locale-capability.md) | [#838](https://github.com/accuser/bynk/issues/838) | All named slices resolved — retirement candidate | The `Locale` capability: ambient locale reads and a pure render seam for user-facing text, Bynk's first i18n surface |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
 was opened retroactively. `lsp-foundations.md` (now retired) was the first
 track to run the ADR 0167 flow from the start — spine issue first, doc via a
 settling draft PR; `testing-the-boundary.md` (now retired) was the second;
-`locale-capability.md` is the third; `message-bundles.md` is the fourth.
+`locale-capability.md` (now retired) was the third; `message-bundles.md`
+(now retired) was the fourth.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
@@ -92,6 +92,18 @@ decisions, the named follow-ons — is kept for the record in
   bundle, multi-locale completeness + placeholder agreement, and ICU
   MessageFormat (`plural`/`select`/`number`/`date`, host-`Intl` delegation,
   no CLDR data bundled); shipped v0.228.0–v0.230.0 (ADRs 0272–0273, 0276).
+- **`locale-capability.md`** — Bynk's first i18n surface: an ambient `Locale`
+  capability paired with a pure, total `render(tag, msg) -> String`. All
+  three named slices resolved: the capability + `LocaleTag`/`Message`/
+  `render` (slice 1), real Cloudflare `Accept-Language` negotiation (slice
+  2, shipped with a `uses`-collision limitation later closed by a
+  `bynk.locale.types` leaf-commons split), and ICU MessageFormat retired in
+  favour of message-bundles' own slice 3; shipped v0.221.0–v0.232.0 (ADRs
+  0256, 0277–0278). The track's own stated payoff — automatic boundary-codec
+  integration from a refinement failure to a localised message — never
+  shipped: it depends on the still-unfiled `predicate`-declaration language
+  change; every `render` call across all three slices is manual,
+  handler-authored.
 - **`deploy.md`** — the `bynk deploy` verb: provisioning + remote deploy, and
   the load-bearing provisioning-state model (`bynk.deploy.lock`); the first
   driver command with irreversible, outward-facing side effects. All six
