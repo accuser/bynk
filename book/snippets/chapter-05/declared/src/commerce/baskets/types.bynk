@@ -1,0 +1,11 @@
+context commerce.baskets
+
+type BasketId = opaque String
+type Sku = opaque String
+type Quantity = Int where Positive
+
+type BasketSnapshot = {
+  lineCount: Int,
+  revision: Int,
+  note: Option[String],
+}

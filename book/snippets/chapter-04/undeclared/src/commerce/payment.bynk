@@ -1,0 +1,12 @@
+context commerce.payment
+
+capability Bank {
+  fn charge(cents: Int) -> Effect[String]
+}
+
+service authorise {
+  on call(cents: Int) -> Effect[String] {
+    let reference <- Bank.charge(cents)
+    reference
+  }
+}

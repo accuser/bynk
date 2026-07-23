@@ -1,0 +1,7 @@
+context commerce.audit
+
+service audit {
+  on call (event: String) -> Effect[Result[String, String]] by c: Caller {
+    Ok(c.identity)
+  }
+}

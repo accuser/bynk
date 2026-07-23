@@ -1,0 +1,14 @@
+context commerce.baskets
+
+type BasketId = opaque String
+type Revision = Int where Positive
+
+agent Basket {
+  key id: BasketId
+
+  store revision: Cell[Revision]
+
+  on call currentRevision() -> Effect[Revision] {
+    revision
+  }
+}

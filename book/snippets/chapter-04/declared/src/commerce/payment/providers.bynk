@@ -1,0 +1,17 @@
+context commerce.payment
+
+provides Bank = SandboxBank {
+  fn charge(cents: Cents) -> Effect[Result[String, PaymentError]] {
+    if cents > 100000 { Err(Declined) } else { Ok("AUTH-42") }
+  }
+}
+
+provides Log = SilentLog {
+  fn info(message: String) -> Effect[()] { () }
+}
+
+provides Audit = LoggedAudit given Log {
+  fn authorised(reference: String) -> Effect[()] {
+    do Log.info("authorised \(reference)")
+  }
+}

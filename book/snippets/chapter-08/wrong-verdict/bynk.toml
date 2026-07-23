@@ -1,0 +1,4 @@
+# Intentionally rejected source for chapter 8.
+[project]
+name = "chapter-08-wrong-verdict"
+version = "0.1.0"
