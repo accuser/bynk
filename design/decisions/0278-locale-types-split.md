@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "`bynk.locale`'s types split into a leaf commons, `bynk.locale.types`, closing Locale slice 2's uses-collision gap"
----
+# 0278 — Split `bynk.locale`'s types into a leaf commons, `bynk.locale.types`
 
-## ADR: locale-types-split
-title: Split `bynk.locale`'s types into a leaf commons, `bynk.locale.types`
-summary: LocaleTag/Message/MessageArg move to a dependency-free leaf so a context calling Locale.current() no longer collides with a message-bundle commons's synthesised render
+- **Status:** Accepted (v0.232)
 
 **Context.** Locale-negotiation slice 2 (#882, `design/pending/locale-negotiation-slice-2.md`)
 shipped Cloudflare `Accept-Language` negotiation wiring that auto-detects a
