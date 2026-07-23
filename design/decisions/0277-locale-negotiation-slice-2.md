@@ -2,8 +2,10 @@
 
 - **Status:** Accepted (v0.231)
 
-**Context.** [Locale capability](../tracks/locale-capability.md) (spine
-[#838](https://github.com/accuser/bynk/issues/838)), slice 2 (#882): slice 1
+**Context.** Locale capability (spine
+[#838](https://github.com/accuser/bynk/issues/838), now retired — see
+[`../archive/retired-tracks.md`](../archive/retired-tracks.md)), slice 2
+(#882): slice 1
 (#844, ADR 0256) shipped `Locale.current(): Effect[LocaleTag]` with all three
 platform providers (`bynk-node.ts`/`bynk-cloudflare.ts`/`bynk-browser.ts`)
 hardcoding `LocaleTag.of("en")` — no header, env, or request read anywhere.
