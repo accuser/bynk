@@ -1,0 +1,7 @@
+suite commerce.stock {
+	property "an accepted shipment has a prior accepted receipt" {
+		for all run: History[Stock] {
+			expect run.all((step) => (step.call is Ship && step.accepted) implies run.upTo(step).any((prior) => prior.call is Receive && prior.accepted))
+		}
+	}
+}

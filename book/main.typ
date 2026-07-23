@@ -36,3 +36,13 @@
 
 #recto-break()
 #include "chapters/08-time-and-messages-are-architectural-boundaries.typ"
+
+#part-page(3, [Confidence without illusion])
+
+#include "chapters/09-tests-should-preserve-the-architecture.typ"
+
+#recto-break()
+#include "chapters/10-a-compiler-refusal-can-teach-the-design.typ"
+
+#recto-break()
+#include "chapters/11-a-new-language-should-not-require-a-new-universe.typ"

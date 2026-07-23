@@ -1,0 +1,21 @@
+context support.counters
+
+agent Counter {
+	key name: String
+
+	store value: Cell[Int]
+
+	on call add(amount: Int) -> Effect[Int] {
+		do value.update((current) => current + amount)
+		value
+	}
+}
+
+service increment {
+	on call(name: String, amount: Int) -> Effect[Result[Int, ()]] {
+		if amount <= 0 { Err(()) } else {
+			let current <- Counter(name).add(amount)
+			Ok(current)
+		}
+	}
+}

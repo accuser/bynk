@@ -1,0 +1,5 @@
+context commerce.inventory
+
+service release {
+	on call(sku: String) -> Effect[Bool] { sku != "" }
+}

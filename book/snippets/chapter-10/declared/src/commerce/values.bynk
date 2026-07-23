@@ -1,0 +1,5 @@
+commons commerce.values
+
+type ParcelWeight = Int where InRange(1, 50000)
+
+fn ParcelWeight.parse(raw: Int) -> Result[ParcelWeight, ValidationError] { ParcelWeight.of(raw) }

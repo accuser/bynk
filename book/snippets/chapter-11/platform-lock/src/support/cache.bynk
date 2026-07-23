@@ -1,0 +1,10 @@
+context support.cache
+
+consumes bynk.cloudflare { Kv }
+
+service read {
+	on call(key: String) -> Effect[Option[String]] given Kv {
+		let value <- Kv.get(key)
+		value
+	}
+}
