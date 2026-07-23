@@ -1,0 +1,12 @@
+context app.web
+
+consumes bynk { Locale }
+uses bynk.locale.types
+uses app.bundle
+
+service greeting {
+  on call() -> Effect[String] given Locale {
+    let tag <- Locale.current()
+    Effect.pure(greet(tag))
+  }
+}
