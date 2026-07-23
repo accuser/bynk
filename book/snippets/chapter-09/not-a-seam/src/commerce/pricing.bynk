@@ -1,0 +1,13 @@
+context commerce.pricing
+
+capability Rates {
+	fn lookup(code: String) -> Effect[Int]
+}
+
+provides Rates = LiveRates {
+	fn lookup(code: String) -> Effect[Int] { Effect.pure(3) }
+}
+
+service fixedPrice {
+	on call(amount: Int) -> Effect[Int] { Effect.pure(amount) }
+}

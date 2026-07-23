@@ -1,0 +1,10 @@
+adapter text.normalise
+
+binding "./normalise.binding.ts"
+exports capability { Slug }
+
+capability Slug {
+	fn make(value: String) -> Effect[String]
+}
+
+provides Slug = JavaScriptSlug

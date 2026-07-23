@@ -1,0 +1,10 @@
+context commerce.inventory
+
+consumes commerce.returns as Returns
+
+service release {
+	on call(sku: String) -> Effect[Bool] {
+		let eligible <- Returns.eligible(sku)
+		eligible
+	}
+}

@@ -1,0 +1,9 @@
+context commerce.payment
+
+exports transparent { PaymentError }
+
+type PaymentError = enum { Declined }
+
+service authorise {
+	on call(amount: Int) -> Effect[Result[(), PaymentError]] { if amount <= 10000 { Effect.pure(Ok(())) } else { Effect.pure(Err(Declined)) } }
+}

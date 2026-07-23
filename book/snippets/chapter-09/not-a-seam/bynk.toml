@@ -1,0 +1,4 @@
+# Intentionally rejected source for chapter 9.
+[project]
+name = "chapter-09-not-a-seam"
+version = "0.1.0"
