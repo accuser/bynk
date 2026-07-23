@@ -1,10 +1,10 @@
 context commerce.baskets
 
-type BasketId = opaque String
+type CustomerId = opaque String where NonEmpty
 type Revision = Int where Positive
 
 agent Basket {
-  key id: BasketId
+  key owner: CustomerId
 
   store revision: Cell[Revision]
 

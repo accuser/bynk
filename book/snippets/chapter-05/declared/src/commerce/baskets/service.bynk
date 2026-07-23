@@ -2,17 +2,17 @@ context commerce.baskets
 
 service setBasketLine {
   on call(
-    id: BasketId,
+    owner: CustomerId,
     sku: Sku,
     quantity: Quantity
   ) -> Effect[()] {
-    do Basket(id).setLine(sku, quantity)
+    do Basket(owner).setLine(sku, quantity)
   }
 }
 
 service basketSnapshot {
-  on call(id: BasketId) -> Effect[BasketSnapshot] {
-    let basket = Basket(id)
+  on call(owner: CustomerId) -> Effect[BasketSnapshot] {
+    let basket = Basket(owner)
     let view <- basket.snapshot()
     view
   }

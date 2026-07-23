@@ -1,4 +1,4 @@
-type BasketId = string;
+type CustomerId = string;
 type Sku = string;
 
 type BasketState = {
@@ -8,8 +8,8 @@ type BasketState = {
 };
 
 interface BasketStore {
-  load(id: BasketId): Promise<BasketState | undefined>;
-  save(id: BasketId, state: BasketState): Promise<void>;
+  load(id: CustomerId): Promise<BasketState | undefined>;
+  save(id: CustomerId, state: BasketState): Promise<void>;
 }
 
 declare const store: BasketStore;
@@ -19,7 +19,7 @@ function emptyBasket(): BasketState {
 }
 
 export async function setLine(
-  id: BasketId,
+  id: CustomerId,
   sku: Sku,
   quantity: number,
 ): Promise<void> {
@@ -32,7 +32,7 @@ export async function setLine(
 }
 
 export async function leaveNote(
-  id: BasketId,
+  id: CustomerId,
   message: string,
 ): Promise<void> {
   const before = (await store.load(id)) ?? emptyBasket();

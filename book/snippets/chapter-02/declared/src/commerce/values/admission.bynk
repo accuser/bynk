@@ -1,4 +1,4 @@
-commons commerce.order_values
+commons commerce.values
 
 fn OrderId.parse(raw: String) -> Result[OrderId, ValidationError] {
   OrderId.of(raw)

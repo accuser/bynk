@@ -1,4 +1,4 @@
-commons commerce.order_values
+commons commerce.values
 
 type Quantity = Int where InRange(1, 100)
 

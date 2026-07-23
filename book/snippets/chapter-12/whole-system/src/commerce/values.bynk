@@ -1,0 +1,13 @@
+commons commerce.values
+
+type OrderId = opaque String where NonEmpty
+
+type CustomerId = opaque String where NonEmpty
+
+type Sku = opaque String where NonEmpty
+
+type Quantity = Int where InRange(1, 100)
+
+type Cents = Int where Positive
+
+type OrderRequest = { sku: Sku, quantity: Quantity, cents: Cents }

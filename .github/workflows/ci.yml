@@ -148,6 +148,7 @@ jobs:
               - *global
               - 'book/**'
               - 'scripts/build-book.sh'
+              - 'scripts/check-book-snippets.sh'
       # Collapse "not a PR" (push/schedule) and "a global file changed" into one
       # boolean the downstream `if:`s can OR against. Pinned to the `global`
       # output so a lockfile/toolchain/workflow change fans out to everything.
@@ -478,6 +479,26 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  book-snippets:
+    # Compile-test every Bynk listing in the print manuscript (book/README.md
+    # working principle 7). `bynkc check` over each snippet project must match
+    # its expected outcome in book/snippets/EXPECTATIONS.tsv: a clean pass, the
+    # exact refusal a chapter quotes, or a specific warning. Runs when the
+    # snippets change *or* when the compiler changes, so a diagnostic rename
+    # cannot silently break a chapter's evidence.
+    name: Print book snippets (bynkc)
+    needs: changes
+    if: needs.changes.outputs.book == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # The script builds bynkc (debug) if absent, then runs `bynkc check` over
+      # each project. Check-only: no Node or tsc required.
+      - name: Compile-test the book's Bynk snippets
+        run: ./scripts/check-book-snippets.sh
+
   extension:
     # Build, type-check, bundle, and package the VS Code extension, then assert
     # the bundle has no unresolved external `require` other than `vscode`. This
@@ -746,6 +767,7 @@ jobs:
       - playground
       - site
       - book
+      - book-snippets
       - extension
       - extension-tests
       - grammar

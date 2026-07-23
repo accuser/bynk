@@ -1,6 +1,6 @@
 bynk.toml
 src/
-  shop/
+  commerce/
     values.bynk
     inventory.bynk
     orders.bynk

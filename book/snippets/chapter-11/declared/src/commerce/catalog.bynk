@@ -1,12 +1,12 @@
-context support.dashboard
+context commerce.catalog
 
-consumes support.counters as Counters
+consumes commerce.metrics as Metrics
 consumes text.normalise { Slug }
 
 service refresh {
 	on call(label: String) -> Effect[Result[Int, ()]] given Slug {
 		let name <- Slug.make(label)
-		let result <- Counters.increment(name, 1)
+		let result <- Metrics.increment(name, 1)
 		result
 	}
 }

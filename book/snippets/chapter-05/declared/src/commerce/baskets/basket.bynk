@@ -1,7 +1,7 @@
 context commerce.baskets
 
 agent Basket {
-  key id: BasketId
+  key owner: CustomerId
 
   store lines: Map[Sku, Quantity]
   store note: Cell[Option[String]]

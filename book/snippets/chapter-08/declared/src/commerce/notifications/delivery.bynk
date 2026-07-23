@@ -1,6 +1,6 @@
 context commerce.notifications
 
-type UserId = String where NonEmpty
+type CustomerId = opaque String where NonEmpty
 type EmailAddress = String where NonEmpty
 
 type EmailJob = {
@@ -10,14 +10,14 @@ type EmailJob = {
 
 type SendError = enum { Temporary, Permanent }
 
-actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+actor Customer { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = CustomerId }
 
 capability Mailer {
   fn send(job: EmailJob) -> Effect[Result[(), SendError]]
 }
 
 service api from http {
-  on POST("/emails") (body: EmailJob) -> Effect[HttpResult[String]] by User given Mailer {
+  on POST("/emails") (body: EmailJob) -> Effect[HttpResult[String]] by Customer given Mailer {
     let outcome <- Mailer.send(body)
     match outcome {
       Ok(_) => NoContent

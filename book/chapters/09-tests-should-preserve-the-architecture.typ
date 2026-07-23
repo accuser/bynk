@@ -216,7 +216,7 @@ The stock agent has two operations and one snapshot invariant:
 
 #code-listing(
   [The invariant prevents a committed negative stock level],
-  read("../snippets/chapter-09/declared/src/commerce/stock.bynk"),
+  read("../snippets/chapter-09/declared/src/commerce/inventory.bynk"),
   lang: "bynk",
 )
 

@@ -1,7 +1,7 @@
-type UserId = string;
+type CustomerId = string;
 
 type Principal = {
-  readonly id: UserId;
+  readonly id: CustomerId;
   readonly claims: ReadonlySet<string>;
 };
 
@@ -20,15 +20,15 @@ type HttpResponse<T> = {
 
 type Handler<T> = (request: HttpRequest) => Promise<HttpResponse<T>>;
 
-declare function requireUser<T>(
+declare function requireCustomer<T>(
   handler: (request: AuthenticatedRequest) => Promise<HttpResponse<T>>,
 ): Handler<T>;
 
 declare const baskets: {
-  load(owner: UserId): Promise<{ readonly itemCount: number }>;
+  load(owner: CustomerId): Promise<{ readonly itemCount: number }>;
 };
 
-export const getBasket = requireUser(async (request) => {
+export const getBasket = requireCustomer(async (request) => {
   if (!request.principal.claims.has("basket:read")) {
     return { status: 403, body: { itemCount: 0 } };
   }

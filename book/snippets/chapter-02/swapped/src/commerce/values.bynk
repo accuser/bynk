@@ -1,4 +1,4 @@
-commons commerce.order_values
+commons commerce.values
 
 type OrderId = opaque String where NonEmpty
 type CustomerId = opaque String where NonEmpty

@@ -1,0 +1,18 @@
+context commerce.payments
+
+uses commerce.values
+exports transparent { PaymentError }
+
+type PaymentError = enum { Declined, ProviderUnavailable }
+
+capability Bank {
+	fn charge(customer: CustomerId, cents: Cents) -> Effect[Result[String, PaymentError]]
+}
+
+provides Bank = DemonstrationBank {
+	fn charge(customer: CustomerId, cents: Cents) -> Effect[Result[String, PaymentError]] { if cents > 50000 { Err(Declined) } else { Ok("bank-reference") } }
+}
+
+service charge {
+	on call(customer: CustomerId, cents: Cents) -> Effect[Result[String, PaymentError]] given Bank { Bank.charge(customer, cents) }
+}

@@ -40,8 +40,8 @@ and memory in a test.
 The problem is not the repository. It is what the repository contract permits
 us to forget.
 
-Every operation receives a `BasketId`, loads whatever state is stored under it,
-invents an empty basket when none exists, builds a replacement value, and saves
+Every operation receives a `CustomerId`, loads whatever state is stored under
+it, invents an empty basket when none exists, builds a replacement value, and saves
 it. The repetition is architectural work disguised as plumbing. Each new
 operation must remember the same lifecycle rule and use the same key. A generic
 `save` also permits code elsewhere to write a basket shape without going
@@ -79,9 +79,9 @@ The basket vocabulary gives the key and stored values their domain identities:
   lang: "bynk",
 )
 
-`BasketId` and `Sku` have the same runtime representation, but their opaque
+`CustomerId` and `Sku` have the same runtime representation, but their opaque
 types stop one being passed where the other is required. `Quantity` carries the
-positive-value rule from Chapter 2. State ownership begins with identity, so
+`InRange` rule from Chapter 2. State ownership begins with identity, so
 letting unrelated strings select an instance would weaken the boundary before
 any state was read.
 
@@ -128,8 +128,8 @@ handler:
   lang: "bynk",
 )
 
-`Basket(id)` does not mean “allocate a new empty basket every time”. It addresses
-the logical `Basket` instance selected by `id`. Calls that use the same key meet
+`Basket(owner)` does not mean “allocate a new empty basket every time”. It addresses
+the logical `Basket` instance selected by `owner`. Calls that use the same key meet
 the same remembered state. Calls using different keys address independent
 instances.
 
@@ -144,9 +144,10 @@ in-process registry keyed by the same logical value. The source-level model is
 the stable part: one declared owner per key, regardless of the mechanism used
 to locate it.
 
-That independence is also a modelling choice. A basket per `BasketId` gives
-each basket its own state boundary. A basket book keyed by customer, with every
-basket stored in one map, would create a different boundary. The declarations
+That independence is also a modelling choice. A basket per `CustomerId` gives
+each customer's basket its own state boundary. A single basket book keyed by a
+storefront, holding every customer's basket in one map, would create a different
+boundary. The declarations
 might hold similar data, but contention, atomicity, querying, and failure would
 be grouped differently.
 
@@ -277,7 +278,7 @@ to change together, or gather unrelated data into one oversized instance.
 Queries across many owners may require a separate index or reporting model.
 
 Nor does an agent establish who is entitled to name a key. If an HTTP handler
-accepts an arbitrary `BasketId`, the fact that `Basket(id)` has well-defined
+accepts an arbitrary `CustomerId`, the fact that `Basket(owner)` has well-defined
 state does not authorise the caller to see it. Ownership of state and authority
 of callers are separate questions. Chapter 7 will join them.
 

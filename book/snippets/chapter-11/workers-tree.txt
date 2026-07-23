@@ -3,12 +3,12 @@ text/
   normalise.ts
   normalise.binding.ts
 workers/
-  support-counters/
+  commerce-metrics/
     handlers.ts
     index.ts
     compose.ts
     wrangler.toml
-  support-dashboard/
+  commerce-catalog/
     handlers.ts
     index.ts
     compose.ts

@@ -1,6 +1,6 @@
 context commerce.orders
 
-uses commerce.order_values
+uses commerce.values
 
 consumes commerce.payment as Payment
 

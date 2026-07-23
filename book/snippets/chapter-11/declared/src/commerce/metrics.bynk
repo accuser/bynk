@@ -1,4 +1,4 @@
-context support.counters
+context commerce.metrics
 
 agent Counter {
 	key name: String
