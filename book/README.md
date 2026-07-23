@@ -24,33 +24,47 @@ while the manuscript finds its shape.
 - `notes/` contains editorial planning and source maps, not manuscript prose.
 - `snippets/` contains book-specific Bynk programs and fragments.
 - `figures/` contains original book artwork.
+- `fonts/` contains the fixed, licensed Source faces used for typesetting.
 - `build/` is ignored local output.
 
 Chapter files should describe meaning, not page geometry. New visual components
 belong in `template.typ`; they should only be added when real manuscript content
 demands them.
 
-## Toolchain
+## Build
 
-The current specimen targets **Typst 0.15.0**. Build from the repository root so
-future listings can read compiler-tested examples elsewhere in the repository:
-
-```sh
-mkdir -p output/pdf
-typst compile --root . \
-  --font-path /path/to/source-fonts \
-  book/main.typ output/pdf/bynk-manuscript.pdf
-```
-
-For continuous preview while writing:
+Build the manuscript from anywhere in the worktree:
 
 ```sh
-typst watch --root . \
-  --font-path /path/to/source-fonts \
-  book/main.typ output/pdf/bynk-manuscript.pdf
+./scripts/build-book.sh
 ```
 
-The generated PDF is not committed.
+The PDF is written to `output/pdf/bynk-manuscript.pdf`. For continuous preview
+while writing:
+
+```sh
+./scripts/build-book.sh watch
+```
+
+The generated PDF and downloaded toolchain are not committed.
+
+The build is pinned to **Typst 0.15.0**. If that exact version is already on
+`PATH`, the script uses it. Otherwise, on macOS or Linux (arm64 or x86_64), it
+downloads the official release, verifies its SHA-256 digest, and caches the
+binary under `book/build/toolchain/`. Set `BYNK_TYPST_BIN` to use an exact Typst
+0.15.0 executable on another platform.
+
+Optional environment overrides:
+
+- `BYNK_TYPST_BIN` selects an exact Typst 0.15.0 executable.
+- `BYNK_BOOK_OUTPUT` changes the generated PDF path.
+- `SOURCE_DATE_EPOCH` sets the PDF creation timestamp. When omitted in a Git
+  checkout, the build derives a stable timestamp from the latest manuscript or
+  build-script commit.
+
+CI runs the same command when manuscript, font, or build-script inputs change.
+The resulting PDF is available from the workflow run as the
+`bynk-manuscript` artifact.
 
 ### Source fonts
 
@@ -60,9 +74,11 @@ Source Sans 3 for section headings and book furniture, and Source Code Pro for
 listings, inline code, and diagnostics. There is no alternate typography
 setting.
 
-The Source fonts are distributed by Adobe under the SIL Open Font License 1.1.
-They are not currently vendored; exact static or variable files and a
-reproducible acquisition method must be settled before production.
+The ten static OpenType faces used by the manuscript are vendored in `fonts/`.
+The build ignores system fonts and verifies these files before compiling, so
+local and CI line breaks do not depend on machine state. Their exact versions,
+upstream archives, checksums, copyright notices, and SIL Open Font License 1.1
+are recorded in that directory.
 
 ## Working principles
 
