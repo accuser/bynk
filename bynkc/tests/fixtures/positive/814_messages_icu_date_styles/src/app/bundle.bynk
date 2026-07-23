@@ -1,6 +1,7 @@
 commons app.bundle
 
 uses bynk.locale
+uses bynk.locale.types
 
 ---
 message-bundles slice 3 (#878): `date` placeholders, bare (default) and

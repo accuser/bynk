@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, selectPluralArm, formatIcuNumber, formatIcuDate } from "../runtime.js";
 
-import { LocaleTag, Message, MessageArg } from "../bynk/locale.js";
+import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
 /**

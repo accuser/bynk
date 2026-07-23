@@ -172,7 +172,7 @@ There are **430** codes in total.
 | `bynk.messages.format_mismatch` | A code's placeholder is formatted as a different ICU kind (plain/plural/select/number/date) across declared locales. |  |
 | `bynk.messages.incomplete` | A locale is missing a code the reference locale declares. |  |
 | `bynk.messages.malformed_icu_syntax` | A message template's ICU placeholder syntax is invalid — unbalanced arm braces, an unknown format keyword, `#` outside a plural arm, a missing mandatory `other` arm, or an explicitly out-of-scope construct (`selectordinal`, `offset:`/`=N`, a CLDR skeleton). |  |
-| `bynk.messages.missing_locale_dependency` | A commons declaring `messages` doesn't `uses bynk.locale`, which its generated `render`'s fallback needs. |  |
+| `bynk.messages.missing_locale_dependency` | A commons declaring `messages` doesn't `uses bynk.locale` and/or `uses bynk.locale.types`, which its generated `render` and the types its signature names need. |  |
 | `bynk.messages.missing_reference` | A message bundle has no `@reference` block. |  |
 | `bynk.messages.multiple_reference` | A message bundle has more than one `@reference` block. |  |
 | `bynk.messages.outside_commons` | A `messages` declaration appears outside a commons. |  |

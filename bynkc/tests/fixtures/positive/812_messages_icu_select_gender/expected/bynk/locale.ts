@@ -4,49 +4,8 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
 import { reverse } from "./list.js";
+import { LocaleTag, Message, MessageArg } from "./locale/types.js";
 import { join } from "./string.js";
-
-/**
- * A validated locale identifier: `language[-Script][-REGION]`
- * (e.g. `en`, `pt-BR`, `zh-Hans-CN`).
- */
-export type LocaleTag = string & { readonly __brand: "LocaleTag" };
-
-export const LocaleTag = {
-  of(value: string): Result<LocaleTag, ValidationError> {
-    if (!new RegExp("^(?:" + "[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?" + ")$").test(value)) {
-      return Err({ field: "LocaleTag", message: "must match /[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?/", value });
-    }
-    return Ok(value as LocaleTag);
-  },
-};
-
-/**
- * One value substitutable into a rendered message.
- */
-export type MessageArg =
-    { readonly tag: "Text"; readonly value: string }
-  | { readonly tag: "Whole"; readonly value: number }
-  | { readonly tag: "Num"; readonly value: number }
-  | { readonly tag: "Moment"; readonly value: number };
-
-export const MessageArg = {
-  Text: (value: string): MessageArg => ({ tag: "Text", value }),
-  Whole: (value: number): MessageArg => ({ tag: "Whole", value }),
-  Num: (value: number): MessageArg => ({ tag: "Num", value }),
-  Moment: (value: number): MessageArg => ({ tag: "Moment", value }),
-};
-
-/**
- * A message to render: a lookup code plus its named substitution values.
- */
-export interface Message {
-  readonly code: string;
-  readonly params: ReadonlyMap<string, MessageArg>;
-}
-
-export const Message = {
-};
 
 /**
  * Renders `msg`. Slice 1 has no bundle/lookup mechanism: the output is
@@ -101,11 +60,11 @@ export function renderArg(arg: MessageArg): string {
  * Starts a `Message` with no substitution values. Building `Message`/
  * `MessageArg` through this constructor and the `withX` helpers below (rather
  * than a record/sum literal) is deliberate: a consuming context's own `uses
- * bynk.locale` gets a per-context-rebranded view of the *types* (v0.4 §3.4),
- * but a plain `fn` mixed in from a commons is a value import and is never
- * rebranded — so building a `Message` exclusively through these functions
- * keeps `MessageArg`/`Message` values flowing untyped end to end, sidestepping
- * the rebrand entirely.
+ * bynk.locale.types` gets a per-context-rebranded view of the *types* (v0.4
+ * §3.4), but a plain `fn` mixed in from a commons is a value import and is
+ * never rebranded — so building a `Message` exclusively through these
+ * functions keeps `MessageArg`/`Message` values flowing untyped end to end,
+ * sidestepping the rebrand entirely.
  */
 export function message(code: string): Message {
   return { code: code, params: new Map<string, MessageArg>() };

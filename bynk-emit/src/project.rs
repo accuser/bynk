@@ -1123,12 +1123,17 @@ fn phase_parse(
             .any(|pf| pf.uses().iter().any(|u| u.target.joined() == unit))
     };
     let uses_map = uses_unit(&parsed, firstparty::MAP_UNIT);
-    // `bynk.locale` itself `uses bynk.list` and `uses bynk.string` (including
-    // transitively via the `bynk` adapter's own `uses bynk.locale`, for
-    // `capability Locale`'s `LocaleTag` — Locale capability track, slice 1,
-    // #844); compute it up front so both injections below can OR it in the
-    // same way `uses_map` is OR'd into the `bynk.list` check.
+    // `bynk.locale` itself `uses bynk.list` and `uses bynk.string`; compute it
+    // up front so both injections below can OR it in the same way `uses_map`
+    // is OR'd into the `bynk.list` check.
     let uses_locale = uses_unit(&parsed, firstparty::LOCALE_UNIT);
+    // `bynk.locale` itself now `uses bynk.locale.types` (locale-negotiation-
+    // slice-2 follow-up, #886 — split out so a context can reach `LocaleTag`
+    // without also reaching `bynk.locale`'s `render`), and the `bynk` adapter
+    // `uses bynk.locale.types` directly for `capability Locale`'s
+    // `LocaleTag` — so this needs the same `|| uses_locale` cascade `uses_map`
+    // gets from `bynk.map` into the `bynk.list` check just below.
+    let uses_locale_types = uses_locale || uses_unit(&parsed, firstparty::LOCALE_TYPES_UNIT);
     if uses_map {
         match lexer::tokenize(firstparty::BYNK_MAP_SRC)
             .map_err(|e| vec![e])
@@ -1182,9 +1187,30 @@ fn phase_parse(
             Err(errs) => errors.extend_for(None, errs),
         }
     }
-    // Locale capability track, slice 1 (#844): the locale value types
-    // (`LocaleTag`/`MessageArg`/`Message`) and the bundle-free `render`
-    // helper.
+    // Locale-negotiation-slice-2 follow-up (#886): the locale value types
+    // (`LocaleTag`/`MessageArg`/`Message`), split out to a dependency-free
+    // leaf so `bynk.bynk`'s own `uses` (for `capability Locale`'s
+    // `LocaleTag`) and a message-bundle commons's `uses bynk.locale` (for
+    // `render`) no longer have to be the same clause.
+    if uses_locale_types {
+        match lexer::tokenize(firstparty::BYNK_LOCALE_TYPES_SRC)
+            .map_err(|e| vec![e])
+            .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_LOCALE_TYPES_SRC))
+        {
+            Ok(unit) => parsed.push(ParsedFile {
+                identity_path: PathBuf::from("bynk/locale/types.bynk"),
+                source_path: PathBuf::from("bynk/locale/types.bynk"),
+                abs_path: None,
+                source: firstparty::BYNK_LOCALE_TYPES_SRC.to_string(),
+                unit,
+                kind: UnitKind::Commons,
+                synthetic: true,
+            }),
+            Err(errs) => errors.extend_for(None, errs),
+        }
+    }
+    // Locale capability track, slice 1 (#844): the bundle-free `render`
+    // helper and the `message`/`with*` builder API.
     if uses_locale {
         match lexer::tokenize(firstparty::BYNK_LOCALE_SRC)
             .map_err(|e| vec![e])

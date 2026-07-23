@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0278](0278-locale-types-split.md) | **Split `bynk.locale`'s types into a leaf commons, `bynk.locale.types`** (v0.232) — LocaleTag/Message/MessageArg move to a dependency-free leaf so a context calling Locale.current() no longer collides with a message-bundle commons's synthesised render | Accepted (v0.232) |
 | [0277](0277-locale-negotiation-slice-2.md) | **Cloudflare Accept-Language negotiation, slice 2 — RFC 4647 basic filtering against a context's message bundle** (v0.231) — The default Locale provider on Cloudflare Workers negotiates a real request header instead of returning a fixed tag, wired by the emitter with no new language surface | Accepted (v0.231) |
 | [0276](0276-messages-icu-format-slice-3.md) | **The ICU MessageFormat template format, slice 3 — plural/select/number/date over MessageArg's typed args** (v0.230) — A bynk-emit-only mini-parser adds four ICU dispatch forms to a message template, checked and emitted with no bynk-syntax grammar change | Accepted (v0.230) |
 | [0275](0275-sequence-diagram-principal-actor.md) | **The handler's `by` principal is an actor that originates the request and receives replies** (v0.229.1) — A principal renders as a leftmost actor; the request is an inbound message and outcomes return to it | Accepted (v0.229.1) |

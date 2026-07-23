@@ -3,7 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { Message as __CommonsMessage, message, render } from "../bynk/locale.js";
+import { message, render } from "../bynk/locale.js";
+import { Message as __CommonsMessage } from "../bynk/locale/types.js";
 
 import * as bynk from "../bynk.js";
 

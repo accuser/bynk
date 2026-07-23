@@ -1,0 +1,15 @@
+---
+Locale-negotiation-slice-2 follow-up (#886): proves the gap named in
+`design/pending/locale-negotiation-slice-2.md` is closed — `app.web`
+combines a real `Locale.current()` call with a message-bundle's own
+`render` (via `app.bundle`'s `greet` wrapper) in one context, with no
+`uses bynk.locale` anywhere in `app.web` itself.
+---
+suite app.web as unit {
+  stub Locale.current() returns "en"
+
+  case "renders the bundle's greeting through the wrapper" {
+    let g <- greeting.call()
+    expect g == "Hello"
+  }
+}

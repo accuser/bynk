@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as app_bundle from "./../app/bundle.js";
 import * as bynk_locale from "./../bynk/locale.js";
+import * as bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -35,7 +36,8 @@ async function test_substitutes_a_present_placeholder() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withText(message("greeting"), "name", "Ada");
     if (!(render(("en" as any), msg) === "Hello, Ada!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:10:12", 358, 392, "expect render(\"en\", msg) == \"Hello, Ada!\"\n  expected: render(\"en\", msg) == \"Hello, Ada!\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("Hello, Ada!"))); }
     return { pass: true };
@@ -52,7 +54,8 @@ async function test_renders_a_literal_only_template_unchanged() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     if (!(render(("en" as any), message("farewell")) === "Bye")) { throw __bynkExpectFailure("tests/bundle.test.bynk:14:12", 462, 504, "expect render(\"en\", message(\"farewell\")) == \"Bye\"\n  expected: render(\"en\", message(\"farewell\")) == \"Bye\"\n  actual:   " + __bynkShow((render(("en" as any), message("farewell")))) + " == " + __bynkShow(("Bye"))); }
     return { pass: true };
   } catch (e) {
@@ -68,7 +71,8 @@ async function test_leaves_an_unmatched_placeholder_as_literal_text() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     if (!(render(("en" as any), message("unmatched_placeholder")) === "Value: {oops}")) { throw __bynkExpectFailure("tests/bundle.test.bynk:18:12", 580, 645, "expect render(\"en\", message(\"unmatched_placeholder\")) == \"Value: {oops}\"\n  expected: render(\"en\", message(\"unmatched_placeholder\")) == \"Value: {oops}\"\n  actual:   " + __bynkShow((render(("en" as any), message("unmatched_placeholder")))) + " == " + __bynkShow(("Value: {oops}"))); }
     return { pass: true };
   } catch (e) {
@@ -84,7 +88,8 @@ async function test_substitutes_multiple_typed_placeholders() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withNum(withWhole(message("quantity"), "count", 3), "price", 9.99);
     if (!(render(("en" as any), msg) === "3 at 9.99")) { throw __bynkExpectFailure("tests/bundle.test.bynk:23:12", 794, 826, "expect render(\"en\", msg) == \"3 at 9.99\"\n  expected: render(\"en\", msg) == \"3 at 9.99\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("3 at 9.99"))); }
     return { pass: true };
@@ -101,7 +106,8 @@ async function test_falls_back_to_bynk_locale_render_for_a_code_the_bundle_doesn
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withWhole(message("nope"), "x", 5);
     if (!(render(("en" as any), msg) === "nope {x=5}")) { throw __bynkExpectFailure("tests/bundle.test.bynk:28:12", 974, 1007, "expect render(\"en\", msg) == \"nope {x=5}\"\n  expected: render(\"en\", msg) == \"nope {x=5}\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("nope {x=5}"))); }
     return { pass: true };

@@ -2,6 +2,7 @@ context app.greet
 
 consumes bynk { Locale }
 uses bynk.locale
+uses bynk.locale.types
 
 service currentTag {
   on call() -> Effect[String] given Locale {

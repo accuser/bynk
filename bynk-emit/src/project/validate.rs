@@ -169,8 +169,10 @@ pub(crate) fn check_platform_lock(
 /// blocks — commons-only legality, exactly one `@reference` annotation
 /// across every `messages` block in the commons, a within-block duplicate
 /// `code`, and (since nothing in this compiler auto-injects a `uses`
-/// clause) that a commons declaring `messages` also `uses bynk.locale` —
-/// the generated bundle-scoped `render`'s fallback needs it in scope.
+/// clause) that a commons declaring `messages` also `uses bynk.locale`
+/// (the generated bundle-scoped `render`'s fallback needs it in scope) and
+/// `uses bynk.locale.types` (locale-negotiation-slice-2 follow-up, #886 —
+/// the generated `render`'s own signature names `LocaleTag`/`Message`).
 ///
 /// message-bundles slice 2 (#874): once cardinality confirms exactly one
 /// `@reference` block, a second pass diffs every other declared locale
@@ -390,16 +392,38 @@ pub(crate) fn check_messages_bundles(
                 }
             }
         }
-        let has_locale_uses = unit_uses
-            .get(name)
-            .is_some_and(|targets| targets.iter().any(|t| t == "bynk.locale"));
-        if !has_locale_uses {
+        // Locale-negotiation-slice-2 follow-up (#886): the synthetic `render`
+        // this commons gets (`synthetic_render_fn`, symbols.rs) names
+        // `LocaleTag`/`Message` by `TypeRef::Named` — real, resolved
+        // references, not bypassed — so both `bynk.locale` (for `render`
+        // itself) and `bynk.locale.types` (for the types its signature
+        // names) must be `uses`d. Kept as one diagnostic, not two: a message
+        // bundle always needs both together, so splitting the code would
+        // just be two author-facing fixes for one underlying requirement.
+        let targets = unit_uses.get(name);
+        let has_locale_uses = targets.is_some_and(|targets| {
+            targets
+                .iter()
+                .any(|t| t == bynk_check::firstparty::LOCALE_UNIT)
+        });
+        let has_locale_types_uses = targets.is_some_and(|targets| {
+            targets
+                .iter()
+                .any(|t| t == bynk_check::firstparty::LOCALE_TYPES_UNIT)
+        });
+        if !has_locale_uses || !has_locale_types_uses {
+            let missing = match (has_locale_uses, has_locale_types_uses) {
+                (false, false) => "`bynk.locale` and `bynk.locale.types`",
+                (false, true) => "`bynk.locale`",
+                (true, false) => "`bynk.locale.types`",
+                (true, true) => unreachable!("at least one of the two is missing here"),
+            };
             errors.push_for(
                 Some(&parsed[first_i].identity_path),
                 CompileError::new(
                     "bynk.messages.missing_locale_dependency",
                     first_span,
-                    "a commons declaring `messages` must also `uses bynk.locale`",
+                    format!("a commons declaring `messages` must also `uses` {missing}"),
                 ),
             );
         }
