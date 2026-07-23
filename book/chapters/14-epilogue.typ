@@ -52,9 +52,10 @@ different architectural boundaries because the language gives each a different
 contract.
 
 The compiler can then reject contradictions. It can refuse a dependency the
-context did not declare, an effect for which no authority was supplied, a state
-change that violates an invariant, a call that omits its actor, or a match that
-forgets a failure variant.
+context did not declare, an effect for which no authority was supplied, a call
+that omits its actor, or a match that forgets a failure variant. The state
+contract is checked one step later, when the owner commits---but it too refuses,
+declining to persist a state the agent promised could never exist.
 
 These refusals do not prove that the diagram is correct. They mean that the
 implementation cannot quietly become a different diagram.

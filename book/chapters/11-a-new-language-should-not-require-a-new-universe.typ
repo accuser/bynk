@@ -258,6 +258,35 @@ Bindings, and Durable Objects supply a coherent deployment target without a
 bespoke runtime, but also define its envelope. A host with different deployment
 units or state semantics requires more than another command-line flag.
 
+== How much survives without Cloudflare
+
+The vendor refusal raises a fair worry. Bynk's agent model has its most natural
+home in Durable Objects, its contexts map cleanly to Workers, and its deployment
+story is Cloudflare's. A reader can reasonably ask how much of the language is
+left for a team that cannot, or will not, deploy there.
+
+The honest answer has two parts. The source-level model is portable. Contexts,
+capabilities, agents, actors, entry protocols, contracts, and the checking that
+enforces them are properties of the language, not the platform. The `bundle`
+target already runs the whole model in one process, with an in-memory registry
+standing in for keyed owners, and code that uses only the portable `bynk`
+surface receives ordinary implementations of clocks, randomness, logging, and
+fetch. Everything Parts I and II argued for holds on a plain Node process.
+
+What does not come for free is the operational realisation. Without Durable
+Objects, a keyed owner with serialised access and durable state is not a
+platform primitive the compiler can assume; it is something a target must
+supply. Bynk does not today ship a second production runtime that provides agent
+semantics elsewhere, and a context deployed as an isolated unit needs a target
+that offers the equivalent of a Service Binding. The model is portable; a
+distributed production runtime for it, beyond Cloudflare, currently is not.
+
+So the language is not welded to the vendor, but its most operationally complete
+story is. A team that wants the architectural guarantees without the platform
+can have them in a bundle today, and would need another runtime to regain the
+distributed deployment. That is a real limit, and naming it is more useful than
+a portability claim the platform mapping would quietly contradict.
+
 == The inherited universe is not neutral
 
 Bynk inherits JavaScript's values and execution model. `Int` occupies a
@@ -275,21 +304,58 @@ abolish them. The question is whether the inherited constraints fit the
 service. Bynk bets that JavaScript's reach and a Workers-shaped deployment
 model are worth more than complete control below the language.
 
-TypeScript can use all of this without Bynk. It has direct access to every
-framework and no translation layer. A team with disciplined boundaries,
-explicit effects, well-owned state, strong lint rules, and good deployment
-tooling may gain too little to justify the new front end.
+== Why a language, and not a framework?
 
-Bynk's narrower claim is that such a team should not have to discard its runtime
-and operational world to make more architecture compile-visible. The language
-adds a model and translates it into familiar machinery. Whether the additional
-constraints earn their place remains an empirical question.
+The prologue promised to face the sharpest objection directly, and this is the
+chapter where it comes due. If Bynk compiles to TypeScript and reuses its
+runtime, and if every individual guarantee in this book can be reproduced in
+TypeScript with enough discipline, why introduce a new language at all rather
+than a strict framework: a package of branded types, a schema library, an effect
+library, generated wiring, and a lint configuration that forbids the rest?
 
-That completes Part III. Tests can preserve the declared architecture without
-claiming proof. Diagnostics can explain contradictions without choosing the
-design. Translation can reuse an established universe without pretending that
-it is costless or neutral.
+It is the right question, because that framework can be very good. A team that
+adopts one buys most of what Parts I and II describe without a second compiler,
+a smaller labour market, or a new toolchain to own. For many systems that is the
+better trade, and this book does not pretend otherwise.
 
-Part IV puts the argument under pressure. First, we will read a whole system and
-ask how much of its architecture can actually be recovered from source. Then we
-will account for what the stronger constraints take away.
+The difference is not what each guarantee expresses in isolation. It is what
+holds the guarantees together. A framework's rules live beside the language's
+own, and the language does not know they exist. A branded type is a suggestion a
+cast can bypass. An import rule is a linter's opinion a disabled comment can
+silence. An effect convention holds until an imported singleton is more
+convenient. Each rule is enforced by a different tool, configured separately,
+and any one can be relaxed in a single file without the others noticing. The
+architecture is present, but nothing requires the pieces to stay aligned, and
+the pressure to misalign them arrives one reasonable exception at a
+time---precisely the erosion the prologue described.
+
+A language makes the same facts the definition of a valid program. There is no
+configuration to loosen for one file, no rule that lives outside the checker, no
+second representation that can drift from the first. `consumes`, `given`, an
+agent key, and a `by` clause are not checks layered over the program; they are
+the program. That is the whole of the difference, and it is both smaller than a
+newcomer expects and larger than it sounds. A framework asks a team to stay
+disciplined. A language moves the discipline beneath the point where a team can
+be tempted out of it.
+
+Whether that is worth a compiler and a platform commitment is a genuine
+question, not a settled one. It turns on how expensive misalignment actually is
+in a given system, and how reliably a particular team holds a convention under
+deadline. Chapter 13 returns to the accounting. The honest short answer is that
+the framework is the right choice more often than a language advocate would like
+to concede, and the language earns its place precisely when the cost of a
+convention quietly failing is high enough to justify removing the option to
+fail.
+
+None of this settles the adoption question; it narrows it. A team with
+disciplined boundaries, explicit effects, well-owned state, and strong tooling
+may still gain too little to justify a new front end. Bynk's narrower claim is
+only that such a team should not have to discard its runtime and operational
+world to make more of its architecture compile-visible. The language adds a
+model and translates it into machinery the ecosystem already understands.
+
+Whether the model earns its place cannot be judged in the abstract. We have now
+seen the substrate it runs on and the bargains it strikes with the world
+beneath it. The next chapter puts the whole thing together: one system, read
+from its own source, to ask how much of its architecture that source can
+actually recover---and where the reading still runs out.

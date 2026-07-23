@@ -36,11 +36,11 @@ rules. Its diagram remains simple while its architecture becomes implicit.
    Test doubles, tiers, observation, histories, and false confidence.
 10. **A compiler refusal can teach the design**
     Diagnostics as explanations of violated invariants.
-11. **A new language should not require a new universe**
-    Typed TypeScript, Cloudflare Workers, pragmatism, and compromise.
 
 ## Part IV - The argument tested
 
+11. **A new language should not require a new universe**
+    Typed TypeScript, Cloudflare Workers, pragmatism, and compromise.
 12. **Reading a whole system**
     Recovering boundaries, ownership, effects, callers, and failure from source.
 13. **The cost of stronger constraints**

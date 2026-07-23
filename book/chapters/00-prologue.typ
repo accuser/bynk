@@ -167,6 +167,18 @@ be expressed. Some of those limits are there because the language is young.
 Others are deliberate. They remove forms of flexibility that are easy to use
 locally but difficult to reason about globally.
 
+That comparison invites the sharpest objection to the whole enterprise, and it
+is better stated now than avoided. If the aim is only to make architectural
+facts explicit and checkable, why a new language at all? A capable team could
+brand its types, lint its import boundaries, generate its wiring, and forbid
+ambient effects using tools it already owns. Much of what follows can indeed be
+approximated that way, and later chapters will admit as much at each step. The
+open question is whether an assembly of conventions, libraries, and lint rules
+holds the line as reliably as a language whose compiler treats these facts as
+the definition of a valid program---and whether that reliability is worth
+another compiler standing between a team and its running service. The trade is
+real, not rhetorical. Part IV faces it directly.
+
 That trade deserves scrutiny. Constraints are not valuable merely because they
 are constraints. An inflexible model can prevent bad designs, but it can also
 prevent necessary ones. A compiler can enforce a declared architecture while

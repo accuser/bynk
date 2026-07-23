@@ -302,9 +302,16 @@ similar conclusions only after a team has supplied an architectural model for
 it to enforce.
 
 A refusal can therefore teach the design, but only the design the language can
-actually see. The remaining challenge is practical. A language that offers
-better constraints and better explanations still asks a team to adopt another
-compiler, editor integration, build path, and runtime story.
+actually see.
 
-The next chapter examines Bynk's answer to that cost: use a new language for the
-architectural model without demanding a new universe underneath it.
+That completes Part III. Tests can preserve the declared architecture without
+claiming proof; diagnostics can explain a contradiction without choosing the
+design. Both, though, have quietly assumed the harder thing---that a team would
+take on this language, its compiler, its editor integration, its build path, and
+its runtime story at all.
+
+Part IV tests the argument against that assumption. It opens with the bargain
+that makes adoption thinkable: a new language for the architectural model,
+running on a runtime nobody has to invent. It then reads a whole system to see
+how much architecture the source can really recover, and closes by accounting
+for everything the stronger constraints cost.
