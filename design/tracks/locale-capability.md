@@ -373,15 +373,21 @@ internals.
   (RFC 4647 basic filtering — exact match, then successive rightmost-subtag
   truncation), falling back to the reference locale (§4.4). Node/Browser are
   unchanged (neither platform has an inbound-HTTP-request entry point in
-  this compiler). **A real, named limitation, not silently swept under**:
-  the pre-existing `uses`-clause name-conflict check (no aliasing support)
-  means a context can never simultaneously `uses bynk.locale` (required to
-  call `Locale.current()` at all) and `uses` a message-bundle commons (whose
-  synthesised `render` always collides with `bynk.locale`'s own) — so the
-  negotiation wiring this slice ships is verified at the unit level
-  (`negotiateLocale`, `detect_context_message_bundle`) and cannot yet be
-  exercised end-to-end by any compiling program. Fixing that is a separate,
-  general `uses`-aliasing feature, not scoped to this slice.
+  this compiler). Shipped with a real, named limitation — the pre-existing
+  `uses`-clause name-conflict check (no aliasing support) meant a context
+  could never simultaneously `uses bynk.locale` (required to call
+  `Locale.current()` at all) and `uses` a message-bundle commons (whose
+  synthesised `render` always collided with `bynk.locale`'s own), leaving
+  the negotiation wiring verified only at the unit level. **Closed by #886**
+  (`bynk.locale.types` leaf-commons split): `LocaleTag`/`Message`/
+  `MessageArg` moved into a dependency-free `bynk.locale.types`, so a
+  context now only ever needs that leaf directly — `render`/`message` are
+  reached exclusively through a message-bundle commons's own wrapper
+  function, never through the consuming context's own `uses bynk.locale` —
+  and the collision has nothing left to collide on. Verified end-to-end
+  (real `Locale.current()` negotiation plus a message bundle's `render` in
+  one context, compiled, `tsc --strict`-checked, and executed under node):
+  `bynkc/tests/fixtures/positive/817_locale_bundle_wrapper_e2e`.
 - **Slice 3 — retired in favour of message-bundles' slice 3.** Shipped as
   part of that track instead
   ([#878](https://github.com/accuser/bynk/issues/878),
