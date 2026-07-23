@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "./runtime.js";
 
-import { LocaleTag } from "./bynk/locale.js";
+import { LocaleTag } from "./bynk/locale/types.js";
 
 /**
  * A UUID in canonical 8-4-4-4-12 lowercase-hex form.

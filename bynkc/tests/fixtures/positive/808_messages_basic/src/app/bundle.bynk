@@ -1,6 +1,7 @@
 commons app.bundle
 
 uses bynk.locale
+uses bynk.locale.types
 
 ---
 message-bundles track, slice 1 (#859): a single-locale bundle wired to

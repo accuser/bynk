@@ -3,7 +3,7 @@
 import type { Clock, Fetch, Locale, Logger, Random, Secrets } from "./bynk.js";
 import type { Request as FetchRequest, Response as FetchResponse } from "./bynk.js";
 import { FetchError, Uuid } from "./bynk.js";
-import { LocaleTag } from "./bynk/locale.js";
+import { LocaleTag } from "./bynk/locale/types.js";
 import { Err, None, Ok, Some, negotiateLocale, type Option, type Result } from "./runtime.js";
 
 export class ClockProvider implements Clock {

@@ -4,6 +4,7 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as app_bundle from "./../app/bundle.js";
 import * as bynk_locale from "./../bynk/locale.js";
+import * as bynk_locale_types from "./../bynk/locale/types.js";
 
 class ExpectationError extends Error {
   location: string;
@@ -35,7 +36,8 @@ async function test_male_arm() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withText(message("greeting"), "g", "male");
     if (!(render(("en" as any), msg) === "He liked this.")) { throw __bynkExpectFailure("tests/bundle.test.bynk:4:12", 107, 144, "expect render(\"en\", msg) == \"He liked this.\"\n  expected: render(\"en\", msg) == \"He liked this.\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("He liked this."))); }
     return { pass: true };
@@ -52,7 +54,8 @@ async function test_female_arm() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withText(message("greeting"), "g", "female");
     if (!(render(("en" as any), msg) === "She liked this.")) { throw __bynkExpectFailure("tests/bundle.test.bynk:9:12", 242, 280, "expect render(\"en\", msg) == \"She liked this.\"\n  expected: render(\"en\", msg) == \"She liked this.\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("She liked this."))); }
     return { pass: true };
@@ -69,7 +72,8 @@ async function test_undeclared_key_falls_back_to_other() {
   try {
     const deps = {};
     const { render } = app_bundle as any;
-    const { LocaleTag, Message, MessageArg, message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
     const msg = withText(message("greeting"), "g", "nonbinary");
     if (!(render(("en" as any), msg) === "They liked this.")) { throw __bynkExpectFailure("tests/bundle.test.bynk:14:12", 405, 444, "expect render(\"en\", msg) == \"They liked this.\"\n  expected: render(\"en\", msg) == \"They liked this.\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("They liked this."))); }
     return { pass: true };
