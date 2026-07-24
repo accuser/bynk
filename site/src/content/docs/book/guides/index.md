@@ -13,6 +13,7 @@ topic and act on it without hopping between sections. New to Bynk? Work through
 - [Agents & state](/book/guides/agents-and-state/) — stateful, keyed agents.
 - [Entry points](/book/guides/entry-points/) — HTTP, cron, and queue handlers.
 - [Actors & access control](/book/guides/actors/) — authentication, authorisation, and the `by` clause.
+- [Localisation](/book/guides/localisation/) — the `Locale` capability, message bundles, ICU formatting.
 - [Testing](/book/guides/testing/) — unit and integration testing.
 - [Projects, build & deployment](/book/guides/projects-build-and-deployment/) — layout, build, Cloudflare Workers.
 

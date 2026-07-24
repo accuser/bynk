@@ -33,6 +33,7 @@ environment), so code that stays on this surface is portable.
 | **`Logger`** | `info(msg: String) -> Effect[()]` · `error(msg: String) -> Effect[()]`. |
 | **`Fetch`** | `send(req: Request) -> Effect[Result[Response, FetchError]]` — an outbound HTTP request. |
 | **`Secrets`** | `get(name: String) -> Effect[Option[String]]` — read configuration/secrets; `None` if unset. |
+| **`Locale`** | `current() -> Effect[LocaleTag]` — the locale to render messages in. On Cloudflare, negotiated from the request's `Accept-Language` against a context's message bundle; a fixed `"en"` on every other platform, and on Cloudflare without a detectable bundle. See [Understand localisation](/book/guides/localisation/understand-localisation/). |
 
 The `bynk` unit also exports the transparent types these operations use:
 
@@ -104,6 +105,17 @@ Beyond capabilities, the `bynk` namespace also ships pure **commons** you bring
 in with `uses` (not `consumes`) — `bynk.list` and `bynk.map` (combinators over
 the `List`/`Map` kernels) and `bynk.string` (string helpers). These are ordinary
 functions with no effects; see the [type system reference](/book/reference/types/).
+
+Two more serve the `Locale` capability above.
+**`bynk.locale.types`** is a dependency-free leaf declaring `LocaleTag`,
+`Message` and `MessageArg` — `uses` it wherever you only need to *name* those
+types, which is all a context calling `Locale.current()` requires.
+**`bynk.locale`** declares the value-level API: the `message`/`withText`/
+`withWhole`/`withNum`/`withMoment` builders and the bundle-free `render`
+fallback. A commons declaring a `messages` bundle needs both; a context
+consuming that bundle should `uses` only `bynk.locale.types`, since
+`bynk.locale` and every message-bundle commons both export a `render`. See
+[Localisation](/book/guides/localisation/).
 
 > **Deprecated (v0.91, ADR 0116 D6):** the `bynk.list` free functions whose method
 > forms now exist — `map`, `filter`, `find`, `any`, `all` — emit a non-failing

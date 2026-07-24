@@ -239,6 +239,27 @@
         ]
       },
       {
+        "label": "Localisation",
+        "items": [
+          {
+            "label": "Overview",
+            "link": "/book/guides/localisation/"
+          },
+          {
+            "label": "Understand localisation",
+            "link": "/book/guides/localisation/understand-localisation/"
+          },
+          {
+            "label": "Declare a message bundle",
+            "link": "/book/guides/localisation/declare-a-message-bundle/"
+          },
+          {
+            "label": "Format with ICU",
+            "link": "/book/guides/localisation/format-with-icu/"
+          }
+        ]
+      },
+      {
         "label": "Testing",
         "items": [
           {
