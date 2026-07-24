@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.233.1** | A `messages` `select` placeholder now dispatches its arm by own-property check, so a `MessageArg.Text` value naming an `Object.prototype` member (`"constructor"`, `"toString"`, `"__proto__"`) falls back to the mandatory `other` arm instead of resolving off the prototype chain |
 | **v0.233.0** | A `messages` block's locale tag is a checked `LocaleTag` string literal (`messages "pt-BR"`), so region/script tags are declarable and an invalid tag is `bynk.messages.invalid_locale_tag` rather than reaching the runtime |
 | **v0.232.0** | "`bynk.locale`'s types split into a leaf commons, `bynk.locale.types`, closing Locale slice 2's uses-collision gap" |
 | **v0.231.0** | The Cloudflare `Locale` provider negotiates Accept-Language against a context's message bundle (RFC 4647 basic filtering) |
