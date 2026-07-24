@@ -18,23 +18,17 @@ use bynkc::fmt::{FormatOptions, format_source};
 use bynkc::lexer::tokenize;
 use bynkc::parser::parse_unit;
 
-/// The first-party Bynk sources, by display name. All are `pub const` in
-/// `bynkc::firstparty`, each now an `include_str!` of a real `.bynk` file.
-fn sources() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("bynk.list", bynkc::firstparty::BYNK_LIST_SRC),
-        ("bynk.map", bynkc::firstparty::BYNK_MAP_SRC),
-        ("bynk.string", bynkc::firstparty::BYNK_STRING_SRC),
-        ("bynk.locale", bynkc::firstparty::BYNK_LOCALE_SRC),
-        ("bynk", bynkc::firstparty::BYNK_ADAPTER_SRC),
-        ("bynk.cloudflare", bynkc::firstparty::CLOUDFLARE_ADAPTER_SRC),
-    ]
+/// The first-party Bynk sources, by display name — the single
+/// `FIRSTPARTY_SOURCES` list, so this guard covers every first-party commons
+/// automatically (`bynk.locale.types` was previously omitted here — #901).
+fn sources() -> &'static [(&'static str, &'static str)] {
+    bynkc::firstparty::FIRSTPARTY_SOURCES
 }
 
 #[test]
 fn every_first_party_source_parses() {
     let mut failures = Vec::new();
-    for (name, src) in sources() {
+    for &(name, src) in sources() {
         let parsed = tokenize(src).and_then(|toks| {
             parse_unit(&toks, src).map_err(|errs| {
                 errs.into_iter()
@@ -57,7 +51,7 @@ fn every_first_party_source_parses() {
 fn every_first_party_source_is_fmt_clean() {
     let opts = FormatOptions::default();
     let mut failures = Vec::new();
-    for (name, src) in sources() {
+    for &(name, src) in sources() {
         match format_source(src, &opts) {
             Ok(formatted) if formatted == src => {}
             Ok(_) => failures.push(format!(
@@ -70,5 +64,53 @@ fn every_first_party_source_is_fmt_clean() {
         failures.is_empty(),
         "first-party .bynk sources must be bynk-fmt-clean:\n{}",
         failures.join("\n")
+    );
+}
+
+/// #901 drift guard: every `pub const *_SRC` in `firstparty.rs` must appear in
+/// the `FIRSTPARTY_SOURCES` list, so the next first-party commons cannot be
+/// added to `firstparty.rs` yet silently left out of hover / completion / this
+/// parse guard — the exact way `bynk.locale` and `bynk.locale.types` were.
+/// A pure text scan of the source file, since Rust has no const reflection.
+#[test]
+fn firstparty_sources_cover_every_src_const() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../bynk-check/src/firstparty.rs");
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+
+    // The `FIRSTPARTY_SOURCES = &[ … ];` array literal, as text.
+    let list_start = text
+        .find("pub const FIRSTPARTY_SOURCES")
+        .expect("FIRSTPARTY_SOURCES declared in firstparty.rs");
+    let list_end = text[list_start..]
+        .find("];")
+        .map(|rel| list_start + rel)
+        .expect("FIRSTPARTY_SOURCES array is closed with `];`");
+    let list_block = &text[list_start..list_end];
+
+    // Every exported source const: `pub const <NAME>_SRC: &str = include_str!(…)`.
+    let mut missing = Vec::new();
+    for line in text.lines() {
+        let line = line.trim_start();
+        let Some(rest) = line.strip_prefix("pub const ") else {
+            continue;
+        };
+        let Some((ident, _)) = rest.split_once(':') else {
+            continue;
+        };
+        let ident = ident.trim();
+        // The `.bynk` source consts, not the list itself or binding paths.
+        if ident.ends_with("_SRC") && !list_block.contains(ident) {
+            missing.push(ident.to_string());
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "these `*_SRC` consts are declared in firstparty.rs but missing from \
+         FIRSTPARTY_SOURCES (add them, or hover/completion/parse-guard will skip \
+         them — #901):\n{}",
+        missing.join("\n")
     );
 }

@@ -43,9 +43,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::SystemTime;
 
 use bynk_check::checker::{NamedKind, Ty};
-use bynk_check::firstparty::{
-    BYNK_ADAPTER_SRC, BYNK_LIST_SRC, BYNK_MAP_SRC, BYNK_STRING_SRC, CLOUDFLARE_ADAPTER_SRC,
-};
 use bynk_check::kernel_methods;
 use bynk_check::locals::LocalBinding;
 use bynk_check::store_ops;
@@ -1442,16 +1439,13 @@ fn parse_source_unit(src: &str) -> Option<SourceUnit> {
 /// help. Harmless to the other contexts — the commons declare only `fn`s (no
 /// types/capabilities) and are never a `consumes` target.
 static EMBEDDED_UNITS: LazyLock<Vec<Arc<SourceUnit>>> = LazyLock::new(|| {
-    [
-        BYNK_ADAPTER_SRC,
-        CLOUDFLARE_ADAPTER_SRC,
-        BYNK_LIST_SRC,
-        BYNK_MAP_SRC,
-        BYNK_STRING_SRC,
-    ]
-    .into_iter()
-    .filter_map(|src| parse_source_unit(src).map(Arc::new))
-    .collect()
+    // The single first-party source list (`bynk-check::firstparty`), so a new
+    // first-party commons is completion-visible without a second edit here
+    // (#901 — `bynk.locale`/`bynk.locale.types` were missing from this copy).
+    bynk_check::firstparty::FIRSTPARTY_SOURCES
+        .iter()
+        .filter_map(|(_, src)| parse_source_unit(src).map(Arc::new))
+        .collect()
 });
 
 /// A cached parse of one on-disk project file, tagged with the file identity
@@ -1791,6 +1785,7 @@ static EMPTY_CONSUMES: Vec<bynk_syntax::ast::ConsumesDecl> = Vec::new();
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bynk_check::firstparty::BYNK_LIST_SRC;
 
     fn labels(line: &str, doc: &str) -> Vec<String> {
         complete(line, doc, None)
@@ -1910,6 +1905,30 @@ mod tests {
             find(&items, "values", CompletionKind::Function).is_none(),
             "bynk.map.values leaked without `uses bynk.map`"
         );
+    }
+
+    #[test]
+    fn locale_functions_offered_when_bynk_locale_is_used() {
+        // #901: `bynk.locale` was absent from the embedded-source list, so its
+        // builders/render never surfaced in completion even under `uses
+        // bynk.locale`. Exercised through the real `complete()` path, not the
+        // renderer alone.
+        let doc = "commons app {\n  uses bynk.locale\n}\n";
+        let items = complete("  let y = ", doc, None);
+        for name in [
+            "render",
+            "message",
+            "withText",
+            "withWhole",
+            "withNum",
+            "withMoment",
+        ] {
+            assert!(
+                find(&items, name, CompletionKind::Function).is_some(),
+                "bynk.locale.{name} missing from completion: {:?}",
+                items.iter().map(|i| &i.label).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

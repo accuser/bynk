@@ -195,6 +195,25 @@ const BYNK_BROWSER_BINDING: &str = include_str!("firstparty/bindings/bynk-browse
 /// clause — the toolchain supplies the binding.
 pub const CLOUDFLARE_ADAPTER_SRC: &str = include_str!("firstparty/bynk.cloudflare.bynk");
 
+/// Every first-party `.bynk` source, paired with its unit name — the single
+/// list every consumer iterates: hover (`describe_firstparty_symbol`),
+/// completion (`EMBEDDED_UNITS`), and the parse guard
+/// (`every_first_party_source_parses`). Before this list each consumer kept its
+/// own hand-maintained copy, and `bynk.locale`/`bynk.locale.types` were added to
+/// none of them — so the whole locale surface hovered as nothing and was absent
+/// from completion (#901). Add a first-party commons here once; the
+/// `firstparty_sources_cover_every_src_const` drift guard
+/// (`bynkc/tests/firstparty_sources.rs`) fails if a `*_SRC` const is left out.
+pub const FIRSTPARTY_SOURCES: &[(&str, &str)] = &[
+    (BYNK_UNIT, BYNK_ADAPTER_SRC),
+    (CLOUDFLARE_UNIT, CLOUDFLARE_ADAPTER_SRC),
+    (LIST_UNIT, BYNK_LIST_SRC),
+    (MAP_UNIT, BYNK_MAP_SRC),
+    (STRING_UNIT, BYNK_STRING_SRC),
+    (LOCALE_UNIT, BYNK_LOCALE_SRC),
+    (LOCALE_TYPES_UNIT, BYNK_LOCALE_TYPES_SRC),
+];
+
 /// The output path of the Cloudflare platform adapter's binding module,
 /// beside the adapter's emitted `bynk/cloudflare.ts` (distinct from the
 /// `bynk` *surface*'s per-platform `bynk-cloudflare.ts`).

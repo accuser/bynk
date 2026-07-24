@@ -542,14 +542,11 @@ pub fn qualified_callee_at(text: &str, ident_span: Span) -> Option<String> {
 /// first-party declaration rides along (via `describe_fn`/`describe_type`/…),
 /// once the sources carry one.
 pub fn describe_firstparty_symbol(name: &str) -> Option<String> {
-    const SOURCES: &[&str] = &[
-        bynk_check::firstparty::BYNK_ADAPTER_SRC,
-        bynk_check::firstparty::CLOUDFLARE_ADAPTER_SRC,
-        bynk_check::firstparty::BYNK_LIST_SRC,
-        bynk_check::firstparty::BYNK_MAP_SRC,
-        bynk_check::firstparty::BYNK_STRING_SRC,
-    ];
-    SOURCES.iter().find_map(|src| describe_symbol(src, name))
+    // The single first-party source list (`bynk-check::firstparty`), so a new
+    // first-party commons is hoverable without a second edit here (#901).
+    bynk_check::firstparty::FIRSTPARTY_SOURCES
+        .iter()
+        .find_map(|(_, src)| describe_symbol(src, name))
 }
 
 /// Slice 6b: the `(unit name, name span)` of every `uses`/`consumes` target in
@@ -1667,6 +1664,23 @@ mod tests {
             clock.contains("wall-clock"),
             "capability doc surfaced: {clock}"
         );
+        // #901: the whole locale surface hovered as nothing before
+        // `bynk.locale`/`bynk.locale.types` reached the shared source list. A
+        // type from the leaf, and a fn from the value-level commons.
+        let locale_tag = describe_firstparty_symbol("LocaleTag")
+            .expect("`bynk.locale.types.LocaleTag` described");
+        assert!(
+            locale_tag.contains("LocaleTag") && locale_tag.contains("Matches"),
+            "{locale_tag}"
+        );
+        let render = describe_firstparty_symbol("render").expect("`bynk.locale.render` described");
+        assert!(
+            render.contains("render") && render.contains("LocaleTag"),
+            "{render}"
+        );
+        let with_text =
+            describe_firstparty_symbol("withText").expect("`bynk.locale.withText` described");
+        assert!(with_text.contains("withText"), "{with_text}");
         // A name in no first-party source yields nothing (the fallback no-ops).
         assert!(describe_firstparty_symbol("DoesNotExist").is_none());
     }
