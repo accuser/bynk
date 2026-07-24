@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.233.2** | The editor now hovers and completes the first-party `bynk.locale` / `bynk.locale.types` surface (`LocaleTag`, `Message`, `render`, `message`, the `with*` builders); the hand-maintained per-consumer source lists are unified into one `firstparty::FIRSTPARTY_SOURCES` with a drift guard so a new first-party commons cannot be silently omitted again |
 | **v0.233.1** | A `messages` `select` placeholder now dispatches its arm by own-property check, so a `MessageArg.Text` value naming an `Object.prototype` member (`"constructor"`, `"toString"`, `"__proto__"`) falls back to the mandatory `other` arm instead of resolving off the prototype chain |
 | **v0.233.0** | A `messages` block's locale tag is a checked `LocaleTag` string literal (`messages "pt-BR"`), so region/script tags are declarable and an invalid tag is `bynk.messages.invalid_locale_tag` rather than reaching the runtime |
 | **v0.232.0** | "`bynk.locale`'s types split into a leaf commons, `bynk.locale.types`, closing Locale slice 2's uses-collision gap" |
