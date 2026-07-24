@@ -64,11 +64,9 @@ pub(crate) fn assemble_index(
                         &a.name.name,
                         symbol_modifiers(&unit, None),
                     ),
-                    CommonsItem::Messages(m) => (
-                        SymbolKind::Messages,
-                        &m.tag.name,
-                        symbol_modifiers(&unit, None),
-                    ),
+                    CommonsItem::Messages(m) => {
+                        (SymbolKind::Messages, &m.tag, symbol_modifiers(&unit, None))
+                    }
                 };
                 builder.add_first_party_def(&unit, kind, name, modifiers);
             }
@@ -207,11 +205,16 @@ pub(crate) fn assemble_index(
                     );
                 }
                 CommonsItem::Messages(m) => {
+                    // The tag is a string literal, not an `Ident`, so build the
+                    // `SiteRef` from its span directly rather than via `site`.
                     builder.add_def(
                         &unit,
                         SymbolKind::Messages,
-                        &m.tag.name,
-                        site(&m.tag),
+                        &m.tag,
+                        SiteRef {
+                            path: pf.identity_path.clone(),
+                            span: m.tag_span,
+                        },
                         symbol_modifiers(&unit, None),
                     );
                 }
@@ -1120,7 +1123,8 @@ mod detect_context_message_bundle_tests {
             Vec::new()
         };
         let messages = MessagesDecl {
-            tag: ident(tag),
+            tag: tag.to_string(),
+            tag_span: Span::default(),
             annotations,
             entries: Vec::new(),
             documentation: None,

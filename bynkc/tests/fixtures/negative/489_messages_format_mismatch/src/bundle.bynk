@@ -2,10 +2,10 @@ commons bundle
 
 uses bynk.locale
 
-messages en @reference {
+messages "en" @reference {
   "cart.count" => "You have {count, plural, one {# item} other {# items}}"
 }
 
-messages fr {
+messages "fr" {
   "cart.count" => "{count} articles"
 }

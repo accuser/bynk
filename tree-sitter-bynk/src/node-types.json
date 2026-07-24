@@ -5818,7 +5818,7 @@
         "required": true,
         "types": [
           {
-            "type": "identifier",
+            "type": "string_literal",
             "named": true
           }
         ]

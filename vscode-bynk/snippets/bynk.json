@@ -139,7 +139,7 @@
   "messages": {
     "prefix": "messages",
     "body": [
-      "messages ${1:en} @reference {",
+      "messages \"${1:en}\" @reference {",
       "  \"${2:code}\" => \"${3:template}\"",
       "}$0"
     ],

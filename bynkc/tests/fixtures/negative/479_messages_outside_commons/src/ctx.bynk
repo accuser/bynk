@@ -1,5 +1,5 @@
 context ctx {
-  messages en @reference {
+  messages "en" @reference {
     "a" => "b"
   }
 }

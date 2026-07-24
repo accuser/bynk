@@ -11,7 +11,7 @@ string in the test suite (timezone-sensitive — the host has no `timeZone`
 override in this slice's fixed helper signature); see the test suite's own
 note.
 ---
-messages en @reference {
+messages "en" @reference {
   "published" => "Published {d, date}"
   "published.short" => "Published {d, date, short}"
   "published.full" => "Published {d, date, full}"

@@ -6,20 +6,18 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-/**
- * message-bundles track, slice 1 (#859): a single-locale bundle wired to
- * `bynk.locale`'s bundle-free `render` (ADR 0256) as its fallback for a
- * code this bundle doesn't declare.
- */
-const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
-  "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Bye",
-  "unmatched_placeholder": (params: ReadonlyMap<string, MessageArg>): string => "Value: " + (params.get("oops") !== undefined ? renderArg(params.get("oops") as MessageArg) : "{oops}"),
-  "quantity": (params: ReadonlyMap<string, MessageArg>): string => (params.get("count") !== undefined ? renderArg(params.get("count") as MessageArg) : "{count}") + " at " + (params.get("price") !== undefined ? renderArg(params.get("price") as MessageArg) : "{price}"),
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "en": __messages_en,
+  /**
+   * message-bundles track, slice 1 (#859): a single-locale bundle wired to
+   * `bynk.locale`'s bundle-free `render` (ADR 0256) as its fallback for a
+   * code this bundle doesn't declare.
+   */
+  "en": {
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
+    "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Bye",
+    "unmatched_placeholder": (params: ReadonlyMap<string, MessageArg>): string => "Value: " + (params.get("oops") !== undefined ? renderArg(params.get("oops") as MessageArg) : "{oops}"),
+    "quantity": (params: ReadonlyMap<string, MessageArg>): string => (params.get("count") !== undefined ? renderArg(params.get("count") as MessageArg) : "{count}") + " at " + (params.get("price") !== undefined ? renderArg(params.get("price") as MessageArg) : "{price}"),
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;

@@ -1465,11 +1465,14 @@ impl ExternalReferences {
 
 fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> ExternalReferences {
     // Names declared in this file (so we know what's local-to-file).
+    // A `messages` block declares no importable identifier of its own (its
+    // `render` is synthesised separately), so `name()` is `None` there and it
+    // contributes nothing to the local-name set.
     let local_to_file: HashSet<String> = commons
         .commons
         .items
         .iter()
-        .map(|i| i.name().name.clone())
+        .filter_map(|i| i.name().map(|n| n.name.clone()))
         .collect();
 
     let mut refs = ExternalReferences::default();

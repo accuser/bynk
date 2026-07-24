@@ -6,22 +6,20 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, se
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-/**
- * message-bundles slice 3 (#878): `date` placeholders, bare (default) and
- * all four fixed `dateStyle` keywords — delegated to the host
- * `Intl.DateTimeFormat`. Deliberately not asserted against an exact date
- * string in the test suite (timezone-sensitive — the host has no `timeZone`
- * override in this slice's fixed helper signature); see the test suite's own
- * note.
- */
-const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "published": (params: ReadonlyMap<string, MessageArg>): string => "Published " + ((__arg) => __arg !== undefined && __arg.tag === "Moment" ? formatIcuDate("en", __arg.value) : "{d}")(params.get("d")),
-  "published.short": (params: ReadonlyMap<string, MessageArg>): string => "Published " + ((__arg) => __arg !== undefined && __arg.tag === "Moment" ? formatIcuDate("en", __arg.value, "short") : "{d}")(params.get("d")),
-  "published.full": (params: ReadonlyMap<string, MessageArg>): string => "Published " + ((__arg) => __arg !== undefined && __arg.tag === "Moment" ? formatIcuDate("en", __arg.value, "full") : "{d}")(params.get("d")),
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "en": __messages_en,
+  /**
+   * message-bundles slice 3 (#878): `date` placeholders, bare (default) and
+   * all four fixed `dateStyle` keywords — delegated to the host
+   * `Intl.DateTimeFormat`. Deliberately not asserted against an exact date
+   * string in the test suite (timezone-sensitive — the host has no `timeZone`
+   * override in this slice's fixed helper signature); see the test suite's own
+   * note.
+   */
+  "en": {
+    "published": (params: ReadonlyMap<string, MessageArg>): string => "Published " + ((__arg) => __arg !== undefined && __arg.tag === "Moment" ? formatIcuDate("en", __arg.value) : "{d}")(params.get("d")),
+    "published.short": (params: ReadonlyMap<string, MessageArg>): string => "Published " + ((__arg) => __arg !== undefined && __arg.tag === "Moment" ? formatIcuDate("en", __arg.value, "short") : "{d}")(params.get("d")),
+    "published.full": (params: ReadonlyMap<string, MessageArg>): string => "Published " + ((__arg) => __arg !== undefined && __arg.tag === "Moment" ? formatIcuDate("en", __arg.value, "full") : "{d}")(params.get("d")),
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;

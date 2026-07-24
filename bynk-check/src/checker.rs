@@ -40,7 +40,7 @@ use kernels::*;
 use refinements::*;
 
 pub use calls::check_state_initialiser;
-pub use refinements::zero_value_ts;
+pub use refinements::{locale_tag_accepts, locale_tag_pattern, zero_value_ts};
 
 // ==== Type representation ====
 

@@ -2,6 +2,6 @@ commons bundle
 
 uses bynk.locale
 
-messages en @reference {
+messages "en" @reference {
   "rank" => "{rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}"
 }

@@ -9,6 +9,6 @@ message-bundles slice 3 (#878): a `plural` placeholder over a real
 selection is delegated to the host `Intl.PluralRules`, not hardcoded to
 English's two categories.
 ---
-messages pl @reference {
+messages "pl" @reference {
   "cart.count" => "Masz {n, plural, one {# element} few {# elementy} many {# elementow} other {# elementu}} w koszyku"
 }

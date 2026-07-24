@@ -1,0 +1,18 @@
+---
+#899: the region-subtagged locale renders its own translation, and an
+undeclared locale still falls back to the reference — proving `"pt-BR"`
+flows end to end as a real declared locale, not just as parseable syntax.
+---
+suite app.bundle {
+  case "the region-subtagged locale renders its own translation" {
+    expect render("pt-BR", withText(message("greeting"), "name", "Ana")) == "Olá, Ana!"
+  }
+
+  case "the reference locale still renders its own" {
+    expect render("en", withText(message("greeting"), "name", "Ada")) == "Hello, Ada!"
+  }
+
+  case "an undeclared locale falls back to the reference" {
+    expect render("de", withText(message("greeting"), "name", "Ada")) == "Hello, Ada!"
+  }
+}

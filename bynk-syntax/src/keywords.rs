@@ -137,7 +137,7 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k(
         "messages",
-        "Declare a message bundle for one locale (`messages <tag> { \"code\" => \"template\" }`), inside a commons.",
+        "Declare a message bundle for one locale (`messages \"<tag>\" { \"code\" => \"template\" }`), inside a commons.",
     ),
     k(
         "on",

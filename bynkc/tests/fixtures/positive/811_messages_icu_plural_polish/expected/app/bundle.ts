@@ -6,18 +6,16 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, se
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-/**
- * message-bundles slice 3 (#878): a `plural` placeholder over a real
- * 4-category CLDR plural rule (Polish: one/few/many/other) — proves category
- * selection is delegated to the host `Intl.PluralRules`, not hardcoded to
- * English's two categories.
- */
-const __messages_pl: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "Masz " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{n}" : selectPluralArm("pl", __arg.value, { "one": formatIcuNumber("pl", __arg.value) + " element", "few": formatIcuNumber("pl", __arg.value) + " elementy", "many": formatIcuNumber("pl", __arg.value) + " elementow", "other": formatIcuNumber("pl", __arg.value) + " elementu" }))(params.get("n")) + " w koszyku",
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "pl": __messages_pl,
+  /**
+   * message-bundles slice 3 (#878): a `plural` placeholder over a real
+   * 4-category CLDR plural rule (Polish: one/few/many/other) — proves category
+   * selection is delegated to the host `Intl.PluralRules`, not hardcoded to
+   * English's two categories.
+   */
+  "pl": {
+    "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "Masz " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{n}" : selectPluralArm("pl", __arg.value, { "one": formatIcuNumber("pl", __arg.value) + " element", "few": formatIcuNumber("pl", __arg.value) + " elementy", "many": formatIcuNumber("pl", __arg.value) + " elementow", "other": formatIcuNumber("pl", __arg.value) + " elementu" }))(params.get("n")) + " w koszyku",
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("pl" as string) as LocaleTag;

@@ -1435,7 +1435,7 @@ mod tests {
                    ---\n\
                    docs\n\
                    ---\n\
-                   messages en @reference {\n\
+                   messages \"en\" @reference {\n\
                    \"greeting\" => \"Hello, {name}!\"\n\
                    \"farewell\" => \"Bye\"\n\
                    } -- trailing\n\
@@ -1444,7 +1444,7 @@ mod tests {
         let CommonsItem::Messages(m) = &c.items[0] else {
             panic!("expected a messages item, got {:?}", c.items[0]);
         };
-        assert_eq!(m.tag.name, "en");
+        assert_eq!(m.tag, "en");
         assert_eq!(m.annotations.len(), 1);
         assert_eq!(m.annotations[0].name.name, "reference");
         assert!(m.annotations[0].args.is_empty());
@@ -1463,12 +1463,12 @@ mod tests {
         // The parser stays permissive on annotation cardinality (zero-or-more)
         // — "exactly one `@reference`" is a checker concern (validate.rs), not
         // a parse error.
-        let src = "commons app.messages {\nmessages en {\n}\n}";
+        let src = "commons app.messages {\nmessages \"en\" {\n}\n}";
         let c = parse_str(src).unwrap();
         let CommonsItem::Messages(m) = &c.items[0] else {
             panic!("expected a messages item, got {:?}", c.items[0]);
         };
-        assert_eq!(m.tag.name, "en");
+        assert_eq!(m.tag, "en");
         assert!(m.annotations.is_empty());
         assert!(m.entries.is_empty());
     }
@@ -1479,7 +1479,7 @@ mod tests {
         // in bynk-emit's project validation), not a parser rejection — mirrors
         // how `service`/`agent` already parse syntactically inside `adapter`
         // bodies for the same reason.
-        let src = "context app.svc {\nmessages en @reference {\n\"a\" => \"b\"\n}\n}";
+        let src = "context app.svc {\nmessages \"en\" @reference {\n\"a\" => \"b\"\n}\n}";
         let toks = tokenize(src).unwrap();
         let (unit, errors) = parse_unit_with_recovery(&toks, src);
         assert!(errors.is_empty(), "unexpected parse errors: {errors:?}");
@@ -1489,7 +1489,7 @@ mod tests {
         let CommonsItem::Messages(m) = &ctx.items[0] else {
             panic!("expected a messages item, got {:?}", ctx.items[0]);
         };
-        assert_eq!(m.tag.name, "en");
+        assert_eq!(m.tag, "en");
     }
 
     #[test]

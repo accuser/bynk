@@ -10,12 +10,12 @@ the reference (`en`)'s. `greeting`'s placeholders are reordered between
 locales (idiomatic for French word order) to prove cross-locale
 placeholder agreement compares sets, not sequences.
 ---
-messages en @reference {
+messages "en" @reference {
   "greeting" => "Hello, {name}, you are {age}"
   "farewell" => "Bye"
 }
 
-messages fr {
+messages "fr" {
   "greeting" => "{age} ans, bonjour {name}"
   "farewell" => "Au revoir"
 }

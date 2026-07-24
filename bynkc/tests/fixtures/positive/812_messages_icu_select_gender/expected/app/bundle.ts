@@ -6,17 +6,15 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-/**
- * message-bundles slice 3 (#878): a `select` placeholder with arbitrary
- * (non-CLDR) keys, plus its mandatory `other` arm as the fallback for an
- * undeclared key.
- */
-const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "greeting": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => { if (__arg === undefined || __arg.tag !== "Text") { return "{g}"; } const __arms: Record<string, string> = { "male": "He", "female": "She", "other": "They" }; return __arms[__arg.value] ?? __arms["other"]; })(params.get("g")) + " liked this.",
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "en": __messages_en,
+  /**
+   * message-bundles slice 3 (#878): a `select` placeholder with arbitrary
+   * (non-CLDR) keys, plus its mandatory `other` arm as the fallback for an
+   * undeclared key.
+   */
+  "en": {
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => { if (__arg === undefined || __arg.tag !== "Text") { return "{g}"; } const __arms: Record<string, string> = { "male": "He", "female": "She", "other": "They" }; return __arms[__arg.value] ?? __arms["other"]; })(params.get("g")) + " liked this.",
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;

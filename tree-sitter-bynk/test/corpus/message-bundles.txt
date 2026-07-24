@@ -5,7 +5,7 @@ messages block with @reference and entries
 commons app.bundle
 uses bynk.locale
 
-messages en @reference {
+messages "en" @reference {
   "greeting" => "Hello, {name}!"
   "farewell" => "Bye"
 }
@@ -22,7 +22,7 @@ messages en @reference {
         (identifier)
         (identifier)))
     (messages_decl
-      tag: (identifier)
+      tag: (string_literal)
       annotation: (store_annotation
         name: (identifier))
       (message_entry
@@ -37,7 +37,7 @@ messages parses syntactically inside a context too (legality is a checker concer
 ==========================
 
 context app.ctx {
-  messages en @reference {
+  messages "en" @reference {
     "a" => "b"
   }
 }
@@ -50,7 +50,7 @@ context app.ctx {
       (identifier)
       (identifier))
     (messages_decl
-      tag: (identifier)
+      tag: (string_literal)
       annotation: (store_annotation
         name: (identifier))
       (message_entry
@@ -62,7 +62,7 @@ messages block with no annotation and no entries (the parser stays permissive)
 ==========================
 
 commons app.bundle
-messages en {
+messages "en" {
 }
 
 --------------------------
@@ -73,4 +73,4 @@ messages en {
       (identifier)
       (identifier))
     (messages_decl
-      tag: (identifier))))
+      tag: (string_literal))))

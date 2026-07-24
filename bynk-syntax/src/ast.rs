@@ -485,26 +485,34 @@ pub enum CommonsItem {
 }
 
 impl CommonsItem {
-    pub fn name(&self) -> &Ident {
+    /// The declaring identifier, when the item is named by one. `Messages` is
+    /// the sole `None`: its locale tag is a `LocaleTag` string literal
+    /// (`"pt-BR"`), not an identifier, and synthesising an `Ident` from it
+    /// would be a lie any identifier-shaped consumer (rename, go-to-def) would
+    /// eventually surface.
+    pub fn name(&self) -> Option<&Ident> {
         match self {
-            CommonsItem::Type(t) => &t.name,
-            CommonsItem::Fn(f) => f.name.ident(),
-            CommonsItem::Capability(c) => &c.name,
-            CommonsItem::Provider(p) => &p.provider_name,
-            CommonsItem::Service(s) => &s.name,
-            CommonsItem::Agent(a) => &a.name,
-            CommonsItem::Actor(a) => &a.name,
-            CommonsItem::Messages(m) => &m.tag,
+            CommonsItem::Type(t) => Some(&t.name),
+            CommonsItem::Fn(f) => Some(f.name.ident()),
+            CommonsItem::Capability(c) => Some(&c.name),
+            CommonsItem::Provider(p) => Some(&p.provider_name),
+            CommonsItem::Service(s) => Some(&s.name),
+            CommonsItem::Agent(a) => Some(&a.name),
+            CommonsItem::Actor(a) => Some(&a.name),
+            CommonsItem::Messages(_) => None,
         }
     }
 }
 
-/// One locale's message bundle (v0.222+): `messages <tag> @reference { ... }`.
-/// `tag` is a plain identifier at the grammar level — its `LocaleTag`
-/// refinement (`bynk.locale`) is checked later, not lexed as a string.
+/// One locale's message bundle (v0.222+): `messages "<tag>" @reference { ... }`.
+/// `tag` is a `LocaleTag` string literal (like an entry's `code`/`template`);
+/// its refinement (`bynk.locale.types`) is checked by `check_messages_bundles`,
+/// which reports `bynk.messages.invalid_locale_tag` for a tag the pattern
+/// rejects.
 #[derive(Debug, Clone)]
 pub struct MessagesDecl {
-    pub tag: Ident,
+    pub tag: String,
+    pub tag_span: Span,
     /// Every `@`-annotation attached to this block. The parser stays
     /// permissive (zero or more, same as `store` field annotations); cardinality
     /// (exactly one `@reference` per bundle, counted across every `Messages`

@@ -6,19 +6,17 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, se
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-/**
- * message-bundles slice 3 (#878): `number` placeholders, bare (default
- * decimal) and both fixed styles (`integer`, `percent`) — all delegated to
- * the host `Intl.NumberFormat`.
- */
-const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "price": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? formatIcuNumber("en", __arg.value) : "{n}")(params.get("n")),
-  "quantity": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? formatIcuNumber("en", __arg.value, "integer") : "{n}")(params.get("n")),
-  "discount": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? formatIcuNumber("en", __arg.value, "percent") : "{n}")(params.get("n")),
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "en": __messages_en,
+  /**
+   * message-bundles slice 3 (#878): `number` placeholders, bare (default
+   * decimal) and both fixed styles (`integer`, `percent`) — all delegated to
+   * the host `Intl.NumberFormat`.
+   */
+  "en": {
+    "price": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? formatIcuNumber("en", __arg.value) : "{n}")(params.get("n")),
+    "quantity": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? formatIcuNumber("en", __arg.value, "integer") : "{n}")(params.get("n")),
+    "discount": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => __arg !== undefined && (__arg.tag === "Whole" || __arg.tag === "Num") ? formatIcuNumber("en", __arg.value, "percent") : "{n}")(params.get("n")),
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;

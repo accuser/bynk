@@ -14,7 +14,7 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "cart.empty" => "Your basket is empty."
   "cart.greeting" => "Hello, {name}!"
 }
@@ -47,12 +47,12 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "cart.empty" => "Your basket is empty."
   "cart.greeting" => "Hello, {name}!"
 }
 
-messages fr {
+messages "fr" {
   "cart.empty" => "Votre panier est vide."
   "cart.greeting" => "Bonjour, {name} !"
 }
@@ -73,9 +73,29 @@ target language's grammar, and only the set is compared.
 A locale may be declared once. Two blocks with the same tag is
 `bynk.resolve.duplicate_message_locale`.
 
-> **Known gap:** a locale tag is written as a bare identifier today, so it must
-> be a single subtag — `en`, `fr`, `pl`. Region- and script-bearing tags such as
-> `pt-BR` or `zh-Hans-CN` cannot yet be declared.
+The tag is a `LocaleTag` string literal, so region- and script-bearing tags are
+declared like any other — `messages "pt-BR"`, `messages "zh-Hans-CN"`:
+
+```bynk
+commons shop.messages
+
+uses bynk.locale
+uses bynk.locale.types
+
+messages "en" @reference {
+  "cart.empty" => "Your basket is empty."
+}
+
+messages "pt-BR" {
+  "cart.empty" => "A sua cesta está vazia."
+}
+```
+
+A tag that isn't a valid `LocaleTag` — a bare word like `messages "klingon"`, or
+a mis-cased `messages "pt-br"` — is `bynk.messages.invalid_locale_tag`, caught at
+compile time rather than reaching the locale-aware runtime as an invalid tag.
+`LocaleTag`'s pattern mandates canonical casing (`pt-BR`, not `pt-br`), so a
+locale has one spelling across the bundle.
 
 ## Rendering
 
@@ -89,11 +109,11 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "cart.greeting" => "Hello, {name}!"
 }
 
-messages fr {
+messages "fr" {
   "cart.greeting" => "Bonjour, {name} !"
 }
 

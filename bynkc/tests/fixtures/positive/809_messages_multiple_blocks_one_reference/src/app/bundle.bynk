@@ -13,10 +13,10 @@ contributes nothing to codegen yet (review finding on PR #872: a
 second block used to emit a second, colliding `export function
 render`).
 ---
-messages en @reference {
+messages "en" @reference {
   "greeting" => "Hello, {name}!"
 }
 
-messages fr {
+messages "fr" {
   "greeting" => "Bonjour, {name}!"
 }

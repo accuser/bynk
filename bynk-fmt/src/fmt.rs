@@ -927,7 +927,7 @@ impl<'a> Formatter<'a> {
         if let Some(doc) = &m.documentation {
             self.emit_doc(doc);
         }
-        self.push(&format!("messages {}", m.tag.name));
+        self.push(&format!("messages \"{}\"", escape_string(&m.tag)));
         for ann in &m.annotations {
             self.push(" ");
             self.push(&annotation_to_string(ann));
