@@ -1043,8 +1043,16 @@ fn emit_icu_placeholder(p: &icu::IcuPlaceholder<'_>, locale_tag: &str) -> String
                     )
                 })
                 .collect();
+            // `Object.hasOwn` (not `?? __arms["other"]`): the arm table is an
+            // object literal, so a runtime `__arg.value` naming an
+            // `Object.prototype` member (`"constructor"`, `"toString"`,
+            // `"__proto__"`) would resolve off the prototype chain and never
+            // reach the mandatory `other` arm — `??` only fires on
+            // null/undefined, and an inherited method is neither (#900). The
+            // dispatch's real question is own-property presence. `Object.hasOwn`
+            // is ES2022, which `emit_tsconfig` already targets.
             format!(
-                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback}; }} const __arms: Record<string, string> = {{ {} }}; return __arms[__arg.value] ?? __arms[\"other\"]; }})({arg})",
+                "((__arg) => {{ if (__arg === undefined || __arg.tag !== \"Text\") {{ return {fallback}; }} const __arms: Record<string, string> = {{ {} }}; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms[\"other\"]; }})({arg})",
                 arms_obj.join(", ")
             )
         }
