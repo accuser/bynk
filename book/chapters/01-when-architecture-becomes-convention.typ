@@ -264,7 +264,7 @@ The difference is easiest to see by placing the two approaches side by side.
     #table(
       columns: (0.82fr, 1.12fr, 1.12fr),
       inset: (x: 0.55em, y: 0.5em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Question],
         text(weight: "semibold")[Convention],

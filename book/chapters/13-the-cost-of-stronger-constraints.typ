@@ -38,7 +38,7 @@ of evidence:
     #table(
       columns: (0.9fr, 1.35fr, 1.35fr),
       inset: (x: 0.45em, y: 0.46em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Constraint],
         text(weight: "semibold")[Evidence gained],
@@ -225,7 +225,7 @@ recurrent:
     #table(
       columns: (1fr, 1fr),
       inset: (x: 0.52em, y: 0.5em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Bynk is more likely to fit],
         text(weight: "semibold")[TypeScript is more likely to fit],

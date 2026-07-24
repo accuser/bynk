@@ -72,7 +72,7 @@ latency and remote failure can enter.
     #table(
       columns: (0.82fr, 1.35fr, 1.35fr),
       inset: (x: 0.5em, y: 0.5em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Unit],
         text(weight: "semibold")[Owns or declares],
@@ -273,7 +273,7 @@ questions:
     #table(
       columns: (0.78fr, 1.42fr, 1.42fr),
       inset: (x: 0.45em, y: 0.46em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Concern],
         text(weight: "semibold")[Recoverable from source],

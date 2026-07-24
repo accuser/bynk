@@ -187,11 +187,42 @@
   body
 }
 
+// A small language chip, right-aligned on the caption row, so a reader can tell
+// a Bynk listing from a TypeScript one at a glance. Bynk (the book's own
+// language) carries the accent colour; TypeScript reads as a neutral reference.
+#let lang-chip(lang) = {
+  let chip(label, tint, ink) = box(
+    inset: (x: 0.5em, y: 0.22em),
+    radius: 2.5pt,
+    fill: tint,
+    text(
+      font: sans-font,
+      size: 6.9pt,
+      weight: "semibold",
+      tracking: 0.05em,
+      fill: ink,
+    )[#label],
+  )
+  if lang == "bynk" {
+    chip("Bynk", accent.lighten(86%), accent.darken(6%))
+  } else if lang == "typescript" {
+    chip("TypeScript", quiet.lighten(80%), quiet.darken(14%))
+  } else {
+    none
+  }
+}
+
 #let code-listing(title, source, lang: "text") = {
   block(breakable: false, above: 1.2em, below: 1.2em)[
     #set par(justify: false, first-line-indent: 0pt)
-    #text(font: sans-font, size: 8.7pt, weight: "semibold", fill: quiet)[#title]
-    #v(-0.45em)
+    #grid(
+      columns: (1fr, auto),
+      align: (left + horizon, right + horizon),
+      column-gutter: 0.6em,
+      text(font: sans-font, size: 8.7pt, weight: "semibold", fill: quiet)[#title],
+      lang-chip(lang),
+    )
+    #v(-0.4em)
     #raw(source, lang: lang, block: true)
   ]
 }

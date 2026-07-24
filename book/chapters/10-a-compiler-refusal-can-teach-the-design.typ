@@ -58,7 +58,7 @@ repair from a design choice.
     #table(
       columns: (0.82fr, 1.2fr, 1.55fr),
       inset: (x: 0.5em, y: 0.5em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Element],
         text(weight: "semibold")[Question answered],
@@ -225,7 +225,7 @@ Severity is therefore part of the language's honesty:
     #table(
       columns: (0.8fr, 1.55fr, 1.3fr),
       inset: (x: 0.5em, y: 0.5em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Form],
         text(weight: "semibold")[What is known],

@@ -123,7 +123,7 @@ Bynk treats unit, integration, and system tests as one case form with a tier:
     #table(
       columns: (0.7fr, 1.65fr, 0.9fr),
       inset: (x: 0.5em, y: 0.5em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Tier],
         text(weight: "semibold")[What becomes real],
