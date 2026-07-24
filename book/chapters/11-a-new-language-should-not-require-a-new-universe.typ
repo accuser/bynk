@@ -85,7 +85,7 @@ Several pieces lower to ordinary TypeScript shapes:
     #table(
       columns: (0.9fr, 1.25fr, 1.45fr),
       inset: (x: 0.5em, y: 0.5em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Bynk construct],
         text(weight: "semibold")[Typed TypeScript shape],
@@ -142,7 +142,7 @@ counter context's generated `wrangler.toml` declares a Durable Object class for
     #table(
       columns: (0.82fr, 1.45fr, 1.45fr),
       inset: (x: 0.5em, y: 0.5em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Concern],
         text(weight: "semibold")[Bundle],

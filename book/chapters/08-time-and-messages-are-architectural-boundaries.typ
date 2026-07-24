@@ -230,7 +230,7 @@ The contrasts can be summarised without collapsing them:
     #table(
       columns: (0.62fr, 0.92fr, 1.15fr, 1.25fr),
       inset: (x: 0.45em, y: 0.48em),
-      stroke: (x, y) => if y == 1 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
+      stroke: (x, y) => if y == 0 { (bottom: 0.8pt + rgb("#4b44d6")) } else { none },
       table.header(
         text(weight: "semibold")[Boundary],
         text(weight: "semibold")[Begins with],
