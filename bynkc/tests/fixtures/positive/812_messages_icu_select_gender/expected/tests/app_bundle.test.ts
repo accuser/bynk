@@ -85,11 +85,49 @@ async function test_undeclared_key_falls_back_to_other() {
   }
 }
 
+// case tier: unit
+async function test_a_prototype_name_key_falls_back_to_other__not_off_the_prototype_chain() {
+  try {
+    const deps = {};
+    const { render } = app_bundle as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const msg = withText(message("greeting"), "g", "constructor");
+    if (!(render(("en" as any), msg) === "They liked this.")) { throw __bynkExpectFailure("tests/bundle.test.bynk:24:12", 972, 1011, "expect render(\"en\", msg) == \"They liked this.\"\n  expected: render(\"en\", msg) == \"They liked this.\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("They liked this."))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
+// case tier: unit
+async function test_a___proto___key_falls_back_to_other() {
+  try {
+    const deps = {};
+    const { render } = app_bundle as any;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const msg = withText(message("greeting"), "g", "__proto__");
+    if (!(render(("en" as any), msg) === "They liked this.")) { throw __bynkExpectFailure("tests/bundle.test.bynk:31:12", 1293, 1332, "expect render(\"en\", msg) == \"They liked this.\"\n  expected: render(\"en\", msg) == \"They liked this.\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("They liked this."))); }
+    return { pass: true };
+  } catch (e) {
+    if (e instanceof ExpectationError) {
+      return { pass: false, error: { message: e.message, location: e.location } };
+    }
+    return { pass: false, error: { message: String(e), location: "unknown" } };
+  }
+}
+
 export async function run(only?: string) {
   const results = [];
   const want = (n: string): boolean => only === undefined || only === n;
   if (want("male arm")) results.push({ name: "male arm", ...(await test_male_arm()) });
   if (want("female arm")) results.push({ name: "female arm", ...(await test_female_arm()) });
   if (want("undeclared key falls back to other")) results.push({ name: "undeclared key falls back to other", ...(await test_undeclared_key_falls_back_to_other()) });
+  if (want("a prototype-name key falls back to other, not off the prototype chain")) results.push({ name: "a prototype-name key falls back to other, not off the prototype chain", ...(await test_a_prototype_name_key_falls_back_to_other__not_off_the_prototype_chain()) });
+  if (want("a __proto__ key falls back to other")) results.push({ name: "a __proto__ key falls back to other", ...(await test_a___proto___key_falls_back_to_other()) });
   return results;
 }

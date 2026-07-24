@@ -13,7 +13,7 @@ const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<strin
    * undeclared key.
    */
   "en": {
-    "greeting": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => { if (__arg === undefined || __arg.tag !== "Text") { return "{g}"; } const __arms: Record<string, string> = { "male": "He", "female": "She", "other": "They" }; return __arms[__arg.value] ?? __arms["other"]; })(params.get("g")) + " liked this.",
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => ((__arg) => { if (__arg === undefined || __arg.tag !== "Text") { return "{g}"; } const __arms: Record<string, string> = { "male": "He", "female": "She", "other": "They" }; return Object.hasOwn(__arms, __arg.value) ? __arms[__arg.value] : __arms["other"]; })(params.get("g")) + " liked this.",
   },
 };
 

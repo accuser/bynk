@@ -11,6 +11,13 @@
  * so `arms["other"]` is always defined; this is a real runtime fallback (a
  * locale's actual CLDR category set can differ from the arms an author
  * happened to write), not dead code.
+ *
+ * The `?? arms["other"]` here is safe where the emitted `select` dispatch's
+ * was not (#900): `category` comes from `Intl.PluralRules().select()`, whose
+ * return is closed over `zero|one|two|few|many|other` — none an
+ * `Object.prototype` member — so it can never resolve off the prototype chain.
+ * A `select` arm, by contrast, is keyed by an arbitrary runtime `MessageArg`
+ * value and needs an own-property (`Object.hasOwn`) check instead.
  */
 export function selectPluralArm(
   tag: string,
