@@ -218,30 +218,46 @@ pub(crate) fn check_messages_bundles(
                     );
                     continue;
                 }
+                // #899: the tag is a `LocaleTag` string literal, checked here
+                // against `LocaleTag`'s own refinement (read from the
+                // firstparty `bynk.locale.types` source, so the pattern has one
+                // definition). An invalid tag would otherwise reach `Intl` at
+                // runtime as `new Intl.PluralRules("xx")`, which throws — the
+                // opposite of `render`'s totality contract.
+                if !bynk_check::checker::locale_tag_accepts(&m.tag) {
+                    let pattern = bynk_check::checker::locale_tag_pattern().unwrap_or("");
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.messages.invalid_locale_tag",
+                            m.tag_span,
+                            format!(
+                                "\"{}\" is not a valid `LocaleTag` — it must match the pattern `{}`",
+                                m.tag, pattern
+                            ),
+                        ),
+                    );
+                }
                 // message-bundles slice 2 (#874, PR #875 review): two blocks
                 // declaring the same locale tag are rejected, not
-                // last-write-wins — the emitter (`emit_messages_bundle`)
-                // has no dedup of its own and would emit two colliding
-                // `const __messages_<tag>` declarations, a hard `tsc`
-                // redeclare error. Mirrors `bynk.resolve.duplicate_fn`'s own
-                // shape: only the *first* occurrence seeds `by_tag`, so a
-                // third duplicate still reports against the original, not
-                // the second.
-                if let Some(&(_, prev)) = by_tag.get(m.tag.name.as_str()) {
+                // last-write-wins — the emitter (`emit_messages_bundle`) has no
+                // dedup of its own and would emit two colliding table entries
+                // under one object key, a hard `tsc` error. Mirrors
+                // `bynk.resolve.duplicate_fn`'s own shape: only the *first*
+                // occurrence seeds `by_tag`, so a third duplicate still reports
+                // against the original, not the second.
+                if let Some(&(_, prev)) = by_tag.get(m.tag.as_str()) {
                     errors.push_for(
                         Some(&parsed[i].identity_path),
                         CompileError::new(
                             "bynk.resolve.duplicate_message_locale",
-                            m.tag.span,
-                            format!(
-                                "locale \"{}\" is already declared in this bundle",
-                                m.tag.name
-                            ),
+                            m.tag_span,
+                            format!("locale \"{}\" is already declared in this bundle", m.tag),
                         )
-                        .with_label(prev.tag.span, "previously declared here"),
+                        .with_label(prev.tag_span, "previously declared here"),
                     );
                 } else {
-                    by_tag.insert(m.tag.name.as_str(), (i, m));
+                    by_tag.insert(m.tag.as_str(), (i, m));
                 }
                 for ann in &m.annotations {
                     if ann.name.name == "reference" {
@@ -307,7 +323,7 @@ pub(crate) fn check_messages_bundles(
                 sorted_tags.sort();
                 for &&tag in &sorted_tags {
                     let &(locale_i, locale_m) = &by_tag[tag];
-                    if tag == reference.tag.name.as_str() {
+                    if tag == reference.tag.as_str() {
                         continue;
                     }
                     for ref_entry in &reference.entries {
@@ -321,7 +337,7 @@ pub(crate) fn check_messages_bundles(
                                     locale_m.span,
                                     format!(
                                         "locale \"{tag}\" is missing code \"{}\", declared by the reference locale \"{}\"",
-                                        ref_entry.code, reference.tag.name
+                                        ref_entry.code, reference.tag
                                     ),
                                 ),
                             );
@@ -337,7 +353,7 @@ pub(crate) fn check_messages_bundles(
                                     locale_entry.template_span,
                                     format!(
                                         "locale \"{tag}\"'s template for code \"{}\" uses placeholders {locale_names:?}, but the reference locale \"{}\"'s uses {ref_names:?}",
-                                        ref_entry.code, reference.tag.name
+                                        ref_entry.code, reference.tag
                                     ),
                                 ),
                             );
@@ -367,7 +383,7 @@ pub(crate) fn check_messages_bundles(
                                             "locale \"{tag}\"'s placeholder \"{pname}\" in code \"{}\" is formatted as {}, but the reference locale \"{}\"'s is {}",
                                             ref_entry.code,
                                             locale_kind.as_str(),
-                                            reference.tag.name,
+                                            reference.tag,
                                             ref_kind.as_str(),
                                         ),
                                     ),

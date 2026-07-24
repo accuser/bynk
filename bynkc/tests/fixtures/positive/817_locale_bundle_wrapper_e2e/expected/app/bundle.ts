@@ -11,24 +11,22 @@ export function greet(tag: LocaleTag): string {
   return render(tag, message("greeting"));
 }
 
-/**
- * Locale-negotiation-slice-2 follow-up (#886): the actual scenario slice 2
- * (#882) could never build under one `uses`-clause name collision — a
- * context calling `Locale.current()` (needing `LocaleTag`) and a context
- * `uses`-ing a message-bundle commons (whose synthetic `render` collided
- * with `bynk.locale`'s own) could never coexist. `bynk.locale`'s split into
- * this leaf (`bynk.locale.types`, carrying just the types) plus the
- * value-level `bynk.locale` closes that gap: a consuming context now only
- * ever needs `bynk.locale.types` directly (see `app.web` below), reaching
- * `render`/`message` exclusively through this wrapper — never through its
- * own `uses bynk.locale`, so the collision has nothing left to collide on.
- */
-const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello",
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "en": __messages_en,
+  /**
+   * Locale-negotiation-slice-2 follow-up (#886): the actual scenario slice 2
+   * (#882) could never build under one `uses`-clause name collision — a
+   * context calling `Locale.current()` (needing `LocaleTag`) and a context
+   * `uses`-ing a message-bundle commons (whose synthetic `render` collided
+   * with `bynk.locale`'s own) could never coexist. `bynk.locale`'s split into
+   * this leaf (`bynk.locale.types`, carrying just the types) plus the
+   * value-level `bynk.locale` closes that gap: a consuming context now only
+   * ever needs `bynk.locale.types` directly (see `app.web` below), reaching
+   * `render`/`message` exclusively through this wrapper — never through its
+   * own `uses bynk.locale`, so the collision has nothing left to collide on.
+   */
+  "en": {
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello",
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;

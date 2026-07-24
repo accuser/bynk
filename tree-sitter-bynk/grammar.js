@@ -581,19 +581,19 @@ module.exports = grammar({
         field("return_type", $._type_ref),
       ),
 
-    // message-bundles track, slice 1 (#859): `messages <tag> @reference {
+    // message-bundles track, slice 1 (#859): `messages "<tag>" @reference {
     // "code" => "template" ... }` — a commons item declaring one locale's
-    // message bundle. `tag` is a plain identifier (its `LocaleTag`
-    // refinement is a checker concern); annotations reuse `store_annotation`
-    // (the same general `@name(args)` shape, ADR 0111) — the parser stays
-    // permissive on cardinality, same as the Rust side. Legality
-    // (commons-only) is a checker concern too, so this rule is admitted in
-    // `_context_body_item`/`_adapter_body_item` as well, mirroring
-    // `service_decl`/`agent_decl`'s existing permissive placement there.
+    // message bundle. `tag` is a `LocaleTag` string literal (#899, like an
+    // entry's `code`/`template`); its refinement is a checker concern.
+    // Annotations reuse `store_annotation` (the same general `@name(args)`
+    // shape, ADR 0111) — the parser stays permissive on cardinality, same as
+    // the Rust side. Legality (commons-only) is a checker concern too, so this
+    // rule is admitted in `_context_body_item`/`_adapter_body_item` as well,
+    // mirroring `service_decl`/`agent_decl`'s existing permissive placement.
     messages_decl: ($) =>
       seq(
         "messages",
-        field("tag", $.identifier),
+        field("tag", $.string_literal),
         repeat(field("annotation", $.store_annotation)),
         "{",
         repeat($.message_entry),

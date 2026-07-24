@@ -15,7 +15,7 @@ ever needs `bynk.locale.types` directly (see `app.web` below), reaching
 `render`/`message` exclusively through this wrapper — never through its
 own `uses bynk.locale`, so the collision has nothing left to collide on.
 ---
-messages en @reference {
+messages "en" @reference {
   "greeting" => "Hello"
 }
 

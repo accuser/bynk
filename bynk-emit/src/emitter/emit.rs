@@ -1107,34 +1107,27 @@ pub(crate) fn emit_messages_bundle(
     blocks: &[&MessagesDecl],
     reference: &MessagesDecl,
 ) {
-    let reference_tag = escape_ts_string(&reference.tag.name);
+    let reference_tag = escape_ts_string(&reference.tag);
 
-    let mut tables = Vec::with_capacity(blocks.len());
-    for m in blocks {
-        emit_doc_block(out, m.documentation.as_deref(), 0);
-        let table = format!("__messages_{}", ts_ident(&m.tag.name));
-        writeln!(
-            out,
-            "const {table}: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {{"
-        )
-        .unwrap();
-        for entry in &m.entries {
-            write!(out, "  \"{}\": ", escape_ts_string(&entry.code)).unwrap();
-            emit_message_entry_renderer(out, entry, &m.tag.name);
-            writeln!(out, ",").unwrap();
-        }
-        writeln!(out, "}};").unwrap();
-        writeln!(out).unwrap();
-        tables.push((escape_ts_string(&m.tag.name), table));
-    }
-
+    // One `code -> renderer` table per locale, inlined into a single
+    // `messagesByLocale` object literal keyed by tag. No per-locale `const
+    // __messages_<tag>` binding: a locale tag can be `"pt-BR"`, which is not a
+    // valid TS identifier, so a named binding would be a syntax error — the
+    // object is keyed by the tag *string* and needs no binding of its own.
     writeln!(
         out,
         "const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {{"
     )
     .unwrap();
-    for (tag, table) in &tables {
-        writeln!(out, "  \"{tag}\": {table},").unwrap();
+    for m in blocks {
+        emit_doc_block(out, m.documentation.as_deref(), INDENT_STEP);
+        writeln!(out, "  \"{}\": {{", escape_ts_string(&m.tag)).unwrap();
+        for entry in &m.entries {
+            write!(out, "    \"{}\": ", escape_ts_string(&entry.code)).unwrap();
+            emit_message_entry_renderer(out, entry, &m.tag);
+            writeln!(out, ",").unwrap();
+        }
+        writeln!(out, "  }},").unwrap();
     }
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
@@ -1144,9 +1137,9 @@ pub(crate) fn emit_messages_bundle(
         "export const messagesReferenceLocale: LocaleTag = (\"{reference_tag}\" as string) as LocaleTag;"
     )
     .unwrap();
-    let locale_list: Vec<String> = tables
+    let locale_list: Vec<String> = blocks
         .iter()
-        .map(|(tag, _)| format!("(\"{tag}\" as string) as LocaleTag"))
+        .map(|m| format!("(\"{}\" as string) as LocaleTag", escape_ts_string(&m.tag)))
         .collect();
     writeln!(
         out,

@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **430** codes in total.
+There are **431** codes in total.
 
 ## Agents
 
@@ -171,6 +171,7 @@ There are **430** codes in total.
 |---|---|---|
 | `bynk.messages.format_mismatch` | A code's placeholder is formatted as a different ICU kind (plain/plural/select/number/date) across declared locales. |  |
 | `bynk.messages.incomplete` | A locale is missing a code the reference locale declares. |  |
+| `bynk.messages.invalid_locale_tag` | A `messages` block's locale tag is not a valid `LocaleTag` (e.g. `messages "xx"` where `xx` doesn't match the tag pattern). |  |
 | `bynk.messages.malformed_icu_syntax` | A message template's ICU placeholder syntax is invalid — unbalanced arm braces, an unknown format keyword, `#` outside a plural arm, a missing mandatory `other` arm, or an explicitly out-of-scope construct (`selectordinal`, `offset:`/`=N`, a CLDR skeleton). |  |
 | `bynk.messages.missing_locale_dependency` | A commons declaring `messages` doesn't `uses bynk.locale` and/or `uses bynk.locale.types`, which its generated `render` and the types its signature names need. |  |
 | `bynk.messages.missing_reference` | A message bundle has no `@reference` block. |  |

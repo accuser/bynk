@@ -235,12 +235,12 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
         }),
         // message-bundles slice 1 (#859): a messages block, keyed by its tag.
         CommonsItem::Messages(m) => out.push(DocEntry {
-            name: m.tag.name.clone(),
+            name: m.tag.clone(),
             kind: "messages",
             depth: 0,
             markdown: symbols::describe_messages(m),
             documented: m.documentation.is_some(),
-            span: m.tag.span,
+            span: m.tag_span,
         }),
     }
 }

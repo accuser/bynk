@@ -2,6 +2,6 @@ commons bundle
 
 uses bynk.locale
 
-messages en @reference {
+messages "en" @reference {
   "cart.count" => "{n, plural, one {nested {m, number}} other {ok}}"
 }

@@ -6,24 +6,20 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError, se
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-/**
- * message-bundles slice 3 (#878): `bynk.messages.format_mismatch` compares
- * format *kind*, not arm order or arm count — `pl`'s arms are written in a
- * different order than `en`'s reference, and `pl` declares an extra `few`
- * category `en` has no use for. Neither is a mismatch (Decision D/H): this
- * must compile with no diagnostics.
- */
-const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "You have " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{count}" : selectPluralArm("en", __arg.value, { "one": formatIcuNumber("en", __arg.value) + " item", "other": formatIcuNumber("en", __arg.value) + " items" }))(params.get("count")),
-};
-
-const __messages_pl: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "Masz " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{count}" : selectPluralArm("pl", __arg.value, { "other": formatIcuNumber("pl", __arg.value) + " elementu", "one": formatIcuNumber("pl", __arg.value) + " element", "few": formatIcuNumber("pl", __arg.value) + " elementy" }))(params.get("count")),
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "en": __messages_en,
-  "pl": __messages_pl,
+  /**
+   * message-bundles slice 3 (#878): `bynk.messages.format_mismatch` compares
+   * format *kind*, not arm order or arm count — `pl`'s arms are written in a
+   * different order than `en`'s reference, and `pl` declares an extra `few`
+   * category `en` has no use for. Neither is a mismatch (Decision D/H): this
+   * must compile with no diagnostics.
+   */
+  "en": {
+    "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "You have " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{count}" : selectPluralArm("en", __arg.value, { "one": formatIcuNumber("en", __arg.value) + " item", "other": formatIcuNumber("en", __arg.value) + " items" }))(params.get("count")),
+  },
+  "pl": {
+    "cart.count": (params: ReadonlyMap<string, MessageArg>): string => "Masz " + ((__arg) => __arg === undefined || (__arg.tag !== "Whole" && __arg.tag !== "Num") ? "{count}" : selectPluralArm("pl", __arg.value, { "other": formatIcuNumber("pl", __arg.value) + " elementu", "one": formatIcuNumber("pl", __arg.value) + " element", "few": formatIcuNumber("pl", __arg.value) + " elementy" }))(params.get("count")),
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;

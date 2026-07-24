@@ -42,7 +42,7 @@ pub fn find_declaration_span(source: &str, name: &str) -> Option<Span> {
     };
     items
         .iter()
-        .map(CommonsItem::name)
+        .filter_map(CommonsItem::name)
         .find(|ident| ident.name == name)
         .map(|ident| ident.span)
 }
@@ -834,7 +834,7 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
         // message-bundles slice 1 (#859): a messages block, keyed by its tag —
         // the same top-level, plain-name convention as Capability/Service/
         // Agent above.
-        CommonsItem::Messages(m) if m.tag.name == name => Some(describe_messages(m)),
+        CommonsItem::Messages(m) if m.tag == name => Some(describe_messages(m)),
         // #611 (gap B): a record field, keyed `"Type.field"` by the index — the
         // checker records construction labels and field accesses as `Field` refs,
         // so hover resolves the key but had no arm to render it and fell through
@@ -1179,7 +1179,9 @@ pub(crate) fn describe_capability(c: &CapabilityDecl) -> String {
 pub(crate) fn describe_messages(m: &MessagesDecl) -> String {
     let mut out = String::new();
     out.push_str("```bynk\nmessages ");
-    out.push_str(&m.tag.name);
+    out.push('"');
+    out.push_str(&m.tag);
+    out.push('"');
     for ann in &m.annotations {
         out.push(' ');
         out.push_str(&bynk_fmt::annotation_to_string(ann));
@@ -2266,13 +2268,13 @@ mod tests {
             ---\n\
             The English reference bundle.\n\
             ---\n\
-            messages en @reference {\n\
+            messages \"en\" @reference {\n\
             \x20 \"greeting\" => \"Hello, {name}!\"\n\
             \x20 \"farewell\" => \"Bye\"\n\
             }\n";
 
         let info = describe_symbol(src, "en").expect("hover on the `en` messages tag");
-        assert!(info.contains("messages en @reference {"), "{info}");
+        assert!(info.contains("messages \"en\" @reference {"), "{info}");
         assert!(info.contains("\"greeting\" => …"), "{info}");
         assert!(info.contains("\"farewell\" => …"), "{info}");
         assert!(info.contains("The English reference bundle."), "{info}");

@@ -906,6 +906,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A locale is missing a code the reference locale declares.",
     ),
     d(
+        "bynk.messages.invalid_locale_tag",
+        "A `messages` block's locale tag is not a valid `LocaleTag` (e.g. `messages \"xx\"` where `xx` doesn't match the tag pattern).",
+    ),
+    d(
         "bynk.messages.malformed_icu_syntax",
         "A message template's ICU placeholder syntax is invalid — unbalanced arm braces, an unknown format keyword, `#` outside a plural arm, a missing mandatory `other` arm, or an explicitly out-of-scope construct (`selectordinal`, `offset:`/`=N`, a CLDR skeleton).",
     ),

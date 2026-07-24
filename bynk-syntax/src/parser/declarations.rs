@@ -3075,7 +3075,11 @@ impl<'a> Parser<'a> {
     /// identically wherever it's called from.
     fn parse_messages_decl(&mut self) -> Result<MessagesDecl, CompileError> {
         let kw = self.expect(TokenKind::Messages, "to start a messages declaration")?;
-        let tag = self.expect_ident("as the locale tag after `messages`")?;
+        // A `LocaleTag` string literal, like an entry's `code`/`template` — so a
+        // region/script tag (`"pt-BR"`) is expressible and the refinement is
+        // checked, not lexed. Legality against `LocaleTag`'s pattern is
+        // `check_messages_bundles`' concern (`bynk.messages.invalid_locale_tag`).
+        let (tag, tag_span) = self.expect_str_lit("as the locale tag after `messages`")?;
         let mut annotations = Vec::new();
         while self.peek_kind() == Some(TokenKind::At) {
             annotations.push(self.parse_annotation()?);
@@ -3089,6 +3093,7 @@ impl<'a> Parser<'a> {
         let close = self.expect(TokenKind::RBrace, "to close the messages body")?;
         Ok(MessagesDecl {
             tag,
+            tag_span,
             annotations,
             entries,
             documentation: None,

@@ -7,17 +7,17 @@ uses bynk.locale
 The reference locale — every code here must appear, with the same
 placeholders, in every other declared locale below.
 ---
-messages en @reference {
+messages "en" @reference {
   "greeting" => "Hello, {name}!"
   "farewell" => "Goodbye, {name}!"
 }
 
-messages fr {
+messages "fr" {
   "greeting" => "Bonjour, {name} !"
   "farewell" => "Au revoir, {name} !"
 }
 
-messages es {
+messages "es" {
   "greeting" => "¡Hola, {name}!"
   "farewell" => "¡Adiós, {name}!"
 }

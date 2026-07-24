@@ -6,27 +6,23 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-/**
- * message-bundles track, slice 1 (#859): multiple `messages` blocks in one
- * commons are legal (forward-compatible with slice 2's multi-locale
- * model) as long as exactly one carries `@reference`. Slice 1 emits
- * exactly one `export function render`, built only from the reference
- * block's entries — a non-reference block is checker-validated but
- * contributes nothing to codegen yet (review finding on PR #872: a
- * second block used to emit a second, colliding `export function
- * render`).
- */
-const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
-};
-
-const __messages_fr: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Bonjour, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "en": __messages_en,
-  "fr": __messages_fr,
+  /**
+   * message-bundles track, slice 1 (#859): multiple `messages` blocks in one
+   * commons are legal (forward-compatible with slice 2's multi-locale
+   * model) as long as exactly one carries `@reference`. Slice 1 emits
+   * exactly one `export function render`, built only from the reference
+   * block's entries — a non-reference block is checker-validated but
+   * contributes nothing to codegen yet (review finding on PR #872: a
+   * second block used to emit a second, colliding `export function
+   * render`).
+   */
+  "en": {
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
+  },
+  "fr": {
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Bonjour, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + "!",
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;

@@ -86,7 +86,7 @@ const MESSAGES_BUNDLE: &str = r#"commons app.bundle
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "greeting" => "Hi"
 }
 "#;

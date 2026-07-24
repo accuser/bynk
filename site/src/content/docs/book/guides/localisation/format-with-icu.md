@@ -19,7 +19,7 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "cart.count" => "{n, plural, one {# item} other {# items}}"
 }
 ```
@@ -37,11 +37,11 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "cart.count" => "{n, plural, one {# item} other {# items}}"
 }
 
-messages pl {
+messages "pl" {
   "cart.count" => "{n, plural, one {# produkt} few {# produkty} other {# produktów}}"
 }
 ```
@@ -63,7 +63,7 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "review.liked" => "{g, select, male {He} female {She} other {They}} liked this."
 }
 ```
@@ -79,7 +79,7 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "stats.views" => "{n, number} views"
   "stats.rounded" => "{n, number, integer} views"
   "stats.share" => "{n, number, percent} of readers"
@@ -97,7 +97,7 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "order.placed" => "Placed {at, date}"
   "order.placed_long" => "Placed {at, date, long}"
 }
@@ -125,7 +125,7 @@ commons shop.messages
 uses bynk.locale
 uses bynk.locale.types
 
-messages en @reference {
+messages "en" @reference {
   "cart.count" => "{n, plural, one {it''s # item} other {it''s # items}}"
   "syntax.hint" => "{n, plural, other {use '{'name'}' to substitute}}"
 }

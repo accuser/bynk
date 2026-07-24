@@ -232,6 +232,57 @@ pub(crate) fn first_failed_predicate<'a>(
     None
 }
 
+/// `LocaleTag`'s refinement, read once from the firstparty `bynk.locale.types`
+/// source — the single source of truth the emitter also lowers to a
+/// `new RegExp(...)`. `None` only if that type ever loses its refinement or the
+/// firstparty source stops parsing (both guarded elsewhere), in which case the
+/// tag check below accepts everything rather than spuriously rejecting.
+fn locale_tag_refinement() -> Option<&'static Refinement> {
+    use std::sync::OnceLock;
+    static REFINEMENT: OnceLock<Option<Refinement>> = OnceLock::new();
+    REFINEMENT
+        .get_or_init(|| {
+            let src = crate::firstparty::BYNK_LOCALE_TYPES_SRC;
+            let tokens = bynk_syntax::lexer::tokenize(src).ok()?;
+            let unit = bynk_syntax::parser::parse_unit(&tokens, src).ok()?;
+            let bynk_syntax::ast::SourceUnit::Commons(commons) = unit else {
+                return None;
+            };
+            commons.items.iter().find_map(|item| match item {
+                CommonsItem::Type(t) if t.name.name == "LocaleTag" => {
+                    type_decl_refinement(t).cloned()
+                }
+                _ => None,
+            })
+        })
+        .as_ref()
+}
+
+/// The pattern `LocaleTag`'s refinement matches against, for a diagnostic that
+/// names it. `None` if the type carries no `Matches` predicate.
+pub fn locale_tag_pattern() -> Option<&'static str> {
+    locale_tag_refinement()?.predicates.iter().find_map(|p| {
+        if let PredKind::Matches(pat) = &p.kind {
+            Some(pat.as_str())
+        } else {
+            None
+        }
+    })
+}
+
+/// Whether `tag` satisfies `LocaleTag`'s refinement — the check behind
+/// `bynk.messages.invalid_locale_tag`. Evaluated with the same regex-engine
+/// semantics (`regress`, anchored, no flags) the emitted `new RegExp(...)`
+/// runs under, so a tag accepted here is one the runtime cast is honest about.
+pub fn locale_tag_accepts(tag: &str) -> bool {
+    match locale_tag_refinement() {
+        Some(refinement) => {
+            first_failed_predicate(refinement, &ConstLit::Str(tag.to_string())).is_none()
+        }
+        None => true,
+    }
+}
+
 pub(crate) fn literal_matches_base(lit: &ConstLit, base: BaseType) -> bool {
     matches!(
         (lit, base),

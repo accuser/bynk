@@ -10,10 +10,10 @@ different order than `en`'s reference, and `pl` declares an extra `few`
 category `en` has no use for. Neither is a mismatch (Decision D/H): this
 must compile with no diagnostics.
 ---
-messages en @reference {
+messages "en" @reference {
   "cart.count" => "You have {count, plural, one {# item} other {# items}}"
 }
 
-messages pl {
+messages "pl" {
   "cart.count" => "Masz {count, plural, other {# elementu} one {# element} few {# elementy}}"
 }

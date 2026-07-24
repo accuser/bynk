@@ -2452,7 +2452,7 @@
           "name": "tag",
           "content": {
             "type": "SYMBOL",
-            "name": "identifier"
+            "name": "string_literal"
           }
         },
         {

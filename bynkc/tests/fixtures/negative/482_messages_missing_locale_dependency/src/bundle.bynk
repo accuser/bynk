@@ -1,5 +1,5 @@
 commons bundle
 
-messages en @reference {
+messages "en" @reference {
   "a" => "b"
 }

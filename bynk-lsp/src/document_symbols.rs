@@ -119,11 +119,11 @@ fn item_symbol(pm: &PositionMap, item: &CommonsItem) -> DocumentSymbol {
 
 fn messages_symbol(pm: &PositionMap, m: &MessagesDecl) -> DocumentSymbol {
     make_symbol(
-        format!("messages {}", m.tag.name),
+        format!("messages \"{}\"", m.tag),
         detail_from_doc(&m.documentation),
         SymbolKind::STRUCT,
         pm.range(m.span),
-        pm.range(m.tag.span),
+        pm.range(m.tag_span),
         Vec::new(),
     )
 }

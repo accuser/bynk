@@ -1,0 +1,19 @@
+commons app.bundle
+
+uses bynk.locale
+uses bynk.locale.types
+
+---
+#899: a region-subtagged locale tag (`"pt-BR"`) is now declarable — the tag
+is a `LocaleTag` string literal, not a bare identifier, so it flows through
+to the emitted `messagesLocales` set and renders like any other locale. Before
+#899, `messages pt-BR` was a parse error and `messagesLocales` could never
+carry a subtag'd tag for `negotiateLocale`'s RFC 4647 filtering to match.
+---
+messages "en" @reference {
+  "greeting" => "Hello, {name}!"
+}
+
+messages "pt-BR" {
+  "greeting" => "Olá, {name}!"
+}

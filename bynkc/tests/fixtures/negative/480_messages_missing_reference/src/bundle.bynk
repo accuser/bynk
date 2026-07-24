@@ -2,6 +2,6 @@ commons bundle
 
 uses bynk.locale
 
-messages en {
+messages "en" {
   "a" => "b"
 }

@@ -2,11 +2,11 @@ commons bundle
 
 uses bynk.locale
 
-messages en @reference {
+messages "en" @reference {
   "greeting" => "Hello"
   "farewell" => "Bye"
 }
 
-messages fr {
+messages "fr" {
   "greeting" => "Bonjour"
 }

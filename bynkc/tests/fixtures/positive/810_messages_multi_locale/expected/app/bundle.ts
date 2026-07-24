@@ -6,26 +6,22 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 import { LocaleTag, Message, MessageArg } from "../bynk/locale/types.js";
 import { render as __bynkLocaleRender, renderArg } from "../bynk/locale.js";
 
-/**
- * message-bundles track, slice 2 (#874): a real second locale — `render`
- * now actually reads `tag` to select `fr`'s own translations, not just
- * the reference (`en`)'s. `greeting`'s placeholders are reordered between
- * locales (idiomatic for French word order) to prove cross-locale
- * placeholder agreement compares sets, not sequences.
- */
-const __messages_en: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + ", you are " + (params.get("age") !== undefined ? renderArg(params.get("age") as MessageArg) : "{age}"),
-  "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Bye",
-};
-
-const __messages_fr: Record<string, (params: ReadonlyMap<string, MessageArg>) => string> = {
-  "greeting": (params: ReadonlyMap<string, MessageArg>): string => (params.get("age") !== undefined ? renderArg(params.get("age") as MessageArg) : "{age}") + " ans, bonjour " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}"),
-  "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Au revoir",
-};
-
 const messagesByLocale: Record<string, Record<string, (params: ReadonlyMap<string, MessageArg>) => string>> = {
-  "en": __messages_en,
-  "fr": __messages_fr,
+  /**
+   * message-bundles track, slice 2 (#874): a real second locale — `render`
+   * now actually reads `tag` to select `fr`'s own translations, not just
+   * the reference (`en`)'s. `greeting`'s placeholders are reordered between
+   * locales (idiomatic for French word order) to prove cross-locale
+   * placeholder agreement compares sets, not sequences.
+   */
+  "en": {
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => "Hello, " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}") + ", you are " + (params.get("age") !== undefined ? renderArg(params.get("age") as MessageArg) : "{age}"),
+    "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Bye",
+  },
+  "fr": {
+    "greeting": (params: ReadonlyMap<string, MessageArg>): string => (params.get("age") !== undefined ? renderArg(params.get("age") as MessageArg) : "{age}") + " ans, bonjour " + (params.get("name") !== undefined ? renderArg(params.get("name") as MessageArg) : "{name}"),
+    "farewell": (params: ReadonlyMap<string, MessageArg>): string => "Au revoir",
+  },
 };
 
 export const messagesReferenceLocale: LocaleTag = ("en" as string) as LocaleTag;
