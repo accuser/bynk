@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A `messages` block's locale tag is a checked `LocaleTag` string literal (`messages "pt-BR"`), so region/script tags are declarable and an invalid tag is `bynk.messages.invalid_locale_tag` rather than reaching the runtime
----
+# 0279 — A `messages` block's tag is a checked `LocaleTag` literal
 
-## ADR: messages-tag-locale-literal
-title: A `messages` block's tag is a checked `LocaleTag` literal
-summary: The tag becomes a string literal checked against `LocaleTag`'s refinement, closing two shipped defects
+- **Status:** Accepted (v0.233)
 
 **Context.** The `messages` construct (slice 1, ADR 0272) shipped its locale
 tag as a bare identifier: `messages en @reference { … }`. Grounding [#899](https://github.com/accuser/bynk/issues/899)

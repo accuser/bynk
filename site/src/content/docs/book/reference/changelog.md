@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.232**.
+written against **v0.233**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.233.0** | A `messages` block's locale tag is a checked `LocaleTag` string literal (`messages "pt-BR"`), so region/script tags are declarable and an invalid tag is `bynk.messages.invalid_locale_tag` rather than reaching the runtime |
 | **v0.232.0** | "`bynk.locale`'s types split into a leaf commons, `bynk.locale.types`, closing Locale slice 2's uses-collision gap" |
 | **v0.231.0** | The Cloudflare `Locale` provider negotiates Accept-Language against a context's message bundle (RFC 4647 basic filtering) |
 | **v0.230.0** | "`messages` templates gain ICU `plural`/`select`/`number`/`date` placeholders, formatted via the host `Intl`" |
