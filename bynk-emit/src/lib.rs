@@ -14,6 +14,8 @@
 pub mod emitter;
 pub mod project;
 
+pub(crate) mod json;
+
 use std::path::Path;
 
 use bynk_check::{checker, resolver};

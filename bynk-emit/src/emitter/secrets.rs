@@ -28,6 +28,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::json::json_string;
+
 use bynk_check::actors::SumMemberSeam;
 use bynk_syntax::CompileError;
 use bynk_syntax::ast::{Block, Expr, ExprKind};
@@ -296,30 +298,6 @@ fn json_array(names: &BTreeSet<String>) -> String {
         .map(|n| format!("    {}", json_string(n)))
         .collect();
     format!("[\n{}\n  ]", rendered.join(",\n"))
-}
-
-/// Escape a secret name as a JSON string literal.
-///
-/// A name reaches here from a Bynk `StrLit`, so as far as this file is concerned
-/// it is arbitrary text. Escaping the two structural characters plus the control
-/// range is what keeps the manifest parseable rather than merely
-/// usually-parseable.
-fn json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 #[cfg(test)]

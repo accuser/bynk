@@ -20,6 +20,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::json::json_string;
+
 /// The file the driver reads, beside each Worker's `wrangler.toml`.
 pub const CONTRACTS_MANIFEST: &str = "bynk-contracts.json";
 
@@ -94,26 +96,6 @@ fn json_map(m: &BTreeMap<String, String>, indent: usize) -> String {
         .map(|(k, v)| format!("{pad}{}: {}", json_string(k), json_string(v)))
         .collect();
     format!("{{\n{}\n{close}}}", entries.join(",\n"))
-}
-
-fn json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 #[cfg(test)]

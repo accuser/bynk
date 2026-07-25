@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::json::json_string;
+
 /// v0.17 [DECISION L] stub: a version range is *unpinned* — and rejected — when
 /// it is empty, `*`/`x`/`latest`, or otherwise carries no concrete version
 /// number. A pinned range names at least one digit (`^5`, `~1.2`, `1.2.3`,
@@ -21,20 +23,6 @@ pub(crate) fn render_package_json(deps: &std::collections::BTreeMap<String, Stri
         .collect();
     out.push_str(&entries.join(",\n"));
     out.push_str("\n  }\n}\n");
-    out
-}
-
-/// Minimal JSON string escaping for package names and version ranges.
-fn json_string(s: &str) -> String {
-    let mut out = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            _ => out.push(c),
-        }
-    }
-    out.push('"');
     out
 }
 
@@ -300,6 +288,49 @@ mod tests {
         assert!(!is_unpinned_range("~0.1"));
         assert!(!is_unpinned_range(">=2"));
         assert!(!is_unpinned_range("18"));
+    }
+
+    // -- render_package_json --------------------------------------------------
+    #[test]
+    fn render_package_json_renders_sorted_dependencies() {
+        let mut deps = std::collections::BTreeMap::new();
+        deps.insert("zod".to_string(), "^3.22.4".to_string());
+        deps.insert("hono".to_string(), "^4.0.0".to_string());
+        let out = render_package_json(&deps);
+        // BTreeMap ordering keeps the file byte-stable across builds.
+        assert!(
+            out.find("\"hono\"").unwrap() < out.find("\"zod\"").unwrap(),
+            "dependencies render in sorted order:\n{out}"
+        );
+        assert!(out.contains("\"hono\": \"^4.0.0\""), "{out}");
+    }
+
+    /// A package name and version range reach here from adapter declarations in
+    /// Bynk source, so they are arbitrary text. This module used to escape only
+    /// `"` and `\`, which let a control character through as a literal — and a
+    /// literal control character inside a JSON string is a parse error, so the
+    /// emitted `package.json` was invalid rather than merely odd.
+    #[test]
+    fn render_package_json_escapes_the_control_range() {
+        let mut deps = std::collections::BTreeMap::new();
+        deps.insert("pkg\nname".to_string(), "^1.0\u{1}0".to_string());
+        let out = render_package_json(&deps);
+        assert!(out.contains("\"pkg\\nname\""), "{out}");
+        assert!(out.contains("\"^1.0\\u00010\""), "{out}");
+        // No raw control character survives into the rendered document (the
+        // pretty-printer's own newlines are all that remain).
+        assert!(
+            !out.lines().any(|l| l.chars().any(|c| (c as u32) < 0x20)),
+            "a raw control character reached the output:\n{out:?}"
+        );
+    }
+
+    #[test]
+    fn render_package_json_escapes_structural_characters() {
+        let mut deps = std::collections::BTreeMap::new();
+        deps.insert("a\"b".to_string(), "c\\d".to_string());
+        let out = render_package_json(&deps);
+        assert!(out.contains(r#""a\"b": "c\\d""#), "{out}");
     }
 
     // -- normalize_rel --------------------------------------------------------
