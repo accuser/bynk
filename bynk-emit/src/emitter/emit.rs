@@ -103,10 +103,14 @@ fn sorted_index_fields(indexes: &HashMap<String, Vec<String>>) -> Vec<(&String, 
     entries
 }
 
-/// The parts of a refined-or-opaque `TypeBody` that its lowering reads. Grouped
-/// because all three come out of the same `t.body` the caller already matched on,
-/// so passing them alongside `t` as separate arguments only restated the
-/// destructure at every call site.
+/// The parts of a refined-or-opaque `TypeBody` that its lowering reads.
+///
+/// Honest about what this is: `emit_refined_type` reached eight arguments when it
+/// gained `runtime_use`, and grouping three of them keeps it under
+/// `clippy::too_many_arguments` without another `#[allow]`. The three do cohere —
+/// all come out of the same `t.body` the caller already matched on — but the
+/// function still takes six parameters, so this is a lint fix that reads well,
+/// not a decomposition.
 struct RefinedShape<'a> {
     base: BaseType,
     refinement: Option<&'a Refinement>,
