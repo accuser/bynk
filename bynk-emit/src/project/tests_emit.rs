@@ -1024,8 +1024,13 @@ fn emit_system_http_support(
     unit_tables: &HashMap<String, UnitTable>,
 ) -> SystemHttpSupport {
     use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
-    // The system-test harness module's imports are emitted by this file, not
-    // decided from the codecs below, so the accumulator is a throwaway.
+    // NOTE: this file emits the harness module's runtime import list as a **fixed**
+    // set that has never included the `Bytes` helpers, so a `Bytes` crossing a
+    // system-test route emits an unimported `__bynkBytes*` — the same gap as
+    // `compose.ts`, in another place. It predates this accumulator (the
+    // `out.contains` scan it replaces never covered these modules either) and is
+    // unchanged by it; a throwaway keeps the behaviour identical rather than
+    // quietly widening the fix.
     let runtime_use = crate::emitter::RuntimeUse::default();
     let mut http_services: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut declared: DeclaredRoutes = std::collections::HashSet::new();

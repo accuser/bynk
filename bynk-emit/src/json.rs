@@ -15,6 +15,8 @@
 //! in the build output. One definition means a fix like that cannot land in three
 //! places and miss the fourth.
 
+use std::fmt::Write as _;
+
 /// Render `s` as a double-quoted JSON string literal, escaping the two
 /// structural characters (`"` and `\`) and the whole C0 control range.
 ///
@@ -34,8 +36,11 @@ pub(crate) fn json_string(s: &str) -> String {
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             // The rest of C0 has no short escape; `\u00xx` is the only form.
+            // `write!` into the buffer rather than `push_str(&format!(…))` (what
+            // two of the four copies this replaces did) — no `String` allocated
+            // per control character.
             c if (c as u32) < 0x20 => {
-                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("\\u{:04x}", c as u32));
+                let _ = write!(out, "\\u{:04x}", c as u32);
             }
             c => out.push(c),
         }

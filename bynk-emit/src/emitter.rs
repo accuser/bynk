@@ -3415,6 +3415,32 @@ mod conditional_runtime_import_tests {
             .unwrap_or("")
     }
 
+    /// Emit a `messages` bundle and return its own module's TypeScript.
+    ///
+    /// A bundle needs `uses bynk.locale` / `bynk.locale.types`, which the
+    /// single-file [`crate::compile`] path rejects by construction, so this drives
+    /// the fs-free project pipeline instead and picks the user's unit out of the
+    /// module graph. Without this seam the ICU condition has no crate-local
+    /// coverage at all — it rests entirely on `bynkc`'s fixtures one crate up,
+    /// which is a long way from the code that decides the import.
+    fn emit_bundle(body: &str) -> String {
+        let src =
+            format!("commons app.bundle\n\nuses bynk.locale\nuses bynk.locale.types\n\n{body}");
+        let out = match crate::project::compile_in_memory(
+            &src,
+            crate::project::BuildTarget::Bundle,
+            Default::default(),
+        ) {
+            Ok(out) => out,
+            Err(_) => panic!("bundle fixture should compile:\n{src}"),
+        };
+        out.files
+            .iter()
+            .find(|f| f.output_path.ends_with("bundle.ts"))
+            .map(|f| f.typescript.clone())
+            .expect("the bundle's own module should be in the output")
+    }
+
     #[test]
     fn bytes_helpers_are_imported_when_a_bytes_value_is_built() {
         let ts = emit_source(
@@ -3457,5 +3483,63 @@ mod conditional_runtime_import_tests {
             !runtime_import_line(&ts).contains("__bynkBytes"),
             "a marker inside a string literal is not a helper reference: {ts}"
         );
+    }
+
+    // -- the ICU formatters ---------------------------------------------------
+
+    const ICU_HELPERS: [&str; 3] = ["selectPluralArm", "formatIcuNumber", "formatIcuDate"];
+
+    /// The case the per-arm recording exists for. A `select` placeholder lowers to
+    /// `Object.hasOwn` over an arm table and calls no formatter, so a bundle whose
+    /// only ICU construct is a `select` must import none of the three — recording
+    /// once per placeholder instead of per arm would import all three here.
+    #[test]
+    fn a_select_only_bundle_imports_no_icu_formatter() {
+        let ts = emit_bundle(
+            "messages \"en\" @reference {\n  \"greeting\" => \"{g, select, male {He} female {She} other {They}} liked this.\"\n}\n",
+        );
+        assert!(
+            ts.contains("Object.hasOwn"),
+            "the select arm table should have been emitted, else this proves nothing: {ts}"
+        );
+        for helper in ICU_HELPERS {
+            assert!(
+                !runtime_import_line(&ts).contains(helper),
+                "a select-only bundle calls no formatter, so `{helper}` must not be imported: {ts}"
+            );
+        }
+    }
+
+    /// The opposite direction: a `plural` placeholder does call a formatter, and
+    /// the three are imported as a group.
+    #[test]
+    fn a_plural_bundle_imports_the_icu_formatters() {
+        let ts = emit_bundle(
+            "messages \"en\" @reference {\n  \"cart\" => \"You have {n, plural, one {# item} other {# items}} in your cart\"\n}\n",
+        );
+        assert!(
+            ts.contains("selectPluralArm("),
+            "the plural dispatch should have been emitted: {ts}"
+        );
+        for helper in ICU_HELPERS {
+            assert!(
+                runtime_import_line(&ts).contains(helper),
+                "`{helper}` should be imported for a plural bundle: {ts}"
+            );
+        }
+    }
+
+    /// A bundle with no ICU dispatch at all — a plain `{name}` placeholder goes
+    /// through `renderArg`, not a formatter.
+    #[test]
+    fn a_plain_placeholder_bundle_imports_no_icu_formatter() {
+        let ts =
+            emit_bundle("messages \"en\" @reference {\n  \"hello\" => \"Hello, {name}!\"\n}\n");
+        for helper in ICU_HELPERS {
+            assert!(
+                !runtime_import_line(&ts).contains(helper),
+                "`{helper}` must not be imported for a bundle with no ICU dispatch: {ts}"
+            );
+        }
     }
 }

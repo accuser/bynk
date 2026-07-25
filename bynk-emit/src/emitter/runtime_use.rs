@@ -48,6 +48,15 @@
 //! bottom of a deep tree of `&`-taking emit functions — several of them pure
 //! `String`-returning helpers — and a shared `&RuntimeUse` threads through that
 //! tree without turning every intermediate signature into a `&mut` chain.
+//!
+//! The consequence, recorded here so it does not have to be bisected for later:
+//! `Cell` is `!Sync`, so [`RuntimeUse`] is `!Sync`, and so is `EmitProjectCtx`
+//! now that it owns one — an `&EmitProjectCtx` can no longer cross a thread
+//! boundary. Nothing in the tree is parallel today, so this costs nothing, but
+//! per-unit emission is the obvious thing to parallelise, and that is when it
+//! will bite. Swapping both fields to `AtomicBool` with `Relaxed` ordering
+//! restores `Sync` at no meaningful cost and leaves every call site reading the
+//! same — do that rather than unpicking the shared-`&` design.
 
 use std::cell::Cell;
 
@@ -87,29 +96,17 @@ impl RuntimeUse {
 mod tests {
     use super::*;
 
+    /// The type's contract, written down: the two flags are independent and a
+    /// note latches. Everything else about this type is `Cell` behaviour and is
+    /// not worth a test — the coverage that matters drives the real producers
+    /// end-to-end (`emitter::conditional_runtime_import_tests`).
     #[test]
-    fn flags_start_clear_and_latch() {
+    fn notes_are_independent_and_latch() {
         let u = RuntimeUse::default();
-        assert!(!u.bytes());
-        assert!(!u.icu());
         u.note_bytes();
         assert!(u.bytes());
         assert!(!u.icu(), "noting one helper does not set the other");
-        u.note_icu();
-        assert!(u.icu());
-        // Latching: a second note is not a toggle.
         u.note_bytes();
-        assert!(u.bytes());
-    }
-
-    /// A `&RuntimeUse` is all a producer needs — the point of the `Cell`.
-    #[test]
-    fn a_shared_reference_can_record() {
-        fn producer(u: &RuntimeUse) {
-            u.note_bytes();
-        }
-        let u = RuntimeUse::default();
-        producer(&u);
-        assert!(u.bytes());
+        assert!(u.bytes(), "a second note is not a toggle");
     }
 }

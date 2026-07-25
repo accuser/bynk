@@ -36,7 +36,7 @@ pub(crate) fn emit_type(
         } => emit_refined_type(
             out,
             t,
-            &RefinedShape {
+            RefinedShape {
                 base: *base,
                 refinement: refinement.as_ref(),
                 is_opaque: false,
@@ -56,7 +56,7 @@ pub(crate) fn emit_type(
             emit_refined_type(
                 out,
                 t,
-                &RefinedShape {
+                RefinedShape {
                     base: *base,
                     refinement: refinement.as_ref(),
                     is_opaque: true,
@@ -119,7 +119,7 @@ struct RefinedShape<'a> {
 fn emit_refined_type(
     out: &mut String,
     t: &TypeDecl,
-    shape: &RefinedShape<'_>,
+    shape: RefinedShape<'_>,
     commons: &TypedCommons,
     brand_prefix: &str,
     runtime_use: &RuntimeUse,
@@ -128,7 +128,7 @@ fn emit_refined_type(
         base,
         refinement,
         is_opaque,
-    } = *shape;
+    } = shape;
     let ts_base = ts_base(base);
     writeln!(
         out,

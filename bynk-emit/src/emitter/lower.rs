@@ -29,10 +29,15 @@ pub fn lower_block_to_async_body(
     // v0.70: a sub-builder records body checkpoints relative to this local buffer;
     // the caller merges it into the module map at the splice offset.
     let smb = RefCell::new(SourceMapBuilder::new());
-    // These bodies are spliced into a test-scaffold module whose import list is
-    // decided by the test emitter, not from this lowering — so the accumulator is
-    // a throwaway. Owned rather than optional so `note_bytes` is never a silent
-    // no-op on a path that *does* decide its own imports.
+    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
+    // import list `tests_emit.rs` emits as a **fixed** set that has never included
+    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
+    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
+    // That predates this accumulator (the `out.contains` scan it replaces never
+    // covered these modules either) and is unchanged by it; a throwaway keeps the
+    // behaviour identical rather than quietly widening the fix. Owned rather than
+    // optional so `note_bytes` is never a silent no-op on a path that *does*
+    // decide its own imports.
     let runtime_use = crate::emitter::RuntimeUse::default();
     {
         let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
@@ -66,10 +71,15 @@ pub fn lower_test_case_body(
 ) -> (String, SourceMapBuilder) {
     let mut out = String::new();
     let smb = RefCell::new(SourceMapBuilder::new());
-    // These bodies are spliced into a test-scaffold module whose import list is
-    // decided by the test emitter, not from this lowering — so the accumulator is
-    // a throwaway. Owned rather than optional so `note_bytes` is never a silent
-    // no-op on a path that *does* decide its own imports.
+    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
+    // import list `tests_emit.rs` emits as a **fixed** set that has never included
+    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
+    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
+    // That predates this accumulator (the `out.contains` scan it replaces never
+    // covered these modules either) and is unchanged by it; a throwaway keeps the
+    // behaviour identical rather than quietly widening the fix. Owned rather than
+    // optional so `note_bytes` is never a silent no-op on a path that *does*
+    // decide its own imports.
     let runtime_use = crate::emitter::RuntimeUse::default();
     {
         let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
@@ -123,10 +133,15 @@ pub fn lower_integration_case_body(
 ) -> (String, SourceMapBuilder) {
     let mut out = String::new();
     let smb = RefCell::new(SourceMapBuilder::new());
-    // These bodies are spliced into a test-scaffold module whose import list is
-    // decided by the test emitter, not from this lowering — so the accumulator is
-    // a throwaway. Owned rather than optional so `note_bytes` is never a silent
-    // no-op on a path that *does* decide its own imports.
+    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
+    // import list `tests_emit.rs` emits as a **fixed** set that has never included
+    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
+    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
+    // That predates this accumulator (the `out.contains` scan it replaces never
+    // covered these modules either) and is unchanged by it; a throwaway keeps the
+    // behaviour identical rather than quietly widening the fix. Owned rather than
+    // optional so `note_bytes` is never a silent no-op on a path that *does*
+    // decide its own imports.
     let runtime_use = crate::emitter::RuntimeUse::default();
     {
         let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
