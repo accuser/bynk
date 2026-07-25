@@ -1042,7 +1042,19 @@ fn emit_http_sum_wrapper(
             "        return HttpResult.BadRequest(\"Invalid request body\");"
         );
         let _ = writeln!(out, "      }}");
-        let dser = super::workers_entry::deserialise_call(&body_param.type_ref, "__body_json", "$");
+        // NOTE: `compose.ts` builds its runtime import list structurally, above,
+        // and has never included the `Bytes` helpers — so a `Bytes` body param on
+        // an http route returning a sum would emit an unimported
+        // `__bynkBytesFromBase64` here. That gap predates this accumulator and is
+        // unchanged by it; a throwaway keeps the behaviour identical rather than
+        // quietly widening the fix.
+        let runtime_use = crate::emitter::RuntimeUse::default();
+        let dser = super::workers_entry::deserialise_call(
+            &body_param.type_ref,
+            "__body_json",
+            "$",
+            &runtime_use,
+        );
         let _ = writeln!(out, "      const __r_body = {dser};");
         let _ = writeln!(
             out,

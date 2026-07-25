@@ -45,6 +45,8 @@ pub use workers_entry::emit_worker_entry;
 pub use wrangler::emit_wrangler_toml;
 
 mod lower;
+pub mod runtime_use;
+pub use runtime_use::RuntimeUse;
 pub(crate) mod source_map;
 pub(crate) use lower::*;
 pub(crate) mod emit;
@@ -155,8 +157,11 @@ pub fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
 /// Emit TypeScript source for the typed commons (single-file mode).
 pub fn emit(commons: &TypedCommons) -> String {
     // Emit the body first so the header can decide which runtime helpers to
-    // import from what the body actually references (v0.110: the `__bynkBytes*`
+    // import from what the body actually referenced (v0.110: the `__bynkBytes*`
     // helpers are imported only when a `Bytes` value is constructed/compared).
+    // "What it referenced" comes from `dummy_ctx.runtime_use`, which the `Bytes`
+    // lowerings write as they emit — not from scanning `body` for the helper's
+    // name, which a user string literal or doc comment could also contain.
     let mut body = String::new();
     write_commons_doc(&mut body, commons);
     let dummy_ctx = single_file_ctx();
@@ -171,7 +176,7 @@ pub fn emit(commons: &TypedCommons) -> String {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            emit_free_fn(&mut body, f, commons, None, false);
+            emit_free_fn(&mut body, f, commons, None, false, &dummy_ctx.runtime_use);
         }
     }
     // v0.22b: module-local codec helpers for Json.encode/decode targets.
@@ -188,7 +193,7 @@ pub fn emit(commons: &TypedCommons) -> String {
     // Structural (over the AST), not a body-string scan, so a comment or string
     // literal mentioning `HttpResult` never triggers a spurious import.
     let uses_http = file_mentions_http_result(commons);
-    write_header_single(&mut out, commons, body.contains("__bynkBytes"), uses_http);
+    write_header_single(&mut out, commons, dummy_ctx.runtime_use.bytes(), uses_http);
     out.push_str(&body);
     out
 }
@@ -228,6 +233,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         consumed_adapters: HashSet::new(),
         history_target_agents: HashSet::new(),
         imported_methods: HashMap::new(),
+        runtime_use: Default::default(),
     }
 }
 
@@ -288,7 +294,14 @@ pub fn emit_project(
             && let FnName::Free(_) = &f.name
         {
             smb.borrow_mut().record(out.len(), f.span);
-            emit_free_fn(&mut out, f, commons, Some(&smb), ctx.contracts);
+            emit_free_fn(
+                &mut out,
+                f,
+                commons,
+                Some(&smb),
+                ctx.contracts,
+                &ctx.runtime_use,
+            );
         }
     }
     // message-bundles slice 2 (#874): every `messages` block in the commons
@@ -312,7 +325,7 @@ pub fn emit_project(
         .find(|m| m.annotations.iter().any(|a| a.name.name == "reference"))
     {
         smb.borrow_mut().record(out.len(), reference.span);
-        emit_messages_bundle(&mut out, &messages_blocks, reference);
+        emit_messages_bundle(&mut out, &messages_blocks, reference, &ctx.runtime_use);
     }
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {
@@ -387,11 +400,18 @@ pub fn emit_project(
         .map(|s| format!("{}.ts", s.to_string_lossy()))
         .unwrap_or_else(|| "module.ts".to_string());
     let source_map = smb.borrow().to_v3(&out, &generated_file);
+    // Both injections below key on `ctx.runtime_use`, which the producers wrote as
+    // they emitted. They used to key on `out.contains("<helper name>")`, which was
+    // wrong in both directions: `out` also carries user string literals and doc
+    // comments (a spurious import), and the ICU scan additionally depended on the
+    // call being emitted with no space before its paren — so an unrelated
+    // formatting change could silently drop a *required* import and produce a
+    // module that does not compile. See `emitter::runtime_use`.
     // v0.110 (ADR 0142): import the `Bytes` runtime helpers iff the emitted body
     // actually references them. Injected into the existing runtime import line
     // (no new line, no body-column shift), so the source map computed above from
     // the pre-injection text stays valid.
-    if out.contains("__bynkBytes") {
+    if ctx.runtime_use.bytes() {
         out = inject_runtime_imports(
             out,
             &runtime_import_for(&ctx.source_path, ctx.import_ext),
@@ -406,10 +426,7 @@ pub fn emit_project(
     // (mirrors `BYTES_RUNTIME_IMPORTS`'s own all-or-nothing shape) rather
     // than cherry-picked per-name — the emitted `tsconfig.json` has no
     // `noUnusedLocals`, so an unused named import is inert.
-    if out.contains("selectPluralArm(")
-        || out.contains("formatIcuNumber(")
-        || out.contains("formatIcuDate(")
-    {
+    if ctx.runtime_use.icu() {
         out = inject_runtime_imports(
             out,
             &runtime_import_for(&ctx.source_path, ctx.import_ext),
@@ -969,13 +986,19 @@ fn emit_json_codec_helpers(
         .into_iter()
         .filter(|n| !skip_names.contains(n))
         .collect();
-    emit_helpers_for_owner(out, &names, &commons.types, &ctx.commons_name);
+    emit_helpers_for_owner(
+        out,
+        &names,
+        &commons.types,
+        &ctx.commons_name,
+        &ctx.runtime_use,
+    );
     let insts: Vec<serialisation::GenericInst> = insts
         .into_iter()
         .filter(|i| !skip_insts.contains(&i.ts_name()))
         .collect();
     if !insts.is_empty() {
-        emit_generic_helpers(out, &insts, &commons.types);
+        emit_generic_helpers(out, &insts, &commons.types, &ctx.runtime_use);
     }
 }
 
@@ -1048,6 +1071,7 @@ fn emit_boundary_helpers(
             &local_boundary,
             &commons.types,
             ctx.commons_name.as_str(),
+            &ctx.runtime_use,
         );
 
         // Re-export helpers for commons-owned boundary types so consumers
@@ -1114,7 +1138,7 @@ fn emit_boundary_helpers(
         // in handler signatures or in boundary-type fields (v0.18).
         let insts =
             collect_generic_instantiations(&services, &agents, &boundary_types_all, &commons.types);
-        emit_generic_helpers(out, &insts, &commons.types);
+        emit_generic_helpers(out, &insts, &commons.types, &ctx.runtime_use);
 
         // #661 (ADR 0199 Decision G discharged): the caller's own view of each
         // consumed context's boundary codecs, so a cross-context call reaches
@@ -1169,14 +1193,20 @@ fn emit_boundary_helpers(
             .map(|(name, _)| name.clone())
             .collect();
         locally.sort();
-        emit_helpers_for_owner(out, &locally, &commons.types, ctx.commons_name.as_str());
+        emit_helpers_for_owner(
+            out,
+            &locally,
+            &commons.types,
+            ctx.commons_name.as_str(),
+            &ctx.runtime_use,
+        );
         let insts = collect_generic_instantiations(
             &HashMap::new(),
             &HashMap::new(),
             &locally,
             &commons.types,
         );
-        emit_generic_helpers(out, &insts, &commons.types);
+        emit_generic_helpers(out, &insts, &commons.types, &ctx.runtime_use);
         (
             locally.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),
@@ -1279,6 +1309,7 @@ fn emit_consumed_context_helpers(
             types_table,
             ctx.commons_name.as_str(),
             &qual,
+            &ctx.runtime_use,
         );
         consumed_names_out.extend(to_emit);
 
@@ -1289,7 +1320,7 @@ fn emit_consumed_context_helpers(
         for i in &to_emit_insts {
             consumed_insts_out.push(i.ts_name());
         }
-        emit_generic_helpers_qualified(out, &to_emit_insts, types_table, &qual);
+        emit_generic_helpers_qualified(out, &to_emit_insts, types_table, &qual, &ctx.runtime_use);
     }
 
     (consumed_names_out, consumed_insts_out)
@@ -2599,6 +2630,19 @@ pub(crate) struct LowerCtx<'a> {
     /// borrow in. `None` for the single-file `emit()` path and any body emitted
     /// outside a project, where no map is produced.
     pub source_map: Option<&'a RefCell<SourceMapBuilder>>,
+    /// The emitted module's conditional-runtime-helper accumulator.
+    ///
+    /// The `Bytes` lowerings (kernel, `==`, base64 codec) call
+    /// [`RuntimeUse::note_bytes`] through this, so the module's import line is
+    /// decided from what lowering actually emitted rather than by scanning the
+    /// generated text for the helper's own name.
+    ///
+    /// Required rather than optional: a missing accumulator would make
+    /// `note_bytes` a silent no-op, which is exactly the failure this replaces —
+    /// a module that references `__bynkBytesEqual` without importing it. A
+    /// lowering whose imports are decided elsewhere (the test scaffolds) owns a
+    /// throwaway one, which reads as the deliberate choice it is.
+    pub runtime_use: &'a RuntimeUse,
 }
 
 /// v0.59: the source context an `assert` lowering needs to turn its span into a
@@ -2625,6 +2669,7 @@ impl<'a> LowerCtx<'a> {
     fn new(
         commons: &'a TypedCommons,
         cross_context: &'a bynk_check::resolver::CrossContextInfo,
+        runtime_use: &'a RuntimeUse,
     ) -> Self {
         Self {
             next_tmp: 0,
@@ -2671,6 +2716,7 @@ impl<'a> LowerCtx<'a> {
             assert_loc: None,
             test_scaffold: false,
             source_map: None,
+            runtime_use,
         }
     }
 
@@ -2680,6 +2726,12 @@ impl<'a> LowerCtx<'a> {
     fn with_source_map(mut self, map: Option<&'a RefCell<SourceMapBuilder>>) -> Self {
         self.source_map = map;
         self
+    }
+
+    /// Record that this lowering emitted a reference to the `Bytes` runtime
+    /// helpers, so the module imports them.
+    fn note_bytes(&self) {
+        self.runtime_use.note_bytes();
     }
 
     /// Record a checkpoint: generated text from `out_len` onward originates at
@@ -3338,6 +3390,72 @@ mod runtime_tests {
         assert_eq!(
             runtime_import_for(Path::new("tests/commerce_payment.test.ts"), ImportExt::Js),
             "../runtime.js"
+        );
+    }
+}
+
+/// Which conditional runtime helpers a module's import line ends up carrying.
+///
+/// These drive the single-file `emit()` path end-to-end (parse → resolve → check
+/// → emit), so they exercise the real producers rather than the accumulator in
+/// isolation. Before `RuntimeUse`, the decision was `body.contains("__bynkBytes")`
+/// — a scan of the generated text — and `escapes_a_marker_in_a_string_literal`
+/// below is the case that got wrong.
+#[cfg(test)]
+mod conditional_runtime_import_tests {
+    fn emit_source(src: &str) -> String {
+        crate::compile(src, "t.bynk").expect("fixture should compile")
+    }
+
+    /// The import line is the first `import { … } from "./runtime.js"` in the
+    /// emitted module.
+    fn runtime_import_line(ts: &str) -> &str {
+        ts.lines()
+            .find(|l| l.starts_with("import {") && l.contains("runtime.js"))
+            .unwrap_or("")
+    }
+
+    #[test]
+    fn bytes_helpers_are_imported_when_a_bytes_value_is_built() {
+        let ts = emit_source(
+            "commons b\n\nfn decode(s: String) -> Option[Bytes] {\n  Bytes.fromBase64(s)\n}\n",
+        );
+        assert!(
+            runtime_import_line(&ts).contains("__bynkBytesFromBase64"),
+            "{ts}"
+        );
+    }
+
+    #[test]
+    fn bytes_helpers_are_imported_for_content_equality() {
+        let ts = emit_source("commons b\n\nfn same(a: Bytes, b: Bytes) -> Bool {\n  a == b\n}\n");
+        assert!(
+            runtime_import_line(&ts).contains("__bynkBytesEqual"),
+            "{ts}"
+        );
+    }
+
+    #[test]
+    fn bytes_helpers_are_absent_from_a_module_that_never_uses_bytes() {
+        let ts = emit_source("commons b\n\nfn double(n: Int) -> Int {\n  n * 2\n}\n");
+        assert!(!runtime_import_line(&ts).contains("__bynkBytes"), "{ts}");
+    }
+
+    /// The regression this replaced a text scan for: a `Bytes` helper name
+    /// appearing inside a user **string literal** is not a reference to the
+    /// helper, and must not pull the import in. `body.contains("__bynkBytes")`
+    /// could not tell the two apart, because the literal is emitted verbatim
+    /// into the same buffer it scanned.
+    #[test]
+    fn escapes_a_marker_in_a_string_literal() {
+        let ts = emit_source("commons b\n\nfn label() -> String {\n  \"__bynkBytesEqual\"\n}\n");
+        assert!(
+            ts.contains("\"__bynkBytesEqual\""),
+            "the literal should survive into the body: {ts}"
+        );
+        assert!(
+            !runtime_import_line(&ts).contains("__bynkBytes"),
+            "a marker inside a string literal is not a helper reference: {ts}"
         );
     }
 }
