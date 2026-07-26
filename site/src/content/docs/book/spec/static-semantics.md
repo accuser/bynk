@@ -33,7 +33,11 @@ Within a scope, names MUST be unique: duplicate types, functions, methods,
 services, capabilities, providers, agents, record fields, variants, and
 parameters are each rejected (the `bynk.resolve.duplicate_*` codes). A `let`
 binding MUST NOT shadow a function or a type (`bynk.resolve.let_shadows_fn`,
-`bynk.resolve.let_shadows_type`).
+`bynk.resolve.let_shadows_type`), but a `let` MAY re-bind a name already bound
+by a prior `let` in the same scope — a deliberate ML-family idiom the
+locals-in-scope tooling (ADR 0064) resolves as "latest in-scope def wins" —
+with each occurrence free to change type. The emitter gives a re-bound name
+its own emitted identifier so each `let` still lowers to a distinct binding.
 
 A bare reference to a **named function** is a value only where a function
 type is expected (v0.20a); elsewhere it MUST be called
