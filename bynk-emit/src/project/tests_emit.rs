@@ -1024,6 +1024,14 @@ fn emit_system_http_support(
     unit_tables: &HashMap<String, UnitTable>,
 ) -> SystemHttpSupport {
     use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
+    // NOTE: this file emits the harness module's runtime import list as a **fixed**
+    // set that has never included the `Bytes` helpers, so a `Bytes` crossing a
+    // system-test route emits an unimported `__bynkBytes*` — the same gap as
+    // `compose.ts`, in another place. It predates this accumulator (the
+    // `out.contains` scan it replaces never covered these modules either) and is
+    // unchanged by it; a throwaway keeps the behaviour identical rather than
+    // quietly widening the fix.
+    let runtime_use = crate::emitter::RuntimeUse::default();
     let mut http_services: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut declared: DeclaredRoutes = std::collections::HashSet::new();
     let mut route_body: RouteBodyMap = HashMap::new();
@@ -1126,6 +1134,7 @@ fn emit_system_http_support(
                         &p.type_ref,
                         &crate::emitter::ts_ident(&p.name.name),
                         &type_ns,
+                        &runtime_use,
                     );
                     (
                         format!("  const __body = JSON.stringify({ser});\n"),
@@ -1136,7 +1145,11 @@ fn emit_system_http_support(
             };
             // The response payload deserialiser: the `T` of `Effect[HttpResult[T]]`.
             let payload_deser = match strip_effect_httpresult(&h.return_type) {
-                Some(inner) => crate::emitter::serialisation::deserialise_ref_via(inner, &type_ns),
+                Some(inner) => crate::emitter::serialisation::deserialise_ref_via(
+                    inner,
+                    &type_ns,
+                    &runtime_use,
+                ),
                 None => format!("{type_ns}deserialise_unit"),
             };
             // Driver params mirror the handler's params (path params, then body).

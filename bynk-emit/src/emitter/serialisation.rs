@@ -14,6 +14,8 @@ use std::fmt::Write as _;
 
 use bynk_syntax::ast::*;
 
+use crate::emitter::RuntimeUse;
+
 /// #661: a *type qualifier* — maps a callee-owned type name to the type-only
 /// namespace prefix (`"commerce_payment."`) the caller must use to *name* it,
 /// while the caller generates that type's codec **locally** under a bare name.
@@ -325,8 +327,9 @@ pub fn emit_helpers_for_owner(
     type_names: &[String],
     types: &std::collections::HashMap<String, TypeDecl>,
     owner_qualified: &str,
+    ru: &RuntimeUse,
 ) {
-    emit_helpers_for_owner_qualified(out, type_names, types, owner_qualified, &Qual::new());
+    emit_helpers_for_owner_qualified(out, type_names, types, owner_qualified, &Qual::new(), ru);
 }
 
 /// #661: as [`emit_helpers_for_owner`], but the caller supplies a type
@@ -342,6 +345,7 @@ pub fn emit_helpers_for_owner_qualified(
     types: &std::collections::HashMap<String, TypeDecl>,
     _owner_qualified: &str,
     qual: &Qual,
+    ru: &RuntimeUse,
 ) {
     // Only emit helpers for *named* types declared by this owner. Skip
     // unknown names — they belong to another module or to the runtime's
@@ -359,19 +363,19 @@ pub fn emit_helpers_for_owner_qualified(
             continue;
         }
         emitted_any = true;
-        emit_one(out, name, decl, qual);
+        emit_one(out, name, decl, qual, ru);
     }
     if emitted_any {
         writeln!(out).unwrap();
     }
 }
 
-fn emit_one(out: &mut String, name: &str, decl: &TypeDecl, qual: &Qual) {
+fn emit_one(out: &mut String, name: &str, decl: &TypeDecl, qual: &Qual, ru: &RuntimeUse) {
     match &decl.body {
-        TypeBody::Refined { base, .. } => emit_refined(out, name, *base, decl, qual),
-        TypeBody::Opaque { base, .. } => emit_refined(out, name, *base, decl, qual),
-        TypeBody::Record(r) => emit_record(out, name, r, qual),
-        TypeBody::Sum(s) => emit_sum(out, name, s, qual),
+        TypeBody::Refined { base, .. } => emit_refined(out, name, *base, decl, qual, ru),
+        TypeBody::Opaque { base, .. } => emit_refined(out, name, *base, decl, qual, ru),
+        TypeBody::Record(r) => emit_record(out, name, r, qual, ru),
+        TypeBody::Sum(s) => emit_sum(out, name, s, qual, ru),
     }
 }
 
@@ -393,7 +397,8 @@ fn ts_base_for_serialisation(b: BaseType) -> &'static str {
 /// and decoded (rejecting a non-string or invalid-base64 wire value) on
 /// deserialise. There are no `Bytes` refinement predicates, so there is no
 /// `.of` re-validation to thread.
-fn emit_bytes_named_codec(out: &mut String, name: &str, qual: &Qual) {
+fn emit_bytes_named_codec(out: &mut String, name: &str, qual: &Qual, ru: &RuntimeUse) {
+    ru.note_bytes();
     let ty = format!("{}{name}", qual_prefix(qual, name));
     writeln!(
         out,
@@ -433,10 +438,17 @@ fn emit_bytes_named_codec(out: &mut String, name: &str, qual: &Qual) {
     writeln!(out).unwrap();
 }
 
-fn emit_refined(out: &mut String, name: &str, base: BaseType, decl: &TypeDecl, qual: &Qual) {
+fn emit_refined(
+    out: &mut String,
+    name: &str,
+    base: BaseType,
+    decl: &TypeDecl,
+    qual: &Qual,
+    ru: &RuntimeUse,
+) {
     // v0.110: a `Bytes`-based opaque/refined type has a bespoke base64 codec.
     if base == BaseType::Bytes {
-        emit_bytes_named_codec(out, name, qual);
+        emit_bytes_named_codec(out, name, qual, ru);
         return;
     }
     // #661: a *consumed* type (one the caller qualifies through the callee's
@@ -612,7 +624,7 @@ fn emit_inline_pred_check(out: &mut String, pred: &PredKind, violation: &dyn Fn(
     }
 }
 
-fn emit_record(out: &mut String, name: &str, body: &RecordBody, qual: &Qual) {
+fn emit_record(out: &mut String, name: &str, body: &RecordBody, qual: &Qual, ru: &RuntimeUse) {
     let fields: Vec<(String, TypeRef)> = body
         .fields
         .iter()
@@ -623,7 +635,7 @@ fn emit_record(out: &mut String, name: &str, body: &RecordBody, qual: &Qual) {
     // bare and local. Its field codec calls are unqualified too — they resolve
     // to the caller's own locally-generated helpers.
     let ts_type = format!("{}{name}", qual_prefix(qual, name));
-    emit_record_codec(out, name, &ts_type, &fields);
+    emit_record_codec(out, name, &ts_type, &fields, ru);
 }
 
 /// v0.174 (#592): the shared record codec body. `fn_suffix` is the codec name
@@ -636,6 +648,7 @@ fn emit_record_codec(
     fn_suffix: &str,
     ts_type: &str,
     fields: &[(String, TypeRef)],
+    ru: &RuntimeUse,
 ) {
     // serialise
     writeln!(
@@ -645,7 +658,7 @@ fn emit_record_codec(
     .unwrap();
     writeln!(out, "  return {{").unwrap();
     for (fname, type_ref) in fields {
-        let expr = serialise_field_expr(type_ref, &format!("value.{fname}"));
+        let expr = serialise_field_expr(type_ref, &format!("value.{fname}"), ru);
         writeln!(out, "    {fname}: {expr},").unwrap();
     }
     writeln!(out, "  }};").unwrap();
@@ -673,7 +686,7 @@ fn emit_record_codec(
     for (fname, type_ref) in fields {
         let access = format!("obj[\"{fname}\"]");
         let sub_path = format!("`${{path}}.{fname}`");
-        emit_field_deserialise(out, fname, type_ref, &access, &sub_path);
+        emit_field_deserialise(out, fname, type_ref, &access, &sub_path, ru);
     }
     write!(out, "  return Ok({{ ").unwrap();
     let parts: Vec<String> = fields
@@ -686,7 +699,7 @@ fn emit_record_codec(
     writeln!(out).unwrap();
 }
 
-fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual) {
+fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual, ru: &RuntimeUse) {
     // #661: a consumed sum's TS value type is namespace-qualified; the codec
     // function name and its per-variant codec calls stay bare and local. #593:
     // the codec body is the shared `emit_sum_codec` (also reused, unqualified,
@@ -706,7 +719,7 @@ fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual) {
             )
         })
         .collect();
-    emit_sum_codec(out, name, &ty, &variants);
+    emit_sum_codec(out, name, &ty, &variants, ru);
 }
 
 /// The serialise/deserialise pair for a sum type, over already-resolved variant
@@ -720,6 +733,7 @@ fn emit_sum_codec(
     fn_suffix: &str,
     ts_type: &str,
     variants: &[(String, Vec<(String, TypeRef)>)],
+    ru: &RuntimeUse,
 ) {
     writeln!(
         out,
@@ -735,7 +749,7 @@ fn emit_sum_codec(
             writeln!(out, "    case \"{vname}\": {{").unwrap();
             write!(out, "      return {{ kind: \"{vname}\"").unwrap();
             for (fname, type_ref) in payload {
-                let expr = serialise_field_expr(type_ref, &format!("(value as any).{fname}"));
+                let expr = serialise_field_expr(type_ref, &format!("(value as any).{fname}"), ru);
                 write!(out, ", {fname}: {expr}").unwrap();
             }
             writeln!(out, " }};").unwrap();
@@ -774,7 +788,7 @@ fn emit_sum_codec(
             for (fname, type_ref) in payload {
                 let access = format!("obj[\"{fname}\"]");
                 let sub_path = format!("`${{path}}.{fname}`");
-                emit_field_deserialise(out, fname, type_ref, &access, &sub_path);
+                emit_field_deserialise(out, fname, type_ref, &access, &sub_path, ru);
             }
             write!(out, "      return Ok({{ tag: \"{vname}\"").unwrap();
             for (fname, _) in payload {
@@ -797,7 +811,14 @@ fn emit_sum_codec(
 
 /// Emit a let binding `__<field>` after destructuring & validating a
 /// nested field.
-fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str, path_expr: &str) {
+fn emit_field_deserialise(
+    out: &mut String,
+    name: &str,
+    t: &TypeRef,
+    json: &str,
+    path_expr: &str,
+    ru: &RuntimeUse,
+) {
     match t {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
@@ -831,6 +852,7 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
         // decoded `Uint8Array`. This is the one base type whose wire value is
         // not a direct cast of its erased representation.
         TypeRef::Base(BaseType::Bytes, _) => {
+            ru.note_bytes();
             writeln!(out, "  if (typeof {json} !== \"string\") {{").unwrap();
             writeln!(
                 out,
@@ -961,8 +983,8 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
     }
 }
 
-fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
-    serialise_field_expr_via(t, value, "")
+fn serialise_field_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
+    serialise_field_expr_via(t, value, "", ru)
 }
 
 /// The same dispatch, reaching its helpers through `ns` — `""` for a
@@ -970,7 +992,7 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
 /// context's handlers as a namespace. Threading the prefix (rather than each
 /// caller owning a parallel dispatch) is what keeps the boundary to **one**
 /// codec path.
-fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str) -> String {
+fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
     match t {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
@@ -996,6 +1018,7 @@ fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str) -> String {
         // v0.110 (ADR 0142 D5): a `Bytes` is base64-encoded on the wire — the
         // one base type whose serialise is an encode, not a bare cast.
         TypeRef::Base(BaseType::Bytes, _) => {
+            ru.note_bytes();
             format!("__bynkBytesToBase64({value}) as JsonValue")
         }
         TypeRef::Base(_, _) => format!("{value} as JsonValue"),
@@ -1014,7 +1037,7 @@ fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str) -> String {
         ),
         // An `Effect` is stripped by the caller before it reaches a wire
         // position; reaching one here means the payload, not the wrapper.
-        TypeRef::Effect(inner, _) => serialise_field_expr_via(inner, value, ns),
+        TypeRef::Effect(inner, _) => serialise_field_expr_via(inner, value, ns, ru),
         // The runtime-owned error types have no *generated* codec — they are
         // declared by the runtime, not by a `TypeDecl` this emitter can walk, so
         // there is no `serialise_ValidationError` to name. They keep the
@@ -1141,8 +1164,8 @@ pub fn collect_codec_closure(
 
 /// v0.22b: an expression-form serialise for a codec target — the same
 /// dispatch as a record field's serialisation.
-pub fn serialise_expr(t: &TypeRef, value: &str) -> String {
-    serialise_field_expr(t, value)
+pub fn serialise_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
+    serialise_field_expr(t, value, ru)
 }
 
 /// v0.176 (#642): the one serialise dispatch for the workers cross-context
@@ -1151,15 +1174,15 @@ pub fn serialise_expr(t: &TypeRef, value: &str) -> String {
 /// (which dropped `List`/`Map` to a bare `as JsonValue` cast) and
 /// `workers_entry.rs`'s `serialise_call` (which did the same to `Bytes`, the
 /// asymmetry that forced `bynk.types.bytes_at_workers_boundary`).
-pub fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str) -> String {
-    serialise_field_expr_via(t, value, ns)
+pub fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
+    serialise_field_expr_via(t, value, ns, ru)
 }
 
 /// v0.176 (#642): a deserialise **reference** for `ns`, shaped to
 /// `callService`'s `deserialiseResult` parameter. The inline arms become a
 /// lambda rather than the unvalidated `((j: any) => ({ tag: "Ok", value: j }))`
 /// identity the caller path used to fall back to.
-pub fn deserialise_ref_via(t: &TypeRef, ns: &str) -> String {
+pub fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
     match strip_effect(t) {
         TypeRef::Named(id) => format!("{ns}deserialise_{}", id.name),
         t @ (TypeRef::Result(..)
@@ -1169,7 +1192,7 @@ pub fn deserialise_ref_via(t: &TypeRef, ns: &str) -> String {
         | TypeRef::App { .. }) => format!("{ns}deserialise_{}", inner_ts_name(t)),
         other => format!(
             "(__j: JsonValue) => {}",
-            deserialise_expr_via(other, "__j", "$", ns)
+            deserialise_expr_via(other, "__j", "$", ns, ru)
         ),
     }
 }
@@ -1186,8 +1209,8 @@ fn strip_effect(t: &TypeRef) -> &TypeRef {
 /// v0.22b: an expression-form deserialise call for a codec target. Named
 /// types and generic instantiations go through their (module-local)
 /// helpers; bases inline the structural check.
-pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
-    deserialise_expr_via(t, json, path, "")
+pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str, ru: &RuntimeUse) -> String {
+    deserialise_expr_via(t, json, path, "", ru)
 }
 
 /// v0.176 (#642): the one deserialise dispatch for the workers cross-context
@@ -1199,7 +1222,13 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
 /// checker's codec-domain rule rejects them there but the cross-context
 /// boundary admits them: `Unit` (an `on call` may return `Effect[Result[(), E]]`)
 /// and the runtime-owned error types.
-pub fn deserialise_expr_via(t: &TypeRef, json: &str, path: &str, ns: &str) -> String {
+pub fn deserialise_expr_via(
+    t: &TypeRef,
+    json: &str,
+    path: &str,
+    ns: &str,
+    ru: &RuntimeUse,
+) -> String {
     match t {
         TypeRef::Named(id) => format!("{ns}deserialise_{}({json}, \"{path}\")", id.name),
         TypeRef::Result(..)
@@ -1211,7 +1240,7 @@ pub fn deserialise_expr_via(t: &TypeRef, json: &str, path: &str, ns: &str) -> St
         | TypeRef::App { .. } => {
             format!("{ns}deserialise_{}({json}, \"{path}\")", inner_ts_name(t))
         }
-        TypeRef::Effect(inner, _) => deserialise_expr_via(inner, json, path, ns),
+        TypeRef::Effect(inner, _) => deserialise_expr_via(inner, json, path, ns, ru),
         // A `()` carries no wire content — the wire slot is `null` and the value
         // is `undefined`. Nothing to validate, so `Ok` is the honest answer here
         // rather than an erosion.
@@ -1234,6 +1263,7 @@ pub fn deserialise_expr_via(t: &TypeRef, json: &str, path: &str, ns: &str) -> St
         // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 string; decode it
         // (rejecting a non-string or invalid base64) to a `Uint8Array`.
         TypeRef::Base(BaseType::Bytes, _) => {
+            ru.note_bytes();
             format!(
                 "((__v) => typeof __v === \"string\" ? ((__b) => __b.tag === \"Some\" ? Ok(__b.value) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"base64 string\", actual: \"invalid base64\" }} as BoundaryError))(__bynkBytesFromBase64(__v)) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"base64 string\", actual: typeof __v }} as BoundaryError))({json})"
             )
@@ -1562,8 +1592,9 @@ pub fn emit_generic_helpers(
     out: &mut String,
     insts: &[GenericInst],
     types: &std::collections::HashMap<String, TypeDecl>,
+    ru: &RuntimeUse,
 ) {
-    emit_generic_helpers_qualified(out, insts, types, &Qual::new());
+    emit_generic_helpers_qualified(out, insts, types, &Qual::new(), ru);
 }
 
 /// #661: as [`emit_generic_helpers`], but the value-type positions of each
@@ -1578,6 +1609,7 @@ pub fn emit_generic_helpers_qualified(
     insts: &[GenericInst],
     types: &std::collections::HashMap<String, TypeDecl>,
     qual: &Qual,
+    ru: &RuntimeUse,
 ) {
     for inst in insts {
         match inst {
@@ -1605,7 +1637,7 @@ pub fn emit_generic_helpers_qualified(
                 let fields = record_inst_fields(name, args, types).unwrap_or_else(|| {
                     unreachable!("RecordInst `{name}` is not a resolved generic record")
                 });
-                emit_record_codec(out, &fn_suffix, &ts_type, &fields);
+                emit_record_codec(out, &fn_suffix, &ts_type, &fields, ru);
             }
             // #593: a generic-sum instantiation `ApiResult[User]` emits
             // `serialise_ApiResult_User` / `deserialise_ApiResult_User`, its
@@ -1624,15 +1656,15 @@ pub fn emit_generic_helpers_qualified(
                 let variants = sum_inst_variants(name, args, types).unwrap_or_else(|| {
                     unreachable!("SumInst `{name}` is not a resolved generic sum")
                 });
-                emit_sum_codec(out, &fn_suffix, &ts_type, &variants);
+                emit_sum_codec(out, &fn_suffix, &ts_type, &variants, ru);
             }
             GenericInst::ResultInst { ok, err } => {
                 let ok_ts = inner_ts_name(ok);
                 let err_ts = inner_ts_name(err);
                 let ok_inner = ts_inner_type(ok, qual);
                 let err_inner = ts_inner_type(err, qual);
-                let serialise_ok = serialise_field_expr(ok, "value.value");
-                let serialise_err = serialise_field_expr(err, "value.error");
+                let serialise_ok = serialise_field_expr(ok, "value.value", ru);
+                let serialise_err = serialise_field_expr(err, "value.error", ru);
                 writeln!(
                     out,
                     "export function serialise_Result_{ok_ts}_{err_ts}(value: Result<{ok_inner}, {err_inner}>): JsonValue {{"
@@ -1665,14 +1697,14 @@ pub fn emit_generic_helpers_qualified(
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
                 writeln!(out, "  if (obj[\"kind\"] === \"Ok\") {{").unwrap();
-                emit_field_deserialise(out, "v", ok, "obj[\"value\"]", "`${path}.value`");
+                emit_field_deserialise(out, "v", ok, "obj[\"value\"]", "`${path}.value`", ru);
                 writeln!(
                     out,
                     "    return Ok(Ok(__v) as Result<{ok_inner}, {err_inner}>);"
                 )
                 .unwrap();
                 writeln!(out, "  }} else if (obj[\"kind\"] === \"Err\") {{").unwrap();
-                emit_field_deserialise(out, "e", err, "obj[\"error\"]", "`${path}.error`");
+                emit_field_deserialise(out, "e", err, "obj[\"error\"]", "`${path}.error`", ru);
                 writeln!(
                     out,
                     "    return Ok(Err(__e) as Result<{ok_inner}, {err_inner}>);"
@@ -1686,7 +1718,7 @@ pub fn emit_generic_helpers_qualified(
             GenericInst::OptionInst { inner } => {
                 let inner_ts = inner_ts_name(inner);
                 let inner_ty = ts_inner_type(inner, qual);
-                let serialise_inner = serialise_field_expr(inner, "value.value");
+                let serialise_inner = serialise_field_expr(inner, "value.value", ru);
                 writeln!(
                     out,
                     "export function serialise_Option_{inner_ts}(value: Option<{inner_ty}>): JsonValue {{"
@@ -1715,7 +1747,7 @@ pub fn emit_generic_helpers_qualified(
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
                 writeln!(out, "  if (obj[\"kind\"] === \"Some\") {{").unwrap();
-                emit_field_deserialise(out, "v", inner, "obj[\"value\"]", "`${path}.value`");
+                emit_field_deserialise(out, "v", inner, "obj[\"value\"]", "`${path}.value`", ru);
                 writeln!(out, "    return Ok(Some(__v) as Option<{inner_ty}>);").unwrap();
                 writeln!(out, "  }} else if (obj[\"kind\"] === \"None\") {{").unwrap();
                 writeln!(out, "    return Ok(None as Option<{inner_ty}>);").unwrap();
@@ -1728,7 +1760,7 @@ pub fn emit_generic_helpers_qualified(
             GenericInst::ListInst { elem } => {
                 let elem_ts = inner_ts_name(elem);
                 let elem_ty = ts_inner_type(elem, qual);
-                let serialise_elem = serialise_field_expr(elem, "v");
+                let serialise_elem = serialise_field_expr(elem, "v", ru);
                 writeln!(
                     out,
                     "export function serialise_List_{elem_ts}(value: readonly {elem_ty}[]): JsonValue {{"
@@ -1755,7 +1787,7 @@ pub fn emit_generic_helpers_qualified(
                 // Bind the element before validating: `json[i]` with a
                 // mutable index does not narrow under a typeof guard.
                 writeln!(out, "  const item = json[i];").unwrap();
-                emit_field_deserialise(out, "el", elem, "item", "`${path}[${i}]`");
+                emit_field_deserialise(out, "el", elem, "item", "`${path}[${i}]`", ru);
                 // The element deserialiser may come from the declaring
                 // commons and return the *unbranded* record; this module's
                 // element type may be the context's branded rebrand. Assert
@@ -1774,8 +1806,8 @@ pub fn emit_generic_helpers_qualified(
                 let val_ts = inner_ts_name(val);
                 let key_ty = ts_inner_type(key, qual);
                 let val_ty = ts_inner_type(val, qual);
-                let serialise_key = serialise_field_expr(key, "k");
-                let serialise_val = serialise_field_expr(val, "v");
+                let serialise_key = serialise_field_expr(key, "k", ru);
+                let serialise_val = serialise_field_expr(val, "v", ru);
                 writeln!(
                     out,
                     "export function serialise_Map_{key_ts}_{val_ts}(value: ReadonlyMap<{key_ty}, {val_ty}>): JsonValue {{"
@@ -1813,8 +1845,8 @@ pub fn emit_generic_helpers_qualified(
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  const entryK = entry[0];").unwrap();
                 writeln!(out, "  const entryV = entry[1];").unwrap();
-                emit_field_deserialise(out, "k", key, "entryK", "`${path}[${i}][0]`");
-                emit_field_deserialise(out, "v", val, "entryV", "`${path}[${i}][1]`");
+                emit_field_deserialise(out, "k", key, "entryK", "`${path}[${i}][0]`", ru);
+                emit_field_deserialise(out, "v", val, "entryV", "`${path}[${i}][1]`", ru);
                 // Same brand assertion as the List codec (#527).
                 writeln!(out, "  out.set(__k as {key_ty}, __v as {val_ty});").unwrap();
                 writeln!(out, "  }}").unwrap();

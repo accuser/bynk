@@ -29,8 +29,18 @@ pub fn lower_block_to_async_body(
     // v0.70: a sub-builder records body checkpoints relative to this local buffer;
     // the caller merges it into the module map at the splice offset.
     let smb = RefCell::new(SourceMapBuilder::new());
+    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
+    // import list `tests_emit.rs` emits as a **fixed** set that has never included
+    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
+    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
+    // That predates this accumulator (the `out.contains` scan it replaces never
+    // covered these modules either) and is unchanged by it; a throwaway keeps the
+    // behaviour identical rather than quietly widening the fix. Owned rather than
+    // optional so `note_bytes` is never a silent no-op on a path that *does*
+    // decide its own imports.
+    let runtime_use = crate::emitter::RuntimeUse::default();
     {
-        let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
+        let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
         cx.test_scaffold = true;
         let async_tail = is_effectful_return(return_type);
         emit_block_as_function_body_with_return(
@@ -61,8 +71,18 @@ pub fn lower_test_case_body(
 ) -> (String, SourceMapBuilder) {
     let mut out = String::new();
     let smb = RefCell::new(SourceMapBuilder::new());
+    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
+    // import list `tests_emit.rs` emits as a **fixed** set that has never included
+    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
+    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
+    // That predates this accumulator (the `out.contains` scan it replaces never
+    // covered these modules either) and is unchanged by it; a throwaway keeps the
+    // behaviour identical rather than quietly widening the fix. Owned rather than
+    // optional so `note_bytes` is never a silent no-op on a path that *does*
+    // decide its own imports.
+    let runtime_use = crate::emitter::RuntimeUse::default();
     {
-        let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
+        let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
         cx.test_services = test_services;
         cx.test_service_handlers = test_service_handlers;
         cx.local_agents = test_agents.clone();
@@ -113,8 +133,18 @@ pub fn lower_integration_case_body(
 ) -> (String, SourceMapBuilder) {
     let mut out = String::new();
     let smb = RefCell::new(SourceMapBuilder::new());
+    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
+    // import list `tests_emit.rs` emits as a **fixed** set that has never included
+    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
+    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
+    // That predates this accumulator (the `out.contains` scan it replaces never
+    // covered these modules either) and is unchanged by it; a throwaway keeps the
+    // behaviour identical rather than quietly widening the fix. Owned rather than
+    // optional so `note_bytes` is never a silent no-op on a path that *does*
+    // decide its own imports.
+    let runtime_use = crate::emitter::RuntimeUse::default();
     {
-        let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
+        let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
         cx.target = BuildTarget::Workers;
         cx.system_http_services = system_http_services;
         cx.system_http_routes = system_http_routes;
@@ -1395,6 +1425,7 @@ fn lower_method_call(
             }
             ("fromBase64", 1) => {
                 let s = lower_expr(&args[0], stmts, cx);
+                cx.note_bytes();
                 return format!("__bynkBytesFromBase64({s})");
             }
             ("empty", 0) => {
@@ -1548,7 +1579,8 @@ fn lower_method_call(
                         crate::emitter::serialisation::serialise_expr_via(
                             ty,
                             &format!("({lowered} as any)"),
-                            &cx.system_http_type_ns
+                            &cx.system_http_type_ns,
+                            cx.runtime_use
                         )
                     ),
                     _ => format!("String({lowered})"),
@@ -1860,7 +1892,7 @@ fn lower_json_codec_call(
             && let Some(tref) = ty_to_type_ref(&arg_ty)
         {
             let v = lower_expr(&args[0], stmts, cx);
-            let ser = serialisation::serialise_expr(&tref, &v);
+            let ser = serialisation::serialise_expr(&tref, &v, cx.runtime_use);
             return Some(format!("JSON.stringify({ser})"));
         }
         if method.name == "decode"
@@ -1868,7 +1900,7 @@ fn lower_json_codec_call(
             && let Some(tref) = ty_to_type_ref(&t)
         {
             let ts = ts_ty(&t);
-            let des = serialisation::deserialise_expr(&tref, "__j", "$");
+            let des = serialisation::deserialise_expr(&tref, "__j", "$", cx.runtime_use);
             let arg = lower_expr(&args[0], stmts, cx);
             return Some(format!(
                 "((__s: string): Result<{ts}, JsonError> => {{ \
@@ -2882,10 +2914,12 @@ fn lower_bytes_kernel(
         }
         ("toBase64", []) => {
             let recv = lower_expr(receiver, stmts, cx);
+            cx.note_bytes();
             Some(format!("__bynkBytesToBase64({recv})"))
         }
         ("decodeUtf8", []) => {
             let recv = lower_expr(receiver, stmts, cx);
+            cx.note_bytes();
             Some(format!("__bynkBytesDecodeUtf8({recv})"))
         }
         _ => None,
@@ -3662,6 +3696,7 @@ fn lower_bin_op(
         // (`Bytes.fromUtf8("a") === Bytes.fromUtf8("a")` is `false`). Equality
         // must compare by content — operand-typed dispatch, exactly like `Div`.
         // The checker rejects mixed operands, so the left operand decides.
+        cx.note_bytes();
         let eq = format!("__bynkBytesEqual({l}, {r})");
         if op == BinOp::Eq {
             eq

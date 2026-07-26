@@ -2733,6 +2733,7 @@ fn emit_unit(
         import_ext,
         contracts,
         history_target_agents: collect_history_target_agents(parsed),
+        runtime_use: Default::default(),
     };
     // v0.72: the map's `source` is the absolute path the compiler read the file
     // from, so an editor breakpoint set on the real `.bynk` resolves to the same
@@ -4717,6 +4718,19 @@ pub struct EmitProjectCtx {
     /// forward `Cents.fromInt(…)` and friends onto the rebranded const. Empty
     /// for commons units and for contexts with no such imports.
     pub imported_methods: HashMap<String, Vec<FnDecl>>,
+    /// Which conditional `runtime.ts` helpers this file's emission referenced.
+    ///
+    /// Unlike every field above, this is an **output**, not an input: emission
+    /// writes it (through `&self`, via interior mutability) and the header /
+    /// import post-pass reads it back. It rides on the context because the
+    /// producers — the `Bytes` kernel in `lower`, the boundary codecs in
+    /// `serialisation`, the ICU formatters in `emit` — already receive `&ctx`,
+    /// so no other signature has to change to carry the fact up.
+    ///
+    /// One `EmitProjectCtx` is built per emitted file, immediately before its
+    /// `emit_project` call, so the flags cannot leak between files. Replaces a
+    /// substring scan of the generated text; see `emitter::runtime_use`.
+    pub runtime_use: crate::emitter::RuntimeUse,
 }
 
 /// Where a boundary-crossing type was declared.

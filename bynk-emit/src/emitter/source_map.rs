@@ -22,6 +22,8 @@
 
 use bynk_syntax::span::{LineIndex, Span};
 
+use crate::json::json_string;
+
 /// Accumulates source-map checkpoints during emission. Lives behind a `RefCell`
 /// on `LowerCtx` so the deep lowering chain and the declaration loop can both
 /// record without fighting the borrow checker. A *sub*-builder (one per spliced
@@ -230,26 +232,6 @@ fn vlq_encode(value: i64, out: &mut String) {
             break;
         }
     }
-}
-
-/// Minimal JSON string escaping — enough for paths, source text, and the
-/// `mappings` (which is pure ASCII). Avoids a serde dependency for one field.
-pub(crate) fn json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 #[cfg(test)]

@@ -36,11 +36,14 @@ pub(crate) fn emit_type(
         } => emit_refined_type(
             out,
             t,
-            *base,
-            refinement.as_ref(),
+            RefinedShape {
+                base: *base,
+                refinement: refinement.as_ref(),
+                is_opaque: false,
+            },
             commons,
             &brand_prefix,
-            false,
+            &ctx.runtime_use,
         ),
         TypeBody::Opaque {
             base, refinement, ..
@@ -53,15 +56,18 @@ pub(crate) fn emit_type(
             emit_refined_type(
                 out,
                 t,
-                *base,
-                refinement.as_ref(),
+                RefinedShape {
+                    base: *base,
+                    refinement: refinement.as_ref(),
+                    is_opaque: true,
+                },
                 commons,
                 &brand_prefix,
-                true,
+                &ctx.runtime_use,
             );
         }
-        TypeBody::Record(r) => emit_record_type(out, t, r, commons),
-        TypeBody::Sum(s) => emit_sum_type(out, t, s, commons),
+        TypeBody::Record(r) => emit_record_type(out, t, r, commons, &ctx.runtime_use),
+        TypeBody::Sum(s) => emit_sum_type(out, t, s, commons, &ctx.runtime_use),
     }
 }
 
@@ -97,15 +103,36 @@ fn sorted_index_fields(indexes: &HashMap<String, Vec<String>>) -> Vec<(&String, 
     entries
 }
 
+/// The parts of a refined-or-opaque `TypeBody` that its lowering reads.
+///
+/// Honest about what this is: `emit_refined_type` reached eight arguments when it
+/// gained `runtime_use`, and grouping three of them keeps it under
+/// `clippy::too_many_arguments` without another `#[allow]`. The three do cohere —
+/// all come out of the same `t.body` the caller already matched on — but the
+/// function still takes six parameters, so this is a lint fix that reads well,
+/// not a decomposition.
+struct RefinedShape<'a> {
+    base: BaseType,
+    refinement: Option<&'a Refinement>,
+    /// ADR 0182: opaque and refined lower identically apart from `unsafe`, which
+    /// only opaque exposes (its defining commons needs a representation-level
+    /// constructor).
+    is_opaque: bool,
+}
+
 fn emit_refined_type(
     out: &mut String,
     t: &TypeDecl,
-    base: BaseType,
-    refinement: Option<&Refinement>,
+    shape: RefinedShape<'_>,
     commons: &TypedCommons,
     brand_prefix: &str,
-    is_opaque: bool,
+    runtime_use: &RuntimeUse,
 ) {
+    let RefinedShape {
+        base,
+        refinement,
+        is_opaque,
+    } = shape;
     let ts_base = ts_base(base);
     writeln!(
         out,
@@ -142,7 +169,7 @@ fn emit_refined_type(
         writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
         writeln!(out, "  }},").unwrap();
     }
-    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons, runtime_use);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
@@ -286,7 +313,13 @@ pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
     format!("<{}>", names.join(", "))
 }
 
-fn emit_record_type(out: &mut String, t: &TypeDecl, r: &RecordBody, commons: &TypedCommons) {
+fn emit_record_type(
+    out: &mut String,
+    t: &TypeDecl,
+    r: &RecordBody,
+    commons: &TypedCommons,
+    runtime_use: &RuntimeUse,
+) {
     writeln!(
         out,
         "export interface {name}{params} {{",
@@ -306,12 +339,18 @@ fn emit_record_type(out: &mut String, t: &TypeDecl, r: &RecordBody, commons: &Ty
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
-    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons, runtime_use);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
 
-fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCommons) {
+fn emit_sum_type(
+    out: &mut String,
+    t: &TypeDecl,
+    s: &SumBody,
+    commons: &TypedCommons,
+    runtime_use: &RuntimeUse,
+) {
     // #593: a generic sum erases to a TypeScript generic discriminated union,
     // exactly as a generic record erases to `interface Name<T>`. The type
     // parameters ride the `export type` header and each payload constructor
@@ -401,7 +440,7 @@ fn emit_sum_type(out: &mut String, t: &TypeDecl, s: &SumBody, commons: &TypedCom
             .unwrap();
         }
     }
-    emit_attached_methods(out, &t.name.name, &t.type_params, commons);
+    emit_attached_methods(out, &t.name.name, &t.type_params, commons, runtime_use);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
 }
@@ -411,6 +450,7 @@ fn emit_attached_methods(
     type_name: &str,
     type_params: &[TypeParam],
     commons: &TypedCommons,
+    runtime_use: &RuntimeUse,
 ) {
     for item in &commons.commons.items {
         let CommonsItem::Fn(f) = item else { continue };
@@ -424,7 +464,15 @@ fn emit_attached_methods(
         if t.name != type_name {
             continue;
         }
-        emit_method(out, f, type_name, type_params, method_name, commons);
+        emit_method(
+            out,
+            f,
+            type_name,
+            type_params,
+            method_name,
+            commons,
+            runtime_use,
+        );
     }
 }
 
@@ -484,6 +532,7 @@ fn emit_method(
     type_params: &[TypeParam],
     method_name: &Ident,
     commons: &TypedCommons,
+    runtime_use: &RuntimeUse,
 ) {
     emit_doc_block(out, f.documentation.as_deref(), INDENT_STEP);
     // #594: a method on a generic type erases to a generic namespace-object
@@ -515,7 +564,7 @@ fn emit_method(
     )
     .unwrap();
     let empty = bynk_check::resolver::CrossContextInfo::default();
-    let mut cx = LowerCtx::new(commons, &empty);
+    let mut cx = LowerCtx::new(commons, &empty, runtime_use);
     // Methods are emitted as plain (non-async) members on an object literal;
     // any `Effect.pure(...)` in tail position must still wrap as
     // `Promise.resolve(...)` because there's no surrounding `async` to absorb
@@ -539,6 +588,7 @@ pub(crate) fn emit_free_fn(
     // v0.115: emit the contract call-site guard (dev/test profile). Stripped
     // (false) in the deploy build for zero runtime cost (DECISION J).
     contracts: bool,
+    runtime_use: &RuntimeUse,
 ) {
     let FnName::Free(name) = &f.name else {
         return;
@@ -577,7 +627,7 @@ pub(crate) fn emit_free_fn(
     )
     .unwrap();
     let empty = bynk_check::resolver::CrossContextInfo::default();
-    let mut cx = LowerCtx::new(commons, &empty).with_source_map(source_map);
+    let mut cx = LowerCtx::new(commons, &empty, runtime_use).with_source_map(source_map);
     let async_tail = is_effectful_return(&f.return_type);
     let guarded = contracts && (!f.requires.is_empty() || !f.ensures.is_empty());
     if guarded {
@@ -761,9 +811,9 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
             out.push(',');
         }
         first = false;
-        out.push_str(&source_map::json_string(k));
+        out.push_str(&crate::json::json_string(k));
         out.push(':');
-        out.push_str(&source_map::json_string(v));
+        out.push_str(&crate::json::json_string(v));
     }
     out.push('}');
     Some(out)
@@ -975,7 +1025,12 @@ pub(crate) fn placeholder_names(template: &str) -> BTreeSet<&str> {
 /// (`bynk.messages.malformed_icu_syntax`) already rejects it before emission
 /// runs on an error-free project — but is handled totally, matching this
 /// function's own "never throws" contract, rather than `unreachable!()`.
-fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry, locale_tag: &str) {
+fn emit_message_entry_renderer(
+    out: &mut String,
+    entry: &MessageEntry,
+    locale_tag: &str,
+    runtime_use: &RuntimeUse,
+) {
     write!(out, "(params: ReadonlyMap<string, MessageArg>): string => ").unwrap();
     let segments = split_template(&entry.template);
     let parts: Vec<String> = segments
@@ -991,7 +1046,7 @@ fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry, locale_ta
                     )
                 }
                 Some(_) => match icu::parse_icu_placeholder(inner) {
-                    Ok(p) => emit_icu_placeholder(&p, locale_tag),
+                    Ok(p) => emit_icu_placeholder(&p, locale_tag, runtime_use),
                     Err(_) => {
                         let name = inner.split(',').next().unwrap_or(inner).trim();
                         format!("\"{{{}}}\"", escape_ts_string(name))
@@ -1014,17 +1069,31 @@ fn emit_message_entry_renderer(out: &mut String, entry: &MessageEntry, locale_ta
 /// after the guard, so no cast is needed. Falls back to the literal
 /// `"{name}"` text when the param is missing or the wrong `MessageArg`
 /// variant, matching the plain-placeholder fallback's own convention.
-fn emit_icu_placeholder(p: &icu::IcuPlaceholder<'_>, locale_tag: &str) -> String {
+fn emit_icu_placeholder(
+    p: &icu::IcuPlaceholder<'_>,
+    locale_tag: &str,
+    runtime_use: &RuntimeUse,
+) -> String {
+    // Recorded per-arm, not once up front: a `select` placeholder emits
+    // `Object.hasOwn` over an arm table and no formatter at all, so noting here
+    // would import the three helpers into a select-only bundle that never calls
+    // them. The three are imported as a group, so one note per helper-emitting
+    // arm is enough.
     let tag_lit = format!("\"{}\"", escape_ts_string(locale_tag));
     let key = format!("\"{}\"", escape_ts_string(p.name));
     let fallback = format!("\"{{{}}}\"", escape_ts_string(p.name));
     let arg = format!("params.get({key})");
     match &p.kind {
         icu::PlaceholderKind::Plural { arms } => {
+            runtime_use.note_icu();
             let arms_obj: Vec<String> = arms
                 .iter()
                 .map(|(cat, segs)| {
-                    format!("\"{}\": {}", cat.as_str(), emit_sub_message(segs, &tag_lit))
+                    format!(
+                        "\"{}\": {}",
+                        cat.as_str(),
+                        emit_sub_message(segs, &tag_lit, runtime_use)
+                    )
                 })
                 .collect();
             format!(
@@ -1039,7 +1108,7 @@ fn emit_icu_placeholder(p: &icu::IcuPlaceholder<'_>, locale_tag: &str) -> String
                     format!(
                         "\"{}\": {}",
                         escape_ts_string(k),
-                        emit_sub_message(segs, &tag_lit)
+                        emit_sub_message(segs, &tag_lit, runtime_use)
                     )
                 })
                 .collect();
@@ -1057,6 +1126,7 @@ fn emit_icu_placeholder(p: &icu::IcuPlaceholder<'_>, locale_tag: &str) -> String
             )
         }
         icu::PlaceholderKind::Number { style } => {
+            runtime_use.note_icu();
             let style_arg = style
                 .map(|s| format!(", \"{}\"", s.as_str()))
                 .unwrap_or_default();
@@ -1065,6 +1135,7 @@ fn emit_icu_placeholder(p: &icu::IcuPlaceholder<'_>, locale_tag: &str) -> String
             )
         }
         icu::PlaceholderKind::Date { style } => {
+            runtime_use.note_icu();
             let style_arg = style
                 .map(|s| format!(", \"{}\"", s.as_str()))
                 .unwrap_or_default();
@@ -1080,14 +1151,21 @@ fn emit_icu_placeholder(p: &icu::IcuPlaceholder<'_>, locale_tag: &str) -> String
 /// is already in scope and narrowed. `Hash` only ever occurs in a `plural`
 /// arm (the parser's `allow_hash` guarantees a `select` arm never contains
 /// one), where `__arg.value: number` after narrowing.
-fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str) -> String {
+fn emit_sub_message(segs: &[icu::SubSegment], tag_lit: &str, runtime_use: &RuntimeUse) -> String {
     if segs.is_empty() {
         return "\"\"".to_string();
     }
     segs.iter()
         .map(|seg| match seg {
             icu::SubSegment::Literal(s) => format!("\"{}\"", escape_ts_string(s)),
-            icu::SubSegment::Hash => format!("formatIcuNumber({tag_lit}, __arg.value)"),
+            // A bare `#` renders the argument as a number. Recorded here even
+            // though the only arm that can contain one is `plural` (see this
+            // function's doc), which records for itself: the note belongs with
+            // the emission, so this stays correct if that invariant ever moves.
+            icu::SubSegment::Hash => {
+                runtime_use.note_icu();
+                format!("formatIcuNumber({tag_lit}, __arg.value)")
+            }
         })
         .collect::<Vec<_>>()
         .join(" + ")
@@ -1114,6 +1192,7 @@ pub(crate) fn emit_messages_bundle(
     out: &mut String,
     blocks: &[&MessagesDecl],
     reference: &MessagesDecl,
+    runtime_use: &RuntimeUse,
 ) {
     let reference_tag = escape_ts_string(&reference.tag);
 
@@ -1132,7 +1211,7 @@ pub(crate) fn emit_messages_bundle(
         writeln!(out, "  \"{}\": {{", escape_ts_string(&m.tag)).unwrap();
         for entry in &m.entries {
             write!(out, "    \"{}\": ", escape_ts_string(&entry.code)).unwrap();
-            emit_message_entry_renderer(out, entry, &m.tag);
+            emit_message_entry_renderer(out, entry, &m.tag, runtime_use);
             writeln!(out, ",").unwrap();
         }
         writeln!(out, "  }},").unwrap();
@@ -1283,7 +1362,8 @@ pub(crate) fn emit_provider(
         .unwrap();
         // v0.70: provider operation bodies lower directly into `out`, so attaching
         // the module builder records correct offsets — no splice merge needed.
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(source_map);
+        let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
+            .with_source_map(source_map);
         cx.local_agents = ctx.local_agents.clone();
         cx.agent_method_givens = ctx.agent_method_givens.clone();
         cx.set_rebrand_info(commons, ctx);
@@ -1392,7 +1472,8 @@ pub(crate) fn emit_service(
         // splice below so handler statements map per-statement, not to the
         // `service` declaration line.
         let body_smb = RefCell::new(SourceMapBuilder::new());
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));
+        let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
+            .with_source_map(Some(&body_smb));
         cx.capabilities = handler
             .given
             .iter()
@@ -2044,7 +2125,7 @@ pub(crate) fn lower_workers_cross_context_call(
     for (i, a) in args.iter().enumerate() {
         let lowered = lower_expr(a, stmts, cx);
         let (_, param_ty) = &svc.params[i];
-        args_serialised.push(serialise_expr_via(param_ty, &lowered, &ns));
+        args_serialised.push(serialise_expr_via(param_ty, &lowered, &ns, cx.runtime_use));
     }
     let args_json = if args_serialised.len() == 1 {
         args_serialised.into_iter().next().unwrap()
@@ -2059,7 +2140,7 @@ pub(crate) fn lower_workers_cross_context_call(
         format!("{{ {} }}", pairs.join(", "))
     };
 
-    let deser_ref = deserialise_ref_via(&svc.return_type, &ns);
+    let deser_ref = deserialise_ref_via(&svc.return_type, &ns, cx.runtime_use);
 
     // v0.54: stamp the calling context's qualified name so the callee's
     // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
@@ -2587,7 +2668,7 @@ pub(crate) fn emit_agent(
         for f in &effective_fields {
             let val = if let Some(init) = &f.init {
                 let mut stmts = Vec::new();
-                let mut icx = LowerCtx::new(commons, &ctx.cross_context);
+                let mut icx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
                 icx.target = ctx.target;
                 icx.local_agents = ctx.local_agents.clone();
                 icx.agent_method_givens = ctx.agent_method_givens.clone();
@@ -2672,7 +2753,7 @@ pub(crate) fn emit_agent(
             return;
         }
         let json = format!("({value_expr} as unknown as JsonValue)");
-        let d = serialisation::deserialise_expr(ty, &json, path);
+        let d = serialisation::deserialise_expr(ty, &json, path, &ctx.runtime_use);
         checks.push(format!(
             "  {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}"
         ));
@@ -2693,7 +2774,12 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __v of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(v, "(__v as unknown as JsonValue)", &name.name),
+                d = serialisation::deserialise_expr(
+                    v,
+                    "(__v as unknown as JsonValue)",
+                    &name.name,
+                    &ctx.runtime_use,
+                ),
             ));
         }
         if let Some(k) = store_field_key_type(a, &name.name)
@@ -2702,7 +2788,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name),
+                d = serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use),
             ));
         }
     }
@@ -2716,7 +2802,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name),
+                d = serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use),
             ));
         }
     }
@@ -2727,7 +2813,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(t, "(__k as unknown as JsonValue)", &name.name),
+                d = serialisation::deserialise_expr(t, "(__k as unknown as JsonValue)", &name.name, &ctx.runtime_use),
             ));
         }
     }
@@ -2737,7 +2823,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __e of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(v, "(__e.v as unknown as JsonValue)", &name.name),
+                d = serialisation::deserialise_expr(v, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use),
             ));
         }
     }
@@ -2747,7 +2833,7 @@ pub(crate) fn emit_agent(
             rehydrate_checks.push(format!(
                 "  for (const __e of s.{n}) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
                 n = name.name,
-                d = serialisation::deserialise_expr(t, "(__e.v as unknown as JsonValue)", &name.name),
+                d = serialisation::deserialise_expr(t, "(__e.v as unknown as JsonValue)", &name.name, &ctx.runtime_use),
             ));
         }
     }
@@ -2821,7 +2907,7 @@ pub(crate) fn emit_agent(
             .map(|f| f.name.name.clone())
             .collect();
         for inv in &a.invariants {
-            let mut cx = LowerCtx::new(commons, &ctx.cross_context);
+            let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
             cx.invariant_state = Some(("s".to_string(), field_names.clone()));
             let mut pre = Vec::new();
             let pred = lower_expr(&inv.predicate, &mut pre, &mut cx);
@@ -2863,7 +2949,7 @@ pub(crate) fn emit_agent(
         writeln!(out, "      const __old = {{ ...{zero_fn}(), ...__prior }};").unwrap();
         writeln!(out, "      const __new = s;").unwrap();
         for tr in &a.transitions {
-            let mut cx = LowerCtx::new(commons, &ctx.cross_context);
+            let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
             cx.transition_states = Some(("__old".to_string(), "__new".to_string()));
             let mut pre = Vec::new();
             let pred = lower_expr(&tr.predicate, &mut pre, &mut cx);
@@ -2909,7 +2995,8 @@ pub(crate) fn emit_agent(
         let mut body_out = String::new();
         // v0.70: per-statement maps for the spliced handler body (see emit_service).
         let body_smb = RefCell::new(SourceMapBuilder::new());
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));
+        let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
+            .with_source_map(Some(&body_smb));
         cx.in_agent_handler = true;
         // v0.81: a store-agent handler reads/writes cells over a mutable working
         // record `__state`; a state-record handler uses `currentState`/`self.state`.
@@ -3154,7 +3241,7 @@ pub(crate) fn emit_agent(
         // frame against `in:` (reject-and-close on failure), recover the sender
         // identity + route args from the socket attachment, and run the body.
         for host in &ws_open_hosts {
-            emit_ws_dispatch_handlers(out, host);
+            emit_ws_dispatch_handlers(out, host, &ctx.runtime_use);
         }
     }
     writeln!(out, "}}").unwrap();
@@ -3421,7 +3508,8 @@ fn emit_ws_do_method(
         ));
     }
     let body_smb = RefCell::new(SourceMapBuilder::new());
-    let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));
+    let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
+        .with_source_map(Some(&body_smb));
     cx.capabilities = h
         .given
         .iter()
@@ -3569,7 +3657,7 @@ fn ws_attachment_deps_arg(seam: &Option<bynk_check::actors::BearerSeam>) -> Stri
 /// decodes the raw frame against the service's `in:` type first — a malformed frame
 /// closes the socket (`1003`/`1008`) and is never dispatched (the client-bytes trust
 /// boundary).
-fn emit_ws_dispatch_handlers(out: &mut String, host: &WsOpenHost<'_>) {
+fn emit_ws_dispatch_handlers(out: &mut String, host: &WsOpenHost<'_>, runtime_use: &RuntimeUse) {
     if !host.has_inbound() {
         return;
     }
@@ -3582,7 +3670,7 @@ fn emit_ws_dispatch_handlers(out: &mut String, host: &WsOpenHost<'_>) {
 
     if let Some(m) = host.message {
         let method = ws_message_do_method_name(host.service);
-        let decode = serialisation::deserialise_expr(host.in_type, "__json", "frame");
+        let decode = serialisation::deserialise_expr(host.in_type, "__json", "frame", runtime_use);
         writeln!(
             out,
             "  async webSocketMessage(ws: {ws_ty}, message: string | ArrayBuffer): Promise<void> {{"
