@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.237.1** | The Events track's foundational ADRs — fan-out substrate, closed-protocol-set extension, pattern-dispatch semantics, and the replay split — land before slice 0 |
 | **v0.237.0** | Idempotency.dedup/remember scope the caller's key to the calling handler's own qualified name, so two unrelated handlers can't collide on the same literal key |
 | **v0.236.0** | The `Idempotency` capability — mechanical dedup for at-least-once delivery, slice 0 (in-memory provider) |
 | **v0.235.0** | A capability operation may declare its own type parameter (`capability X { fn op[T](…) -> … }`, ADR 0281), resolved only from an explicit call-site type argument (`X.op[SomeType](…)`) and emitted as a genuine generic TypeScript interface method; a generic operation requires an external (bodiless) provider and cannot be stubbed |
