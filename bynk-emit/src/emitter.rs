@@ -2664,6 +2664,21 @@ pub(crate) struct LowerCtx<'a> {
     /// the method-call lowering so `x.method(args)` resolves through
     /// the agent's class rather than via the receiver-namespace lookup.
     pub local_agent_vars: HashMap<String, String>,
+    /// #908: a stack of per-block frames tracking `let`/`let <-` names that
+    /// needed a fresh emitted identifier because the name was already bound
+    /// by an enclosing (or the same) block's `let` — the checker allows
+    /// re-binding a name (`let x = 1; let x = x + 1`, a deliberate ML-family
+    /// idiom, ADR 0064), but each `let` still lowers to its own `const`, so
+    /// without renaming a same-block re-`let` collides with the first
+    /// (TS2451), and a nested block's re-`let` — while a legal *redeclaration*
+    /// on its own — would put an RHS read of the outer binding in its own
+    /// declaration's temporal dead zone. Pushed/popped in lock-step with
+    /// [`emit_block_inner`] — the single choke point every block (function,
+    /// lambda, if/else branch, match arm) lowers through — so a read
+    /// (`lower_ident`, and the agent-dispatch receiver text) resolves a name
+    /// by walking the stack innermost-out and falls back to the natural
+    /// `ts_ident` name when no frame renamed it.
+    pub shadow_scopes: Vec<HashMap<String, String>>,
     /// v0.8 build target. In workers mode cross-context calls lower to
     /// `callService(...)` instead of `deps.surface.<key>.<method>(...)`.
     pub target: BuildTarget,
@@ -2788,6 +2803,7 @@ impl<'a> LowerCtx<'a> {
             rebranded_types: HashSet::new(),
             commons_imported_fns: HashSet::new(),
             local_agent_vars: HashMap::new(),
+            shadow_scopes: vec![HashMap::new()],
             target: BuildTarget::Bundle,
             agents_instantiated: false,
             is_receiver_temps: HashMap::new(),
@@ -2879,6 +2895,66 @@ impl<'a> LowerCtx<'a> {
         let n = self.next_tmp;
         self.next_tmp += 1;
         format!("__r{n}")
+    }
+    /// #908: bind a `let`/`let <-` LHS to its emitted JS identifier. Returns
+    /// the natural `ts_ident` name unless `name` is already bound *anywhere*
+    /// in the enclosing block chain — not only the current block. A nested
+    /// block re-`let`-ing an outer name is ordinary, valid lexical shadowing
+    /// in JS on its own, but this `let`'s own RHS may still read the outer
+    /// binding (`let n = n + 1` one block in); a plain `const n` there
+    /// would put the read inside its own declaration's temporal dead zone
+    /// (JS hoists a block's `let`/`const` names to the top of that block),
+    /// turning a correct read of the outer value into a TDZ ReferenceError.
+    /// Renaming whenever *any* enclosing frame already has the name sidesteps
+    /// that regardless of whether this particular RHS reads it. Allocates a
+    /// fresh name via [`Self::fresh`] when so. `_` never collides (each is
+    /// already a fresh throwaway) and is never registered, since it is never
+    /// read.
+    pub(crate) fn bind_local_name(&mut self, name: &str) -> String {
+        if name == "_" {
+            return self.fresh();
+        }
+        let natural = ts_ident(name);
+        let js_name = if self.shadow_scopes.iter().any(|f| f.contains_key(name)) {
+            self.fresh()
+        } else {
+            natural
+        };
+        self.shadow_scopes
+            .last_mut()
+            .expect("shadow_scopes always has a root frame")
+            .insert(name.to_string(), js_name.clone());
+        js_name
+    }
+    /// #908: the emitted JS identifier currently bound to a local name, if a
+    /// `let` re-bind renamed it somewhere in the enclosing block chain.
+    /// Walked innermost-out so a nested block sees an outer rename that was
+    /// still active when it was entered. `None` means no rename applies —
+    /// callers fall back to the natural `ts_ident` name.
+    pub(crate) fn resolved_local_name(&self, name: &str) -> Option<String> {
+        self.shadow_scopes
+            .iter()
+            .rev()
+            .find_map(|f| f.get(name).cloned())
+    }
+    /// #908: register a non-`let` binder (a match-arm/`is` pattern binding, or
+    /// a lambda param) into the current frame under its natural `ts_ident`
+    /// name — never renamed, since each such binder already lowers inside its
+    /// own JS block/arrow scope with no risk of colliding with a sibling
+    /// declaration of the same name. Without this, a read inside the binder's
+    /// scope would fall through [`Self::resolved_local_name`]'s stack walk
+    /// past this (unregistered) declaration to an outer `let` rename that is
+    /// no longer the right value here — silently wrong output, not a `tsc`
+    /// error. Every construct that introduces a binder outside `bind_local_name`
+    /// (match arms, `is`, lambda params) must call this for each name it binds.
+    pub(crate) fn declare_binder(&mut self, name: &str) {
+        if name == "_" {
+            return;
+        }
+        self.shadow_scopes
+            .last_mut()
+            .expect("shadow_scopes always has a root frame")
+            .insert(name.to_string(), ts_ident(name));
     }
     /// Return a stable textual reference to an `is` receiver, used by the
     /// `.tag` check in `lower_is`. A simple, repeatable lvalue is lowered

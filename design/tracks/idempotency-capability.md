@@ -1,11 +1,16 @@
 # The `Idempotency` capability — mechanical dedup for at-least-once delivery
 
-- **Status:** Draft (settling). Spine issue
+- **Status:** Draft (settled — not yet sliced). Spine issue
   [#921](https://github.com/accuser/bynk/issues/921) open; this doc landed via
   [#922](https://github.com/accuser/bynk/pull/922) ("Part of #921"), but that PR was marked
   ready for review and merged 55 seconds later with no review — the assertion that §3's
-  questions are closed was never tested. They remain genuinely open; treat this doc as
-  still settling, not adopted. Scopes issue
+  questions were closed was never tested. §3.1, §3.2, and §3.4 have since been genuinely
+  argued and settled (see below; §3.1 depends on
+  [#926](https://github.com/accuser/bynk/issues/926), its cut-out sub-issue); §3.2's
+  settlement narrowed this track's scope and deferred §3.3 to a future, unfiled track. All
+  four of §3's original questions are now resolved (settled or explicitly deferred) — this
+  doc is ready for slice 0 to be cut as an increment-proposal sub-issue of #921, not yet
+  adopted by a merge that actually tested it. Scopes issue
   [#554](https://github.com/accuser/bynk/issues/554) ("Ship the `Idempotency` capability
   ahead of the full Events track") down to its `Idempotency`-capability item.
 - **Realises:** `design/bynk-design-notes.md` §4 ("Idempotency as a system convention",
@@ -23,29 +28,32 @@
   `bynk-check/src/firstparty.rs:64` lists the only first-party capabilities as `Clock`,
   `Random`, `Logger`, `Fetch`, `Secrets`, `Locale`. The design notes' own aside — "the same
   way Sagas does" (multiple provider variants) — is not a working reference either; `Sagas`
-  is equally unimplemented. This track has no sibling implementation to mirror; both of the
-  open questions below are genuinely novel.
+  is equally unimplemented. This track has no sibling implementation to mirror; every
+  question below was genuinely novel going in (§3.1, §3.2, §3.4 settled; §3.3 deferred).
 
 ## 1. The theme
 
 A handler that needs deduplication declares `given Idempotency` and calls
-`Idempotency.dedup(on: <key>, expiresAfter: <duration>)` near its top. On first
-invocation with a given key, the call passes through and the handler's own outcome is
-recorded against the key when the handler commits. On a later invocation with the same
-key inside the retention window — a retried command, a replayed event — the call instead
-short-circuits: the handler's remaining body does not re-execute, and the caller sees the
-previously-recorded outcome. The end state when this track retires: `given Idempotency` is
-a real, checked capability with at least one usable provider, and the design notes' §12
-worked examples (`reserve`, the `PaymentConfirmed` subscriber) compile and run.
+`Idempotency.dedup[T](key, expiresAfter)` near its top. On first invocation with a given
+key, the call passes through and the handler's own outcome is recorded against the key
+when the handler commits. On a later invocation with the same key inside the retention
+window — a retried command, a replayed event — the call instead short-circuits: the
+handler's remaining body does not re-execute, and the caller sees the previously-recorded
+outcome. The end state when this track retires: `given Idempotency` is a real, checked
+capability with its one settled provider, and the §3.1 worked example below (a settled
+correction of §12's `reserve` example) compiles and runs.
 
 ## 2. Why a track (the ADR 0076 trigger)
 
-- [x] **Multi-increment.** A working-but-narrow slice (single in-memory provider, one
-  control-flow shape) is separable from the durable provider (§4.3) and from any
-  Sagas-compensation or event-subscriber ergonomics layered on top later.
-- [x] **Surface not yet settled.** Two structurally load-bearing questions have *no*
-  existing pattern to lean on in the shipped language (§3.1, §3.2) — not "which of two
-  known shapes", but "does either known-elsewhere shape even apply here".
+- [x] **Multi-increment.** Slice 0 (the in-memory provider + match-based short-circuit,
+  depending on [#926](https://github.com/accuser/bynk/issues/926)) is separable from the
+  possible event-subscriber-sugar slice 1. The durable provider, originally envisioned as
+  later slices of this same track, was settled (§3.2) into a *separate*, future,
+  currently-unfiled track instead — this track no longer carries that multi-increment
+  weight itself, but still clears the bar on its own two remaining slices.
+- [x] **Surface not yet settled (at settling time).** §3.1 (the `dedup` short-circuit
+  shape), §3.2 (provider-variant selection), and §3.4 (key typing, scope, eviction) all
+  had no existing pattern to lean on fully — see below for how each settled.
 - [x] **Security/safety boundary.** The capability's entire purpose is a correctness
   guarantee (§12's "safe by construction" claim); a wrong shape is either silently unsafe
   (doesn't dedup) or silently wrong (dedups across the wrong scope — see the threat model,
@@ -53,97 +61,133 @@ worked examples (`reserve`, the `PaymentConfirmed` subscriber) compile and run.
 
 ## 3. Open design questions
 
-### 3.1 — How does `dedup` short-circuit the *rest of the handler body*? (no existing primitive)
+### 3.1 — How does `dedup` short-circuit the *rest of the handler body*? — SETTLED
 
-The design notes' worked example:
+**Decision.** `dedup` is not an early-exit primitive at all. It is an ordinary generic
+capability method, matched on like any other `Option`:
 
 ```
-on reserve(qty: Int, orderId: OrderId) -> ReserveOutcome
-    given Clock, Idempotency {
-  <- Idempotency.dedup(on: orderId, expiresAfter: 24h)?
-  ...
+capability Idempotency {
+  fn dedup[T](key: String, expiresAfter: Duration) -> Effect[Option[T]]
+}
+
+on reserve(qty: Int, orderId: OrderId) -> ReserveOutcome given Clock, Idempotency {
+  let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId), 24.hours)
+  match cached {
+    Some(outcome) => outcome,
+    None => {
+      ... the rest of the handler body, tail-typed to ReserveOutcome ...
+    }
+  }
 }
 ```
 
-reads as ordinary `<- expr?` — an awaited capability call, propagated with `?`. But `?`
-has one implemented shape, verified directly against `check_question`
-(`bynk-check/src/checker/expressions.rs:2060`), not just the spec prose: the receiver must
-be `Result[T, E]` (`bynk.types.question_on_non_result` otherwise; `Option[T]` is accepted
-only inside an `HttpResult`-returning handler, `bynk.types.question_option_outside_http`
-otherwise), the enclosing function's return type must itself be `Result[_, F]` or
-`Effect[Result[_, F]]` (`bynk.types.question_outside_result` otherwise), and the call
-always returns the **success** type `t` on the `Ok` path — the `Err(e)` path is what
-propagates, forwarded or `embeds`-converted, never `t`. There is no path through this
-function that injects an arbitrary externally-supplied `T` (a full cached `ReserveOutcome`
-built by a *different* invocation) as this invocation's return value; that is categorically
-different from anything `?` does. Bynk has **no `return` keyword** and no other early-exit
-construct; the tail expression is the only way a block produces its value.
+(This is the real, settled call syntax — see §3.4 for why `on:`/`expiresAfter:`-as-labels
+and `24h` from §12's own prose never parsed, and for the key-type and key-scoping
+decisions.)
 
-`reserve`'s return type, `ReserveOutcome`, is not shown as a `Result` in the excerpt, and
-even if it were, `?`'s job is to forward `dedup`'s own `Err` variant *unmodified through the
-same `Result[_, F]` shape* — it cannot inject an arbitrary previously-computed `T` (a full
-cached `ReserveOutcome`, built by a *different* invocation of this handler) as this
-invocation's return value. That is a different operation from anything `?` does today:
-"abort the rest of this block and make the block's value be this externally-supplied thing"
-is a control-flow primitive Bynk does not have. Firming this up is the track's central
-question. Candidates to weigh during settling (not yet evaluated against each other):
+No new control-flow construct, and no change to `check_question`/`?` at all. `match` as a
+tail expression with joined arm types already ships (the `join_ty` LUB mechanism,
+[ADR 0230](../decisions/0230-join-match-if-branch-types.md)); what's missing is purely that
+`dedup` needs to be **generic over its own type
+parameter**, independent of any type the capability itself carries — `capability_op`
+(`tree-sitter-bynk/grammar.js:572`) has no type-parameter slot today. That gap is filed as
+its own increment proposal, **[#926](https://github.com/accuser/bynk/issues/926)**
+("Generic capability methods — `capability X { fn op[T](...) }`"), a sub-issue of this
+track's spine (#921) — its surface is dictated by existing precedent
+(`Json.decode[T]`'s explicit-type-argument resolution, v0.22b), not itself an open
+question this track needs to relitigate. This track's slice 0 depends on #926 landing
+first (or alongside it).
 
-- A **new statement form** — e.g. a `dedup`-flavoured bind that is checker-recognised
-  (not just an ordinary capability call) and permitted only as a handler's first
-  statement(s), lowered to an early-return in emitted TS. **No precedent exists for
-  this in the shipped compiler.** The design notes' own closest analogue,
-  `attempt`/`recover` (§13, fault-to-outcome conversion), is itself unimplemented —
-  verified by grep: zero hits for `attempt`/`recover` in `bynk-syntax/src/keywords.rs`,
-  `bynk-syntax/src/ast.rs`, or `tree-sitter-bynk/grammar.js`. So this candidate isn't
-  "a second narrow control-flow form following an established pattern" — it would be
-  the checker's **first** non-`?` control-flow special-case, full stop. That doesn't
-  disqualify it, but it removes the main thing that made it feel like the safe default;
-  weigh it as a genuinely novel mechanism, not an extension of one.
-- **Restrict `Idempotency` to `Result`-returning handlers only**, and require the *whole*
-  handler return type to literally be `Result[T, E]` (not a richer custom outcome sum —
-  contradicting §12's own `PaymentConfirmed` example, which has no natural `Result` shape
-  to unify with, since event subscribers return `Effect[()]`ish rather than a domain
-  outcome). Needs checking against every worked example in §12, not just the first.
-- **Something categorically different from `?` entirely** — e.g. `dedup` doesn't
-  short-circuit *expression* evaluation at all; instead the *provider* wraps the handler
-  invocation itself (interception rather than a call inside the body), and the visible
-  `Idempotency.dedup(...)` call is closer to a declaration than a control-flow statement.
-  This would be a real departure from the design notes' worked syntax and needs to be
-  named as such if chosen, not quietly reinterpreted.
+**Why not the alternatives originally weighed here:**
 
-Whatever is chosen must also explain what happens to `given Clock, Idempotency` handlers
-whose return type carries **no** domain outcome at all (design notes §13: "a handler
-returning bare `Money`... any failure is a fault") — can such a handler use `Idempotency`,
-and if the dedup path fires, what does it return?
+- **A new checker-recognised statement form** (a `dedup`-flavoured bind, lowered to an
+  early return, restricted to a handler's first statement) was the leading candidate, but
+  it would have been the checker's first non-`?` control-flow special-case — verified by
+  grep that even the design notes' own closest analogue, `attempt`/`recover` (§13), is
+  itself unimplemented (zero hits in `bynk-syntax/src/keywords.rs`, `ast.rs`, or
+  `tree-sitter-bynk/grammar.js`) — so there was no existing pattern to extend, only a new
+  one to invent. The match-based shape needs no checker special-casing at all, so it wins
+  on soundness surface alone: a smaller, better-precedented compiler change beats a novel
+  one when both solve the problem.
+- **Restricting `Idempotency` to literal `Result[T, E]`-returning handlers, reusing `?`**
+  turned out not to work at all, not just to be narrow. Even with that restriction, `?`
+  only ever injects a propagated value into the **`Err`** arm of the same `Result[_, F]`
+  shape (`check_question`, `bynk-check/src/checker/expressions.rs:2060`) — so encoding a
+  cached *success* value as `dedup`'s `Err` payload would make a caller observe a genuine
+  `Err` for what was actually a cached `Ok`. That's a semantic inversion, not a narrowing;
+  this candidate is dropped, not just deprioritised.
+- **Interception** (the provider wraps the handler invocation itself; `dedup(...)` reads
+  as a declaration, not a statement) is strictly more machinery than the match-based
+  version for no additional power, and it hides the short-circuit behind provider-level
+  magic the reader can't see operating from the handler body alone — working against the
+  design notes' own "architectural cost is visible at the call site" principle (§4). Not
+  pursued.
 
-### 3.2 — Provider-variant selection collides with ADR 0016
+**The no-domain-outcome case, resolved for free.** A handler with no domain outcome at all
+(design notes §13: `on currentBalance() -> Money`, where "any failure is a fault") is not a
+special case under this decision — `Option[Money]` matches exactly the same way
+`Option[ReserveOutcome]` does. The match-based shape needed no separate answer for this
+because it never special-cased the return type's shape to begin with.
 
-§12 states the capability "has multiple providers, the same way Sagas does: in-memory
-(handler-local dedup, lost on restart)... and durable (records survive crashes)", with "the
-handler shape... the same under both; the provider determines the durability semantics" —
-i.e. a **developer picks which provider variant a given composition uses**, for one
-capability, without changing the handler.
+**Cost accepted, not hidden.** Placement of the `dedup` call relative to any effects the
+handler performs is convention, not compiler-enforced — nothing stops a developer from
+running a side effect before the `match`, which would re-run on every duplicate delivery
+regardless of the cache hit. This mirrors the design notes' own accepted trade-off for
+`Sagas.compensate`: no compiler enforcement, an explicit call that "gives the reviewer
+somewhere to look" (§13). A future slice enforcing placement (e.g. a linter rule, not a
+type-system one) is possible but not required to ship slice 0.
 
-[ADR 0016](../decisions/0016-no-portable-infrastructure.md) ("No portable infrastructure
-tier") already ruled on almost exactly this shape and rejected it: *"No selectable-provider
-mechanism... A project's platform commitment is one greppable `consumes` line."* Decision
-0005 (constructor injection) and the shipped `provides Cap = Impl { ... }` grammar back this
-up structurally — one capability interface, one `provides` binding, wired by the compose
-root in topological order (`bynk-fmt/tests/fixtures/09-capabilities-providers`). Nothing in
-the shipped language today lets one project choose between two named implementations of the
-same capability interface.
+### 3.2 — Provider-variant selection collides with ADR 0016 — SETTLED (scope narrowed)
 
-0016's context was specifically **cross-platform portability** (a lowest-common-denominator
-`bynk.Kv` over Cloudflare KV vs. DynamoDB) — a different motivation from Idempotency's
-in-memory-vs-durable axis, which is a **durability tradeoff available on a single
-platform**, not a portability abstraction. Whether that distinction is enough to carve out
-a narrow exception, or whether 0016's "no selectable-provider mechanism" consequence was
-meant unconditionally, is itself the question to settle — likely via an ADR that either
-narrows 0016's scope explicitly or extends the existing `provides` grammar with a
-selection axis 0016 didn't anticipate. This cannot be answered by precedent; it has to be
-decided.
+**Decision.** This track ships `Idempotency` with exactly **one** provider: the ambient,
+portable, in-memory default — the same shape every other first-party capability (`Clock`,
+`Random`, `Logger`, `Fetch`, `Secrets`, `Locale`) already has. No selectable-provider
+mechanism is introduced, so [ADR 0016](../decisions/0016-no-portable-infrastructure.md)
+("No portable infrastructure tier") is simply not implicated — there is nothing to
+reconcile against a rule about choosing among providers when this track ships exactly one.
+This deliberately narrows §12's own framing: the design notes describe `Idempotency` as
+having "multiple providers, the same way Sagas does" (in-memory *and* durable,
+developer-selectable). This track delivers only the in-memory half. The durable half is
+not dropped, only deferred, for the reason below.
 
-### 3.3 — Does a durable provider need to join the *agent's own* atomic commit?
+**The wider direction this sits inside (deferred, not solved here).** The real shape a
+durable `Idempotency` provider wants is narrower than "a selectable-provider mechanism" in
+the sense ADR 0016 rejected — the rejected shape was specifically **cross-platform
+portability** (one interface abstracting over Cloudflare KV vs. DynamoDB, "lying about
+what's underneath"). What's wanted instead: Bynk ships a capability's interface **and** a
+default, portable provider (works on any platform, no platform dependency — trivially true
+for in-memory dedup, which needs nothing but a plain in-process map); a **specific
+platform adapter** (`bynk.cloudflare`) may separately supply its **own** provider for that
+*same* capability, which supersedes the default when that platform is targeted. This is a
+generalisation of a pattern the compiler already half-has — every `bynk`-surface
+capability's concrete implementation already varies per platform binding
+(`bynk-cloudflare.ts` vs. `bynk-node.ts` vs. `bynk-browser.ts`) — into a genuine two-tier
+model: capabilities with **no override** (today's ambient primitives, unchanged) vs.
+capabilities with a **default, optionally overridden by a specific platform** (new).
+`Idempotency` is the natural first candidate: a future, **currently unfiled** track would
+introduce a Cloudflare-native durable provider (plausibly backed by Durable Object
+storage) under this model, without touching this track's `given Idempotency`/`dedup[T]`
+call-site surface at all — the override would happen entirely at the composition root,
+delivering §12's "handler shape unchanged" property, just on a longer timeline than this
+track covers. Not filed now: there is no concrete durable-storage design to hang it on yet,
+and filing a track needs more than "it would be nice" (ADR 0076's own bar).
+
+**Why this doesn't need to be decided now.** Nothing in slice 0's shape (§3.1, the
+match-based short-circuit over `Effect[Option[T]]`) commits to or forecloses either the
+selectable-provider shape this section originally weighed *or* the default-plus-override
+shape above — both are compose-root-level questions, entirely below the capability
+interface and the handler-visible call site. Settling §3.2 now to "ship one provider,
+defer the rest" keeps this track's committed surface honest (§12's full "in-memory and
+durable" claim is *not* delivered here) without blocking slice 0 on an architectural
+question wider than this track's driving need.
+
+### 3.3 — Does a durable provider need to join the *agent's own* atomic commit? — DEFERRED
+
+Moot for **this** track once §3.2 narrowed scope to the single in-memory provider: there is
+no durable provider here to need an answer. Kept below, unedited, as groundwork for
+whichever future track picks up the Cloudflare-native durable provider §3.2 named — the
+analysis doesn't change just because the track that will need it hasn't been filed yet.
 
 §12: "The dedup record is written atomically with the handler's other commits... If the
 handler completes... the result is cached. If the handler aborts via fault, no record is
@@ -163,64 +207,110 @@ providers can opt into; or evidence that §12's "atomically with the handler's o
 commits" is aspirational and the real guarantee is looser (e.g. dedup-write-then-handler,
 accepting a narrow window where a duplicate could slip through on crash).
 
-### 3.4 — Key typing, key scope, and eviction
+### 3.4 — Key typing, key scope, and eviction — SETTLED
 
-Secondary, but needs an answer before a durable provider can be built: what type(s) can
-`on:` accept (design notes say "any expression in scope" — does that mean anything
-`Json.encode`-able, i.e. the same boundary-legal domain as the existing typed JSON codec,
-`static-semantics.md`'s "The typed JSON codec" section?); whether the dedup record's key
-namespace is automatically scoped (per-agent-instance? per-capability-composition? global
-per-provider?) — this doubles as part of the threat model (§6); and whether eviction
-follows `Cache`'s lazy/check-on-read model or needs to be proactive given dedup records may
-be read from a *different* invocation than the one that wrote them.
+**Decision — the real call shape.** §12's `dedup(on: x, expiresAfter: y)?` never parsed
+against the shipped grammar (three independent mismatches: labelled arguments don't
+exist, `24h` isn't the duration-literal form, and 3.1 already dropped the `?`). The
+settled interface and call:
 
-Two more surface details in §12's own syntax don't match what's shipped, worth folding
-into whichever slice settles the real call shape: **labelled arguments** — `dedup(on: x,
-expiresAfter: y)` — have no grammar today; `call` (`tree-sitter-bynk/grammar.js:1406`) is
-strictly positional (`sep1($._expression, ",")`), and `name: value` labelling exists only
-inside `record_construction`'s `field_init`. And the **duration literal** `24h`/`7d` isn't
-the shipped form either — `Duration` literals are `<int>.<unit>` (`5.minutes`, ADR 0112;
-`bynk-syntax/src/ast.rs:1629`), not a bare numeric suffix. Neither is a deep problem on its
-own (both are plausibly-addable surface, not architectural), but together with 3.1 they
-mean §12's `dedup` example has **three** independent points where it doesn't parse against
-the shipped grammar today — good evidence it was written as illustrative pseudocode for
-the architectural commitment, not as a literal preview of the surface. This track should
-not treat any part of the example's concrete syntax as settled.
+```
+capability Idempotency {
+  fn dedup[T](key: String, expiresAfter: Duration) -> Effect[Option[T]]
+}
+
+let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId), 24.hours)
+match cached {
+  Some(outcome) => outcome,
+  None => { ... }
+}
+```
+
+Declared parameter names (`key`, `expiresAfter`) stay for documentation and
+hover/signature-help — only the *call site* is positional, matching `call`
+(`tree-sitter-bynk/grammar.js:1406`, `sep1($._expression, ",")`) exactly, with no grammar
+change needed. `24.hours` is the shipped `<int>.<unit>` `Duration` literal form (ADR 0112),
+confirmed against the closed unit set in `bynk-syntax/src/ast.rs:1633`
+(`Hours`/`Days` are both in it).
+
+**Decision — the key type is `String`, not "any expression."** §12's "any expression in
+scope" reads most naturally as generic-over-the-key-type (`fn dedup[K, T](key: K, ...) ->
+Effect[Option[T]]`, `K` constrained to the JSON codec's boundary-legal domain). Rejected:
+Bynk has no type-parameter bounds mechanism today (generic records and generic instance
+methods both ship unconstrained), so a badly-chosen `K` would fail only late, at whatever
+point the provider tries to serialise it — not at the `capability_op` declaration site. A
+plain `String` sidesteps this entirely, matches how every real-world idempotency-key
+system works (Stripe's `Idempotency-Key` header, AWS Lambda Powertools' idempotency
+utility — both opaque strings), and keeps `dedup` single-generic (only `T`, the outcome
+type, as settled in 3.1). Where a caller has a richer domain value, they derive the string
+explicitly (`Json.encode(orderId)` above) — a visible step, not implicit codec magic,
+which directly serves §6's "make the effective key visible for review" goal: an implicit
+generic-and-serialised key would hide the effective key's shape from a reviewer who
+doesn't already know the codec's output format.
+
+**Decision — key scope is automatic at the call site, manual across callers.** The
+*effective* key the provider stores against is the developer-supplied string, prefixed
+with a compiler-synthesised, stable per-call-site identifier (e.g. derived from the
+`dedup` call's own source span) — free (compile-time only, no runtime cost, no new
+syntax), and it closes one real class of the §6 threat model for free: two unrelated
+`dedup` call sites can never collide even if a developer reuses an identical literal
+string at both, because the sites themselves are automatically distinguished. It does
+**not** close the other class §6 names — two *different callers of the same call site*
+(e.g. two tenants both invoking the same `reserve` handler) still collide if the
+developer-supplied string doesn't itself differentiate them. That part stays the caller's
+documented responsibility, same trade-off already accepted for `Sagas.compensate`
+targeting a non-idempotent operation (§13): no compiler enforcement, an explicit,
+reviewable call. Automatic call-site scoping narrows the burden; it doesn't remove it.
+
+**Decision — eviction is lazy, matching `Cache`.** Reuses `Cache`'s shipped
+check-on-read model (decision 0113: expired entries reap at next access, no background
+sweep) rather than inventing proactive eviction. This carries the same accepted
+trade-off `Cache` already lives with in this codebase — a key written once and never read
+again isn't reclaimed until *something* reads it — so it is not a new risk this track
+introduces, only one it inherits. A future proactive-sweep slice is a valid optimisation,
+not a blocker for slice 0.
 
 ## 4. Candidate slice decomposition
 
-Provisional — the settling phase's job is to firm up 3.1–3.3 before slice boundaries can be
-trusted.
+With 3.1, 3.2, and 3.4 settled, and 3.3 deferred out of scope, this track is fully
+settled: slice 0 is the only slice needed to deliver this track's actual end state (§1),
+and its shape is now concrete end to end.
 
-- **Slice 0 — the control-flow primitive + an in-memory-only provider.** Settle 3.1.
-  Ship `given Idempotency` with exactly one provider variant (in-memory, handler-local),
-  proving the short-circuit mechanism end-to-end against a `tsc_verify` case reproducing
-  §12's `reserve` example (or a corrected version of it, if 3.1 changes the surface). No
-  provider selection yet — sidesteps 3.2 entirely by shipping only one provider.
-- **Slice 1 — provider-variant selection.** Settle 3.2 (the ADR 0016 reconciliation).
-  Extend `provides`/the compose root with whatever selection mechanism 3.2 settles on,
-  proven against exactly two variants (in-memory, durable) rather than an open-ended set.
-- **Slice 2 — the durable provider.** Settle 3.3 and 3.4. Build the durable backing store,
-  the transactional-participation contract, key-scoping and eviction. The one most likely
-  to reveal that 3.2's selection mechanism needs revisiting once a real second variant
-  exists.
-- **Slice 3 (possible, not yet scoped) — event-subscriber sugar.** §12's `e.eventId`
+- **Slice 0 — the match-based short-circuit + the (sole) in-memory provider.** Depends on
+  [#926](https://github.com/accuser/bynk/issues/926) (generic capability methods) landing
+  first or alongside. Ship `given Idempotency` with its one provider (in-memory,
+  handler-local; `String` keys, call-site-scoped, lazy eviction per §3.4), proving the
+  settled §3.1 shape end-to-end against a `tsc_verify` case reproducing the (corrected)
+  `reserve` example above.
+- **Slice 1 (possible, not yet scoped) — event-subscriber sugar.** §12's `e.eventId`
   canonical-key pattern for event subscribers; whether this deserves special syntax or is
-  just documented convention once slices 0–2 land.
+  just documented convention once slice 0 lands.
+
+**Not slices of this track.** Provider-variant selection and the durable provider (the
+original slices 1–2) are not deferred *within* this track — they move to the future,
+currently unfiled track named in §3.2, along with §3.3's transactional-participation
+question. Recorded there, not here, so this track's own scope stays honest about what it
+actually delivers.
 
 ## 5. Front-loaded ADR candidates
 
-- **The `Idempotency` short-circuit primitive** (3.1) — whatever control-flow shape is
-  chosen, recorded as a decision distinct from `?`'s existing documented semantics, with
-  the constraint on which handler return-type shapes can use `given Idempotency` stated
-  explicitly.
-- **Provider-variant selection vs. ADR 0016** (3.2) — must either narrow 0016's stated
-  scope in an explicit follow-up decision or justify why Idempotency's variants are exempt
-  from "no selectable-provider mechanism". Do not let this land as a silent contradiction
-  of an Accepted ADR.
-- **Durable-provider transactional participation** (3.3) — the contract a capability
-  provider must satisfy to commit-or-abort alongside an agent handler it doesn't own, and
-  its answer for service handlers (which have no `store` to join).
+- **The `dedup` match-based short-circuit** (3.1, settled) — records that `dedup` is an
+  ordinary generic capability method returning `Effect[Option[T]]`, matched by the caller;
+  no new control-flow construct, no `?`/`check_question` changes. Depends on
+  [#926](https://github.com/accuser/bynk/issues/926)'s own ADR (generic capability
+  methods) landing as its foundation.
+- **`Idempotency` ships ambient-default-only; scope narrowed, not silently reduced** (3.2,
+  settled) — records that this track ships exactly one provider, so ADR 0016 is not
+  implicated, and names the wider default-plus-platform-override direction as future work,
+  not decided here. Keeps the scope-narrowing decision itself durable and citable, not just
+  implicit in the doc's diff history.
+- **Durable-provider transactional participation** (3.3) — deferred; not this track's ADR.
+  Belongs to whichever future track picks up the durable provider named in 3.2.
+- **`Idempotency`'s key shape** (3.4, settled) — `String`-typed keys, positional call
+  syntax (no labelled arguments), automatic compiler-synthesised call-site scoping
+  layered under the developer-supplied key, and lazy eviction matching `Cache`. Records
+  why "any expression" and implicit generic serialisation were rejected in favour of an
+  explicit `Json.encode(...)` at the call site.
 
 ## 6. Threat model
 
@@ -232,45 +322,50 @@ correctness guarantee itself (a wrongly-short-circuited handler silently skips r
 sanctions caller-supplied keys for non-idempotent receivers ("the caller supplies a
 deterministic identifier... the receiver dedupes against it"), and those keys can
 originate from external actors — an HTTP client-supplied idempotency header is the classic
-case. If the key namespace (3.4) is not automatically scoped per-caller/per-tenant/per-
-composition, a second caller who reuses or guesses a first caller's key receives the
-*first caller's* cached outcome rather than executing their own request — a cross-tenant
-data leak if the outcome carries tenant-specific data, and a correctness bug even when it
-doesn't (wrong operation silently skipped). This risk is structural, not an implementation
-slip: it exists because the capability's entire contract is "key equality means treat as
-the same call", and nothing in §12 states who is responsible for making sure two
-unrelated calls can never coincide on a key.
+case. Two distinct collision classes exist: **cross-call-site** (two unrelated `dedup`
+calls in different handlers happen to use the same literal string) and **cross-caller,
+same-call-site** (two different tenants both invoke the *same* handler, and the
+handler-derived key doesn't itself differentiate them). A second caller who lands on either
+collision receives the *first caller's* cached outcome instead of executing their own
+request — a cross-tenant data leak if the outcome carries tenant-specific data, and a
+correctness bug even when it doesn't (wrong operation silently skipped).
 
-**Where verification happens.** The design notes place the uniqueness burden on the
-*caller* ("the caller supplies a deterministic identifier derived from its own context")
-— this track should make that a checked or at least visibly-documented discipline, not a
-silent assumption. Candidates worth weighing during settling: auto-composing the key with
-an implicit scope (composition/context/agent identity) the developer cannot omit, so a
-caller-supplied component is always only *part* of the effective key; or leaving it fully
-manual but requiring the emitted/generated code to make the effective key visible for
-review (mirroring how `Sagas.compensate` targeting a non-idempotent operation is "a latent
-bug the explicit call gives the reviewer somewhere to look" — §13). No enforcement
-mechanism is settled yet; this section exists so the question is not lost by the time a
-durable provider (slice 2) makes the blast radius real.
+**Where verification happens — settled in 3.4.** The cross-call-site class is closed
+automatically and for free: §3.4's decision prefixes every key with a
+compiler-synthesised, per-call-site identifier, so two different `dedup` call sites can
+never collide regardless of what string a developer picks. The cross-caller,
+same-call-site class is **not** closed by the mechanism — it stays the caller's documented
+responsibility (the design notes' own framing: "the caller supplies a deterministic
+identifier derived from its own context"), the same trade-off already accepted for
+`Sagas.compensate` targeting a non-idempotent operation: no compiler enforcement, an
+explicit, reviewable call that "gives the reviewer somewhere to look" (§13). This applies
+to the in-memory provider now and will apply just as much to a future durable provider
+(§3.2) — the stakes rise with durability (a longer retention window, crash survival), but
+the mechanism and its accepted gap are the same.
 
 ## 7. Slice status
 
-- [ ] Slice 0 — control-flow primitive + in-memory provider
-- [ ] Slice 1 — provider-variant selection
-- [ ] Slice 2 — durable provider
-- [ ] Slice 3 — event-subscriber sugar (unscoped)
+- [ ] Slice 0 — match-based short-circuit + the in-memory provider (incl. 3.4)
+- [ ] Slice 1 — event-subscriber sugar (unscoped)
 
 ## 8. Done when
 
-- `given Idempotency` is checked and at least one provider variant is usable; §12's worked
-  examples (or their settled corrections) compile and pass a `tsc_verify` case.
-- The short-circuit mechanism (3.1) is a named, documented control-flow shape distinct from
-  `?`, with its handler-return-type constraints explicit.
-- Provider-variant selection (3.2) either amends ADR 0016's stated scope explicitly or is
-  justified as consistent with it — never a silent contradiction.
-- A durable provider exists with its transactional-participation contract (3.3) written
-  down, and the key-scoping threat (§6) has a stated answer, not an implicit one.
-- Issue [#554](https://github.com/accuser/bynk/issues/554) can be closed (or narrowed to
-  its remaining two items — ADR 0020, the composition root — once Idempotency ships).
-- ADRs written; spec gains the `Idempotency` capability's normative section. **On retire:**
-  remove this doc.
+- `given Idempotency` is checked and its one provider is usable; the settled §3.1/§3.4
+  `reserve` example compiles and passes a `tsc_verify` case.
+- The match-based short-circuit (3.1) ships on top of
+  [#926](https://github.com/accuser/bynk/issues/926) (generic capability methods), with no
+  bespoke control-flow construct introduced for `Idempotency` itself.
+- `String` keys, positional call syntax, compiler-synthesised call-site scoping, and
+  `Cache`-style lazy eviction (3.4) all ship as specified; the cross-call-site collision
+  class is closed by construction, and the cross-caller-same-site class is documented as
+  the caller's responsibility, not left implicit.
+- The doc is explicit that provider-variant selection and the durable provider (3.2's
+  deferred half, 3.3) are **not** delivered by this track — named as future work, not
+  silently dropped.
+- Issue [#554](https://github.com/accuser/bynk/issues/554) can be narrowed to its
+  remaining two items (ADR 0020, the composition root) once this track's slice 0 ships —
+  it does not fully close here, since the durable provider it also named is now explicitly
+  out of this track's scope.
+- ADRs written (including 3.2's scope-narrowing decision); spec gains the `Idempotency`
+  capability's normative section, scoped to the single provider this track ships.
+  **On retire:** remove this doc.
