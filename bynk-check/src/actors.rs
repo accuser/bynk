@@ -134,6 +134,10 @@ pub fn default_actor(protocol: &ServiceProtocol) -> Option<&'static str> {
         ServiceProtocol::Call => Some("Caller"),
         ServiceProtocol::Cron => Some("Scheduler"),
         ServiceProtocol::Queue { .. } => Some("Producer"),
+        // Events track, slice 0 (spine #936): delivery is runtime-triggered,
+        // not an external caller — like `Queue`'s "Producer", the default
+        // actor names the event's originating publisher.
+        ServiceProtocol::Events { .. } => Some("Publisher"),
         // v0.103: like HTTP, a WebSocket upgrade has no safe default actor —
         // `by` is mandatory on `on open` (edge auth before accept, D-A).
         ServiceProtocol::Http | ServiceProtocol::WebSocket { .. } => None,
@@ -446,7 +450,13 @@ pub fn scheme_admissible(protocol: &ServiceProtocol, scheme: Scheme) -> bool {
         ServiceProtocol::WebSocket { .. } => {
             matches!(scheme, Scheme::None | Scheme::Bearer)
         }
-        ServiceProtocol::Call | ServiceProtocol::Cron | ServiceProtocol::Queue { .. } => {
+        // Events track, slice 0 (spine #936): delivery is an internal,
+        // runtime-triggered invocation, like `Call`/`Cron`/`Queue` — no
+        // external network request, so no external auth scheme applies.
+        ServiceProtocol::Call
+        | ServiceProtocol::Cron
+        | ServiceProtocol::Queue { .. }
+        | ServiceProtocol::Events { .. } => {
             matches!(scheme, Scheme::Internal)
         }
     }

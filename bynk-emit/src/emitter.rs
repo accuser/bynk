@@ -1556,6 +1556,12 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
             CommonsItem::Type(t) => {
                 collect_refs_in_type_decl(t, &local_to_file, ctx, &mut refs);
             }
+            // Events track, slice 0 (spine #936): an `event`'s field types
+            // are collected exactly like a `type`'s, via the same synthetic
+            // `TypeDecl` `EventDecl::as_type_decl` builds.
+            CommonsItem::Event(e) => {
+                collect_refs_in_type_decl(&e.as_type_decl(), &local_to_file, ctx, &mut refs);
+            }
             CommonsItem::Fn(f) => {
                 collect_refs_in_fn(f, &local_to_file, commons, ctx, &mut refs);
             }

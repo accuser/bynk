@@ -395,6 +395,12 @@ pub fn emit_worker_compose(
                 // v0.106 (slice 3b-iii): `on close` runs in the DO (`webSocketClose`),
                 // not at the edge — no compose wrapper.
                 HandlerKind::Close => {}
+                // Events track, slice 0 (spine #936): `on event` runs inside
+                // the fan-out delivery mechanism (the publishing context's
+                // Durable Object on Cloudflare), not at the edge — no
+                // compose wrapper, mirroring `on close`/the WebSocket
+                // `on message` case above.
+                HandlerKind::Event => {}
             }
         }
     }

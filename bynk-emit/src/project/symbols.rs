@@ -33,6 +33,14 @@ pub(crate) fn assemble_index(
                         &t.name.name,
                         symbol_modifiers(&unit, Some(t)),
                     ),
+                    // Events track, slice 0 (spine #936): an `event` indexes
+                    // as an ordinary `Type` symbol — it *is* one, a record,
+                    // registered via `EventDecl::as_type_decl`. A dedicated
+                    // `SymbolKind::Event` (its own hover/completion icon) is
+                    // a follow-on, not a slice-0 blocker.
+                    CommonsItem::Event(e) => {
+                        (SymbolKind::Type, &e.name.name, symbol_modifiers(&unit, None))
+                    }
                     CommonsItem::Fn(f) => match &f.name {
                         FnName::Free(id) => {
                             (SymbolKind::Fn, &id.name, symbol_modifiers(&unit, None))
@@ -106,6 +114,29 @@ pub(crate) fn assemble_index(
                                 symbol_modifiers(&unit, None),
                             );
                         }
+                    }
+                }
+                // Events track, slice 0 (spine #936): an `event` indexes
+                // exactly like a `Type` whose body is a record — same
+                // `SymbolKind::Type`/`SymbolKind::Field` reuse as the
+                // synthetic-unit arm above, so hover/go-to-def/rename work
+                // on an event and its fields without a new symbol kind.
+                CommonsItem::Event(e) => {
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Type,
+                        &e.name.name,
+                        site(&e.name),
+                        symbol_modifiers(&unit, None),
+                    );
+                    for field in &e.body.fields {
+                        builder.add_def(
+                            &unit,
+                            SymbolKind::Field,
+                            &format!("{}.{}", e.name.name, field.name.name),
+                            site(&field.name),
+                            symbol_modifiers(&unit, None),
+                        );
                     }
                 }
                 CommonsItem::Fn(f) => match &f.name {
@@ -267,6 +298,15 @@ pub struct UnitTable {
     /// v0.15: capability names this context offers to consumers via
     /// `exports capability { … }`. Empty for commons.
     pub exported_capabilities: std::collections::HashSet<String>,
+    /// Events track, slice 0 (spine #936): `event` declarations. Each also
+    /// registers into `types` (via `EventDecl::as_type_decl`) so ordinary
+    /// type-reference/exports/consumes/construction machinery treats it like
+    /// any other record type; this table is the separate "is `name`
+    /// specifically an event" answer — owner-only emission and the
+    /// `from Events(E)`/`Events.emit[E]` "must name a declared event, not
+    /// just any type" checks key off it. Empty for commons/adapters
+    /// (`bynk.event.outside_context` rejects it there).
+    pub events: HashMap<String, EventDecl>,
 }
 
 /// #696: each table-construction diagnostic is attributed to the project-relative
@@ -288,19 +328,46 @@ pub(crate) fn build_unit_table(
     for &i in indices {
         let mut errors: Vec<CompileError> = Vec::new();
         for item in parsed[i].items() {
-            if let CommonsItem::Type(t) = item {
-                if let Some(prev) = table.types.get(&t.name.name) {
+            // Events track, slice 0 (spine #936): an `event` registers into
+            // `types` exactly like a `type` (via `EventDecl::as_type_decl`,
+            // so name-conflict detection against ordinary types is a single
+            // check regardless of declaration order within the file) and
+            // additionally into `events`, the separate "is this specifically
+            // an event" table.
+            if let CommonsItem::Event(e) = item
+                && kind != UnitKind::Context
+            {
+                errors.push(CompileError::new(
+                    "bynk.event.outside_context",
+                    e.span,
+                    "`event` declarations are only allowed inside a context",
+                ));
+                continue;
+            }
+            let as_type: Option<(&Ident, TypeDecl, bool)> = match item {
+                CommonsItem::Type(t) => Some((&t.name, t.clone(), false)),
+                CommonsItem::Event(e) => Some((&e.name, e.as_type_decl(), true)),
+                _ => None,
+            };
+            if let Some((name, decl, is_event)) = as_type {
+                if let Some(prev) = table.types.get(&name.name) {
                     errors.push(
                         CompileError::new(
                             "bynk.resolve.duplicate_type",
-                            t.name.span,
-                            format!("type `{}` is already declared", t.name.name),
+                            name.span,
+                            format!("type `{}` is already declared", name.name),
                         )
                         .with_label(prev.name.span, "previously declared here"),
                     );
                 } else {
-                    table.types.insert(t.name.name.clone(), t.clone());
-                    table.methods.entry(t.name.name.clone()).or_default();
+                    table.methods.entry(name.name.clone()).or_default();
+                    if is_event {
+                        let CommonsItem::Event(e) = item else {
+                            unreachable!("is_event only set for CommonsItem::Event")
+                        };
+                        table.events.insert(name.name.clone(), e.clone());
+                    }
+                    table.types.insert(name.name.clone(), decl);
                 }
             }
         }
@@ -703,6 +770,15 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
                 CommonsItem::Type(t) => {
                     idx.types
                         .entry(t.name.name.clone())
+                        .or_insert_with(|| path.clone());
+                }
+                // Events track, slice 0 (spine #936): an `event` name shares
+                // the `types` file index — it registers into the same
+                // `types` symbol table as an ordinary `type` everywhere else
+                // in this module.
+                CommonsItem::Event(e) => {
+                    idx.types
+                        .entry(e.name.name.clone())
                         .or_insert_with(|| path.clone());
                 }
                 CommonsItem::Fn(f) => match &f.name {

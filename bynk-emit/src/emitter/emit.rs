@@ -780,6 +780,10 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
                         }
                         HandlerKind::Open => ("open".to_string(), "WebSocket open".to_string()),
                         HandlerKind::Close => ("close".to_string(), "WebSocket close".to_string()),
+                        // Events track, slice 0 (spine #936): exactly one
+                        // `on event` per `from Events(E)` service (no
+                        // pattern-refinement fan-out yet, so no index).
+                        HandlerKind::Event => ("event".to_string(), "event".to_string()),
                     };
                     entries.push(pair);
                 }

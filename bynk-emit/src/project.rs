@@ -2865,6 +2865,10 @@ fn check_unit_files(
             .iter()
             .filter_map(|it| match it {
                 CommonsItem::Type(t) => Some(t.name.name.clone()),
+                // Events track, slice 0 (spine #936): an `event` shares the
+                // `types` namespace, so a multi-file context's method
+                // dispatch treats its name the same as a `type`'s.
+                CommonsItem::Event(e) => Some(e.name.name.clone()),
                 _ => None,
             })
             .collect();
@@ -2900,6 +2904,9 @@ fn check_unit_files(
                 }
                 CommonsItem::Messages(m) => {
                     emit_items.push(CommonsItem::Messages(m.clone()));
+                }
+                CommonsItem::Event(e) => {
+                    emit_items.push(CommonsItem::Event(e.clone()));
                 }
             }
         }

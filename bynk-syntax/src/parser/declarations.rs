@@ -198,6 +198,23 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                // Events track, slice 0 (spine #936): `event` parses into
+                // items too, so the checker can reject it precisely
+                // (`bynk.event.outside_context`) — same reasoning as
+                // `messages` above, mirrored to the opposite placement.
+                Some(TokenKind::Event) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_event_decl() {
+                        Ok(mut e) => {
+                            e.documentation = doc;
+                            e.trivia.leading = leading;
+                            e.trivia.trailing = self.take_trailing_trivia();
+                            items.push(CommonsItem::Event(e));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 Some(TokenKind::Capability) => {
                     let err = CompileError::new(
                         "bynk.capability.outside_context",
@@ -369,6 +386,21 @@ impl<'a> Parser<'a> {
                             m.trivia.trailing = self.take_trailing_trivia();
                             last_span = m.span;
                             items.push(CommonsItem::Messages(m));
+                            seen_item = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Event) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_event_decl() {
+                        Ok(mut e) => {
+                            e.documentation = doc;
+                            e.trivia.leading = leading;
+                            e.trivia.trailing = self.take_trailing_trivia();
+                            last_span = e.span;
+                            items.push(CommonsItem::Event(e));
                             seen_item = true;
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -1270,6 +1302,19 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                Some(TokenKind::Event) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_event_decl() {
+                        Ok(mut e) => {
+                            e.documentation = doc;
+                            e.trivia.leading = leading;
+                            e.trivia.trailing = self.take_trailing_trivia();
+                            items.push(CommonsItem::Event(e));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 Some(_) => {
                     let t = self.peek().unwrap();
                     let err = CompileError::new(
@@ -1554,6 +1599,21 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                Some(TokenKind::Event) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_event_decl() {
+                        Ok(mut e) => {
+                            e.documentation = doc;
+                            e.trivia.leading = leading;
+                            e.trivia.trailing = self.take_trailing_trivia();
+                            last_span = e.span;
+                            items.push(CommonsItem::Event(e));
+                            seen_item = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 None => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
@@ -1810,6 +1870,20 @@ impl<'a> Parser<'a> {
                             m.trivia.trailing = self.take_trailing_trivia();
                             last_span = m.span;
                             items.push(CommonsItem::Messages(m));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Event) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_event_decl() {
+                        Ok(mut e) => {
+                            e.documentation = doc;
+                            e.trivia.leading = leading;
+                            e.trivia.trailing = self.take_trailing_trivia();
+                            last_span = e.span;
+                            items.push(CommonsItem::Event(e));
                         }
                         Err(e) => self.handle_item_err(e)?,
                     }
@@ -2687,6 +2761,27 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RParen, "to close the WebSocket header")?;
                 Ok(ServiceProtocol::WebSocket { in_type, out_type })
             }
+            // Events track, slice 0 (spine #936): `from Events(E)`. `Events`,
+            // capitalised, is matched as plain `Ident` text the same way
+            // `websocket` is matched lowercase — it names the `Events`
+            // capability directly (every first-party capability is already
+            // an unreserved PascalCase identifier), so this costs no lexer
+            // reservation. No pattern yet (slice 1); the header takes one
+            // bare type reference.
+            Some(TokenKind::Ident)
+                if self
+                    .peek()
+                    .is_some_and(|t| self.slice(t.span) == "Events") =>
+            {
+                self.bump();
+                self.expect(
+                    TokenKind::LParen,
+                    "expected the subscribed event type `(EventType)` after `from Events`",
+                )?;
+                let event_type = self.parse_type_ref("as the `from Events(...)` event type")?;
+                self.expect(TokenKind::RParen, "to close the `from Events(...)` header")?;
+                Ok(ServiceProtocol::Events { event_type })
+            }
             _ => {
                 let (span, found) = match self.peek() {
                     Some(t) => (t.span, t.kind.describe()),
@@ -2696,7 +2791,7 @@ impl<'a> Parser<'a> {
                     "bynk.service.unknown_protocol",
                     span,
                     format!(
-                        "unknown protocol after `from` — found {found}, expected `http`, `cron`, `queue`, or `websocket`"
+                        "unknown protocol after `from` — found {found}, expected `http`, `cron`, `queue`, `websocket`, or `Events`"
                     ),
                 )
                 .with_note(
@@ -3223,6 +3318,9 @@ impl<'a> Parser<'a> {
             // `from websocket` service reuses `HandlerKind::Message`; the checker
             // disambiguates the queue and WebSocket forms by the service protocol.)
             "close" => HandlerKind::Close,
+            // Events track, slice 0 (spine #936): `on event(e: E)` — a
+            // `from Events(E)` subscriber's one handler.
+            "event" => HandlerKind::Event,
             "schedule" => {
                 self.expect(TokenKind::LParen, "before the cron schedule expression")?;
                 let expr_tok = self.expect(

@@ -1370,6 +1370,9 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         ServiceProtocol::WebSocket { .. },
                         HandlerKind::Open | HandlerKind::Message | HandlerKind::Close
                     )
+                    // Events track, slice 0 (spine #936): `from Events(E)`
+                    // admits exactly `on event(e: E)`.
+                    | (ServiceProtocol::Events { .. }, HandlerKind::Event)
             );
             if matches_protocol {
                 continue;
@@ -1381,6 +1384,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         HandlerKind::Cron { .. } => "from cron",
                         HandlerKind::Message => "from queue(\"…\")",
                         HandlerKind::Open | HandlerKind::Close => "from websocket(in: …, out: …)",
+                        HandlerKind::Event => "from Events(EventType)",
                         HandlerKind::Call => continue,
                     };
                     errors.push(
@@ -1422,6 +1426,7 @@ fn protocol_label(p: &ServiceProtocol) -> &'static str {
         ServiceProtocol::Cron => "from cron",
         ServiceProtocol::Queue { .. } => "from queue",
         ServiceProtocol::WebSocket { .. } => "from websocket",
+        ServiceProtocol::Events { .. } => "from Events",
     }
 }
 
@@ -4281,8 +4286,18 @@ pub(crate) fn collect_type_decls<'a>(
 ) -> std::collections::HashMap<String, TypeDecl> {
     let mut out = std::collections::HashMap::new();
     for item in items {
-        if let CommonsItem::Type(t) = item {
-            out.entry(t.name.name.clone()).or_insert_with(|| t.clone());
+        match item {
+            CommonsItem::Type(t) => {
+                out.entry(t.name.name.clone()).or_insert_with(|| t.clone());
+            }
+            // Events track, slice 0 (spine #936): an event's synthetic
+            // `TypeDecl` joins the same table, so a field referencing an
+            // event type recurses into it exactly like any other type.
+            CommonsItem::Event(e) => {
+                out.entry(e.name.name.clone())
+                    .or_insert_with(|| e.as_type_decl());
+            }
+            _ => {}
         }
     }
     out
@@ -4318,6 +4333,14 @@ pub fn check_function_type_boundary_items(
                     }
                     TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
                 },
+                // Events track, slice 0 (spine #936): an event's fields are
+                // boundary values (an emission crosses a context boundary),
+                // so the same record-field rule applies as for a `type`.
+                CommonsItem::Event(e) => {
+                    for f in &e.body.fields {
+                        reject_fn_types(&f.type_ref, "an event field", types, errors);
+                    }
+                }
                 CommonsItem::Capability(c) => {
                     for op in &c.ops {
                         for p in &op.params {

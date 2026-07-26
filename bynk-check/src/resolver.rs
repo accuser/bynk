@@ -257,6 +257,41 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                     methods.insert(t.name.name.clone(), MethodTable::default());
                 }
             }
+            // Events track, slice 0 (spine #936): an `event` registers into
+            // the same `types` table as an ordinary `type` — via the
+            // synthetic `TypeDecl` `EventDecl::as_type_decl` builds — so it
+            // reuses every existing type-reference/construction check.
+            // Context-only legality (`bynk.event.outside_context`) and
+            // event-vs-plain-type distinctions live in bynk-emit's project
+            // validation, the same split `messages` already uses.
+            CommonsItem::Event(e) => {
+                let t = e.as_type_decl();
+                if let Some(prev) = types.get(&t.name.name) {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.resolve.duplicate_type",
+                            t.name.span,
+                            format!("type `{}` is already declared", t.name.name),
+                        )
+                        .with_label(prev.name.span, "previously declared here"),
+                    );
+                } else if let Some(prev) = fns.get(&t.name.name) {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.resolve.name_conflict",
+                            t.name.span,
+                            format!(
+                                "type `{}` conflicts with a function of the same name",
+                                t.name.name
+                            ),
+                        )
+                        .with_label(prev.name.ident().span, "function declared here"),
+                    );
+                } else {
+                    methods.insert(t.name.name.clone(), MethodTable::default());
+                    types.insert(t.name.name.clone(), t);
+                }
+            }
             CommonsItem::Fn(f) => match &f.name {
                 FnName::Free(id) => {
                     if let Some(prev) = fns.get(&id.name) {
@@ -369,6 +404,9 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             CommonsItem::Type(t) => {
                 check_type_decl_refs(t, &types, &mut sinks);
             }
+            CommonsItem::Event(e) => {
+                check_type_decl_refs(&e.as_type_decl(), &types, &mut sinks);
+            }
             CommonsItem::Fn(f) => {
                 check_fn_refs(f, &types, &fns, &methods, &mut sinks);
             }
@@ -433,6 +471,10 @@ pub fn resolve_file_record(
             CommonsItem::Type(t) => {
                 sinks.refs.set_owner(&t.name.name);
                 check_type_decl_refs(t, &resolved.types, &mut sinks);
+            }
+            CommonsItem::Event(e) => {
+                sinks.refs.set_owner(&e.name.name);
+                check_type_decl_refs(&e.as_type_decl(), &resolved.types, &mut sinks);
             }
             CommonsItem::Fn(f) => {
                 sinks.refs.set_owner(f.name.display());
