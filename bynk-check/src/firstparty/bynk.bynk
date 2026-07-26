@@ -1,6 +1,6 @@
 adapter bynk {
 	uses bynk.locale.types
-	exports capability { Clock, Random, Logger, Fetch, Secrets, Locale }
+	exports capability { Clock, Random, Logger, Fetch, Secrets, Locale, Idempotency }
 	exports transparent { Uuid, Method, FetchError, Request, Response }
 
 	---
@@ -79,6 +79,21 @@ adapter bynk {
 		fn current() -> Effect[LocaleTag]
 	}
 
+	---
+	Mechanical dedup for at-least-once delivery (design notes §12). `dedup`
+	checks for a cached outcome under `key`; on a cache miss the caller
+	computes its outcome and writes it back with `remember` (`record` is a
+	reserved keyword), which the caller must call to actually cache anything
+	— a `dedup` miss with no matching `remember` call simply recomputes every
+	time. `expiresAfter` sets the retention window a call to `remember`
+	establishes. Slice 0 (design/tracks/idempotency-capability.md): a single
+	in-memory provider, lost on process restart — no durability guarantee yet.
+	---
+	capability Idempotency {
+		fn dedup[T](key: String) -> Effect[Option[T]]
+		fn remember[T](key: String, value: T, expiresAfter: Duration) -> Effect[()]
+	}
+
 	provides Clock = ClockProvider
 
 	provides Random = RandomProvider
@@ -90,4 +105,6 @@ adapter bynk {
 	provides Secrets = SecretsProvider
 
 	provides Locale = LocaleProvider
+
+	provides Idempotency = IdempotencyProvider given Clock
 }

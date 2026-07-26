@@ -61,7 +61,7 @@ pub const BYNK_UNIT: &str = "bynk";
 /// explicit list. Kept in sync with the adapter source by
 /// `bynk_surface_capabilities_match_the_adapter`.
 pub const BYNK_SURFACE_CAPABILITIES: &[&str] =
-    &["Clock", "Random", "Logger", "Fetch", "Secrets", "Locale"];
+    &["Clock", "Random", "Logger", "Fetch", "Secrets", "Locale", "Idempotency"];
 
 /// The unit name of the first-party Cloudflare platform adapter (v0.19,
 /// decision 0026): inside the reserved `bynk.*` prefix, so no separate

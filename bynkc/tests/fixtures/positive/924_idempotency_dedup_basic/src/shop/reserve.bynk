@@ -1,0 +1,19 @@
+context shop.reserve
+
+consumes bynk { Idempotency }
+
+type ReserveOutcome = { orderId: String, reserved: Bool }
+
+service ordering {
+  on call(orderId: String) -> Effect[ReserveOutcome] given Idempotency {
+    let cached <- Idempotency.dedup[ReserveOutcome](orderId)
+    match cached {
+      Some(outcome) => outcome,
+      None => {
+        let outcome = ReserveOutcome { orderId: orderId, reserved: true }
+        let _ <- Idempotency.remember[ReserveOutcome](orderId, outcome, 24.hours)
+        outcome
+      }
+    }
+  }
+}

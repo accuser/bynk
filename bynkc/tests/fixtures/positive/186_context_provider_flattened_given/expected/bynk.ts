@@ -129,3 +129,20 @@ export interface Locale {
 
 export const LocaleToken: unique symbol = Symbol("Locale");
 
+/**
+ * Mechanical dedup for at-least-once delivery (design notes §12). `dedup`
+ * checks for a cached outcome under `key`; on a cache miss the caller
+ * computes its outcome and writes it back with `remember` (`record` is a
+ * reserved keyword), which the caller must call to actually cache anything
+ * — a `dedup` miss with no matching `remember` call simply recomputes every
+ * time. `expiresAfter` sets the retention window a call to `remember`
+ * establishes. Slice 0 (design/tracks/idempotency-capability.md): a single
+ * in-memory provider, lost on process restart — no durability guarantee yet.
+ */
+export interface Idempotency {
+  dedup<T>(key: string): Promise<Option<T>>;
+  remember<T>(key: string, value: T, expiresAfter: number): Promise<void>;
+}
+
+export const IdempotencyToken: unique symbol = Symbol("Idempotency");
+
