@@ -41,7 +41,11 @@ For everything else, the standard single-increment
    design questions (investigation + prior art) under line-anchored review,
    and identify the load-bearing, hard-to-reverse **ADRs to land up front**.
    Marking the PR **ready for review** asserts the questions are closed;
-   **merging it settles direction** — it is not a build authorisation.
+   **merging it settles direction** — it is not a build authorisation. (If a
+   settling PR is marked ready and merged without that assertion actually
+   being tested under review, the track's real phase stays **Settling** past
+   the merge until a follow-up re-settling PR — step 4 — closes the doc's
+   open questions for real.)
 3. **Slice.** Cut each increment as an ordinary
    [increment proposal](../proposals/README.md), opened as a **sub-issue of
    the spine** and citing the doc and the foundational ADRs; `accepted` on
@@ -66,6 +70,7 @@ each track's spine issue; this table is deliberately just the map.
 | Track doc | Spine issue | Phase | Theme |
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
+| [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Settling (open design questions not yet closed — see doc §3) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -73,11 +78,19 @@ was opened retroactively. `lsp-foundations.md` (now retired) was the first
 track to run the ADR 0167 flow from the start — spine issue first, doc via a
 settling draft PR; `testing-the-boundary.md` (now retired) was the second;
 `locale-capability.md` (now retired) was the third; `message-bundles.md`
-(now retired) was the fourth.
+(now retired) was the fourth; `idempotency-capability.md` is the fifth — and
+the first still active.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
-table.)
+table. `idempotency-capability.md`'s settling PR (#922) was marked ready for
+review and merged 55 seconds later with no review (`reviews: []`) — the
+"ready for review" assertion that §3's questions are closed was never
+tested, so they remain genuinely open despite the doc being committed; its
+Settling phase is the step-2 carve-out above, not a formality, until a
+re-settling PR actually closes §3 (#924 fixed the doc's stale Status line
+and a false cited precedent ahead of that, but did not close any of the
+open questions themselves).)
 
 ## Retired tracks
 
