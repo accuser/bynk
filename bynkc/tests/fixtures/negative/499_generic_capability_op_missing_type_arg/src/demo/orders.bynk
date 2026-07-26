@@ -1,0 +1,12 @@
+context demo.orders {
+  capability Idempotency {
+    fn dedup[T](key: String) -> Effect[Option[T]]
+  }
+
+  service reserve {
+    on call() -> Effect[Option[Int]] given Idempotency {
+      let cached <- Idempotency.dedup("order-key-1")
+      cached
+    }
+  }
+}

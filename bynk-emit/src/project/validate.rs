@@ -2,6 +2,31 @@ use super::*;
 use crate::emitter;
 use bynk_check::builtin_names::methods::{OF, UNSAFE};
 
+/// #926: build a checker-facing [`CapabilityOpInfo`] from a capability op's
+/// AST, with the op's own type parameters (if any) resolved as [`Ty::Var`]
+/// rather than ground types — a call site substitutes a concrete `Ty` for
+/// each before checking. Shared by every site that reconstructs
+/// `CapabilityInfo` from a `CapabilityDecl` (local capabilities, test/property
+/// bodies targeting a context) so the vars-in-scope treatment can't drift.
+pub(crate) fn build_capability_op_info(
+    op: &CapabilityOp,
+    types: &HashMap<String, TypeDecl>,
+) -> CapabilityOpInfo {
+    let vars: HashSet<String> = op.type_params.iter().map(|p| p.name.name.clone()).collect();
+    CapabilityOpInfo {
+        name: op.name.name.clone(),
+        type_params: op.type_params.iter().map(|p| p.name.name.clone()).collect(),
+        params: op
+            .params
+            .iter()
+            .map(|p| checker::resolve_type_ref_in(&p.type_ref, types, &vars))
+            .map(|t| t.unwrap_or(Ty::Unit))
+            .collect(),
+        param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
+        return_ty: checker::resolve_type_ref_in(&op.return_type, types, &vars).unwrap_or(Ty::Unit),
+    }
+}
+
 /// v0.19: the lock violation a deployment unit's native-platform set implies
 /// under the selected `--platform`, if any. Pure — unit-tested below with
 /// synthetic sets (the conflict arm is not yet reachable end-to-end while
@@ -916,18 +941,7 @@ pub(crate) fn check_context_declarations(
             let ops = decl
                 .ops
                 .iter()
-                .map(|op| CapabilityOpInfo {
-                    name: op.name.name.clone(),
-                    params: op
-                        .params
-                        .iter()
-                        .map(|p| checker::resolve_type_ref(&p.type_ref, &typed.types))
-                        .map(|t| t.unwrap_or(Ty::Unit))
-                        .collect(),
-                    param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
-                    return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
-                        .unwrap_or(Ty::Unit),
-                })
+                .map(|op| build_capability_op_info(op, &typed.types))
                 .collect();
             (
                 name.clone(),
@@ -952,16 +966,23 @@ pub(crate) fn check_context_declarations(
         let ops = xcap
             .ops
             .iter()
-            .map(|op| CapabilityOpInfo {
-                name: op.name.clone(),
-                params: op
-                    .params
-                    .iter()
-                    .map(|(_, tr)| checker::resolve_type_ref(tr, &typed.types).unwrap_or(Ty::Unit))
-                    .collect(),
-                param_names: op.params.iter().map(|(n, _)| n.clone()).collect(),
-                return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
-                    .unwrap_or(Ty::Unit),
+            .map(|op| {
+                let vars: HashSet<String> = op.type_params.iter().cloned().collect();
+                CapabilityOpInfo {
+                    name: op.name.clone(),
+                    type_params: op.type_params.clone(),
+                    params: op
+                        .params
+                        .iter()
+                        .map(|(_, tr)| {
+                            checker::resolve_type_ref_in(tr, &typed.types, &vars)
+                                .unwrap_or(Ty::Unit)
+                        })
+                        .collect(),
+                    param_names: op.params.iter().map(|(n, _)| n.clone()).collect(),
+                    return_ty: checker::resolve_type_ref_in(&op.return_type, &typed.types, &vars)
+                        .unwrap_or(Ty::Unit),
+                }
             })
             .collect();
         capability_info_map.insert(
@@ -1027,10 +1048,18 @@ fn check_capability_decls(
     for (name, decl) in &table.capabilities {
         refs.set_owner(name);
         for op in &decl.ops {
+            // #926: an op's own type parameters shadow a same-named real type
+            // (mirroring every other `skip`-set use here) — a bare `T` should
+            // never index-reference an unrelated declared type `T`.
+            let vars: HashSet<String> = if op.type_params.is_empty() {
+                no_vars.clone()
+            } else {
+                op.type_params.iter().map(|p| p.name.name.clone()).collect()
+            };
             for p in &op.params {
-                checker::record_type_refs(&p.type_ref, types, no_vars, refs);
+                checker::record_type_refs(&p.type_ref, types, &vars, refs);
             }
-            checker::record_type_refs(&op.return_type, types, no_vars, refs);
+            checker::record_type_refs(&op.return_type, types, &vars, refs);
         }
     }
     refs.clear_owner();

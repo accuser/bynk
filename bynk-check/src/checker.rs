@@ -1376,6 +1376,12 @@ pub struct CapabilityInfo {
 #[derive(Debug, Clone)]
 pub struct CapabilityOpInfo {
     pub name: String,
+    /// #926: the op's own type parameters (empty for a non-generic op).
+    /// `params`/`return_ty` below are *pattern* types resolved with these in
+    /// scope, so a declared `T` survives as `Ty::Var("T")` rather than
+    /// collapsing to `Ty::Unit` — a call site substitutes a concrete `Ty` for
+    /// each before checking arguments/return.
+    pub type_params: Vec<String>,
     pub params: Vec<Ty>,
     /// The operation's parameter names, positionally aligned with `params`
     /// (v0.117). Needed for observation: the `with <pred>` scope binds them by
@@ -2771,7 +2777,10 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                     None
                 }
             } else {
-                check_static_call(type_name, method, args, expr.span, expected, ctx)
+                // `ConstructorCall` has no type-argument slot — qualified
+                // variant construction (`Opt.Some(x)`), never a capability
+                // call, so `type_args` is always empty here.
+                check_static_call(type_name, method, &[], args, expr.span, expected, ctx)
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {

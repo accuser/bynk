@@ -145,6 +145,11 @@ pub struct CrossContextCapability {
 #[derive(Debug, Clone)]
 pub struct CrossContextCapabilityOp {
     pub name: String,
+    /// #926: the op's own type parameters (empty for a non-generic op),
+    /// spelled the same as the consumed context's own declaration. A cross-
+    /// context call resolves these from an explicit call-site type argument,
+    /// same as the local-capability path.
+    pub type_params: Vec<String>,
     pub params: Vec<(String, TypeRef)>,
     pub return_type: TypeRef,
 }

@@ -1112,11 +1112,22 @@ fn member_candidates(receiver: &str, doc_text: &str, files: Option<&[PathBuf]>) 
                                 .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
                                 .collect::<Vec<_>>()
                                 .join(", ");
+                            // #926: `[T, …]` type parameters on the op itself.
+                            let type_params = if op.type_params.is_empty() {
+                                String::new()
+                            } else {
+                                let names: Vec<&str> = op
+                                    .type_params
+                                    .iter()
+                                    .map(|tp| tp.name.name.as_str())
+                                    .collect();
+                                format!("[{}]", names.join(", "))
+                            };
                             out.push(Completion::item(
                                 op.name.name.clone(),
                                 CompletionKind::Member,
                                 Some(format!(
-                                    "{}({params}) -> {} — operation of `{receiver}`",
+                                    "{}{type_params}({params}) -> {} — operation of `{receiver}`",
                                     op.name.name,
                                     type_ref_str(&op.return_type)
                                 )),

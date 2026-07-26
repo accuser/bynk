@@ -1,0 +1,11 @@
+context demo.orders {
+  capability Idempotency {
+    fn dedup[T](key: String) -> Effect[Option[T]]
+  }
+
+  provides Idempotency = MemoIdempotency {
+    fn dedup(key: String) -> Effect[Option[Int]] {
+      Effect.pure(None)
+    }
+  }
+}

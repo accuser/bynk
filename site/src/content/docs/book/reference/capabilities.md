@@ -48,6 +48,58 @@ A `given` name must be a declared capability (`bynk.given.unknown_capability`); 
 call to a capability not in `given` is an error (`bynk.given.undeclared_capability`);
 a declared-but-unused capability is a warning (`bynk.given.unused_capability`).
 
+## Generic operations
+
+A capability operation may declare its own type parameter (v0.235, ADR 0281) —
+useful when the value it hands back is of whatever type the *calling* handler
+determines, not a type the capability's author can know ahead of time:
+
+```bynk
+capability Idempotency {
+  fn dedup[T](key: String) -> Effect[Option[T]]
+}
+```
+
+`T` is resolved only from an **explicit** call-site type argument — never
+inferred from the arguments or the expected type, the same discipline
+`Json.decode[T](s)` uses:
+
+```bynk
+service reserve {
+  on call() -> Effect[Option[ReserveOutcome]] given Idempotency {
+    let cached <- Idempotency.dedup[ReserveOutcome]("order-key-1")
+    cached
+  }
+}
+```
+
+Omitting `[T]` when no parameter's type mentions it is
+`bynk.generics.uninferable_type_arg`; the wrong number of type arguments is
+`bynk.generics.type_arg_mismatch`. The operation is emitted as a genuine
+generic TypeScript interface method (`dedup<T>(key: string): Promise<Option<T>>`)
+— no monomorphisation, no erasure — and the call site names the type argument
+explicitly in the emitted TypeScript too, since nothing else at the call site
+lets `tsc` infer a return-position-only parameter.
+
+Two restrictions follow directly from there being no runtime codec to
+specialise a generic operation's `T` against:
+
+- **A capability with a generic operation requires an [external
+  provider](/book/reference/adapters/)** (`bynk.provider.generic_op_requires_external`)
+  — a Bynk-bodied provider would need `T` rigid through its own body checker
+  for no expressive gain, since it can only ever return a value it already
+  has. This means a capability with a generic operation can only be declared
+  inside an `adapter`, never a plain `context` (whose provider must have a
+  Bynk body).
+- **A generic operation cannot be stubbed in a test** (`bynk.stub.generic_op`)
+  — a `stub` clause's body has no way to construct a value of an unconstrained
+  `T`. Stubbing another, non-generic operation of the same capability is
+  unaffected.
+
+A generic operation is called the same way through a cross-context capability,
+both flattened (`consumes Adapter { Cap }` → `Cap.op[T](…)`) and qualified
+(`consumes Adapter` → `Adapter.Cap.op[T](…)`).
+
 ## Provider composition (`provides … given`)
 
 A provider may itself depend on other capabilities — declare them with `given`

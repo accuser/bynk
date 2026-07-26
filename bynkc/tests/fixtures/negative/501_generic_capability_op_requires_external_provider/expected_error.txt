@@ -1,0 +1,1 @@
+bynk.provider.generic_op_requires_external provider `MemoIdempotency` for capability `Idempotency` has a Bynk body, but operation `dedup` declares its own type parameter(s) (`[T]`) — a generic capability operation requires an external (bodiless) provider

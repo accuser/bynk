@@ -573,6 +573,10 @@ module.exports = grammar({
       seq(
         "fn",
         field("name", $.identifier),
+        // #926: optional `[T, …]` type parameters on the op itself — resolved
+        // only from an explicit type argument at the call site (mirroring
+        // `fn_decl`'s own `[A, B]` slot, `grammar.js:525`).
+        optional(seq("[", sep1(field("type_param", $.identifier), ","), "]")),
         "(",
         optional(sep1($.param, ",")),
         optional(","),

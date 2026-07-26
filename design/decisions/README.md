@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0281](0281-generic-capability-methods.md) | **A capability operation may declare its own type parameter** (v0.235) — `capability X { fn op[T](…) -> … }`, resolved only from an explicit call-site type argument; a generic op requires an external provider and cannot be stubbed | Accepted (v0.235) |
 | [0280](0280-locale-tag-bcp47-widen.md) | **`LocaleTag` widens to the productive BCP-47 grammar — variants, extensions, extlang, and private-use** (v0.234) — The refinement's `Matches` pattern grows past language[-Script][-REGION] to admit variants/extensions/extlang/private-use, bounded to satisfy the ReDoS guard, while grandfathered/irregular tags stay rejected | Accepted (v0.234) |
 | [0279](0279-messages-tag-locale-literal.md) | **A `messages` block's tag is a checked `LocaleTag` literal** (v0.233) — The tag becomes a string literal checked against `LocaleTag`'s refinement, closing two shipped defects | Accepted (v0.233) |
 | [0278](0278-locale-types-split.md) | **Split `bynk.locale`'s types into a leaf commons, `bynk.locale.types`** (v0.232) — LocaleTag/Message/MessageArg move to a dependency-free leaf so a context calling Locale.current() no longer collides with a message-bundle commons's synthesised render | Accepted (v0.232) |

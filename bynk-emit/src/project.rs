@@ -2145,6 +2145,39 @@ fn phase_validate_providers(
                 );
                 continue;
             };
+            // #926 (Decision E): a capability op with its own type parameter(s)
+            // cannot be implemented by a Bynk-bodied provider — the body would
+            // need `T` rigid through the handler-body checker for a body that
+            // can only ever return `None` or echo a `T`-typed parameter.
+            // External providers (checked above) are exempt: TypeScript
+            // natively supports a generic interface method, so a hand-authored
+            // binding class implements it directly.
+            for cap_op in &cap.ops {
+                if !cap_op.type_params.is_empty() {
+                    errors.push_for(
+                        provider_file,
+                        CompileError::new(
+                            "bynk.provider.generic_op_requires_external",
+                            provider.span,
+                            format!(
+                                "provider `{}` for capability `{}` has a Bynk body, but operation `{}` declares its own type parameter(s) (`[{}]`) — a generic capability operation requires an external (bodiless) provider",
+                                provider.provider_name.name,
+                                cap_name,
+                                cap_op.name.name,
+                                cap_op
+                                    .type_params
+                                    .iter()
+                                    .map(|p| p.name.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                            ),
+                        )
+                        .with_note(
+                            "write `provides Cap = Name` with no `{ … }` block, and supply the implementation as a hand-authored class in the adapter's binding file",
+                        ),
+                    );
+                }
+            }
             // 1) Every capability op has a provider op.
             for cap_op in &cap.ops {
                 if !provider.ops.iter().any(|o| o.name.name == cap_op.name.name) {

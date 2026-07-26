@@ -486,6 +486,16 @@ module MUST `export`, and `implements <Interface>` against the generated
 interface is the contract between the two halves, checked by the `tsc --strict`
 gate ([§8.4](/book/spec/compilation-model/#84-build-pipeline--conformance-to-typescript)).
 
+A capability operation's own type parameter (v0.235, ADR 0281) emits as a
+**genuine generic interface method** — `dedup<T>(key: string): Promise<Option<T>>`
+— not an erased/monomorphised one, since the implementing class is
+hand-authored TypeScript, not compiler-generated. Unlike a generic *function*
+(above) or `Json.decode[T]` (which specialises a runtime codec per call and
+needs no TS-level generic at all), a capability operation's `T` is a pure
+type-level parameter with no runtime codec to specialise, so nothing at the
+call site lets `tsc` infer a return-position-only parameter — the call site
+therefore names the type argument explicitly too (`deps.Cap.op<SomeType>(…)`).
+
 The **binding module is copied verbatim** into the output beside the adapter's
 emitted module, so its imports resolve and the gate checks it. Its declared
 `requires` dependencies are folded into a generated `package.json`.

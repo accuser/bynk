@@ -582,6 +582,21 @@ the same dependency-cycle check.
 
 {{#grammar-semantics given_clause}}
 
+**A capability operation's own type parameter (v0.235, ADR 0281).** A
+`capability_op`'s optional `[T, …]` is resolved only from an explicit type
+argument at the call site (`Cap.op[SomeType](…)`) — never inferred from the
+arguments or the expected type. Omitting it where no parameter's type mentions
+`T` is rejected (`bynk.generics.uninferable_type_arg`); the wrong number of
+type arguments is `bynk.generics.type_arg_mismatch`. A capability with a
+generic operation MUST be implemented by an **external** provider
+(`bynk.provider.generic_op_requires_external`) — a Bynk-bodied provider's `T`
+has no expressive use, since its body can only return a value it already has —
+so a generic operation is declarable only inside an `adapter`, whose providers
+are always external, never a plain `context`. A generic operation MUST NOT be
+named in a test `stub` clause (`bynk.stub.generic_op`): a stub body has no way
+to construct a value of an unconstrained `T`; stubbing a different, non-generic
+operation of the same capability is unaffected.
+
 ## §5.6 Pattern matching
 
 A `match` MUST be **exhaustive** — every variant of the scrutinised sum,

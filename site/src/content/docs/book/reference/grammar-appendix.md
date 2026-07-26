@@ -57,7 +57,7 @@ params ::= (self_param | param) ("," param)* ","?
 self_param ::= "self"
 param ::= identifier ":" type_ref
 capability_decl ::= "capability" identifier "{" capability_op* "}"
-capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref
+capability_op ::= "fn" identifier ("[" identifier ("," identifier)* "]")? "(" (param ("," param)*)? ","? ")" "->" type_ref
 messages_decl ::= "messages" string_literal store_annotation* "{" message_entry* "}"
 message_entry ::= string_literal "=>" string_literal ","?
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?

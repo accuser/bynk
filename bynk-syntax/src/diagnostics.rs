@@ -1216,6 +1216,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["provider_decl"],
     ),
     dg(
+        "bynk.provider.generic_op_requires_external",
+        "A Bynk-bodied `provides` implements a capability operation that declares its own type parameter — only an external (bodiless) provider can.",
+        &["provider_decl"],
+    ),
+    dg(
         "bynk.provider.missing_operation",
         "A `provides` block is missing a capability operation.",
         &["provider_decl"],
@@ -1564,6 +1569,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.stub.bad_sequence",
         "A `stub … returns each […]` sequence is malformed (e.g. empty).",
+    ),
+    d(
+        "bynk.stub.generic_op",
+        "A test `stub` targets a capability operation that declares its own type parameter — not supported at v1.",
     ),
     d(
         "bynk.stub.not_a_seam",

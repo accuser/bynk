@@ -903,6 +903,12 @@ fn record_capability_ref(span: Span, name: &str, ctx: &mut Ctx) {
 pub(crate) fn check_static_call(
     type_name: &Ident,
     method: &Ident,
+    // #926: explicit type arguments for a generic capability operation
+    // (`Cap.op[T](…)`). Consumed only by the capability-dispatch branch below
+    // — the user-declared-static branch never receives a non-empty slice,
+    // since `check_method_call`'s gate only lets type args through for a
+    // capability (or the `Json` codec, handled separately) receiver.
+    type_args: &[TypeRef],
     args: &[Expr],
     span: Span,
     // #593: threaded to `check_variant_construction` so a qualified generic
@@ -1026,10 +1032,61 @@ pub(crate) fn check_static_call(
             return None;
         }
         let op_clone = op.clone();
+        // #926: resolve the op's own type parameter(s) from an explicit
+        // call-site type argument — explicit only, never inferred (mirrors
+        // `Json.decode[T]`, not `#594`'s inference). `check_generic_call`
+        // (this file) is the model; only its arity-check + substitution-build
+        // half applies here, since a capability op has no argument-driven
+        // inference pass.
+        let mut subst: HashMap<String, Ty> = HashMap::new();
+        if !op_clone.type_params.is_empty() || !type_args.is_empty() {
+            if type_args.is_empty() {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.generics.uninferable_type_arg",
+                        span,
+                        format!(
+                            "capability operation `{}.{}` takes a type parameter, but none of its arguments determine it",
+                            type_name.name, method.name
+                        ),
+                    )
+                    .with_note(format!(
+                        "give it explicitly: `{}.{}[T](…)`",
+                        type_name.name, method.name
+                    )),
+                );
+                for a in args {
+                    let _ = type_of(a, None, ctx);
+                }
+                return None;
+            }
+            if type_args.len() != op_clone.type_params.len() {
+                ctx.errors.push(CompileError::new(
+                    "bynk.generics.type_arg_mismatch",
+                    span,
+                    format!(
+                        "capability operation `{}.{}` takes {} type argument(s), but {} were given",
+                        type_name.name,
+                        method.name,
+                        op_clone.type_params.len(),
+                        type_args.len()
+                    ),
+                ));
+                for a in args {
+                    let _ = type_of(a, None, ctx);
+                }
+                return None;
+            }
+            for (tp, ta) in op_clone.type_params.iter().zip(type_args) {
+                let ty = resolve_expr_type_ref(ta, ctx)?;
+                subst.insert(tp.clone(), ty);
+            }
+        }
         for (i, (param_ty, arg)) in op_clone.params.iter().zip(args.iter()).enumerate() {
-            let arg_ty = type_of(arg, Some(param_ty), ctx);
+            let param_ty = substitute(param_ty, &subst);
+            let arg_ty = type_of(arg, Some(&param_ty), ctx);
             if let Some(actual) = arg_ty
-                && !compatible(&actual, param_ty)
+                && !compatible(&actual, &param_ty)
             {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1045,7 +1102,7 @@ pub(crate) fn check_static_call(
                 ));
             }
         }
-        return Some(op_clone.return_ty);
+        return Some(substitute(&op_clone.return_ty, &subst));
     }
     let decl = ctx.input.types.get(&type_name.name)?;
     ctx.refs
@@ -1765,9 +1822,27 @@ pub(crate) fn check_method_call(
     // arguments. #594: a generic *user* instance method infers its type
     // arguments from the receiver and the argument types — the explicit
     // `x.map[U](…)` form is deferred, so explicit type args are rejected here.
+    // #926: a capability operation may declare its own type parameter(s),
+    // resolved only from an explicit call-site type argument (never
+    // inferred) — the same explicit-only discipline as `Json.decode[T]`, so
+    // it joins that carve-out rather than `#594`'s inference. Covers a bare
+    // local/declared capability receiver and a cross-context one (flattened
+    // `Cap.op[T](…)` or qualified `B.Cap.op[T](…)`); arity/substitution
+    // happens downstream in `check_static_call` /
+    // `check_cross_context_capability_call`.
+    let receiver_is_capability = matches!(&receiver.kind, ExprKind::Ident(id)
+            if ctx.caps.capabilities.contains_key(&id.name)
+                || ctx.caps.declared_capabilities.contains_key(&id.name))
+        || flatten_ident_chain(receiver).is_some_and(|chain| {
+            ctx.input
+                .cross_context
+                .resolve_cross_capability(&chain)
+                .is_some()
+        });
     if !type_args.is_empty()
         && !matches!(&receiver.kind, ExprKind::Ident(id) if id.name == JSON
             && !ctx.input.types.contains_key(JSON))
+        && !receiver_is_capability
     {
         ctx.errors.push(CompileError::new(
             "bynk.generics.type_arg_mismatch",
@@ -1823,7 +1898,7 @@ pub(crate) fn check_method_call(
                     .record_in_unit(field.span, SymbolKind::Capability, &cap, &consumed);
             }
             return check_cross_context_capability_call(
-                receiver, &consumed, &cap, method, args, span, ctx,
+                receiver, &consumed, &cap, method, type_args, args, span, ctx,
             );
         }
         if let Some(consumed) = cross_context_prefix(receiver, ctx) {
@@ -1869,15 +1944,18 @@ pub(crate) fn check_method_call(
         && (ctx.caps.capabilities.contains_key(&id.name)
             || ctx.caps.declared_capabilities.contains_key(&id.name))
     {
-        return check_static_call(id, method, args, span, expected, ctx);
+        return check_static_call(id, method, type_args, args, span, expected, ctx);
     }
     // Detect static-call shape: receiver is a bare Ident naming a declared
-    // type (not a local/param). Dispatch to check_static_call.
+    // type (not a local/param). Dispatch to check_static_call. `type_args` is
+    // always empty here — `check_method_call`'s gate above only admits a
+    // non-empty slice for a capability (handled just above) or the `Json`
+    // codec (handled separately, `check_json_static`).
     if let ExprKind::Ident(id) = &receiver.kind
         && ctx.lookup(id.name.as_str()).is_none()
         && ctx.input.types.contains_key(&id.name)
     {
-        return check_static_call(id, method, args, span, expected, ctx);
+        return check_static_call(id, method, type_args, args, span, expected, ctx);
     }
     // v0.20b: qualified statics on the built-in collection types —
     // `List.empty()` / `Map.empty()`. Like an empty `[]`, they need an
@@ -3089,11 +3167,15 @@ fn flatten_ident_chain(expr: &Expr) -> Option<String> {
 /// `Alias.Cap.op(args)`. The capability operation signatures are carried in
 /// `consumed_capabilities` (in the providing context's namespace); the
 /// capability must be listed in the handler/provider's `given` clause.
+#[allow(clippy::too_many_arguments)]
 fn check_cross_context_capability_call(
     receiver: &Expr,
     consumed: &str,
     cap: &str,
     method: &Ident,
+    // #926 (Decision G): explicit type arguments for a generic capability
+    // operation, qualified form (`B.Cap.op[T](…)` / `Alias.Cap.op[T](…)`).
+    type_args: &[TypeRef],
     args: &[Expr],
     _span: Span,
     ctx: &mut Ctx,
@@ -3193,10 +3275,61 @@ fn check_cross_context_capability_call(
         .get(consumed)
         .cloned()
         .unwrap_or_default();
+    // #926: resolve the op's own type parameter(s) — declared in the
+    // *consumed* context's namespace but instantiated from an explicit type
+    // argument named in the *calling* context's own namespace (same split
+    // `resolve_type_ref`/`resolve_expr_type_ref` already draw for
+    // params/return vs. call-site type args in the local-capability path,
+    // `check_static_call`). Explicit only, never inferred.
+    let vars: HashSet<String> = op.type_params.iter().cloned().collect();
+    let mut subst: HashMap<String, Ty> = HashMap::new();
+    if !op.type_params.is_empty() || !type_args.is_empty() {
+        if type_args.is_empty() {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.generics.uninferable_type_arg",
+                    method.span,
+                    format!(
+                        "capability operation `{consumed}.{cap}.{}` takes a type parameter, but none of its arguments determine it",
+                        method.name
+                    ),
+                )
+                .with_note(format!(
+                    "give it explicitly: `{consumed}.{cap}.{}[T](…)`",
+                    method.name
+                )),
+            );
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        }
+        if type_args.len() != op.type_params.len() {
+            ctx.errors.push(CompileError::new(
+                "bynk.generics.type_arg_mismatch",
+                method.span,
+                format!(
+                    "capability operation `{consumed}.{cap}.{}` takes {} type argument(s), but {} were given",
+                    method.name,
+                    op.type_params.len(),
+                    type_args.len()
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        }
+        for (tp, ta) in op.type_params.iter().zip(type_args) {
+            let ty = resolve_expr_type_ref(ta, ctx)?;
+            subst.insert(tp.clone(), ty);
+        }
+    }
     let mut all_ok = true;
     for (i, ((pname, ptype_ref), arg)) in op.params.iter().zip(args.iter()).enumerate() {
         record_param_hint(ctx.hints, pname, arg);
-        let param_ty = resolve_type_ref(ptype_ref, &consumed_types).unwrap_or(Ty::Unit);
+        let param_ty = resolve_type_ref_in(ptype_ref, &consumed_types, &vars).unwrap_or(Ty::Unit);
+        let param_ty = substitute(&param_ty, &subst);
         let Some(arg_ty) = type_of(arg, None, ctx) else {
             all_ok = false;
             continue;
@@ -3219,7 +3352,8 @@ fn check_cross_context_capability_call(
     if !all_ok {
         return None;
     }
-    let raw_ret = resolve_type_ref(&op.return_type, &consumed_types).unwrap_or(Ty::Unit);
+    let raw_ret = resolve_type_ref_in(&op.return_type, &consumed_types, &vars).unwrap_or(Ty::Unit);
+    let raw_ret = substitute(&raw_ret, &subst);
     Some(rebrand_return_type(&raw_ret, &ctx.input.types))
 }
 

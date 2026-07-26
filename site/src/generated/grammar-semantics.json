@@ -736,6 +736,10 @@
       "summary": "A `provides` block implements an operation not in the capability."
     },
     {
+      "code": "bynk.provider.generic_op_requires_external",
+      "summary": "A Bynk-bodied `provides` implements a capability operation that declares its own type parameter — only an external (bodiless) provider can."
+    },
+    {
       "code": "bynk.provider.missing_operation",
       "summary": "A `provides` block is missing a capability operation."
     },

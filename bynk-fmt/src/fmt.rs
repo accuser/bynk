@@ -1261,6 +1261,15 @@ impl<'a> Formatter<'a> {
                 }
                 f.push("fn ");
                 f.push(&op.name.name);
+                // #926: `[T, …]` type parameters on the op itself.
+                if !op.type_params.is_empty() {
+                    let names: Vec<&str> = op
+                        .type_params
+                        .iter()
+                        .map(|tp| tp.name.name.as_str())
+                        .collect();
+                    f.push(&format!("[{}]", names.join(", ")));
+                }
                 f.format_params(&op.params, false);
                 f.push(" -> ");
                 f.format_type_ref(&op.return_type);

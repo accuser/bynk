@@ -1274,8 +1274,12 @@ pub(crate) fn emit_capability(out: &mut String, c: &CapabilityDecl) {
             .collect();
         writeln!(
             out,
-            "  {name}({params}): {ret};",
+            "  {name}{generics}({params}): {ret};",
             name = op.name.name,
+            // #926 (Decision C): a genuine generic TS interface method, no
+            // monomorphisation/erasure — `ts_type_params` is the same helper
+            // a generic record's own methods use (`emit_method`).
+            generics = ts_type_params(&op.type_params),
             params = params.join(", "),
             ret = ts_type_ref(&op.return_type),
         )

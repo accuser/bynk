@@ -820,6 +820,7 @@ pub(crate) fn build_cross_context_info(
                 .iter()
                 .map(|op| resolver::CrossContextCapabilityOp {
                     name: op.name.name.clone(),
+                    type_params: op.type_params.iter().map(|p| p.name.name.clone()).collect(),
                     params: op
                         .params
                         .iter()
