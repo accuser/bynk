@@ -7,7 +7,12 @@
 //! - the `Bytes` helpers (`__bynkBytesEqual` and friends, v0.110 / ADR 0142),
 //!   emitted by the `Bytes` kernel, `==` on `Bytes`, and the boundary codecs;
 //! - the ICU formatters (`selectPluralArm`, `formatIcuNumber`, `formatIcuDate`,
-//!   #878), emitted by a `messages` bundle's `render`.
+//!   #878), emitted by a `messages` bundle's `render`;
+//! - the boundary-codec trio (`Ok`, `Err`, `BoundaryError`, #914), which an
+//!   *inlined* deserialiser builds directly. Most modules import `Ok`/`Err`
+//!   unconditionally and never consult this; it exists for the two that curate
+//!   their runtime import list — a Worker's `compose.ts` and the test-scaffold
+//!   modules.
 //!
 //! The condition is "did emission actually reference it", which is a fact only
 //! emission knows. This type is how that fact travels: the producers call
@@ -68,6 +73,7 @@ use std::cell::Cell;
 pub struct RuntimeUse {
     bytes: Cell<bool>,
     icu: Cell<bool>,
+    boundary_codec: Cell<bool>,
 }
 
 impl RuntimeUse {
@@ -81,9 +87,21 @@ impl RuntimeUse {
         self.icu.set(true);
     }
 
+    /// Record that the module inlines a boundary deserialiser, which builds
+    /// `Ok(…)` / `Err(… as BoundaryError)` directly rather than delegating to a
+    /// `deserialise_<T>` in its own namespace.
+    pub fn note_boundary_codec(&self) {
+        self.boundary_codec.set(true);
+    }
+
     /// Whether the `Bytes` helpers must be imported.
     pub fn bytes(&self) -> bool {
         self.bytes.get()
+    }
+
+    /// Whether the `Ok` / `Err` / `BoundaryError` trio must be imported.
+    pub fn boundary_codec(&self) -> bool {
+        self.boundary_codec.get()
     }
 
     /// Whether the ICU formatting helpers must be imported.

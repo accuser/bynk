@@ -466,7 +466,7 @@ pub(crate) fn inject_runtime_imports(out: String, runtime_specifier: &str, extra
             && let Some(pos) = line.rfind(&from_runtime)
         {
             result.push_str(&line[..pos]);
-            result.push_str(extra);
+            result.push_str(&missing_bindings(&line[..pos], extra));
             result.push_str(&line[pos..]);
             injected = true;
             continue;
@@ -474,6 +474,39 @@ pub(crate) fn inject_runtime_imports(out: String, runtime_specifier: &str, extra
         result.push_str(line);
     }
     result
+}
+
+/// The subset of `extra` not already bound on `existing` — the head of an import
+/// line, e.g. `import { Ok, Err, type Result`.
+///
+/// #914: an injection target may already import some of what a group carries. The
+/// test-scaffold module lists `Ok`/`Err` in its fixed set but not `BoundaryError`,
+/// so injecting the boundary trio wholesale would emit `import { Ok, …, Ok, … }` —
+/// a duplicate-identifier error, i.e. trading one uncompilable module for another.
+/// Comparing on the bare name lets `type BoundaryError` match an existing
+/// `BoundaryError` and vice versa.
+fn missing_bindings(existing: &str, extra: &str) -> String {
+    fn bare(binding: &str) -> &str {
+        binding
+            .trim()
+            .strip_prefix("type ")
+            .unwrap_or(binding.trim())
+    }
+    let present: HashSet<&str> = existing
+        .trim_start_matches("import {")
+        .split(',')
+        .map(bare)
+        .collect();
+    let wanted: Vec<&str> = extra
+        .split(',')
+        .map(str::trim)
+        .filter(|b| !b.is_empty() && !present.contains(bare(b)))
+        .collect();
+    if wanted.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", wanted.join(", "))
+    }
 }
 
 /// v0.22b: pre-order expression visitor — visits `e`, then every
@@ -2401,6 +2434,16 @@ pub(crate) const BYTES_RUNTIME_IMPORTS: &str =
 /// `bynk-emit/src/emitter/emit.rs`).
 const MESSAGES_RUNTIME_IMPORTS: &str = ", selectPluralArm, formatIcuNumber, formatIcuDate";
 
+/// #914: the names an **inlined** boundary deserialiser builds directly, appended
+/// to the import list of a module that curates its own — a Worker's `compose.ts`
+/// and the test-scaffold modules. Every other module imports `Ok`/`Err`
+/// unconditionally, so this is inert there and never applied.
+///
+/// A codec for a *named* type delegates (`handlers.deserialise_Order(…)`) and needs
+/// none of these; one for a base type, a `Bytes`, or a tuple inlines the
+/// construction and needs all three.
+pub(crate) const BOUNDARY_CODEC_RUNTIME_IMPORTS: &str = ", Ok, Err, type BoundaryError";
+
 /// Emit the commons-level doc block (if any) at the current position.
 fn write_commons_doc(out: &mut String, commons: &TypedCommons) {
     if let Some(doc) = &commons.commons.documentation {
@@ -3541,5 +3584,63 @@ mod conditional_runtime_import_tests {
                 "`{helper}` must not be imported for a bundle with no ICU dispatch: {ts}"
             );
         }
+    }
+}
+
+/// #914: `inject_runtime_imports` must not add a binding the target line already
+/// has. The test-scaffold module lists `Ok`/`Err` but not `BoundaryError`, so the
+/// boundary trio is a partial overlap — injecting it wholesale would emit a
+/// duplicate identifier, trading one uncompilable module for another.
+#[cfg(test)]
+mod inject_runtime_imports_tests {
+    use super::*;
+
+    const SPEC: &str = "./runtime.js";
+
+    fn line(bindings: &str) -> String {
+        format!("import {{ {bindings} }} from \"{SPEC}\";\nconst x = 1;\n")
+    }
+
+    #[test]
+    fn appends_bindings_that_are_absent() {
+        let out = inject_runtime_imports(line("Ok, Err"), SPEC, BYTES_RUNTIME_IMPORTS);
+        assert!(out.contains("Ok, Err, __bynkBytesEqual"), "{out}");
+        assert!(out.contains("__bynkBytesDecodeUtf8 } from"), "{out}");
+    }
+
+    #[test]
+    fn skips_bindings_already_present() {
+        let out = inject_runtime_imports(line("Ok, Err"), SPEC, BOUNDARY_CODEC_RUNTIME_IMPORTS);
+        assert_eq!(
+            out.matches("Ok").count(),
+            1,
+            "`Ok` was already imported and must not repeat: {out}"
+        );
+        assert!(out.contains("Ok, Err, type BoundaryError"), "{out}");
+    }
+
+    /// The bare name is what collides, so `type BoundaryError` must match an
+    /// existing `BoundaryError` and vice versa.
+    #[test]
+    fn matches_across_the_type_prefix() {
+        let out = inject_runtime_imports(
+            line("Ok, Err, type BoundaryError"),
+            SPEC,
+            BOUNDARY_CODEC_RUNTIME_IMPORTS,
+        );
+        assert_eq!(
+            out,
+            line("Ok, Err, type BoundaryError"),
+            "every binding was already present, so the line is untouched"
+        );
+    }
+
+    #[test]
+    fn leaves_a_line_for_another_specifier_alone() {
+        let other = "import { Ok } from \"./elsewhere.js\";\n".to_string();
+        assert_eq!(
+            inject_runtime_imports(other.clone(), SPEC, BYTES_RUNTIME_IMPORTS),
+            other
+        );
     }
 }

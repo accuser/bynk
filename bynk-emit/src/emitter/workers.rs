@@ -8,6 +8,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
+use crate::emitter::RuntimeUse;
 use crate::emitter::http_handler_method_name;
 use crate::emitter::ts_ident;
 use crate::emitter::wrangler::{agent_binding_name, consumed_binding_name};
@@ -141,6 +142,13 @@ pub fn emit_worker_compose(
                 bynk_check::actors::sum_members_for(h, &table.actors).is_some()
                     && h.params.iter().any(|p| p.name.name == "body")
             });
+    // #914: the sum wrapper's body codec is emitted *below* the import line, and
+    // for anything but a named type it inlines `Ok`/`Err`/`BoundaryError` (plus the
+    // base64 helpers for a `Bytes`). Those cannot be predicted from the handler
+    // signature without restating the codec's own arm table, so they are recorded
+    // as the codec emits and injected into the import line as a post-pass — the
+    // same shape `emit_project` and `emit_worker_entry` already use.
+    let runtime_use = crate::emitter::RuntimeUse::default();
     let mut runtime_imports: Vec<&str> = Vec::new();
     if needs_kv {
         runtime_imports.push("type KVNamespace");
@@ -338,7 +346,15 @@ pub fn emit_worker_compose(
                     } else if let Some(members) =
                         bynk_check::actors::sum_members_for(h, &table.actors)
                     {
-                        emit_http_sum_wrapper(&mut out, sname, h, *method, path, &members);
+                        emit_http_sum_wrapper(
+                            &mut out,
+                            sname,
+                            h,
+                            *method,
+                            path,
+                            &members,
+                            &runtime_use,
+                        );
                     } else {
                         let seam = bynk_check::actors::bearer_seam_for(h, &table.actors);
                         emit_http_wrapper(&mut out, sname, h, *method, path, seam.as_ref());
@@ -373,6 +389,24 @@ pub fn emit_worker_compose(
     let _ = writeln!(out, "  }};");
 
     let _ = writeln!(out, "}}");
+    // #914: fold in whatever the wrappers' codecs actually reached for. Injected
+    // into the existing runtime import line rather than emitted as a second one,
+    // so the module keeps a single import from `runtime.js`.
+    let specifier = "../../runtime.js";
+    if runtime_use.boundary_codec() {
+        out = crate::emitter::inject_runtime_imports(
+            out,
+            specifier,
+            crate::emitter::BOUNDARY_CODEC_RUNTIME_IMPORTS,
+        );
+    }
+    if runtime_use.bytes() {
+        out = crate::emitter::inject_runtime_imports(
+            out,
+            specifier,
+            crate::emitter::BYTES_RUNTIME_IMPORTS,
+        );
+    }
     (out, needs_request)
 }
 
@@ -923,6 +957,7 @@ fn emit_http_sum_wrapper(
     method: HttpMethod,
     path: &str,
     members: &[bynk_check::actors::SumMember],
+    runtime_use: &RuntimeUse,
 ) {
     use bynk_check::actors::SumMemberSeam;
     let method_key = http_handler_method_name(method, path);
@@ -1042,18 +1077,11 @@ fn emit_http_sum_wrapper(
             "        return HttpResult.BadRequest(\"Invalid request body\");"
         );
         let _ = writeln!(out, "      }}");
-        // NOTE: `compose.ts` builds its runtime import list structurally, above,
-        // and has never included the `Bytes` helpers — so a `Bytes` body param on
-        // an http route returning a sum would emit an unimported
-        // `__bynkBytesFromBase64` here. That gap predates this accumulator and is
-        // unchanged by it; a throwaway keeps the behaviour identical rather than
-        // quietly widening the fix.
-        let runtime_use = crate::emitter::RuntimeUse::default();
         let dser = super::workers_entry::deserialise_call(
             &body_param.type_ref,
             "__body_json",
             "$",
-            &runtime_use,
+            runtime_use,
         );
         let _ = writeln!(out, "      const __r_body = {dser};");
         let _ = writeln!(
