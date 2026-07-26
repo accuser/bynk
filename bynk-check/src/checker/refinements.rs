@@ -1132,5 +1132,57 @@ mod redos_tests {
         ] {
             assert!(!redos(pat), "false positive on safe pattern `{pat}`");
         }
+        // `LocaleTag`'s pattern is read from the firstparty source rather than
+        // duplicated here (its own single-source-of-truth rule, ADR 0279), so
+        // fetch it live instead of hand-copying the string.
+        let locale_pat = super::locale_tag_pattern().expect("LocaleTag has a Matches predicate");
+        assert!(
+            !redos(locale_pat),
+            "false positive on safe pattern `{locale_pat}`"
+        );
+    }
+}
+
+#[cfg(test)]
+mod locale_tag_tests {
+    use super::locale_tag_accepts;
+
+    #[test]
+    fn admits_the_pre_existing_shapes() {
+        for tag in ["en", "pt-BR", "zh-Hans-CN", "es-419"] {
+            assert!(locale_tag_accepts(tag), "expected `{tag}` to be admitted");
+        }
+    }
+
+    #[test]
+    fn admits_variants_extensions_private_use_and_extlang() {
+        for tag in [
+            "de-CH-1996",          // variant (digit-led)
+            "ca-valencia",         // variant (alpha)
+            "sl-rozaj",            // variant, shortest admitted length
+            "en-scotland-fonipa",  // two variants
+            "en-US-u-ca-buddhist", // extension
+            "de-CH-x-phonebk",     // attached private-use
+            "x-custom",            // standalone private-use
+            "zh-yue",              // extlang
+        ] {
+            assert!(locale_tag_accepts(tag), "expected `{tag}` to be admitted");
+        }
+    }
+
+    #[test]
+    fn rejects_grandfathered_and_malformed_tags() {
+        for tag in [
+            "i-klingon",      // grandfathered irregular
+            "en-GB-oed",      // grandfathered irregular
+            "Klingon",        // not a tag at all
+            "pt-br",          // region must be uppercase
+            "en-SCOTLAND",    // variant must be lowercase
+            "en-x-abcdefghi", // private-use subtag over 8 chars
+            "x",              // private-use with no subtag
+            "",
+        ] {
+            assert!(!locale_tag_accepts(tag), "expected `{tag}` to be rejected");
+        }
     }
 }
