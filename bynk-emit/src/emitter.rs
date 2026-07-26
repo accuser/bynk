@@ -466,7 +466,7 @@ pub(crate) fn inject_runtime_imports(out: String, runtime_specifier: &str, extra
             && let Some(pos) = line.rfind(&from_runtime)
         {
             result.push_str(&line[..pos]);
-            result.push_str(extra);
+            result.push_str(&missing_bindings(&line[..pos], extra));
             result.push_str(&line[pos..]);
             injected = true;
             continue;
@@ -474,6 +474,46 @@ pub(crate) fn inject_runtime_imports(out: String, runtime_specifier: &str, extra
         result.push_str(line);
     }
     result
+}
+
+/// The subset of `extra` not already bound on `existing` — the head of an import
+/// line, e.g. `import { Ok, Err, type Result`.
+///
+/// #914: an injection target may already import some of what a group carries. The
+/// test-scaffold module lists `Ok`/`Err` in its fixed set but not `BoundaryError`,
+/// so injecting the boundary group wholesale would emit `import { Ok, …, Ok, … }` —
+/// a duplicate-identifier error, i.e. trading one uncompilable module for another.
+/// Comparing on the bare name lets `type BoundaryError` match an existing
+/// `BoundaryError` and vice versa.
+///
+/// Invariant: a group is a list of plain bindings, optionally `type`-prefixed —
+/// **never an alias**. `bare("Foo as Ok")` is the whole phrase, so an aliased
+/// binding on either side would compare unequal and inject a duplicate. No group
+/// carries one today; keep it that way rather than teaching this to split on
+/// `as`.
+fn missing_bindings(existing: &str, extra: &str) -> String {
+    fn bare(binding: &str) -> &str {
+        binding
+            .trim()
+            .strip_prefix("type ")
+            .unwrap_or(binding.trim())
+    }
+    let present: HashSet<&str> = existing
+        .strip_prefix("import {")
+        .unwrap_or(existing)
+        .split(',')
+        .map(bare)
+        .collect();
+    let wanted: Vec<&str> = extra
+        .split(',')
+        .map(str::trim)
+        .filter(|b| !b.is_empty() && !present.contains(bare(b)))
+        .collect();
+    if wanted.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", wanted.join(", "))
+    }
 }
 
 /// v0.22b: pre-order expression visitor — visits `e`, then every
@@ -2401,6 +2441,47 @@ pub(crate) const BYTES_RUNTIME_IMPORTS: &str =
 /// `bynk-emit/src/emitter/emit.rs`).
 const MESSAGES_RUNTIME_IMPORTS: &str = ", selectPluralArm, formatIcuNumber, formatIcuDate";
 
+/// #914: the names an **inlined** boundary deserialiser builds directly, appended
+/// to the import list of a module that curates its own — a Worker's `compose.ts`
+/// and the test-scaffold modules. Every other module imports `Ok`/`Err`/`Result`
+/// unconditionally, so most of this is inert there and never applied.
+///
+/// A codec for a *named* type delegates (`handlers.deserialise_Order(…)`) and needs
+/// none of these; one for a base type or a `Bytes` inlines the construction. Two
+/// arms — `Unit` and the runtime-owned error types — additionally annotate the
+/// result (`Ok(undefined) as Result<void, BoundaryError>`), which `compose.ts`'s
+/// structural list never carries; `Result` is in the group for those. The dedupe
+/// in [`inject_runtime_imports`] makes it free wherever it is already imported.
+pub(crate) const BOUNDARY_CODEC_RUNTIME_IMPORTS: &str =
+    ", Ok, Err, type Result, type BoundaryError";
+
+/// #914: the names the `Json.decode[T]` wrapper puts in the module — its own
+/// `Result<T, JsonError>` signature and the `JsonValue` it parses into
+/// (`lower_json_codec_call`, `bynk-emit/src/emitter/lower.rs`).
+///
+/// A sibling group rather than part of [`BOUNDARY_CODEC_RUNTIME_IMPORTS`]: the
+/// producer is the wrapper, not the codec, and it names these whichever arm the
+/// inner deserialiser takes — including the delegating ones, which set no
+/// boundary-codec flag at all. `Json.encode` needs nothing for its own wrapper
+/// text either (it lowers to a bare `JSON.stringify`).
+///
+/// The delegating arm — `Json.decode[SomeRecord]` / `Json.encode(someRecord)`
+/// — used to be broken in a test-scaffold module for an unrelated reason
+/// (issue #917): the call lowers to a bare `deserialise_SomeRecord(…)` /
+/// `serialise_SomeRecord(…)`, and no such codec was emitted anywhere — the
+/// unit module exports the record's interface and no codec of its own. Fixed
+/// by generating the test module's *own* closure for every root a case body's
+/// `Json` call reaches for (`RuntimeUse::note_json_codec_root`, drained by
+/// `tests_emit.rs`'s `emit_test_module`), namespace-qualifying the TS type
+/// positions through the target/`uses` unit's own namespace import
+/// (`RuntimeUse::json_codec_qual`) — the same caller-generates-its-own-codec
+/// pattern `emit_consumed_context_helpers` uses for a workers cross-context
+/// caller's consumed-boundary types (#661). See
+/// `918_json_decode_in_test_case` (base type, delegation-free) and
+/// `919_json_decode_named_record_in_test_case` (named record, delegating).
+pub(crate) const JSON_CODEC_RUNTIME_IMPORTS: &str =
+    ", Ok, Err, type Result, type JsonValue, type JsonError";
+
 /// Emit the commons-level doc block (if any) at the current position.
 fn write_commons_doc(out: &mut String, commons: &TypedCommons) {
     if let Some(doc) = &commons.commons.documentation {
@@ -3541,5 +3622,105 @@ mod conditional_runtime_import_tests {
                 "`{helper}` must not be imported for a bundle with no ICU dispatch: {ts}"
             );
         }
+    }
+}
+
+/// #914: `inject_runtime_imports` must not add a binding the target line already
+/// has. The test-scaffold module lists `Ok`/`Err`/`Result` but not
+/// `BoundaryError`, so the boundary group is a partial overlap — injecting it
+/// wholesale would emit a duplicate identifier, trading one uncompilable module
+/// for another.
+#[cfg(test)]
+mod inject_runtime_imports_tests {
+    use super::*;
+
+    const SPEC: &str = "./runtime.js";
+
+    fn line(bindings: &str) -> String {
+        format!("import {{ {bindings} }} from \"{SPEC}\";\nconst x = 1;\n")
+    }
+
+    #[test]
+    fn appends_bindings_that_are_absent() {
+        let out = inject_runtime_imports(line("Ok, Err"), SPEC, BYTES_RUNTIME_IMPORTS);
+        assert!(out.contains("Ok, Err, __bynkBytesEqual"), "{out}");
+        assert!(out.contains("__bynkBytesDecodeUtf8 } from"), "{out}");
+    }
+
+    #[test]
+    fn skips_bindings_already_present() {
+        let out = inject_runtime_imports(
+            line("Ok, Err, type Result"),
+            SPEC,
+            BOUNDARY_CODEC_RUNTIME_IMPORTS,
+        );
+        assert_eq!(
+            out.matches("Ok").count(),
+            1,
+            "`Ok` was already imported and must not repeat: {out}"
+        );
+        assert!(
+            out.contains("Ok, Err, type Result, type BoundaryError"),
+            "{out}"
+        );
+    }
+
+    /// The bare name is what collides, so `type BoundaryError` must match an
+    /// existing `BoundaryError`.
+    #[test]
+    fn matches_a_type_prefixed_group_binding_against_a_bare_one() {
+        let out = inject_runtime_imports(
+            line("Ok, Err, type Result, BoundaryError"),
+            SPEC,
+            BOUNDARY_CODEC_RUNTIME_IMPORTS,
+        );
+        assert_eq!(
+            out,
+            line("Ok, Err, type Result, BoundaryError"),
+            "every binding was already present, so the line is untouched"
+        );
+    }
+
+    /// …and the other direction: a bare group binding against an existing
+    /// `type`-prefixed one. This is the case that would regress if `bare` were
+    /// applied to only one side of the comparison.
+    #[test]
+    fn matches_a_bare_group_binding_against_a_type_prefixed_one() {
+        // A group whose bindings are bare, against a line that `type`-prefixes
+        // them. `Result` is the realistic instance — the fixed test-scaffold
+        // list writes `type Result`.
+        let out = inject_runtime_imports(line("type Ok, type Err"), SPEC, ", Ok, Err");
+        assert_eq!(
+            out,
+            line("type Ok, type Err"),
+            "a bare binding must match an existing `type`-prefixed one: {out}"
+        );
+    }
+
+    /// The two injections run back to back over the same line, so the second
+    /// sees the first's output as `existing` — the overlap between the groups
+    /// (`Ok`, `Err`, `type Result`) must not double up.
+    #[test]
+    fn composes_across_two_sequential_injections() {
+        let out = inject_runtime_imports(
+            line("Ok, Err, type Result"),
+            SPEC,
+            BOUNDARY_CODEC_RUNTIME_IMPORTS,
+        );
+        let out = inject_runtime_imports(out, SPEC, JSON_CODEC_RUNTIME_IMPORTS);
+        assert_eq!(
+            out,
+            line("Ok, Err, type Result, type BoundaryError, type JsonValue, type JsonError"),
+            "the shared bindings must be injected once: {out}"
+        );
+    }
+
+    #[test]
+    fn leaves_a_line_for_another_specifier_alone() {
+        let other = "import { Ok } from \"./elsewhere.js\";\n".to_string();
+        assert_eq!(
+            inject_runtime_imports(other.clone(), SPEC, BYTES_RUNTIME_IMPORTS),
+            other
+        );
     }
 }

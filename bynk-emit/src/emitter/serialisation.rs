@@ -1229,6 +1229,24 @@ pub fn deserialise_expr_via(
     ns: &str,
     ru: &RuntimeUse,
 ) -> String {
+    // Every arm except the delegating ones — which call a `deserialise_<T>` in the
+    // module's own namespace — builds `Ok(…)` / `Err(… as BoundaryError)` inline.
+    // Recorded once here rather than per-arm: the delegating set is short and
+    // closed, the inlining set is long, and erring the other way emits a module
+    // that references an unimported name (#914). `Effect` recurses, so it lets the
+    // inner type decide.
+    if !matches!(
+        t,
+        TypeRef::Named(_)
+            | TypeRef::Result(..)
+            | TypeRef::Option(..)
+            | TypeRef::List(..)
+            | TypeRef::Map(..)
+            | TypeRef::App { .. }
+            | TypeRef::Effect(..)
+    ) {
+        ru.note_boundary_codec();
+    }
     match t {
         TypeRef::Named(id) => format!("{ns}deserialise_{}({json}, \"{path}\")", id.name),
         TypeRef::Result(..)
@@ -1856,6 +1874,19 @@ pub fn emit_generic_helpers_qualified(
             }
         }
     }
+}
+
+/// #917: the qualified TS type renderer, exposed for the `Json.decode[T]`
+/// wrapper — a test-scaffold module has no local declaration of the target
+/// type, so its `Result<T, JsonError>` signature and `as T` cast must reach
+/// it through the same type-only namespace (`qual`) the module's own
+/// caller-generated codec helpers use. `qual` is empty on every other emission
+/// path, where this renders identically to a bare type.
+pub fn ts_type_ref_qualified(
+    t: &TypeRef,
+    qual: &std::collections::HashMap<String, String>,
+) -> String {
+    ts_inner_type(t, qual)
 }
 
 fn ts_inner_type(t: &TypeRef, qual: &Qual) -> String {

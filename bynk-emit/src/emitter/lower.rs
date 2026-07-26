@@ -24,23 +24,14 @@ pub fn lower_block_to_async_body(
     return_type: &TypeRef,
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
+    runtime_use: &RuntimeUse,
 ) -> (String, SourceMapBuilder) {
     let mut out = String::new();
     // v0.70: a sub-builder records body checkpoints relative to this local buffer;
     // the caller merges it into the module map at the splice offset.
     let smb = RefCell::new(SourceMapBuilder::new());
-    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
-    // import list `tests_emit.rs` emits as a **fixed** set that has never included
-    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
-    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
-    // That predates this accumulator (the `out.contains` scan it replaces never
-    // covered these modules either) and is unchanged by it; a throwaway keeps the
-    // behaviour identical rather than quietly widening the fix. Owned rather than
-    // optional so `note_bytes` is never a silent no-op on a path that *does*
-    // decide its own imports.
-    let runtime_use = crate::emitter::RuntimeUse::default();
     {
-        let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
+        let mut cx = LowerCtx::new(typed, cross_context, runtime_use).with_source_map(Some(&smb));
         cx.test_scaffold = true;
         let async_tail = is_effectful_return(return_type);
         emit_block_as_function_body_with_return(
@@ -68,21 +59,12 @@ pub fn lower_test_case_body(
     test_agents: HashSet<String>,
     source: &str,
     rel_path: &str,
+    runtime_use: &RuntimeUse,
 ) -> (String, SourceMapBuilder) {
     let mut out = String::new();
     let smb = RefCell::new(SourceMapBuilder::new());
-    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
-    // import list `tests_emit.rs` emits as a **fixed** set that has never included
-    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
-    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
-    // That predates this accumulator (the `out.contains` scan it replaces never
-    // covered these modules either) and is unchanged by it; a throwaway keeps the
-    // behaviour identical rather than quietly widening the fix. Owned rather than
-    // optional so `note_bytes` is never a silent no-op on a path that *does*
-    // decide its own imports.
-    let runtime_use = crate::emitter::RuntimeUse::default();
     {
-        let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
+        let mut cx = LowerCtx::new(typed, cross_context, runtime_use).with_source_map(Some(&smb));
         cx.test_services = test_services;
         cx.test_service_handlers = test_service_handlers;
         cx.local_agents = test_agents.clone();
@@ -130,21 +112,12 @@ pub fn lower_integration_case_body(
     system_http_type_ns: String,
     source: &str,
     rel_path: &str,
+    runtime_use: &RuntimeUse,
 ) -> (String, SourceMapBuilder) {
     let mut out = String::new();
     let smb = RefCell::new(SourceMapBuilder::new());
-    // NOTE: these bodies are spliced into a test-scaffold module whose runtime
-    // import list `tests_emit.rs` emits as a **fixed** set that has never included
-    // the `Bytes` helpers — so a `Bytes` value in a test-case body emits an
-    // unimported `__bynkBytes*`, exactly the `compose.ts` gap in another place.
-    // That predates this accumulator (the `out.contains` scan it replaces never
-    // covered these modules either) and is unchanged by it; a throwaway keeps the
-    // behaviour identical rather than quietly widening the fix. Owned rather than
-    // optional so `note_bytes` is never a silent no-op on a path that *does*
-    // decide its own imports.
-    let runtime_use = crate::emitter::RuntimeUse::default();
     {
-        let mut cx = LowerCtx::new(typed, cross_context, &runtime_use).with_source_map(Some(&smb));
+        let mut cx = LowerCtx::new(typed, cross_context, runtime_use).with_source_map(Some(&smb));
         cx.target = BuildTarget::Workers;
         cx.system_http_services = system_http_services;
         cx.system_http_routes = system_http_routes;
@@ -1891,6 +1864,14 @@ fn lower_json_codec_call(
             && let Some(arg_ty) = cx.commons.expr_types.get(&args[0].span).cloned()
             && let Some(tref) = ty_to_type_ref(&arg_ty)
         {
+            // #917: a test-scaffold module's target/`uses` types export no codec
+            // of their own — record the root so the module that spliced this
+            // body in can generate its own `serialise_*`/`deserialise_*` closure,
+            // the same way a workers cross-context caller generates one for a
+            // consumed context's boundary types (#661).
+            if cx.test_scaffold {
+                cx.runtime_use.note_json_codec_root(tref.clone());
+            }
             let v = lower_expr(&args[0], stmts, cx);
             let ser = serialisation::serialise_expr(&tref, &v, cx.runtime_use);
             return Some(format!("JSON.stringify({ser})"));
@@ -1899,7 +1880,25 @@ fn lower_json_codec_call(
             && let Some(Ty::Result(t, _)) = cx.commons.expr_types.get(&e.span).cloned()
             && let Some(tref) = ty_to_type_ref(&t)
         {
-            let ts = ts_ty(&t);
+            // #917: in a test-scaffold module `T` may be foreign (owned by the
+            // suite target or one of its `uses`, never declared locally), so its
+            // TS type positions reach through the module's namespace qualifier —
+            // empty everywhere else, where this renders identically to `ts_ty`.
+            let ts = if cx.test_scaffold {
+                let qual = cx.runtime_use.json_codec_qual();
+                serialisation::ts_type_ref_qualified(&tref, &qual)
+            } else {
+                ts_ty(&t)
+            };
+            if cx.test_scaffold {
+                cx.runtime_use.note_json_codec_root(tref.clone());
+            }
+            // #914: the wrapper below names `Result`, `JsonValue` and `JsonError`
+            // in its own signature and body, whichever arm the inner deserialiser
+            // takes — including the delegating ones, which record nothing. A
+            // module that curates its import list (the test-scaffold modules)
+            // otherwise emits all three unimported.
+            cx.runtime_use.note_json_codec();
             let des = serialisation::deserialise_expr(&tref, "__j", "$", cx.runtime_use);
             let arg = lower_expr(&args[0], stmts, cx);
             return Some(format!(

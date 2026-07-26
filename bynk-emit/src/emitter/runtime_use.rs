@@ -1,13 +1,31 @@
 //! Which `runtime.ts` helpers an emitted module actually references.
 //!
 //! Most of the runtime import list is fixed (`Ok`, `Err`, `Some`, `None`, …),
-//! but three groups are conditional, because importing them unconditionally
+//! but four groups are conditional, because importing them unconditionally
 //! would put names in every module that most modules never use:
 //!
 //! - the `Bytes` helpers (`__bynkBytesEqual` and friends, v0.110 / ADR 0142),
 //!   emitted by the `Bytes` kernel, `==` on `Bytes`, and the boundary codecs;
 //! - the ICU formatters (`selectPluralArm`, `formatIcuNumber`, `formatIcuDate`,
-//!   #878), emitted by a `messages` bundle's `render`.
+//!   #878), emitted by a `messages` bundle's `render`;
+//! - the boundary-codec group (`Ok`, `Err`, `Result`, `BoundaryError`, #914),
+//!   which an *inlined* deserialiser builds directly;
+//! - the JSON-codec group (`Ok`, `Err`, `Result`, `JsonValue`, `JsonError`,
+//!   #914), which the `Json.decode[T]` wrapper names in its own signature and
+//!   body, independently of which arm the inner deserialiser takes.
+//!
+//! Most modules import `Ok`/`Err`/`Result` unconditionally and never consult the
+//! last two; they exist for the module kinds that curate their runtime import
+//! list — a Worker's `compose.ts` and the test-scaffold modules.
+//!
+//! #917 adds a fifth, differently-shaped piece of state, riding this same
+//! shared reference for the same reason: a test-scaffold module's `Json.decode`/
+//! `Json.encode` on a named type has no local codec to delegate to (the unit it
+//! imports exports the type but not a codec for it), so the module generates its
+//! own — the `json_codec_qual`/`json_codec_roots` fields carry the namespace a
+//! foreign type's TS positions render through and the roots its bodies reached
+//! for, respectively. Not a runtime-*helper* reference like the four flags
+//! above, but the same "note during lowering, decide after" shape.
 //!
 //! The condition is "did emission actually reference it", which is a fact only
 //! emission knows. This type is how that fact travels: the producers call
@@ -54,11 +72,14 @@
 //! now that it owns one — an `&EmitProjectCtx` can no longer cross a thread
 //! boundary. Nothing in the tree is parallel today, so this costs nothing, but
 //! per-unit emission is the obvious thing to parallelise, and that is when it
-//! will bite. Swapping both fields to `AtomicBool` with `Relaxed` ordering
+//! will bite. Swapping the fields to `AtomicBool` with `Relaxed` ordering
 //! restores `Sync` at no meaningful cost and leaves every call site reading the
 //! same — do that rather than unpicking the shared-`&` design.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+
+use bynk_syntax::ast::TypeRef;
 
 /// Per-module accumulator of conditional runtime-helper references.
 ///
@@ -68,6 +89,21 @@ use std::cell::Cell;
 pub struct RuntimeUse {
     bytes: Cell<bool>,
     icu: Cell<bool>,
+    boundary_codec: Cell<bool>,
+    json_codec: Cell<bool>,
+    /// #917: for a test-scaffold module, the type-only namespace each
+    /// codec-eligible named type reaches through (`"Order" -> "orders."`) — the
+    /// module has no local declaration of its own, only a namespace import of
+    /// the suite's target (and its `uses`). Empty (the default) on every other
+    /// emission path, where every name renders bare.
+    json_codec_qual: RefCell<HashMap<String, String>>,
+    /// #917: the `Json.decode[T]`/`Json.encode` target type-refs a test-scaffold
+    /// module's case/property/stub bodies actually reached for, collected as they
+    /// lower. `emit_test_module` drains this once all bodies are lowered to
+    /// compute the codec closure those bodies need — the unit module they import
+    /// exports the type but no codec, so a test-scaffold module generates its own
+    /// (#661's caller-generates-its-own-codec pattern, applied to test scaffolding).
+    json_codec_roots: RefCell<Vec<TypeRef>>,
 }
 
 impl RuntimeUse {
@@ -81,9 +117,61 @@ impl RuntimeUse {
         self.icu.set(true);
     }
 
+    /// Record that the module inlines a boundary deserialiser, which builds
+    /// `Ok(…)` / `Err(… as BoundaryError)` directly rather than delegating to a
+    /// `deserialise_<T>` in its own namespace.
+    pub fn note_boundary_codec(&self) {
+        self.boundary_codec.set(true);
+    }
+
+    /// Record that the module emits the `Json.decode[T]` wrapper, whose
+    /// signature and body name `Result`, `JsonValue` and `JsonError` regardless
+    /// of which arm the inner deserialiser takes.
+    pub fn note_json_codec(&self) {
+        self.json_codec.set(true);
+    }
+
+    /// #917: set once, up front, before any body lowers — the type-only
+    /// namespace qualifier a test-scaffold module's codec calls render foreign
+    /// named types through. A no-op default (empty map) everywhere else.
+    pub fn set_json_codec_qual(&self, qual: HashMap<String, String>) {
+        *self.json_codec_qual.borrow_mut() = qual;
+    }
+
+    /// The namespace qualifier a test-scaffold module's codec calls render
+    /// foreign named types through (empty on every other emission path).
+    pub fn json_codec_qual(&self) -> std::cell::Ref<'_, HashMap<String, String>> {
+        self.json_codec_qual.borrow()
+    }
+
+    /// #917: record a `Json.decode[T]`/`Json.encode` target type-ref a
+    /// test-scaffold body reached for, so the module that spliced it in can
+    /// generate the codec helper its delegating call needs.
+    pub fn note_json_codec_root(&self, t: TypeRef) {
+        self.json_codec_roots.borrow_mut().push(t);
+    }
+
+    /// Drain the accumulated `Json` codec roots — called once, after every
+    /// case/property/stub body in the module has lowered.
+    pub fn take_json_codec_roots(&self) -> Vec<TypeRef> {
+        std::mem::take(&mut *self.json_codec_roots.borrow_mut())
+    }
+
     /// Whether the `Bytes` helpers must be imported.
     pub fn bytes(&self) -> bool {
         self.bytes.get()
+    }
+
+    /// Whether the `Ok` / `Err` / `Result` / `BoundaryError` group must be
+    /// imported.
+    pub fn boundary_codec(&self) -> bool {
+        self.boundary_codec.get()
+    }
+
+    /// Whether the `Ok` / `Err` / `Result` / `JsonValue` / `JsonError` group
+    /// must be imported.
+    pub fn json_codec(&self) -> bool {
+        self.json_codec.get()
     }
 
     /// Whether the ICU formatting helpers must be imported.
@@ -96,7 +184,7 @@ impl RuntimeUse {
 mod tests {
     use super::*;
 
-    /// The type's contract, written down: the two flags are independent and a
+    /// The type's contract, written down: the flags are independent and a
     /// note latches. Everything else about this type is `Cell` behaviour and is
     /// not worth a test — the coverage that matters drives the real producers
     /// end-to-end (`emitter::conditional_runtime_import_tests`).

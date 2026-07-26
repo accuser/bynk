@@ -1,0 +1,5 @@
+commons orders
+
+fn double(n: Int) -> Int {
+  n * 2
+}
