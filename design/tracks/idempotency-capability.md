@@ -1,8 +1,11 @@
 # The `Idempotency` capability — mechanical dedup for at-least-once delivery
 
 - **Status:** Draft (settling). Spine issue
-  [#921](https://github.com/accuser/bynk/issues/921) open; this doc has not yet landed via
-  a settling draft PR ("Part of #921"). Scopes issue
+  [#921](https://github.com/accuser/bynk/issues/921) open; this doc landed via
+  [#922](https://github.com/accuser/bynk/pull/922) ("Part of #921"), but that PR was marked
+  ready for review and merged 55 seconds later with no review — the assertion that §3's
+  questions are closed was never tested. They remain genuinely open; treat this doc as
+  still settling, not adopted. Scopes issue
   [#554](https://github.com/accuser/bynk/issues/554) ("Ship the `Idempotency` capability
   ahead of the full Events track") down to its `Idempotency`-capability item.
 - **Realises:** `design/bynk-design-notes.md` §4 ("Idempotency as a system convention",
@@ -87,10 +90,15 @@ question. Candidates to weigh during settling (not yet evaluated against each ot
 
 - A **new statement form** — e.g. a `dedup`-flavoured bind that is checker-recognised
   (not just an ordinary capability call) and permitted only as a handler's first
-  statement(s), lowered to an early-return in emitted TS. Precedent for the checker
-  special-casing a specific capability's call shape: none yet, but `attempt`/`recover`
-  (§13) is precedent for the language having *a* narrow, non-generalised control-flow
-  form purpose-built for one architectural concern.
+  statement(s), lowered to an early-return in emitted TS. **No precedent exists for
+  this in the shipped compiler.** The design notes' own closest analogue,
+  `attempt`/`recover` (§13, fault-to-outcome conversion), is itself unimplemented —
+  verified by grep: zero hits for `attempt`/`recover` in `bynk-syntax/src/keywords.rs`,
+  `bynk-syntax/src/ast.rs`, or `tree-sitter-bynk/grammar.js`. So this candidate isn't
+  "a second narrow control-flow form following an established pattern" — it would be
+  the checker's **first** non-`?` control-flow special-case, full stop. That doesn't
+  disqualify it, but it removes the main thing that made it feel like the safe default;
+  weigh it as a genuinely novel mechanism, not an extension of one.
 - **Restrict `Idempotency` to `Result`-returning handlers only**, and require the *whole*
   handler return type to literally be `Result[T, E]` (not a richer custom outcome sum —
   contradicting §12's own `PaymentConfirmed` example, which has no natural `Result` shape
@@ -140,8 +148,10 @@ decided.
 §12: "The dedup record is written atomically with the handler's other commits... If the
 handler completes... the result is cached. If the handler aborts via fault, no record is
 written." This describes the dedup write joining the *same* atomic transaction as the
-enclosing agent handler's `store` writes (decision 0109's "handler is the atomic unit").
-Every existing capability (`Clock`, `Random`, `Fetch`, `Secrets`, `Locale`) is an
+enclosing agent handler's `store` writes (decision 0109's "handler is the atomic unit" —
+confirmed implemented, not aspirational: `bynk-emit/src/emitter.rs` stages `store` writes
+and flushes them once at handler end, unlike the false `attempt`/`recover` precedent 3.1
+found and corrected). Every existing capability (`Clock`, `Random`, `Fetch`, `Secrets`, `Locale`) is an
 independent side effect with no participation in the calling agent's storage transaction;
 `Cache`/`Log` (the closest TTL/retention precedent) are `store` fields *owned by the agent
 itself*, not capability-provider state at all. A durable `Idempotency` provider is asking
