@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.233**.
+written against **v0.234**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.234.0** | `LocaleTag` widens past `language[-Script][-REGION]` to admit BCP-47 variants, extensions, and private-use subtags (`messages "ca-valencia"`, `messages "en-US-u-ca-buddhist"`, `messages "x-custom"`), while still rejecting grandfathered/irregular tags |
 | **v0.233.7** | The emitter now gives a same-block re-`let` of a name (`let x = 1; let x = x + 1`) its own emitted identifier instead of reusing the source name, so the second `const` no longer collides with the first and fails `tsc` (TS2451) — shadowing itself was already accepted by the checker and is a deliberate ML-family idiom (ADR 0064) |
 | **v0.233.6** | The checker now rejects direct construction of a `uses`-sourced commons sum type's variant (bare or qualified constructor call) inside a context, where the per-context rebrand leaves that constructor out of value scope — closing the enforcement gap ADR 0256 documented, so `bynkc check` catches what would otherwise be a clean check followed by a `tsc` failure |
 | **v0.233.5** | A test-scaffold module's `Json.decode[T]`/`Json.encode` on a named record now generates its own `serialise_*`/`deserialise_*` closure and namespace-qualifies the type, instead of emitting a call to a codec the unit never exports and a bare type name the module never declares |

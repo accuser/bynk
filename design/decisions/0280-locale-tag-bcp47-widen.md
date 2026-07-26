@@ -1,11 +1,6 @@
----
-level: minor
-changelog: `LocaleTag` widens past `language[-Script][-REGION]` to admit BCP-47 variants, extensions, and private-use subtags (`messages "ca-valencia"`, `messages "en-US-u-ca-buddhist"`, `messages "x-custom"`), while still rejecting grandfathered/irregular tags
----
+# 0280 — `LocaleTag` widens to the productive BCP-47 grammar — variants, extensions, extlang, and private-use
 
-## ADR: locale-tag-bcp47-widen
-title: `LocaleTag` widens to the productive BCP-47 grammar — variants, extensions, extlang, and private-use
-summary: The refinement's `Matches` pattern grows past language[-Script][-REGION] to admit variants/extensions/extlang/private-use, bounded to satisfy the ReDoS guard, while grandfathered/irregular tags stay rejected
+- **Status:** Accepted (v0.234)
 
 **Context.** [#909](https://github.com/accuser/bynk/issues/909) grounded a
 narrower gap ADR 0279 named out of scope: `LocaleTag`'s refinement —
