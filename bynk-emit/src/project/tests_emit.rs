@@ -816,6 +816,15 @@ fn emit_integration_module(
     // and boundary-codec paths. What those reach for is recorded here as they emit
     // and injected into the import line as a post-pass, the same shape
     // `emit_project` and `emit_worker_entry` use.
+    //
+    // #917: a case body here can still call `Json.decode[T]`/`Json.encode` on a
+    // named type, and `lower_json_codec_call` still records the root on this
+    // `runtime_use` (it is gated on `cx.test_scaffold`, which this harness sets
+    // regardless). Nothing drains it — `emit_test_module`'s codec-closure pass is
+    // unit-tier-only — so a delegating call here is left exactly as broken as it
+    // was before this fix. Deliberate scope, per the issue's own hedge ("the
+    // driver path may already be correct — worth confirming rather than
+    // assuming"); not yet confirmed either way.
     let runtime_use = RuntimeUse::default();
     let sanitized = sanitise_suite(suite);
     let module_path = PathBuf::from(format!("tests/integration_{sanitized}.test.ts"));
@@ -3263,6 +3272,39 @@ fn attackable_contracts(
     Some((resolved, fns))
 }
 
+/// #917: the type-only namespace qualifier every named type reachable from
+/// `target_name` (or one of its `uses`) renders through inside the test module
+/// that targets it — a test module imports the target/`uses` commons only as
+/// a namespace (`import * as orders from …`), never inlining their
+/// declarations the way a `uses`r module's own production emission does, so
+/// *every* name here is foreign and needs one. The target's own name wins a
+/// collision against a `uses`d one, matching `synthetic_typed_commons_for_target`'s
+/// merge precedence.
+fn json_codec_qual_for_target(
+    target_name: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+) -> HashMap<String, String> {
+    let mut qual = HashMap::new();
+    if let Some(used) = unit_uses.get(target_name) {
+        for u in used {
+            let ns = u.replace('.', "_");
+            if let Some(table) = unit_tables.get(u) {
+                for n in table.types.keys() {
+                    qual.entry(n.clone()).or_insert_with(|| format!("{ns}."));
+                }
+            }
+        }
+    }
+    let target_ns = target_name.replace('.', "_");
+    if let Some(table) = unit_tables.get(target_name) {
+        for n in table.types.keys() {
+            qual.insert(n.clone(), format!("{target_ns}."));
+        }
+    }
+    qual
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_test_module(
     target_name: &str,
@@ -3286,6 +3328,11 @@ fn emit_test_module(
     // and injected into the import line as a post-pass, the same shape
     // `emit_project` and `emit_worker_entry` use.
     let runtime_use = RuntimeUse::default();
+    runtime_use.set_json_codec_qual(json_codec_qual_for_target(
+        target_name,
+        unit_tables,
+        unit_uses,
+    ));
     let _ = exports_visibility;
     let ext = import_ext.as_str();
     let mut out = String::new();
@@ -3616,6 +3663,45 @@ fn emit_test_module(
         );
         out.push_str(&attack_text);
         out.push('\n');
+    }
+
+    // #917: every case/property/stub/attack body above has now lowered, so every
+    // `Json.decode[T]`/`Json.encode` root it reached for is in hand. The unit
+    // this module targets (or one of its `uses`) exports `T` but no codec for
+    // it — generate the caller's own closure here, the same pattern #661 uses
+    // for a workers cross-context caller's consumed-boundary types. Plain
+    // `function` declarations hoist, and this is a pure append after every
+    // `module_smb` merge above, so it disturbs no earlier source-map offset.
+    let json_codec_roots = runtime_use.take_json_codec_roots();
+    if !json_codec_roots.is_empty() {
+        let synthetic = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+        let (codec_names, codec_insts) = crate::emitter::serialisation::collect_codec_closure(
+            &json_codec_roots,
+            &synthetic.types,
+        );
+        if !codec_names.is_empty() || !codec_insts.is_empty() {
+            // The helpers below always name `JsonValue`/`BoundaryError` in their
+            // own signatures, regardless of which arm (if any) the case bodies'
+            // own `Json.decode`/`Json.encode` calls happened to trip.
+            runtime_use.note_json_codec();
+            runtime_use.note_boundary_codec();
+            let qual = runtime_use.json_codec_qual();
+            crate::emitter::serialisation::emit_helpers_for_owner_qualified(
+                &mut out,
+                &codec_names,
+                &synthetic.types,
+                target_name,
+                &qual,
+                &runtime_use,
+            );
+            crate::emitter::serialisation::emit_generic_helpers_qualified(
+                &mut out,
+                &codec_insts,
+                &synthetic.types,
+                &qual,
+                &runtime_use,
+            );
+        }
     }
 
     // Module-level runner. v0.127: `only` filters to a single case/property by

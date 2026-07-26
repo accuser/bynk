@@ -1,0 +1,6 @@
+commons orders
+
+type Order = {
+  id: String,
+  qty: Int,
+}

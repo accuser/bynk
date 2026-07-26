@@ -1864,6 +1864,14 @@ fn lower_json_codec_call(
             && let Some(arg_ty) = cx.commons.expr_types.get(&args[0].span).cloned()
             && let Some(tref) = ty_to_type_ref(&arg_ty)
         {
+            // #917: a test-scaffold module's target/`uses` types export no codec
+            // of their own — record the root so the module that spliced this
+            // body in can generate its own `serialise_*`/`deserialise_*` closure,
+            // the same way a workers cross-context caller generates one for a
+            // consumed context's boundary types (#661).
+            if cx.test_scaffold {
+                cx.runtime_use.note_json_codec_root(tref.clone());
+            }
             let v = lower_expr(&args[0], stmts, cx);
             let ser = serialisation::serialise_expr(&tref, &v, cx.runtime_use);
             return Some(format!("JSON.stringify({ser})"));
@@ -1872,7 +1880,19 @@ fn lower_json_codec_call(
             && let Some(Ty::Result(t, _)) = cx.commons.expr_types.get(&e.span).cloned()
             && let Some(tref) = ty_to_type_ref(&t)
         {
-            let ts = ts_ty(&t);
+            // #917: in a test-scaffold module `T` may be foreign (owned by the
+            // suite target or one of its `uses`, never declared locally), so its
+            // TS type positions reach through the module's namespace qualifier —
+            // empty everywhere else, where this renders identically to `ts_ty`.
+            let ts = if cx.test_scaffold {
+                let qual = cx.runtime_use.json_codec_qual();
+                serialisation::ts_type_ref_qualified(&tref, &qual)
+            } else {
+                ts_ty(&t)
+            };
+            if cx.test_scaffold {
+                cx.runtime_use.note_json_codec_root(tref.clone());
+            }
             // #914: the wrapper below names `Result`, `JsonValue` and `JsonError`
             // in its own signature and body, whichever arm the inner deserialiser
             // takes — including the delegating ones, which record nothing. A

@@ -1876,6 +1876,19 @@ pub fn emit_generic_helpers_qualified(
     }
 }
 
+/// #917: the qualified TS type renderer, exposed for the `Json.decode[T]`
+/// wrapper — a test-scaffold module has no local declaration of the target
+/// type, so its `Result<T, JsonError>` signature and `as T` cast must reach
+/// it through the same type-only namespace (`qual`) the module's own
+/// caller-generated codec helpers use. `qual` is empty on every other emission
+/// path, where this renders identically to a bare type.
+pub fn ts_type_ref_qualified(
+    t: &TypeRef,
+    qual: &std::collections::HashMap<String, String>,
+) -> String {
+    ts_inner_type(t, qual)
+}
+
 fn ts_inner_type(t: &TypeRef, qual: &Qual) -> String {
     match t {
         // v0.20a: function types are confined to non-boundary positions
