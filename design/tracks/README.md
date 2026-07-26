@@ -88,9 +88,9 @@ review and merged 55 seconds later with no review (`reviews: []`) — the
 "ready for review" assertion that §3's questions are closed was never
 tested, so they remain genuinely open despite the doc being committed; its
 Settling phase is the step-2 carve-out above, not a formality, until a
-re-settling PR closes them for real. Its own Status line is stale for the
-same reason (still reads "not yet landed via a settling draft PR" — a fix
-that belongs in that re-settling PR, not here).)
+re-settling PR actually closes §3 (#924 fixed the doc's stale Status line
+and a false cited precedent ahead of that, but did not close any of the
+open questions themselves).)
 
 ## Retired tracks
 
