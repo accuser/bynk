@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **431** codes in total.
+There are **432** codes in total.
 
 ## Agents
 
@@ -58,6 +58,7 @@ There are **431** codes in total.
 | `bynk.context.external_construction` | A context-owned type was constructed from outside that context. |  |
 | `bynk.context.external_provider` | A bodiless (external) provider was declared outside an `adapter`. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |
 | `bynk.context.opaque_inspection` | An opaquely-exported type was inspected from outside its context. |  |
+| `bynk.context.rebrand_construction` | A `uses`-sourced commons record or sum type was constructed directly inside a context, where the emitter's per-context rebrand leaves its constructors out of scope. |  |
 
 ## Contracts
 

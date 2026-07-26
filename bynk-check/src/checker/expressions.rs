@@ -1316,6 +1316,9 @@ pub(crate) fn nullary_variant_ty(
     expected: Option<&Ty>,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
+    if reject_rebrand_construction(&owner.name.name, span, ctx) {
+        return None;
+    }
     if owner.type_params.is_empty() {
         return Some(named_ty(owner));
     }
@@ -1351,6 +1354,9 @@ pub(crate) fn check_variant_construction(
     let TypeBody::Sum(s) = &owner.body else {
         return None;
     };
+    if reject_rebrand_construction(&owner.name.name, span, ctx) {
+        return None;
+    }
     let variant = s.variants.iter().find(|v| v.name.name == variant_name)?;
     if variant.payload.len() != args.len() {
         ctx.errors.push(
@@ -2109,17 +2115,32 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
         if let Some(eff_e) = effect_result {
             // v0.154 (ADR 0178): the error propagates as-is when compatible, or
             // via a declared embedding (`eff_e embeds e as V`) that `?` auto-wraps.
-            if !compatible(e, &eff_e) && embedding_for(&eff_e, e, &ctx.input.types).is_none() {
-                ctx.errors.push(CompileError::new(
-                    "bynk.types.question_error_mismatch",
-                    span,
-                    format!(
-                        "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Effect[Result[_, {}]]` (and no `embeds` clause converts it)",
-                        e.display(),
-                        eff_e.display()
-                    ),
-                ));
-                return None;
+            if !compatible(e, &eff_e) {
+                match embedding_for(&eff_e, e, &ctx.input.types) {
+                    Some((sum_name, _)) => {
+                        // #907: the emitter lowers this auto-wrap to a real
+                        // runtime `SumType.Variant(...)` reference (`embed_conversion`
+                        // in `bynk-emit/src/emitter/lower.rs`) — the same rebrand
+                        // hazard as an explicit variant construction, just with no
+                        // source-level construction site for the checks above to
+                        // catch. Gate it here too.
+                        if reject_rebrand_construction(&sum_name, span, ctx) {
+                            return None;
+                        }
+                    }
+                    None => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.types.question_error_mismatch",
+                            span,
+                            format!(
+                                "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Effect[Result[_, {}]]` (and no `embeds` clause converts it)",
+                                e.display(),
+                                eff_e.display()
+                            ),
+                        ));
+                        return None;
+                    }
+                }
             }
             return Some((**t).clone());
         }
@@ -2136,17 +2157,26 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
         );
         return None;
     };
-    if !compatible(e, ret_e) && embedding_for(ret_e, e, &ctx.input.types).is_none() {
-        ctx.errors.push(CompileError::new(
-            "bynk.types.question_error_mismatch",
-            span,
-            format!(
-                "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Result[_, {}]` (and no `embeds` clause converts it)",
-                e.display(),
-                ret_e.display()
-            ),
-        ));
-        return None;
+    if !compatible(e, ret_e) {
+        match embedding_for(ret_e, e, &ctx.input.types) {
+            Some((sum_name, _)) => {
+                if reject_rebrand_construction(&sum_name, span, ctx) {
+                    return None;
+                }
+            }
+            None => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.question_error_mismatch",
+                    span,
+                    format!(
+                        "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Result[_, {}]` (and no `embeds` clause converts it)",
+                        e.display(),
+                        ret_e.display()
+                    ),
+                ));
+                return None;
+            }
+        }
     }
     Some((**t).clone())
 }
@@ -2246,6 +2276,47 @@ pub(crate) fn check_record_spread(
         }
     }
     Some(base_ty)
+}
+
+/// #907: a context that `uses` a commons sum type only ever sees that type
+/// rebranded on emission (`emit_context_rebrands` in `bynk-emit`) — the
+/// rebrand re-exports the public name as a *type* alias, never a value, so
+/// the type's own variant constructors are not in scope there. Checking this
+/// in `bynk-check` catches what would otherwise be a clean `bynkc check`
+/// followed by a `tsc` failure (TS2693) on the emitted output. Called from
+/// every site that resolves to a runtime `SumType.Variant(...)` reference in
+/// the emitted output: explicit construction (a bare `Text(...)` or
+/// qualified `MessageArg.Text(...)`) *and* a `?`-operator declared-embedding
+/// auto-wrap (ADR 0178's `embeds E as V`, lowered by `embed_conversion` in
+/// `bynk-emit/src/emitter/lower.rs`) — the latter has no source-level
+/// construction expression at all, so it needs its own call site rather than
+/// falling out of `check_variant_construction`/`nullary_variant_ty`.
+///
+/// Record-literal construction of a `uses`-sourced commons record type has
+/// no such hazard and is *not* gated here: `lower_record_construction`
+/// (`bynk-emit/src/emitter/lower.rs`) never emits the type name at all — a
+/// record literal lowers to a plain structural `{ field: value, ... }`
+/// object, so the type-only rebrand never surfaces at the construction site.
+/// Refined/opaque types are likewise unaffected by the sum-specific gate
+/// below — the emitter re-exports a real value (`.of`/`.unsafe`) for those.
+fn reject_rebrand_construction(type_name: &str, span: Span, ctx: &mut Ctx) -> bool {
+    if !ctx.input.is_context || !ctx.input.uses_commons_type_names.contains(type_name) {
+        return false;
+    }
+    ctx.errors.push(
+        CompileError::new(
+            "bynk.context.rebrand_construction",
+            span,
+            format!(
+                "cannot construct `{type_name}` here — its constructors are not in scope in this context"
+            ),
+        )
+        .with_note(
+            "this type is `uses`-sourced from a commons and is rebranded per-context on \
+             emission; construct it through that commons's own builder function(s) instead",
+        ),
+    );
+    true
 }
 
 pub(crate) fn check_record_construction(

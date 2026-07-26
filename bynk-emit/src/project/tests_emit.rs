@@ -747,6 +747,9 @@ fn check_integration_case_body(
         cross_context: cross_context.clone(),
         agents: HashMap::new(),
         imported_from: HashMap::new(),
+        // Test-scaffold body, not a real context emission — never rebranded.
+        is_context: false,
+        uses_commons_type_names: HashSet::new(),
     };
 
     let unit_span = case.span;
@@ -3178,6 +3181,10 @@ fn build_privileged_resolved(
         cross_context,
         agents: agents_for_resolved,
         imported_from: HashMap::new(),
+        // "Privileged" test/stub-body resolved — deliberately relaxed, not a
+        // real context emission subject to the rebrand.
+        is_context: false,
+        uses_commons_type_names: HashSet::new(),
     };
     Some((resolved, ()))
 }

@@ -1,0 +1,21 @@
+---
+#907: a context that `uses` a commons sum type never sees that type's
+variant constructors as values — the emitter's per-context rebrand
+re-exports the public name as a type alias only (ADR 0256). Constructing a
+variant directly here must be rejected at `check` time, not left to surface
+as a `tsc` failure on the emitted output. Covers both a free `fn` body and a
+service handler body — the two independent paths the checker runs.
+---
+context app.main
+
+uses geo.shapes
+
+fn unitCircle() -> Shape {
+  Circle(1.0)
+}
+
+service shapes {
+  on call() -> Effect[Shape] {
+    Effect.pure(Square(2.0))
+  }
+}

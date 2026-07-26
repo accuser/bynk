@@ -71,6 +71,22 @@ pub struct ResolvedCommons {
     /// first-party free functions at their call sites. Empty in single-file
     /// mode and in synthetic handler-validation resolveds.
     pub imported_from: HashMap<String, String>,
+    /// True iff this unit is a `context` (as opposed to a commons, adapter, or
+    /// test/integration scaffold). `bynk-check` has no dependency on
+    /// `bynk-emit`'s `UnitKind`, so callers set this directly from their own
+    /// unit-kind knowledge. Used to gate the context-rebrand construction
+    /// check (#907): only a context's emission rebrands a `uses`-sourced
+    /// commons sum type's variant constructors out of value scope.
+    pub is_context: bool,
+    /// Names of types brought into scope via `uses` of a *commons*
+    /// specifically (as opposed to a local declaration, or a type surfaced
+    /// via `consumes`). Mirrors the exact predicate `emit_context_rebrands`
+    /// (`bynk-emit/src/emitter.rs`) uses to decide which names it rebrands:
+    /// `imported_from_kind.get(name) == Some(UnitKind::Commons)`. A type
+    /// surfaced via `consumes` (a capability signature from an adapter or
+    /// another context) is *not* rebranded and must not be gated by #907's
+    /// check — only this narrower set may be.
+    pub uses_commons_type_names: std::collections::HashSet<String>,
 }
 
 /// Static information about the consuming context: the set of contexts it
@@ -376,6 +392,10 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             agents: HashMap::new(),
             // Single-file mode has no `uses`-imported functions.
             imported_from: HashMap::new(),
+            // Single-file mode has no `uses` at all — the rebrand this flag
+            // gates is unreachable here.
+            is_context: false,
+            uses_commons_type_names: HashSet::new(),
         })
     } else {
         Err(errors)
