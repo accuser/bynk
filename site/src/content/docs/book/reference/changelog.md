@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.233.5** | A test-scaffold module's `Json.decode[T]`/`Json.encode` on a named record now generates its own `serialise_*`/`deserialise_*` closure and namespace-qualifies the type, instead of emitting a call to a codec the unit never exports and a bare type name the module never declares |
 | **v0.233.4** | An inlined boundary codec, or a `Json.decode[T]`, reaching a Worker's `compose.ts` or a test-scaffold module now imports the runtime helpers and types it names, instead of emitting TypeScript that references an unimported name |
 | **v0.233.3** | An adapter-declared package name or version range carrying a control character no longer emits an invalid `package.json`; conditional runtime imports are decided from what emission referenced rather than by scanning the generated text |
 | **v0.233.2** | The editor now hovers and completes the first-party `bynk.locale` / `bynk.locale.types` surface (`LocaleTag`, `Message`, `render`, `message`, the `with*` builders); the hand-maintained per-consumer source lists are unified into one `firstparty::FIRSTPARTY_SOURCES` with a drift guard so a new first-party commons cannot be silently omitted again |
