@@ -380,7 +380,7 @@ Well-formedness: §5.
 {{#grammar capability_op}}
 
 One operation in a capability: `fn`, a name, an optional `[T, …]` type-parameter
-list (v0.234, ADR 0280), parameters, `->`, and a return type — no body. A type
+list (v0.235, ADR 0281), parameters, `->`, and a return type — no body. A type
 parameter is resolved only from an explicit type argument at the call site
 (`Cap.op[SomeType](…)`), never inferred. Well-formedness: §5.
 

@@ -1,0 +1,19 @@
+---
+#909: the variant-subtagged locale renders its own translation, and an
+undeclared locale still falls back to the reference — proving
+`"ca-valencia"` flows end to end as a real declared locale, not just as
+parseable syntax.
+---
+suite app.bundle {
+  case "the variant-subtagged locale renders its own translation" {
+    expect render("ca-valencia", withText(message("greeting"), "name", "Anna")) == "Bon dia, Anna!"
+  }
+
+  case "the reference locale still renders its own" {
+    expect render("ca", withText(message("greeting"), "name", "Anna")) == "Hola, Anna!"
+  }
+
+  case "an undeclared locale falls back to the reference" {
+    expect render("es", withText(message("greeting"), "name", "Anna")) == "Hola, Anna!"
+  }
+}

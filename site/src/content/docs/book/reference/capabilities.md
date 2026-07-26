@@ -50,7 +50,7 @@ a declared-but-unused capability is a warning (`bynk.given.unused_capability`).
 
 ## Generic operations
 
-A capability operation may declare its own type parameter (v0.234, ADR 0280) —
+A capability operation may declare its own type parameter (v0.235, ADR 0281) —
 useful when the value it hands back is of whatever type the *calling* handler
 determines, not a type the capability's author can know ahead of time:
 

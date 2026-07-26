@@ -582,7 +582,7 @@ the same dependency-cycle check.
 
 {{#grammar-semantics given_clause}}
 
-**A capability operation's own type parameter (v0.234, ADR 0280).** A
+**A capability operation's own type parameter (v0.235, ADR 0281).** A
 `capability_op`'s optional `[T, …]` is resolved only from an explicit type
 argument at the call site (`Cap.op[SomeType](…)`) — never inferred from the
 arguments or the expected type. Omitting it where no parameter's type mentions

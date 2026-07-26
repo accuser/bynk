@@ -486,7 +486,7 @@ module MUST `export`, and `implements <Interface>` against the generated
 interface is the contract between the two halves, checked by the `tsc --strict`
 gate ([§8.4](/book/spec/compilation-model/#84-build-pipeline--conformance-to-typescript)).
 
-A capability operation's own type parameter (v0.234, ADR 0280) emits as a
+A capability operation's own type parameter (v0.235, ADR 0281) emits as a
 **genuine generic interface method** — `dedup<T>(key: string): Promise<Option<T>>`
 — not an erased/monomorphised one, since the implementing class is
 hand-authored TypeScript, not compiler-generated. Unlike a generic *function*

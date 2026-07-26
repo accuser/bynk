@@ -1,6 +1,6 @@
-# 0280 — A capability operation may declare its own type parameter
+# 0281 — A capability operation may declare its own type parameter
 
-- **Status:** Accepted (v0.234)
+- **Status:** Accepted (v0.235)
 
 **Context.** A capability interface method could not declare its own type
 parameter: `capability_op` (`tree-sitter-bynk/grammar.js`) was a fixed

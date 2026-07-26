@@ -4,15 +4,24 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "../../runtime.js";
 
 /**
- * A validated locale identifier: `language[-Script][-REGION]`
- * (e.g. `en`, `pt-BR`, `zh-Hans-CN`).
+ * A well-formed BCP-47 language tag: `language[-extlang][-Script][-REGION]
+ * [-variant]*[-extension]*[-privateuse]`, or a standalone `x-...` private-use
+ * tag (e.g. `en`, `pt-BR`, `zh-Hans-CN`, `zh-yue`, `ca-valencia`,
+ * `de-CH-1996`, `en-US-u-ca-buddhist`, `de-CH-x-phonebk`, `x-custom`).
+ * Casing is canonical by construction: language/extlang/variant/extension/
+ * private-use lowercase, script Titlecase, region uppercase (or 3 digits).
+ * Grandfathered/irregular tags (`i-klingon`, `en-GB-oed`) don't fit this
+ * productive shape and are rejected. This checks well-formedness only, not
+ * registry membership — `en-abc` (a made-up extlang shape) is well-formed
+ * and accepted, and extlang position isn't restricted to a 2-letter primary
+ * the way RFC 5646 restricts it.
  */
 export type LocaleTag = string & { readonly __brand: "LocaleTag" };
 
 export const LocaleTag = {
   of(value: string): Result<LocaleTag, ValidationError> {
-    if (!new RegExp("^(?:" + "[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?" + ")$").test(value)) {
-      return Err({ field: "LocaleTag", message: "must match /[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?/", value });
+    if (!new RegExp("^(?:" + "(?:[a-z]{2,3}(?:-[a-z]{3}){0,3}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?(?:-(?:[a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*(?:-[a-wy-z0-9](?:-[a-z0-9]{2,8}){1,8})*(?:-x(?:-[a-z0-9]{1,8}){1,8})?|x(?:-[a-z0-9]{1,8}){1,8})" + ")$").test(value)) {
+      return Err({ field: "LocaleTag", message: "must match /(?:[a-z]{2,3}(?:-[a-z]{3}){0,3}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?(?:-(?:[a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*(?:-[a-wy-z0-9](?:-[a-z0-9]{2,8}){1,8})*(?:-x(?:-[a-z0-9]{1,8}){1,8})?|x(?:-[a-z0-9]{1,8}){1,8})/", value });
     }
     return Ok(value as LocaleTag);
   },
