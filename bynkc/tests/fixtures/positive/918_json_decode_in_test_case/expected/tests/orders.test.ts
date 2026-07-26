@@ -38,10 +38,10 @@ async function test_decodes_a_base_type() {
         switch (__d.tag) {
           case "Ok": {
             const n = __d.value;
-            return __bynkExpect((double(n) === 84), "tests/orders.test.bynk:19:23", 1067, 1082, "expect double(n) == 84");
+            return __bynkExpect((double(n) === 84), "tests/orders.test.bynk:17:23", 923, 938, "expect double(n) == 84");
           }
           case "Err": {
-            return __bynkExpect((false), "tests/orders.test.bynk:20:24", 1106, 1111, "expect false");
+            return __bynkExpect((false), "tests/orders.test.bynk:18:24", 962, 967, "expect false");
           }
         }
         throw new Error("non-exhaustive match");

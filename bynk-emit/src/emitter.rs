@@ -2462,17 +2462,23 @@ pub(crate) const BOUNDARY_CODEC_RUNTIME_IMPORTS: &str =
 /// A sibling group rather than part of [`BOUNDARY_CODEC_RUNTIME_IMPORTS`]: the
 /// producer is the wrapper, not the codec, and it names these whichever arm the
 /// inner deserialiser takes — including the delegating ones, which set no
-/// boundary-codec flag at all. `Json.encode` needs nothing (it lowers to a bare
-/// `JSON.stringify`).
+/// boundary-codec flag at all. `Json.encode` needs nothing for its own wrapper
+/// text either (it lowers to a bare `JSON.stringify`).
 ///
-/// **Known gap, not closed here (issue #917).** The delegating arm is broken in a
-/// test-scaffold module for an unrelated reason: `Json.decode[SomeRecord]` in a
-/// test-case body lowers to `deserialise_SomeRecord(…)`, and no such codec is
-/// emitted anywhere — the unit module exports the record's interface and no
-/// codec, so the reference is unresolvable however the import list is built.
-/// That is a codec-emission defect, not an import-list one, and fixture
-/// `918_json_decode_in_test_case` takes the base-type direction deliberately
-/// rather than pretending the other one is sound.
+/// The delegating arm — `Json.decode[SomeRecord]` / `Json.encode(someRecord)`
+/// — used to be broken in a test-scaffold module for an unrelated reason
+/// (issue #917): the call lowers to a bare `deserialise_SomeRecord(…)` /
+/// `serialise_SomeRecord(…)`, and no such codec was emitted anywhere — the
+/// unit module exports the record's interface and no codec of its own. Fixed
+/// by generating the test module's *own* closure for every root a case body's
+/// `Json` call reaches for (`RuntimeUse::note_json_codec_root`, drained by
+/// `tests_emit.rs`'s `emit_test_module`), namespace-qualifying the TS type
+/// positions through the target/`uses` unit's own namespace import
+/// (`RuntimeUse::json_codec_qual`) — the same caller-generates-its-own-codec
+/// pattern `emit_consumed_context_helpers` uses for a workers cross-context
+/// caller's consumed-boundary types (#661). See
+/// `918_json_decode_in_test_case` (base type, delegation-free) and
+/// `919_json_decode_named_record_in_test_case` (named record, delegating).
 pub(crate) const JSON_CODEC_RUNTIME_IMPORTS: &str =
     ", Ok, Err, type Result, type JsonValue, type JsonError";
 

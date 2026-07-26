@@ -18,6 +18,15 @@
 //! last two; they exist for the module kinds that curate their runtime import
 //! list — a Worker's `compose.ts` and the test-scaffold modules.
 //!
+//! #917 adds a fifth, differently-shaped piece of state, riding this same
+//! shared reference for the same reason: a test-scaffold module's `Json.decode`/
+//! `Json.encode` on a named type has no local codec to delegate to (the unit it
+//! imports exports the type but not a codec for it), so the module generates its
+//! own — the `json_codec_qual`/`json_codec_roots` fields carry the namespace a
+//! foreign type's TS positions render through and the roots its bodies reached
+//! for, respectively. Not a runtime-*helper* reference like the four flags
+//! above, but the same "note during lowering, decide after" shape.
+//!
 //! The condition is "did emission actually reference it", which is a fact only
 //! emission knows. This type is how that fact travels: the producers call
 //! [`RuntimeUse::note_bytes`] / [`RuntimeUse::note_icu`] as they emit, and the
@@ -67,7 +76,10 @@
 //! restores `Sync` at no meaningful cost and leaves every call site reading the
 //! same — do that rather than unpicking the shared-`&` design.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+
+use bynk_syntax::ast::TypeRef;
 
 /// Per-module accumulator of conditional runtime-helper references.
 ///
@@ -79,6 +91,19 @@ pub struct RuntimeUse {
     icu: Cell<bool>,
     boundary_codec: Cell<bool>,
     json_codec: Cell<bool>,
+    /// #917: for a test-scaffold module, the type-only namespace each
+    /// codec-eligible named type reaches through (`"Order" -> "orders."`) — the
+    /// module has no local declaration of its own, only a namespace import of
+    /// the suite's target (and its `uses`). Empty (the default) on every other
+    /// emission path, where every name renders bare.
+    json_codec_qual: RefCell<HashMap<String, String>>,
+    /// #917: the `Json.decode[T]`/`Json.encode` target type-refs a test-scaffold
+    /// module's case/property/stub bodies actually reached for, collected as they
+    /// lower. `emit_test_module` drains this once all bodies are lowered to
+    /// compute the codec closure those bodies need — the unit module they import
+    /// exports the type but no codec, so a test-scaffold module generates its own
+    /// (#661's caller-generates-its-own-codec pattern, applied to test scaffolding).
+    json_codec_roots: RefCell<Vec<TypeRef>>,
 }
 
 impl RuntimeUse {
@@ -104,6 +129,32 @@ impl RuntimeUse {
     /// of which arm the inner deserialiser takes.
     pub fn note_json_codec(&self) {
         self.json_codec.set(true);
+    }
+
+    /// #917: set once, up front, before any body lowers — the type-only
+    /// namespace qualifier a test-scaffold module's codec calls render foreign
+    /// named types through. A no-op default (empty map) everywhere else.
+    pub fn set_json_codec_qual(&self, qual: HashMap<String, String>) {
+        *self.json_codec_qual.borrow_mut() = qual;
+    }
+
+    /// The namespace qualifier a test-scaffold module's codec calls render
+    /// foreign named types through (empty on every other emission path).
+    pub fn json_codec_qual(&self) -> std::cell::Ref<'_, HashMap<String, String>> {
+        self.json_codec_qual.borrow()
+    }
+
+    /// #917: record a `Json.decode[T]`/`Json.encode` target type-ref a
+    /// test-scaffold body reached for, so the module that spliced it in can
+    /// generate the codec helper its delegating call needs.
+    pub fn note_json_codec_root(&self, t: TypeRef) {
+        self.json_codec_roots.borrow_mut().push(t);
+    }
+
+    /// Drain the accumulated `Json` codec roots — called once, after every
+    /// case/property/stub body in the module has lowered.
+    pub fn take_json_codec_roots(&self) -> Vec<TypeRef> {
+        std::mem::take(&mut *self.json_codec_roots.borrow_mut())
     }
 
     /// Whether the `Bytes` helpers must be imported.
