@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0283](0283-idempotency-key-scoping.md) | **Idempotency key scoping — the qualified handler path, not a hash** (v0.237) — Why the dedup/remember key is prefixed with the calling handler's own name rather than a source-span hash | Accepted (v0.237) |
 | [0282](0282-idempotency-capability-slice0.md) | **The `Idempotency` capability, slice 0 — two ops, not one, and why** (v0.236) — dedup/remember instead of a single closure-taking op; explicit type arguments always; call-site scoping deferred | Accepted (v0.236) |
 | [0281](0281-generic-capability-methods.md) | **A capability operation may declare its own type parameter** (v0.235) — `capability X { fn op[T](…) -> … }`, resolved only from an explicit call-site type argument; a generic op requires an external provider and cannot be stubbed | Accepted (v0.235) |
 | [0280](0280-locale-tag-bcp47-widen.md) | **`LocaleTag` widens to the productive BCP-47 grammar — variants, extensions, extlang, and private-use** (v0.234) — The refinement's `Matches` pattern grows past language[-Script][-REGION] to admit variants/extensions/extlang/private-use, bounded to satisfy the ReDoS guard, while grandfathered/irregular tags stay rejected | Accepted (v0.234) |

@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.236**.
+written against **v0.237**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.237.0** | Idempotency.dedup/remember scope the caller's key to the calling handler's own qualified name, so two unrelated handlers can't collide on the same literal key |
 | **v0.236.0** | The `Idempotency` capability — mechanical dedup for at-least-once delivery, slice 0 (in-memory provider) |
 | **v0.235.0** | A capability operation may declare its own type parameter (`capability X { fn op[T](…) -> … }`, ADR 0281), resolved only from an explicit call-site type argument (`X.op[SomeType](…)`) and emitted as a genuine generic TypeScript interface method; a generic operation requires an external (bodiless) provider and cannot be stubbed |
 | **v0.234.0** | `LocaleTag` widens past `language[-Script][-REGION]` to admit BCP-47 variants, extensions, and private-use subtags (`messages "ca-valencia"`, `messages "en-US-u-ca-buddhist"`, `messages "x-custom"`), while still rejecting grandfathered/irregular tags |

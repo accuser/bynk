@@ -1,11 +1,6 @@
----
-level: minor
-changelog: Idempotency.dedup/remember scope the caller's key to the calling handler's own qualified name, so two unrelated handlers can't collide on the same literal key
----
+# 0283 — Idempotency key scoping — the qualified handler path, not a hash
 
-## ADR: idempotency-key-scoping
-title: Idempotency key scoping — the qualified handler path, not a hash
-summary: Why the dedup/remember key is prefixed with the calling handler's own name rather than a source-span hash
+- **Status:** Accepted (v0.237)
 
 **Context.** [ADR 0282](0282-idempotency-capability-slice0.md) (§3.4, D)
 shipped slice 0 of the `Idempotency` capability without any automatic scoping
