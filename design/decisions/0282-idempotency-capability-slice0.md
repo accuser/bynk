@@ -1,11 +1,6 @@
----
-level: minor
-changelog: The `Idempotency` capability — mechanical dedup for at-least-once delivery, slice 0 (in-memory provider)
----
+# 0282 — The `Idempotency` capability, slice 0 — two ops, not one, and why
 
-## ADR: idempotency-capability-slice0
-title: The `Idempotency` capability, slice 0 — two ops, not one, and why
-summary: dedup/remember instead of a single closure-taking op; explicit type arguments always; call-site scoping deferred
+- **Status:** Accepted (v0.236)
 
 **Context.** The `Idempotency` capability track (spine #921,
 [`design/tracks/idempotency-capability.md`](../tracks/idempotency-capability.md))
