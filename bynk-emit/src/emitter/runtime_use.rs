@@ -1,18 +1,22 @@
 //! Which `runtime.ts` helpers an emitted module actually references.
 //!
 //! Most of the runtime import list is fixed (`Ok`, `Err`, `Some`, `None`, …),
-//! but three groups are conditional, because importing them unconditionally
+//! but four groups are conditional, because importing them unconditionally
 //! would put names in every module that most modules never use:
 //!
 //! - the `Bytes` helpers (`__bynkBytesEqual` and friends, v0.110 / ADR 0142),
 //!   emitted by the `Bytes` kernel, `==` on `Bytes`, and the boundary codecs;
 //! - the ICU formatters (`selectPluralArm`, `formatIcuNumber`, `formatIcuDate`,
 //!   #878), emitted by a `messages` bundle's `render`;
-//! - the boundary-codec trio (`Ok`, `Err`, `BoundaryError`, #914), which an
-//!   *inlined* deserialiser builds directly. Most modules import `Ok`/`Err`
-//!   unconditionally and never consult this; it exists for the two that curate
-//!   their runtime import list — a Worker's `compose.ts` and the test-scaffold
-//!   modules.
+//! - the boundary-codec group (`Ok`, `Err`, `Result`, `BoundaryError`, #914),
+//!   which an *inlined* deserialiser builds directly;
+//! - the JSON-codec group (`Ok`, `Err`, `Result`, `JsonValue`, `JsonError`,
+//!   #914), which the `Json.decode[T]` wrapper names in its own signature and
+//!   body, independently of which arm the inner deserialiser takes.
+//!
+//! Most modules import `Ok`/`Err`/`Result` unconditionally and never consult the
+//! last two; they exist for the module kinds that curate their runtime import
+//! list — a Worker's `compose.ts` and the test-scaffold modules.
 //!
 //! The condition is "did emission actually reference it", which is a fact only
 //! emission knows. This type is how that fact travels: the producers call
@@ -59,7 +63,7 @@
 //! now that it owns one — an `&EmitProjectCtx` can no longer cross a thread
 //! boundary. Nothing in the tree is parallel today, so this costs nothing, but
 //! per-unit emission is the obvious thing to parallelise, and that is when it
-//! will bite. Swapping both fields to `AtomicBool` with `Relaxed` ordering
+//! will bite. Swapping the fields to `AtomicBool` with `Relaxed` ordering
 //! restores `Sync` at no meaningful cost and leaves every call site reading the
 //! same — do that rather than unpicking the shared-`&` design.
 
@@ -74,6 +78,7 @@ pub struct RuntimeUse {
     bytes: Cell<bool>,
     icu: Cell<bool>,
     boundary_codec: Cell<bool>,
+    json_codec: Cell<bool>,
 }
 
 impl RuntimeUse {
@@ -94,14 +99,28 @@ impl RuntimeUse {
         self.boundary_codec.set(true);
     }
 
+    /// Record that the module emits the `Json.decode[T]` wrapper, whose
+    /// signature and body name `Result`, `JsonValue` and `JsonError` regardless
+    /// of which arm the inner deserialiser takes.
+    pub fn note_json_codec(&self) {
+        self.json_codec.set(true);
+    }
+
     /// Whether the `Bytes` helpers must be imported.
     pub fn bytes(&self) -> bool {
         self.bytes.get()
     }
 
-    /// Whether the `Ok` / `Err` / `BoundaryError` trio must be imported.
+    /// Whether the `Ok` / `Err` / `Result` / `BoundaryError` group must be
+    /// imported.
     pub fn boundary_codec(&self) -> bool {
         self.boundary_codec.get()
+    }
+
+    /// Whether the `Ok` / `Err` / `Result` / `JsonValue` / `JsonError` group
+    /// must be imported.
+    pub fn json_codec(&self) -> bool {
+        self.json_codec.get()
     }
 
     /// Whether the ICU formatting helpers must be imported.
@@ -114,7 +133,7 @@ impl RuntimeUse {
 mod tests {
     use super::*;
 
-    /// The type's contract, written down: the two flags are independent and a
+    /// The type's contract, written down: the flags are independent and a
     /// note latches. Everything else about this type is `Cell` behaviour and is
     /// not worth a test — the coverage that matters drives the real producers
     /// end-to-end (`emitter::conditional_runtime_import_tests`).

@@ -1,0 +1,23 @@
+-- #914: `Json.decode[T]` inside a test-case body. The wrapper it lowers to names
+-- `Result`, `JsonValue` and `JsonError` in its own signature and body, and the
+-- test module's runtime import list is emitted as a fixed set carrying none of
+-- them — so those must reach the import line, which is what this fixture holds.
+--
+-- A *base* type, deliberately: it inlines its deserialiser, so this also pins the
+-- boundary-codec group end-to-end in a test-scaffold module (917 trips only the
+-- `Bytes` flag).
+--
+-- The delegating direction — `Json.decode[SomeRecord]` — is **not** here, and not
+-- because it works. It lowers to a `deserialise_<T>` call, and for a test-scaffold
+-- module that codec is never emitted anywhere: the unit module exports the record
+-- interface and no codec, so the module fails to compile for a reason that has
+-- nothing to do with an import list. Filed as issue #917; see the note on
+-- `emitter::JSON_CODEC_RUNTIME_IMPORTS`.
+suite orders {
+  case "decodes a base type" {
+    match Json.decode[Int]("42") {
+      Ok(n) => expect double(n) == 84
+      Err(_) => expect false
+    }
+  }
+}

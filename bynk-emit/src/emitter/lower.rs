@@ -1873,6 +1873,12 @@ fn lower_json_codec_call(
             && let Some(tref) = ty_to_type_ref(&t)
         {
             let ts = ts_ty(&t);
+            // #914: the wrapper below names `Result`, `JsonValue` and `JsonError`
+            // in its own signature and body, whichever arm the inner deserialiser
+            // takes — including the delegating ones, which record nothing. A
+            // module that curates its import list (the test-scaffold modules)
+            // otherwise emits all three unimported.
+            cx.runtime_use.note_json_codec();
             let des = serialisation::deserialise_expr(&tref, "__j", "$", cx.runtime_use);
             let arg = lower_expr(&args[0], stmts, cx);
             return Some(format!(

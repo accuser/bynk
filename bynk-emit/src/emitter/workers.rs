@@ -8,13 +8,25 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
-use crate::emitter::RuntimeUse;
 use crate::emitter::http_handler_method_name;
 use crate::emitter::ts_ident;
 use crate::emitter::wrangler::{agent_binding_name, consumed_binding_name};
+use crate::emitter::{
+    BOUNDARY_CODEC_RUNTIME_IMPORTS, BYTES_RUNTIME_IMPORTS, JSON_CODEC_RUNTIME_IMPORTS, RuntimeUse,
+    inject_runtime_imports,
+};
 use crate::project::symbols::MessageBundleInfo;
 use crate::project::{ImportExt, LocaleNegotiationArgs, UnitTable};
 use bynk_syntax::ast::*;
+
+/// Where `compose.ts` imports the runtime from — it sits two levels below the
+/// out root (`<out>/workers/<worker>/compose.ts`).
+///
+/// Named because the emitted import line and the post-pass that injects into it
+/// (#914) must agree exactly: [`inject_runtime_imports`] anchors on the specifier
+/// verbatim, so two drifting literals would silently stop injecting rather than
+/// fail loudly — the anchor-drift failure v0.176 (#642) already hit once.
+const COMPOSE_RUNTIME_SPECIFIER: &str = "../../runtime.js";
 
 #[allow(clippy::too_many_arguments)]
 pub fn emit_worker_compose(
@@ -143,12 +155,12 @@ pub fn emit_worker_compose(
                     && h.params.iter().any(|p| p.name.name == "body")
             });
     // #914: the sum wrapper's body codec is emitted *below* the import line, and
-    // for anything but a named type it inlines `Ok`/`Err`/`BoundaryError` (plus the
-    // base64 helpers for a `Bytes`). Those cannot be predicted from the handler
-    // signature without restating the codec's own arm table, so they are recorded
-    // as the codec emits and injected into the import line as a post-pass — the
-    // same shape `emit_project` and `emit_worker_entry` already use.
-    let runtime_use = crate::emitter::RuntimeUse::default();
+    // for anything but a named type it inlines `Ok`/`Err`/`Result`/`BoundaryError`
+    // (plus the base64 helpers for a `Bytes`). Those cannot be predicted from the
+    // handler signature without restating the codec's own arm table, so they are
+    // recorded as the codec emits and injected into the import line as a post-pass
+    // — the same shape `emit_project` and `emit_worker_entry` already use.
+    let runtime_use = RuntimeUse::default();
     let mut runtime_imports: Vec<&str> = Vec::new();
     if needs_kv {
         runtime_imports.push("type KVNamespace");
@@ -182,7 +194,7 @@ pub fn emit_worker_compose(
     }
     let _ = writeln!(
         out,
-        "import {{ {} }} from \"../../runtime.js\";",
+        "import {{ {} }} from \"{COMPOSE_RUNTIME_SPECIFIER}\";",
         runtime_imports.join(", ")
     );
     let _ = writeln!(out, "import * as handlers from \"./handlers.js\";");
@@ -392,20 +404,18 @@ pub fn emit_worker_compose(
     // #914: fold in whatever the wrappers' codecs actually reached for. Injected
     // into the existing runtime import line rather than emitted as a second one,
     // so the module keeps a single import from `runtime.js`.
-    let specifier = "../../runtime.js";
     if runtime_use.boundary_codec() {
-        out = crate::emitter::inject_runtime_imports(
+        out = inject_runtime_imports(
             out,
-            specifier,
-            crate::emitter::BOUNDARY_CODEC_RUNTIME_IMPORTS,
+            COMPOSE_RUNTIME_SPECIFIER,
+            BOUNDARY_CODEC_RUNTIME_IMPORTS,
         );
     }
+    if runtime_use.json_codec() {
+        out = inject_runtime_imports(out, COMPOSE_RUNTIME_SPECIFIER, JSON_CODEC_RUNTIME_IMPORTS);
+    }
     if runtime_use.bytes() {
-        out = crate::emitter::inject_runtime_imports(
-            out,
-            specifier,
-            crate::emitter::BYTES_RUNTIME_IMPORTS,
-        );
+        out = inject_runtime_imports(out, COMPOSE_RUNTIME_SPECIFIER, BYTES_RUNTIME_IMPORTS);
     }
     (out, needs_request)
 }

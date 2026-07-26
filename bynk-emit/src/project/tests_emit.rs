@@ -989,6 +989,13 @@ fn emit_integration_module(
             emitter::BOUNDARY_CODEC_RUNTIME_IMPORTS,
         );
     }
+    if runtime_use.json_codec() {
+        out = emitter::inject_runtime_imports(
+            out,
+            &runtime_import,
+            emitter::JSON_CODEC_RUNTIME_IMPORTS,
+        );
+    }
     if runtime_use.bytes() {
         out = emitter::inject_runtime_imports(out, &runtime_import, emitter::BYTES_RUNTIME_IMPORTS);
     }
@@ -3674,6 +3681,13 @@ fn emit_test_module(
             out,
             &runtime_import,
             emitter::BOUNDARY_CODEC_RUNTIME_IMPORTS,
+        );
+    }
+    if runtime_use.json_codec() {
+        out = emitter::inject_runtime_imports(
+            out,
+            &runtime_import,
+            emitter::JSON_CODEC_RUNTIME_IMPORTS,
         );
     }
     if runtime_use.bytes() {
