@@ -66,6 +66,7 @@ each track's spine issue; this table is deliberately just the map.
 | Track doc | Spine issue | Phase | Theme |
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
+| [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Settling (open design questions not yet closed — see doc §3) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §12 |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -77,7 +78,11 @@ settling draft PR; `testing-the-boundary.md` (now retired) was the second;
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
-table.)
+table. `idempotency-capability.md`'s settling PR (#922) was merged while
+still in Draft — the "mark ready for review" step that normally asserts the
+open design questions are closed never happened, so its §3 questions remain
+genuinely open despite the doc being committed; treat its "Settling" phase
+as literal, not a formality.)
 
 ## Retired tracks
 
