@@ -70,7 +70,7 @@ each track's spine issue; this table is deliberately just the map.
 | Track doc | Spine issue | Phase | Theme |
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
-| [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Settling (open design questions not yet closed — see doc §3) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
+| [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -85,12 +85,11 @@ neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
 table. `idempotency-capability.md`'s settling PR (#922) was marked ready for
 review and merged 55 seconds later with no review (`reviews: []`) — the
-"ready for review" assertion that §3's questions are closed was never
-tested, so they remain genuinely open despite the doc being committed; its
-Settling phase is the step-2 carve-out above, not a formality, until a
-re-settling PR actually closes §3 (#924 fixed the doc's stale Status line
-and a false cited precedent ahead of that, but did not close any of the
-open questions themselves).)
+step-2 carve-out above applied to it for a time, since the "ready for
+review" assertion that §3's questions were closed had never actually been
+tested. A genuine re-settling pass (#924, #927) closed all four of §3's
+questions for real (three settled, one deferred to a future track) before
+slice 0 (#929) shipped, so the carve-out no longer applies to this row.)
 
 ## Retired tracks
 
