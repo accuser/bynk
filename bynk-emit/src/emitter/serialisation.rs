@@ -1229,6 +1229,24 @@ pub fn deserialise_expr_via(
     ns: &str,
     ru: &RuntimeUse,
 ) -> String {
+    // Every arm except the delegating ones — which call a `deserialise_<T>` in the
+    // module's own namespace — builds `Ok(…)` / `Err(… as BoundaryError)` inline.
+    // Recorded once here rather than per-arm: the delegating set is short and
+    // closed, the inlining set is long, and erring the other way emits a module
+    // that references an unimported name (#914). `Effect` recurses, so it lets the
+    // inner type decide.
+    if !matches!(
+        t,
+        TypeRef::Named(_)
+            | TypeRef::Result(..)
+            | TypeRef::Option(..)
+            | TypeRef::List(..)
+            | TypeRef::Map(..)
+            | TypeRef::App { .. }
+            | TypeRef::Effect(..)
+    ) {
+        ru.note_boundary_codec();
+    }
     match t {
         TypeRef::Named(id) => format!("{ns}deserialise_{}({json}, \"{path}\")", id.name),
         TypeRef::Result(..)

@@ -1,4 +1,5 @@
 use super::*;
+use crate::emitter::RuntimeUse;
 use crate::emitter::source_map::SourceMapBuilder;
 
 /// Render a type-ref in the same form the user wrote it, for diagnostics.
@@ -810,6 +811,12 @@ fn emit_integration_module(
     unit_tables: &HashMap<String, UnitTable>,
     cases: &[SystemCaseInput],
 ) -> Option<(PathBuf, String, Option<String>, RunnableTest)> {
+    // #914: the test-scaffold module's runtime import list is emitted below as a
+    // fixed set, but the bodies spliced into it lower through the ordinary `Bytes`
+    // and boundary-codec paths. What those reach for is recorded here as they emit
+    // and injected into the import line as a post-pass, the same shape
+    // `emit_project` and `emit_worker_entry` use.
+    let runtime_use = RuntimeUse::default();
     let sanitized = sanitise_suite(suite);
     let module_path = PathBuf::from(format!("tests/integration_{sanitized}.test.ts"));
     let mut out = String::new();
@@ -876,7 +883,7 @@ fn emit_integration_module(
 
     // Slice B: the test-only signer + per-route drivers for the target's http
     // service, and the set of http service names so the lowering calls a driver.
-    let http_support = emit_system_http_support(suite, unit_tables);
+    let http_support = emit_system_http_support(suite, unit_tables, &runtime_use);
     if !http_support.code.is_empty() {
         out.push_str(&http_support.code);
         out.push('\n');
@@ -927,6 +934,7 @@ fn emit_integration_module(
             http_support.type_ns.clone(),
             input.source,
             &input.rel_path,
+            &runtime_use,
         );
         let src_id = module_smb.add_source(input.map_source.clone(), input.source.to_string());
         let body_base = out.len();
@@ -970,6 +978,27 @@ fn emit_integration_module(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "module.ts".to_string());
     let source_map = module_smb.to_v3(&out, &module_file);
+    // #914: fold in whatever the spliced bodies actually reached for. After
+    // `to_v3`, and into the existing import line rather than a new one, so the map
+    // computed above stays valid — the same ordering `emit_project` relies on.
+    // `inject_runtime_imports` drops any binding the fixed list already carries.
+    if runtime_use.boundary_codec() {
+        out = emitter::inject_runtime_imports(
+            out,
+            &runtime_import,
+            emitter::BOUNDARY_CODEC_RUNTIME_IMPORTS,
+        );
+    }
+    if runtime_use.json_codec() {
+        out = emitter::inject_runtime_imports(
+            out,
+            &runtime_import,
+            emitter::JSON_CODEC_RUNTIME_IMPORTS,
+        );
+    }
+    if runtime_use.bytes() {
+        out = emitter::inject_runtime_imports(out, &runtime_import, emitter::BYTES_RUNTIME_IMPORTS);
+    }
     Some((
         module_path.clone(),
         out,
@@ -1022,16 +1051,9 @@ struct SystemHttpSupport {
 fn emit_system_http_support(
     target: &str,
     unit_tables: &HashMap<String, UnitTable>,
+    runtime_use: &RuntimeUse,
 ) -> SystemHttpSupport {
     use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
-    // NOTE: this file emits the harness module's runtime import list as a **fixed**
-    // set that has never included the `Bytes` helpers, so a `Bytes` crossing a
-    // system-test route emits an unimported `__bynkBytes*` — the same gap as
-    // `compose.ts`, in another place. It predates this accumulator (the
-    // `out.contains` scan it replaces never covered these modules either) and is
-    // unchanged by it; a throwaway keeps the behaviour identical rather than
-    // quietly widening the fix.
-    let runtime_use = crate::emitter::RuntimeUse::default();
     let mut http_services: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut declared: DeclaredRoutes = std::collections::HashSet::new();
     let mut route_body: RouteBodyMap = HashMap::new();
@@ -1134,7 +1156,7 @@ fn emit_system_http_support(
                         &p.type_ref,
                         &crate::emitter::ts_ident(&p.name.name),
                         &type_ns,
-                        &runtime_use,
+                        runtime_use,
                     );
                     (
                         format!("  const __body = JSON.stringify({ser});\n"),
@@ -1145,11 +1167,9 @@ fn emit_system_http_support(
             };
             // The response payload deserialiser: the `T` of `Effect[HttpResult[T]]`.
             let payload_deser = match strip_effect_httpresult(&h.return_type) {
-                Some(inner) => crate::emitter::serialisation::deserialise_ref_via(
-                    inner,
-                    &type_ns,
-                    &runtime_use,
-                ),
+                Some(inner) => {
+                    crate::emitter::serialisation::deserialise_ref_via(inner, &type_ns, runtime_use)
+                }
                 None => format!("{type_ns}deserialise_unit"),
             };
             // Driver params mirror the handler's params (path params, then body).
@@ -3260,6 +3280,12 @@ fn emit_test_module(
     import_ext: ImportExt,
     contracts: bool,
 ) -> Option<(PathBuf, String, Option<String>, RunnableTest)> {
+    // #914: the test-scaffold module's runtime import list is emitted below as a
+    // fixed set, but the bodies spliced into it lower through the ordinary `Bytes`
+    // and boundary-codec paths. What those reach for is recorded here as they emit
+    // and injected into the import line as a post-pass, the same shape
+    // `emit_project` and `emit_worker_entry` use.
+    let runtime_use = RuntimeUse::default();
     let _ = exports_visibility;
     let ext = import_ext.as_str();
     let mut out = String::new();
@@ -3409,6 +3435,7 @@ fn emit_test_module(
             unit_uses,
             unit_consumes,
             unit_consumes_aliases,
+            &runtime_use,
         ));
         out.push('\n');
     }
@@ -3465,6 +3492,7 @@ fn emit_test_module(
                 unit_consumes_aliases,
                 &parsed[i].source,
                 &rel_path,
+                &runtime_use,
             );
             // v0.70: merge this case's body checkpoints into the module map under
             // the case's `.bynk` source (a test group can span several files).
@@ -3521,6 +3549,7 @@ fn emit_test_module(
                     unit_consumes_aliases,
                     &parsed[i].source,
                     &rel_path,
+                    &runtime_use,
                 )
             } else {
                 emit_test_property_function(
@@ -3535,6 +3564,7 @@ fn emit_test_module(
                     unit_consumes_aliases,
                     &parsed[i].source,
                     &rel_path,
+                    &runtime_use,
                 )
             };
             out.push_str(&prop_text);
@@ -3582,6 +3612,7 @@ fn emit_test_module(
             unit_consumes,
             unit_consumes_aliases,
             &rep_rel_path,
+            &runtime_use,
         );
         out.push_str(&attack_text);
         out.push('\n');
@@ -3641,6 +3672,27 @@ fn emit_test_module(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "module.ts".to_string());
     let source_map = module_smb.to_v3(&out, &module_file);
+    // #914: fold in whatever the spliced bodies actually reached for. After
+    // `to_v3`, and into the existing import line rather than a new one, so the map
+    // computed above stays valid — the same ordering `emit_project` relies on.
+    // `inject_runtime_imports` drops any binding the fixed list already carries.
+    if runtime_use.boundary_codec() {
+        out = emitter::inject_runtime_imports(
+            out,
+            &runtime_import,
+            emitter::BOUNDARY_CODEC_RUNTIME_IMPORTS,
+        );
+    }
+    if runtime_use.json_codec() {
+        out = emitter::inject_runtime_imports(
+            out,
+            &runtime_import,
+            emitter::JSON_CODEC_RUNTIME_IMPORTS,
+        );
+    }
+    if runtime_use.bytes() {
+        out = emitter::inject_runtime_imports(out, &runtime_import, emitter::BYTES_RUNTIME_IMPORTS);
+    }
     Some((
         module_path.clone(),
         out,
@@ -3804,6 +3856,7 @@ fn emit_stub_class(
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    runtime_use: &RuntimeUse,
 ) -> String {
     let mut out = String::new();
     let cap = &rp.cap;
@@ -3912,6 +3965,7 @@ fn emit_stub_class(
                         unit_uses,
                         unit_consumes,
                         unit_consumes_aliases,
+                        runtime_use,
                     );
                     let vname = format!("__pv_{idx}_{i}");
                     out.push_str(&format!("    const {vname} = await (async () => {{\n"));
@@ -3939,6 +3993,7 @@ fn emit_stub_class(
                 unit_uses,
                 unit_consumes,
                 unit_consumes_aliases,
+                runtime_use,
             );
             for line in rhs_body.lines() {
                 out.push_str("      ");
@@ -3968,6 +4023,7 @@ fn emit_stub_rhs(
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    runtime_use: &RuntimeUse,
 ) -> String {
     const FAULT: &str = "throw new Error(\"bynk: injected capability fault (stubs … fails)\");";
     let lower = |e: &Expr| {
@@ -3980,6 +4036,7 @@ fn emit_stub_rhs(
             unit_uses,
             unit_consumes,
             unit_consumes_aliases,
+            runtime_use,
         )
     };
     match &clause.rhs {
@@ -4036,6 +4093,7 @@ fn lower_stub_value_block(
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    runtime_use: &RuntimeUse,
 ) -> String {
     let owning_unit = target_name.to_string();
     let mut typed = synthetic_typed_commons_for_target(&owning_unit, unit_tables, unit_uses);
@@ -4066,7 +4124,7 @@ fn lower_stub_value_block(
     let cross = bynk_check::resolver::CrossContextInfo::default();
     // v0.70: `stub` value scaffolding is not user test logic, so its source
     // map is discarded — it stays unmapped (a deliberate scope cut).
-    emitter::lower_block_to_async_body(&block, ret_type, &mut typed, &cross).0
+    emitter::lower_block_to_async_body(&block, ret_type, &mut typed, &cross, runtime_use).0
 }
 
 fn synthetic_typed_commons_for_target(
@@ -4441,6 +4499,7 @@ fn emit_test_case_function(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     source: &str,
     rel_path: &str,
+    runtime_use: &RuntimeUse,
 ) -> (String, SourceMapBuilder) {
     let _ = stubs;
     let mut out = String::new();
@@ -4499,6 +4558,7 @@ fn emit_test_case_function(
         test_agents,
         source,
         rel_path,
+        runtime_use,
     );
     // v0.70: splice the case body (line-by-line, indented) and merge its source-map
     // sub-builder into the case builder, line-anchored at the splice. The caller
@@ -5214,6 +5274,7 @@ fn emit_test_property_function(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     source: &str,
     rel_path: &str,
+    runtime_use: &RuntimeUse,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("async function {runner_name}() {{\n"));
@@ -5283,6 +5344,7 @@ fn emit_test_property_function(
             &TypeRef::Base(BaseType::Bool, w.span),
             &mut typed,
             &cross,
+            runtime_use,
         );
         out.push_str("    const __where = (__vals: any[]) => {\n");
         out.push_str(&format!("      {destructure}\n"));
@@ -5316,6 +5378,7 @@ fn emit_test_property_function(
         test_agents,
         source,
         rel_path,
+        runtime_use,
     );
     out.push_str("    const __body = async (__vals: any[]) => {\n");
     out.push_str(&format!("      {destructure}\n"));
@@ -5359,6 +5422,7 @@ fn emit_test_history_property_function(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     source: &str,
     rel_path: &str,
+    runtime_use: &RuntimeUse,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("async function {runner_name}() {{\n"));
@@ -5490,6 +5554,7 @@ fn emit_test_history_property_function(
         test_agents,
         source,
         rel_path,
+        runtime_use,
     );
     out.push_str("    const __body = async (__run: any[]) => {\n");
     out.push_str(&format!("      const {run_var} = __run;\n"));
@@ -5539,6 +5604,7 @@ fn emit_contract_attack_function(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     rel_path: &str,
+    runtime_use: &RuntimeUse,
 ) -> String {
     let FnName::Free(fname) = &f.name else {
         return String::new();
@@ -5606,6 +5672,7 @@ fn emit_contract_attack_function(
             &TypeRef::Base(BaseType::Bool, w.span),
             &mut typed,
             &cross,
+            runtime_use,
         );
         out.push_str("    const __where = (__vals: any[]) => {\n");
         out.push_str(&format!("      {destructure}\n"));

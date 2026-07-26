@@ -1,0 +1,5 @@
+commons blobs
+
+fn size(b: Bytes) -> Int {
+  b.length()
+}
