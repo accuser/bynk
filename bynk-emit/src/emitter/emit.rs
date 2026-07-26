@@ -1378,6 +1378,13 @@ pub(crate) fn emit_provider(
         if !p.given.is_empty() {
             cx.cap_deps_expr = "this.deps".to_string();
         }
+        // #934: a provider's own op body can itself call a `given` capability
+        // (e.g. a provider that dedups its own work via `Idempotency`).
+        cx.handler_scope = Some(format!(
+            "{}.provides.{}.{}",
+            ctx.commons_name, p.capability.name, op.name.name
+        ));
+        cx.in_bynk_unit = ctx.commons_name == "bynk";
         let async_tail = is_effectful_return(&op.return_type);
         emit_block_as_function_body_with_return(
             out,
@@ -1483,6 +1490,13 @@ pub(crate) fn emit_service(
             .iter()
             .map(|c| c.key().to_string())
             .collect::<HashSet<_>>();
+        // #934: the qualified handler name `Idempotency.dedup`/`remember` key
+        // scoping prefixes onto the developer-supplied key.
+        cx.handler_scope = Some(format!(
+            "{}.{}.{}",
+            ctx.commons_name, s.name.name, kind_name
+        ));
+        cx.in_bynk_unit = ctx.commons_name == "bynk";
         cx.local_agents = ctx.local_agents.clone();
         cx.agent_method_givens = ctx.agent_method_givens.clone();
         cx.set_rebrand_info(commons, ctx);
@@ -3040,6 +3054,19 @@ pub(crate) fn emit_agent(
             .iter()
             .map(|c| c.key().to_string())
             .collect::<HashSet<_>>();
+        // #934: mirrors the `method` name resolved below (all non-`method_name`
+        // agent handler kinds resolve to `"call"`), computed here so it's
+        // available before the body lowers.
+        let scope_method = h
+            .method_name
+            .as_ref()
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| "call".to_string());
+        cx.handler_scope = Some(format!(
+            "{}.{}.{}",
+            ctx.commons_name, a.name.name, scope_method
+        ));
+        cx.in_bynk_unit = ctx.commons_name == "bynk";
         cx.local_agents = ctx.local_agents.clone();
         cx.agent_method_givens = ctx.agent_method_givens.clone();
         cx.set_rebrand_info(commons, ctx);
@@ -3519,6 +3546,12 @@ fn emit_ws_do_method(
         .iter()
         .map(|c| c.key().to_string())
         .collect::<HashSet<_>>();
+    // #934: the hosting agent + lifecycle method name (`open`/`message`/`close`).
+    cx.handler_scope = Some(format!(
+        "{}.{}.{}",
+        ctx.commons_name, agent.name.name, method
+    ));
+    cx.in_bynk_unit = ctx.commons_name == "bynk";
     cx.local_agents = ctx.local_agents.clone();
     cx.agent_method_givens = ctx.agent_method_givens.clone();
     cx.set_rebrand_info(commons, ctx);

@@ -2696,6 +2696,24 @@ pub(crate) struct LowerCtx<'a> {
     /// v0.12: the receiver expression a capability call resolves against —
     /// `deps` in a handler body, `this.deps` in a composed provider body.
     cap_deps_expr: String,
+    /// #934: the calling handler's own qualified name (`<unit>.<service or
+    /// agent>.<handler>`, e.g. `shop.reserve.ordering.call`), set at every real
+    /// capability-call site — an ordinary service handler, an agent handler, a
+    /// composed provider op body, and a websocket lifecycle DO method. Read
+    /// only by the `Idempotency.dedup`/`remember` lowering, which prefixes the
+    /// developer-supplied key with it so two unrelated handlers using the same
+    /// literal key never collide (design/tracks/idempotency-capability.md
+    /// §3.4). `None` anywhere a capability call cannot occur (a plain method, a
+    /// free fn, an invariant/transition predicate, a static field initialiser).
+    pub handler_scope: Option<String>,
+    /// #934: true when the unit being emitted is the reserved first-party
+    /// `bynk` adapter itself. `bynk` is a reserved namespace, so a capability
+    /// literally named `Idempotency` declared *in this unit* is unambiguously
+    /// the real one — used alongside `CrossContextInfo::flattened_caps` (the
+    /// consumed-from-elsewhere case) to confirm a flattened `Idempotency`
+    /// call is genuinely first-party before scoping its key, not a same-named
+    /// capability some other adapter or context happens to declare.
+    pub in_bynk_unit: bool,
     /// v0.47: when lowering a Bearer handler body, the `by` binder whose
     /// `.identity` is threaded through `deps` (so `<binder>.identity` lowers to
     /// `deps.identity` rather than the unit-value `undefined`).
@@ -2808,6 +2826,8 @@ impl<'a> LowerCtx<'a> {
             agents_instantiated: false,
             is_receiver_temps: HashMap::new(),
             cap_deps_expr: "deps".to_string(),
+            handler_scope: None,
+            in_bynk_unit: false,
             deps_identity_binder: None,
             actor_sum_binder: None,
             assert_loc: None,

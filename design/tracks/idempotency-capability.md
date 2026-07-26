@@ -1,6 +1,7 @@
 # The `Idempotency` capability — mechanical dedup for at-least-once delivery
 
-- **Status:** Slicing — slice 0 shipped ([#929](https://github.com/accuser/bynk/issues/929)).
+- **Status:** Slicing — slice 0 shipped ([#929](https://github.com/accuser/bynk/issues/929)),
+  call-site key scoping shipped as a follow-up correction ([#934](https://github.com/accuser/bynk/issues/934)).
   Spine issue [#921](https://github.com/accuser/bynk/issues/921) open. §3.1, §3.2, and §3.4
   were genuinely argued and settled during this doc's settling pass (§3.1 depended on
   [#926](https://github.com/accuser/bynk/issues/926)/[ADR 0281](../decisions/0281-generic-capability-methods.md),
@@ -10,9 +11,12 @@
   compile — `bynk.types.function_at_boundary` — so the shipped capability is two ops,
   `dedup`/`remember`; see `design/pending/idempotency-capability-slice0.md` pre-stamp for
   the full account) and one deliberate deferral (§3.4's call-site scoping did not ship with
-  slice 0). Scopes issue [#554](https://github.com/accuser/bynk/issues/554) ("Ship the
-  `Idempotency` capability ahead of the full Events track") down to its
-  `Idempotency`-capability item.
+  slice 0). That deferral has since closed: call-site scoping shipped as its own follow-up
+  (not a slice of this track — a correctness fix to the already-shipped mechanism), prefixing
+  every key with the calling handler's own qualified name; see
+  `design/pending/idempotency-key-scoping.md` pre-stamp for the full account. Scopes issue
+  [#554](https://github.com/accuser/bynk/issues/554) ("Ship the `Idempotency` capability
+  ahead of the full Events track") down to its `Idempotency`-capability item.
 - **Realises:** `design/bynk-design-notes.md` §4 ("Idempotency as a system convention",
   lines 103–109) and §12 ("Handler-level idempotency via the `Idempotency` capability",
   lines 640–674) — the architectural commitment that at-least-once delivery (commands,
@@ -280,25 +284,36 @@ doesn't already know the codec's output format.
 
 **Decision — key scope is automatic at the call site, manual across callers.** The
 *effective* key the provider stores against is the developer-supplied string, prefixed
-with a compiler-synthesised, stable per-call-site identifier (e.g. derived from the
-`dedup` call's own source span) — free (compile-time only, no runtime cost, no new
-syntax), and it closes one real class of the §6 threat model for free: two unrelated
-`dedup` call sites can never collide even if a developer reuses an identical literal
-string at both, because the sites themselves are automatically distinguished. It does
-**not** close the other class §6 names — two *different callers of the same call site*
-(e.g. two tenants both invoking the same `reserve` handler) still collide if the
-developer-supplied string doesn't itself differentiate them. That part stays the caller's
-documented responsibility, same trade-off already accepted for `Sagas.compensate`
-targeting a non-idempotent operation (§13): no compiler enforcement, an explicit,
-reviewable call. Automatic call-site scoping narrows the burden; it doesn't remove it.
+with a compiler-synthesised, stable per-call-site identifier — free (compile-time only, no
+runtime cost, no new syntax), and it closes one real class of the §6 threat model for
+free: two unrelated `dedup` call sites can never collide even if a developer reuses an
+identical literal string at both, because the sites themselves are automatically
+distinguished. It does **not** close the other class §6 names — two *different callers of
+the same call site* (e.g. two tenants both invoking the same `reserve` handler) still
+collide if the developer-supplied string doesn't itself differentiate them. That part
+stays the caller's documented responsibility, same trade-off already accepted for
+`Sagas.compensate` targeting a non-idempotent operation (§13): no compiler enforcement, an
+explicit, reviewable call. Automatic call-site scoping narrows the burden; it doesn't
+remove it.
 
-**Not shipped in slice 0 (#929).** This decision itself stands, but slice 0 shipped
-without implementing it — it's the one piece of this whole track with no existing
-compiler mechanism to copy (a genuinely novel, `Idempotency`-specific emitter special
-case), and slice 0 was already proving a two-op mechanism correction (3.1) under real
-implementation pressure. The cross-call-site collision risk is therefore open, not
-closed, until a follow-up increment adds it — named here so it isn't mistaken for
-already-shipped protection.
+**Shipped as a follow-up ([#934](https://github.com/accuser/bynk/issues/934), not a slice
+of this track).** Slice 0 (#929) shipped without this piece — it was the one part of the
+whole track with no existing compiler mechanism to copy, and slice 0 was already proving a
+two-op mechanism correction (3.1) under real implementation pressure. The identifier is the
+*qualified handler path*, not a source-span hash: `<unit qualified name>.<service or agent
+name>.<handler name>` (e.g. `shop.reserve.ordering.call`), joined to the developer-supplied
+key with `::` inside a template literal. Chosen over hashing a call site's source span
+because auditing where a capability call can actually lower found the real site count much
+smaller than expected (four: an ordinary service handler, an agent handler, a composed
+provider's own op body, and a websocket lifecycle DO method — a plain method, a free fn,
+and an agent's `Cell` initialiser/invariant/transition predicates never populate
+`given`-capabilities and so can never reach one) — a span hash would need new plumbing at
+those same four sites regardless, so the handler-path form was chosen on readability alone,
+not a plumbing-cost difference. See
+`design/pending/idempotency-key-scoping.md` pre-stamp for the full account; proven against
+`bynkc/tests/fixtures/positive/934_idempotency_key_scoping` (two services plus an agent
+handler, all three calling `dedup`/`remember` with the identical literal key `"same-key"`,
+asserting the emitted prefix differs at all three).
 
 **Decision — eviction is lazy, matching `Cache`.** Reuses `Cache`'s shipped
 check-on-read model (decision 0113: expired entries reap at next access, no background
@@ -321,7 +336,12 @@ and its shape is now concrete end to end.
   lazy eviction per §3.4), proven against `bynkc/tests/fixtures/positive/924_idempotency_dedup_basic`
   — a real `tsc --strict` pass, not just golden-diffed. Shipped as **two** ops
   (`dedup`/`remember`), not the one originally settled — see 3.1's implementation
-  correction. Call-site scoping (§3.4) did **not** ship with this slice; still open.
+  correction. Call-site scoping (§3.4) did **not** ship with this slice; closed by the
+  follow-up below.
+- **Follow-up — SHIPPED ([#934](https://github.com/accuser/bynk/issues/934)).** Call-site
+  key scoping (§3.4): the qualified handler path, closing the cross-call-site collision
+  risk slice 0 shipped without. Not a slice of this track (a correctness fix to the
+  already-shipped mechanism, not new capability surface).
 - **Slice 1 (possible, not yet scoped) — event-subscriber sugar.** §12's `e.eventId`
   canonical-key pattern for event subscribers; whether this deserves special syntax or is
   just documented convention once slice 0 lands.
@@ -347,12 +367,15 @@ actually delivers.
   implicit in the doc's diff history.
 - **Durable-provider transactional participation** (3.3) — deferred; not this track's ADR.
   Belongs to whichever future track picks up the durable provider named in 3.2.
-- **`Idempotency`'s key shape** (3.4, settled; partially shipped) — `String`-typed keys,
-  positional call syntax (no labelled arguments), and lazy eviction matching `Cache` all
-  shipped with slice 0. Automatic compiler-synthesised call-site scoping did **not** ship
-  — still a genuine future ADR, not yet written. Records why "any expression" and
-  implicit generic serialisation were rejected in favour of an explicit `Json.encode(...)`
-  at the call site.
+- **`Idempotency`'s key shape** (3.4, settled; shipped) — `String`-typed keys, positional
+  call syntax (no labelled arguments), and lazy eviction matching `Cache` all shipped with
+  slice 0. Records why "any expression" and implicit generic serialisation were rejected in
+  favour of an explicit `Json.encode(...)` at the call site.
+- **Call-site key scoping — the qualified handler path** (3.4, shipped as a follow-up,
+  [#934](https://github.com/accuser/bynk/issues/934)) — shipped at
+  `design/pending/idempotency-key-scoping.md` (pre-stamp): why the handler-path prefix was
+  chosen over hashing a call site's source span, and the audit of exactly which emitter
+  sites can lower a capability call at all.
 
 ## 6. Threat model
 
@@ -372,27 +395,27 @@ collision receives the *first caller's* cached outcome instead of executing thei
 request — a cross-tenant data leak if the outcome carries tenant-specific data, and a
 correctness bug even when it doesn't (wrong operation silently skipped).
 
-**Where verification happens — settled in 3.4, not yet shipped.** The cross-call-site
-class is *designed* to be closed automatically and for free: §3.4's decision prefixes
-every key with a compiler-synthesised, per-call-site identifier, so two different `dedup`
-call sites can never collide regardless of what string a developer picks — but slice 0
-(#929) shipped without implementing this, so as of slice 0 the cross-call-site class is
-**still open** in the running compiler, pending a follow-up increment. The cross-caller,
-same-call-site class is **not** closed by the mechanism even once scoping ships — it stays the caller's documented
-responsibility (the design notes' own framing: "the caller supplies a deterministic
-identifier derived from its own context"), the same trade-off already accepted for
-`Sagas.compensate` targeting a non-idempotent operation: no compiler enforcement, an
-explicit, reviewable call that "gives the reviewer somewhere to look" (§13). This applies
-to the in-memory provider now and will apply just as much to a future durable provider
-(§3.2) — the stakes rise with durability (a longer retention window, crash survival), but
-the mechanism and its accepted gap are the same.
+**Where verification happens — settled and shipped in 3.4.** The cross-call-site class is
+*designed* to be closed automatically and for free: §3.4's decision prefixes every key with
+the calling handler's own qualified name, so two different `dedup` call sites can never
+collide regardless of what string a developer picks. Slice 0 (#929) shipped without this;
+the follow-up ([#934](https://github.com/accuser/bynk/issues/934)) closed it, so the
+cross-call-site class is now closed in the running compiler, not merely designed to be. The
+cross-caller, same-call-site class is **not** closed by the mechanism — it stays the
+caller's documented responsibility (the design notes' own framing: "the caller supplies a
+deterministic identifier derived from its own context"), the same trade-off already
+accepted for `Sagas.compensate` targeting a non-idempotent operation: no compiler
+enforcement, an explicit, reviewable call that "gives the reviewer somewhere to look"
+(§13). This applies to the in-memory provider now and will apply just as much to a future
+durable provider (§3.2) — the stakes rise with durability (a longer retention window, crash
+survival), but the mechanism and its accepted gap are the same.
 
 ## 7. Slice status
 
 - [x] Slice 0 — `dedup`/`remember` + the in-memory provider, shipped (#929)
 - [ ] Slice 1 — event-subscriber sugar (unscoped)
-- [ ] Follow-up (unscoped, not a slice of this track) — call-site key scoping (§3.4),
-  deferred out of slice 0
+- [x] Follow-up (not a slice of this track) — call-site key scoping (§3.4), shipped
+  ([#934](https://github.com/accuser/bynk/issues/934))
 
 ## 8. Done when
 
@@ -406,9 +429,10 @@ the mechanism and its accepted gap are the same.
   control-flow construct introduced for `Idempotency` itself.
 - [x] `String` keys, positional call syntax, and `Cache`-style lazy eviction (3.4) ship as
   specified.
-- [ ] Compiler-synthesised call-site scoping (3.4) — **not shipped**; the cross-call-site
-  collision class remains open pending a follow-up increment, not closed by construction
-  as originally intended.
+- [x] Call-site key scoping (3.4) — shipped as the qualified handler path
+  ([#934](https://github.com/accuser/bynk/issues/934)); the cross-call-site collision class
+  is now closed by construction, proven against
+  `bynkc/tests/fixtures/positive/934_idempotency_key_scoping`.
 - [x] The doc is explicit that provider-variant selection and the durable provider (3.2's
   deferred half, 3.3) are **not** delivered by this track — named as future work, not
   silently dropped.
