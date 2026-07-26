@@ -52,7 +52,12 @@ a declared-but-unused capability is a warning (`bynk.given.unused_capability`).
 
 A capability operation may declare its own type parameter (v0.235, ADR 0281) —
 useful when the value it hands back is of whatever type the *calling* handler
-determines, not a type the capability's author can know ahead of time:
+determines, not a type the capability's author can know ahead of time. The
+example below is also the real shape of the first-party `Idempotency`
+capability this mechanism was built for — see
+[First-party `bynk` capabilities](/book/reference/bynk-capabilities/#the-idempotency-capability)
+for its actual, shipped two-operation form (`dedup` plus a `remember` to write
+a value back):
 
 ```bynk
 capability Idempotency {

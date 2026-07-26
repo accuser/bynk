@@ -1,18 +1,18 @@
 # The `Idempotency` capability — mechanical dedup for at-least-once delivery
 
-- **Status:** Draft (settled — not yet sliced). Spine issue
-  [#921](https://github.com/accuser/bynk/issues/921) open; this doc landed via
-  [#922](https://github.com/accuser/bynk/pull/922) ("Part of #921"), but that PR was marked
-  ready for review and merged 55 seconds later with no review — the assertion that §3's
-  questions were closed was never tested. §3.1, §3.2, and §3.4 have since been genuinely
-  argued and settled (see below; §3.1 depends on
-  [#926](https://github.com/accuser/bynk/issues/926), its cut-out sub-issue); §3.2's
-  settlement narrowed this track's scope and deferred §3.3 to a future, unfiled track. All
-  four of §3's original questions are now resolved (settled or explicitly deferred) — this
-  doc is ready for slice 0 to be cut as an increment-proposal sub-issue of #921, not yet
-  adopted by a merge that actually tested it. Scopes issue
-  [#554](https://github.com/accuser/bynk/issues/554) ("Ship the `Idempotency` capability
-  ahead of the full Events track") down to its `Idempotency`-capability item.
+- **Status:** Slicing — slice 0 shipped ([#929](https://github.com/accuser/bynk/issues/929)).
+  Spine issue [#921](https://github.com/accuser/bynk/issues/921) open. §3.1, §3.2, and §3.4
+  were genuinely argued and settled during this doc's settling pass (§3.1 depended on
+  [#926](https://github.com/accuser/bynk/issues/926)/[ADR 0281](../decisions/0281-generic-capability-methods.md),
+  its cut-out sub-issue, which shipped); §3.2's settlement narrowed this track's scope and
+  deferred §3.3 to a future, unfiled track. Slice 0 then shipped with one real correction
+  found only under implementation (§3.1: the settled single-op closure shape does not
+  compile — `bynk.types.function_at_boundary` — so the shipped capability is two ops,
+  `dedup`/`remember`; see `design/pending/idempotency-capability-slice0.md` pre-stamp for
+  the full account) and one deliberate deferral (§3.4's call-site scoping did not ship with
+  slice 0). Scopes issue [#554](https://github.com/accuser/bynk/issues/554) ("Ship the
+  `Idempotency` capability ahead of the full Events track") down to its
+  `Idempotency`-capability item.
 - **Realises:** `design/bynk-design-notes.md` §4 ("Idempotency as a system convention",
   lines 103–109) and §12 ("Handler-level idempotency via the `Idempotency` capability",
   lines 640–674) — the architectural commitment that at-least-once delivery (commands,
@@ -61,30 +61,51 @@ correction of §12's `reserve` example) compiles and runs.
 
 ## 3. Open design questions
 
-### 3.1 — How does `dedup` short-circuit the *rest of the handler body*? — SETTLED
+### 3.1 — How does `dedup` short-circuit the *rest of the handler body*? — SETTLED, SHIPPED (slice 0, #929)
 
 **Decision.** `dedup` is not an early-exit primitive at all. It is an ordinary generic
-capability method, matched on like any other `Option`:
+capability method, matched on like any other `Option`.
+
+**Implementation correction.** The shape settled below (a single `dedup` op taking a
+`compute` closure) does not compile: `bynk.types.function_at_boundary` explicitly forbids
+a function type in a capability operation signature. Building slice 0 found this the hard
+way; the shipped shape is **two** ops, `dedup` (read) and `remember` (write-back) — the
+"restrict to a two-call form" candidate originally weighed and set aside below, now the
+only mechanically valid option. See the ADR (`design/pending/idempotency-capability-slice0.md`
+pre-stamp; `idempotency-capability-slice0` post-stamp) for the full account. The real,
+shipped shape:
 
 ```
 capability Idempotency {
-  fn dedup[T](key: String, expiresAfter: Duration) -> Effect[Option[T]]
+  fn dedup[T](key: String) -> Effect[Option[T]]
+  fn remember[T](key: String, value: T, expiresAfter: Duration) -> Effect[()]
 }
 
-on reserve(qty: Int, orderId: OrderId) -> ReserveOutcome given Clock, Idempotency {
-  let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId), 24.hours)
+on reserve(qty: Int, orderId: OrderId) -> ReserveOutcome given Idempotency {
+  let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId))
   match cached {
     Some(outcome) => outcome,
     None => {
-      ... the rest of the handler body, tail-typed to ReserveOutcome ...
+      let outcome = ... the rest of the handler body, tail-typed to ReserveOutcome ...
+      let _ <- Idempotency.remember[ReserveOutcome](Json.encode(orderId), outcome, 24.hours)
+      outcome
     }
   }
 }
 ```
 
-(This is the real, settled call syntax — see §3.4 for why `on:`/`expiresAfter:`-as-labels
-and `24h` from §12's own prose never parsed, and for the key-type and key-scoping
-decisions.)
+Note `given Idempotency` only, not `given Clock, Idempotency` — the shipped provider
+consumes `Clock` itself (§3.1's original text below still shows the design notes' `given
+Clock, Idempotency`; that was never revisited before implementation and is now corrected
+here). Note also `remember`, not `record` (a reserved keyword), and the explicit `[T]` on
+*every* call, `remember` included, even though `value`'s type would make `T` inferable —
+generic capability ops resolve `T` only from an explicit type argument, never from an
+argument's type (ADR 0281's own Decision B), so `Idempotency.remember(key, outcome, ...)`
+without `[ReserveOutcome]` is rejected (`bynk.generics.uninferable_type_arg`).
+
+The below is the settling-time analysis (§3.1's original argument for *why* a match-based,
+no-new-control-flow shape beats the alternatives) — still the right argument, just for a
+two-op capability rather than the one-op-with-a-closure shape it was written against.
 
 No new control-flow construct, and no change to `check_question`/`?` at all. `match` as a
 tail expression with joined arm types already ships (the `join_ty` LUB mechanism,
@@ -212,17 +233,23 @@ accepting a narrow window where a duplicate could slip through on crash).
 **Decision — the real call shape.** §12's `dedup(on: x, expiresAfter: y)?` never parsed
 against the shipped grammar (three independent mismatches: labelled arguments don't
 exist, `24h` isn't the duration-literal form, and 3.1 already dropped the `?`). The
-settled interface and call:
+settled interface and call (updated post-implementation to the shipped two-op shape —
+see 3.1's implementation correction):
 
 ```
 capability Idempotency {
-  fn dedup[T](key: String, expiresAfter: Duration) -> Effect[Option[T]]
+  fn dedup[T](key: String) -> Effect[Option[T]]
+  fn remember[T](key: String, value: T, expiresAfter: Duration) -> Effect[()]
 }
 
-let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId), 24.hours)
+let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId))
 match cached {
   Some(outcome) => outcome,
-  None => { ... }
+  None => {
+    let outcome = ...
+    let _ <- Idempotency.remember[ReserveOutcome](Json.encode(orderId), outcome, 24.hours)
+    outcome
+  }
 }
 ```
 
@@ -231,7 +258,10 @@ hover/signature-help — only the *call site* is positional, matching `call`
 (`tree-sitter-bynk/grammar.js:1406`, `sep1($._expression, ",")`) exactly, with no grammar
 change needed. `24.hours` is the shipped `<int>.<unit>` `Duration` literal form (ADR 0112),
 confirmed against the closed unit set in `bynk-syntax/src/ast.rs:1633`
-(`Hours`/`Days` are both in it).
+(`Hours`/`Days` are both in it). One more shipped-implementation detail this settling pass
+didn't anticipate: `remember[T]`'s type argument is required explicitly even though
+`value`'s type would make `T` inferable — ADR 0281's generic-capability-op resolution
+never infers from an argument's type, only from an explicit call-site type argument.
 
 **Decision — the key type is `String`, not "any expression."** §12's "any expression in
 scope" reads most naturally as generic-over-the-key-type (`fn dedup[K, T](key: K, ...) ->
@@ -262,6 +292,14 @@ documented responsibility, same trade-off already accepted for `Sagas.compensate
 targeting a non-idempotent operation (§13): no compiler enforcement, an explicit,
 reviewable call. Automatic call-site scoping narrows the burden; it doesn't remove it.
 
+**Not shipped in slice 0 (#929).** This decision itself stands, but slice 0 shipped
+without implementing it — it's the one piece of this whole track with no existing
+compiler mechanism to copy (a genuinely novel, `Idempotency`-specific emitter special
+case), and slice 0 was already proving a two-op mechanism correction (3.1) under real
+implementation pressure. The cross-call-site collision risk is therefore open, not
+closed, until a follow-up increment adds it — named here so it isn't mistaken for
+already-shipped protection.
+
 **Decision — eviction is lazy, matching `Cache`.** Reuses `Cache`'s shipped
 check-on-read model (decision 0113: expired entries reap at next access, no background
 sweep) rather than inventing proactive eviction. This carries the same accepted
@@ -276,12 +314,14 @@ With 3.1, 3.2, and 3.4 settled, and 3.3 deferred out of scope, this track is ful
 settled: slice 0 is the only slice needed to deliver this track's actual end state (§1),
 and its shape is now concrete end to end.
 
-- **Slice 0 — the match-based short-circuit + the (sole) in-memory provider.** Depends on
-  [#926](https://github.com/accuser/bynk/issues/926) (generic capability methods) landing
-  first or alongside. Ship `given Idempotency` with its one provider (in-memory,
-  handler-local; `String` keys, call-site-scoped, lazy eviction per §3.4), proving the
-  settled §3.1 shape end-to-end against a `tsc_verify` case reproducing the (corrected)
-  `reserve` example above.
+- **Slice 0 — SHIPPED (#929).** The match-based short-circuit + the (sole) in-memory
+  provider, on top of [#926](https://github.com/accuser/bynk/issues/926) (generic
+  capability methods, shipped as [ADR 0281](../decisions/0281-generic-capability-methods.md)).
+  `given Idempotency` with its one provider (in-memory, `Clock`-backed; `String` keys,
+  lazy eviction per §3.4), proven against `bynkc/tests/fixtures/positive/924_idempotency_dedup_basic`
+  — a real `tsc --strict` pass, not just golden-diffed. Shipped as **two** ops
+  (`dedup`/`remember`), not the one originally settled — see 3.1's implementation
+  correction. Call-site scoping (§3.4) did **not** ship with this slice; still open.
 - **Slice 1 (possible, not yet scoped) — event-subscriber sugar.** §12's `e.eventId`
   canonical-key pattern for event subscribers; whether this deserves special syntax or is
   just documented convention once slice 0 lands.
@@ -294,11 +334,12 @@ actually delivers.
 
 ## 5. Front-loaded ADR candidates
 
-- **The `dedup` match-based short-circuit** (3.1, settled) — records that `dedup` is an
-  ordinary generic capability method returning `Effect[Option[T]]`, matched by the caller;
-  no new control-flow construct, no `?`/`check_question` changes. Depends on
-  [#926](https://github.com/accuser/bynk/issues/926)'s own ADR (generic capability
-  methods) landing as its foundation.
+- **The `dedup`/`remember` match-based short-circuit** (3.1, shipped) — records that
+  `Idempotency` is two ordinary generic capability methods, matched/called explicitly by
+  the caller; no new control-flow construct, no `?`/`check_question` changes. Built on
+  [ADR 0281](../decisions/0281-generic-capability-methods.md) (#926); shipped as its own
+  ADR at `design/pending/idempotency-capability-slice0.md` (pre-stamp), covering the
+  two-op correction, the `remember` naming, and the always-explicit-type-argument rule.
 - **`Idempotency` ships ambient-default-only; scope narrowed, not silently reduced** (3.2,
   settled) — records that this track ships exactly one provider, so ADR 0016 is not
   implicated, and names the wider default-plus-platform-override direction as future work,
@@ -306,11 +347,12 @@ actually delivers.
   implicit in the doc's diff history.
 - **Durable-provider transactional participation** (3.3) — deferred; not this track's ADR.
   Belongs to whichever future track picks up the durable provider named in 3.2.
-- **`Idempotency`'s key shape** (3.4, settled) — `String`-typed keys, positional call
-  syntax (no labelled arguments), automatic compiler-synthesised call-site scoping
-  layered under the developer-supplied key, and lazy eviction matching `Cache`. Records
-  why "any expression" and implicit generic serialisation were rejected in favour of an
-  explicit `Json.encode(...)` at the call site.
+- **`Idempotency`'s key shape** (3.4, settled; partially shipped) — `String`-typed keys,
+  positional call syntax (no labelled arguments), and lazy eviction matching `Cache` all
+  shipped with slice 0. Automatic compiler-synthesised call-site scoping did **not** ship
+  — still a genuine future ADR, not yet written. Records why "any expression" and
+  implicit generic serialisation were rejected in favour of an explicit `Json.encode(...)`
+  at the call site.
 
 ## 6. Threat model
 
@@ -330,11 +372,13 @@ collision receives the *first caller's* cached outcome instead of executing thei
 request — a cross-tenant data leak if the outcome carries tenant-specific data, and a
 correctness bug even when it doesn't (wrong operation silently skipped).
 
-**Where verification happens — settled in 3.4.** The cross-call-site class is closed
-automatically and for free: §3.4's decision prefixes every key with a
-compiler-synthesised, per-call-site identifier, so two different `dedup` call sites can
-never collide regardless of what string a developer picks. The cross-caller,
-same-call-site class is **not** closed by the mechanism — it stays the caller's documented
+**Where verification happens — settled in 3.4, not yet shipped.** The cross-call-site
+class is *designed* to be closed automatically and for free: §3.4's decision prefixes
+every key with a compiler-synthesised, per-call-site identifier, so two different `dedup`
+call sites can never collide regardless of what string a developer picks — but slice 0
+(#929) shipped without implementing this, so as of slice 0 the cross-call-site class is
+**still open** in the running compiler, pending a follow-up increment. The cross-caller,
+same-call-site class is **not** closed by the mechanism even once scoping ships — it stays the caller's documented
 responsibility (the design notes' own framing: "the caller supplies a deterministic
 identifier derived from its own context"), the same trade-off already accepted for
 `Sagas.compensate` targeting a non-idempotent operation: no compiler enforcement, an
@@ -345,27 +389,35 @@ the mechanism and its accepted gap are the same.
 
 ## 7. Slice status
 
-- [ ] Slice 0 — match-based short-circuit + the in-memory provider (incl. 3.4)
+- [x] Slice 0 — `dedup`/`remember` + the in-memory provider, shipped (#929)
 - [ ] Slice 1 — event-subscriber sugar (unscoped)
+- [ ] Follow-up (unscoped, not a slice of this track) — call-site key scoping (§3.4),
+  deferred out of slice 0
 
 ## 8. Done when
 
-- `given Idempotency` is checked and its one provider is usable; the settled §3.1/§3.4
-  `reserve` example compiles and passes a `tsc_verify` case.
-- The match-based short-circuit (3.1) ships on top of
-  [#926](https://github.com/accuser/bynk/issues/926) (generic capability methods), with no
-  bespoke control-flow construct introduced for `Idempotency` itself.
-- `String` keys, positional call syntax, compiler-synthesised call-site scoping, and
-  `Cache`-style lazy eviction (3.4) all ship as specified; the cross-call-site collision
-  class is closed by construction, and the cross-caller-same-site class is documented as
-  the caller's responsibility, not left implicit.
-- The doc is explicit that provider-variant selection and the durable provider (3.2's
+- [x] `given Idempotency` is checked and its one provider is usable — shipped (#929) as
+  `dedup[T](key) -> Effect[Option[T]]` / `remember[T](key, value, expiresAfter) ->
+  Effect[()]`, not the single-op shape originally settled (see 3.1's implementation
+  correction); a real `tsc --strict` pass, not just golden-diffed
+  (`bynkc/tests/fixtures/positive/924_idempotency_dedup_basic`).
+- [x] The match-based short-circuit (3.1) ships on top of
+  [ADR 0281](../decisions/0281-generic-capability-methods.md) (#926), with no bespoke
+  control-flow construct introduced for `Idempotency` itself.
+- [x] `String` keys, positional call syntax, and `Cache`-style lazy eviction (3.4) ship as
+  specified.
+- [ ] Compiler-synthesised call-site scoping (3.4) — **not shipped**; the cross-call-site
+  collision class remains open pending a follow-up increment, not closed by construction
+  as originally intended.
+- [x] The doc is explicit that provider-variant selection and the durable provider (3.2's
   deferred half, 3.3) are **not** delivered by this track — named as future work, not
   silently dropped.
-- Issue [#554](https://github.com/accuser/bynk/issues/554) can be narrowed to its
-  remaining two items (ADR 0020, the composition root) once this track's slice 0 ships —
-  it does not fully close here, since the durable provider it also named is now explicitly
-  out of this track's scope.
-- ADRs written (including 3.2's scope-narrowing decision); spec gains the `Idempotency`
-  capability's normative section, scoped to the single provider this track ships.
-  **On retire:** remove this doc.
+- [x] Issue [#554](https://github.com/accuser/bynk/issues/554) can be narrowed to its
+  remaining two items (ADR 0020, the composition root) now that slice 0 has shipped — it
+  does not fully close here, since the durable provider it also named is explicitly out
+  of this track's scope.
+- [x] ADR written (`design/pending/idempotency-capability-slice0.md`, pre-stamp) covering
+  slice 0's implementation corrections and remaining gaps; 3.2's scope-narrowing decision
+  was recorded in an earlier settling pass. Spec/book updates for the `Idempotency`
+  capability are a separate, not-yet-done follow-up (tracked in #929, not blocking this
+  doc's own bookkeeping). **On retire:** remove this doc.

@@ -34,6 +34,39 @@ environment), so code that stays on this surface is portable.
 | **`Fetch`** | `send(req: Request) -> Effect[Result[Response, FetchError]]` — an outbound HTTP request. |
 | **`Secrets`** | `get(name: String) -> Effect[Option[String]]` — read configuration/secrets; `None` if unset. |
 | **`Locale`** | `current() -> Effect[LocaleTag]` — the locale to render messages in. On Cloudflare, negotiated from the request's `Accept-Language` against a context's message bundle; a fixed `"en"` on every other platform, and on Cloudflare without a detectable bundle. See [Understand localisation](/book/guides/localisation/understand-localisation/). |
+| **`Idempotency`** | `dedup[T](key: String) -> Effect[Option[T]]` · `remember[T](key: String, value: T, expiresAfter: Duration) -> Effect[()]` — mechanical dedup for at-least-once delivery. See below. |
+
+### The `Idempotency` capability
+
+`Idempotency` makes at-least-once delivery (a retried command, a replayed event) safe:
+check `dedup` for a cached outcome, and on a miss, cache the value you compute with
+`remember` so a later call with the same key gets it back instead of recomputing:
+
+```bynk,ignore
+on reserve(orderId: OrderId) -> ReserveOutcome given Idempotency {
+  let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId))
+  match cached {
+    Some(outcome) => outcome,
+    None => {
+      let outcome = ... compute the real outcome ...
+      let _ <- Idempotency.remember[ReserveOutcome](Json.encode(orderId), outcome, 24.hours)
+      outcome
+    }
+  }
+}
+```
+
+Both operations take their type argument explicitly (`dedup[ReserveOutcome]`,
+`remember[ReserveOutcome]`) — always, even where an argument's type would otherwise make
+it obvious, since a capability operation's own type parameter is never inferred (see
+[Capabilities & providers](/book/reference/capabilities/#generic-operations)). Calling
+`dedup` alone does **not** cache anything — `remember` is what writes the entry, so
+forgetting to call it after a cache miss means that key is recomputed every time, not an
+error. The shipped provider is a single in-memory map, identical on every platform: state
+is lost on process restart, and there is no durability or multi-instance sharing yet — a
+durable, platform-native provider is a named but unfiled future direction (see
+[the track's own settling notes](https://github.com/accuser/bynk/blob/main/design/tracks/idempotency-capability.md)
+for why that's a separate axis from portability, not a variant of it).
 
 The `bynk` unit also exports the transparent types these operations use:
 
