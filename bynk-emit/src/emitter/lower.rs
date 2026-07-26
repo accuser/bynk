@@ -1058,6 +1058,42 @@ fn capability_call_type_args_ts(type_args: &[TypeRef]) -> String {
     )
 }
 
+/// #934 (call-site key scoping): `Idempotency.dedup[T](key)` and
+/// `Idempotency.remember[T](key, value, expiresAfter)` both take the
+/// developer-supplied dedup key as their first argument (already lowered, in
+/// `args_lowered[0]`). Rewrite it in place to a template literal prefixed with
+/// the calling handler's own qualified name, so two unrelated handlers that
+/// happen to pick the same literal key never collide.
+///
+/// `is_first_party` must already have confirmed this is genuinely the
+/// first-party `bynk.Idempotency` capability, not merely a same-named
+/// capability some other adapter or context happens to declare (both call
+/// sites resolve that separately, since the two lowering paths — flattened
+/// vs. cross-context-qualified — carry the provenance differently).
+///
+/// `cx.handler_scope` is set at every real capability-call site (an ordinary
+/// service handler, an agent handler, a composed provider op body, a
+/// websocket lifecycle DO method — see `emit_service`/`emit_agent`/
+/// `emit_provider`/`emit_ws_do_method`). Its absence here means some new
+/// capability-call site was added without threading it through; that is a
+/// compiler bug, not a user error, so this fails loudly rather than silently
+/// shipping an unscoped key.
+fn scope_idempotency_key(
+    is_first_party: bool,
+    method: &str,
+    args_lowered: &mut [String],
+    cx: &LowerCtx,
+) {
+    if !is_first_party || !matches!(method, "dedup" | "remember") {
+        return;
+    }
+    let scope = cx
+        .handler_scope
+        .as_deref()
+        .unwrap_or_else(|| panic!("Idempotency.{method} lowered with no handler_scope set"));
+    args_lowered[0] = format!("`{scope}::${{{}}}`", args_lowered[0]);
+}
+
 fn lower_method_call(
     e: &Expr,
     receiver: &Expr,
@@ -1449,9 +1485,15 @@ fn lower_method_call(
     // `<deps>.<Cap>.op(args)` exactly like a local capability call —
     // the consumed-context prefix is resolved away.
     if let Some(chain) = flatten_emit_ident_chain(receiver)
-        && let Some((_consumed, cap)) = cx.cross_context.resolve_cross_capability(&chain)
+        && let Some((consumed, cap)) = cx.cross_context.resolve_cross_capability(&chain)
     {
-        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        let mut args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        scope_idempotency_key(
+            cap == "Idempotency" && consumed == "bynk",
+            &method.name,
+            &mut args_lowered,
+            cx,
+        );
         return format!(
             "{}.{}.{}{}({})",
             cx.cap_deps_expr,
@@ -1473,7 +1515,22 @@ fn lower_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.capabilities.contains(&id.name)
     {
-        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        let mut args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        // #934: a flattened `consumes bynk { Idempotency }` local name is
+        // first-party only if it's actually `bynk`'s own capability — either
+        // declared right here (this unit *is* `bynk`) or flattened in from it
+        // (`flattened_caps`). A same-named capability from any other adapter
+        // or context (e.g. the #926/#931 generic-op test fixtures' own
+        // illustrative `capability Idempotency`) must not be scoped.
+        let is_first_party = id.name == "Idempotency"
+            && (cx.in_bynk_unit
+                || cx
+                    .cross_context
+                    .flattened_caps
+                    .get(&id.name)
+                    .map(String::as_str)
+                    == Some("bynk"));
+        scope_idempotency_key(is_first_party, &method.name, &mut args_lowered, cx);
         return format!(
             "{}.{}.{}{}({})",
             cx.cap_deps_expr,
@@ -4902,5 +4959,82 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
         "true".to_string()
     } else {
         format!("({})", terms.join(" && "))
+    }
+}
+
+#[cfg(test)]
+mod idempotency_scoping_tests {
+    use super::*;
+    use bynk_check::checker::TypedCommons;
+    use bynk_syntax::ast::{Commons, CommonsForm, QualifiedName};
+
+    fn empty_commons() -> TypedCommons {
+        TypedCommons {
+            commons: Commons {
+                name: QualifiedName {
+                    parts: Vec::new(),
+                    span: Default::default(),
+                },
+                items: Vec::new(),
+                uses: Vec::new(),
+                documentation: None,
+                form: CommonsForm::Fragment,
+                span: Default::default(),
+                trivia: Default::default(),
+                trailing_comments: Vec::new(),
+            },
+            types: HashMap::new(),
+            fns: HashMap::new(),
+            methods: HashMap::new(),
+            expr_types: HashMap::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// #934 (Decision C): a first-party `Idempotency.dedup`/`remember` call
+    /// reaching `scope_idempotency_key` with no `handler_scope` set means some
+    /// emission site populated `capabilities` without also wiring the scope —
+    /// a compiler bug. This must fail loudly, not silently ship an unscoped
+    /// key; nothing in the fixture suite exercises a missing scope (every real
+    /// site sets it), so this is the only proof the guard actually fires.
+    #[test]
+    #[should_panic(expected = "handler_scope")]
+    fn missing_handler_scope_panics() {
+        let commons = empty_commons();
+        let cross_context = bynk_check::resolver::CrossContextInfo::default();
+        let runtime_use = RuntimeUse::default();
+        let cx = LowerCtx::new(&commons, &cross_context, &runtime_use);
+        let mut args = vec!["orderId".to_string()];
+        scope_idempotency_key(true, "dedup", &mut args, &cx);
+    }
+
+    /// The mirror case: a real scope present, the call proceeds and the key
+    /// is prefixed — confirms the panic in the test above is really guarding
+    /// the `None` case and not firing unconditionally.
+    #[test]
+    fn present_handler_scope_prefixes_the_key() {
+        let commons = empty_commons();
+        let cross_context = bynk_check::resolver::CrossContextInfo::default();
+        let runtime_use = RuntimeUse::default();
+        let mut cx = LowerCtx::new(&commons, &cross_context, &runtime_use);
+        cx.handler_scope = Some("shop.reserve.ordering.call".to_string());
+        let mut args = vec!["orderId".to_string()];
+        scope_idempotency_key(true, "dedup", &mut args, &cx);
+        assert_eq!(args[0], "`shop.reserve.ordering.call::${orderId}`");
+    }
+
+    /// A capability merely named `"Idempotency"` from some other adapter or
+    /// context (not first-party `bynk`) must pass through untouched even with
+    /// no scope set — `is_first_party: false` short-circuits before the
+    /// `handler_scope` check, so this must NOT panic.
+    #[test]
+    fn non_first_party_capability_is_not_scoped() {
+        let commons = empty_commons();
+        let cross_context = bynk_check::resolver::CrossContextInfo::default();
+        let runtime_use = RuntimeUse::default();
+        let cx = LowerCtx::new(&commons, &cross_context, &runtime_use);
+        let mut args = vec!["orderId".to_string()];
+        scope_idempotency_key(false, "dedup", &mut args, &cx);
+        assert_eq!(args[0], "orderId");
     }
 }

@@ -15,7 +15,7 @@ export const ReserveOutcome = {
 
 export const ordering = {
   async call(orderId: string, deps: { Idempotency: bynk.Idempotency }): Promise<ReserveOutcome> {
-    const cached = await deps.Idempotency.dedup<ReserveOutcome>(orderId);
+    const cached = await deps.Idempotency.dedup<ReserveOutcome>(`shop.reserve.ordering.call::${orderId}`);
     switch (cached.tag) {
       case "Some": {
         const outcome = cached.value;
@@ -23,7 +23,7 @@ export const ordering = {
       }
       case "None": {
         const outcome = { orderId: orderId, reserved: true };
-        const __r0 = await deps.Idempotency.remember<ReserveOutcome>(orderId, outcome, 86400000);
+        const __r0 = await deps.Idempotency.remember<ReserveOutcome>(`shop.reserve.ordering.call::${orderId}`, outcome, 86400000);
         return outcome;
       }
     }

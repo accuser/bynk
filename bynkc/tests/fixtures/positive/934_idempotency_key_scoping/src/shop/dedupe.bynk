@@ -1,0 +1,46 @@
+context shop.dedupe
+
+consumes bynk { Idempotency }
+
+agent Ledger {
+  key id: String
+  store total: Cell[Int] = 0
+
+  on call bump() -> Effect[String] given Idempotency {
+    let _ <- total.update((n) => n + 1)
+    let cached <- Idempotency.dedup[String]("same-key")
+    match cached {
+      Some(v) => v,
+      None => {
+        let _ <- Idempotency.remember[String]("same-key", "ledger-value", 1.hours)
+        "ledger-value"
+      }
+    }
+  }
+}
+
+service alpha {
+  on call() -> Effect[String] given Idempotency {
+    let cached <- Idempotency.dedup[String]("same-key")
+    match cached {
+      Some(v) => v,
+      None => {
+        let _ <- Idempotency.remember[String]("same-key", "alpha-value", 1.hours)
+        "alpha-value"
+      }
+    }
+  }
+}
+
+service beta {
+  on call() -> Effect[String] given Idempotency {
+    let cached <- Idempotency.dedup[String]("same-key")
+    match cached {
+      Some(v) => v,
+      None => {
+        let _ <- Idempotency.remember[String]("same-key", "beta-value", 1.hours)
+        "beta-value"
+      }
+    }
+  }
+}

@@ -68,6 +68,17 @@ durable, platform-native provider is a named but unfiled future direction (see
 [the track's own settling notes](https://github.com/accuser/bynk/blob/main/design/tracks/idempotency-capability.md)
 for why that's a separate axis from portability, not a variant of it).
 
+The `key` you pass is automatically scoped to the calling handler's own qualified name
+before it reaches the provider — `Idempotency.dedup[T]("order-1")` inside `on call` of
+service `ordering` in context `shop.reserve` actually stores against
+`"shop.reserve.ordering.call::order-1"`. Two unrelated handlers can therefore never
+collide on the same literal key by accident; only two calls that are genuinely the *same*
+call site (including the same call reached via a cross-context alias) ever share a scope.
+This doesn't stop two different *callers* of the same handler from colliding if the key
+you supply doesn't itself distinguish them (two tenants both calling `reserve` with the
+same order ID, say) — differentiating those is still on you, the same discipline any
+caller-supplied idempotency key requires.
+
 The `bynk` unit also exports the transparent types these operations use:
 
 ```bynk,ignore
