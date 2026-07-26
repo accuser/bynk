@@ -1438,7 +1438,13 @@ pub(crate) fn emit_service(
         // these are callable surface methods a `TestConnection` test drives.)
         let is_ws_handler = matches!(handler.kind, HandlerKind::Open | HandlerKind::Close)
             || (ws_proto && matches!(handler.kind, HandlerKind::Message));
-        if is_ws_handler && matches!(ctx.target, BuildTarget::Workers) {
+        // Events track, slice 0 (spine #936): `on event`, like the WebSocket
+        // lifecycle handlers above, does not emit a service-surface method on
+        // Workers — real delivery is driven by the fan-out mechanism, not a
+        // caller of this compose surface. On bundle it stays a callable
+        // surface method a test can drive directly, simulating one delivery.
+        let is_event_handler = matches!(handler.kind, HandlerKind::Event);
+        if (is_ws_handler || is_event_handler) && matches!(ctx.target, BuildTarget::Workers) {
             continue;
         }
         emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
@@ -1460,6 +1466,9 @@ pub(crate) fn emit_service(
             // v0.103/v0.106: the WebSocket lifecycle surface methods.
             HandlerKind::Open => "open".to_string(),
             HandlerKind::Close => "close".to_string(),
+            // Events track, slice 0 (spine #936): exactly one `on event` per
+            // `from Events(E)` service.
+            HandlerKind::Event => "event".to_string(),
         };
         // For service handlers the operation name is the handler kind
         // (e.g. `call`). v0.5 has only one handler kind, so the service is a
@@ -3116,7 +3125,8 @@ pub(crate) fn emit_agent(
                 | HandlerKind::Cron { .. }
                 | HandlerKind::Message
                 | HandlerKind::Open
-                | HandlerKind::Close => "call".to_string(),
+                | HandlerKind::Close
+                | HandlerKind::Event => "call".to_string(),
             });
         writeln!(
             out,

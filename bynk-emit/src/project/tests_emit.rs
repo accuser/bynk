@@ -1934,6 +1934,7 @@ fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::T
                 ServiceProtocol::Cron => Some("cron".to_string()),
                 ServiceProtocol::Queue { .. } => Some("queue".to_string()),
                 ServiceProtocol::WebSocket { .. } => Some("websocket".to_string()),
+                ServiceProtocol::Events { .. } => Some("events".to_string()),
             };
             let handlers = decl
                 .handlers

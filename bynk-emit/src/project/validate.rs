@@ -916,7 +916,17 @@ pub(crate) fn check_context_declarations(
     // Build a resolved-commons snapshot for the per-handler checker.
     // We synthesise a ResolvedCommons by reusing typed.types / typed.fns /
     // typed.methods; the resolver wouldn't add anything new.
-    let local_type_names: std::collections::HashSet<String> = typed.types.keys().cloned().collect();
+    //
+    // `local_type_names` must be the *pre-merge* local table (`table.types`),
+    // not `typed.types` (already local+uses+consumes merged) — its own
+    // contract (`ResolvedCommons::local_type_names`) is "declared in this
+    // commons, not imported", which `typed.types` cannot answer. Events
+    // track, slice 0 (spine #936) found this in the course of implementing
+    // owner-only emission (`is_local_type` is exactly the provenance that
+    // check needs): reusing `typed.types` here made every consumed/used
+    // type read as "local", silently over-widening `.raw`/`.unsafe()`
+    // access on a consumed opaque type too — the field's original purpose.
+    let local_type_names: std::collections::HashSet<String> = table.types.keys().cloned().collect();
     let resolved = ResolvedCommons {
         commons: typed.commons.clone(),
         types: typed.types.clone(),

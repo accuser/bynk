@@ -1240,6 +1240,9 @@ fn service_protocol_suffix(p: &ServiceProtocol) -> String {
         ServiceProtocol::Cron => " from cron".to_string(),
         ServiceProtocol::Queue { name } => format!(" from queue(\"{name}\")"),
         ServiceProtocol::WebSocket { .. } => " from websocket".to_string(),
+        ServiceProtocol::Events { event_type } => {
+            format!(" from Events({})", type_ref_str(event_type))
+        }
     }
 }
 
@@ -1292,6 +1295,7 @@ pub(crate) fn handler_line(h: &Handler) -> String {
         HandlerKind::Message => "on message".to_string(),
         HandlerKind::Open => "on open".to_string(),
         HandlerKind::Close => "on close".to_string(),
+        HandlerKind::Event => "on event".to_string(),
     }
 }
 

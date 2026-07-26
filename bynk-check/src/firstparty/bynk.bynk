@@ -1,6 +1,6 @@
 adapter bynk {
 	uses bynk.locale.types
-	exports capability { Clock, Random, Logger, Fetch, Secrets, Locale, Idempotency }
+	exports capability { Clock, Random, Logger, Fetch, Secrets, Locale, Idempotency, Events }
 	exports transparent { Uuid, Method, FetchError, Request, Response }
 
 	---
@@ -94,6 +94,22 @@ adapter bynk {
 		fn remember[T](key: String, value: T, expiresAfter: Duration) -> Effect[()]
 	}
 
+	---
+	Emits an event declared by the calling context (Events track, slice 0;
+	design/tracks/events.md, spine #936). Owner-only: the compiler rejects
+	`emit[E]` when `E` is not an event declared in the emitting context, even
+	when `E` is otherwise visible via `consumes`. Fire-and-forget: releases at
+	handler commit, so an aborted handler emits nothing — a `dedup`/`remember`-
+	style write-then-flush the provider itself is responsible for, not a
+	distinct control-flow form here. The explicit `[E]` type argument follows
+	the `Idempotency.remember[T]` precedent: a generic capability operation's
+	type parameter is never inferred, even where an argument's type would
+	determine it.
+	---
+	capability Events {
+		fn emit[E](event: E) -> Effect[()]
+	}
+
 	provides Clock = ClockProvider
 
 	provides Random = RandomProvider
@@ -107,4 +123,6 @@ adapter bynk {
 	provides Locale = LocaleProvider
 
 	provides Idempotency = IdempotencyProvider given Clock
+
+	provides Events = EventsProvider
 }

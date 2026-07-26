@@ -1079,6 +1079,34 @@ pub(crate) fn check_static_call(
             }
             for (tp, ta) in op_clone.type_params.iter().zip(type_args) {
                 let ty = resolve_expr_type_ref(ta, ctx)?;
+                // Events track, slice 0 (spine #936): owner-only emission —
+                // `Events.emit[E]` may only name an event `E` declared in
+                // *this* context, even though a `consumes`-visible foreign
+                // event resolves here just as validly for every other
+                // purpose. `is_local_type` already distinguishes "declared
+                // here" from "visible via uses/consumes" (the same table
+                // ADR 0256's locale-types-split gap analysis used), so this
+                // is a check over existing data, not new provenance
+                // plumbing — the primary boundary guarantee the threat
+                // model (events.md §6) names.
+                if type_name.name == "Events"
+                    && method.name == "emit"
+                    && let Ty::Named { name: ename, .. } = &ty
+                    && !ctx.input.is_local_type(ename)
+                {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.event.emit_outside_owner",
+                            ta.span(),
+                            format!(
+                                "`{ename}` is not declared in this context — only the context that declares an event may emit it"
+                            ),
+                        )
+                        .with_note(
+                            "a foreign event is visible via `consumes` for subscription (`from Events(...)`), but only its owning context may `Events.emit` it",
+                        ),
+                    );
+                }
                 subst.insert(tp.clone(), ty);
             }
         }
