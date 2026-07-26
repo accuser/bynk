@@ -1,11 +1,13 @@
 # The `Idempotency` capability — mechanical dedup for at-least-once delivery
 
-- **Status:** Draft (settling). Spine issue
+- **Status:** Draft (settling — partial). Spine issue
   [#921](https://github.com/accuser/bynk/issues/921) open; this doc landed via
   [#922](https://github.com/accuser/bynk/pull/922) ("Part of #921"), but that PR was marked
   ready for review and merged 55 seconds later with no review — the assertion that §3's
-  questions are closed was never tested. They remain genuinely open; treat this doc as
-  still settling, not adopted. Scopes issue
+  questions were closed was never tested. §3.1 has since been genuinely argued and settled
+  (see below, and [#926](https://github.com/accuser/bynk/issues/926), its cut-out
+  sub-issue); §3.2 and §3.3 remain open. Treat this doc as still settling, not adopted.
+  Scopes issue
   [#554](https://github.com/accuser/bynk/issues/554) ("Ship the `Idempotency` capability
   ahead of the full Events track") down to its `Idempotency`-capability item.
 - **Realises:** `design/bynk-design-notes.md` §4 ("Idempotency as a system convention",
@@ -23,8 +25,8 @@
   `bynk-check/src/firstparty.rs:64` lists the only first-party capabilities as `Clock`,
   `Random`, `Logger`, `Fetch`, `Secrets`, `Locale`. The design notes' own aside — "the same
   way Sagas does" (multiple provider variants) — is not a working reference either; `Sagas`
-  is equally unimplemented. This track has no sibling implementation to mirror; both of the
-  open questions below are genuinely novel.
+  is equally unimplemented. This track has no sibling implementation to mirror; the open
+  questions below (§3.2, §3.3 remaining; §3.1 settled) are genuinely novel.
 
 ## 1. The theme
 
@@ -43,9 +45,10 @@ worked examples (`reserve`, the `PaymentConfirmed` subscriber) compile and run.
 - [x] **Multi-increment.** A working-but-narrow slice (single in-memory provider, one
   control-flow shape) is separable from the durable provider (§4.3) and from any
   Sagas-compensation or event-subscriber ergonomics layered on top later.
-- [x] **Surface not yet settled.** Two structurally load-bearing questions have *no*
-  existing pattern to lean on in the shipped language (§3.1, §3.2) — not "which of two
-  known shapes", but "does either known-elsewhere shape even apply here".
+- [x] **Surface not yet settled.** §3.1 (the `dedup` short-circuit shape) settled during
+  this track's own settling pass — see below. §3.2 and §3.3 have *no* existing pattern to
+  lean on in the shipped language and remain open — not "which of two known shapes", but
+  "does either known-elsewhere shape even apply here".
 - [x] **Security/safety boundary.** The capability's entire purpose is a correctness
   guarantee (§12's "safe by construction" claim); a wrong shape is either silently unsafe
   (doesn't dedup) or silently wrong (dedups across the wrong scope — see the threat model,
@@ -53,68 +56,82 @@ worked examples (`reserve`, the `PaymentConfirmed` subscriber) compile and run.
 
 ## 3. Open design questions
 
-### 3.1 — How does `dedup` short-circuit the *rest of the handler body*? (no existing primitive)
+### 3.1 — How does `dedup` short-circuit the *rest of the handler body*? — SETTLED
 
-The design notes' worked example:
+**Decision.** `dedup` is not an early-exit primitive at all. It is an ordinary generic
+capability method, matched on like any other `Option`:
 
 ```
-on reserve(qty: Int, orderId: OrderId) -> ReserveOutcome
-    given Clock, Idempotency {
-  <- Idempotency.dedup(on: orderId, expiresAfter: 24h)?
-  ...
+capability Idempotency {
+  fn dedup[T](on: Key, expiresAfter: Duration) -> Effect[Option[T]]
+}
+
+on reserve(qty: Int, orderId: OrderId) -> ReserveOutcome given Clock, Idempotency {
+  let cached <- Idempotency.dedup[ReserveOutcome](on: orderId, expiresAfter: 24h)
+  match cached {
+    Some(outcome) => outcome,
+    None => {
+      ... the rest of the handler body, tail-typed to ReserveOutcome ...
+    }
+  }
 }
 ```
 
-reads as ordinary `<- expr?` — an awaited capability call, propagated with `?`. But `?`
-has one implemented shape, verified directly against `check_question`
-(`bynk-check/src/checker/expressions.rs:2060`), not just the spec prose: the receiver must
-be `Result[T, E]` (`bynk.types.question_on_non_result` otherwise; `Option[T]` is accepted
-only inside an `HttpResult`-returning handler, `bynk.types.question_option_outside_http`
-otherwise), the enclosing function's return type must itself be `Result[_, F]` or
-`Effect[Result[_, F]]` (`bynk.types.question_outside_result` otherwise), and the call
-always returns the **success** type `t` on the `Ok` path — the `Err(e)` path is what
-propagates, forwarded or `embeds`-converted, never `t`. There is no path through this
-function that injects an arbitrary externally-supplied `T` (a full cached `ReserveOutcome`
-built by a *different* invocation) as this invocation's return value; that is categorically
-different from anything `?` does. Bynk has **no `return` keyword** and no other early-exit
-construct; the tail expression is the only way a block produces its value.
+(Written here with §12's illustrative `on:`/`expiresAfter:`/`24h` syntax; §3.4 settles the
+real call syntax — labelled arguments and bare-suffix durations don't exist as shown, see
+below.)
 
-`reserve`'s return type, `ReserveOutcome`, is not shown as a `Result` in the excerpt, and
-even if it were, `?`'s job is to forward `dedup`'s own `Err` variant *unmodified through the
-same `Result[_, F]` shape* — it cannot inject an arbitrary previously-computed `T` (a full
-cached `ReserveOutcome`, built by a *different* invocation of this handler) as this
-invocation's return value. That is a different operation from anything `?` does today:
-"abort the rest of this block and make the block's value be this externally-supplied thing"
-is a control-flow primitive Bynk does not have. Firming this up is the track's central
-question. Candidates to weigh during settling (not yet evaluated against each other):
+No new control-flow construct, and no change to `check_question`/`?` at all. `match` as a
+tail expression with joined arm types already ships (the `join_ty` LUB mechanism,
+[ADR 0230](../decisions/0230-join-match-if-branch-types.md)); what's missing is purely that
+`dedup` needs to be **generic over its own type
+parameter**, independent of any type the capability itself carries — `capability_op`
+(`tree-sitter-bynk/grammar.js:572`) has no type-parameter slot today. That gap is filed as
+its own increment proposal, **[#926](https://github.com/accuser/bynk/issues/926)**
+("Generic capability methods — `capability X { fn op[T](...) }`"), a sub-issue of this
+track's spine (#921) — its surface is dictated by existing precedent
+(`Json.decode[T]`'s explicit-type-argument resolution, v0.22b), not itself an open
+question this track needs to relitigate. This track's slice 0 depends on #926 landing
+first (or alongside it).
 
-- A **new statement form** — e.g. a `dedup`-flavoured bind that is checker-recognised
-  (not just an ordinary capability call) and permitted only as a handler's first
-  statement(s), lowered to an early-return in emitted TS. **No precedent exists for
-  this in the shipped compiler.** The design notes' own closest analogue,
-  `attempt`/`recover` (§13, fault-to-outcome conversion), is itself unimplemented —
-  verified by grep: zero hits for `attempt`/`recover` in `bynk-syntax/src/keywords.rs`,
-  `bynk-syntax/src/ast.rs`, or `tree-sitter-bynk/grammar.js`. So this candidate isn't
-  "a second narrow control-flow form following an established pattern" — it would be
-  the checker's **first** non-`?` control-flow special-case, full stop. That doesn't
-  disqualify it, but it removes the main thing that made it feel like the safe default;
-  weigh it as a genuinely novel mechanism, not an extension of one.
-- **Restrict `Idempotency` to `Result`-returning handlers only**, and require the *whole*
-  handler return type to literally be `Result[T, E]` (not a richer custom outcome sum —
-  contradicting §12's own `PaymentConfirmed` example, which has no natural `Result` shape
-  to unify with, since event subscribers return `Effect[()]`ish rather than a domain
-  outcome). Needs checking against every worked example in §12, not just the first.
-- **Something categorically different from `?` entirely** — e.g. `dedup` doesn't
-  short-circuit *expression* evaluation at all; instead the *provider* wraps the handler
-  invocation itself (interception rather than a call inside the body), and the visible
-  `Idempotency.dedup(...)` call is closer to a declaration than a control-flow statement.
-  This would be a real departure from the design notes' worked syntax and needs to be
-  named as such if chosen, not quietly reinterpreted.
+**Why not the alternatives originally weighed here:**
 
-Whatever is chosen must also explain what happens to `given Clock, Idempotency` handlers
-whose return type carries **no** domain outcome at all (design notes §13: "a handler
-returning bare `Money`... any failure is a fault") — can such a handler use `Idempotency`,
-and if the dedup path fires, what does it return?
+- **A new checker-recognised statement form** (a `dedup`-flavoured bind, lowered to an
+  early return, restricted to a handler's first statement) was the leading candidate, but
+  it would have been the checker's first non-`?` control-flow special-case — verified by
+  grep that even the design notes' own closest analogue, `attempt`/`recover` (§13), is
+  itself unimplemented (zero hits in `bynk-syntax/src/keywords.rs`, `ast.rs`, or
+  `tree-sitter-bynk/grammar.js`) — so there was no existing pattern to extend, only a new
+  one to invent. The match-based shape needs no checker special-casing at all, so it wins
+  on soundness surface alone: a smaller, better-precedented compiler change beats a novel
+  one when both solve the problem.
+- **Restricting `Idempotency` to literal `Result[T, E]`-returning handlers, reusing `?`**
+  turned out not to work at all, not just to be narrow. Even with that restriction, `?`
+  only ever injects a propagated value into the **`Err`** arm of the same `Result[_, F]`
+  shape (`check_question`, `bynk-check/src/checker/expressions.rs:2060`) — so encoding a
+  cached *success* value as `dedup`'s `Err` payload would make a caller observe a genuine
+  `Err` for what was actually a cached `Ok`. That's a semantic inversion, not a narrowing;
+  this candidate is dropped, not just deprioritised.
+- **Interception** (the provider wraps the handler invocation itself; `dedup(...)` reads
+  as a declaration, not a statement) is strictly more machinery than the match-based
+  version for no additional power, and it hides the short-circuit behind provider-level
+  magic the reader can't see operating from the handler body alone — working against the
+  design notes' own "architectural cost is visible at the call site" principle (§4). Not
+  pursued.
+
+**The no-domain-outcome case, resolved for free.** A handler with no domain outcome at all
+(design notes §13: `on currentBalance() -> Money`, where "any failure is a fault") is not a
+special case under this decision — `Option[Money]` matches exactly the same way
+`Option[ReserveOutcome]` does. The match-based shape needed no separate answer for this
+because it never special-cased the return type's shape to begin with.
+
+**Cost accepted, not hidden.** Placement of the `dedup` call relative to any effects the
+handler performs is convention, not compiler-enforced — nothing stops a developer from
+running a side effect before the `match`, which would re-run on every duplicate delivery
+regardless of the cache hit. This mirrors the design notes' own accepted trade-off for
+`Sagas.compensate`: no compiler enforcement, an explicit call that "gives the reviewer
+somewhere to look" (§13). A future slice enforcing placement (e.g. a linter rule, not a
+type-system one) is possible but not required to ship slice 0.
 
 ### 3.2 — Provider-variant selection collides with ADR 0016
 
@@ -189,13 +206,14 @@ not treat any part of the example's concrete syntax as settled.
 
 ## 4. Candidate slice decomposition
 
-Provisional — the settling phase's job is to firm up 3.1–3.3 before slice boundaries can be
-trusted.
+Provisional — the settling phase's job is to firm up 3.2–3.3 before slice boundaries can be
+trusted. 3.1 is settled (above), so slice 0's shape is now concrete.
 
-- **Slice 0 — the control-flow primitive + an in-memory-only provider.** Settle 3.1.
-  Ship `given Idempotency` with exactly one provider variant (in-memory, handler-local),
-  proving the short-circuit mechanism end-to-end against a `tsc_verify` case reproducing
-  §12's `reserve` example (or a corrected version of it, if 3.1 changes the surface). No
+- **Slice 0 — the match-based short-circuit + an in-memory-only provider.** Depends on
+  [#926](https://github.com/accuser/bynk/issues/926) (generic capability methods) landing
+  first or alongside. Ship `given Idempotency` with exactly one provider variant
+  (in-memory, handler-local), proving the §3.1 shape end-to-end against a `tsc_verify`
+  case reproducing (a syntactically corrected version of) §12's `reserve` example. No
   provider selection yet — sidesteps 3.2 entirely by shipping only one provider.
 - **Slice 1 — provider-variant selection.** Settle 3.2 (the ADR 0016 reconciliation).
   Extend `provides`/the compose root with whatever selection mechanism 3.2 settles on,
@@ -210,10 +228,11 @@ trusted.
 
 ## 5. Front-loaded ADR candidates
 
-- **The `Idempotency` short-circuit primitive** (3.1) — whatever control-flow shape is
-  chosen, recorded as a decision distinct from `?`'s existing documented semantics, with
-  the constraint on which handler return-type shapes can use `given Idempotency` stated
-  explicitly.
+- **The `dedup` match-based short-circuit** (3.1, settled) — records that `dedup` is an
+  ordinary generic capability method returning `Effect[Option[T]]`, matched by the caller;
+  no new control-flow construct, no `?`/`check_question` changes. Depends on
+  [#926](https://github.com/accuser/bynk/issues/926)'s own ADR (generic capability
+  methods) landing as its foundation.
 - **Provider-variant selection vs. ADR 0016** (3.2) — must either narrow 0016's stated
   scope in an explicit follow-up decision or justify why Idempotency's variants are exempt
   from "no selectable-provider mechanism". Do not let this land as a silent contradiction
@@ -264,8 +283,9 @@ durable provider (slice 2) makes the blast radius real.
 
 - `given Idempotency` is checked and at least one provider variant is usable; §12's worked
   examples (or their settled corrections) compile and pass a `tsc_verify` case.
-- The short-circuit mechanism (3.1) is a named, documented control-flow shape distinct from
-  `?`, with its handler-return-type constraints explicit.
+- The match-based short-circuit (3.1) ships on top of
+  [#926](https://github.com/accuser/bynk/issues/926) (generic capability methods), with no
+  bespoke control-flow construct introduced for `Idempotency` itself.
 - Provider-variant selection (3.2) either amends ADR 0016's stated scope explicitly or is
   justified as consistent with it — never a silent contradiction.
 - A durable provider exists with its transactional-participation contract (3.3) written
