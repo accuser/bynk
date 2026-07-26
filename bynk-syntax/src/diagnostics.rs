@@ -451,6 +451,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An opaquely-exported type was inspected from outside its context.",
     ),
     d(
+        "bynk.context.rebrand_construction",
+        "A `uses`-sourced commons record or sum type was constructed directly inside a context, where the emitter's per-context rebrand leaves its constructors out of scope.",
+    ),
+    d(
         "bynk.contract.duplicate_name",
         "A function declares two contract clauses (`requires`/`ensures`) with the same name.",
     ),

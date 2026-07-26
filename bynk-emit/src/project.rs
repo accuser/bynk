@@ -2812,6 +2812,16 @@ fn check_unit_files(
         .iter()
         .map(|(n, i)| (n.clone(), i.aliases.clone()))
         .collect();
+    // #907: the exact set of type names `emit_context_rebrands` rebrands for
+    // this unit — names brought in via `uses` of a *commons* specifically
+    // (not a local declaration, and not a type surfaced via `consumes`,
+    // which `imported_from_kind` tags `UnitKind::Context` in
+    // `merge_consumed_exports` and which the emitter never rebrands).
+    let uses_commons_type_names: HashSet<String> = imported_from_kind
+        .iter()
+        .filter(|(n, k)| **k == UnitKind::Commons && combined_types.contains_key(n.as_str()))
+        .map(|(n, _)| n.clone())
+        .collect();
 
     for &i in indices {
         let pf = &parsed[i];
@@ -2919,6 +2929,8 @@ fn check_unit_files(
             agents: HashMap::new(),
             // ADR 0116 D6: provenance for the `bynk.list` deprecation lint.
             imported_from: imported_from.clone(),
+            is_context: kind == UnitKind::Context,
+            uses_commons_type_names: uses_commons_type_names.clone(),
         };
         refs.enter_file(&pf.identity_path, name, pf.synthetic);
         // v0.27: synthetic and test/integration files record no hints —
@@ -2995,6 +3007,8 @@ fn check_unit_files(
                 &mut typed,
                 table,
                 &cross_context_for_file,
+                kind == UnitKind::Context,
+                &uses_commons_type_names,
                 refs,
                 hints,
                 locals,
