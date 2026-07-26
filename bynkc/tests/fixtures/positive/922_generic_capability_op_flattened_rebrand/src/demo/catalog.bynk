@@ -1,0 +1,3 @@
+commons demo.catalog
+
+type ReserveOutcome = { orderId: String }

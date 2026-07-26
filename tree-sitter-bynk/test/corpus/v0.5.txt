@@ -24,6 +24,36 @@ context billing {
         return_type: (unit_type)))))
 
 ==========================
+generic capability operation (#926)
+==========================
+
+context billing {
+	capability Idempotency {
+		fn dedup[T](key: String) -> Effect[Option[T]]
+	}
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier))
+    (capability_decl
+      name: (identifier)
+      (capability_op
+        name: (identifier)
+        type_param: (identifier)
+        (param
+          name: (identifier)
+          type: (base_type))
+        return_type: (generic_type_ref
+          name: (builtin_type)
+          arg: (generic_type_ref
+            name: (builtin_type)
+            arg: (identifier)))))))
+
+==========================
 provider declaration
 ==========================
 

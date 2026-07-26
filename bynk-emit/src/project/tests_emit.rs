@@ -338,7 +338,7 @@ fn resolve_stubs(
             );
             continue;
         };
-        if !cap_decl.ops.iter().any(|o| o.name.name == pc.method.name) {
+        let Some(op_decl) = cap_decl.ops.iter().find(|o| o.name.name == pc.method.name) else {
             errors.push(CompileError::new(
                 "bynk.stub.unknown_op",
                 pc.method.span,
@@ -347,6 +347,29 @@ fn resolve_stubs(
                     pc.method.name
                 ),
             ));
+            continue;
+        };
+        // #926 (Decision F): a generic capability operation cannot be stubbed
+        // — `__Stub_Cap`'s per-op method body has no way to construct a
+        // value of the op's unconstrained `T`. Deferred rather than
+        // supported: the stub class carries no `implements` clause (its
+        // members are duck-typed through an untyped `deps` seam), so
+        // stubbing another, non-generic op of the same capability keeps
+        // type-checking.
+        if !op_decl.type_params.is_empty() {
+            errors.push(
+                CompileError::new(
+                    "bynk.stub.generic_op",
+                    pc.method.span,
+                    format!(
+                        "`{cap_name}.{}` declares its own type parameter — a generic capability operation cannot be stubbed at v1",
+                        pc.method.name
+                    ),
+                )
+                .with_note(
+                    "test through the capability's real (external) provider instead, or restructure the test to avoid stubbing this operation",
+                ),
+            );
             continue;
         }
         if let StubRhs::ReturnsEach(outcomes, span) = &pc.rhs
@@ -1966,20 +1989,7 @@ fn typecheck_case_body(
             let ops = decl
                 .ops
                 .iter()
-                .map(|op| checker::CapabilityOpInfo {
-                    name: op.name.name.clone(),
-                    params: op
-                        .params
-                        .iter()
-                        .map(|p| {
-                            checker::resolve_type_ref(&p.type_ref, &resolved.types)
-                                .unwrap_or(checker::Ty::Unit)
-                        })
-                        .collect(),
-                    param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
-                    return_ty: checker::resolve_type_ref(&op.return_type, &resolved.types)
-                        .unwrap_or(checker::Ty::Unit),
-                })
+                .map(|op| build_capability_op_info(op, &resolved.types))
                 .collect();
             capability_info_map.insert(
                 name.clone(),
@@ -2938,20 +2948,7 @@ fn check_property_body(
             let ops = decl
                 .ops
                 .iter()
-                .map(|op| checker::CapabilityOpInfo {
-                    name: op.name.name.clone(),
-                    params: op
-                        .params
-                        .iter()
-                        .map(|p| {
-                            checker::resolve_type_ref(&p.type_ref, &resolved.types)
-                                .unwrap_or(checker::Ty::Unit)
-                        })
-                        .collect(),
-                    param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
-                    return_ty: checker::resolve_type_ref(&op.return_type, &resolved.types)
-                        .unwrap_or(checker::Ty::Unit),
-                })
+                .map(|op| build_capability_op_info(op, &resolved.types))
                 .collect();
             capability_info_map.insert(
                 name.clone(),

@@ -937,6 +937,21 @@ pub(crate) fn describe_actor(a: &ActorDecl) -> String {
     out
 }
 
+/// #926: an op's own `[T, …]` type parameters, rendered for hover — `""` when
+/// the op is non-generic. Shared by [`describe_capability_op`] and
+/// [`describe_capability`] so the two signature renderings can't drift.
+fn capability_op_type_params_str(op: &CapabilityOp) -> String {
+    if op.type_params.is_empty() {
+        return String::new();
+    }
+    let names: Vec<&str> = op
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.as_str())
+        .collect();
+    format!("[{}]", names.join(", "))
+}
+
 /// v0.166 (#616): a capability operation as declared, attributed to the
 /// capability that owns it. Mirrors how [`describe_capability`] renders the same
 /// op within the capability body, as [`describe_record_field`] does for a field.
@@ -947,8 +962,9 @@ pub(crate) fn describe_capability_op(c: &CapabilityDecl, op: &CapabilityOp) -> S
         .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
         .collect();
     let mut out = format!(
-        "```bynk\nfn {}({}) -> {}\n```\n\nAn operation of capability `{}`.\n",
+        "```bynk\nfn {}{}({}) -> {}\n```\n\nAn operation of capability `{}`.\n",
         op.name.name,
+        capability_op_type_params_str(op),
         params.join(", "),
         type_ref_str(&op.return_type),
         c.name.name
@@ -1150,6 +1166,7 @@ pub(crate) fn describe_capability(c: &CapabilityDecl) -> String {
     for op in &c.ops {
         out.push_str("\tfn ");
         out.push_str(&op.name.name);
+        out.push_str(&capability_op_type_params_str(op));
         out.push('(');
         let parts: Vec<String> = op
             .params

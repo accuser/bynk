@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **432** codes in total.
+There are **434** codes in total.
 
 ## Agents
 
@@ -284,6 +284,7 @@ There are **432** codes in total.
 | `bynk.store.unknown_map_accessor` | A `store Map` field access is not one of its query accessors (`entries`/`keys`/`values`). |  |
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  |
 | `bynk.stub.bad_sequence` | A `stub … returns each […]` sequence is malformed (e.g. empty). |  |
+| `bynk.stub.generic_op` | A test `stub` targets a capability operation that declares its own type parameter — not supported at v1. |  |
 | `bynk.stub.not_a_seam` | A test `stub` overrides a capability the unit under test does not consume. |  |
 | `bynk.stub.rhs_type` | A test `stub … returns <value>` right-hand side does not match the operation's return type. |  |
 | `bynk.stub.unknown_op` | A test `stub` names an operation the capability does not declare. |  |
@@ -386,6 +387,7 @@ There are **432** codes in total.
 |---|---|---|
 | `bynk.provider.dependency_cycle` | Providers form a capability dependency cycle through `given`. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |
 | `bynk.provider.extra_operation` | A `provides` block implements an operation not in the capability. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |
+| `bynk.provider.generic_op_requires_external` | A Bynk-bodied `provides` implements a capability operation that declares its own type parameter — only an external (bodiless) provider can. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |
 | `bynk.provider.missing_operation` | A `provides` block is missing a capability operation. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |
 | `bynk.provider.outside_context` | `provides` was declared outside a context. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |
 | `bynk.provider.signature_mismatch` | A `provides` operation's signature does not match the capability. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |

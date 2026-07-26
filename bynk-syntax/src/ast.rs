@@ -552,6 +552,10 @@ pub struct CapabilityDecl {
 #[derive(Debug, Clone)]
 pub struct CapabilityOp {
     pub name: Ident,
+    /// #926: `[T, …]` type parameters on the op itself; empty for a
+    /// non-generic op. Resolved only from an explicit type argument at the
+    /// call site (`Cap.op[Some](…)`) — never inferred.
+    pub type_params: Vec<TypeParam>,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
     pub documentation: Option<String>,

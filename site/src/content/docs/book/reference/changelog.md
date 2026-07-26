@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.233**.
+written against **v0.234**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.234.0** | A capability operation may declare its own type parameter (`capability X { fn op[T](…) -> … }`, ADR 0280), resolved only from an explicit call-site type argument (`X.op[SomeType](…)`) and emitted as a genuine generic TypeScript interface method; a generic operation requires an external (bodiless) provider and cannot be stubbed |
 | **v0.233.5** | A test-scaffold module's `Json.decode[T]`/`Json.encode` on a named record now generates its own `serialise_*`/`deserialise_*` closure and namespace-qualifies the type, instead of emitting a call to a codec the unit never exports and a bare type name the module never declares |
 | **v0.233.4** | An inlined boundary codec, or a `Json.decode[T]`, reaching a Worker's `compose.ts` or a test-scaffold module now imports the runtime helpers and types it names, instead of emitting TypeScript that references an unimported name |
 | **v0.233.3** | An adapter-declared package name or version range carrying a control character no longer emits an invalid `package.json`; conditional runtime imports are decided from what emission referenced rather than by scanning the generated text |

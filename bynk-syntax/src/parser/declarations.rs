@@ -2018,6 +2018,10 @@ impl<'a> Parser<'a> {
     fn parse_capability_op(&mut self) -> Result<CapabilityOp, CompileError> {
         let kw = self.expect(TokenKind::Fn, "to start a capability operation")?;
         let name = self.expect_ident("as the capability operation name")?;
+        // #926: `[T, …]` type parameters on the op itself, spelled identically
+        // to `fn`/`type`'s own (`parse_optional_type_params`). Resolved only
+        // from an explicit type argument at the call site — never inferred.
+        let type_params = self.parse_optional_type_params()?;
         self.expect(TokenKind::LParen, "after the operation name")?;
         let mut params = Vec::new();
         if self.peek_kind() != Some(TokenKind::RParen) {
@@ -2032,6 +2036,7 @@ impl<'a> Parser<'a> {
         let end_span = return_type.span();
         Ok(CapabilityOp {
             name,
+            type_params,
             params,
             return_type,
             documentation: None,

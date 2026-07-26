@@ -737,9 +737,9 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
         ExprKind::MethodCall {
             receiver,
             method,
+            type_args,
             args,
-            ..
-        } => lower_method_call(e, receiver, method, args, stmts, cx),
+        } => lower_method_call(e, receiver, method, type_args, args, stmts, cx),
         ExprKind::If {
             cond,
             then_block,
@@ -1034,10 +1034,33 @@ fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
 /// UFCS instance-call tail. The collection/numeric/string/option/result
 /// kernels and the typed JSON codec delegate to dedicated helpers that
 /// return `Option<String>`.
+/// #926: render a capability call's explicit type argument(s) as a TS
+/// generic argument list (`<T>`), or `""` when absent. Unlike
+/// `Json.decode[T]` (`lower_json_codec_call`, below), which specialises a
+/// runtime codec per call and needs no TS-level generic at all, a capability
+/// operation's `T` is a pure type-level parameter on a real generic TS
+/// interface method (Decision C) — with no argument of type `T`, TypeScript
+/// cannot infer a return-position-only parameter, so the call site must
+/// name it explicitly.
+fn capability_call_type_args_ts(type_args: &[TypeRef]) -> String {
+    if type_args.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<{}>",
+        type_args
+            .iter()
+            .map(ts_type_ref)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 fn lower_method_call(
     e: &Expr,
     receiver: &Expr,
     method: &Ident,
+    type_args: &[TypeRef],
     args: &[Expr],
     stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
@@ -1428,10 +1451,11 @@ fn lower_method_call(
     {
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         return format!(
-            "{}.{}.{}({})",
+            "{}.{}.{}{}({})",
             cx.cap_deps_expr,
             cap,
             method.name,
+            capability_call_type_args_ts(type_args),
             args_lowered.join(", ")
         );
     }
@@ -1449,10 +1473,11 @@ fn lower_method_call(
     {
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         return format!(
-            "{}.{}.{}({})",
+            "{}.{}.{}{}({})",
             cx.cap_deps_expr,
             id.name,
             method.name,
+            capability_call_type_args_ts(type_args),
             args_lowered.join(", ")
         );
     }
