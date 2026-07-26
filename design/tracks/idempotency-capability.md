@@ -1,14 +1,16 @@
 # The `Idempotency` capability — mechanical dedup for at-least-once delivery
 
-- **Status:** Draft (settling — partial). Spine issue
+- **Status:** Draft (settled — not yet sliced). Spine issue
   [#921](https://github.com/accuser/bynk/issues/921) open; this doc landed via
   [#922](https://github.com/accuser/bynk/pull/922) ("Part of #921"), but that PR was marked
   ready for review and merged 55 seconds later with no review — the assertion that §3's
-  questions were closed was never tested. §3.1 and §3.2 have since been genuinely argued
-  and settled (see below; §3.1 depends on
+  questions were closed was never tested. §3.1, §3.2, and §3.4 have since been genuinely
+  argued and settled (see below; §3.1 depends on
   [#926](https://github.com/accuser/bynk/issues/926), its cut-out sub-issue); §3.2's
-  settlement narrowed this track's scope and deferred §3.3 to a future, unfiled track.
-  §3.4 remains open. Treat this doc as still settling, not adopted. Scopes issue
+  settlement narrowed this track's scope and deferred §3.3 to a future, unfiled track. All
+  four of §3's original questions are now resolved (settled or explicitly deferred) — this
+  doc is ready for slice 0 to be cut as an increment-proposal sub-issue of #921, not yet
+  adopted by a merge that actually tested it. Scopes issue
   [#554](https://github.com/accuser/bynk/issues/554) ("Ship the `Idempotency` capability
   ahead of the full Events track") down to its `Idempotency`-capability item.
 - **Realises:** `design/bynk-design-notes.md` §4 ("Idempotency as a system convention",
@@ -26,20 +28,20 @@
   `bynk-check/src/firstparty.rs:64` lists the only first-party capabilities as `Clock`,
   `Random`, `Logger`, `Fetch`, `Secrets`, `Locale`. The design notes' own aside — "the same
   way Sagas does" (multiple provider variants) — is not a working reference either; `Sagas`
-  is equally unimplemented. This track has no sibling implementation to mirror; the open
-  question remaining below (§3.4; §3.1 and §3.2 settled, §3.3 deferred) is genuinely novel.
+  is equally unimplemented. This track has no sibling implementation to mirror; every
+  question below was genuinely novel going in (§3.1, §3.2, §3.4 settled; §3.3 deferred).
 
 ## 1. The theme
 
 A handler that needs deduplication declares `given Idempotency` and calls
-`Idempotency.dedup(on: <key>, expiresAfter: <duration>)` near its top. On first
-invocation with a given key, the call passes through and the handler's own outcome is
-recorded against the key when the handler commits. On a later invocation with the same
-key inside the retention window — a retried command, a replayed event — the call instead
-short-circuits: the handler's remaining body does not re-execute, and the caller sees the
-previously-recorded outcome. The end state when this track retires: `given Idempotency` is
-a real, checked capability with at least one usable provider, and the design notes' §12
-worked examples (`reserve`, the `PaymentConfirmed` subscriber) compile and run.
+`Idempotency.dedup[T](key, expiresAfter)` near its top. On first invocation with a given
+key, the call passes through and the handler's own outcome is recorded against the key
+when the handler commits. On a later invocation with the same key inside the retention
+window — a retried command, a replayed event — the call instead short-circuits: the
+handler's remaining body does not re-execute, and the caller sees the previously-recorded
+outcome. The end state when this track retires: `given Idempotency` is a real, checked
+capability with its one settled provider, and the §3.1 worked example below (a settled
+correction of §12's `reserve` example) compiles and runs.
 
 ## 2. Why a track (the ADR 0076 trigger)
 
@@ -49,10 +51,9 @@ worked examples (`reserve`, the `PaymentConfirmed` subscriber) compile and run.
   later slices of this same track, was settled (§3.2) into a *separate*, future,
   currently-unfiled track instead — this track no longer carries that multi-increment
   weight itself, but still clears the bar on its own two remaining slices.
-- [x] **Surface not yet settled.** §3.1 (the `dedup` short-circuit shape) and §3.2
-  (provider-variant selection) both settled during this track's own settling pass — see
-  below. §3.4 (key typing, scope, eviction) remains open, with no existing pattern to lean
-  on fully.
+- [x] **Surface not yet settled (at settling time).** §3.1 (the `dedup` short-circuit
+  shape), §3.2 (provider-variant selection), and §3.4 (key typing, scope, eviction) all
+  had no existing pattern to lean on fully — see below for how each settled.
 - [x] **Security/safety boundary.** The capability's entire purpose is a correctness
   guarantee (§12's "safe by construction" claim); a wrong shape is either silently unsafe
   (doesn't dedup) or silently wrong (dedups across the wrong scope — see the threat model,
@@ -67,11 +68,11 @@ capability method, matched on like any other `Option`:
 
 ```
 capability Idempotency {
-  fn dedup[T](on: Key, expiresAfter: Duration) -> Effect[Option[T]]
+  fn dedup[T](key: String, expiresAfter: Duration) -> Effect[Option[T]]
 }
 
 on reserve(qty: Int, orderId: OrderId) -> ReserveOutcome given Clock, Idempotency {
-  let cached <- Idempotency.dedup[ReserveOutcome](on: orderId, expiresAfter: 24h)
+  let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId), 24.hours)
   match cached {
     Some(outcome) => outcome,
     None => {
@@ -81,9 +82,9 @@ on reserve(qty: Int, orderId: OrderId) -> ReserveOutcome given Clock, Idempotenc
 }
 ```
 
-(Written here with §12's illustrative `on:`/`expiresAfter:`/`24h` syntax; §3.4 settles the
-real call syntax — labelled arguments and bare-suffix durations don't exist as shown, see
-below.)
+(This is the real, settled call syntax — see §3.4 for why `on:`/`expiresAfter:`-as-labels
+and `24h` from §12's own prose never parsed, and for the key-type and key-scoping
+decisions.)
 
 No new control-flow construct, and no change to `check_question`/`?` at all. `match` as a
 tail expression with joined arm types already ships (the `join_ty` LUB mechanism,
@@ -206,44 +207,81 @@ providers can opt into; or evidence that §12's "atomically with the handler's o
 commits" is aspirational and the real guarantee is looser (e.g. dedup-write-then-handler,
 accepting a narrow window where a duplicate could slip through on crash).
 
-### 3.4 — Key typing, key scope, and eviction
+### 3.4 — Key typing, key scope, and eviction — SETTLED
 
-Still needed for slice 0 (the in-memory provider needs *some* retention/eviction answer
-too — `expiresAfter` isn't durable-only), and doubly so whenever the future durable
-provider (§3.2) gets filed: what type(s) can
-`on:` accept (design notes say "any expression in scope" — does that mean anything
-`Json.encode`-able, i.e. the same boundary-legal domain as the existing typed JSON codec,
-`static-semantics.md`'s "The typed JSON codec" section?); whether the dedup record's key
-namespace is automatically scoped (per-agent-instance? per-capability-composition? global
-per-provider?) — this doubles as part of the threat model (§6); and whether eviction
-follows `Cache`'s lazy/check-on-read model or needs to be proactive given dedup records may
-be read from a *different* invocation than the one that wrote them.
+**Decision — the real call shape.** §12's `dedup(on: x, expiresAfter: y)?` never parsed
+against the shipped grammar (three independent mismatches: labelled arguments don't
+exist, `24h` isn't the duration-literal form, and 3.1 already dropped the `?`). The
+settled interface and call:
 
-Two more surface details in §12's own syntax don't match what's shipped, worth folding
-into whichever slice settles the real call shape: **labelled arguments** — `dedup(on: x,
-expiresAfter: y)` — have no grammar today; `call` (`tree-sitter-bynk/grammar.js:1406`) is
-strictly positional (`sep1($._expression, ",")`), and `name: value` labelling exists only
-inside `record_construction`'s `field_init`. And the **duration literal** `24h`/`7d` isn't
-the shipped form either — `Duration` literals are `<int>.<unit>` (`5.minutes`, ADR 0112;
-`bynk-syntax/src/ast.rs:1629`), not a bare numeric suffix. Neither is a deep problem on its
-own (both are plausibly-addable surface, not architectural), but together with 3.1 they
-mean §12's `dedup` example has **three** independent points where it doesn't parse against
-the shipped grammar today — good evidence it was written as illustrative pseudocode for
-the architectural commitment, not as a literal preview of the surface. This track should
-not treat any part of the example's concrete syntax as settled.
+```
+capability Idempotency {
+  fn dedup[T](key: String, expiresAfter: Duration) -> Effect[Option[T]]
+}
+
+let cached <- Idempotency.dedup[ReserveOutcome](Json.encode(orderId), 24.hours)
+match cached {
+  Some(outcome) => outcome,
+  None => { ... }
+}
+```
+
+Declared parameter names (`key`, `expiresAfter`) stay for documentation and
+hover/signature-help — only the *call site* is positional, matching `call`
+(`tree-sitter-bynk/grammar.js:1406`, `sep1($._expression, ",")`) exactly, with no grammar
+change needed. `24.hours` is the shipped `<int>.<unit>` `Duration` literal form (ADR 0112),
+confirmed against the closed unit set in `bynk-syntax/src/ast.rs:1633`
+(`Hours`/`Days` are both in it).
+
+**Decision — the key type is `String`, not "any expression."** §12's "any expression in
+scope" reads most naturally as generic-over-the-key-type (`fn dedup[K, T](key: K, ...) ->
+Effect[Option[T]]`, `K` constrained to the JSON codec's boundary-legal domain). Rejected:
+Bynk has no type-parameter bounds mechanism today (generic records and generic instance
+methods both ship unconstrained), so a badly-chosen `K` would fail only late, at whatever
+point the provider tries to serialise it — not at the `capability_op` declaration site. A
+plain `String` sidesteps this entirely, matches how every real-world idempotency-key
+system works (Stripe's `Idempotency-Key` header, AWS Lambda Powertools' idempotency
+utility — both opaque strings), and keeps `dedup` single-generic (only `T`, the outcome
+type, as settled in 3.1). Where a caller has a richer domain value, they derive the string
+explicitly (`Json.encode(orderId)` above) — a visible step, not implicit codec magic,
+which directly serves §6's "make the effective key visible for review" goal: an implicit
+generic-and-serialised key would hide the effective key's shape from a reviewer who
+doesn't already know the codec's output format.
+
+**Decision — key scope is automatic at the call site, manual across callers.** The
+*effective* key the provider stores against is the developer-supplied string, prefixed
+with a compiler-synthesised, stable per-call-site identifier (e.g. derived from the
+`dedup` call's own source span) — free (compile-time only, no runtime cost, no new
+syntax), and it closes one real class of the §6 threat model for free: two unrelated
+`dedup` call sites can never collide even if a developer reuses an identical literal
+string at both, because the sites themselves are automatically distinguished. It does
+**not** close the other class §6 names — two *different callers of the same call site*
+(e.g. two tenants both invoking the same `reserve` handler) still collide if the
+developer-supplied string doesn't itself differentiate them. That part stays the caller's
+documented responsibility, same trade-off already accepted for `Sagas.compensate`
+targeting a non-idempotent operation (§13): no compiler enforcement, an explicit,
+reviewable call. Automatic call-site scoping narrows the burden; it doesn't remove it.
+
+**Decision — eviction is lazy, matching `Cache`.** Reuses `Cache`'s shipped
+check-on-read model (decision 0113: expired entries reap at next access, no background
+sweep) rather than inventing proactive eviction. This carries the same accepted
+trade-off `Cache` already lives with in this codebase — a key written once and never read
+again isn't reclaimed until *something* reads it — so it is not a new risk this track
+introduces, only one it inherits. A future proactive-sweep slice is a valid optimisation,
+not a blocker for slice 0.
 
 ## 4. Candidate slice decomposition
 
-With 3.1 and 3.2 settled and 3.3 deferred out of scope, this track's remaining work is
-small: slice 0 is the only slice needed to deliver this track's actual end state (§1).
+With 3.1, 3.2, and 3.4 settled, and 3.3 deferred out of scope, this track is fully
+settled: slice 0 is the only slice needed to deliver this track's actual end state (§1),
+and its shape is now concrete end to end.
 
 - **Slice 0 — the match-based short-circuit + the (sole) in-memory provider.** Depends on
   [#926](https://github.com/accuser/bynk/issues/926) (generic capability methods) landing
   first or alongside. Ship `given Idempotency` with its one provider (in-memory,
-  handler-local), proving the §3.1 shape end-to-end against a `tsc_verify` case
-  reproducing (a syntactically corrected version of) §12's `reserve` example, and settle
-  3.4 (key typing/scope/eviction) as part of the same slice, since the provider can't ship
-  without it.
+  handler-local; `String` keys, call-site-scoped, lazy eviction per §3.4), proving the
+  settled §3.1 shape end-to-end against a `tsc_verify` case reproducing the (corrected)
+  `reserve` example above.
 - **Slice 1 (possible, not yet scoped) — event-subscriber sugar.** §12's `e.eventId`
   canonical-key pattern for event subscribers; whether this deserves special syntax or is
   just documented convention once slice 0 lands.
@@ -268,6 +306,11 @@ actually delivers.
   implicit in the doc's diff history.
 - **Durable-provider transactional participation** (3.3) — deferred; not this track's ADR.
   Belongs to whichever future track picks up the durable provider named in 3.2.
+- **`Idempotency`'s key shape** (3.4, settled) — `String`-typed keys, positional call
+  syntax (no labelled arguments), automatic compiler-synthesised call-site scoping
+  layered under the developer-supplied key, and lazy eviction matching `Cache`. Records
+  why "any expression" and implicit generic serialisation were rejected in favour of an
+  explicit `Json.encode(...)` at the call site.
 
 ## 6. Threat model
 
@@ -279,28 +322,26 @@ correctness guarantee itself (a wrongly-short-circuited handler silently skips r
 sanctions caller-supplied keys for non-idempotent receivers ("the caller supplies a
 deterministic identifier... the receiver dedupes against it"), and those keys can
 originate from external actors — an HTTP client-supplied idempotency header is the classic
-case. If the key namespace (3.4) is not automatically scoped per-caller/per-tenant/per-
-composition, a second caller who reuses or guesses a first caller's key receives the
-*first caller's* cached outcome rather than executing their own request — a cross-tenant
-data leak if the outcome carries tenant-specific data, and a correctness bug even when it
-doesn't (wrong operation silently skipped). This risk is structural, not an implementation
-slip: it exists because the capability's entire contract is "key equality means treat as
-the same call", and nothing in §12 states who is responsible for making sure two
-unrelated calls can never coincide on a key.
+case. Two distinct collision classes exist: **cross-call-site** (two unrelated `dedup`
+calls in different handlers happen to use the same literal string) and **cross-caller,
+same-call-site** (two different tenants both invoke the *same* handler, and the
+handler-derived key doesn't itself differentiate them). A second caller who lands on either
+collision receives the *first caller's* cached outcome instead of executing their own
+request — a cross-tenant data leak if the outcome carries tenant-specific data, and a
+correctness bug even when it doesn't (wrong operation silently skipped).
 
-**Where verification happens.** The design notes place the uniqueness burden on the
-*caller* ("the caller supplies a deterministic identifier derived from its own context")
-— this track should make that a checked or at least visibly-documented discipline, not a
-silent assumption. Candidates worth weighing during settling: auto-composing the key with
-an implicit scope (composition/context/agent identity) the developer cannot omit, so a
-caller-supplied component is always only *part* of the effective key; or leaving it fully
-manual but requiring the emitted/generated code to make the effective key visible for
-review (mirroring how `Sagas.compensate` targeting a non-idempotent operation is "a latent
-bug the explicit call gives the reviewer somewhere to look" — §13). No enforcement
-mechanism is settled yet; this section exists so the question is not lost by the time a
-future durable provider (§3.2) makes the blast radius real — it applies to the in-memory
-provider too, just with lower stakes (a shorter typical retention window, no
-crash-survival exposure).
+**Where verification happens — settled in 3.4.** The cross-call-site class is closed
+automatically and for free: §3.4's decision prefixes every key with a
+compiler-synthesised, per-call-site identifier, so two different `dedup` call sites can
+never collide regardless of what string a developer picks. The cross-caller,
+same-call-site class is **not** closed by the mechanism — it stays the caller's documented
+responsibility (the design notes' own framing: "the caller supplies a deterministic
+identifier derived from its own context"), the same trade-off already accepted for
+`Sagas.compensate` targeting a non-idempotent operation: no compiler enforcement, an
+explicit, reviewable call that "gives the reviewer somewhere to look" (§13). This applies
+to the in-memory provider now and will apply just as much to a future durable provider
+(§3.2) — the stakes rise with durability (a longer retention window, crash survival), but
+the mechanism and its accepted gap are the same.
 
 ## 7. Slice status
 
@@ -309,13 +350,15 @@ crash-survival exposure).
 
 ## 8. Done when
 
-- `given Idempotency` is checked and its one provider is usable; §12's worked examples (or
-  their settled corrections) compile and pass a `tsc_verify` case.
+- `given Idempotency` is checked and its one provider is usable; the settled §3.1/§3.4
+  `reserve` example compiles and passes a `tsc_verify` case.
 - The match-based short-circuit (3.1) ships on top of
   [#926](https://github.com/accuser/bynk/issues/926) (generic capability methods), with no
   bespoke control-flow construct introduced for `Idempotency` itself.
-- 3.4 (key typing, scope, eviction) has a stated answer, and the key-scoping threat (§6)
-  is addressed, not implicit.
+- `String` keys, positional call syntax, compiler-synthesised call-site scoping, and
+  `Cache`-style lazy eviction (3.4) all ship as specified; the cross-call-site collision
+  class is closed by construction, and the cross-caller-same-site class is documented as
+  the caller's responsibility, not left implicit.
 - The doc is explicit that provider-variant selection and the durable provider (3.2's
   deferred half, 3.3) are **not** delivered by this track — named as future work, not
   silently dropped.
