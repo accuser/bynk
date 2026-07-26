@@ -4,9 +4,12 @@
   [ADR 0167](../decisions/0167-feature-tracks-run-github-native.md): the
   **spine issue** is
   [#936](https://github.com/accuser/bynk/issues/936); this doc lands via a
-  draft PR referencing it (*"Part of #936"*, never `Closes`). No slices
-  shipped yet. Nothing in the compiler implements `event`/`Events` today
-  (`bynk-syntax/src/keywords.rs`
+  draft PR referencing it (*"Part of #936"*, never `Closes`). §3.1, §3.2, §3.3,
+  and §3.6 are now genuinely settled, with their foundational ADRs recorded in
+  `design/pending/events-foundational-adrs.md` (pre-stamp); §3.4 stays open
+  until slice 0 has a substrate to measure, and §3.5 is a named slice-3
+  concern. No slices shipped yet. Nothing in the compiler implements
+  `event`/`Events` today (`bynk-syntax/src/keywords.rs`
   has no `event` token; `bynk-check/src/firstparty.rs` lists the first-party
   capabilities as `Clock`, `Random`, `Logger`, `Fetch`, `Secrets`, `Locale`,
   `Idempotency` — no `Events`).
@@ -40,7 +43,9 @@
   scratch. The risk this doc must not fall into is relitigating settled §7 prose;
   the risk it must not hide is treating the two hard, substrate-level unknowns
   (the fan-out substrate, per-publisher ordering on Cloudflare) as settled merely
-  because §7 asserts an outcome for them.
+  because §7 asserts an outcome for them — the fan-out substrate (§3.1) is now
+  settled by argument, and per-publisher ordering (§3.4) deliberately stays
+  open until it can be settled by evidence instead.
 
 ## 1. The theme
 
@@ -110,7 +115,7 @@ Treated as **committed by the design notes**, not open questions for this track:
   [`idempotency-capability.md`](idempotency-capability.md)). This track *reuses*
   it; it does not rebuild it.
 
-### 3.1 — The fan-out substrate on Cloudflare — OPEN (the load-bearing fork)
+### 3.1 — The fan-out substrate on Cloudflare — SETTLED (the load-bearing fork)
 
 **The question.** §7's lowering note offers a fork without choosing it: emit
 "maps to Queues with topic-as-topic routing, **or** a custom event-fanout DO for
@@ -136,15 +141,19 @@ durable log.
   runtime machinery, a scaling chokepoint at high fan-out, and it puts a DO on the
   emission hot path.
 
-**Leaning (to settle under review).** Start with the **fanout-DO** shape for the
-core, because it is the only one of the two that can *honestly* deliver §7's
-per-publisher ordering and failure-isolation guarantees rather than approximate
-them — and the follow-on replay track (§3.6) needs a durable log-owner anyway, so
-the DO is not throwaway. The queue path stays a documented future optimisation
-for the high-fanout, ordering-relaxed case, not slice 0's substrate. This is the
-**ADR to land up front** (§5); everything else composes above it.
+**Settled.** Slice 0 lowers emission onto the **fanout-DO** shape, because it is
+the only one of the two that can *honestly* deliver §7's per-publisher ordering
+and failure-isolation guarantees rather than approximate them — and the
+follow-on replay track (§3.6) needs a durable log-owner anyway, so the DO is not
+throwaway. The queue path stays a documented future optimisation for the
+high-fanout, ordering-relaxed case, not slice 0's substrate. Recorded as the
+`events-fanout-substrate` ADR,
+`design/pending/events-foundational-adrs.md` (pre-stamp) — the **foundational
+ADR landed before slice 0** (§5); everything else composes above it. This
+settles the substrate choice itself; per-publisher FIFO as a *verified*
+guarantee (§3.4) is a separate, still-open, empirical decision.
 
-### 3.2 — Admitting Events to the closed protocol set — OPEN, but precedented
+### 3.2 — Admitting Events to the closed protocol set — SETTLED, precedented
 
 **The question.** Events is a sixth service protocol. The protocol set is
 **closed** ([ADR 0079](../decisions/0079-protocols-closed-set.md)), so admitting
@@ -160,9 +169,10 @@ surface (the WebSocket track). Events differs in one real way: `from Events(E)`
 **parameterises the protocol by an event type**, and (§3.3) by a pattern — no
 shipped protocol takes a type argument on the header. That parameterisation is
 the genuinely new grammar/checker slice-0 work; the closed-set membership itself
-is a one-line extension.
+is a one-line extension. Recorded as the `events-protocol-set-extension` ADR,
+`design/pending/events-foundational-adrs.md` (pre-stamp).
 
-### 3.3 — Subscription pattern refinement — OPEN, leans hard on precedent
+### 3.3 — Subscription pattern refinement — SETTLED, leaned hard on precedent
 
 **The question.** `from Events(E { region: Domestic, .. })` filters emissions by a
 structural pattern (§7 lines 198–227). The pattern is type-checked against the
@@ -178,12 +188,14 @@ already establish structural, declarative, enforced-before-the-handler dispatch.
 The payload pattern itself reuses the shipped refined-pattern and nested-payload
 machinery (ADRs [0169](../decisions/0169-nested-payload-patterns-and-match-arm-guards.md),
 [0252](../decisions/0252-or-patterns.md),
-[0253](../decisions/0253-refined-patterns.md)). **The one thing to settle:** where
-the filter runs — §7 wants "server-side filtering where the platform supports it,
-deliver-and-filter as a transparent fallback" (line 227). Slice 1 should ship the
-**deliver-and-filter fallback** only (the DO delivers, the subscriber's generated
-guard filters), with server-side pre-filtering a later optimisation that cannot
-change observable semantics.
+[0253](../decisions/0253-refined-patterns.md)). **The one thing settled here:**
+where the filter runs — §7 wants "server-side filtering where the platform
+supports it, deliver-and-filter as a transparent fallback" (line 227). Slice 1
+ships the **deliver-and-filter fallback** only (the DO delivers, the
+subscriber's generated guard filters), with server-side pre-filtering a later
+optimisation that cannot change observable semantics. Recorded as the
+`events-pattern-dispatch-deliver-and-filter` ADR,
+`design/pending/events-foundational-adrs.md` (pre-stamp).
 
 ### 3.4 — Per-publisher FIFO: the contract vs. what Cloudflare delivers — OPEN, needs an empirical check
 
@@ -225,7 +237,7 @@ as a version-bumping change all need settling. This is a slice-3 concern, not a
 slice-0 blocker; naming it now keeps versioning from being retrofitted onto an
 envelope that did not plan for it.
 
-### 3.6 — Replay / backfill — SPLIT OUT to a future track (the precedent move)
+### 3.6 — Replay / backfill — SPLIT OUT to a future track (the precedent move; recorded)
 
 **Decision.** Event replay — a new subscriber "backfilling from log history",
 the runtime upgrading old wire events to the current schema on read (§7 lines
@@ -258,9 +270,12 @@ split:
 
 **What this track still owes replay (so the split is honest, not a dodge).** The
 envelope (§4 slice 2) must carry `eventId` and `schemaVersion` from day one, and
-the fan-out substrate (§3.1) must not foreclose a durable log — the §3.1 leaning
-toward a fanout DO is chosen partly because it is the natural future log-owner.
-This track ships the *seams* replay will need; it does not ship replay.
+the fan-out substrate (§3.1) must not foreclose a durable log — the §3.1 fanout
+DO is chosen partly because it is the natural future log-owner. This track ships
+the *seams* replay will need; it does not ship replay. Recorded as the
+`events-replay-out-of-scope` ADR,
+`design/pending/events-foundational-adrs.md` (pre-stamp) — durable and citable
+rather than implicit in a diff.
 
 ## 4. Candidate slice decomposition
 
@@ -307,29 +322,37 @@ chosen substrate before it is asserted as shipped.
 ## 5. Front-loaded ADR candidates
 
 The load-bearing, hard-to-reverse decisions to land up front (ADR 0076/0167's
-"foundational ADRs"):
+"foundational ADRs"). Four of the five are **written**, recorded in
+`design/pending/events-foundational-adrs.md` (pre-stamp) ahead of any slice-0
+code; one remains open, deliberately, until there is something to measure.
 
-- **The Events fan-out substrate** (§3.1) — records the fanout-DO-vs-queue choice
-  and *why*, because per-publisher ordering, subscriber failure isolation, and the
-  future replay log all depend on it and it is the most expensive decision to
-  reverse. **This is the one that must land before slice 0.**
-- **Events joins the closed protocol set; the header takes a type argument**
-  (§3.2) — records extending [ADR 0079](../decisions/0079-protocols-closed-set.md)
-  to a sixth protocol and the new event-type-parameterised `from Events(E)`
-  header shape (no prior protocol parameterises on a type).
-- **Per-publisher FIFO is a verified guarantee, not an assertion** (§3.4) —
-  records the empirical fixture that backs the ordering claim on the chosen
-  substrate, in the deploy track's evidence-not-assertion tradition
-  ([ADR 0193](../decisions/0193-multi-context-deploy-ordering.md)).
-- **Subscription pattern dispatch reuses auth/refined-pattern machinery** (§3.3) —
-  records that no bespoke matching engine is introduced for Events; deliver-and-
-  filter is the committed semantics, server-side pre-filter a later
+- **[Written] The Events fan-out substrate** (§3.1, `events-fanout-substrate`) —
+  records the fanout-DO-vs-queue choice and *why*, because per-publisher
+  ordering, subscriber failure isolation, and the future replay log all depend
+  on it and it is the most expensive decision to reverse. **This is the one
+  that had to land before slice 0 — it now has.**
+- **[Written] Events joins the closed protocol set; the header takes a type
+  argument** (§3.2, `events-protocol-set-extension`) — records extending
+  [ADR 0079](../decisions/0079-protocols-closed-set.md) to a sixth protocol and
+  the new event-type-parameterised `from Events(E)` header shape (no prior
+  protocol parameterises on a type).
+- **[Still open] Per-publisher FIFO is a verified guarantee, not an assertion**
+  (§3.4) — records the empirical fixture that backs the ordering claim on the
+  chosen substrate, in the deploy track's evidence-not-assertion tradition
+  ([ADR 0193](../decisions/0193-multi-context-deploy-ordering.md)). Cannot be
+  written until slice 0 has a substrate to run the fixture against.
+- **[Written] Subscription pattern dispatch reuses auth/refined-pattern
+  machinery** (§3.3, `events-pattern-dispatch-deliver-and-filter`) — records
+  that no bespoke matching engine is introduced for Events; deliver-and-filter
+  is the committed semantics, server-side pre-filter a later
   semantics-preserving optimisation.
-- **Event schema versioning + the cross-build registry** (§3.5) — slice-3 ADR;
-  records where the registry lives and whether it reuses the ADR 0200 normal form.
-- **Replay is out of scope** (§3.6) — records the split decision itself, so it is
-  durable and citable rather than implicit in a diff, and names the future track
-  and its dependency on the durable `Idempotency` provider.
+- **[Deferred to slice 3] Event schema versioning + the cross-build registry**
+  (§3.5) — slice-3 ADR; records where the registry lives and whether it reuses
+  the ADR 0200 normal form. Not a slice-0 blocker, so not written now.
+- **[Written] Replay is out of scope** (§3.6, `events-replay-out-of-scope`) —
+  records the split decision itself, so it is durable and citable rather than
+  implicit in a diff, and names the future track and its dependency on the
+  durable `Idempotency` provider.
 
 ## 6. Threat model
 
@@ -404,8 +427,13 @@ receives *exactly* the emissions its pattern admits.
   ([#260](https://github.com/accuser/bynk/issues/260)) are **not** delivered by
   this track — named as a future track with its durable-`Idempotency` dependency,
   not silently dropped.
-- [ ] Foundational ADRs (§5) written — the substrate ADR (§3.1) landed **before**
-  slice 0; the ordering-evidence ADR (§3.4) before the guarantee is documented.
+- [x] Foundational ADRs (§5) written that do not depend on slice-0 code —
+  the substrate ADR (§3.1), the closed-protocol-set extension (§3.2), the
+  deliver-and-filter dispatch commitment (§3.3), and the replay split (§3.6) —
+  landed **before** slice 0 (`design/pending/events-foundational-adrs.md`,
+  pre-stamp).
+- [ ] The ordering-evidence ADR (§3.4) landed, backed by the empirical fixture,
+  before per-publisher FIFO is documented as shipped.
   Spec-in-place updates for the Events protocol are a per-slice follow-on.
   **On retire:** remove this doc; append its closing summary to
   [`../archive/retired-tracks.md`](../archive/retired-tracks.md); close the spine
