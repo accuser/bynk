@@ -222,6 +222,12 @@ fn emit_block_inner(
     indent: usize,
     async_tail: bool,
 ) {
+    // #908: every nested block (if/else branch, match arm, lambda body) as
+    // well as a function/handler's own body reaches here, so this is the one
+    // place that needs to push/pop a shadow-rename frame to match the
+    // language's actual block-scoping — a re-`let` frame must not survive
+    // past the block it was declared in.
+    cx.shadow_scopes.push(HashMap::new());
     for stmt in &block.statements {
         emit_statement(out, stmt, cx, indent);
     }
@@ -248,6 +254,7 @@ fn emit_block_inner(
             write_line(out, indent, &format!("return {tail};"));
         }
     }
+    cx.shadow_scopes.pop();
 }
 
 /// Lower an expression that's in the tail position of a returning context.
@@ -322,13 +329,12 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             for s in &stmts {
                 write_line(out, indent, s);
             }
-            let bind_name = if l.name.name == "_" {
-                // Emit a unique throwaway local; TS allows `const _ = ...` only
-                // once per scope, so use a fresh name to be safe.
-                cx.fresh()
-            } else {
-                ts_ident(&l.name.name)
-            };
+            // #908: also covers `_` (a fresh throwaway local; TS allows
+            // `const _ = ...` only once per scope) and a re-`let` of a name
+            // already bound in this or an enclosing block (which otherwise
+            // either collides with the first `const` of that name — TS2451 —
+            // or, one block deeper, shadows it into a TDZ read).
+            let bind_name = cx.bind_local_name(&l.name.name);
             match &l.type_annot {
                 Some(annot) => write_line(
                     out,
@@ -372,11 +378,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             for s in &stmts {
                 write_line(out, indent, s);
             }
-            let bind_name = if l.name.name == "_" {
-                cx.fresh()
-            } else {
-                ts_ident(&l.name.name)
-            };
+            let bind_name = cx.bind_local_name(&l.name.name);
             match &l.type_annot {
                 Some(annot) => write_line(
                     out,
@@ -1685,7 +1687,13 @@ fn lower_method_call(
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         let mut all = args_lowered;
         all.push("deps".to_string());
-        return format!("{}.{}({})", id.name, method.name, all.join(", "));
+        // #908: `local_agent_vars` is keyed by the bynk source name, which a
+        // re-`let` may have renamed — resolve to the actual JS binding rather
+        // than assuming the source name is still it.
+        let recv = cx
+            .resolved_local_name(&id.name)
+            .unwrap_or_else(|| id.name.clone());
+        return format!("{}.{}({})", recv, method.name, all.join(", "));
     }
     // v0.20b: built-in kernel methods on the collection types,
     // dispatched on the receiver's checked type. Emitted inline
@@ -2018,6 +2026,11 @@ fn lower_and_with_is(
     // instead of re-emitting the receiver. For simple receivers nothing is
     // cached and the output is byte-identical to before.
     let lhs_expr = lower_expr(lhs, stmts, cx);
+    // #908: the gathered bindings are only in scope for `rhs` (the caller
+    // wraps them together in one IIFE) — push a frame so a same-named `rhs`
+    // read resolves to the binding rather than an outer `let` rename, and pop
+    // once `rhs` is lowered so the registration doesn't leak past this `&&`.
+    cx.shadow_scopes.push(HashMap::new());
     let mut bindings = Vec::new();
     let mut found = false;
     gather_is_bindings_for_emit(lhs, cx, &mut bindings, &mut found);
@@ -2026,6 +2039,7 @@ fn lower_and_with_is(
     // statement-style prefix from rhs is folded into the IIFE properly.
     let mut rhs_stmts = Vec::new();
     let rhs_expr = lower_expr(rhs, &mut rhs_stmts, cx);
+    cx.shadow_scopes.pop();
     let mut rhs_full = String::new();
     for s in &rhs_stmts {
         rhs_full.push_str(s);
@@ -2038,7 +2052,12 @@ fn lower_and_with_is(
 /// Walk an expression collecting `const name = expr.field;` strings for
 /// any `is`-pattern bindings on the truthy path. `found` indicates whether
 /// at least one `is` was seen.
-fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, found: &mut bool) {
+fn gather_is_bindings_for_emit(
+    e: &Expr,
+    cx: &mut LowerCtx,
+    out: &mut Vec<String>,
+    found: &mut bool,
+) {
     match &e.kind {
         ExprKind::Is { value, pattern } => {
             *found = true;
@@ -2059,6 +2078,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                         name = ts_ident(&id.name),
                         refined = variant.name,
                     ));
+                    cx.declare_binder(&id.name);
                     return;
                 }
                 for (i, b) in bindings.iter().enumerate() {
@@ -2087,6 +2107,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                             ));
                         }
                     }
+                    cx.declare_binder(&name.name);
                 }
             }
             // #474 §2.3.6: an or-pattern's shared names can live at different
@@ -2104,6 +2125,9 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                 }
                 let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
                 out.push(format!("let {};", decl.join(", ")));
+                for id in &names {
+                    cx.declare_binder(&id.name);
+                }
                 let last = alts.len() - 1;
                 for (i, alt) in alts.iter().enumerate() {
                     let (tag, pairs) = match alt {
@@ -3271,7 +3295,12 @@ fn lower_if(
         iife.push_str("    if (");
         iife.push_str(&cond_expr);
         iife.push_str(") {\n");
-        // Inject is-binding declarations on the truthy side.
+        // Inject is-binding declarations on the truthy side. #908: scoped to
+        // the then-branch only — pushed here, popped once it's emitted —
+        // so a read inside resolves to the binding rather than an outer
+        // `let` rename, and the registration doesn't leak into the else
+        // branch or beyond.
+        cx.shadow_scopes.push(HashMap::new());
         let mut is_bindings = Vec::new();
         let mut found = false;
         gather_is_bindings_for_emit(cond, cx, &mut is_bindings, &mut found);
@@ -3288,6 +3317,7 @@ fn lower_if(
         // plain `?` (no function-level wrap), never inheriting the outer type.
         let saved = cx.return_ty.take();
         emit_block_as_function_body(&mut iife, then_block, cx, INDENT_STEP * 3, false);
+        cx.shadow_scopes.pop();
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
@@ -3368,7 +3398,9 @@ fn emit_if_tail(
         write_line(out, indent, s);
     }
     write_line(out, indent, &format!("if ({cond_expr}) {{"));
-    // is-binding declarations on the truthy path.
+    // is-binding declarations on the truthy path. #908: scoped to the
+    // then-branch only (see the IIFE sibling above for the same reasoning).
+    cx.shadow_scopes.push(HashMap::new());
     let mut is_bindings = Vec::new();
     let mut found = false;
     gather_is_bindings_for_emit(cond, cx, &mut is_bindings, &mut found);
@@ -3376,6 +3408,7 @@ fn emit_if_tail(
         write_line(out, indent + INDENT_STEP, b);
     }
     emit_block_as_function_body(out, then_block, cx, indent + INDENT_STEP, async_tail);
+    cx.shadow_scopes.pop();
     write_line(out, indent, "} else {");
     emit_block_as_function_body(out, else_block, cx, indent + INDENT_STEP, async_tail);
     write_line(out, indent, "}");
@@ -3520,7 +3553,11 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     {
         return "deps.who".to_string();
     }
-    ts_ident(&id.name)
+    // #908: a re-`let` of this name (in this or an enclosing block) renamed
+    // its emitted binding — resolve to it rather than the natural
+    // (now-shadowed) `ts_ident` name.
+    cx.resolved_local_name(&id.name)
+        .unwrap_or_else(|| ts_ident(&id.name))
 }
 
 fn lower_call(
@@ -3915,7 +3952,15 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
         })
         .collect();
     let params = params.join(", ");
-    match &lambda.body.kind {
+    // #908: a param's name is the lambda body's own binding — push a frame and
+    // register each so a body read resolves to the param rather than an
+    // outer `let` rename, popped once the body is lowered so the
+    // registration doesn't leak past the lambda.
+    cx.shadow_scopes.push(HashMap::new());
+    for p in &lambda.params {
+        cx.declare_binder(&p.name.name);
+    }
+    let result = match &lambda.body.kind {
         ExprKind::Block(b) => {
             let mut out = format!("{prefix}({params}) => {{\n");
             // v0.154 (ADR 0178): a lambda is its own return scope — a `return`
@@ -3959,7 +4004,9 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
                 out
             }
         }
-    }
+    };
+    cx.shadow_scopes.pop();
+    result
 }
 
 fn lower_record_spread(
@@ -4233,6 +4280,11 @@ fn emit_match_case(
     // Anchor this arm's `case`/binding/`return` lines to the arm's source span
     // (slice 1, ADR 0103 D2) — so stepping a `match` walks arm-to-arm.
     cx.record_span(out.len(), arm.span);
+    // #908: this arm's payload/catch-all bindings live in the `case`'s own JS
+    // block, so a read inside the body must resolve to them rather than an
+    // outer `let` rename — push a frame and register each below, popped once
+    // the whole arm (bindings + body) is emitted.
+    cx.shadow_scopes.push(HashMap::new());
     match &arm.pattern {
         Pattern::Wildcard(_) => {
             write_line(out, indent, "default: {");
@@ -4247,6 +4299,7 @@ fn emit_match_case(
                 indent + INDENT_STEP,
                 &format!("const {} = {disc_var};", ts_ident(&id.name)),
             );
+            cx.declare_binder(&id.name);
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
@@ -4295,6 +4348,7 @@ fn emit_match_case(
                     indent + INDENT_STEP,
                     &format!("const {local} = {disc_var}.{field};"),
                 );
+                cx.declare_binder(&name.name);
             }
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
@@ -4308,13 +4362,12 @@ fn emit_match_case(
         // `switch` has no `case _:` form, only `default:`. Emitting case
         // labels for the other (now-redundant) alternatives and dropping the
         // wildcard produced malformed, `tsc`-rejected output.
+        Pattern::Or(alts, _) if arm.pattern.is_irrefutable() => {
+            write_line(out, indent, "default: {");
+            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
         Pattern::Or(alts, _) => {
-            if arm.pattern.is_irrefutable() {
-                write_line(out, indent, "default: {");
-                emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
-                write_line(out, indent, "}");
-                return;
-            }
             let last = alts.len() - 1;
             for (i, alt) in alts.iter().enumerate() {
                 let label = match alt {
@@ -4343,6 +4396,7 @@ fn emit_match_case(
             write_line(out, indent, "}");
         }
     }
+    cx.shadow_scopes.pop();
 }
 
 fn emit_match_body(
@@ -4493,7 +4547,7 @@ fn emit_pattern_bindings(
     path: &str,
     path_ty: Option<&Ty>,
     pattern: &Pattern,
-    cx: &LowerCtx,
+    cx: &mut LowerCtx,
 ) {
     match pattern {
         Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
@@ -4503,6 +4557,7 @@ fn emit_pattern_bindings(
                 indent,
                 &format!("const {} = {path};", ts_ident(&id.name)),
             );
+            cx.declare_binder(&id.name);
         }
         // #472: a refined pattern binds only what its inner pattern binds
         // (`_ where P` binds nothing today).
@@ -4546,6 +4601,9 @@ fn emit_pattern_bindings(
             }
             let decl: Vec<String> = names.iter().map(|id| ts_ident(&id.name)).collect();
             write_line(out, indent, &format!("let {};", decl.join(", ")));
+            for id in &names {
+                cx.declare_binder(&id.name);
+            }
             let last = alts.len() - 1;
             for (i, alt) in alts.iter().enumerate() {
                 if i == last {
@@ -4648,6 +4706,13 @@ fn emit_match_if_chain(
         .any(|a| a.guard.is_none() && a.pattern.is_irrefutable());
     for arm in arms {
         cx.record_span(out.len(), arm.span);
+        // #908: this arm's bindings must resolve within its own body rather
+        // than falling through to an outer `let` rename — see the identical
+        // reasoning in `emit_match_case`. Pushed/popped once per arm
+        // regardless of `has_tests` below, since the concern is which
+        // binding a read resolves to, not whether the arm also happens to
+        // emit a wrapping JS block.
+        cx.shadow_scopes.push(HashMap::new());
         let mut tests = Vec::new();
         pattern_match_tests(disc_var, disc_ty.as_ref(), &arm.pattern, cx, &mut tests);
         let has_tests = !tests.is_empty();
@@ -4682,6 +4747,7 @@ fn emit_match_if_chain(
         if has_tests {
             write_line(out, indent, "}");
         }
+        cx.shadow_scopes.pop();
     }
     if !has_catchall {
         write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
