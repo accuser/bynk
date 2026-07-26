@@ -1,0 +1,18 @@
+commons app.bundle
+
+uses bynk.locale
+uses bynk.locale.types
+
+---
+#909: a BCP-47 variant-subtagged locale tag (`"ca-valencia"`) is now
+declarable — `LocaleTag`'s pattern widened past `language[-Script][-REGION]`
+to admit variants, extensions, and private-use subtags, so it flows through
+to the emitted `messagesLocales` set and renders like any other locale.
+---
+messages "ca" @reference {
+  "greeting" => "Hola, {name}!"
+}
+
+messages "ca-valencia" {
+  "greeting" => "Bon dia, {name}!"
+}

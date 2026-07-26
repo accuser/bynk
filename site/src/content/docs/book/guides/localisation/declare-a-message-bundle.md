@@ -97,6 +97,14 @@ compile time rather than reaching the locale-aware runtime as an invalid tag.
 `LocaleTag`'s pattern mandates canonical casing (`pt-BR`, not `pt-br`), so a
 locale has one spelling across the bundle.
 
+`LocaleTag` admits the full well-formed BCP-47 shape, not just
+`language[-Script][-REGION]`: variants (`messages "ca-valencia"`,
+`messages "de-CH-1996"`), extensions (`messages "en-US-u-ca-buddhist"`), and
+private-use subtags (`messages "de-CH-x-phonebk"`, or the standalone
+`messages "x-custom"`) are all declarable. Grandfathered/irregular tags like
+`i-klingon` and `en-GB-oed` don't fit this productive grammar and remain
+`bynk.messages.invalid_locale_tag`.
+
 ## Rendering
 
 A `messages` block gives its own commons a generated
