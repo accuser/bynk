@@ -35,7 +35,13 @@ fn fixture() -> PathBuf {
 /// Run `bynkc test <fixture>` with optional `--case <name>` and return combined
 /// stdout+stderr.
 fn run(case: Option<&str>, out_dir: &str) -> String {
-    let out_root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(out_dir);
+    // Each run gets its own parent dir: the runner derives the executed
+    // `out-js` tree as a *sibling* of `--output`, so a shared parent (e.g. two
+    // behavioural tests both rooted directly under `CARGO_TARGET_TMPDIR`)
+    // would race the emitted `.js` a concurrent test's `tsc`/`node` run reads.
+    let out_root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(out_dir)
+        .join("out");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_bynkc"));
     cmd.arg("test")
         .arg(fixture())
