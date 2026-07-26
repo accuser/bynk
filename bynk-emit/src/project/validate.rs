@@ -873,10 +873,13 @@ fn walk_expr_for_constraints(
 /// per-declaration-kind validators in a fixed order. The order is load-bearing:
 /// multi-error fixtures assert the diagnostic sequence
 /// (capabilities → providers → services → agents).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_context_declarations(
     typed: &mut checker::TypedCommons,
     table: &UnitTable,
     cross_context: &resolver::CrossContextInfo,
+    is_context: bool,
+    uses_commons_type_names: &HashSet<String>,
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
@@ -898,6 +901,8 @@ pub(crate) fn check_context_declarations(
         cross_context: cross_context.clone(),
         agents: table.agents.clone(),
         imported_from: HashMap::new(),
+        is_context,
+        uses_commons_type_names: uses_commons_type_names.clone(),
     };
 
     // v0.25: capability operation signatures reference types.
@@ -996,6 +1001,8 @@ pub(crate) fn check_context_declarations(
         typed,
         table,
         cross_context,
+        is_context,
+        uses_commons_type_names,
         &capability_info_map,
         &no_vars,
         refs,
@@ -2975,6 +2982,8 @@ fn check_agent_decls(
     typed: &mut checker::TypedCommons,
     table: &UnitTable,
     cross_context: &resolver::CrossContextInfo,
+    is_context: bool,
+    uses_commons_type_names: &HashSet<String>,
     capability_info_map: &HashMap<String, CapabilityInfo>,
     no_vars: &HashSet<String>,
     refs: &mut RefSink,
@@ -3064,6 +3073,8 @@ fn check_agent_decls(
             cross_context: cross_context.clone(),
             agents: table.agents.clone(),
             imported_from: HashMap::new(),
+            is_context,
+            uses_commons_type_names: uses_commons_type_names.clone(),
         };
         // v0.81: the fresh-key rule for `store Cell[T]` fields — an
         // initialiser is checked against the element type `T` (which also types
@@ -3150,6 +3161,8 @@ fn check_agent_decls(
             cross_context: cross_context.clone(),
             agents: table.agents.clone(),
             imported_from: HashMap::new(),
+            is_context,
+            uses_commons_type_names: uses_commons_type_names.clone(),
         };
         self_scope.insert(
             "self".to_string(),

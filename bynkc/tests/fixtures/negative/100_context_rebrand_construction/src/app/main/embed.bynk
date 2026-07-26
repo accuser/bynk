@@ -1,0 +1,16 @@
+---
+#907: a `?`-operator declared-embedding auto-wrap (ADR 0178, `embeds E as V`)
+has no source-level construction expression, yet the emitter lowers it to
+the same rebranded `SumType.Variant(...)` value reference as an explicit
+construction — must be caught here too.
+---
+context app.main
+
+uses demo.embeds
+
+service placement {
+  on call(amount: Int) -> Effect[Result[Int, OrderError]] {
+    let authId = authorise(amount)?
+    Effect.pure(Ok(authId))
+  }
+}

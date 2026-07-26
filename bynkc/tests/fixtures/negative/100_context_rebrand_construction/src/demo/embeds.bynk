@@ -1,0 +1,16 @@
+commons demo.embeds
+
+type PaymentError = enum { Declined, InsufficientFunds }
+
+type OrderError =
+  | OutOfStock(sku: String)
+  | Payment(reason: PaymentError)
+  embeds PaymentError as Payment
+
+fn authorise(amount: Int) -> Result[Int, PaymentError] {
+  if amount > 0 {
+    Ok(amount)
+  } else {
+    Err(Declined)
+  }
+}
