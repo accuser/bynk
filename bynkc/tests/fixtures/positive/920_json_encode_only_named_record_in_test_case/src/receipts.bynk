@@ -1,0 +1,6 @@
+commons receipts
+
+type Receipt = {
+  code: String,
+  total: Int,
+}
