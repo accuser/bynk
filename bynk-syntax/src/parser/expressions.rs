@@ -834,8 +834,12 @@ impl<'a> Parser<'a> {
             // happened to name a binding after one and then read it back) and
             // surfaced concretely by `event` colliding with the pre-existing
             // `examples/event-log` handler `add(event: Event)`.
-            TokenKind::Ident | TokenKind::Case | TokenKind::Event | TokenKind::Messages
-            | TokenKind::On | TokenKind::Suite => {
+            TokenKind::Ident
+            | TokenKind::Case
+            | TokenKind::Event
+            | TokenKind::Messages
+            | TokenKind::On
+            | TokenKind::Suite => {
                 self.bump();
                 let ident = Ident {
                     name: self.slice(t.span).to_string(),

@@ -38,9 +38,11 @@ pub(crate) fn assemble_index(
                     // registered via `EventDecl::as_type_decl`. A dedicated
                     // `SymbolKind::Event` (its own hover/completion icon) is
                     // a follow-on, not a slice-0 blocker.
-                    CommonsItem::Event(e) => {
-                        (SymbolKind::Type, &e.name.name, symbol_modifiers(&unit, None))
-                    }
+                    CommonsItem::Event(e) => (
+                        SymbolKind::Type,
+                        &e.name.name,
+                        symbol_modifiers(&unit, None),
+                    ),
                     CommonsItem::Fn(f) => match &f.name {
                         FnName::Free(id) => {
                             (SymbolKind::Fn, &id.name, symbol_modifiers(&unit, None))

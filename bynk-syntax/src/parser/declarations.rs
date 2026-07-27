@@ -2769,9 +2769,7 @@ impl<'a> Parser<'a> {
             // reservation. No pattern yet (slice 1); the header takes one
             // bare type reference.
             Some(TokenKind::Ident)
-                if self
-                    .peek()
-                    .is_some_and(|t| self.slice(t.span) == "Events") =>
+                if self.peek().is_some_and(|t| self.slice(t.span) == "Events") =>
             {
                 self.bump();
                 self.expect(

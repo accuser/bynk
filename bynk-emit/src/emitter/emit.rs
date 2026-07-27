@@ -1794,8 +1794,8 @@ pub(crate) fn cross_context_caps_used(
                 // — unlike every other capability, there is no
                 // `EventsProvider` for compose to build, so the first-party
                 // `Events` must not appear in any context's deps interface.
-                let is_first_party_events =
-                    c.key() == "Events" && info.flattened_caps.get(c.key()).map(String::as_str) == Some("bynk");
+                let is_first_party_events = c.key() == "Events"
+                    && info.flattened_caps.get(c.key()).map(String::as_str) == Some("bynk");
                 if is_first_party_events {
                     continue;
                 }
@@ -1873,7 +1873,12 @@ fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
     out.retain(|c| {
         c.key() != "Events"
             || !(cx.in_bynk_unit
-                || cx.cross_context.flattened_caps.get(c.key()).map(String::as_str) == Some("bynk"))
+                || cx
+                    .cross_context
+                    .flattened_caps
+                    .get(c.key())
+                    .map(String::as_str)
+                    == Some("bynk"))
     });
     out
 }
@@ -3009,7 +3014,20 @@ pub(crate) fn emit_agent(
     // constructor's second argument. Bundle mode constructs with `state`
     // only and never uses the fetch path, so the parameter stays optional.
     let given_deps_expr = ctx.agent_given_deps.get(&a.name.name).cloned();
-    if given_deps_expr.is_some() {
+    // Events track, slice 0 (spine #936): the same wire problem #527 already
+    // solved for capability providers hits `deps.__eventsDispatch` too — it is
+    // a function, so it does not survive the DO's JSON wire either. An agent
+    // whose own handler body emits directly (`body_emits_directly`'s
+    // per-handler test, mirrored here at the whole-agent level) needs its
+    // fetch dispatch to rebuild it from `env.EVENTS_FANOUT` exactly as a
+    // `given` provider is rebuilt, so it takes the same env-carrying
+    // constructor.
+    let agent_uses_emit = a
+        .handlers
+        .iter()
+        .any(|h| crate::emitter::block_uses_emit(&h.body));
+    let needs_env_ctor = given_deps_expr.is_some() || agent_uses_emit;
+    if needs_env_ctor {
         writeln!(out, "  private __env: unknown;").unwrap();
         writeln!(
             out,
@@ -3423,16 +3441,38 @@ pub(crate) fn emit_agent(
             "      const {{ args, deps }} = (await request.json()) as {{ args: unknown[]; deps: unknown }};"
         )
         .unwrap();
-        if let Some(expr) = &given_deps_expr {
+        if given_deps_expr.is_some() || agent_uses_emit {
             // #527: the wire deps are JSON — any capability provider in them
             // is a dead plain object (its methods did not survive
             // serialisation). Rebuild this agent's `given` deps in-process,
             // exactly as compose wires them, and let them win the merge.
+            //
+            // Events track, slice 0: `deps.__eventsDispatch` is a function
+            // too, and does not survive the wire any better than a provider
+            // — rebuilt from this Worker's own `env.EVENTS_FANOUT` binding
+            // (shared by every DO class this script hosts) rather than
+            // trusting whatever the caller's JSON carried.
             writeln!(out, "      const env = this.__env as any;").unwrap();
-            writeln!(out, "      const __givenDeps = {expr};").unwrap();
+            let mut rebuilt: Vec<String> = Vec::new();
+            if let Some(expr) = &given_deps_expr {
+                writeln!(out, "      const __givenDeps = {expr};").unwrap();
+                rebuilt.push("...__givenDeps".to_string());
+            }
+            if agent_uses_emit {
+                let bind = crate::emitter::wrangler::agent_binding_name(
+                    crate::emitter::wrangler::EVENTS_FANOUT_CLASS_NAME,
+                );
+                writeln!(
+                    out,
+                    "      const __eventsDeps = {{ __eventsDispatch: (events: Array<{{ type: string; payload: unknown }}>) => dispatchToEventsFanout(env.{bind}, events) }};"
+                )
+                .unwrap();
+                rebuilt.push("...__eventsDeps".to_string());
+            }
             writeln!(
                 out,
-                "      const result = await (this as any)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), ...__givenDeps }});"
+                "      const result = await (this as any)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), {} }});",
+                rebuilt.join(", ")
             )
             .unwrap();
         } else {

@@ -3694,6 +3694,13 @@ fn build_output(
         })
         .collect();
 
+    // Events track, slice 0 (spine #936): project-wide "who subscribes to
+    // what", built once and shared by both targets — Bundle mode's
+    // `composeApp` dispatches in-process; Workers mode uses it to size each
+    // publishing context's fan-out DO routing table and wrangler.toml
+    // Service Bindings.
+    let event_subscribers = discover_event_subscribers(&unit_tables, &unit_consumes);
+
     match target {
         BuildTarget::Bundle => {
             // v0.6 §6.3: emit a composition root when the project has at
@@ -3713,6 +3720,7 @@ fn build_output(
                 // resource is consumed, so native-free programs are
                 // byte-identical to v0.18 output.
                 !context_native.is_empty(),
+                &event_subscribers,
             ) {
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from("compose.bynk"),
@@ -3809,11 +3817,30 @@ fn build_output(
                 );
                 // Adapters are not Workers, so they get no Service Binding in
                 // the consumer's wrangler config — drop them from the list.
-                let service_consumes: Vec<String> = consumes_targets
+                let mut service_consumes: BTreeSet<String> = consumes_targets
                     .iter()
                     .filter(|t| !binding_modules.contains_key(*t))
                     .cloned()
                     .collect();
+                // Events track, slice 0 (spine #936, ADR 0284): this
+                // context's own published events → their subscribers,
+                // sliced from the project-wide table. A subscriber
+                // `consumes` the publisher for the event *type*; nothing
+                // upstream gives the publisher a binding back to the
+                // subscriber, so its Worker needs one added here — the
+                // reverse direction of an ordinary `consumes` edge.
+                let own_event_routes: BTreeMap<String, Vec<(String, String)>> = event_subscribers
+                    .iter()
+                    .filter(|((owner, _), _)| owner == ctx_name)
+                    .map(|((_, name), subs)| (name.clone(), subs.clone()))
+                    .collect();
+                service_consumes.extend(
+                    own_event_routes
+                        .values()
+                        .flatten()
+                        .map(|(sub_ctx, _)| sub_ctx.clone()),
+                );
+                let service_consumes: Vec<String> = service_consumes.into_iter().collect();
                 let wrangler =
                     emitter::emit_wrangler_toml(ctx_name, table, &service_consumes, needs_kv);
                 compiled.push(CompiledFile {
@@ -3823,6 +3850,21 @@ fn build_output(
                     source_map: None,
                     debug_metadata: None,
                 });
+                // Events track, slice 0: this context's fan-out Durable
+                // Object — emitted only when it actually publishes (mirrors
+                // `emit_worker_compose`'s own `unit_table_uses_emit` gate on
+                // `deps.__eventsDispatch`, so the two never disagree about
+                // whether `env.EVENTS_FANOUT` is real).
+                if unit_table_uses_emit(table) {
+                    let fanout_ts = emitter::emit_events_fanout_do(ctx_name, &own_event_routes);
+                    compiled.push(CompiledFile {
+                        source_path: PathBuf::from(format!("workers/{dashes}/<events-fanout>")),
+                        output_path: PathBuf::from(format!("workers/{dashes}/events_fanout.ts")),
+                        typescript: fanout_ts,
+                        source_map: None,
+                        debug_metadata: None,
+                    });
+                }
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<compose>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/compose.ts")),
@@ -4153,7 +4195,8 @@ fn plan_agent_given_deps(
                 // in `handler_cross_caps` — no `EventsProvider` exists for
                 // compose (or a synthesised DO's own reconstructed deps) to
                 // build.
-                if g.key() == "Events" && info.flattened.get(g.key()).map(String::as_str) == Some("bynk")
+                if g.key() == "Events"
+                    && info.flattened.get(g.key()).map(String::as_str) == Some("bynk")
                 {
                     continue;
                 }
@@ -4363,15 +4406,16 @@ pub(crate) fn instantiate_provider_expr(
 /// the `UnitTable`-level analogue of `emitter::commons_uses_emit`, needed
 /// here because compose works from the project-wide `UnitTable` map, not a
 /// single unit's `TypedCommons`.
-fn unit_table_uses_emit(table: &UnitTable) -> bool {
-    table
-        .services
-        .values()
-        .any(|s| s.handlers.iter().any(|h| crate::emitter::block_uses_emit(&h.body)))
-        || table
-            .agents
-            .values()
-            .any(|a| a.handlers.iter().any(|h| crate::emitter::block_uses_emit(&h.body)))
+pub(crate) fn unit_table_uses_emit(table: &UnitTable) -> bool {
+    table.services.values().any(|s| {
+        s.handlers
+            .iter()
+            .any(|h| crate::emitter::block_uses_emit(&h.body))
+    }) || table.agents.values().any(|a| {
+        a.handlers
+            .iter()
+            .any(|h| crate::emitter::block_uses_emit(&h.body))
+    })
 }
 
 /// Events track, slice 0 (spine #936): project-wide "who subscribes to
@@ -4430,6 +4474,7 @@ fn discover_event_subscribers(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_composition_root(
     groups: &HashMap<String, Vec<usize>>,
     kinds: &HashMap<String, UnitKind>,
@@ -4444,6 +4489,10 @@ fn emit_composition_root(
     // Worker with `env` at its entry; native-free programs emit the v0.18
     // no-parameter signature unchanged.
     thread_env: bool,
+    // Events track, slice 0 (spine #936): the project-wide subscriber table,
+    // computed once by the caller (Workers mode needs the same table for its
+    // own per-Worker fan-out wiring, so it is shared rather than rebuilt).
+    event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
 ) -> Option<String> {
     // Identify contexts that consume something whose surface has services.
     let mut needs_compose = false;
@@ -4551,11 +4600,6 @@ fn emit_composition_root(
         visit(c, unit_consumes, &mut visited, &mut ordered);
     }
 
-    // Events track, slice 0 (spine #936): the project-wide subscriber table,
-    // built once — every publishing context's `__eventsDispatch` closure
-    // (below) looks up its own declared event types in it.
-    let event_subscribers = discover_event_subscribers(unit_tables, unit_consumes);
-
     for ctx_name in &ordered {
         if kinds.get(ctx_name.as_str()) != Some(&UnitKind::Context) {
             continue;
@@ -4648,10 +4692,7 @@ fn emit_composition_root(
                         format!("await {sub_ns}.{sub_svc}.event(ev.payload as any, {sub_ns}Deps);")
                     })
                     .collect();
-                cases.push_str(&format!(
-                    "case {name:?}: {{ {} break; }} ",
-                    calls.join(" ")
-                ));
+                cases.push_str(&format!("case {name:?}: {{ {} break; }} ", calls.join(" ")));
             }
             deps_entries.push(format!(
                 "__eventsDispatch: async (events: Array<{{ type: string; payload: unknown }}>) => {{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}"

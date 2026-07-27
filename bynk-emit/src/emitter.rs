@@ -33,12 +33,14 @@ use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
 
 pub mod contracts;
+pub mod events_fanout;
 pub mod secrets;
 pub mod serialisation;
 pub mod workers;
 pub mod workers_entry;
 pub mod wrangler;
 
+pub use events_fanout::emit_events_fanout_do;
 pub use secrets::emit_secrets_manifest;
 pub use workers::emit_worker_compose;
 pub use workers_entry::emit_worker_entry;
@@ -684,7 +686,8 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
 /// own precedent (it doesn't verify `~>`'s target either).
 pub(crate) fn block_uses_emit(b: &Block) -> bool {
     fn is_events_emit_call(receiver: &Expr, method: &Ident) -> bool {
-        matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "Events") && method.name == "emit"
+        matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "Events")
+            && method.name == "emit"
     }
     fn stmt(s: &Statement) -> bool {
         match s {
@@ -702,11 +705,7 @@ pub(crate) fn block_uses_emit(b: &Block) -> bool {
                 method,
                 args,
                 ..
-            } => {
-                is_events_emit_call(receiver, method)
-                    || expr(receiver)
-                    || args.iter().any(expr)
-            }
+            } => is_events_emit_call(receiver, method) || expr(receiver) || args.iter().any(expr),
             ExprKind::Block(b) => block_uses_emit(b),
             ExprKind::If {
                 cond,
@@ -2227,8 +2226,8 @@ fn emit_project_imports(
             let mut parts: Vec<String> = Vec::new();
             for n in &name_list {
                 let from_kind = ctx.imported_from_kind.get(n.as_str()).copied();
-                let is_subscribed_event_type =
-                    ctx.target == BuildTarget::Workers && subscribed_event_type_names.contains(n.as_str());
+                let is_subscribed_event_type = ctx.target == BuildTarget::Workers
+                    && subscribed_event_type_names.contains(n.as_str());
                 if ctx.unit_kind == UnitKind::Context
                     && from_kind == Some(UnitKind::Commons)
                     && commons.types.contains_key(n.as_str())
@@ -2411,6 +2410,20 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         }
         if has_agent_invariants {
             parts.push("invariantViolation");
+        }
+        // Events track, slice 0 (spine #936): an agent whose own handler body
+        // emits directly needs its Workers-mode DO fetch dispatcher to
+        // rebuild `deps.__eventsDispatch` from `env.EVENTS_FANOUT` (mirrors
+        // the `#527` `given`-provider rebuild — see `emit_agent`) — a
+        // function does not survive the JSON wire any better than a
+        // provider does.
+        let has_agent_uses_emit = workers
+            && commons.commons.items.iter().any(|i| match i {
+                CommonsItem::Agent(a) => a.handlers.iter().any(|h| block_uses_emit(&h.body)),
+                _ => false,
+            });
+        if has_agent_uses_emit {
+            parts.push("dispatchToEventsFanout");
         }
         // v0.96 (ADR 0124): an agent whose load-time validation gate fires imports
         // the `rehydrationViolation` fault helper.
@@ -2905,7 +2918,12 @@ impl<'a> LowerCtx<'a> {
     /// into a buffer nothing constructs a provider for.
     pub(crate) fn is_first_party_events(&self) -> bool {
         self.in_bynk_unit
-            || self.cross_context.flattened_caps.get("Events").map(String::as_str) == Some("bynk")
+            || self
+                .cross_context
+                .flattened_caps
+                .get("Events")
+                .map(String::as_str)
+                == Some("bynk")
     }
 
     fn new(
