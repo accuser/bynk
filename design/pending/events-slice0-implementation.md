@@ -18,7 +18,7 @@ grounding.
 **Decision.**
 
 **A. The fanout DO is hosted in the publishing context's own Worker script,
-not a dedicated Worker.** A compiler-synthesised `EventsFanout` class
+not a dedicated Worker.** A compiler-synthesised `__EventsFanout` class
 (`bynk-emit/src/emitter/events_fanout.rs`) is emitted as a new
 `events_fanout.ts` file per publishing context and re-exported from that
 context's `index.ts` — Cloudflare resolves a Durable Object binding's
@@ -28,7 +28,11 @@ requirement an ordinary agent's DO class already satisfies via `handlers.ts`
 path to reuse). The fanout DO folds into the *same* `[[durable_objects.
 bindings]]`/`[[migrations]]` blocks a context's real agents already get
 (`wrangler.rs`), rather than a parallel mechanism — Cloudflare does not care
-which generated file a class comes from.
+which generated file a class comes from. Double-underscore-prefixed (not
+`EventsFanout`) because a Bynk `agent` name can never start with `_` — an
+agent coincidentally named the same as the synthetic class is therefore
+structurally impossible, not merely unlikely, closing a real collision review
+found (the first pass used the un-prefixed name).
 
 **B. The subscriber registry is a compile-time literal, not carried on the
 wire.** `discover_event_subscribers` (`project.rs`) already resolves, at
@@ -73,19 +77,71 @@ dispatcher rebuilds `__eventsDispatch` from `env.EVENTS_FANOUT` before
 invoking the method, alongside (not instead of) any real provider rebuild
 already happening there.
 
+**F. The `/_bynk/event/<service>` route has no boundary decoding, no
+contract-skew guard, and no auth — an accepted, named gap, not an oversight.**
+Compare it to the `/_bynk/call/<service>` route in the same generated
+`index.ts`: `on call` decodes each argument field-by-field through the
+boundary codec and refuses a deploy-skewed caller with a `409`
+(`X-Bynk-Contract`, v0.177/#643); `on event` parses the body as opaque JSON
+and passes it straight through as `any`. Three consequences, each accepted for
+slice 0 rather than silently shipped: **(1)** a rich field type (`Duration`,
+`Uuid`, `Bytes`, a refined type) the codec machinery would normally
+reconstruct arrives as raw JSON on Workers and a real object on Bundle — a
+target divergence a subscriber's handler body cannot see from its own source.
+**(2)** no `X-Bynk-Contract`-equivalent skew detection — a subscriber
+deployed against an older event shape accepts a mismatched payload silently,
+where the call path fails closed; the primitive already exists, it is simply
+not reached from this route yet. **(3)** the route sits before any auth in
+the `fetch` chain, and Service Bindings share the Worker's public `fetch`
+surface — anything that can reach a subscriber Worker's URL can `POST
+/_bynk/event/<service>` with arbitrary JSON, bypassing `bynk.event.
+emit_outside_owner`'s compile-time-only guarantee entirely at the wire. This
+mirrors `/_bynk/call/`'s own unauthenticated posture (an existing,
+project-wide stance this slice does not change), but `Events` is the one
+capability whose whole selling point is an ownership guarantee `calls` don't
+claim — so unlike `/_bynk/call/`, this is named here rather than left
+implicit. Closing it (per-field boundary decoding, a contract-hash guard, an
+internal-only auth seam) is future work, not assumed done.
+
 **Consequences.** Verified: a hand-compiled two-context Workers-target
 project (`bynkc/tests/events_workers_wiring.rs`) asserts the `wrangler.toml`/
 `events_fanout.ts` content directly — nothing else in the suite reads either
 file — and passes real `tsc --strict` over the whole emitted tree, alongside
 the pre-existing Bundle-target behavioural proof
 (`bynkc/tests/events_behaviour.rs`) that release-at-commit delivery and
-abort-suppression actually run under `node`. Not verified, and not claimed:
-real delivery through an actual Cloudflare Durable Object — this suite has no
+abort-suppression actually run under `node`, extended with a sibling
+subscriber whose handler always throws to prove failure isolation is real on
+both targets (a throwing subscriber no longer aborts its siblings nor
+propagates into the already-committed publisher — found missing on the
+Bundle target specifically by review, since the two targets had silently
+diverged on this exact guarantee). Not verified, and not claimed: real
+delivery through an actual Cloudflare Durable Object — this suite has no
 `workerd`/`wrangler dev` to run one, so the DO's `fetch` wire contract is
 proven by `tsc --strict` and direct inspection of the generated TOML/TS, not
 by an executed round trip. Per-publisher FIFO ordering under real concurrent
 load ([ADR 0284](../decisions/0284-events-fanout-substrate.md)'s own
-"separate, empirical decision") remains open for the same reason.
+"separate, empirical decision") remains open for the same reason, and is now
+joined by two further named-not-hidden gaps review surfaced: **(1)**
+`wrangler.toml`'s DO migration always writes `tag = "v1"` — a context that
+already has a deployed agent and adopts `Events` regenerates the same tag
+with an added class, which Cloudflare treats as already-applied and skips, so
+`__EventsFanout` is never actually created on a redeploy (a pre-existing
+limitation for adding any new agent to an already-deployed context, made
+newly reachable by this feature). **(2)** the fan-out DO's dispatch is fully
+synchronous from the publisher's perspective — one emission's tail latency is
+the sum of every subscriber's own processing time, serialised through the one
+DO instance `idFromName("singleton")` gives each publishing context; a
+`waitUntil`-based fire-and-forget (precedent: fixture `221_async_send_
+waituntil`) is a future optimisation, not assumed already fast. Two review
+findings that *were* fixed rather than merely named: `Events.emit` inside a
+parenthesised (or otherwise nested) expression previously compiled to
+invalid TypeScript with no bynk diagnostic (`block_uses_emit` now drives off
+the exhaustive expression-walking visitor instead of a hand-rolled match that
+had drifted from the lowering it gates); and `Events.emit[E]`/`from
+Events(E)` naming a type that resolves but isn't actually a declared `event`
+silently failed open in both directions (a dropped emission, a permanently
+dead subscriber) — both now diagnosed (`bynk.event.emit_not_an_event`,
+`bynk.event.unknown_subscription`).
 
 ## ADR: events-owner-only-emission-check
 title: Owner-only event emission is enforced by a new checker pass, not a reuse
@@ -132,3 +188,30 @@ attempting to emit a peer's event type fails to compile with
 risk this decision exists to close — a forged/cross-context emission,
 `events.md` §6's primary threat-model guarantee — rests entirely on this one
 pass; it has no fallback mechanism behind it.
+
+**Two changes ride along that are visible beyond `Events`, both corrected
+during implementation and now covered by their own fixtures.** First,
+`ResolvedCommons::local_type_names` (`bynk-check/src/resolver.rs`) was
+narrowed from "local, `uses`, and `consumes` merged" (`typed.types`) to
+"declared directly in this unit" (`table.types`) — the provenance
+owner-only emission actually needs, since a `uses`-rebranded or
+`consumes`-surfaced type must not read as emittable just because it's
+visible. This is the same field `bynk.types.opaque_raw_outside`/
+`opaque_unsafe_outside` already gate on, so the narrowing also newly rejects
+`.raw`/`.unsafe()` on a `uses`-imported commons opaque type used inside a
+context — plausibly the correct reading of ".raw is only available within
+its defining commons" (it wasn't, before), but previously untested in either
+direction; the actor-identity-sealing check (`bynk-emit/src/project/
+validate.rs`) depended on the old, broader meaning and was compensated by
+reading `uses_commons_type_names` (the exact set `emit_context_rebrands`
+already rebrands) alongside the narrowed field, rather than by re-widening
+it and re-breaking owner-only emission. Fixture 506 locks in the new,
+narrower behaviour. Second, `bynk-syntax/src/parser/expressions.rs`'s
+primary-expression parser now admits `case`/`event`/`messages`/`on`/`suite`
+(`keywords::RESERVED_CONTEXTUAL`) when *reading back* a binding declared
+with one of these names, not only at the declaration site — a gap latent
+since `messages`/`on`/`case`/`suite` shipped (no existing fixture happened to
+name a binding after one and read it back), surfaced concretely by `event`
+joining the tier and colliding with `examples/event-log`'s pre-existing
+`add(event: Event)` handler. Covered by a new parser unit test naming a
+parameter after each of the five and reading it back in the body.
