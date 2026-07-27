@@ -351,7 +351,7 @@ pub struct CompileOptions {
     pub contracts: bool,
     /// #57 (testing track): when `Some`, every file `roots` would otherwise
     /// discover on disk is instead read from here — keyed the same way
-    /// [`discovery::read_source`]'s overlay is (a canonicalised absolute path,
+    /// `discovery::read_source`'s overlay is (a canonicalised absolute path,
     /// falling back to the literal path when the file has no on-disk
     /// counterpart to canonicalise). Filesystem discovery is skipped entirely;
     /// `roots` still supplies `src_root`/`tests_root` and their prefixes, so a

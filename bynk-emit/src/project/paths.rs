@@ -98,7 +98,7 @@ pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
 
 /// Like [`read_project_paths`], but honours `overlay` for `bynk.toml` itself
 /// — the in-memory test seam's (#57) one remaining disk read outside
-/// [`discovery::read_source`], now routed through the same helper so a test
+/// `discovery::read_source`, now routed through the same helper so a test
 /// can supply a virtual `bynk.toml` with no on-disk file at all. `#[cfg(test)]`
 /// because that's its only consumer today; drop the gate if a non-test caller
 /// needs it (`try_read_project_paths_with`, which this wraps, has none of that
@@ -158,7 +158,7 @@ pub fn try_read_project_paths(project_root: &Path) -> Result<ProjectPaths, Proje
 }
 
 /// Like [`try_read_project_paths`], but honours `overlay` for `bynk.toml`
-/// itself, the same way [`discovery::read_source`] does for every other file.
+/// itself, the same way `discovery::read_source` does for every other file.
 pub fn try_read_project_paths_with(
     project_root: &Path,
     overlay: &HashMap<PathBuf, String>,
