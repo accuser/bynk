@@ -10,13 +10,15 @@ use std::fmt::Write as _;
 
 use crate::emitter::http_handler_method_name;
 use crate::emitter::ts_ident;
-use crate::emitter::wrangler::{agent_binding_name, consumed_binding_name};
+use crate::emitter::wrangler::{
+    EVENTS_FANOUT_CLASS_NAME, agent_binding_name, consumed_binding_name,
+};
 use crate::emitter::{
     BOUNDARY_CODEC_RUNTIME_IMPORTS, BYTES_RUNTIME_IMPORTS, JSON_CODEC_RUNTIME_IMPORTS, RuntimeUse,
     inject_runtime_imports,
 };
 use crate::project::symbols::MessageBundleInfo;
-use crate::project::{ImportExt, LocaleNegotiationArgs, UnitTable};
+use crate::project::{ImportExt, LocaleNegotiationArgs, UnitTable, unit_table_uses_emit};
 use bynk_syntax::ast::*;
 
 /// Where `compose.ts` imports the runtime from — it sits two levels below the
@@ -192,6 +194,15 @@ pub fn emit_worker_compose(
     if has_ws_open {
         runtime_imports.push("serialiseAgentKey");
     }
+    // Events track, slice 0 (spine #936, ADR 0284): a context whose handlers
+    // emit gets its own fan-out DO binding (`emitter::events_fanout`) and a
+    // `deps.__eventsDispatch` that calls into it — mirrors `unit_table_uses_
+    // emit`'s Bundle-mode gate on `composeApp`'s `__eventsDispatch` closure,
+    // so the two targets agree on when the field exists.
+    let ctx_uses_emit = unit_table_uses_emit(table);
+    if ctx_uses_emit {
+        runtime_imports.push("dispatchToEventsFanout");
+    }
     let _ = writeln!(
         out,
         "import {{ {} }} from \"{COMPOSE_RUNTIME_SPECIFIER}\";",
@@ -247,10 +258,14 @@ pub fn emit_worker_compose(
         let bind = agent_binding_name(a);
         let _ = writeln!(out, "  {bind}: DurableObjectNamespace;");
     }
+    if ctx_uses_emit {
+        let bind = agent_binding_name(EVENTS_FANOUT_CLASS_NAME);
+        let _ = writeln!(out, "  {bind}: DurableObjectNamespace;");
+    }
     let _ = writeln!(out, "}}");
     writeln!(out).unwrap();
 
-    if !agent_names.is_empty() {
+    if !agent_names.is_empty() || ctx_uses_emit {
         let _ = writeln!(
             out,
             "type DurableObjectNamespace = {{ idFromName(name: string): {{ toString(): string }}; get(id: any): any }};"
@@ -332,6 +347,16 @@ pub fn emit_worker_compose(
     if ctx_uses_send {
         deps_entries.push("__exec: exec".to_string());
     }
+    // Events track, slice 0 (spine #936, ADR 0284): a publishing handler's
+    // release-at-commit event batch is handed to this context's own fan-out
+    // DO — `env.<bind>` is typed by the `Env` interface built above, one
+    // instance per publishing context.
+    if ctx_uses_emit {
+        let bind = agent_binding_name(EVENTS_FANOUT_CLASS_NAME);
+        deps_entries.push(format!(
+            "__eventsDispatch: (events: Array<{{ type: string; payload: unknown }}>) => dispatchToEventsFanout(env.{bind}, events)"
+        ));
+    }
     let _ = writeln!(out, "  const deps = {{ {} }};", deps_entries.join(", "));
 
     // Local-surface object: one async wrapper per service operation plus
@@ -395,6 +420,17 @@ pub fn emit_worker_compose(
                 // v0.106 (slice 3b-iii): `on close` runs in the DO (`webSocketClose`),
                 // not at the edge — no compose wrapper.
                 HandlerKind::Close => {}
+                // Events track, slice 0 (spine #936): unlike the WS
+                // lifecycle handlers above, an `on event` handler's body
+                // *does* need a compose-surface wrapper — it is reached from
+                // `/_bynk/event/<sname>` (`emit_worker_entry`), the route a
+                // *subscriber* Worker's own fan-out delivery lands on (not
+                // this context's edge traffic, and not HTTP-routable, hence
+                // no route table entry — just a plain wrapper like `on
+                // call`'s).
+                HandlerKind::Event => {
+                    emit_event_wrapper(&mut out, sname, h);
+                }
             }
         }
     }
@@ -458,6 +494,16 @@ fn worker_cross_caps(
     }
     for given in givens {
         for c in given {
+            // Events track, slice 0 (spine #936): `Events.emit` is
+            // intercepted entirely at the call site (release-at-commit
+            // buffering) and never calls through a constructed provider —
+            // see the matching skip in `bynk-emit/src/project.rs`'s
+            // `handler_cross_caps`. Without this, Workers-mode compose
+            // tries to construct a `bynk__binding.EventsProvider` that
+            // does not exist.
+            if c.key() == "Events" && flattened.get(c.key()).map(String::as_str) == Some("bynk") {
+                continue;
+            }
             if let Some(p) = c.prefix() {
                 if let Some(ctx) = resolve(&p, consumes, aliases) {
                     out.entry(c.key().to_string()).or_insert(ctx);
@@ -532,6 +578,25 @@ fn emit_call_wrapper(
         "      return handlers.{sname}.call({}{}{deps_expr});",
         param_args.join(", "),
         if param_args.is_empty() { "" } else { ", " },
+    );
+    let _ = writeln!(out, "    }},");
+}
+
+/// Events track, slice 0 (spine #936): the compose-surface wrapper for a
+/// `from Events(E)` service's `on event` handler. Reached by
+/// `emit_worker_entry`'s `/_bynk/event/<sname>` route (which the *publisher*
+/// context's fan-out DO calls over this subscriber's Service Binding) — never
+/// by an HTTP route, so no path/CORS/actor plumbing to mirror from
+/// `emit_call_wrapper`.
+fn emit_event_wrapper(out: &mut String, sname: &str, h: &Handler) {
+    let _ = h;
+    let _ = writeln!(out, "    async {sname}(payload: unknown) {{");
+    // Mirrors Bundle mode's `ev.payload as any` (project.rs's `__eventsDispatch`
+    // closure): the event's real payload type only exists at the *publisher's*
+    // end, not on this wire (`payload` arrives here as parsed JSON).
+    let _ = writeln!(
+        out,
+        "      return handlers.{sname}.event(payload as any, deps);"
     );
     let _ = writeln!(out, "    }},");
 }

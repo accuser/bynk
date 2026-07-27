@@ -536,6 +536,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful.",
         &["call"],
     ),
+    d(
+        "bynk.event.emit_not_an_event",
+        "`Events.emit[E]` named a type `E` that is declared in this context, but is not itself an `event` — only an `event` type may be emitted.",
+    ),
+    d(
+        "bynk.event.emit_outside_owner",
+        "`Events.emit[E]` named an event `E` not declared in the emitting context — only an event's declaring context may emit it.",
+    ),
+    d(
+        "bynk.event.outside_context",
+        "An `event` was declared outside a context.",
+    ),
+    d(
+        "bynk.event.unknown_subscription",
+        "A `from Events(E)` subscription named `E`, which is not a declared event in this context or any consumed context.",
+    ),
     dg(
         "bynk.expect.not_bool",
         "`expect` was given a non-`Bool` predicate.",

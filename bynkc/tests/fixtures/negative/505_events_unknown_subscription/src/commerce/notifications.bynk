@@ -1,0 +1,9 @@
+context commerce.notifications
+
+consumes commerce.order
+
+service OnPayment from Events(PaymentConfrimed) {
+  on event(e: PaymentConfrimed) -> Effect[()] {
+    ()
+  }
+}

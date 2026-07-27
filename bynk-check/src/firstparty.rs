@@ -68,6 +68,7 @@ pub const BYNK_SURFACE_CAPABILITIES: &[&str] = &[
     "Secrets",
     "Locale",
     "Idempotency",
+    "Events",
 ];
 
 /// The unit name of the first-party Cloudflare platform adapter (v0.19,

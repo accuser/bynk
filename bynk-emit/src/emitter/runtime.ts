@@ -322,6 +322,27 @@ export async function callService<T, E>(
   return result.value;
 }
 
+// Events track, slice 0: the fan-out DO's own delivery to one subscriber,
+// over that subscriber's Service Binding. Subscriber failure isolation (ADR
+// 0284) is the caller's responsibility — the fan-out DO catches per-subscriber
+// so one subscriber's rejection does not stop delivery to its siblings; this
+// helper itself just throws on a non-`ok` response.
+export async function deliverEvent(
+  binding: ServiceBinding,
+  servicePath: string,
+  payload: unknown,
+): Promise<void> {
+  const request = new Request(`http://internal/_bynk/event/${servicePath}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const response = await binding.fetch(request);
+  if (!response.ok) {
+    throw new Error(`event delivery to ${servicePath} failed: ${response.status}`);
+  }
+}
+
 // v0.9: HttpResult — the built-in HTTP-result sum.
 
 export type HttpResult<T> =
@@ -1068,6 +1089,40 @@ export function makeAgent<C>(
   }
   const state = registry.getOrCreate(key);
   return constructBundle(state);
+}
+
+// Events track, slice 0 (spine #936, ADR 0284): a publishing context's
+// `deps.__eventsDispatch` hands its release-at-commit event batch to this
+// context's own fan-out Durable Object (one namespace per publishing
+// context — `idFromName` is passed a fixed key since the DO instance itself,
+// not the id, is what scopes the fan-out to this publisher and gives it
+// single-threaded per-publisher ordering). A non-`ok` response is logged, not
+// thrown: the publishing handler already committed by the time this runs
+// (release-at-commit), so a fan-out transport failure must not surface as a
+// failure of the handler that emitted.
+export async function dispatchToEventsFanout(
+  binding: DurableObjectNamespace,
+  events: Array<{ type: string; payload: unknown }>,
+): Promise<void> {
+  // The whole round trip is wrapped, not just the status check: a rejected
+  // `stub.fetch` (a network error, the DO throwing) is exactly as much a
+  // fan-out transport failure as a non-`ok` response, and by this point
+  // `commitState` has already succeeded — letting a rejection propagate
+  // would surface a transport problem as a failure of a handler that, from
+  // the caller's perspective, already completed.
+  try {
+    const stub = binding.get(binding.idFromName("singleton"));
+    const response = await stub.fetch("https://_bynk/_bynk/fanout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events }),
+    });
+    if (!response.ok) {
+      console.error("EventsFanout dispatch failed", { status: response.status });
+    }
+  } catch (e) {
+    console.error("EventsFanout dispatch failed", { error: String(e) });
+  }
 }
 
 // v0.16: an in-process Durable-Object namespace for multi-Worker integration

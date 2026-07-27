@@ -533,6 +533,67 @@ pub(crate) fn check_locale_bundle_ambiguity(
     }
 }
 
+/// Events track, slice 0 (spine #936): a `from Events(E)` subscription must
+/// name a real, declared event — owned either by this context or by a
+/// context it `consumes` (mirroring `discover_event_subscribers`'s own
+/// ownership resolution, `project.rs`, which silently drops an unresolvable
+/// subscription rather than diagnosing it). Runs at the project-wide phase
+/// (needs `unit_tables` + `unit_consumes` together, unlike the local, per-
+/// context `check_service_protocols`), alongside the other cross-unit checks
+/// that need the same two maps.
+pub(crate) fn check_event_subscriptions(
+    parsed: &[ParsedFile],
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        if kinds.get(name) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let consumed = unit_consumes.get(name).cloned().unwrap_or_default();
+        for &i in indices {
+            for item in parsed[i].items() {
+                let CommonsItem::Service(s) = item else {
+                    continue;
+                };
+                let ServiceProtocol::Events { event_type } = &s.protocol else {
+                    continue;
+                };
+                let TypeRef::Named(id) = event_type else {
+                    continue;
+                };
+                let owned_locally = unit_tables
+                    .get(name)
+                    .is_some_and(|t| t.events.contains_key(&id.name));
+                let owned_by_consumed = consumed.iter().any(|c| {
+                    unit_tables
+                        .get(c)
+                        .is_some_and(|t| t.events.contains_key(&id.name))
+                });
+                if !owned_locally && !owned_by_consumed {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.event.unknown_subscription",
+                            id.span,
+                            format!(
+                                "`{}` is not a declared event in this context or any consumed context",
+                                id.name
+                            ),
+                        )
+                        .with_note(
+                            "check the spelling, or add `consumes <context>` for the context whose `event` this names — an unresolvable subscription never receives anything, silently",
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// message-bundles slice 3 (#878): reports `bynk.messages.malformed_icu_syntax`
 /// for every ICU-dispatch placeholder in `entry.template` that fails to
 /// parse (unbalanced arm braces, an unknown format keyword, `#` outside a
@@ -916,7 +977,17 @@ pub(crate) fn check_context_declarations(
     // Build a resolved-commons snapshot for the per-handler checker.
     // We synthesise a ResolvedCommons by reusing typed.types / typed.fns /
     // typed.methods; the resolver wouldn't add anything new.
-    let local_type_names: std::collections::HashSet<String> = typed.types.keys().cloned().collect();
+    //
+    // `local_type_names` must be the *pre-merge* local table (`table.types`),
+    // not `typed.types` (already local+uses+consumes merged) — its own
+    // contract (`ResolvedCommons::local_type_names`) is "declared in this
+    // commons, not imported", which `typed.types` cannot answer. Events
+    // track, slice 0 (spine #936) found this in the course of implementing
+    // owner-only emission (`is_local_type` is exactly the provenance that
+    // check needs): reusing `typed.types` here made every consumed/used
+    // type read as "local", silently over-widening `.raw`/`.unsafe()`
+    // access on a consumed opaque type too — the field's original purpose.
+    let local_type_names: std::collections::HashSet<String> = table.types.keys().cloned().collect();
     let resolved = ResolvedCommons {
         commons: typed.commons.clone(),
         types: typed.types.clone(),
@@ -928,6 +999,7 @@ pub(crate) fn check_context_declarations(
         imported_from: HashMap::new(),
         is_context,
         uses_commons_type_names: uses_commons_type_names.clone(),
+        event_type_names: table.events.keys().cloned().collect(),
     };
 
     // v0.25: capability operation signatures reference types.
@@ -1370,6 +1442,9 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         ServiceProtocol::WebSocket { .. },
                         HandlerKind::Open | HandlerKind::Message | HandlerKind::Close
                     )
+                    // Events track, slice 0 (spine #936): `from Events(E)`
+                    // admits exactly `on event(e: E)`.
+                    | (ServiceProtocol::Events { .. }, HandlerKind::Event)
             );
             if matches_protocol {
                 continue;
@@ -1381,6 +1456,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         HandlerKind::Cron { .. } => "from cron",
                         HandlerKind::Message => "from queue(\"…\")",
                         HandlerKind::Open | HandlerKind::Close => "from websocket(in: …, out: …)",
+                        HandlerKind::Event => "from Events(EventType)",
                         HandlerKind::Call => continue,
                     };
                     errors.push(
@@ -1422,6 +1498,7 @@ fn protocol_label(p: &ServiceProtocol) -> &'static str {
         ServiceProtocol::Cron => "from cron",
         ServiceProtocol::Queue { .. } => "from queue",
         ServiceProtocol::WebSocket { .. } => "from websocket",
+        ServiceProtocol::Events { .. } => "from Events",
     }
 }
 
@@ -1910,15 +1987,27 @@ fn check_actor_contracts(
             }
             Some(_) => {}
         }
-        // A declared identity must be a context-ownable (sealed) type — a type
-        // this context declares, so it can only be minted inside the context.
+        // A declared identity must be a context-ownable (sealed) type — either
+        // declared directly in this context, or a `uses`-imported commons type
+        // this context's own emission rebrands (`uses_commons_type_names`,
+        // `emit_context_rebrands`'s exact predicate) — either way, unforgeable
+        // from outside the context. A `consumes`-surfaced cross-context type is
+        // neither: it is not rebranded, so it stays excluded.
+        //
+        // Events track, slice 0 (spine #936) narrowed `local_type_names` itself
+        // to "declared directly here" only (owner-only emission and `.raw`/
+        // `.unsafe()` need exactly that, excluding `uses`-rebrands too) — this
+        // check predates that narrowing and needs the broader "context-owned"
+        // union back, so it reads `uses_commons_type_names` alongside it
+        // instead of relying on the now-narrower `local_type_names` alone.
         // (Signature handles its own identity rule above.)
         if Scheme::from_name(actor.auth.as_ref().map(|a| a.name.as_str()).unwrap_or(""))
             != Some(Scheme::Signature)
             && let Some(id) = &actor.identity
         {
-            let ownable =
-                matches!(id, TypeRef::Named(n) if resolved.local_type_names.contains(&n.name));
+            let ownable = matches!(id, TypeRef::Named(n) if
+                resolved.local_type_names.contains(&n.name)
+                    || resolved.uses_commons_type_names.contains(&n.name));
             if !ownable {
                 errors.push(
                     CompileError::new(
@@ -3104,6 +3193,7 @@ fn check_agent_decls(
             imported_from: HashMap::new(),
             is_context,
             uses_commons_type_names: uses_commons_type_names.clone(),
+            event_type_names: table.events.keys().cloned().collect(),
         };
         // v0.81: the fresh-key rule for `store Cell[T]` fields — an
         // initialiser is checked against the element type `T` (which also types
@@ -3192,6 +3282,7 @@ fn check_agent_decls(
             imported_from: HashMap::new(),
             is_context,
             uses_commons_type_names: uses_commons_type_names.clone(),
+            event_type_names: table.events.keys().cloned().collect(),
         };
         self_scope.insert(
             "self".to_string(),
@@ -4281,8 +4372,18 @@ pub(crate) fn collect_type_decls<'a>(
 ) -> std::collections::HashMap<String, TypeDecl> {
     let mut out = std::collections::HashMap::new();
     for item in items {
-        if let CommonsItem::Type(t) = item {
-            out.entry(t.name.name.clone()).or_insert_with(|| t.clone());
+        match item {
+            CommonsItem::Type(t) => {
+                out.entry(t.name.name.clone()).or_insert_with(|| t.clone());
+            }
+            // Events track, slice 0 (spine #936): an event's synthetic
+            // `TypeDecl` joins the same table, so a field referencing an
+            // event type recurses into it exactly like any other type.
+            CommonsItem::Event(e) => {
+                out.entry(e.name.name.clone())
+                    .or_insert_with(|| e.as_type_decl());
+            }
+            _ => {}
         }
     }
     out
@@ -4318,6 +4419,14 @@ pub fn check_function_type_boundary_items(
                     }
                     TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
                 },
+                // Events track, slice 0 (spine #936): an event's fields are
+                // boundary values (an emission crosses a context boundary),
+                // so the same record-field rule applies as for a `type`.
+                CommonsItem::Event(e) => {
+                    for f in &e.body.fields {
+                        reject_fn_types(&f.type_ref, "an event field", types, errors);
+                    }
+                }
                 CommonsItem::Capability(c) => {
                     for op in &c.ops {
                         for p in &op.params {

@@ -38,6 +38,13 @@ pub enum TokenKind {
     Commons,
     #[token("type")]
     Type,
+    // Events track, slice 0 (spine #936): `event Name = { fields }` — a
+    // context-only item declaring a typed fact. RESERVED_CONTEXTUAL, not
+    // hard, per ADR 0272's `messages` postmortem (a hard keyword broke the
+    // dotted-name case its own worked example used); `event` is at least as
+    // likely a parameter/local name (`on event(event: T)`).
+    #[token("event")]
+    Event,
     #[token("fn")]
     Fn,
     #[token("where")]
@@ -356,6 +363,7 @@ impl TokenKind {
         match self {
             Commons => "`commons`",
             Type => "`type`",
+            Event => "`event`",
             Fn => "`fn`",
             Where => "`where`",
             True => "`true`",

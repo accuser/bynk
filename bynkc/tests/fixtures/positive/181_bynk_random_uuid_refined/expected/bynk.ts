@@ -146,3 +146,21 @@ export interface Idempotency {
 
 export const IdempotencyToken: unique symbol = Symbol("Idempotency");
 
+/**
+ * Emits an event declared by the calling context (Events track, slice 0;
+ * design/tracks/events.md, spine #936). Owner-only: the compiler rejects
+ * `emit[E]` when `E` is not an event declared in the emitting context, even
+ * when `E` is otherwise visible via `consumes`. Fire-and-forget: releases at
+ * handler commit, so an aborted handler emits nothing — a `dedup`/`remember`-
+ * style write-then-flush the provider itself is responsible for, not a
+ * distinct control-flow form here. The explicit `[E]` type argument follows
+ * the `Idempotency.remember[T]` precedent: a generic capability operation's
+ * type parameter is never inferred, even where an argument's type would
+ * determine it.
+ */
+export interface Events {
+  emit<E>(event: E): Promise<void>;
+}
+
+export const EventsToken: unique symbol = Symbol("Events");
+

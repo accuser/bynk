@@ -823,7 +823,23 @@ impl<'a> Parser<'a> {
                     span: kw.span.merge(close.span),
                 })
             }
-            TokenKind::Ident => {
+            // A `RESERVED_CONTEXTUAL` keyword (`case`/`event`/`messages`/`on`/
+            // `suite`) is reserved only at its own item-dispatch position — an
+            // ordinary identifier everywhere else, per `expect_ident`'s
+            // exemption (`keywords::RESERVED_CONTEXTUAL`'s doc comment). That
+            // exemption covers *declaring* a binding with one of these names
+            // (a parameter, a `let`), but not *referencing* it afterwards in
+            // expression position, which parses through here instead — a gap
+            // latent since `messages`/`on`/`case`/`suite` shipped (no fixture
+            // happened to name a binding after one and then read it back) and
+            // surfaced concretely by `event` colliding with the pre-existing
+            // `examples/event-log` handler `add(event: Event)`.
+            TokenKind::Ident
+            | TokenKind::Case
+            | TokenKind::Event
+            | TokenKind::Messages
+            | TokenKind::On
+            | TokenKind::Suite => {
                 self.bump();
                 let ident = Ident {
                     name: self.slice(t.span).to_string(),

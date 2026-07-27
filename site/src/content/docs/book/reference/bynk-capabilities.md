@@ -35,6 +35,7 @@ environment), so code that stays on this surface is portable.
 | **`Secrets`** | `get(name: String) -> Effect[Option[String]]` — read configuration/secrets; `None` if unset. |
 | **`Locale`** | `current() -> Effect[LocaleTag]` — the locale to render messages in. On Cloudflare, negotiated from the request's `Accept-Language` against a context's message bundle; a fixed `"en"` on every other platform, and on Cloudflare without a detectable bundle. See [Understand localisation](/book/guides/localisation/understand-localisation/). |
 | **`Idempotency`** | `dedup[T](key: String) -> Effect[Option[T]]` · `remember[T](key: String, value: T, expiresAfter: Duration) -> Effect[()]` — mechanical dedup for at-least-once delivery. See below. |
+| **`Events`** | `emit[E](event: E) -> Effect[()]` — emit an `event` declared by the calling context, fire-and-forget. See below. |
 
 ### The `Idempotency` capability
 
@@ -78,6 +79,36 @@ This doesn't stop two different *callers* of the same handler from colliding if 
 you supply doesn't itself distinguish them (two tenants both calling `reserve` with the
 same order ID, say) — differentiating those is still on you, the same discipline any
 caller-supplied idempotency key requires.
+
+### The `Events` capability
+
+`Events` emits an `event` — a typed fact a context declares — for any number
+of other contexts to subscribe to with `from Events(E)`:
+
+```bynk,ignore
+context commerce.order
+
+exports transparent { PaymentConfirmed }
+
+event PaymentConfirmed = {
+  orderId: String,
+}
+
+service markPaid {
+  on call(orderId: String) -> Effect[()] given Events {
+    Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId })
+  }
+}
+```
+
+`emit`'s type argument is explicit, like `Idempotency`'s operations above —
+never inferred from the value's type. Only the context that declares an event
+may emit it, even though the type is visible cross-context for subscription
+(`bynk.event.emit_outside_owner` otherwise); emission is released only if the
+emitting handler itself commits, so an aborted handler emits nothing. See
+[Understand events](/book/guides/events/understand-events/) for the full
+model, the subscriber side (`from Events(E)`, `on event`), and how delivery
+differs between Cloudflare and Bundle targets.
 
 The `bynk` unit also exports the transparent types these operations use:
 

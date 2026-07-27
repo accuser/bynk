@@ -8,11 +8,15 @@
   and §3.6 are now genuinely settled, with their foundational ADRs recorded in
   `design/pending/events-foundational-adrs.md` (pre-stamp); §3.4 stays open
   until slice 0 has a substrate to measure, and §3.5 is a named slice-3
-  concern. No slices shipped yet. Nothing in the compiler implements
-  `event`/`Events` today (`bynk-syntax/src/keywords.rs`
-  has no `event` token; `bynk-check/src/firstparty.rs` lists the first-party
-  capabilities as `Clock`, `Random`, `Logger`, `Fetch`, `Secrets`, `Locale`,
-  `Idempotency` — no `Events`).
+  concern. **Slice 0 has shipped** (#939): `event` declarations, `given
+  Events` emission with owner-only enforcement, and unpatterned `from
+  Events(E)` subscription, across contexts and across all three platforms —
+  its own implementation decisions (the concrete fan-out mechanism per
+  platform, and the owner-only checker pass) are recorded in
+  `design/pending/events-slice0-implementation.md` (pre-stamp). Structural
+  pattern refinement on the subscription header (§3.3's deliver-and-filter),
+  the envelope, additive versioning, and per-publisher FIFO's own empirical
+  proof (§3.4) remain later slices.
 - **The one scope decision made up front.** This track delivers the **live
   pub-sub core** — declaration, emission, subscription with pattern refinement,
   the envelope, and additive versioning. It **splits event replay / backfill
@@ -398,7 +402,7 @@ receives *exactly* the emissions its pattern admits.
 
 ## 7. Slice status
 
-- [ ] Slice 0 — emit/subscribe loop + closed-protocol-set extension
+- [x] Slice 0 — emit/subscribe loop + closed-protocol-set extension (#939)
 - [ ] Slice 1 — subscription pattern refinement (deliver-and-filter)
 - [ ] Slice 2 — `EventEnvelope` + the `env.eventId` idempotency idiom
 - [ ] Slice 3 — additive versioning + the cross-build schema registry
@@ -410,11 +414,15 @@ receives *exactly* the emissions its pattern admits.
 - [ ] `event` declarations, `given Events` emission, and pattern-refined
   `from Events(...)` subscription are checked surface with their one first-party
   provider; §7's `PaymentConfirmed` example compiles and runs end to end (a real
-  `tsc --strict` project fixture), **minus** replay.
-- [ ] Events is a member of the closed protocol set
+  `tsc --strict` project fixture), **minus** replay. **Slice 0 done** (#939):
+  `event`/`given Events`/unpatterned `from Events(E)` ship, verified by a real
+  `tsc --strict` two-context project fixture on both Cloudflare and Bundle
+  targets. Still open: the pattern refinement on the subscription header
+  itself (§3.3/slice 1) — this bullet stays unchecked until that lands too.
+- [x] Events is a member of the closed protocol set
   ([ADR 0079](../decisions/0079-protocols-closed-set.md)) with the
   event-type-parameterised header; the per-protocol handler-shape check rejects a
-  malformed `on event` handler.
+  malformed `on event` handler. Shipped in slice 0 (#939).
 - [ ] Per-publisher FIFO (§3.4) is backed by an **empirical** integration fixture
   on the chosen substrate, not asserted — before it enters the spec as shipped.
 - [ ] The envelope carries `eventId`, `publisherId`, `emittedAt`, `schemaVersion`;

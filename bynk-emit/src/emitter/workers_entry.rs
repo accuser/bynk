@@ -262,6 +262,18 @@ pub fn emit_worker_entry(
         let _ = writeln!(out, "export {{ {joined} }} from \"./handlers.js\";");
         writeln!(out).unwrap();
     }
+    // Events track, slice 0 (spine #936, ADR 0284): same re-export
+    // requirement, for the fan-out DO — it lives in its own file
+    // (`events_fanout.ts`, not `handlers.ts`; a fan-out DO has no backing
+    // `AgentDecl` for `emit_agent` to emit it from).
+    if crate::project::unit_table_uses_emit(table) {
+        let _ = writeln!(
+            out,
+            "export {{ {} }} from \"./events_fanout.js\";",
+            crate::emitter::wrangler::EVENTS_FANOUT_CLASS_NAME
+        );
+        writeln!(out).unwrap();
+    }
 
     let _ = writeln!(out, "export default {{");
     let _ = writeln!(
@@ -397,6 +409,48 @@ pub fn emit_worker_entry(
                 args.join(", ")
             );
         }
+        let _ = writeln!(out, "      }}");
+        writeln!(out).unwrap();
+    }
+
+    // 1.6. Events dispatch (spine #936, ADR 0284). Reached only from a
+    // publishing context's fan-out DO calling in over this subscriber's
+    // Service Binding (`deliverEvent`) — never from external edge traffic, so
+    // it needs no CORS/actor handling, unlike the HTTP routes below.
+    let event_services: Vec<&String> = service_names
+        .iter()
+        .filter(|sname| {
+            table.services.get(**sname).is_some_and(|s| {
+                s.handlers
+                    .iter()
+                    .any(|h| matches!(h.kind, HandlerKind::Event))
+            })
+        })
+        .copied()
+        .collect();
+    if !event_services.is_empty() {
+        let _ = writeln!(out, "      if (path.startsWith(\"/_bynk/event/\")) {{");
+        let _ = writeln!(
+            out,
+            "        const servicePath = path.slice(\"/_bynk/event/\".length);"
+        );
+        let _ = writeln!(out, "        const payload = await request.json();");
+        let _ = writeln!(out, "        switch (servicePath) {{");
+        for sname in &event_services {
+            let _ = writeln!(out, "          case \"{sname}\": {{");
+            let _ = writeln!(out, "            await surface.{sname}(payload);");
+            let _ = writeln!(
+                out,
+                "            return new Response(null, {{ status: 204 }});"
+            );
+            let _ = writeln!(out, "          }}");
+        }
+        let _ = writeln!(out, "          default:");
+        let _ = writeln!(
+            out,
+            "            return new Response(\"Not found\", {{ status: 404 }});"
+        );
+        let _ = writeln!(out, "        }}");
         let _ = writeln!(out, "      }}");
         writeln!(out).unwrap();
     }

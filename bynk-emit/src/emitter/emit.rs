@@ -780,6 +780,10 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
                         }
                         HandlerKind::Open => ("open".to_string(), "WebSocket open".to_string()),
                         HandlerKind::Close => ("close".to_string(), "WebSocket close".to_string()),
+                        // Events track, slice 0 (spine #936): exactly one
+                        // `on event` per `from Events(E)` service (no
+                        // pattern-refinement fan-out yet, so no index).
+                        HandlerKind::Event => ("event".to_string(), "event".to_string()),
                     };
                     entries.push(pair);
                 }
@@ -1434,6 +1438,15 @@ pub(crate) fn emit_service(
         // these are callable surface methods a `TestConnection` test drives.)
         let is_ws_handler = matches!(handler.kind, HandlerKind::Open | HandlerKind::Close)
             || (ws_proto && matches!(handler.kind, HandlerKind::Message));
+        // Events track, slice 0 (spine #936): unlike the WebSocket lifecycle
+        // handlers above, `on event` has no *other* place its body could go
+        // on Workers — a WS lifecycle handler's real body lives in the
+        // hosting agent's DO (`emit_ws_do_method`); a subscriber service has
+        // no such alternate home. So the method is still emitted here on
+        // every target — real delivery (the fan-out DO calling in) reaches
+        // it directly, not through `compose.ts`'s HTTP-routable surface,
+        // which never exposes it regardless (no HTTP method/route to route
+        // from).
         if is_ws_handler && matches!(ctx.target, BuildTarget::Workers) {
             continue;
         }
@@ -1456,6 +1469,9 @@ pub(crate) fn emit_service(
             // v0.103/v0.106: the WebSocket lifecycle surface methods.
             HandlerKind::Open => "open".to_string(),
             HandlerKind::Close => "close".to_string(),
+            // Events track, slice 0 (spine #936): exactly one `on event` per
+            // `from Events(E)` service.
+            HandlerKind::Event => "event".to_string(),
         };
         // For service handlers the operation name is the handler kind
         // (e.g. `call`). v0.5 has only one handler kind, so the service is a
@@ -1633,6 +1649,37 @@ pub(crate) fn emit_service(
                 )
             };
         }
+        // Events track, slice 0 (spine #936): a handler whose body uses
+        // `Events.emit` receives a compose-supplied `__eventsDispatch`
+        // callback in its deps — the actual fanout delivery mechanism
+        // (a Cloudflare Durable Object per publishing context, or an
+        // in-process dispatch on Bundle/node) lives at the composition
+        // layer, which already knows how to build any capability's
+        // provider; the handler itself only needs to hand its buffered
+        // `__events` to whatever composed it. Mirrors `__exec`'s threading
+        // for `~>` exactly. Gated on more than this handler's own body: a
+        // handler with no direct `Events.emit` call but that invokes a
+        // *local agent* method which itself emits (`Ledger(id).bump(...)`)
+        // still needs `__eventsDispatch` threaded through, to hand onward —
+        // `cx.agent_given_caps_used` is exactly the existing mechanism that
+        // already propagates an invoked agent method's other `given`
+        // capabilities up to the caller (`effective_given`, just below);
+        // `Events` rides the same path since it's declared as an ordinary
+        // `given Events` on the agent handler.
+        let needs_events_dispatch = cx.is_first_party_events()
+            && (crate::emitter::block_uses_emit(&handler.body)
+                || cx.agent_given_caps_used.contains_key("Events"));
+        if needs_events_dispatch {
+            let field = "__eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>";
+            deps_ty = if deps_ty == "{}" {
+                format!("{{ {field} }}")
+            } else {
+                format!(
+                    "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_type_ref(&handler.return_type);
         let async_kw = if is_effectful_return(&handler.return_type) {
@@ -1647,12 +1694,39 @@ pub(crate) fn emit_service(
             params = params.join(", "),
         )
         .unwrap();
+        // Events track, slice 0 (spine #936): release-at-commit (events.md
+        // §3.0) needs a completion boundary services never had before — the
+        // body runs inside an IIFE so its own `return`s resolve `__result`
+        // rather than the outer method, and only a handler that completes
+        // without throwing reaches past it, then flushes `__events` to
+        // whatever composed it (`deps.__eventsDispatch`, threaded above).
+        // Gated on `block_uses_emit` specifically (not the broader
+        // `needs_events_dispatch` above) — a handler that only *forwards*
+        // `__eventsDispatch` to an agent it calls has nothing of its own to
+        // buffer or flush, so it keeps byte-identical output, mirroring
+        // `__exec`'s gate on `block_uses_send`.
+        let body_emits_directly = crate::emitter::block_uses_emit(&handler.body);
+        if body_emits_directly {
+            writeln!(
+                out,
+                "    const __events: Array<{{ type: string; payload: unknown }}> = [];"
+            )
+            .unwrap();
+            writeln!(out, "    const __result = await (async () => {{").unwrap();
+        }
         let base = out.len();
         out.push_str(&body_out);
         if let Some(module) = source_map {
             module
                 .borrow_mut()
                 .merge(&body_smb.borrow(), &body_out, out, base, 0);
+        }
+        if body_emits_directly {
+            writeln!(out, "    }})();").unwrap();
+            writeln!(out, "    if (__events.length > 0) {{").unwrap();
+            writeln!(out, "      await deps.__eventsDispatch(__events);").unwrap();
+            writeln!(out, "    }}").unwrap();
+            writeln!(out, "    return __result;").unwrap();
         }
         writeln!(out, "  }},").unwrap();
     }
@@ -1676,6 +1750,25 @@ fn cap_ref_ty(c: &CapRef, info: &bynk_check::resolver::CrossContextInfo) -> Stri
     }
 }
 
+/// Events track, slice 0 (spine #936): does any service or agent handler in
+/// this commons emit — the same predicate `block_uses_emit` answers per
+/// handler body, rolled up to "does the context-level `__eventsDispatch`
+/// deps field need to exist at all." Syntactic, like its sibling: a false
+/// positive here just adds an unused interface field, not a miscompile.
+pub(crate) fn commons_uses_emit(commons: &TypedCommons) -> bool {
+    commons.commons.items.iter().any(|item| match item {
+        CommonsItem::Service(s) => s
+            .handlers
+            .iter()
+            .any(|h| crate::emitter::block_uses_emit(&h.body)),
+        CommonsItem::Agent(a) => a
+            .handlers
+            .iter()
+            .any(|h| crate::emitter::block_uses_emit(&h.body)),
+        _ => false,
+    })
+}
+
 /// v0.15: collect the cross-context capabilities a context's **handlers**
 /// (service + agent) reference via `given B.Cap`, as `(deps_key,
 /// consumed_context)` pairs, deduplicated by key and sorted. These become
@@ -1695,6 +1788,17 @@ pub(crate) fn cross_context_caps_used(
         };
         for h in handlers {
             for c in &h.given {
+                // Events track, slice 0 (spine #936): `Events.emit` is
+                // intercepted entirely at the call site (release-at-commit
+                // buffering) and never calls through a constructed provider
+                // — unlike every other capability, there is no
+                // `EventsProvider` for compose to build, so the first-party
+                // `Events` must not appear in any context's deps interface.
+                let is_first_party_events = c.key() == "Events"
+                    && info.flattened_caps.get(c.key()).map(String::as_str) == Some("bynk");
+                if is_first_party_events {
+                    continue;
+                }
                 if let Some(prefix) = c.prefix() {
                     if let Some(consumed) = info.resolve_prefix(&prefix) {
                         seen.entry(c.key().to_string()).or_insert(consumed);
@@ -1758,6 +1862,24 @@ fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
             out.push(cap.clone());
         }
     }
+    // Events track, slice 0 (spine #936): `Events.emit` is intercepted
+    // entirely at the call site (release-at-commit buffering; see the
+    // `Events`/`emit` special case in `lower.rs`) and never calls through a
+    // constructed provider — unlike every other capability, there is no
+    // `EventsProvider` for compose to build. So `Events` must not appear in
+    // `deps` at all, or compose would need to construct a provider that
+    // doesn't exist. Filtered the same way #934 distinguishes a genuine
+    // first-party `Events` from an unrelated same-named capability.
+    out.retain(|c| {
+        c.key() != "Events"
+            || !(cx.in_bynk_unit
+                || cx
+                    .cross_context
+                    .flattened_caps
+                    .get(c.key())
+                    .map(String::as_str)
+                    == Some("bynk"))
+    });
     out
 }
 
@@ -1957,6 +2079,25 @@ fn emit_context_deps_interface(
             "  readonly surface: {};",
             surface_ty(&ctx.cross_context)
         ));
+    }
+    // Events track, slice 0 (spine #936): a context with any handler that
+    // emits needs `__eventsDispatch` threaded all the way from `makeSurface`
+    // down to that handler's own `deps` param (`emit_service`/`emit_agent`'s
+    // matching field) — otherwise `svc.call(args, deps)` inside `makeSurface`
+    // fails to typecheck, since `deps`'s static type there is this interface,
+    // not whatever compose actually constructs.
+    let is_first_party_events = ctx.commons_name == "bynk"
+        || ctx
+            .cross_context
+            .flattened_caps
+            .get("Events")
+            .map(String::as_str)
+            == Some("bynk");
+    if is_first_party_events && commons_uses_emit(commons) {
+        fields.push(
+            "  readonly __eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>;"
+                .to_string(),
+        );
     }
     writeln!(out, "export interface {deps_name} {{").unwrap();
     for f in &fields {
@@ -2873,7 +3014,20 @@ pub(crate) fn emit_agent(
     // constructor's second argument. Bundle mode constructs with `state`
     // only and never uses the fetch path, so the parameter stays optional.
     let given_deps_expr = ctx.agent_given_deps.get(&a.name.name).cloned();
-    if given_deps_expr.is_some() {
+    // Events track, slice 0 (spine #936): the same wire problem #527 already
+    // solved for capability providers hits `deps.__eventsDispatch` too — it is
+    // a function, so it does not survive the DO's JSON wire either. An agent
+    // whose own handler body emits directly (`body_emits_directly`'s
+    // per-handler test, mirrored here at the whole-agent level) needs its
+    // fetch dispatch to rebuild it from `env.EVENTS_FANOUT` exactly as a
+    // `given` provider is rebuilt, so it takes the same env-carrying
+    // constructor.
+    let agent_uses_emit = a
+        .handlers
+        .iter()
+        .any(|h| crate::emitter::block_uses_emit(&h.body));
+    let needs_env_ctor = given_deps_expr.is_some() || agent_uses_emit;
+    if needs_env_ctor {
         writeln!(out, "  private __env: unknown;").unwrap();
         writeln!(
             out,
@@ -3094,12 +3248,30 @@ pub(crate) fn emit_agent(
             async_tail,
             Some(&h.return_type),
         );
-        let deps_ty = build_deps_object_ty_with_surface(
+        let mut deps_ty = build_deps_object_ty_with_surface(
             &effective_given(&h.given, &cx),
             &cx,
             &ctx.cross_context,
             ctx.target,
         );
+        // Events track, slice 0 (spine #936): see the matching field on the
+        // service path (`emit_service`) — an agent handler that emits, or
+        // that calls another local agent method which itself emits, gets
+        // the same compose-supplied `__eventsDispatch` callback.
+        let needs_events_dispatch = cx.is_first_party_events()
+            && (crate::emitter::block_uses_emit(&h.body)
+                || cx.agent_given_caps_used.contains_key("Events"));
+        if needs_events_dispatch {
+            let field = "__eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>";
+            deps_ty = if deps_ty == "{}" {
+                format!("{{ {field} }}")
+            } else {
+                format!(
+                    "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_type_ref(&h.return_type);
         let async_kw = if is_effectful_return(&h.return_type) {
@@ -3120,7 +3292,8 @@ pub(crate) fn emit_agent(
                 | HandlerKind::Cron { .. }
                 | HandlerKind::Message
                 | HandlerKind::Open
-                | HandlerKind::Close => "call".to_string(),
+                | HandlerKind::Close
+                | HandlerKind::Event => "call".to_string(),
             });
         writeln!(
             out,
@@ -3143,6 +3316,20 @@ pub(crate) fn emit_agent(
                     .merge(&body_smb.borrow(), &body_out, out, base, 0);
             }
         };
+        // Events track, slice 0 (spine #936): the same release-at-commit
+        // buffer the service path declares (see `emit_service`'s
+        // `block_uses_emit` gate) — an agent handler needs the same
+        // completion boundary, and a writing store-agent already has one
+        // (`commitState`), so `__events` just rides alongside it there,
+        // flushing to `deps.__eventsDispatch` (threaded above) once the
+        // state commit itself has succeeded. Gated on `body_emits_directly`
+        // specifically (not the broader `needs_events_dispatch` above) —
+        // a handler that only *forwards* `__eventsDispatch` to another
+        // local agent it calls has nothing of its own to buffer or flush;
+        // `deps` (typed with the field) simply passes through unchanged.
+        let body_emits_directly = crate::emitter::block_uses_emit(&h.body);
+        let events_decl = "    const __events: Array<{ type: string; payload: unknown }> = [];";
+        let flush = "    if (__events.length > 0) { await deps.__eventsDispatch(__events); }";
         if is_store_agent {
             if writes_state {
                 writeln!(
@@ -3150,15 +3337,37 @@ pub(crate) fn emit_agent(
                     "    const __state = {{ ...(await this.loadState()) }};"
                 )
                 .unwrap();
+                if body_emits_directly {
+                    writeln!(out, "{events_decl}").unwrap();
+                }
                 writeln!(out, "    const __result = await (async () => {{").unwrap();
                 splice(out);
                 writeln!(out, "    }})();").unwrap();
                 writeln!(out, "    await this.commitState(__state);").unwrap();
+                if body_emits_directly {
+                    writeln!(out, "{flush}").unwrap();
+                }
+                writeln!(out, "    return __result;").unwrap();
+            } else if body_emits_directly {
+                writeln!(out, "    const __state = await this.loadState();").unwrap();
+                writeln!(out, "{events_decl}").unwrap();
+                writeln!(out, "    const __result = await (async () => {{").unwrap();
+                splice(out);
+                writeln!(out, "    }})();").unwrap();
+                writeln!(out, "{flush}").unwrap();
                 writeln!(out, "    return __result;").unwrap();
             } else {
                 writeln!(out, "    const __state = await this.loadState();").unwrap();
                 splice(out);
             }
+        } else if body_emits_directly {
+            writeln!(out, "    const currentState = await this.loadState();").unwrap();
+            writeln!(out, "{events_decl}").unwrap();
+            writeln!(out, "    const __result = await (async () => {{").unwrap();
+            splice(out);
+            writeln!(out, "    }})();").unwrap();
+            writeln!(out, "{flush}").unwrap();
+            writeln!(out, "    return __result;").unwrap();
         } else {
             writeln!(out, "    const currentState = await this.loadState();").unwrap();
             splice(out);
@@ -3240,16 +3449,38 @@ pub(crate) fn emit_agent(
             "      const {{ args, deps }} = (await request.json()) as {{ args: unknown[]; deps: unknown }};"
         )
         .unwrap();
-        if let Some(expr) = &given_deps_expr {
+        if given_deps_expr.is_some() || agent_uses_emit {
             // #527: the wire deps are JSON — any capability provider in them
             // is a dead plain object (its methods did not survive
             // serialisation). Rebuild this agent's `given` deps in-process,
             // exactly as compose wires them, and let them win the merge.
+            //
+            // Events track, slice 0: `deps.__eventsDispatch` is a function
+            // too, and does not survive the wire any better than a provider
+            // — rebuilt from this Worker's own `env.EVENTS_FANOUT` binding
+            // (shared by every DO class this script hosts) rather than
+            // trusting whatever the caller's JSON carried.
             writeln!(out, "      const env = this.__env as any;").unwrap();
-            writeln!(out, "      const __givenDeps = {expr};").unwrap();
+            let mut rebuilt: Vec<String> = Vec::new();
+            if let Some(expr) = &given_deps_expr {
+                writeln!(out, "      const __givenDeps = {expr};").unwrap();
+                rebuilt.push("...__givenDeps".to_string());
+            }
+            if agent_uses_emit {
+                let bind = crate::emitter::wrangler::agent_binding_name(
+                    crate::emitter::wrangler::EVENTS_FANOUT_CLASS_NAME,
+                );
+                writeln!(
+                    out,
+                    "      const __eventsDeps = {{ __eventsDispatch: (events: Array<{{ type: string; payload: unknown }}>) => dispatchToEventsFanout(env.{bind}, events) }};"
+                )
+                .unwrap();
+                rebuilt.push("...__eventsDeps".to_string());
+            }
             writeln!(
                 out,
-                "      const result = await (this as any)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), ...__givenDeps }});"
+                "      const result = await (this as any)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), {} }});",
+                rebuilt.join(", ")
             )
             .unwrap();
         } else {

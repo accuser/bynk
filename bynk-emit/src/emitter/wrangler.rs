@@ -6,12 +6,27 @@
 
 use std::fmt::Write as _;
 
-use crate::project::{UnitTable, worker_dir_name};
+use crate::project::{UnitTable, unit_table_uses_emit, worker_dir_name};
 
 /// Compile-time pinned compatibility date. Cloudflare uses this to lock
 /// Workers runtime behaviour. Bump cautiously when changing the runtime
 /// dependencies.
 const COMPATIBILITY_DATE: &str = "2024-11-01";
+
+/// Events track, slice 0 (spine #936, ADR 0284): the class name of a
+/// publishing context's fan-out Durable Object (`emitter::events_fanout`).
+/// Shared with `emitter::workers` (the `Env` field name + `deps.
+/// __eventsDispatch` call it drives) and `emitter::events_fanout` (the class
+/// this name must actually export) so the three can never drift apart.
+///
+/// Double-underscore-prefixed, matching every other compiler-synthesised
+/// identifier in emitted output (`__events`, `__eventsDispatch`,
+/// `__makeLedger`, …) — a Bynk `agent` name can never start with `_` (a
+/// parse error, checked directly: `agent _Foo { … }` fails with
+/// `expected identifier after \`agent\`, found \`_\``), so an agent
+/// coincidentally named the same as this synthetic class is structurally
+/// impossible, not merely unlikely.
+pub const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
 
 /// Deploy-time sentinel in generated Worker configuration. The driver replaces
 /// this with the persistent Cloudflare KV namespace id immediately before a
@@ -59,20 +74,27 @@ pub fn emit_wrangler_toml(
         writeln!(out).unwrap();
     }
 
-    // Agents → Durable Object bindings + migrations.
-    let mut agent_names: Vec<&String> = table.agents.keys().collect();
-    agent_names.sort();
-    for agent_name in &agent_names {
-        let binding = agent_binding_name(agent_name);
+    // Agents → Durable Object bindings + migrations. Events track, slice 0
+    // (spine #936, ADR 0284): a context whose handlers emit gets its own
+    // fan-out DO folded into the same bindings/migration blocks — Cloudflare
+    // only cares that `index.ts` (this Worker's `main`) exports a class with
+    // this name, not which generated file it came from.
+    let mut class_names: Vec<String> = table.agents.keys().cloned().collect();
+    if unit_table_uses_emit(table) {
+        class_names.push(EVENTS_FANOUT_CLASS_NAME.to_string());
+    }
+    class_names.sort();
+    for class_name in &class_names {
+        let binding = agent_binding_name(class_name);
         let _ = writeln!(out, "[[durable_objects.bindings]]");
         let _ = writeln!(out, "name = \"{binding}\"");
-        let _ = writeln!(out, "class_name = \"{agent_name}\"");
+        let _ = writeln!(out, "class_name = \"{class_name}\"");
         writeln!(out).unwrap();
     }
-    if !agent_names.is_empty() {
+    if !class_names.is_empty() {
         let _ = writeln!(out, "[[migrations]]");
         let _ = writeln!(out, "tag = \"v1\"");
-        let classes: Vec<String> = agent_names.iter().map(|n| format!("\"{n}\"")).collect();
+        let classes: Vec<String> = class_names.iter().map(|n| format!("\"{n}\"")).collect();
         let _ = writeln!(out, "new_classes = [{}]", classes.join(", "));
         writeln!(out).unwrap();
     }

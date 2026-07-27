@@ -207,6 +207,7 @@ fn discriminator(handler: &Handler) -> String {
         HandlerKind::Message => "message".to_string(),
         HandlerKind::Open => "open".to_string(),
         HandlerKind::Close => "close".to_string(),
+        HandlerKind::Event => "event".to_string(),
     }
 }
 

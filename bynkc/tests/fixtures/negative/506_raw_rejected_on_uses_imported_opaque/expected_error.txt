@@ -1,0 +1,1 @@
+bynk.types.opaque_raw_outside

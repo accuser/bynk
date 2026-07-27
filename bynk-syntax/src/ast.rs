@@ -482,6 +482,10 @@ pub enum CommonsItem {
     /// legal syntactically wherever any `CommonsItem` is, per the existing
     /// `Service`/`Agent`-in-`adapter` precedent.
     Messages(MessagesDecl),
+    /// `event Name = { fields }` (Events track, slice 0, spine #936).
+    /// Context-only (checker-enforced, not grammar) — the mirror image of
+    /// `Messages`' commons-only restriction, same mechanism.
+    Event(EventDecl),
 }
 
 impl CommonsItem {
@@ -500,6 +504,7 @@ impl CommonsItem {
             CommonsItem::Agent(a) => Some(&a.name),
             CommonsItem::Actor(a) => Some(&a.name),
             CommonsItem::Messages(_) => None,
+            CommonsItem::Event(e) => Some(&e.name),
         }
     }
 }
@@ -872,6 +877,14 @@ pub enum ServiceProtocol {
     /// carries. The service holds exactly one `on open` handler (edge auth via
     /// `by`, then transfer of the connection to an agent).
     WebSocket { in_type: TypeRef, out_type: TypeRef },
+    /// `from Events(E)` — a pattern-less subscriber to event type `E`
+    /// (Events track, slice 0, spine #936). `Events`, capitalised, is matched
+    /// as plain `Ident` text the same way `websocket` is — it names the
+    /// `Events` capability directly (every first-party capability is already
+    /// an unreserved PascalCase identifier), not a built-in type name, so no
+    /// lexer reservation. The header takes one bare type reference; no
+    /// pattern (slice 1) and no `via schema(...)` clause (slice 4) yet.
+    Events { event_type: TypeRef },
 }
 
 /// An agent declaration (v0.5 §3.6). Agents are state-bearing entities
@@ -1205,6 +1218,13 @@ pub enum HandlerKind {
     /// recovered from the socket attachment (set at `on open`). (A `from websocket`
     /// `on message` reuses [`HandlerKind::Message`], disambiguated by the protocol.)
     Close,
+    /// `on event(e: E)` — one emission of a `from Events(E)` service's
+    /// subscribed event type (Events track, slice 0, spine #936). No
+    /// envelope parameter yet (slice 2). `event`, like `message`/`open`/
+    /// `close`/`schedule`, is matched by plain ident text at the fixed
+    /// position right after `on`, with no lexer reservation — an ordinary
+    /// identifier everywhere else in the grammar.
+    Event,
 }
 
 /// HTTP methods supported by `on http` handlers (v0.9).
@@ -1504,6 +1524,47 @@ pub struct TypeDecl {
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+/// `event Name = { fields }` — a typed fact a context may emit and other
+/// contexts' subscriber services may receive (Events track, slice 0, spine
+/// #936). Record body only in slice 0 — pattern refinement (subscription
+/// side, slice 1) and default-valued fields for additive versioning (slice
+/// 3) both extend a record body, so nothing here forecloses them. Legal only
+/// inside a `context` — checker-enforced (`bynk.event.outside_context`), not
+/// grammar, mirroring how `capability`/`provides` are commons-rejected at
+/// the parser while `event` instead follows `messages`' precedent
+/// (ADR 0272) of parsing uniformly and letting the checker place it, since
+/// unlike `capability`/`provides` an `event` has no meaning to reject early
+/// inside an `adapter` either.
+#[derive(Debug, Clone)]
+pub struct EventDecl {
+    pub name: Ident,
+    pub body: RecordBody,
+    /// Documentation block attached to this declaration.
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+impl EventDecl {
+    /// A synthetic `TypeDecl` with this event's name and record body, so an
+    /// event registers into the ordinary `types` symbol table and reuses
+    /// every existing type-reference/exports/consumes/construction check —
+    /// no non-generic type parameters, no separate resolution path. Callers
+    /// that need to know a name is specifically an *event* (owner-only
+    /// emission, `from Events(E)`/`Events.emit[E]`'s "must be an event, not
+    /// just any type" gate) track that separately, alongside this.
+    pub fn as_type_decl(&self) -> TypeDecl {
+        TypeDecl {
+            name: self.name.clone(),
+            type_params: Vec::new(),
+            body: TypeBody::Record(self.body.clone()),
+            documentation: self.documentation.clone(),
+            span: self.span,
+            trivia: self.trivia.clone(),
+        }
+    }
 }
 
 /// The right-hand side of a `type` declaration. In v0/v0.1 only the

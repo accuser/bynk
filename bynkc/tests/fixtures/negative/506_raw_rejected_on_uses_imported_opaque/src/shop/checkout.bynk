@@ -1,0 +1,9 @@
+context shop.checkout
+
+uses shared.values
+
+service peek {
+  on call(t: Token) -> Effect[String] {
+    t.raw
+  }
+}
