@@ -14,6 +14,7 @@ topic and act on it without hopping between sections. New to Bynk? Work through
 - [Entry points](/book/guides/entry-points/) — HTTP, cron, and queue handlers.
 - [Actors & access control](/book/guides/actors/) — authentication, authorisation, and the `by` clause.
 - [Localisation](/book/guides/localisation/) — the `Locale` capability, message bundles, ICU formatting.
+- [Events](/book/guides/events/) — `event` declarations, `given Events` emission, `from Events(E)` subscription.
 - [Testing](/book/guides/testing/) — unit and integration testing.
 - [Projects, build & deployment](/book/guides/projects-build-and-deployment/) — layout, build, Cloudflare Workers.
 
