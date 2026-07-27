@@ -1,0 +1,11 @@
+context commerce.order
+
+consumes bynk { Events }
+
+type NotAnEvent = { orderId: String }
+
+service leak {
+  on call(orderId: String) -> Effect[()] given Events {
+    Events.emit[NotAnEvent](NotAnEvent { orderId: orderId })
+  }
+}

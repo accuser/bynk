@@ -1515,9 +1515,10 @@ fn lower_method_call(
     // without throwing. The local is declared by the outer body wrapper
     // whenever `block_uses_emit` is true (the same syntactic check this
     // receiver/method match mirrors), so the two stay in lockstep by
-    // construction. The fanout dispatch itself (the Cloudflare DO / non-
-    // Cloudflare equivalent that actually delivers a flushed event) is not
-    // wired yet — #939's remaining piece; nothing reads `__events` yet.
+    // construction. The flush calls `deps.__eventsDispatch`, which the
+    // publishing context's own compose wires to the Cloudflare fan-out DO
+    // (Workers) or an in-process dispatch closure (Bundle) — see
+    // `emit_events_fanout_do`/`project.rs`'s `__eventsDispatch` construction.
     if let ExprKind::Ident(id) = &receiver.kind
         && id.name == "Events"
         && method.name == "emit"

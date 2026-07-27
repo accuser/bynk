@@ -851,12 +851,19 @@ pub(crate) fn build_cross_context_info(
         String,
         HashMap<String, resolver::CrossContextCapability>,
     > = HashMap::new();
+    // Events track, slice 0 (spine #936): each consumed context's own event
+    // names, so a subscriber's `from Events(E)` can be checked against a
+    // foreign owner too — mirrors `discover_event_subscribers` (`project.rs`),
+    // which already resolves ownership this same way for wiring.
+    let mut consumed_event_names: HashMap<String, std::collections::HashSet<String>> =
+        HashMap::new();
     for t in &consumed_contexts {
         let other_types_combined = combined_types_for(t, unit_tables, unit_uses);
         consumed_types.insert(t.clone(), other_types_combined.clone());
         let Some(other_table) = unit_tables.get(t) else {
             continue;
         };
+        consumed_event_names.insert(t.clone(), other_table.events.keys().cloned().collect());
         let mut svcs: HashMap<String, resolver::CrossContextService> = HashMap::new();
         for (sname, sdecl) in &other_table.services {
             let Some(handler) = sdecl
@@ -934,6 +941,7 @@ pub(crate) fn build_cross_context_info(
         consumed_capabilities,
         // Set by the caller from the unit's `consumes U { … }` clauses.
         flattened_caps: HashMap::new(),
+        consumed_event_names,
     }
 }
 

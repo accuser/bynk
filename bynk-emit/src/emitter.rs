@@ -677,53 +677,44 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
 
 /// Events track, slice 0 (spine #936): does this block contain an
 /// `Events.emit[...]` call anywhere — including nested branches, match arms,
-/// and lambdas? Gates release-at-commit buffer threading (`deps.__events`)
-/// so a handler that never emits keeps byte-identical output, mirroring
-/// `block_uses_send`'s gate on `deps.__exec`. Syntactic, like its sibling: it
-/// matches a bare-`Events`-receiver `.emit` call by name, not by resolving
-/// the receiver against `given` — a locally-shadowed `Events` would be a
-/// false positive, an accepted approximation matching `block_uses_send`'s
-/// own precedent (it doesn't verify `~>`'s target either).
+/// lambdas, and any other expression position (a `Paren`, an `Ok`/`Err`
+/// wrapper, a `Call`/`RecordConstruction` argument, a `BinOp` operand, …)?
+/// Gates release-at-commit buffer threading (`deps.__events`) so a handler
+/// that never emits keeps byte-identical output, mirroring `block_uses_send`'s
+/// gate on `deps.__exec`.
+///
+/// Driven off the exhaustive `walk_block_exprs`/`walk_exprs` visitor rather
+/// than a hand-rolled `ExprKind` match — a bespoke match here previously
+/// covered only `MethodCall`/`Block`/`If`/`Match`/`Lambda` and silently
+/// disagreed with `lower_expr` (which recurses into every expression
+/// position), so `do (Events.emit[E](event))` — one added paren — compiled
+/// clean but emitted a body that referenced an undeclared `__events` local
+/// (`tsc`-only failure, no bynk diagnostic). Riding the walker means this
+/// can't drift from the lowering again: a new `ExprKind` variant fails to
+/// compile here until `walk_exprs` itself is taught to visit it.
+///
+/// Syntactic, like `block_uses_send`: matches a bare-`Events`-receiver
+/// `.emit` call by name, not by resolving the receiver against `given` — a
+/// locally-shadowed `Events` would be a false positive, an accepted
+/// approximation matching `block_uses_send`'s own precedent (it doesn't
+/// verify `~>`'s target either).
 pub(crate) fn block_uses_emit(b: &Block) -> bool {
     fn is_events_emit_call(receiver: &Expr, method: &Ident) -> bool {
         matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "Events")
             && method.name == "emit"
     }
-    fn stmt(s: &Statement) -> bool {
-        match s {
-            Statement::Send(_) => false,
-            Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
-            Statement::Expect(a) => expr(&a.value),
-            Statement::Do(d) => expr(&d.value),
-            Statement::Assign(a) => expr(&a.value),
+    let mut found = false;
+    walk_block_exprs(b, &mut |e| {
+        if !found
+            && let ExprKind::MethodCall {
+                receiver, method, ..
+            } = &e.kind
+            && is_events_emit_call(receiver, method)
+        {
+            found = true;
         }
-    }
-    fn expr(e: &Expr) -> bool {
-        match &e.kind {
-            ExprKind::MethodCall {
-                receiver,
-                method,
-                args,
-                ..
-            } => is_events_emit_call(receiver, method) || expr(receiver) || args.iter().any(expr),
-            ExprKind::Block(b) => block_uses_emit(b),
-            ExprKind::If {
-                cond,
-                then_block,
-                else_block,
-            } => expr(cond) || block_uses_emit(then_block) || block_uses_emit(else_block),
-            ExprKind::Match { discriminant, arms } => {
-                expr(discriminant)
-                    || arms.iter().any(|a| match &a.body {
-                        MatchBody::Expr(e) => expr(e),
-                        MatchBody::Block(b) => block_uses_emit(b),
-                    })
-            }
-            ExprKind::Lambda(l) => expr(&l.body),
-            _ => false,
-        }
-    }
-    b.statements.iter().any(stmt) || expr(&b.tail)
+    });
+    found
 }
 
 /// v0.81–v0.87: does this block write durable state — a `:=` `Cell` write, a

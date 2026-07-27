@@ -1089,23 +1089,62 @@ pub(crate) fn check_static_call(
                 // is a check over existing data, not new provenance
                 // plumbing — the primary boundary guarantee the threat
                 // model (events.md §6) names.
-                if type_name.name == "Events"
+                //
+                // First-party-gated like every other Events-special-cased
+                // site (mirrors #934's Idempotency precedent): a bare
+                // `type_name.name == "Events"` string match would also fire
+                // for a third-party capability that happens to declare its
+                // own `Events` with an `emit` method — only bynk's own
+                // capability (declared here, in `bynk` itself, or flattened
+                // in via `consumes bynk { Events }`) gets this check.
+                let is_first_party_events = type_name.name == "Events"
                     && method.name == "emit"
-                    && let Ty::Named { name: ename, .. } = &ty
-                    && !ctx.input.is_local_type(ename)
-                {
-                    ctx.errors.push(
-                        CompileError::new(
-                            "bynk.event.emit_outside_owner",
-                            ta.span(),
-                            format!(
-                                "`{ename}` is not declared in this context — only the context that declares an event may emit it"
+                    && (ctx.input.commons.name.joined() == crate::firstparty::BYNK_UNIT
+                        || ctx
+                            .input
+                            .cross_context
+                            .flattened_caps
+                            .get("Events")
+                            .map(String::as_str)
+                            == Some(crate::firstparty::BYNK_UNIT));
+                if is_first_party_events && let Ty::Named { name: ename, .. } = &ty {
+                    if ctx.input.is_local_event(ename) {
+                        // Locally-declared event — the owner. Fine.
+                    } else if ctx.input.is_local_type(ename) {
+                        // Events track, slice 0: `UnitTable`/`ResolvedCommons`
+                        // record which local names are specifically events
+                        // (as opposed to any other locally-declared type) —
+                        // `Events.emit[SomeLocalRecord]` compiled clean before
+                        // this check existed, silently buffering an emission
+                        // no `from Events(...)` subscriber could ever match
+                        // (`discover_event_subscribers` finds no owner for a
+                        // non-event name and just drops it).
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.event.emit_not_an_event",
+                                ta.span(),
+                                format!(
+                                    "`{ename}` is not a declared `event` — `Events.emit` may only name an event type"
+                                ),
+                            )
+                            .with_note(
+                                "declare it with `event Name = { ... }`, or check that the type argument names the event you meant",
                             ),
-                        )
-                        .with_note(
-                            "a foreign event is visible via `consumes` for subscription (`from Events(...)`), but only its owning context may `Events.emit` it",
-                        ),
-                    );
+                        );
+                    } else {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.event.emit_outside_owner",
+                                ta.span(),
+                                format!(
+                                    "`{ename}` is not declared in this context — only the context that declares an event may emit it"
+                                ),
+                            )
+                            .with_note(
+                                "a foreign event is visible via `consumes` for subscription (`from Events(...)`), but only its owning context may `Events.emit` it",
+                            ),
+                        );
+                    }
                 }
                 subst.insert(tp.clone(), ty);
             }

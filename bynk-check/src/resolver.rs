@@ -87,6 +87,14 @@ pub struct ResolvedCommons {
     /// another context) is *not* rebranded and must not be gated by #907's
     /// check — only this narrower set may be.
     pub uses_commons_type_names: std::collections::HashSet<String>,
+    /// Events track, slice 0 (spine #936): names of `event` declarations in
+    /// *this* commons specifically — as opposed to `local_type_names`, which
+    /// answers "declared here" for any type, event-derived or not. Backs the
+    /// `Events.emit[E]` check that `E` names a real event, not merely any
+    /// local type (owner-only emission alone can't tell the two apart, since
+    /// an event's synthetic `TypeDecl` sits in the same `types` table as
+    /// every ordinary type).
+    pub event_type_names: std::collections::HashSet<String>,
 }
 
 /// Static information about the consuming context: the set of contexts it
@@ -122,6 +130,13 @@ pub struct CrossContextInfo {
     /// so bare `given Cap` / `Cap.op(…)` resolve, the deps type imports from the
     /// right module, and compose instantiates the provider.
     pub flattened_caps: HashMap<String, String>,
+    /// Events track, slice 0 (spine #936): for each consumed context, the
+    /// names of its own `event` declarations. Lets a subscriber's `from
+    /// Events(E)` header be checked against a foreign owner too — `E` is
+    /// legitimate if it's a local event *or* a declared event of some
+    /// consumed context, mirroring how `discover_event_subscribers`
+    /// (`bynk-emit/src/project.rs`) already resolves ownership for wiring.
+    pub consumed_event_names: HashMap<String, HashSet<String>>,
 }
 
 /// Snapshot of one exported capability in a consumed context, as needed for
@@ -202,6 +217,12 @@ impl ResolvedCommons {
     /// their opaque representation (`.raw`) or call `.unsafe(value)`.
     pub fn is_local_type(&self, name: &str) -> bool {
         self.local_type_names.contains(name)
+    }
+
+    /// Events track, slice 0: is `name` a declared `event` in this commons —
+    /// not merely any local type?
+    pub fn is_local_event(&self, name: &str) -> bool {
+        self.event_type_names.contains(name)
     }
 }
 
@@ -425,6 +446,14 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
 
     if errors.is_empty() {
         let local_type_names = types.keys().cloned().collect();
+        let event_type_names = commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Event(e) => Some(e.name.name.clone()),
+                _ => None,
+            })
+            .collect();
         Ok(ResolvedCommons {
             commons,
             types,
@@ -439,6 +468,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             // gates is unreachable here.
             is_context: false,
             uses_commons_type_names: HashSet::new(),
+            event_type_names,
         })
     } else {
         Err(errors)

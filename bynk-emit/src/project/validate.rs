@@ -533,6 +533,67 @@ pub(crate) fn check_locale_bundle_ambiguity(
     }
 }
 
+/// Events track, slice 0 (spine #936): a `from Events(E)` subscription must
+/// name a real, declared event — owned either by this context or by a
+/// context it `consumes` (mirroring `discover_event_subscribers`'s own
+/// ownership resolution, `project.rs`, which silently drops an unresolvable
+/// subscription rather than diagnosing it). Runs at the project-wide phase
+/// (needs `unit_tables` + `unit_consumes` together, unlike the local, per-
+/// context `check_service_protocols`), alongside the other cross-unit checks
+/// that need the same two maps.
+pub(crate) fn check_event_subscriptions(
+    parsed: &[ParsedFile],
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        if kinds.get(name) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let consumed = unit_consumes.get(name).cloned().unwrap_or_default();
+        for &i in indices {
+            for item in parsed[i].items() {
+                let CommonsItem::Service(s) = item else {
+                    continue;
+                };
+                let ServiceProtocol::Events { event_type } = &s.protocol else {
+                    continue;
+                };
+                let TypeRef::Named(id) = event_type else {
+                    continue;
+                };
+                let owned_locally = unit_tables
+                    .get(name)
+                    .is_some_and(|t| t.events.contains_key(&id.name));
+                let owned_by_consumed = consumed.iter().any(|c| {
+                    unit_tables
+                        .get(c)
+                        .is_some_and(|t| t.events.contains_key(&id.name))
+                });
+                if !owned_locally && !owned_by_consumed {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path),
+                        CompileError::new(
+                            "bynk.event.unknown_subscription",
+                            id.span,
+                            format!(
+                                "`{}` is not a declared event in this context or any consumed context",
+                                id.name
+                            ),
+                        )
+                        .with_note(
+                            "check the spelling, or add `consumes <context>` for the context whose `event` this names — an unresolvable subscription never receives anything, silently",
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// message-bundles slice 3 (#878): reports `bynk.messages.malformed_icu_syntax`
 /// for every ICU-dispatch placeholder in `entry.template` that fails to
 /// parse (unbalanced arm braces, an unknown format keyword, `#` outside a
@@ -938,6 +999,7 @@ pub(crate) fn check_context_declarations(
         imported_from: HashMap::new(),
         is_context,
         uses_commons_type_names: uses_commons_type_names.clone(),
+        event_type_names: table.events.keys().cloned().collect(),
     };
 
     // v0.25: capability operation signatures reference types.
@@ -3131,6 +3193,7 @@ fn check_agent_decls(
             imported_from: HashMap::new(),
             is_context,
             uses_commons_type_names: uses_commons_type_names.clone(),
+            event_type_names: table.events.keys().cloned().collect(),
         };
         // v0.81: the fresh-key rule for `store Cell[T]` fields — an
         // initialiser is checked against the element type `T` (which also types
@@ -3219,6 +3282,7 @@ fn check_agent_decls(
             imported_from: HashMap::new(),
             is_context,
             uses_commons_type_names: uses_commons_type_names.clone(),
+            event_type_names: table.events.keys().cloned().collect(),
         };
         self_scope.insert(
             "self".to_string(),
