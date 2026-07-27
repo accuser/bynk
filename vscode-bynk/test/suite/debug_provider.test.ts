@@ -64,7 +64,7 @@ describe("Bynk debug provider (test mode)", () => {
     fs.mkdirSync(path.join(dir, "tests"));
     fs.writeFileSync(
       path.join(dir, "bynk.toml"),
-      "[project]\nname = \"dbg\"\n\n[paths]\nsrc = \"src\"\ntests = \"tests\"\n",
+      "[project]\nname = \"dbg\"\n\n[paths]\ninclude = [\"src\", \"tests\"]\n",
     );
     fs.writeFileSync(
       path.join(dir, "src", "calc.bynk"),

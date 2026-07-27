@@ -1,0 +1,56 @@
+//! Regression: `bynk.toml` is the one input a user hand-edits that the
+//! compiler used to read without checking. `read_project_paths` was total by
+//! construction — a syntax error, a typo'd `[paths]` key, or an `include` list
+//! longer than `Roots` supports (a residual of the src/tests role split
+//! v0.113 removed) all silently fell back to the conventional layout with no
+//! diagnostic and exit 0, after which the user would only see a downstream
+//! cascade (e.g. `bynk.uses.unknown_target` pointing at units that plainly
+//! exist on disk) with no hint at the real cause.
+//!
+//! Drives the real `bynkc check` CLI against three malformed-config fixtures
+//! and asserts each now fails loudly with an actionable message, instead of
+//! silently succeeding.
+
+use std::path::PathBuf;
+use std::process::Command;
+
+fn check(fixture: &str) -> (bool, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_bynkc"))
+        .arg("check")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(fixture))
+        .output()
+        .expect("run bynkc check");
+    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+    s.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.success(), s)
+}
+
+#[test]
+fn a_syntactically_invalid_bynk_toml_fails_loudly() {
+    let (ok, out) = check("tests/fixtures/behaviour/malformed_bynk_toml");
+    assert!(!ok, "expected failure, but the build succeeded:\n{out}");
+    assert!(
+        out.contains("not valid TOML"),
+        "expected a TOML-parse diagnostic, got:\n{out}"
+    );
+}
+
+#[test]
+fn a_typo_d_paths_key_fails_loudly_instead_of_being_silently_ignored() {
+    let (ok, out) = check("tests/fixtures/behaviour/typo_paths_key");
+    assert!(!ok, "expected failure, but the build succeeded:\n{out}");
+    assert!(
+        out.contains("inculde") && out.contains("include"),
+        "expected the diagnostic to name the typo'd key and suggest `include`, got:\n{out}"
+    );
+}
+
+#[test]
+fn more_than_two_include_roots_fails_loudly_instead_of_silently_dropping_trees() {
+    let (ok, out) = check("tests/fixtures/behaviour/too_many_include_roots");
+    assert!(!ok, "expected failure, but the build succeeded:\n{out}");
+    assert!(
+        out.contains("include") && out.contains('3'),
+        "expected a diagnostic naming the unsupported include count, got:\n{out}"
+    );
+}

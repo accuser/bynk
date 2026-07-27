@@ -9,7 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use bynk_emit::project::{self, CompileOptions, read_project_paths};
+use bynk_emit::project::{
+    self, CompileOptions, ProjectPathsError, read_project_paths, try_read_project_paths,
+};
 use bynk_fmt::{FormatOptions, format_source};
 
 /// Root a directory project the way every project command should (#46): a
@@ -24,6 +26,22 @@ pub fn project_options(input: &Path) -> CompileOptions {
         CompileOptions::split(input.to_path_buf(), read_project_paths(input))
     } else {
         CompileOptions::single(input.to_path_buf())
+    }
+}
+
+/// [`project_options`], but a malformed `bynk.toml` is an error rather than a
+/// silent fall-back to the conventional layout — the one input a user
+/// hand-edits that the compiler otherwise reads without checking, after which
+/// a cascade of `bynk.uses.unknown_target` errors points at units that
+/// plainly exist on disk.
+pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectPathsError> {
+    if input.join("bynk.toml").exists() || input.join("src").is_dir() {
+        Ok(CompileOptions::split(
+            input.to_path_buf(),
+            try_read_project_paths(input)?,
+        ))
+    } else {
+        Ok(CompileOptions::single(input.to_path_buf()))
     }
 }
 
@@ -61,22 +79,62 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
     }
 }
 
-/// v0.89 (ADR 0117): print a successful build's non-failing warnings. A
-/// successful build keeps no per-file snapshots, so warnings render in the
-/// plain `warning[<category>]: <message>` form (with the owning file, when
-/// known) rather than ariadne source context.
-pub fn print_project_warnings(warnings: &[project::AttributedError]) {
+/// v0.89 (ADR 0117): print a successful build's non-failing warnings, with
+/// real per-file ariadne context now that a successful build's `snapshots`
+/// (mirroring `ProjectFailure::snapshots`) make that possible. A warning whose
+/// source isn't attributable (or doesn't fit the snapshot) falls back to the
+/// plain `warning[<category>]: <message>` form.
+pub fn print_project_warnings(
+    warnings: &[project::AttributedError],
+    snapshots: &[(PathBuf, String)],
+) {
     for w in warnings {
-        let where_ = w
-            .source_path
-            .as_deref()
-            .map(|p| format!("{}: ", p.to_string_lossy().replace('\\', "/")))
-            .unwrap_or_default();
-        eprintln!("{where_}warning[{}]: {}", w.error.category, w.error.message);
-        for note in &w.error.notes {
-            eprintln!("  note: {note}");
+        match attributed_snapshot(w, snapshots) {
+            Some((label, text)) => {
+                bynk_render::print_errors(std::slice::from_ref(&w.error), text, &label)
+            }
+            None => {
+                let where_ = w
+                    .source_path
+                    .as_deref()
+                    .map(|p| format!("{}: ", p.to_string_lossy().replace('\\', "/")))
+                    .unwrap_or_default();
+                eprintln!("{where_}warning[{}]: {}", w.error.category, w.error.message);
+                for note in &w.error.notes {
+                    eprintln!("  note: {note}");
+                }
+            }
         }
     }
+}
+
+/// [`print_project_warnings`]'s `--format short` analogue: one
+/// `path:line:col: warning[category]: message` line per warning, falling back
+/// to `warning[category]: message` when unattributed.
+pub fn print_project_warnings_short(
+    warnings: &[project::AttributedError],
+    snapshots: &[(PathBuf, String)],
+) {
+    for w in warnings {
+        match attributed_snapshot(w, snapshots) {
+            Some((label, text)) => eprintln!("{}", bynk_render::short_line(&label, text, &w.error)),
+            None => eprintln!("warning[{}]: {}", w.error.category, w.error.message),
+        }
+    }
+}
+
+/// The `(label, source text)` a warning's `source_path` resolves to in
+/// `snapshots`, if any — the same attribution [`print_project_failure`] does.
+fn attributed_snapshot<'a>(
+    w: &project::AttributedError,
+    snapshots: &'a [(PathBuf, String)],
+) -> Option<(String, &'a str)> {
+    let path = w.source_path.as_deref()?;
+    let text = snapshots
+        .iter()
+        .find(|(p, _)| p.as_path() == path)
+        .map(|(_, t)| t.as_str())?;
+    Some((path.to_string_lossy().replace('\\', "/"), text))
 }
 
 /// The project-failure analogue of [`bynk_render::print_errors_short`]: each
@@ -292,9 +350,20 @@ fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
 /// `--format short` rendering. `prog` prefixes messages (`bynk: …`).
 pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
     if input.is_dir() {
-        match project::compile_project(&project_options(input)) {
+        let options = match try_project_options(input) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("{prog}: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match project::compile_project(&options) {
             Ok(out) => {
-                print_project_warnings(&out.warnings);
+                if short {
+                    print_project_warnings_short(&out.warnings, &out.snapshots);
+                } else {
+                    print_project_warnings(&out.warnings, &out.snapshots);
+                }
                 ExitCode::SUCCESS
             }
             Err(failure) => {

@@ -5,5 +5,4 @@ name = "bynk-playground-share"
 version = "0.1.0"
 
 [paths]
-src = "src"
-tests = "tests"
+include = ["src"]

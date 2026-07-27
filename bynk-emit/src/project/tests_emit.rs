@@ -84,9 +84,9 @@ struct ResolvedStub {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn process_tests(
-    test_groups: &HashMap<String, Vec<usize>>,
+    test_groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
-    kinds: &HashMap<String, UnitKind>,
+    kinds: &BTreeMap<String, UnitKind>,
     unit_tables: &HashMap<String, UnitTable>,
     exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
     unit_consumes: &HashMap<String, Vec<String>>,
@@ -101,7 +101,7 @@ pub(crate) fn process_tests(
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     // v0.132: production unit name -> its `parsed` file indices, so a barrel can
     // resolve a multi-file commons the test module imports back to its files.
-    groups: &HashMap<String, Vec<usize>>,
+    groups: &BTreeMap<String, Vec<usize>>,
     tests_prefix: &Path,
     import_ext: ImportExt,
     // v0.115: whether the build emits the contract guard (dev/test). The runner
@@ -404,15 +404,15 @@ fn resolve_stubs(
 /// Bindings and runs the cases across the real serialise/deserialise wire.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn process_integration_tests(
-    integration_groups: &HashMap<String, Vec<usize>>,
+    integration_groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
-    kinds: &HashMap<String, UnitKind>,
+    kinds: &BTreeMap<String, UnitKind>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
     // v0.132: production unit name -> its `parsed` file indices (see `process_tests`).
-    groups: &HashMap<String, Vec<usize>>,
+    groups: &BTreeMap<String, Vec<usize>>,
     tests_prefix: &Path,
     // v0.132: barrel-path dedup set shared with the unit-test pass.
     emitted_barrels: &mut HashSet<PathBuf>,
@@ -3822,7 +3822,7 @@ fn emit_test_module(
 /// (which `FileDeclIndex` would omit).
 fn emit_commons_barrel(
     name: &str,
-    groups: &HashMap<String, Vec<usize>>,
+    groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
     import_ext: ImportExt,
     emitted: &mut HashSet<PathBuf>,

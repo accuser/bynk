@@ -1145,8 +1145,8 @@ pub struct MessageBundleInfo {
 pub(crate) fn detect_context_message_bundle(
     ctx: &str,
     unit_uses: &HashMap<String, Vec<String>>,
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
 ) -> ContextMessageBundle {
     let mut found: Vec<MessageBundleInfo> = Vec::new();
@@ -1275,16 +1275,16 @@ mod detect_context_message_bundle_tests {
     /// clippy-unfriendly four-tuple return type.
     struct Scenario {
         parsed: Vec<ParsedFile>,
-        groups: HashMap<String, Vec<usize>>,
-        kinds: HashMap<String, UnitKind>,
+        groups: BTreeMap<String, Vec<usize>>,
+        kinds: BTreeMap<String, UnitKind>,
         unit_uses: HashMap<String, Vec<String>>,
     }
 
     /// Assembles a [`Scenario`] from a context plus its bundle files.
     fn scenario(ctx_name: &str, ctx_uses: &[&str], bundles: Vec<(&str, ParsedFile)>) -> Scenario {
         let mut parsed = vec![context_using(ctx_name, ctx_uses)];
-        let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
-        let mut kinds: HashMap<String, UnitKind> = HashMap::new();
+        let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut kinds: BTreeMap<String, UnitKind> = BTreeMap::new();
         groups.insert(ctx_name.to_string(), vec![0]);
         kinds.insert(ctx_name.to_string(), UnitKind::Context);
         for (name, pf) in bundles {

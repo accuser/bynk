@@ -92,14 +92,66 @@ impl ProjectPaths {
 /// crate — the previous hand-rolled line scanner mis-read multi-line arrays
 /// and quoted edge cases.
 pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
+    try_read_project_paths(project_root)
+        .unwrap_or_else(|_| ProjectPaths::conventional(project_root))
+}
+
+/// A problem in `bynk.toml` that [`read_project_paths`] silently papers over
+/// by falling back to the conventional layout — a hand-edited config the user
+/// gets no diagnostic for, after which the cascade of `bynk.uses.unknown_target`
+/// errors points at units that plainly exist on disk. Surfaced here so a CLI
+/// entry point can fail loudly instead.
+#[derive(Debug)]
+pub enum ProjectPathsError {
+    /// `bynk.toml` exists but does not parse as TOML (e.g. a trailing comma).
+    Malformed,
+    /// `[paths]` has a key other than `include`/`exclude` — most likely a typo
+    /// (`inculde`) that was silently read as "no include list".
+    UnknownKey(String),
+    /// `[paths] include` names more than the one or two trees `Roots::resolve`
+    /// (a fixed primary/secondary pair, v0.113's residual src/tests split)
+    /// actually walks — any further tree is silently never discovered.
+    TooManyIncludeRoots(usize),
+}
+
+impl std::fmt::Display for ProjectPathsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProjectPathsError::Malformed => write!(f, "`bynk.toml` is not valid TOML"),
+            ProjectPathsError::UnknownKey(k) => {
+                write!(
+                    f,
+                    "`[paths]` has no key named `{k}` — did you mean `include` or `exclude`?"
+                )
+            }
+            ProjectPathsError::TooManyIncludeRoots(n) => write!(
+                f,
+                "`[paths] include` names {n} trees, but only one or two are supported"
+            ),
+        }
+    }
+}
+
+/// Like [`read_project_paths`], but surfaces a malformed `bynk.toml` — a parse
+/// failure, an unrecognised `[paths]` key, or an `include` list longer than
+/// `Roots` supports — as an error instead of silently falling back to the
+/// conventional layout.
+pub fn try_read_project_paths(project_root: &Path) -> Result<ProjectPaths, ProjectPathsError> {
     let toml_path = project_root.join("bynk.toml");
     let Ok(content) = fs::read_to_string(&toml_path) else {
-        return ProjectPaths::conventional(project_root);
+        return Ok(ProjectPaths::conventional(project_root));
     };
     let Ok(doc) = content.parse::<toml::Table>() else {
-        return ProjectPaths::conventional(project_root);
+        return Err(ProjectPathsError::Malformed);
     };
     let paths = doc.get("paths").and_then(|v| v.as_table());
+    if let Some(t) = paths {
+        for k in t.keys() {
+            if k != "include" && k != "exclude" {
+                return Err(ProjectPathsError::UnknownKey(k.clone()));
+            }
+        }
+    }
     let list = |key: &str| -> Vec<PathBuf> {
         match paths.and_then(|t| t.get(key)) {
             Some(toml::Value::Array(items)) => items
@@ -116,7 +168,10 @@ pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
     if include.is_empty() {
         include = ProjectPaths::conventional(project_root).include;
     }
-    ProjectPaths { include, exclude }
+    if include.len() > 2 {
+        return Err(ProjectPathsError::TooManyIncludeRoots(include.len()));
+    }
+    Ok(ProjectPaths { include, exclude })
 }
 
 pub(crate) fn commons_dir_for(name: &str) -> PathBuf {

@@ -74,8 +74,8 @@ pub use bynk_emit::{
 };
 pub use project::{
     AttributedError, BuildTarget, CompileOptions, CompiledFile, DiscoveredCase, DiscoveredSuite,
-    ImportExt, ProjectFailure, ProjectOutput, ProjectPaths, Roots, TestLocation, compile_project,
-    read_project_paths,
+    ImportExt, ProjectFailure, ProjectOutput, ProjectPaths, ProjectPathsError, Roots, TestLocation,
+    compile_project, read_project_paths, try_read_project_paths,
 };
 
 // In-browser track (ADR 0137): strip-only TS→JS, re-exported so the CLI, the API,

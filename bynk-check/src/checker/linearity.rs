@@ -152,6 +152,20 @@ impl Lin<'_> {
                     && held_value(&t)
                     && l.name.name != "_"
                 {
+                    // A `let` reusing a name this block already bound to a held
+                    // value ends that earlier generation's scope right now —
+                    // check-and-clear it here, the same way a borrow/match-arm
+                    // scope checks-and-restores a shadowed entry at its own end.
+                    // Left to the block's single end-of-scope sweep, only the
+                    // latest state per name would ever be seen, silently losing
+                    // an earlier generation's leak (or misattributing its
+                    // disposal to this one).
+                    if let Some(pos) = introduced.iter().position(|(n, _)| n == &l.name.name) {
+                        let (prev_name, prev_span) = introduced.remove(pos);
+                        if state.get(&prev_name) == Some(&Held::Owned) {
+                            self.leak(&prev_name, prev_span);
+                        }
+                    }
                     state.insert(l.name.name.clone(), Held::Owned);
                     introduced.push((l.name.name.clone(), l.name.span));
                 }

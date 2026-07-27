@@ -133,7 +133,7 @@ pub(crate) fn check_path_name_alignment(
 /// Files grouped by qualified name must agree on kind (even across directories).
 pub(crate) fn check_group_kind_consistency(
     parsed: &[ParsedFile],
-    groups: &HashMap<String, Vec<usize>>,
+    groups: &BTreeMap<String, Vec<usize>>,
 ) -> Result<(), Vec<(PathBuf, CompileError)>> {
     let mut errors: Vec<(PathBuf, CompileError)> = Vec::new();
     for (name, indices) in groups {

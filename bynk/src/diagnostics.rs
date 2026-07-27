@@ -7,5 +7,4 @@
 pub use bynk_driver::print_project_failure as render_project_failure;
 #[allow(unused_imports)]
 pub use bynk_driver::print_project_failure_short as render_project_failure_short;
-#[allow(unused_imports)]
 pub use bynk_driver::print_project_warnings;

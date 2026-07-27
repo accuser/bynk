@@ -86,9 +86,101 @@ pub const NODE_MAJOR_FLOOR: u32 = 18;
 /// needed. The shared writer behind both `bynkc`'s `compile`/`test` paths and
 /// `bynk dev`'s in-process build (slice 7) — so the on-disk result is identical
 /// however the build was driven.
+///
+/// Reconciles `dir` against `out.files` first: a `.ts`/`.js`/`.map`/`.json`/
+/// `.toml` file already on disk that no longer corresponds to anything in
+/// `out.files` (or one of its `.map`/`.bynkdbg.json` sidecars) is deleted,
+/// along with any directory that becomes empty as a result — otherwise a
+/// deleted `.bynk` unit's emitted `.ts` lingers on disk, still type-checked by
+/// the emitted `tsconfig.json`'s `include: **/*.ts`, so `tsc` fails against a
+/// module the current project no longer has. `node_modules` and dotfile
+/// directories (`.git`, an npm-installed tree under the output root) are
+/// never descended into — this reconciles the compiler's own output, not
+/// whatever else happens to live alongside it.
 pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
+    prune_stale_output(out, dir)?;
     for file in &out.files {
         write_compiled_file(file, dir)?;
+    }
+    Ok(())
+}
+
+/// The project-relative paths [`write_output`] will have written once this
+/// `ProjectOutput` lands on disk — each `CompiledFile::output_path` plus its
+/// `.map` / `.bynkdbg.json` sidecars, named exactly as [`write_compiled_file`]
+/// names them.
+fn expected_output_paths(out: &ProjectOutput) -> std::collections::HashSet<std::path::PathBuf> {
+    let mut expected = std::collections::HashSet::new();
+    for file in &out.files {
+        expected.insert(file.output_path.clone());
+        let Some(name) = file.output_path.file_name() else {
+            continue;
+        };
+        if file.source_map.is_some() {
+            let map_name = format!("{}.map", name.to_string_lossy());
+            expected.insert(file.output_path.with_file_name(map_name));
+        }
+        if file.debug_metadata.is_some() {
+            let meta_name = format!("{}.bynkdbg.json", name.to_string_lossy());
+            expected.insert(file.output_path.with_file_name(meta_name));
+        }
+    }
+    expected
+}
+
+/// Extensions the compiler ever writes under a build-output directory — the
+/// set [`write_output`]'s reconciliation is allowed to prune. Kept narrow so a
+/// directory the caller points `write_output` at can still carry other files
+/// unrelated to a `.bynk` build without those being swept up.
+fn is_prunable_output_extension(ext: &str) -> bool {
+    matches!(ext, "ts" | "js" | "map" | "json" | "toml")
+}
+
+fn prune_stale_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let expected = expected_output_paths(out);
+    let mut dirs_visited = Vec::new();
+    prune_stale_output_dir(dir, dir, &expected, &mut dirs_visited)?;
+    // Remove directories left empty by the file removals above, deepest first
+    // (a parent only empties out once its children are gone). `remove_dir` is
+    // a no-op error (ignored) on anything still non-empty — e.g. a directory
+    // that held only unrelated files to begin with.
+    dirs_visited.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
+    for d in dirs_visited {
+        let _ = std::fs::remove_dir(&d);
+    }
+    Ok(())
+}
+
+fn prune_stale_output_dir(
+    root: &Path,
+    dir: &Path,
+    expected: &std::collections::HashSet<std::path::PathBuf>,
+    dirs_visited: &mut Vec<std::path::PathBuf>,
+) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            let is_own_cache = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == "node_modules" || n.starts_with('.'));
+            if is_own_cache {
+                continue;
+            }
+            prune_stale_output_dir(root, &path, expected, dirs_visited)?;
+            dirs_visited.push(path);
+        } else if file_type.is_file() {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            if is_prunable_output_extension(ext) && !expected.contains(rel) {
+                std::fs::remove_file(&path)?;
+            }
+        }
     }
     Ok(())
 }

@@ -3170,6 +3170,14 @@ pub(crate) fn emit_agent(
         let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
             .with_source_map(Some(&body_smb));
         cx.in_agent_handler = true;
+        // A handler param is emitted at its natural `ts_ident` name (above), so
+        // it must be declared into scope the same way: otherwise a param that
+        // shares a name with a `store Map`/`Set`/`Cache`/`Log` field is
+        // invisible to `LowerCtx::is_local`, and the store-field dispatch
+        // below silently wins over the parameter.
+        for p in &h.params {
+            cx.declare_binder(&p.name.name);
+        }
         // v0.81: a store-agent handler reads/writes cells over a mutable working
         // record `__state`; a state-record handler uses `currentState`/`self.state`.
         // A store handler that performs any `:=` wraps its body in a closure so an
