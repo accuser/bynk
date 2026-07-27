@@ -32,7 +32,9 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
 
 class __Stub_Logger {
   async log(msg: string): Promise<void> {
-    const { AuthId, PaymentError } = commerce_payment as any;
+    const { AuthId, PaymentError } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     if (true) {
       return undefined;
     }
@@ -48,7 +50,9 @@ function makeTestDeps() {
 async function test_authorise_returns_Ok_for_a_small_positive_amount() {
   try {
     const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment as any;
+    const { AuthId, PaymentError, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     const result = await authorise.call(100, deps);
     if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 167, 182, "expect result is Ok(_)"); }
     return { pass: true };
@@ -64,7 +68,9 @@ async function test_authorise_returns_Ok_for_a_small_positive_amount() {
 async function test_authorise_returns_Err_Declined__for_zero() {
   try {
     const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment as any;
+    const { AuthId, PaymentError, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     const result = await authorise.call(0, deps);
     void (((__d) => {
         if (__d.tag === "Err" && __d.error.tag === "Declined") {
@@ -87,7 +93,9 @@ async function test_authorise_returns_Err_Declined__for_zero() {
 async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts() {
   try {
     const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment as any;
+    const { AuthId, PaymentError, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     const result = await authorise.call(2000000, deps);
     void (((__d) => {
         if (__d.tag === "Err" && __d.error.tag === "InsufficientFunds") {

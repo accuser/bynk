@@ -33,7 +33,9 @@ function makeTestDeps() {
 async function test_short_code_rejects_too_short_input() {
   try {
     const deps = {};
-    const { LongUrl, ShortCode } = shortener_analytics as any;
+    const { LongUrl, ShortCode } = shortener_analytics;
+    type LongUrl = shortener_analytics.LongUrl;
+    type ShortCode = shortener_analytics.ShortCode;
     const result = ShortCode.fromString("ab");
     void (((__d) => {
         switch (__d.tag) {
@@ -59,7 +61,9 @@ async function test_short_code_rejects_too_short_input() {
 async function test_short_code_accepts_valid_input() {
   try {
     const deps = {};
-    const { LongUrl, ShortCode } = shortener_analytics as any;
+    const { LongUrl, ShortCode } = shortener_analytics;
+    type LongUrl = shortener_analytics.LongUrl;
+    type ShortCode = shortener_analytics.ShortCode;
     const result = ShortCode.fromString("abc123");
     void (((__d) => {
         switch (__d.tag) {
@@ -85,7 +89,9 @@ async function test_short_code_accepts_valid_input() {
 async function test_long_url_accepts_a_typical_url() {
   try {
     const deps = {};
-    const { LongUrl, ShortCode } = shortener_analytics as any;
+    const { LongUrl, ShortCode } = shortener_analytics;
+    type LongUrl = shortener_analytics.LongUrl;
+    type ShortCode = shortener_analytics.ShortCode;
     const result = LongUrl.fromString("https://example.com/path");
     if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/shortener/analytics.bynk:20:12", 497, 512, "expect result is Ok(_)"); }
     return { pass: true };

@@ -3723,9 +3723,7 @@ mod runtime_tests {
 /// below is the case that got wrong.
 #[cfg(test)]
 mod conditional_runtime_import_tests {
-    fn emit_source(src: &str) -> String {
-        crate::compile(src, "t.bynk").expect("fixture should compile")
-    }
+    use crate::testkit::{emit_bundle, emit_source};
 
     /// The import line is the first `import { … } from "./runtime.js"` in the
     /// emitted module.
@@ -3733,32 +3731,6 @@ mod conditional_runtime_import_tests {
         ts.lines()
             .find(|l| l.starts_with("import {") && l.contains("runtime.js"))
             .unwrap_or("")
-    }
-
-    /// Emit a `messages` bundle and return its own module's TypeScript.
-    ///
-    /// A bundle needs `uses bynk.locale` / `bynk.locale.types`, which the
-    /// single-file [`crate::compile`] path rejects by construction, so this drives
-    /// the fs-free project pipeline instead and picks the user's unit out of the
-    /// module graph. Without this seam the ICU condition has no crate-local
-    /// coverage at all — it rests entirely on `bynkc`'s fixtures one crate up,
-    /// which is a long way from the code that decides the import.
-    fn emit_bundle(body: &str) -> String {
-        let src =
-            format!("commons app.bundle\n\nuses bynk.locale\nuses bynk.locale.types\n\n{body}");
-        let out = match crate::project::compile_in_memory(
-            &src,
-            crate::project::BuildTarget::Bundle,
-            Default::default(),
-        ) {
-            Ok(out) => out,
-            Err(_) => panic!("bundle fixture should compile:\n{src}"),
-        };
-        out.files
-            .iter()
-            .find(|f| f.output_path.ends_with("bundle.ts"))
-            .map(|f| f.typescript.clone())
-            .expect("the bundle's own module should be in the output")
     }
 
     #[test]

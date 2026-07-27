@@ -32,7 +32,9 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
 
 class __Stub_Logger {
   async log(msg: string): Promise<void> {
-    const { AuthId, PaymentError } = commerce_payment as any;
+    const { AuthId, PaymentError } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     if (true) {
       return undefined;
     }
@@ -48,7 +50,9 @@ function makeTestDeps() {
 async function test_positive_amount_authorises() {
   try {
     const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment as any;
+    const { AuthId, PaymentError, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     const result = await authorise.call(100, deps);
     if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 145, 160, "expect result is Ok(_)"); }
     return { pass: true };
@@ -64,7 +68,9 @@ async function test_positive_amount_authorises() {
 async function test_zero_amount_is_declined() {
   try {
     const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment as any;
+    const { AuthId, PaymentError, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     const result = await authorise.call(0, deps);
     if (!(result.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 248, 264, "expect result is Err(_)"); }
     return { pass: true };

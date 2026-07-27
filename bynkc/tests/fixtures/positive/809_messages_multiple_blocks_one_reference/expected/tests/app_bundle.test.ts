@@ -35,9 +35,12 @@ function makeTestDeps() {
 async function test_render_still_answers_from_the_reference_block_when_a_second__non_reference_block_exists() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     const msg = withText(message("greeting"), "name", "Ada");
     if (!(render(("en" as any), msg) === "Hello, Ada!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:12:12", 540, 574, "expect render(\"en\", msg) == \"Hello, Ada!\"\n  expected: render(\"en\", msg) == \"Hello, Ada!\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("Hello, Ada!"))); }
     return { pass: true };

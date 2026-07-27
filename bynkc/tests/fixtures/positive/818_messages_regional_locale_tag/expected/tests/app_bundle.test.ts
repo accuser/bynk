@@ -35,9 +35,12 @@ function makeTestDeps() {
 async function test_the_region_subtagged_locale_renders_its_own_translation() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     if (!(render(("pt-BR" as any), withText(message("greeting"), "name", "Ana")) === "Olá, Ana!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:8:12", 323, 400, "expect render(\"pt-BR\", withText(message(\"greeting\"), \"name\", \"Ana\")) == \"Olá, Ana!\"\n  expected: render(\"pt-BR\", withText(message(\"greeting\"), \"name\", \"Ana\")) == \"Olá, Ana!\"\n  actual:   " + __bynkShow((render(("pt-BR" as any), withText(message("greeting"), "name", "Ana")))) + " == " + __bynkShow(("Olá, Ana!"))); }
     return { pass: true };
   } catch (e) {
@@ -52,9 +55,12 @@ async function test_the_region_subtagged_locale_renders_its_own_translation() {
 async function test_the_reference_locale_still_renders_its_own() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     if (!(render(("en" as any), withText(message("greeting"), "name", "Ada")) === "Hello, Ada!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:12:12", 471, 546, "expect render(\"en\", withText(message(\"greeting\"), \"name\", \"Ada\")) == \"Hello, Ada!\"\n  expected: render(\"en\", withText(message(\"greeting\"), \"name\", \"Ada\")) == \"Hello, Ada!\"\n  actual:   " + __bynkShow((render(("en" as any), withText(message("greeting"), "name", "Ada")))) + " == " + __bynkShow(("Hello, Ada!"))); }
     return { pass: true };
   } catch (e) {
@@ -69,9 +75,12 @@ async function test_the_reference_locale_still_renders_its_own() {
 async function test_an_undeclared_locale_falls_back_to_the_reference() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     if (!(render(("de" as any), withText(message("greeting"), "name", "Ada")) === "Hello, Ada!")) { throw __bynkExpectFailure("tests/bundle.test.bynk:16:12", 623, 698, "expect render(\"de\", withText(message(\"greeting\"), \"name\", \"Ada\")) == \"Hello, Ada!\"\n  expected: render(\"de\", withText(message(\"greeting\"), \"name\", \"Ada\")) == \"Hello, Ada!\"\n  actual:   " + __bynkShow((render(("de" as any), withText(message("greeting"), "name", "Ada")))) + " == " + __bynkShow(("Hello, Ada!"))); }
     return { pass: true };
   } catch (e) {

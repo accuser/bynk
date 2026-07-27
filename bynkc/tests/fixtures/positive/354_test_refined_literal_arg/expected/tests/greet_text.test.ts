@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_greets_a_bare_literal() {
   try {
     const deps = {};
-    const { Subject, greeting } = greet_text as any;
+    const { Subject, greeting } = greet_text;
+    type Subject = greet_text.Subject;
     if (!(greeting(("World" as any)) === "Hello, World!")) { throw __bynkExpectFailure("tests/text.test.bynk:8:12", 477, 513, "expect greeting(\"World\") == \"Hello, World!\"\n  expected: greeting(\"World\") == \"Hello, World!\"\n  actual:   " + __bynkShow((greeting(("World" as any)))) + " == " + __bynkShow(("Hello, World!"))); }
     return { pass: true };
   } catch (e) {

@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_rate_rejects_negative() {
   try {
     const deps = {};
-    const { Rate } = shipping_rates as any;
+    const { Rate } = shipping_rates;
+    type Rate = shipping_rates.Rate;
     const r = Rate.fromInt(-1);
     if (!(r.tag === "Err")) { throw __bynkExpectFailure("tests/rates.test.bynk:4:12", 96, 107, "expect r is Err(_)"); }
     return { pass: true };
@@ -49,7 +50,8 @@ async function test_rate_rejects_negative() {
 async function test_rate_accepts_non_negative() {
   try {
     const deps = {};
-    const { Rate } = shipping_rates as any;
+    const { Rate } = shipping_rates;
+    type Rate = shipping_rates.Rate;
     const r = Rate.fromInt(3);
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/rates.test.bynk:9:12", 189, 199, "expect r is Ok(_)"); }
     return { pass: true };

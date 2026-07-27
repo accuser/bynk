@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_block_arm_expect() {
   try {
     const deps = {};
-    const { Money } = commerce_money as any;
+    const { Money } = commerce_money;
+    type Money = commerce_money.Money;
     const m = Money.fromMinorUnits(10);
     void (((__d) => {
         switch (__d.tag) {

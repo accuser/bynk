@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_encodes_a_named_type() {
   try {
     const deps = {};
-    const { Receipt } = receipts as any;
+    const { Receipt } = receipts;
+    type Receipt = receipts.Receipt;
     if (!(JSON.stringify(serialise_Receipt({ code: "A1", total: 42 })) === "{\"code\":\"A1\",\"total\":42}")) { throw __bynkExpectFailure("tests/receipts.test.bynk:12:12", 731, 813, "expect Json.encode(Receipt { code: \"A1\", total: 42 }) == \"{\\\"code\\\":\\\"A1\\\",\\\"total\\\":42}\"\n  expected: Json.encode(Receipt { code: \"A1\", total: 42 }) == \"{\\\"code\\\":\\\"A1\\\",\\\"total\\\":42}\"\n  actual:   " + __bynkShow((JSON.stringify(serialise_Receipt({ code: "A1", total: 42 })))) + " == " + __bynkShow(("{\"code\":\"A1\",\"total\":42}"))); }
     return { pass: true };
   } catch (e) {

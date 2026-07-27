@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_decodes_a_named_type() {
   try {
     const deps = {};
-    const { Order } = orders as any;
+    const { Order } = orders;
+    type Order = orders.Order;
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
@@ -59,7 +60,8 @@ async function test_decodes_a_named_type() {
 async function test_encodes_a_named_type() {
   try {
     const deps = {};
-    const { Order } = orders as any;
+    const { Order } = orders;
+    type Order = orders.Order;
     if (!(JSON.stringify(serialise_Order({ id: "a1", qty: 2 })) === "{\"id\":\"a1\",\"qty\":2}")) { throw __bynkExpectFailure("tests/orders.test.bynk:19:12", 847, 917, "expect Json.encode(Order { id: \"a1\", qty: 2 }) == \"{\\\"id\\\":\\\"a1\\\",\\\"qty\\\":2}\"\n  expected: Json.encode(Order { id: \"a1\", qty: 2 }) == \"{\\\"id\\\":\\\"a1\\\",\\\"qty\\\":2}\"\n  actual:   " + __bynkShow((JSON.stringify(serialise_Order({ id: "a1", qty: 2 })))) + " == " + __bynkShow(("{\"id\":\"a1\",\"qty\":2}"))); }
     return { pass: true };
   } catch (e) {

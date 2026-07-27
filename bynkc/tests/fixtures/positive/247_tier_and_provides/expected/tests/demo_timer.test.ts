@@ -72,7 +72,7 @@ function makeTestDeps() {
 async function test_a_specific_argument_pattern_beats_the_fallback() {
   try {
     const deps = makeTestDeps();
-    const { elapsed, rate } = demo_timer as any;
+    const { elapsed, rate } = demo_timer;
     const g = await rate.call("GBP", deps);
     if (!(g === 125)) { throw __bynkExpectFailure("tests/timer.test.bynk:14:12", 521, 529, "expect g == 125\n  expected: g == 125\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow((125))); }
     return { pass: true };
@@ -88,7 +88,7 @@ async function test_a_specific_argument_pattern_beats_the_fallback() {
 async function test_the_fallback_pattern_applies_to_other_arguments() {
   try {
     const deps = makeTestDeps();
-    const { elapsed, rate } = demo_timer as any;
+    const { elapsed, rate } = demo_timer;
     const u = await rate.call("USD", deps);
     if (!(u === 100)) { throw __bynkExpectFailure("tests/timer.test.bynk:19:12", 635, 643, "expect u == 100\n  expected: u == 100\n  actual:   " + __bynkShow((u)) + " == " + __bynkShow((100))); }
     return { pass: true };
@@ -104,7 +104,7 @@ async function test_the_fallback_pattern_applies_to_other_arguments() {
 async function test_an_advancing_clock_via_returns_each() {
   try {
     const deps = makeTestDeps();
-    const { elapsed, rate } = demo_timer as any;
+    const { elapsed, rate } = demo_timer;
     const e = await elapsed.call(deps);
     if (!(e === 150)) { throw __bynkExpectFailure("tests/timer.test.bynk:25:12", 780, 788, "expect e == 150\n  expected: e == 150\n  actual:   " + __bynkShow((e)) + " == " + __bynkShow((150))); }
     return { pass: true };

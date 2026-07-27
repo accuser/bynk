@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_nested_match_expect() {
   try {
     const deps = {};
-    const { Money } = commerce_money as any;
+    const { Money } = commerce_money;
+    type Money = commerce_money.Money;
     const outer = Money.fromMinorUnits(10);
     const inner = Money.fromMinorUnits(-1);
     void (((__d) => {

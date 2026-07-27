@@ -50,10 +50,18 @@ function makeTestDeps() {
 async function test_renders_the_bundle_s_greeting_through_the_wrapper() {
   try {
     const deps = makeTestDeps();
-    const { greeting } = app_web as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
-    const { greet, render } = app_bundle as any;
-    const { FetchError, Method, Request, Response, Uuid } = bynk as any;
+    const { greeting } = app_web;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
+    const { greet, render } = app_bundle;
+    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    type FetchError = bynk.FetchError;
+    type Method = bynk.Method;
+    type Request = bynk.Request;
+    type Response = bynk.Response;
+    type Uuid = bynk.Uuid;
     const g = await greeting.call(deps);
     if (!(g === "Hello")) { throw __bynkExpectFailure("tests/web.test.bynk:13:12", 498, 510, "expect g == \"Hello\"\n  expected: g == \"Hello\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("Hello"))); }
     return { pass: true };

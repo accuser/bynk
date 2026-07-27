@@ -1,0 +1,3 @@
+# #58: FileCheck-style substring assertion, composed with the ordinary
+# expected.ts whole-file snapshot above rather than replacing it.
+__bynkBytesFromBase64

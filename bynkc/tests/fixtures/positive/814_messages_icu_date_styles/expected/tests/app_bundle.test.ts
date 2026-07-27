@@ -35,9 +35,12 @@ function makeTestDeps() {
 async function test_bare_date_renders_a_non_empty_string_containing_the_year() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     const msg = withMoment(message("published"), "d", 1592222400000);
     if (!(render(("en" as any), msg).includes("2020"))) { throw __bynkExpectFailure("tests/bundle.test.bynk:12:12", 585, 619, "expect render(\"en\", msg).contains(\"2020\")"); }
     return { pass: true };
@@ -53,9 +56,12 @@ async function test_bare_date_renders_a_non_empty_string_containing_the_year() {
 async function test_full_style_is_longer_than_short_style__more_detail__not_less_() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     const short = render(("en" as any), withMoment(message("published.short"), "d", 1592222400000));
     const full = render(("en" as any), withMoment(message("published.full"), "d", 1592222400000));
     if (!((full).length > (short).length)) { throw __bynkExpectFailure("tests/bundle.test.bynk:18:12", 935, 965, "expect full.length() > short.length()\n  expected: full.length() > short.length()\n  actual:   " + __bynkShow(((full).length)) + " > " + __bynkShow(((short).length))); }
@@ -72,9 +78,12 @@ async function test_full_style_is_longer_than_short_style__more_detail__not_less
 async function test_missing_param_falls_back_to_the_literal_placeholder_text() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     const msg = message("published");
     if (!(render(("en" as any), msg) === "Published {d}")) { throw __bynkExpectFailure("tests/bundle.test.bynk:23:12", 1085, 1121, "expect render(\"en\", msg) == \"Published {d}\"\n  expected: render(\"en\", msg) == \"Published {d}\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("Published {d}"))); }
     return { pass: true };

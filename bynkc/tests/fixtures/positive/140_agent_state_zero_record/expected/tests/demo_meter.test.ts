@@ -34,7 +34,10 @@ async function test_a_fresh_Meter_key_reads_nested_zeros() {
   try {
     demo_meter.__resetAgents();
     const deps = makeTestDeps();
-    const { Meter, MeterError, MeterId, Totals, __makeMeter, hits } = demo_meter as any;
+    const { Meter, MeterError, MeterId, Totals, __makeMeter, hits } = demo_meter;
+    type MeterError = demo_meter.MeterError;
+    type MeterId = demo_meter.MeterId;
+    type Totals = demo_meter.Totals;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

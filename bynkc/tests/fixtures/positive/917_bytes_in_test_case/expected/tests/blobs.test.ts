@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_decodes_base64() {
   try {
     const deps = {};
-    const { size } = blobs as any;
+    const { size } = blobs;
     void (((__d) => {
         switch (__d.tag) {
           case "Some": {
@@ -59,7 +59,7 @@ async function test_decodes_base64() {
 async function test_compares_by_content() {
   try {
     const deps = {};
-    const { size } = blobs as any;
+    const { size } = blobs;
     if (!(__bynkBytesEqual(new TextEncoder().encode("hi"), new TextEncoder().encode("hi")))) { throw __bynkExpectFailure("tests/blobs.test.bynk:14:12", 446, 490, "expect Bytes.fromUtf8(\"hi\") == Bytes.fromUtf8(\"hi\")\n  expected: Bytes.fromUtf8(\"hi\") == Bytes.fromUtf8(\"hi\")\n  actual:   " + __bynkShow((new TextEncoder().encode("hi"))) + " == " + __bynkShow((new TextEncoder().encode("hi")))); }
     return { pass: true };
   } catch (e) {

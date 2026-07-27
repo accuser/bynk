@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_money_rejects_negative() {
   try {
     const deps = {};
-    const { Money } = commerce_money as any;
+    const { Money } = commerce_money;
+    type Money = commerce_money.Money;
     const m = Money.fromMinorUnits(-1);
     if (!(m.tag === "Err")) { throw __bynkExpectFailure("tests/money.test.bynk:4:12", 105, 116, "expect m is Err(_)"); }
     return { pass: true };
@@ -49,7 +50,8 @@ async function test_money_rejects_negative() {
 async function test_money_accepts_positive() {
   try {
     const deps = {};
-    const { Money } = commerce_money as any;
+    const { Money } = commerce_money;
+    type Money = commerce_money.Money;
     const m = Money.fromMinorUnits(10);
     if (!(m.tag === "Ok")) { throw __bynkExpectFailure("tests/money.test.bynk:9:12", 204, 214, "expect m is Ok(_)"); }
     return { pass: true };
