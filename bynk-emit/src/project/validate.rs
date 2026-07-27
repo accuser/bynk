@@ -1925,15 +1925,27 @@ fn check_actor_contracts(
             }
             Some(_) => {}
         }
-        // A declared identity must be a context-ownable (sealed) type — a type
-        // this context declares, so it can only be minted inside the context.
+        // A declared identity must be a context-ownable (sealed) type — either
+        // declared directly in this context, or a `uses`-imported commons type
+        // this context's own emission rebrands (`uses_commons_type_names`,
+        // `emit_context_rebrands`'s exact predicate) — either way, unforgeable
+        // from outside the context. A `consumes`-surfaced cross-context type is
+        // neither: it is not rebranded, so it stays excluded.
+        //
+        // Events track, slice 0 (spine #936) narrowed `local_type_names` itself
+        // to "declared directly here" only (owner-only emission and `.raw`/
+        // `.unsafe()` need exactly that, excluding `uses`-rebrands too) — this
+        // check predates that narrowing and needs the broader "context-owned"
+        // union back, so it reads `uses_commons_type_names` alongside it
+        // instead of relying on the now-narrower `local_type_names` alone.
         // (Signature handles its own identity rule above.)
         if Scheme::from_name(actor.auth.as_ref().map(|a| a.name.as_str()).unwrap_or(""))
             != Some(Scheme::Signature)
             && let Some(id) = &actor.identity
         {
-            let ownable =
-                matches!(id, TypeRef::Named(n) if resolved.local_type_names.contains(&n.name));
+            let ownable = matches!(id, TypeRef::Named(n) if
+                resolved.local_type_names.contains(&n.name)
+                    || resolved.uses_commons_type_names.contains(&n.name));
             if !ownable {
                 errors.push(
                     CompileError::new(

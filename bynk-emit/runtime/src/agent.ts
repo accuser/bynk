@@ -118,6 +118,30 @@ export function makeAgent<C>(
   return constructBundle(state);
 }
 
+// Events track, slice 0 (spine #936, ADR 0284): a publishing context's
+// `deps.__eventsDispatch` hands its release-at-commit event batch to this
+// context's own fan-out Durable Object (one namespace per publishing
+// context — `idFromName` is passed a fixed key since the DO instance itself,
+// not the id, is what scopes the fan-out to this publisher and gives it
+// single-threaded per-publisher ordering). A non-`ok` response is logged, not
+// thrown: the publishing handler already committed by the time this runs
+// (release-at-commit), so a fan-out transport failure must not surface as a
+// failure of the handler that emitted.
+export async function dispatchToEventsFanout(
+  binding: DurableObjectNamespace,
+  events: Array<{ type: string; payload: unknown }>,
+): Promise<void> {
+  const stub = binding.get(binding.idFromName("singleton"));
+  const response = await stub.fetch("https://_bynk/_bynk/fanout", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ events }),
+  });
+  if (!response.ok) {
+    console.error("EventsFanout dispatch failed", { status: response.status });
+  }
+}
+
 // v0.16: an in-process Durable-Object namespace for multi-Worker integration
 // tests. `construct` builds the emitted DO class from a fresh in-memory state;
 // one instance is kept per key (so state accumulates within a test case). The
