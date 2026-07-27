@@ -4420,6 +4420,13 @@ fn discover_event_subscribers(
             }
         }
     }
+    // `unit_tables`/`table.services` are `HashMap`s, so the pushes above race
+    // across builds — a multi-subscriber event's dispatch order (and so the
+    // emitted `__eventsDispatch` closure's `await sub1; await sub2;`
+    // sequence) would otherwise vary build to build with no source change.
+    for subs in out.values_mut() {
+        subs.sort();
+    }
     out
 }
 

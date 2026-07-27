@@ -2170,6 +2170,23 @@ fn emit_project_imports(
     ctx: &EmitProjectCtx,
     refs: &ExternalReferences,
 ) {
+    // Events track, slice 0 (spine #936): the bare event-type names this
+    // context's own `from Events(E)` service headers name — see the
+    // Workers type-only-import narrowing below.
+    let subscribed_event_type_names: HashSet<String> = commons
+        .commons
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            CommonsItem::Service(s) => match &s.protocol {
+                ServiceProtocol::Events {
+                    event_type: TypeRef::Named(id),
+                } => Some(id.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
     // Sibling imports: relative path within the same commons/context directory.
     let mut sibling_paths: Vec<(&PathBuf, &HashSet<String>)> = refs.by_sibling.iter().collect();
     sibling_paths.sort_by(|a, b| a.0.cmp(b.0));
@@ -2210,11 +2227,31 @@ fn emit_project_imports(
             let mut parts: Vec<String> = Vec::new();
             for n in &name_list {
                 let from_kind = ctx.imported_from_kind.get(n.as_str()).copied();
+                let is_subscribed_event_type =
+                    ctx.target == BuildTarget::Workers && subscribed_event_type_names.contains(n.as_str());
                 if ctx.unit_kind == UnitKind::Context
                     && from_kind == Some(UnitKind::Commons)
                     && commons.types.contains_key(n.as_str())
                 {
                     parts.push(format!("{n} as __Commons{n}"));
+                } else if is_subscribed_event_type {
+                    // Events track, slice 0 (spine #936): under Workers, a
+                    // context deploys as its own separate Worker script —
+                    // there is no shared module graph to import a peer
+                    // context's *value* across (the #661 hazard this
+                    // mirrors: a caller generates its own codec rather than
+                    // importing the callee's runtime code). `from
+                    // Events(E)`'s `E` is the one plain named type crossing
+                    // a context boundary directly by name (every other
+                    // cross-context reference goes through a generated
+                    // Service-Binding codec instead) — used only in type
+                    // position (`e: E`), so this specific name is type-only.
+                    // Narrowly scoped to event types specifically, not every
+                    // cross-context import: a `type`/`enum` crossing via
+                    // `uses`/`consumes` (e.g. `bynk`'s `Method`) is often
+                    // used as a *value* too (`Method.Get`), which a blanket
+                    // `import type` would wrongly break.
+                    parts.push(format!("type {}", ts_ident(n)));
                 } else {
                     parts.push(ts_ident(n));
                 }

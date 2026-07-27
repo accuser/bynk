@@ -464,6 +464,16 @@ fn worker_cross_caps(
     }
     for given in givens {
         for c in given {
+            // Events track, slice 0 (spine #936): `Events.emit` is
+            // intercepted entirely at the call site (release-at-commit
+            // buffering) and never calls through a constructed provider —
+            // see the matching skip in `bynk-emit/src/project.rs`'s
+            // `handler_cross_caps`. Without this, Workers-mode compose
+            // tries to construct a `bynk__binding.EventsProvider` that
+            // does not exist.
+            if c.key() == "Events" && flattened.get(c.key()).map(String::as_str) == Some("bynk") {
+                continue;
+            }
             if let Some(p) = c.prefix() {
                 if let Some(ctx) = resolve(&p, consumes, aliases) {
                     out.entry(c.key().to_string()).or_insert(ctx);

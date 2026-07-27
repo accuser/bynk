@@ -1438,13 +1438,16 @@ pub(crate) fn emit_service(
         // these are callable surface methods a `TestConnection` test drives.)
         let is_ws_handler = matches!(handler.kind, HandlerKind::Open | HandlerKind::Close)
             || (ws_proto && matches!(handler.kind, HandlerKind::Message));
-        // Events track, slice 0 (spine #936): `on event`, like the WebSocket
-        // lifecycle handlers above, does not emit a service-surface method on
-        // Workers — real delivery is driven by the fan-out mechanism, not a
-        // caller of this compose surface. On bundle it stays a callable
-        // surface method a test can drive directly, simulating one delivery.
-        let is_event_handler = matches!(handler.kind, HandlerKind::Event);
-        if (is_ws_handler || is_event_handler) && matches!(ctx.target, BuildTarget::Workers) {
+        // Events track, slice 0 (spine #936): unlike the WebSocket lifecycle
+        // handlers above, `on event` has no *other* place its body could go
+        // on Workers — a WS lifecycle handler's real body lives in the
+        // hosting agent's DO (`emit_ws_do_method`); a subscriber service has
+        // no such alternate home. So the method is still emitted here on
+        // every target — real delivery (the fan-out DO calling in) reaches
+        // it directly, not through `compose.ts`'s HTTP-routable surface,
+        // which never exposes it regardless (no HTTP method/route to route
+        // from).
+        if is_ws_handler && matches!(ctx.target, BuildTarget::Workers) {
             continue;
         }
         emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
