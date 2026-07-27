@@ -87,7 +87,14 @@ pub fn emit_events_fanout_do(
         "    const {{ events }} = (await request.json()) as {{ events: FanoutEvent[] }};"
     );
     let _ = writeln!(out, "    for (const ev of events) {{");
-    let _ = writeln!(out, "      const subs = __eventRoutes[ev.type] ?? [];");
+    // `__eventRoutes` is a plain object literal — an event type named
+    // "toString"/"constructor"/etc would otherwise resolve off
+    // `Object.prototype` (a truthy, non-array value `??` never catches),
+    // throwing a `for...of` TypeError outside every per-subscriber `try`/
+    // `catch` below. `Array.isArray` closes it without changing the
+    // table's own literal-object shape.
+    let _ = writeln!(out, "      const subs = __eventRoutes[ev.type];");
+    let _ = writeln!(out, "      if (!Array.isArray(subs)) continue;");
     let _ = writeln!(out, "      for (const sub of subs) {{");
     let _ = writeln!(out, "        const binding = this.env[sub.binding];");
     let _ = writeln!(out, "        if (!binding) continue;");

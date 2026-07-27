@@ -131,14 +131,24 @@ export async function dispatchToEventsFanout(
   binding: DurableObjectNamespace,
   events: Array<{ type: string; payload: unknown }>,
 ): Promise<void> {
-  const stub = binding.get(binding.idFromName("singleton"));
-  const response = await stub.fetch("https://_bynk/_bynk/fanout", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ events }),
-  });
-  if (!response.ok) {
-    console.error("EventsFanout dispatch failed", { status: response.status });
+  // The whole round trip is wrapped, not just the status check: a rejected
+  // `stub.fetch` (a network error, the DO throwing) is exactly as much a
+  // fan-out transport failure as a non-`ok` response, and by this point
+  // `commitState` has already succeeded — letting a rejection propagate
+  // would surface a transport problem as a failure of a handler that, from
+  // the caller's perspective, already completed.
+  try {
+    const stub = binding.get(binding.idFromName("singleton"));
+    const response = await stub.fetch("https://_bynk/_bynk/fanout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events }),
+    });
+    if (!response.ok) {
+      console.error("EventsFanout dispatch failed", { status: response.status });
+    }
+  } catch (e) {
+    console.error("EventsFanout dispatch failed", { error: String(e) });
   }
 }
 

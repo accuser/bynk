@@ -154,12 +154,12 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
     // (the reverse of the ordinary `consumes` edge — nothing else wires it).
     let order_wrangler = find("workers/commerce-order/wrangler.toml");
     assert!(
-        order_wrangler.contains("name = \"EVENTS_FANOUT\"")
-            && order_wrangler.contains("class_name = \"EventsFanout\""),
+        order_wrangler.contains("name = \"___EVENTS_FANOUT\"")
+            && order_wrangler.contains("class_name = \"__EventsFanout\""),
         "commerce-order's wrangler.toml must declare the fan-out DO binding:\n{order_wrangler}"
     );
     assert!(
-        order_wrangler.contains("new_classes = [\"EventsFanout\", \"Ledger\"]"),
+        order_wrangler.contains("new_classes = [\"Ledger\", \"__EventsFanout\"]"),
         "the fan-out DO must ride the same migration as the context's real agents:\n{order_wrangler}"
     );
     assert!(
@@ -177,14 +177,14 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
         "the fan-out DO's routing table must name the real subscriber:\n{fanout_ts}"
     );
     assert!(
-        fanout_ts.contains("export class EventsFanout"),
+        fanout_ts.contains("export class __EventsFanout"),
         "the fan-out DO class must be exported (wrangler resolves `class_name` \
          against the Worker's `main` exports):\n{fanout_ts}"
     );
 
     let order_index = find("workers/commerce-order/index.ts");
     assert!(
-        order_index.contains("export { EventsFanout } from \"./events_fanout.js\";"),
+        order_index.contains("export { __EventsFanout } from \"./events_fanout.js\";"),
         "index.ts must re-export the fan-out DO class so wrangler's \
          `class_name` resolves against it:\n{order_index}"
     );

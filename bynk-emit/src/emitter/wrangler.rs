@@ -18,7 +18,15 @@ const COMPATIBILITY_DATE: &str = "2024-11-01";
 /// Shared with `emitter::workers` (the `Env` field name + `deps.
 /// __eventsDispatch` call it drives) and `emitter::events_fanout` (the class
 /// this name must actually export) so the three can never drift apart.
-pub const EVENTS_FANOUT_CLASS_NAME: &str = "EventsFanout";
+///
+/// Double-underscore-prefixed, matching every other compiler-synthesised
+/// identifier in emitted output (`__events`, `__eventsDispatch`,
+/// `__makeLedger`, …) — a Bynk `agent` name can never start with `_` (a
+/// parse error, checked directly: `agent _Foo { … }` fails with
+/// `expected identifier after \`agent\`, found \`_\``), so an agent
+/// coincidentally named the same as this synthetic class is structurally
+/// impossible, not merely unlikely.
+pub const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
 
 /// Deploy-time sentinel in generated Worker configuration. The driver replaces
 /// this with the persistent Cloudflare KV namespace id immediately before a
