@@ -156,6 +156,42 @@ service OnPayment from Events(PaymentConfirmed) {
 }
 "#;
 
+// A second, sibling subscriber of the *same* event whose handler always
+// throws (a local agent invariant, tripped unconditionally) — proving
+// subscriber failure isolation (ADR 0284), not merely asserting it from
+// reading the code: `discover_event_subscribers` dispatches subscribers in
+// sorted order, and "commerce.audit" sorts before "commerce.notifications",
+// so this throw fires *before* the sibling below it in the same generated
+// switch-case — if the fix regressed to a bare `await` chain, this would
+// abort `notifications`'s delivery too, and the driver's own top-level
+// `markPaid` call (uncaught anywhere) would crash the whole process.
+const SOURCE_AUDIT: &str = r#"context commerce.audit
+
+consumes commerce.order
+consumes bynk { Logger }
+
+agent Breaker {
+  key id: String
+  store total: Cell[Int] = 0
+
+  invariant always_zero:
+    total == 0
+
+  on call trip() -> Effect[()] {
+    do total.update((n) => n + 1)
+  }
+}
+
+service OnPaymentAudit from Events(PaymentConfirmed) {
+  on event(e: PaymentConfirmed) -> Effect[()] given Logger {
+    let _ <- Logger.info("audit-received")
+    let b = Breaker("x")
+    let _ <- b.trip()
+    ()
+  }
+}
+"#;
+
 const DRIVER_TS: &str = r#"import { composeApp } from "./compose.js";
 
 function assert(cond: boolean, msg: string): void {
@@ -211,6 +247,7 @@ fn bundle_events_publish_subscribe_and_abort_suppresses_delivery() {
     fs::create_dir_all(&proj).unwrap();
     fs::write(proj.join("order.bynk"), SOURCE_ORDER).unwrap();
     fs::write(proj.join("notifications.bynk"), SOURCE_NOTIFICATIONS).unwrap();
+    fs::write(proj.join("audit.bynk"), SOURCE_AUDIT).unwrap();
 
     let out = match bynkc::compile_project(
         &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Bundle),
@@ -251,17 +288,33 @@ fn bundle_events_publish_subscribe_and_abort_suppresses_delivery() {
     // logged via `console.log`) must appear exactly twice: once for
     // `markPaid`'s emission, once for the *successful* `bumpLedger` call —
     // and must NOT appear a third time for the invariant-violating call,
-    // which is the actual assertion this test exists to make.
+    // which is the actual assertion this test exists to make. This also
+    // proves subscriber failure isolation: `commerce.audit`'s sibling
+    // subscriber (dispatched first, sorted before "commerce.notifications")
+    // throws on *every* delivery, so `notifications` only ever logs at all
+    // if that throw was caught rather than aborting the whole dispatch.
     let delivered = msg.matches("order-123").count();
     assert_eq!(
         delivered, 1,
-        "markPaid's emission must be delivered exactly once:\n{msg}"
+        "markPaid's emission must be delivered exactly once, despite the \
+         throwing sibling subscriber dispatched before it:\n{msg}"
     );
     let ledger_delivered = msg.matches("ledger-event").count();
     assert_eq!(
         ledger_delivered, 1,
         "exactly one of the two bumpLedger calls must deliver (the successful one, not the \
          invariant-violating one that aborts before the flush):\n{msg}"
+    );
+    // The throwing subscriber must still have actually run (and thrown) for
+    // every delivered emission — three (markPaid + the one successful
+    // bumpLedger + nothing from the aborted bumpLedger) — otherwise the
+    // isolation proof above is vacuous (it would also pass if `commerce.
+    // audit` were simply never wired at all).
+    let audit_ran = msg.matches("audit-received").count();
+    assert_eq!(
+        audit_ran, 2,
+        "the throwing sibling subscriber must run for every delivered emission \
+         (its own throw must not stop it from starting on later deliveries either):\n{msg}"
     );
 
     let _ = fs::remove_dir_all(&tmp);

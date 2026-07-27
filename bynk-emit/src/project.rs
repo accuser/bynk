@@ -4709,11 +4709,19 @@ fn emit_composition_root(
                 let Some(subs) = event_subscribers.get(&(ctx_name.clone(), name.clone())) else {
                     continue;
                 };
+                // ADR 0284: subscriber failure isolation — one subscriber's
+                // throw is caught and logged, not left to abort delivery to
+                // its siblings or propagate into the already-committed
+                // publishing handler. Mirrors the Cloudflare fan-out DO's own
+                // per-subscriber try/catch (`emit_events_fanout_do`) so the
+                // two targets agree on this guarantee, not just on delivery.
                 let calls: Vec<String> = subs
                     .iter()
                     .map(|(sub_ctx, sub_svc)| {
                         let sub_ns = sub_ctx.replace('.', "_");
-                        format!("await {sub_ns}.{sub_svc}.event(ev.payload as any, {sub_ns}Deps);")
+                        format!(
+                            "try {{ await {sub_ns}.{sub_svc}.event(ev.payload as any, {sub_ns}Deps); }} catch (e) {{ console.error(\"EventsFanout delivery failed\", {{ event: ev.type, service: {sub_svc:?}, error: String(e) }}); }}"
+                        )
                     })
                     .collect();
                 cases.push_str(&format!("case {name:?}: {{ {} break; }} ", calls.join(" ")));
