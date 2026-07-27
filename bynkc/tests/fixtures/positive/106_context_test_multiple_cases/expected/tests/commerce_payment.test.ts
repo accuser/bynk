@@ -32,7 +32,9 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
 
 class __Stub_Logger {
   async log(msg: string): Promise<void> {
-    const { AuthId, PaymentError } = commerce_payment as any;
+    const { AuthId, PaymentError } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     if (true) {
       return undefined;
     }
@@ -48,7 +50,9 @@ function makeTestDeps() {
 async function test_case_one() {
   try {
     const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment as any;
+    const { AuthId, PaymentError, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     const r = await authorise.call(10, deps);
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 121, 131, "expect r is Ok(_)"); }
     return { pass: true };
@@ -64,7 +68,9 @@ async function test_case_one() {
 async function test_case_two() {
   try {
     const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment as any;
+    const { AuthId, PaymentError, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     const r = await authorise.call(20, deps);
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 200, 210, "expect r is Ok(_)"); }
     return { pass: true };
@@ -80,7 +86,9 @@ async function test_case_two() {
 async function test_case_three() {
   try {
     const deps = makeTestDeps();
-    const { AuthId, PaymentError, authorise } = commerce_payment as any;
+    const { AuthId, PaymentError, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
+    type PaymentError = commerce_payment.PaymentError;
     const r = await authorise.call(0, deps);
     if (!(r.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:16:12", 280, 291, "expect r is Err(_)"); }
     return { pass: true };

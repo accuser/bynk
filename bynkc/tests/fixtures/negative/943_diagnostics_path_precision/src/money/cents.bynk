@@ -1,0 +1,3 @@
+commons money.cents
+
+type Cents = opaque Int where NonNegative

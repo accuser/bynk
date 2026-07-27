@@ -948,16 +948,18 @@ fn emit_integration_module(
         for u in uses_targets {
             let ns = u.replace('.', "_");
             if let Some(table) = unit_tables.get(u) {
-                let mut names: Vec<&String> = table.types.keys().chain(table.fns.keys()).collect();
+                let mut names: Vec<String> = table
+                    .types
+                    .keys()
+                    .chain(table.fns.keys())
+                    .cloned()
+                    .collect();
                 names.sort();
                 names.dedup();
-                if !names.is_empty() {
-                    let joined: Vec<String> = names.iter().map(|n| (*n).clone()).collect();
-                    out.push_str(&format!(
-                        "    const {{ {} }} = {ns} as any;\n",
-                        joined.join(", ")
-                    ));
-                }
+                let mut type_names: Vec<String> = table.types.keys().cloned().collect();
+                type_names.sort();
+                type_names.dedup();
+                emit_ns_destructure(&mut out, &ns, &names, &type_names);
             }
         }
         let (body_src, body_smb) = emitter::lower_integration_case_body(
@@ -3996,6 +3998,15 @@ fn emit_stub_class(
     } else {
         Vec::new()
     };
+    let scope_type_names: Vec<String> = unit_tables
+        .get(&owning_unit)
+        .map(|t| {
+            let mut v: Vec<String> = t.types.keys().cloned().collect();
+            v.sort();
+            v.dedup();
+            v
+        })
+        .unwrap_or_default();
 
     // Group clause indices by method, preserving resolution order (case-scoped
     // clauses precede suite-scoped ones, so they win the first-match chain).
@@ -4034,12 +4045,7 @@ fn emit_stub_class(
             .join(", ");
         let return_ty = emitter::ts_type_ref_qualified_multi(&op.return_type, &type_ns);
         out.push_str(&format!("  async {method}({params}): {return_ty} {{\n"));
-        if !scope_names.is_empty() {
-            out.push_str(&format!(
-                "    const {{ {} }} = {scope_ns} as any;\n",
-                scope_names.join(", ")
-            ));
-        }
+        emit_ns_destructure(&mut out, &scope_ns, &scope_names, &scope_type_names);
         for &idx in clause_idxs {
             let clause = &rp.clauses[idx];
             // Argument-pattern consts: a `Value(e)` pattern lowers to a const the
@@ -4398,8 +4404,33 @@ fn emit_test_deps(
     out
 }
 
+/// #18 (testing-track infra): a real value destructure plus a per-type alias,
+/// instead of one `const { … } = ns as any`. Every bynk-declared type pairs an
+/// `export type`/`export interface` with a companion runtime value
+/// (`export const X = {...}`, a refinement's `of`/`unsafe`, a sum's variant
+/// constructors, or simply `{}` for a plain record) — but destructuring does
+/// not carry the *type* side of that merge into the new local binding, so
+/// `const { X } = ns` alone leaves `X` usable only as a value. The blanket
+/// `as any` papered over that by disabling type-checking for every
+/// destructured name, not just the ones needing the workaround — which is
+/// exactly why this generator's own output couldn't be gated by
+/// `tsc --strict`: nothing inside a generated test body was ever really
+/// checked. `type_names` (a subset of `value_names`) gets the alias;
+/// `value_names` is unconditionally destructured with no cast.
+fn emit_ns_destructure(out: &mut String, ns: &str, value_names: &[String], type_names: &[String]) {
+    if !value_names.is_empty() {
+        out.push_str(&format!(
+            "    const {{ {} }} = {ns};\n",
+            value_names.join(", ")
+        ));
+    }
+    for t in type_names {
+        out.push_str(&format!("    type {t} = {ns}.{t};\n"));
+    }
+}
+
 /// Emit the shared per-runner scope setup — agent reset, the `deps` factory, and
-/// the `const { … } = <ns> as any` destructurings that bring the target's,
+/// the destructurings (see [`emit_ns_destructure`]) that bring the target's,
 /// `uses`', and consumed contexts' names into scope. Shared by `case` and
 /// `property` runners so a property body resolves names exactly as a case does.
 #[allow(clippy::too_many_arguments)]
@@ -4489,13 +4520,10 @@ fn emit_test_scope_setup(
         }
         names.sort();
         names.dedup();
-        if !names.is_empty() {
-            let joined: Vec<String> = names.iter().map(|n| (*n).clone()).collect();
-            out.push_str(&format!(
-                "    const {{ {} }} = {target_ns} as any;\n",
-                joined.join(", ")
-            ));
-        }
+        let mut type_names: Vec<String> = table.types.keys().cloned().collect();
+        type_names.sort();
+        type_names.dedup();
+        emit_ns_destructure(out, &target_ns, &names, &type_names);
     }
     // Bring in `uses` commons names too — the target's body can use them.
     // message-bundles slice 1 (#859): a name the target itself already
@@ -4516,21 +4544,24 @@ fn emit_test_scope_setup(
         for u in used {
             let ns = u.replace('.', "_");
             if let Some(table) = unit_tables.get(u) {
-                let mut names: Vec<&String> = table
+                let mut names: Vec<String> = table
                     .types
                     .keys()
                     .chain(table.fns.keys())
                     .filter(|n| !target_local.contains(n))
+                    .cloned()
                     .collect();
                 names.sort();
                 names.dedup();
-                if !names.is_empty() {
-                    let joined: Vec<String> = names.iter().map(|n| (*n).clone()).collect();
-                    out.push_str(&format!(
-                        "    const {{ {} }} = {ns} as any;\n",
-                        joined.join(", ")
-                    ));
-                }
+                let mut type_names: Vec<String> = table
+                    .types
+                    .keys()
+                    .filter(|n| !target_local.contains(n))
+                    .cloned()
+                    .collect();
+                type_names.sort();
+                type_names.dedup();
+                emit_ns_destructure(out, &ns, &names, &type_names);
             }
         }
     }
@@ -4552,15 +4583,10 @@ fn emit_test_scope_setup(
                 Some(UnitKind::Adapter)
             );
             if let Some(table) = unit_tables.get(q) {
-                let mut names: Vec<&String> = table.types.keys().collect();
+                let mut names: Vec<String> = table.types.keys().cloned().collect();
                 names.sort();
-                if !names.is_empty() {
-                    let joined: Vec<String> = names.iter().map(|n| (*n).clone()).collect();
-                    out.push_str(&format!(
-                        "    const {{ {} }} = {ns} as any;\n",
-                        joined.join(", ")
-                    ));
-                }
+                names.dedup();
+                emit_ns_destructure(out, &ns, &names, &names);
             }
             // An `adapter` target has no `makeSurface`/`deps.surface` entry —
             // its capabilities are already flattened onto `deps` directly

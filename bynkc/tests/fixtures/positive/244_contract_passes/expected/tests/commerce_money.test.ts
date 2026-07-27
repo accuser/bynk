@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_ten_percent_off_a_hundred_is_ninety() {
   try {
     const deps = {};
-    const { discount } = commerce_money as any;
+    const { discount } = commerce_money;
     if (!(discount(100, 10) === 90)) { throw __bynkExpectFailure("tests/commerce/money.bynk:5:12", 228, 251, "expect discount(100, 10) == 90\n  expected: discount(100, 10) == 90\n  actual:   " + __bynkShow((discount(100, 10))) + " == " + __bynkShow((90))); }
     return { pass: true };
   } catch (e) {

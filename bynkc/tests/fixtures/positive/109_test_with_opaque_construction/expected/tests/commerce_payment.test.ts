@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_constructs_AuthId_from_inside_the_test() {
   try {
     const deps = makeTestDeps();
-    const { AuthId } = commerce_payment as any;
+    const { AuthId } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
     const id = AuthId.unsafe("AUTH-12345678");
     if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 256, 260, "expect true"); }
     return { pass: true };

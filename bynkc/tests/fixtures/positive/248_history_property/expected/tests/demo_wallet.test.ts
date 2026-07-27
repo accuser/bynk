@@ -245,7 +245,8 @@ function makeTestDeps() {
 async function __prop_test_no_accepted_spend_without_a_prior_accepted_top_up() {
     demo_wallet.__resetAgents();
     const deps = makeTestDeps();
-    const { Amount, Wallet, __makeWallet } = demo_wallet as any;
+    const { Amount, Wallet, __makeWallet } = demo_wallet;
+    type Amount = demo_wallet.Amount;
     type __History_Wallet_Step = any; type __History_Wallet_Call = any; type __History_Wallet_State = any;
     const __handlers = [
       { tag: "TopUp", gens: [{ boundaries: [(1n as any), (1000n as any)], gen: (rng: any) => (rng.int(1n, 1000n) as any), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) }] },

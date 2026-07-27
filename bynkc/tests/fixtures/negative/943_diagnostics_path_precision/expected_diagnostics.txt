@@ -1,0 +1,8 @@
+# #58 regression: the project-mode negative-fixture check used to compare
+# only `category message` substrings with no path, so an error correctly
+# reported in the wrong file (or a file wrongly reported as clean) would
+# still pass. This fixture has two files in the project; pinning the exact
+# `path:line:col` here proves the checked error is attributed to
+# money/fee.bynk specifically, not just that *some* file produced this
+# category.
+bynk.resolve.unknown_type	money/fee.bynk:3:26

@@ -52,14 +52,16 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
 
 class __Stub_Logger {
   async log(msg: string): Promise<void> {
-    const { AuthId } = commerce_payment as any;
+    const { AuthId } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
     if (true) {
       return undefined;
     }
     throw new Error("bynk: no stub clause matched for Logger.log");
   }
   async warn(msg: string): Promise<void> {
-    const { AuthId } = commerce_payment as any;
+    const { AuthId } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
     if (true) {
       return undefined;
     }
@@ -76,7 +78,8 @@ async function test_records_the_observed_calls() {
   try {
     const __obs = { log: {} as Record<string, { args: any[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
-    const { AuthId, authorise } = commerce_payment as any;
+    const { AuthId, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
     const r = await authorise.call(100, deps);
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:7:12", 173, 183, "expect r is Ok(_)"); }
     if (!(((__obs.log["Logger.log"] ?? []).length >= 1))) { throw __bynkExpectFailure("tests/payment.test.bynk:8:12", 195, 212, "expect Logger.log called"); }
@@ -101,7 +104,8 @@ async function test_no_observation_when_the_seam_is_idle() {
   try {
     const __obs = { log: {} as Record<string, { args: any[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
-    const { AuthId, authorise } = commerce_payment as any;
+    const { AuthId, authorise } = commerce_payment;
+    type AuthId = commerce_payment.AuthId;
     if (!(((__obs.log["Logger.log"] ?? []).length === 0))) { throw __bynkExpectFailure("tests/payment.test.bynk:19:12", 564, 587, "expect Logger.log never called"); }
     return { pass: true };
   } catch (e) {

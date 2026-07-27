@@ -34,7 +34,9 @@ async function test_a_fresh_counter_reads_zero() {
   try {
     demo_counter.__resetAgents();
     const deps = makeTestDeps();
-    const { Counter, CounterError, CounterId, __makeCounter, bump, read } = demo_counter as any;
+    const { Counter, CounterError, CounterId, __makeCounter, bump, read } = demo_counter;
+    type CounterError = demo_counter.CounterError;
+    type CounterId = demo_counter.CounterId;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
@@ -71,7 +73,9 @@ async function test_bumping_twice_accumulates() {
   try {
     demo_counter.__resetAgents();
     const deps = makeTestDeps();
-    const { Counter, CounterError, CounterId, __makeCounter, bump, read } = demo_counter as any;
+    const { Counter, CounterError, CounterId, __makeCounter, bump, read } = demo_counter;
+    type CounterError = demo_counter.CounterError;
+    type CounterId = demo_counter.CounterId;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

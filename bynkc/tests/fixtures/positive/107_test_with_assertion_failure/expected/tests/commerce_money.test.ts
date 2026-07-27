@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_deliberate_failure() {
   try {
     const deps = {};
-    const { Money } = commerce_money as any;
+    const { Money } = commerce_money;
+    type Money = commerce_money.Money;
     const m = Money.fromMinorUnits(10);
     if (!(m.tag === "Err")) { throw __bynkExpectFailure("tests/money.test.bynk:6:12", 213, 224, "expect m is Err(_)"); }
     return { pass: true };

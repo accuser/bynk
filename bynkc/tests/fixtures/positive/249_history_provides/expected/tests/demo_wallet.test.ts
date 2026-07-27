@@ -245,7 +245,8 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
 
 class __Stub_Ledger {
   async note(amount: number): Promise<void> {
-    const { Amount } = demo_wallet as any;
+    const { Amount } = demo_wallet;
+    type Amount = demo_wallet.Amount;
     if (true) {
       return undefined;
     }
@@ -260,7 +261,8 @@ function makeTestDeps() {
 async function __prop_test_top_ups_compose_with_a_stubbed_ledger() {
     demo_wallet.__resetAgents();
     const deps = makeTestDeps();
-    const { Amount, Wallet, __makeWallet } = demo_wallet as any;
+    const { Amount, Wallet, __makeWallet } = demo_wallet;
+    type Amount = demo_wallet.Amount;
     type __History_Wallet_Step = any; type __History_Wallet_Call = any; type __History_Wallet_State = any;
     const __handlers = [
       { tag: "TopUp", gens: [{ boundaries: [(1n as any), (1000n as any)], gen: (rng: any) => (rng.int(1n, 1000n) as any), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) }] },

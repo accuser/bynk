@@ -349,6 +349,18 @@ pub struct CompileOptions {
     /// `fn`; `false` (release/deploy) strips it entirely for zero runtime cost.
     /// `bynkc test` and `--inspect` set it on; `bynkc compile` leaves it off.
     pub contracts: bool,
+    /// #57 (testing track): when `Some`, every file `roots` would otherwise
+    /// discover on disk is instead read from here — keyed the same way
+    /// [`discovery::read_source`]'s overlay is (a canonicalised absolute path,
+    /// falling back to the literal path when the file has no on-disk
+    /// counterpart to canonicalise). Filesystem discovery is skipped entirely;
+    /// `roots` still supplies `src_root`/`tests_root` and their prefixes, so a
+    /// `Roots::Split` project can drive both trees in-memory. Production
+    /// callers (`bynkc`, `bynk-driver`, the LSP) never set this — it exists so
+    /// `bynk-emit`'s own tests can exercise the full project pipeline
+    /// (cross-context `uses`, multi-file layouts, workers-mode emission, …)
+    /// without an on-disk fixture tree.
+    pub sources: Option<HashMap<PathBuf, String>>,
 }
 
 impl CompileOptions {
@@ -360,6 +372,7 @@ impl CompileOptions {
             roots: Roots::Single(root.into()),
             import_ext: ImportExt::default(),
             contracts: false,
+            sources: None,
         }
     }
 
@@ -376,6 +389,7 @@ impl CompileOptions {
             },
             import_ext: ImportExt::default(),
             contracts: false,
+            sources: None,
         }
     }
 
@@ -407,6 +421,14 @@ impl CompileOptions {
         self.platform = platform;
         self
     }
+
+    /// #57 (testing track): supply every file in-memory instead of walking
+    /// `roots` on disk — keyed the same way `discovery::read_source`'s
+    /// overlay is (see the `sources` field's own doc).
+    pub fn sources(mut self, sources: HashMap<PathBuf, String>) -> Self {
+        self.sources = Some(sources);
+        self
+    }
 }
 
 /// Compile a Bynk project, keeping error attribution + snapshots on failure
@@ -418,6 +440,21 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
     let src_prefix = options.roots.src_prefix();
     let tests_prefix = options.roots.tests_prefix();
     let excludes = options.roots.excludes();
+    // #57: `options.sources` replaces the on-disk discovery walk with a
+    // caller-supplied file list, partitioned the same way a real walk would
+    // split across `src_root`/`tests_root` — for a single-tree project the
+    // two roots coincide, so every file lands in the first (`src`) list,
+    // matching `compile_in_memory`'s own convention.
+    let (overlay, discovered) = match &options.sources {
+        Some(sources) => {
+            let (src_files, tests_files): (Vec<PathBuf>, Vec<PathBuf>) = sources
+                .keys()
+                .cloned()
+                .partition(|p| src_root == tests_root || p.starts_with(&src_root));
+            (sources.clone(), Some((src_files, tests_files)))
+        }
+        None => (HashMap::new(), None),
+    };
     let run = run_checks(
         &src_root,
         &tests_root,
@@ -427,9 +464,9 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         options.platform,
         options.import_ext,
         Mode::Build,
-        &HashMap::new(),
+        &overlay,
         &excludes,
-        None,
+        discovered,
         options.contracts,
     );
     finish_build(run, options.import_ext)
@@ -1254,6 +1291,7 @@ fn phase_group(
     platform: Platform,
     consumes_bynk: bool,
     consumes_cloudflare: bool,
+    overlay: &HashMap<PathBuf, String>,
     errors: &mut ErrorSink,
 ) -> (
     BTreeMap<String, Vec<usize>>,
@@ -1398,7 +1436,7 @@ fn phase_group(
         let adapter_dir = pf.source_path.parent().unwrap_or(Path::new(""));
         let out_rel = normalize_rel(&adapter_dir.join(&b.module));
         let src_abs = src_root.join(&out_rel);
-        match fs::read_to_string(&src_abs) {
+        match read_source(&src_abs, overlay) {
             Ok(content) => {
                 adapter_bindings.insert(
                     a.name.joined(),
@@ -3315,6 +3353,7 @@ fn run_checks(
         platform,
         consumes_bynk,
         consumes_cloudflare,
+        overlay,
         &mut errors,
     );
 
@@ -5177,6 +5216,57 @@ mod tests {
             keys,
             vec!["src/thing.bynk", "tests/thing.bynk"],
             "a file's identity must be project-relative and unique across include roots"
+        );
+    }
+
+    /// #57 (testing track): a two-file, cross-referencing project compiled
+    /// entirely through the public `compile_project` API with no on-disk
+    /// tree at all — `CompileOptions::sources` replaces what
+    /// `scratch_project` below has to fake with real temp-directory I/O.
+    /// Before this seam, exercising `uses` across two units from inside
+    /// `bynk-emit`'s own tests meant either a `scratch_project` (real files,
+    /// cleaned up on drop) or `bynkc`'s on-disk fixtures one crate up.
+    #[test]
+    fn compile_project_with_in_memory_sources_resolves_a_cross_unit_uses() {
+        let mut sources = HashMap::new();
+        sources.insert(
+            PathBuf::from("shapes.bynk"),
+            "commons shapes\n\ntype Circle = { radius: Int }\n".to_string(),
+        );
+        sources.insert(
+            PathBuf::from("app.bynk"),
+            "commons app\n\nuses shapes\n\nfn area(c: Circle) -> Int {\n  c.radius * c.radius\n}\n"
+                .to_string(),
+        );
+        let options = CompileOptions::single(".").sources(sources);
+        let out = compile_project(&options).unwrap_or_else(|f| {
+            panic!(
+                "in-memory sources project should compile: {:?}",
+                ProjectFailure::flatten(f)
+            )
+        });
+        let names: Vec<String> = out
+            .files
+            .iter()
+            .map(|f| f.output_path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(
+            names.contains(&"shapes.ts".to_string()),
+            "expected shapes.ts among {names:?}"
+        );
+        assert!(
+            names.contains(&"app.ts".to_string()),
+            "expected app.ts among {names:?}"
+        );
+        let app_ts = &out
+            .files
+            .iter()
+            .find(|f| f.output_path == Path::new("app.ts"))
+            .unwrap()
+            .typescript;
+        assert!(
+            app_ts.contains("radius"),
+            "app.ts should reference the cross-unit Circle field:\n{app_ts}"
         );
     }
 

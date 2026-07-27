@@ -32,7 +32,10 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
 
 class __Stub_Clock {
   async now(): Promise<number> {
-    const { Code, RegError, Target } = demo_registry as any;
+    const { Code, RegError, Target } = demo_registry;
+    type Code = demo_registry.Code;
+    type RegError = demo_registry.RegError;
+    type Target = demo_registry.Target;
     if (true) {
       return 7;
     }
@@ -48,7 +51,10 @@ function makeTestDeps() {
 async function test_create_accepts_two_args_and_threads_deps() {
   try {
     const deps = makeTestDeps();
-    const { Code, RegError, Target, create } = demo_registry as any;
+    const { Code, RegError, Target, create } = demo_registry;
+    type Code = demo_registry.Code;
+    type RegError = demo_registry.RegError;
+    type Target = demo_registry.Target;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

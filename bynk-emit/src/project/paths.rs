@@ -96,6 +96,23 @@ pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
         .unwrap_or_else(|_| ProjectPaths::conventional(project_root))
 }
 
+/// Like [`read_project_paths`], but honours `overlay` for `bynk.toml` itself
+/// — the in-memory test seam's (#57) one remaining disk read outside
+/// [`discovery::read_source`], now routed through the same helper so a test
+/// can supply a virtual `bynk.toml` with no on-disk file at all. `#[cfg(test)]`
+/// because that's its only consumer today; drop the gate if a non-test caller
+/// needs it (`try_read_project_paths_with`, which this wraps, has none of that
+/// restriction — production code already reaches it through the always-on
+/// `try_read_project_paths`).
+#[cfg(test)]
+pub(crate) fn read_project_paths_with(
+    project_root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+) -> ProjectPaths {
+    try_read_project_paths_with(project_root, overlay)
+        .unwrap_or_else(|_| ProjectPaths::conventional(project_root))
+}
+
 /// A problem in `bynk.toml` that [`read_project_paths`] silently papers over
 /// by falling back to the conventional layout — a hand-edited config the user
 /// gets no diagnostic for, after which the cascade of `bynk.uses.unknown_target`
@@ -137,8 +154,17 @@ impl std::fmt::Display for ProjectPathsError {
 /// `Roots` supports — as an error instead of silently falling back to the
 /// conventional layout.
 pub fn try_read_project_paths(project_root: &Path) -> Result<ProjectPaths, ProjectPathsError> {
+    try_read_project_paths_with(project_root, &HashMap::new())
+}
+
+/// Like [`try_read_project_paths`], but honours `overlay` for `bynk.toml`
+/// itself, the same way [`discovery::read_source`] does for every other file.
+pub fn try_read_project_paths_with(
+    project_root: &Path,
+    overlay: &HashMap<PathBuf, String>,
+) -> Result<ProjectPaths, ProjectPathsError> {
     let toml_path = project_root.join("bynk.toml");
-    let Ok(content) = fs::read_to_string(&toml_path) else {
+    let Ok(content) = read_source(&toml_path, overlay) else {
         return Ok(ProjectPaths::conventional(project_root));
     };
     let Ok(doc) = content.parse::<toml::Table>() else {
@@ -343,6 +369,31 @@ mod tests {
         assert!(!is_unpinned_range("~0.1"));
         assert!(!is_unpinned_range(">=2"));
         assert!(!is_unpinned_range("18"));
+    }
+
+    // -- read_project_paths_with (#57, in-memory test seam) -------------------
+    #[test]
+    fn read_project_paths_with_honours_a_virtual_bynk_toml() {
+        let root = PathBuf::from("/nonexistent-bynk-test-root-57");
+        let mut overlay = HashMap::new();
+        overlay.insert(
+            root.join("bynk.toml"),
+            "[paths]\ninclude = [\"app\"]\nexclude = [\"vendor\"]\n".to_string(),
+        );
+        let paths = read_project_paths_with(&root, &overlay);
+        assert_eq!(paths.include, vec![PathBuf::from("app")]);
+        assert_eq!(paths.exclude, vec![PathBuf::from("vendor")]);
+    }
+
+    #[test]
+    fn read_project_paths_with_falls_back_to_conventional_with_no_overlay_entry() {
+        // No overlay entry and no real file at this (nonexistent) root — same
+        // fallback `read_project_paths` gives a missing on-disk `bynk.toml`.
+        let root = PathBuf::from("/nonexistent-bynk-test-root-57-empty");
+        let paths = read_project_paths_with(&root, &HashMap::new());
+        let conventional = ProjectPaths::conventional(&root);
+        assert_eq!(paths.include, conventional.include);
+        assert_eq!(paths.exclude, conventional.exclude);
     }
 
     // -- render_package_json --------------------------------------------------

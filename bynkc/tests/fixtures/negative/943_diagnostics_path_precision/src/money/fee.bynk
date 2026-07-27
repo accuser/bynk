@@ -1,0 +1,3 @@
+commons money.fee
+
+type LateFee = { amount: Cents }

@@ -10,10 +10,20 @@
 //!   compiler runs in project mode (`compile_project`) and every generated
 //!   file is compared against its counterpart under `expected/`.
 //!
+//! Either shape may additionally carry an optional `expected_contains.txt`
+//! and/or `expected_absent.txt` (#58) — each a newline-separated list of
+//! substrings (`#`-prefixed lines and blanks ignored) that must, respectively,
+//! appear or not appear somewhere in the emitted output. These compose with
+//! the whole-file snapshot above rather than replacing it — a granularity
+//! between "byte-identical" and "nothing at all" for a fixture that only
+//! cares about one emitted fragment. See [`check_expected_contains_absent`].
+//!
 //! Each subdirectory under `tests/fixtures/negative/` contains either an
-//! `input.bynk` (single-file) or a `src/` (project) input plus an
-//! `expected_error.txt` listing category strings the diagnostics must
-//! contain.
+//! `input.bynk` (single-file) or a `src/` (project) input, plus at least one
+//! of: an `expected_error.txt` listing `category message` substrings the
+//! diagnostics must contain, or (project-mode only, #58) an
+//! `expected_diagnostics.txt` listing exact `category<TAB>path:line:col`
+//! lines — see [`check_expected_diagnostics`].
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -70,6 +80,49 @@ fn collect_expected_ts(expected_root: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// #58: `FileCheck`-style substring assertions (rustc's `tests/codegen`
+/// precedent) — a granularity between whole-file byte identity and a bare
+/// diagnostic category string. `expected_contains.txt` lines must each appear
+/// somewhere in `haystack`; `expected_absent.txt` lines must each not. Either
+/// file is optional and independent of the other, and both compose with a
+/// fixture's ordinary `expected.ts`/`expected/` snapshot rather than replacing
+/// it — a fixture that only cares about one emitted fragment doesn't have to
+/// stop pinning the rest of the file to also assert that fragment precisely.
+fn check_expected_contains_absent(dir: &Path, haystack: &str, failures: &mut Vec<String>) {
+    let contains = dir.join("expected_contains.txt");
+    if contains.exists() {
+        for needle in read(&contains)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        {
+            if !haystack.contains(needle) {
+                failures.push(format!(
+                    "\n=== {} ===\nexpected_contains.txt: expected output to contain `{}`, but it did not",
+                    dir.display(),
+                    needle,
+                ));
+            }
+        }
+    }
+    let absent = dir.join("expected_absent.txt");
+    if absent.exists() {
+        for needle in read(&absent)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        {
+            if haystack.contains(needle) {
+                failures.push(format!(
+                    "\n=== {} ===\nexpected_absent.txt: expected output to NOT contain `{}`, but it did",
+                    dir.display(),
+                    needle,
+                ));
+            }
+        }
+    }
+}
+
 /// Read the build target marker from a fixture root, if present.
 /// Defaults to bundle when no `target.txt` is present.
 fn fixture_target(dir: &Path) -> bynkc::BuildTarget {
@@ -102,7 +155,7 @@ fn fixture_platform(dir: &Path) -> bynkc::Platform {
 fn compile_fixture(
     fixture_root: &Path,
     target: bynkc::BuildTarget,
-) -> Result<bynkc::ProjectOutput, Vec<bynkc::CompileError>> {
+) -> Result<bynkc::ProjectOutput, bynkc::ProjectFailure> {
     let bynk_toml = fixture_root.join("bynk.toml");
     if bynk_toml.exists() {
         // Split-paths mode compiles at the default platform — a bynk.toml
@@ -116,7 +169,6 @@ fn compile_fixture(
         bynkc::compile_project(
             &bynkc::CompileOptions::split(fixture_root.to_path_buf(), paths).target(target),
         )
-        .map_err(bynkc::ProjectFailure::flatten)
     } else {
         let src_dir = fixture_root.join("src");
         let platform = fixture_platform(fixture_root);
@@ -125,7 +177,6 @@ fn compile_fixture(
                 .target(target)
                 .platform(platform),
         )
-        .map_err(bynkc::ProjectFailure::flatten)
     }
 }
 
@@ -152,6 +203,7 @@ fn positive_fixtures() {
                             actual,
                         ));
                     }
+                    check_expected_contains_absent(&dir, &actual, &mut failures);
                 }
                 Err(errors) => {
                     let rendered = bynkc::render_errors(&errors, &source, &name);
@@ -262,9 +314,19 @@ fn positive_fixtures() {
                     if !all_ok {
                         failures.push(format!("\n=== {} ==={}", dir.display(), report));
                     }
+                    // #58: check across every emitted file — fixture-level, not
+                    // per-file, since a substring assertion doesn't need to name
+                    // which file it expects the fragment in.
+                    let haystack: String = out
+                        .files
+                        .iter()
+                        .map(|f| f.typescript.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    check_expected_contains_absent(&dir, &haystack, &mut failures);
                 }
-                Err(errors) => {
-                    let rendered = bynkc::render_project_errors(&errors);
+                Err(failure) => {
+                    let rendered = bynkc::render_project_errors(&failure.flatten());
                     failures.push(format!(
                         "\n=== {} ===\nexpected compile success but got errors:\n{}",
                         dir.display(),
@@ -312,11 +374,11 @@ fn bless_positive_fixtures() {
         let target = fixture_target(&dir);
         let out = match compile_fixture(&dir, target) {
             Ok(out) => out,
-            Err(errors) => {
+            Err(failure) => {
                 panic!(
                     "bless: {} failed to compile:\n{}",
                     dir.display(),
-                    bynkc::render_project_errors(&errors)
+                    bynkc::render_project_errors(&failure.flatten())
                 );
             }
         };
@@ -382,6 +444,58 @@ fn no_unknown_placeholder_in_emitted_output() {
     );
 }
 
+/// #58 (adjacent to #696): checks a project fixture's `expected_diagnostics.txt`
+/// — optional, `category<TAB>path:line:col` lines — against the *attributed*
+/// errors a project-mode compile produced. Unlike `expected_error.txt`'s
+/// substring-over-`category message` check, this pins the file and position
+/// too: `project.rs:5013-5017`'s and `bynk-driver/tests/project_diagnostics.rs`'s
+/// (#696) escapes were both an identity collision the category-only check
+/// could not have caught, because neither carried a path to disagree on.
+fn check_expected_diagnostics(
+    dir: &Path,
+    errors: &[bynkc::AttributedError],
+    snapshots: &[(PathBuf, String)],
+    failures: &mut Vec<String>,
+) {
+    let expected = dir.join("expected_diagnostics.txt");
+    if !expected.exists() {
+        return;
+    }
+    let want = read(&expected);
+    let actual: Vec<String> = errors
+        .iter()
+        .map(|e| {
+            let path = e
+                .source_path
+                .as_deref()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|| "<unattributed>".to_string());
+            let source = e
+                .source_path
+                .as_deref()
+                .and_then(|p| snapshots.iter().find(|(sp, _)| sp == p))
+                .map(|(_, s)| s.as_str())
+                .unwrap_or("");
+            let (line, col) = bynk_syntax::span::line_col(source, e.error.span.start);
+            format!("{}\t{path}:{line}:{col}", e.error.category)
+        })
+        .collect();
+    for needle in want.lines() {
+        let needle = needle.trim();
+        if needle.is_empty() || needle.starts_with('#') {
+            continue;
+        }
+        if !actual.iter().any(|a| a == needle) {
+            failures.push(format!(
+                "\n=== {} ===\nexpected_diagnostics.txt: expected `{}`, but got:\n{}",
+                dir.display(),
+                needle,
+                actual.join("\n"),
+            ));
+        }
+    }
+}
+
 #[test]
 fn negative_fixtures() {
     let dirs = fixture_dirs("negative");
@@ -390,8 +504,24 @@ fn negative_fixtures() {
     for dir in dirs {
         let input = dir.join("input.bynk");
         let src_dir = dir.join("src");
-        let expected = dir.join("expected_error.txt");
-        let want = read(&expected);
+        let expected_error = dir.join("expected_error.txt");
+        let has_expected_error = expected_error.exists();
+        // `expected_diagnostics.txt` needs path attribution, which only a
+        // project-mode compile carries — a single-file fixture must still
+        // supply `expected_error.txt`, or nothing here would ever check it.
+        let has_expected_diagnostics =
+            src_dir.is_dir() && dir.join("expected_diagnostics.txt").exists();
+        assert!(
+            has_expected_error || has_expected_diagnostics,
+            "{}: negative fixture has neither expected_error.txt nor \
+             (a project-mode) expected_diagnostics.txt",
+            dir.display()
+        );
+        let want = if has_expected_error {
+            read(&expected_error)
+        } else {
+            String::new()
+        };
         let want = want.trim();
         if input.exists() {
             let source = read(&input);
@@ -440,10 +570,11 @@ fn negative_fixtures() {
                         dir.display(),
                     ));
                 }
-                Err(errors) => {
-                    let haystack: String = errors
+                Err(failure) => {
+                    let haystack: String = failure
+                        .errors
                         .iter()
-                        .map(|e| format!("{} {}\n", e.category, e.message))
+                        .map(|e| format!("{} {}\n", e.error.category, e.error.message))
                         .collect();
                     for needle in want.lines() {
                         let needle = needle.trim();
@@ -459,6 +590,12 @@ fn negative_fixtures() {
                             ));
                         }
                     }
+                    check_expected_diagnostics(
+                        &dir,
+                        &failure.errors,
+                        &failure.snapshots,
+                        &mut failures,
+                    );
                 }
             }
         } else {

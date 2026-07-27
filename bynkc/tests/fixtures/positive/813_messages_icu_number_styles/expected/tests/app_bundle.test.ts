@@ -35,9 +35,12 @@ function makeTestDeps() {
 async function test_bare_number__default_decimal_grouping() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     const msg = withNum(message("price"), "n", 1234.5);
     if (!(render(("en" as any), msg) === "1,234.5")) { throw __bynkExpectFailure("tests/bundle.test.bynk:4:12", 132, 162, "expect render(\"en\", msg) == \"1,234.5\"\n  expected: render(\"en\", msg) == \"1,234.5\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("1,234.5"))); }
     return { pass: true };
@@ -53,9 +56,12 @@ async function test_bare_number__default_decimal_grouping() {
 async function test_integer_style_rounds_to_zero_fraction_digits() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     const msg = withNum(message("quantity"), "n", 1234.5);
     if (!(render(("en" as any), msg) === "1,235")) { throw __bynkExpectFailure("tests/bundle.test.bynk:9:12", 291, 319, "expect render(\"en\", msg) == \"1,235\"\n  expected: render(\"en\", msg) == \"1,235\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("1,235"))); }
     return { pass: true };
@@ -71,9 +77,12 @@ async function test_integer_style_rounds_to_zero_fraction_digits() {
 async function test_percent_style() {
   try {
     const deps = {};
-    const { render } = app_bundle as any;
-    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
+    const { render } = app_bundle;
+    const { message, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
     const msg = withNum(message("discount"), "n", 0.42);
     if (!(render(("en" as any), msg) === "42%")) { throw __bynkExpectFailure("tests/bundle.test.bynk:14:12", 415, 441, "expect render(\"en\", msg) == \"42%\"\n  expected: render(\"en\", msg) == \"42%\"\n  actual:   " + __bynkShow((render(("en" as any), msg))) + " == " + __bynkShow(("42%"))); }
     return { pass: true };

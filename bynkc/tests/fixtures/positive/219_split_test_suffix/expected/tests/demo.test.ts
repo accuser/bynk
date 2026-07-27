@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_doubles() {
   try {
     const deps = {};
-    const { double } = demo as any;
+    const { double } = demo;
     if (!(double(2) === 4)) { throw __bynkExpectFailure("tests/demo.test.bynk:3:12", 43, 57, "expect double(2) == 4\n  expected: double(2) == 4\n  actual:   " + __bynkShow((double(2))) + " == " + __bynkShow((4))); }
     return { pass: true };
   } catch (e) {

@@ -1,0 +1,5 @@
+commons b
+
+fn decode(s: String) -> Option[Bytes] {
+  Bytes.fromBase64(s)
+}

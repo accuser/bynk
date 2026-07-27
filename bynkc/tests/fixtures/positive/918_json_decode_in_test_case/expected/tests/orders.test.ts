@@ -33,7 +33,7 @@ function makeTestDeps() {
 async function test_decodes_a_base_type() {
   try {
     const deps = {};
-    const { double } = orders as any;
+    const { double } = orders;
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {

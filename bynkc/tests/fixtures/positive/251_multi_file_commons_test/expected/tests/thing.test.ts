@@ -33,7 +33,8 @@ function makeTestDeps() {
 async function test_widget_rejects_negative() {
   try {
     const deps = {};
-    const { Widget } = thing as any;
+    const { Widget } = thing;
+    type Widget = thing.Widget;
     const w = Widget.fromInt(-1);
     if (!(w.tag === "Err")) { throw __bynkExpectFailure("tests/thing.test.bynk:4:12", 91, 102, "expect w is Err(_)"); }
     return { pass: true };
@@ -49,7 +50,8 @@ async function test_widget_rejects_negative() {
 async function test_widget_accepts_non_negative() {
   try {
     const deps = {};
-    const { Widget } = thing as any;
+    const { Widget } = thing;
+    type Widget = thing.Widget;
     const w = Widget.fromInt(7);
     if (!(w.tag === "Ok")) { throw __bynkExpectFailure("tests/thing.test.bynk:9:12", 188, 198, "expect w is Ok(_)"); }
     return { pass: true };

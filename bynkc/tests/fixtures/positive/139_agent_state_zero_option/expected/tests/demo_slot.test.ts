@@ -34,7 +34,9 @@ async function test_a_fresh_Slot_key_resolves_to_Empty() {
   try {
     demo_slot.__resetAgents();
     const deps = makeTestDeps();
-    const { Label, Slot, SlotError, __makeSlot, resolve } = demo_slot as any;
+    const { Label, Slot, SlotError, __makeSlot, resolve } = demo_slot;
+    type Label = demo_slot.Label;
+    type SlotError = demo_slot.SlotError;
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {

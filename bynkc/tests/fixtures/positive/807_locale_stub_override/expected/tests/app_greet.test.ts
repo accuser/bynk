@@ -50,10 +50,18 @@ function makeTestDeps() {
 async function test_a_stubbed_locale_is_what_the_capability_reports() {
   try {
     const deps = makeTestDeps();
-    const { currentTag, greeting } = app_greet as any;
-    const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
-    const { FetchError, Method, Request, Response, Uuid } = bynk as any;
+    const { currentTag, greeting } = app_greet;
+    const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
+    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    type FetchError = bynk.FetchError;
+    type Method = bynk.Method;
+    type Request = bynk.Request;
+    type Response = bynk.Response;
+    type Uuid = bynk.Uuid;
     const tag = await currentTag.call(deps);
     if (!(tag === "fr")) { throw __bynkExpectFailure("tests/greet.test.bynk:11:12", 357, 368, "expect tag == \"fr\"\n  expected: tag == \"fr\"\n  actual:   " + __bynkShow((tag)) + " == " + __bynkShow(("fr"))); }
     return { pass: true };
@@ -69,10 +77,18 @@ async function test_a_stubbed_locale_is_what_the_capability_reports() {
 async function test_render_is_unaffected_by_the_stub_in_slice_1__tag_is_unused_() {
   try {
     const deps = makeTestDeps();
-    const { currentTag, greeting } = app_greet as any;
-    const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale as any;
-    const { LocaleTag, Message, MessageArg } = bynk_locale_types as any;
-    const { FetchError, Method, Request, Response, Uuid } = bynk as any;
+    const { currentTag, greeting } = app_greet;
+    const { message, render, renderArg, withMoment, withNum, withText, withWhole } = bynk_locale;
+    const { LocaleTag, Message, MessageArg } = bynk_locale_types;
+    type LocaleTag = bynk_locale_types.LocaleTag;
+    type Message = bynk_locale_types.Message;
+    type MessageArg = bynk_locale_types.MessageArg;
+    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    type FetchError = bynk.FetchError;
+    type Method = bynk.Method;
+    type Request = bynk.Request;
+    type Response = bynk.Response;
+    type Uuid = bynk.Uuid;
     const g = await greeting.call(deps);
     if (!(g === "hello")) { throw __bynkExpectFailure("tests/greet.test.bynk:16:12", 485, 497, "expect g == \"hello\"\n  expected: g == \"hello\"\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow(("hello"))); }
     return { pass: true };
