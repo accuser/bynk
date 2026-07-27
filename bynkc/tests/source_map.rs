@@ -202,3 +202,60 @@ fn declarations_anchor_to_their_declaration() {
         "describe → `fn describe`"
     );
 }
+
+const IIFE_FIXTURE: &str = "commons reps {
+  fn compute(cond: Bool) -> Int {
+    let a = 1
+    let r = if cond {
+      let y = 2
+      y + 1
+    } else {
+      0
+    }
+    a + r
+  }
+}
+";
+
+#[test]
+fn value_position_if_iife_does_not_corrupt_earlier_checkpoints() {
+    // #4 review: `lower_if`'s value-position IIFE builds its `then`/`else`
+    // branches into a local buffer (`iife`), spliced into the real output
+    // only once fully built. Before `without_source_map`, `record_span` was
+    // still called for statements inside that local buffer (e.g. `let y = 2`
+    // / `y + 1` / the `else` arm's `0`) with an offset relative to *that*
+    // buffer's own (small) length — but `to_v3` resolves every checkpoint's
+    // generated line against the *final*, fully-emitted file's line table.
+    // A small IIFE-local offset (tens of bytes) resolves there to whatever
+    // line actually sits at that byte position in the real file — here, the
+    // header comment / import lines, nowhere near the `if`. Confirmed by
+    // reverting the fix locally: the header lines (0-4) came back mapped to
+    // source lines 5 and 7 (`y + 1` and the `else` arm's `0`) instead of
+    // staying unmapped, silently overriding whatever checkpoint correctly
+    // belonged to those early lines. With recording suppressed for the
+    // duration of the local buffer, they correctly stay unmapped instead.
+    let (ts, map) = compile_reps(IIFE_FIXTURE);
+    let lines = decode(extract_field(&map, "mappings"));
+
+    let header_end = gen_line_of(&ts, "export function compute");
+    for (g, mapped) in lines.iter().enumerate().take(header_end) {
+        assert_eq!(
+            *mapped, None,
+            "gen line {g} (before the function starts) must not be mapped to \
+             a source line stolen from inside the IIFE:\n{ts}"
+        );
+    }
+
+    let at = |g: usize| lines[g].unwrap_or_else(|| panic!("gen line {g} unmapped"));
+    // Source (0-based): line 2 = `let a = 1`, line 9 = `a + r`.
+    assert_eq!(
+        at(gen_line_of(&ts, "const a = ")),
+        2,
+        "`let a` keeps its own line"
+    );
+    assert_eq!(
+        at(gen_line_of(&ts, "return a + r")),
+        9,
+        "the tail `a + r` keeps its own line"
+    );
+}
