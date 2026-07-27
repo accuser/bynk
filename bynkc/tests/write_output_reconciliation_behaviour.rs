@@ -35,14 +35,29 @@ fn deleting_a_unit_prunes_its_stale_emitted_output() {
 
     let compile = || {
         let paths = bynkc::read_project_paths(&root);
-        bynkc::compile_project(&bynkc::CompileOptions::split(root.clone(), paths))
-            .unwrap_or_else(|f| panic!("compile failed: {:?}", f.errors.iter().map(|e| (&e.source_path, e.error.category, &e.error.message)).collect::<Vec<_>>()))
+        bynkc::compile_project(&bynkc::CompileOptions::split(root.clone(), paths)).unwrap_or_else(
+            |f| {
+                panic!(
+                    "compile failed: {:?}",
+                    f.errors
+                        .iter()
+                        .map(|e| (&e.source_path, e.error.category, &e.error.message))
+                        .collect::<Vec<_>>()
+                )
+            },
+        )
     };
 
     let out = compile();
     bynkc::write_output(&out, &out_dir).expect("write_output (first build)");
-    assert!(out_dir.join("keep.ts").is_file(), "keep.ts should be written");
-    assert!(out_dir.join("gone.ts").is_file(), "gone.ts should be written");
+    assert!(
+        out_dir.join("keep.ts").is_file(),
+        "keep.ts should be written"
+    );
+    assert!(
+        out_dir.join("gone.ts").is_file(),
+        "gone.ts should be written"
+    );
 
     // A file the compiler did not write, of a kind it's allowed to prune —
     // must survive, because it IS in the expected set (part of every build).
@@ -83,19 +98,28 @@ fn a_node_modules_subtree_is_never_descended_into() {
         "{\"name\":\"some-pkg\"}",
     );
 
-    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("write-output-reconcile-node-modules-src");
+    let root =
+        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("write-output-reconcile-node-modules-src");
     let _ = std::fs::remove_dir_all(&root);
-    write(&root.join("src/only.bynk"), "commons only\n\nfn f() -> Int {\n  1\n}\n");
+    write(
+        &root.join("src/only.bynk"),
+        "commons only\n\nfn f() -> Int {\n  1\n}\n",
+    );
     let paths = bynkc::read_project_paths(&root);
-    let out = bynkc::compile_project(&bynkc::CompileOptions::split(root, paths))
-        .unwrap_or_else(|f| panic!("compile failed: {:?}", f.errors.iter().map(|e| (&e.source_path, e.error.category, &e.error.message)).collect::<Vec<_>>()));
+    let out =
+        bynkc::compile_project(&bynkc::CompileOptions::split(root, paths)).unwrap_or_else(|f| {
+            panic!(
+                "compile failed: {:?}",
+                f.errors
+                    .iter()
+                    .map(|e| (&e.source_path, e.error.category, &e.error.message))
+                    .collect::<Vec<_>>()
+            )
+        });
     bynkc::write_output(&out, &out_dir).expect("write_output");
 
     assert!(
-        out_dir
-            .join("node_modules/some-pkg/package.json")
-            .is_file(),
+        out_dir.join("node_modules/some-pkg/package.json").is_file(),
         "a file under node_modules must never be pruned"
     );
 }

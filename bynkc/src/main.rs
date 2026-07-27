@@ -208,9 +208,8 @@ fn run_test(
         // v0.115/slice 2: reuse `options` (not a fresh `project_options(&input)`)
         // so this second compile keeps `contracts(true)` and, under `--inspect`,
         // `import_ext(Ts)` — a from-scratch rebuild silently dropped both.
-        let workers_out = bynkc::compile_project(
-            &options.clone().target(bynkc::BuildTarget::Workers),
-        );
+        let workers_out =
+            bynkc::compile_project(&options.clone().target(bynkc::BuildTarget::Workers));
         let workers_out = match workers_out {
             Ok(o) => o,
             Err(failure) => {

@@ -2821,12 +2821,7 @@ fn check_unit_files(
             .iter()
             .map(|(n, i)| (n.clone(), i.aliases.clone()))
             .collect();
-        Some((
-            unit_tables,
-            unit_uses,
-            unit_consumes,
-            unit_consumes_aliases,
-        ))
+        Some((unit_tables, unit_uses, unit_consumes, unit_consumes_aliases))
     } else {
         None
     };
@@ -2930,21 +2925,22 @@ fn check_unit_files(
         // for the resolver, checker, and emitter. v0.18: adapters get it
         // too, so an external provider's `given` resolves against the
         // adapter's flattened consumed capabilities (spec §4.5).
-        let cross_context_for_file = if let Some((unit_tables, unit_uses, unit_consumes, unit_consumes_aliases)) =
-            &cross_context_views
-        {
-            let mut cci = build_cross_context_info(
-                name,
-                unit_consumes,
-                unit_consumes_aliases,
-                unit_uses,
-                unit_tables,
-            );
-            cci.flattened_caps = unit_info[name].flattened.clone();
-            cci
-        } else {
-            resolver::CrossContextInfo::default()
-        };
+        let cross_context_for_file =
+            if let Some((unit_tables, unit_uses, unit_consumes, unit_consumes_aliases)) =
+                &cross_context_views
+            {
+                let mut cci = build_cross_context_info(
+                    name,
+                    unit_consumes,
+                    unit_consumes_aliases,
+                    unit_uses,
+                    unit_tables,
+                );
+                cci.flattened_caps = unit_info[name].flattened.clone();
+                cci
+            } else {
+                resolver::CrossContextInfo::default()
+            };
 
         // Events track, slice 0 (spine #936): this unit's own declared event
         // names — mirrors `local_names`/`local_type_names` but answers "is

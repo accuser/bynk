@@ -543,8 +543,8 @@ pub(crate) fn check_locale_bundle_ambiguity(
 /// that need the same two maps.
 pub(crate) fn check_event_subscriptions(
     parsed: &[ParsedFile],
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     errors: &mut ErrorSink,

@@ -92,7 +92,8 @@ impl ProjectPaths {
 /// crate — the previous hand-rolled line scanner mis-read multi-line arrays
 /// and quoted edge cases.
 pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
-    try_read_project_paths(project_root).unwrap_or_else(|_| ProjectPaths::conventional(project_root))
+    try_read_project_paths(project_root)
+        .unwrap_or_else(|_| ProjectPaths::conventional(project_root))
 }
 
 /// A problem in `bynk.toml` that [`read_project_paths`] silently papers over
@@ -118,7 +119,10 @@ impl std::fmt::Display for ProjectPathsError {
         match self {
             ProjectPathsError::Malformed => write!(f, "`bynk.toml` is not valid TOML"),
             ProjectPathsError::UnknownKey(k) => {
-                write!(f, "`[paths]` has no key named `{k}` — did you mean `include` or `exclude`?")
+                write!(
+                    f,
+                    "`[paths]` has no key named `{k}` — did you mean `include` or `exclude`?"
+                )
             }
             ProjectPathsError::TooManyIncludeRoots(n) => write!(
                 f,

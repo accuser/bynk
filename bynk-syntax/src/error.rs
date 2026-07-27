@@ -264,11 +264,7 @@ mod warning_channel_tests {
     #[test]
     fn report_for_renders_warning_severity_as_a_warning_not_an_error() {
         let source = "commons w\n\nfn f() -> Int { 1 }\n";
-        let warn = CompileError::new(
-            "bynk.given.unused_capability",
-            Span::default(),
-            "unused",
-        );
+        let warn = CompileError::new("bynk.given.unused_capability", Span::default(), "unused");
         let rendered = {
             let mut out = Vec::new();
             let mut cache = ("w.bynk", ariadne::Source::from(source));
@@ -286,11 +282,7 @@ mod warning_channel_tests {
             "a warning-severity category must not render as `Error:`, got:\n{rendered}"
         );
 
-        let err = CompileError::new(
-            "bynk.types.argument_mismatch",
-            Span::default(),
-            "mismatch",
-        );
+        let err = CompileError::new("bynk.types.argument_mismatch", Span::default(), "mismatch");
         let rendered_err = {
             let mut out = Vec::new();
             let mut cache = ("w.bynk", ariadne::Source::from(source));

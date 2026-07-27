@@ -9,7 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use bynk_emit::project::{self, CompileOptions, ProjectPathsError, read_project_paths, try_read_project_paths};
+use bynk_emit::project::{
+    self, CompileOptions, ProjectPathsError, read_project_paths, try_read_project_paths,
+};
 use bynk_fmt::{FormatOptions, format_source};
 
 /// Root a directory project the way every project command should (#46): a
@@ -82,10 +84,15 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
 /// (mirroring `ProjectFailure::snapshots`) make that possible. A warning whose
 /// source isn't attributable (or doesn't fit the snapshot) falls back to the
 /// plain `warning[<category>]: <message>` form.
-pub fn print_project_warnings(warnings: &[project::AttributedError], snapshots: &[(PathBuf, String)]) {
+pub fn print_project_warnings(
+    warnings: &[project::AttributedError],
+    snapshots: &[(PathBuf, String)],
+) {
     for w in warnings {
         match attributed_snapshot(w, snapshots) {
-            Some((label, text)) => bynk_render::print_errors(std::slice::from_ref(&w.error), text, &label),
+            Some((label, text)) => {
+                bynk_render::print_errors(std::slice::from_ref(&w.error), text, &label)
+            }
             None => {
                 let where_ = w
                     .source_path

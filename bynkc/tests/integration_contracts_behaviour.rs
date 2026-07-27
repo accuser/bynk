@@ -46,7 +46,10 @@ fn contracts_survive_the_integration_workers_recompile() {
     // integration re-compile (`BuildTarget::Workers`) is what writes it —
     // this is the exact module the bug's from-scratch `CompileOptions`
     // rebuild would have compiled with `contracts: false`.
-    let handlers = out_root.join("workers").join("shop-payment").join("handlers.ts");
+    let handlers = out_root
+        .join("workers")
+        .join("shop-payment")
+        .join("handlers.ts");
     let ts = std::fs::read_to_string(&handlers)
         .unwrap_or_else(|e| panic!("could not read {}: {e}", handlers.display()));
     // (Backtick-quoted in the emitted JS template literal, so checked as

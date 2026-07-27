@@ -42,7 +42,10 @@ fn project_warning_format_short_consults_short_and_has_position() {
     let fixture = "tests/fixtures/behaviour/warning_severity";
 
     let (ok, plain) = run_check(fixture, &[]);
-    assert!(ok, "a warning-only project build must exit 0, got:\n{plain}");
+    assert!(
+        ok,
+        "a warning-only project build must exit 0, got:\n{plain}"
+    );
     assert!(
         plain.contains("Warning:") && !plain.contains("Error:"),
         "expected an ariadne `Warning:` report for the project's unused `given`, got:\n{plain}"
