@@ -658,6 +658,60 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
     b.statements.iter().any(stmt) || expr(&b.tail)
 }
 
+/// Events track, slice 0 (spine #936): does this block contain an
+/// `Events.emit[...]` call anywhere — including nested branches, match arms,
+/// and lambdas? Gates release-at-commit buffer threading (`deps.__events`)
+/// so a handler that never emits keeps byte-identical output, mirroring
+/// `block_uses_send`'s gate on `deps.__exec`. Syntactic, like its sibling: it
+/// matches a bare-`Events`-receiver `.emit` call by name, not by resolving
+/// the receiver against `given` — a locally-shadowed `Events` would be a
+/// false positive, an accepted approximation matching `block_uses_send`'s
+/// own precedent (it doesn't verify `~>`'s target either).
+pub(crate) fn block_uses_emit(b: &Block) -> bool {
+    fn is_events_emit_call(receiver: &Expr, method: &Ident) -> bool {
+        matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "Events") && method.name == "emit"
+    }
+    fn stmt(s: &Statement) -> bool {
+        match s {
+            Statement::Send(_) => false,
+            Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
+            Statement::Expect(a) => expr(&a.value),
+            Statement::Do(d) => expr(&d.value),
+            Statement::Assign(a) => expr(&a.value),
+        }
+    }
+    fn expr(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                is_events_emit_call(receiver, method)
+                    || expr(receiver)
+                    || args.iter().any(expr)
+            }
+            ExprKind::Block(b) => block_uses_emit(b),
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => expr(cond) || block_uses_emit(then_block) || block_uses_emit(else_block),
+            ExprKind::Match { discriminant, arms } => {
+                expr(discriminant)
+                    || arms.iter().any(|a| match &a.body {
+                        MatchBody::Expr(e) => expr(e),
+                        MatchBody::Block(b) => block_uses_emit(b),
+                    })
+            }
+            ExprKind::Lambda(l) => expr(&l.body),
+            _ => false,
+        }
+    }
+    b.statements.iter().any(stmt) || expr(&b.tail)
+}
+
 /// v0.81–v0.87: does this block write durable state — a `:=` `Cell` write, a
 /// mutating storage-`Map`/`Cache` op (`put`/`remove`/`update`/`upsert`), or a
 /// The names of an agent's `store` fields grouped by kind:

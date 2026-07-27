@@ -4009,6 +4009,14 @@ fn handler_cross_caps(
     let mut out = std::collections::BTreeMap::new();
     let mut scan = |given: &[CapRef]| {
         for c in given {
+            // Events track, slice 0 (spine #936): `Events.emit` is
+            // intercepted entirely at the call site (release-at-commit
+            // buffering) and never calls through a constructed provider —
+            // there is no `EventsProvider` for compose to build, so the
+            // first-party `Events` must never become a compose deps entry.
+            if c.key() == "Events" && flattened.get(c.key()).map(String::as_str) == Some("bynk") {
+                continue;
+            }
             if let Some(p) = c.prefix() {
                 if let Some(ctx) = resolve_consume_prefix(&p, consumed, aliases) {
                     out.entry(c.key().to_string()).or_insert(ctx);
@@ -4141,6 +4149,14 @@ fn plan_agent_given_deps(
             std::collections::BTreeMap::new();
         for h in &a.handlers {
             for g in &h.given {
+                // Events track, slice 0 (spine #936): see the matching skip
+                // in `handler_cross_caps` — no `EventsProvider` exists for
+                // compose (or a synthesised DO's own reconstructed deps) to
+                // build.
+                if g.key() == "Events" && info.flattened.get(g.key()).map(String::as_str) == Some("bynk")
+                {
+                    continue;
+                }
                 caps.entry(g.key().to_string()).or_insert_with(|| g.clone());
             }
         }

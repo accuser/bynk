@@ -1660,12 +1660,35 @@ pub(crate) fn emit_service(
             params = params.join(", "),
         )
         .unwrap();
+        // Events track, slice 0 (spine #936): release-at-commit (events.md
+        // §3.0) needs a completion boundary services never had before — the
+        // body runs inside an IIFE so its own `return`s resolve `__result`
+        // rather than the outer method, and only a handler that completes
+        // without throwing reaches past it. `__events` is buffered here but
+        // not yet flushed anywhere: the fanout dispatch (the Cloudflare DO /
+        // non-Cloudflare equivalent that actually delivers it) is #939's
+        // next remaining piece. Gated on `block_uses_emit` so a handler that
+        // never emits keeps byte-identical output, mirroring `__exec`'s gate
+        // on `block_uses_send`.
+        let uses_emit = crate::emitter::block_uses_emit(&handler.body);
+        if uses_emit {
+            writeln!(
+                out,
+                "    const __events: Array<{{ type: string; payload: unknown }}> = [];"
+            )
+            .unwrap();
+            writeln!(out, "    const __result = await (async () => {{").unwrap();
+        }
         let base = out.len();
         out.push_str(&body_out);
         if let Some(module) = source_map {
             module
                 .borrow_mut()
                 .merge(&body_smb.borrow(), &body_out, out, base, 0);
+        }
+        if uses_emit {
+            writeln!(out, "    }})();").unwrap();
+            writeln!(out, "    return __result;").unwrap();
         }
         writeln!(out, "  }},").unwrap();
     }
@@ -1708,6 +1731,17 @@ pub(crate) fn cross_context_caps_used(
         };
         for h in handlers {
             for c in &h.given {
+                // Events track, slice 0 (spine #936): `Events.emit` is
+                // intercepted entirely at the call site (release-at-commit
+                // buffering) and never calls through a constructed provider
+                // — unlike every other capability, there is no
+                // `EventsProvider` for compose to build, so the first-party
+                // `Events` must not appear in any context's deps interface.
+                let is_first_party_events =
+                    c.key() == "Events" && info.flattened_caps.get(c.key()).map(String::as_str) == Some("bynk");
+                if is_first_party_events {
+                    continue;
+                }
                 if let Some(prefix) = c.prefix() {
                     if let Some(consumed) = info.resolve_prefix(&prefix) {
                         seen.entry(c.key().to_string()).or_insert(consumed);
@@ -1771,6 +1805,19 @@ fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
             out.push(cap.clone());
         }
     }
+    // Events track, slice 0 (spine #936): `Events.emit` is intercepted
+    // entirely at the call site (release-at-commit buffering; see the
+    // `Events`/`emit` special case in `lower.rs`) and never calls through a
+    // constructed provider — unlike every other capability, there is no
+    // `EventsProvider` for compose to build. So `Events` must not appear in
+    // `deps` at all, or compose would need to construct a provider that
+    // doesn't exist. Filtered the same way #934 distinguishes a genuine
+    // first-party `Events` from an unrelated same-named capability.
+    out.retain(|c| {
+        c.key() != "Events"
+            || !(cx.in_bynk_unit
+                || cx.cross_context.flattened_caps.get(c.key()).map(String::as_str) == Some("bynk"))
+    });
     out
 }
 
@@ -3149,6 +3196,13 @@ pub(crate) fn emit_agent(
                     .merge(&body_smb.borrow(), &body_out, out, base, 0);
             }
         };
+        // Events track, slice 0 (spine #936): the same release-at-commit
+        // buffer the service path declares (see `emit_service`'s
+        // `block_uses_emit` gate) — an agent handler needs the same
+        // completion boundary, and a writing store-agent already has one
+        // (`commitState`), so `__events` just rides alongside it there.
+        let uses_emit = crate::emitter::block_uses_emit(&h.body);
+        let events_decl = "    const __events: Array<{ type: string; payload: unknown }> = [];";
         if is_store_agent {
             if writes_state {
                 writeln!(
@@ -3156,15 +3210,32 @@ pub(crate) fn emit_agent(
                     "    const __state = {{ ...(await this.loadState()) }};"
                 )
                 .unwrap();
+                if uses_emit {
+                    writeln!(out, "{events_decl}").unwrap();
+                }
                 writeln!(out, "    const __result = await (async () => {{").unwrap();
                 splice(out);
                 writeln!(out, "    }})();").unwrap();
                 writeln!(out, "    await this.commitState(__state);").unwrap();
                 writeln!(out, "    return __result;").unwrap();
+            } else if uses_emit {
+                writeln!(out, "    const __state = await this.loadState();").unwrap();
+                writeln!(out, "{events_decl}").unwrap();
+                writeln!(out, "    const __result = await (async () => {{").unwrap();
+                splice(out);
+                writeln!(out, "    }})();").unwrap();
+                writeln!(out, "    return __result;").unwrap();
             } else {
                 writeln!(out, "    const __state = await this.loadState();").unwrap();
                 splice(out);
             }
+        } else if uses_emit {
+            writeln!(out, "    const currentState = await this.loadState();").unwrap();
+            writeln!(out, "{events_decl}").unwrap();
+            writeln!(out, "    const __result = await (async () => {{").unwrap();
+            splice(out);
+            writeln!(out, "    }})();").unwrap();
+            writeln!(out, "    return __result;").unwrap();
         } else {
             writeln!(out, "    const currentState = await this.loadState();").unwrap();
             splice(out);
