@@ -26,7 +26,7 @@ export default {
       {
         if (method === "POST" && path === "/bump") {
           const result = await surface.http_POST_bump();
-          return applySecurityHeaders(httpResultToResponse(result, (v: any) => v as JsonValue), __security_api);
+          return applySecurityHeaders(httpResultToResponse(result, (__v: any) => __v as JsonValue), __security_api);
         }
       }
       if (path === "/bump") {

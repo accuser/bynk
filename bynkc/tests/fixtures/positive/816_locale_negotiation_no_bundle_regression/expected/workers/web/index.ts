@@ -24,7 +24,7 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/greet") {
           const result = await surface.http_GET_greet();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __security_api);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

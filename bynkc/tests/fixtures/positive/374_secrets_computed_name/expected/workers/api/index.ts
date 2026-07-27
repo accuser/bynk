@@ -27,7 +27,7 @@ export default {
           const __raw_which = __m.params["which"];
           const which = __raw_which;
           const result = await surface.http_GET_secret_Param_which(which);
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __security_api);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

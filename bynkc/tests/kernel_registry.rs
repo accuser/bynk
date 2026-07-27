@@ -68,6 +68,82 @@ fn kernel_registry_pins_dispatch() {
     );
 }
 
+/// The match-arm method names inside `check_list_kernel_method`'s real
+/// source — the checker's actual `List` dispatch table. Scraped by regex
+/// (the same technique `diagnostics_registry.rs` uses to keep the diagnostic
+/// registry honest against emit sites) rather than duplicated by hand, so
+/// this can't itself drift from what the checker accepts.
+fn list_kernel_dispatch_arm_names() -> std::collections::BTreeSet<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../bynk-check/src/checker/kernels.rs");
+    let text = std::fs::read_to_string(&path).expect("read checker/kernels.rs");
+    let start = text
+        .find("fn check_list_kernel_method")
+        .expect("find check_list_kernel_method");
+    let after = &text[start..];
+    let open = after.find('{').expect("find opening brace");
+    let mut depth = 0i32;
+    let mut end = None;
+    for (i, c) in after[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(open + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &after[..end.expect("find matching closing brace") + 1];
+
+    // A quoted method name immediately followed by `|` (another alternative
+    // in the same arm), `=>`, or an `if` guard — the three ways a match-arm
+    // pattern can end. Nested matches/guards elsewhere in the body use no
+    // quoted string in that position, so this doesn't pick up false matches.
+    let re = regex::Regex::new(r#""([a-zA-Z]+)"\s*(\||=>|if\b)"#).unwrap();
+    let mut names: std::collections::BTreeSet<String> =
+        re.captures_iter(body).map(|c| c[1].to_string()).collect();
+    // These arms dispatch via `builtin_names::methods` constants (bare
+    // identifiers, not string literals), so the textual scan above can't see
+    // them — added by their known constant values instead.
+    for known in [
+        "foldEff",
+        "forEach",
+        "parTraverse",
+        "traverseAll",
+        "parTraverseAll",
+        "traverseTry",
+        "parTraverseTry",
+    ] {
+        names.insert(known.to_string());
+    }
+    names
+}
+
+/// The direction `kernel_registry_pins_dispatch` can't check: a method the
+/// checker's `List` dispatch accepts but `LIST_METHODS` doesn't list — how
+/// `join`/`joinOn`/`leftJoin`/`groupBy` (ADR 0116/0120) fell behind
+/// `QUERY_METHODS`' copy of the same vocabulary undetected. `upTo` is the one
+/// deliberate exception: a History-only accessor gated on the element being a
+/// synthesised `__History_*_Step` record, not a general `List` method.
+#[test]
+fn list_kernel_registry_has_no_undocumented_methods() {
+    let dispatched = list_kernel_dispatch_arm_names();
+    let registered: std::collections::BTreeSet<String> =
+        LIST_METHODS.iter().map(|m| m.name.to_string()).collect();
+    let missing: Vec<&String> = dispatched
+        .difference(&registered)
+        .filter(|n| n.as_str() != "upTo")
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "check_list_kernel_method accepts method(s) LIST_METHODS doesn't list: {missing:?}"
+    );
+}
+
 #[test]
 fn registries_are_well_formed() {
     for methods in [

@@ -24,7 +24,7 @@ export default {
       {
         if (method === "POST" && path === "/blobs") {
           const result = await surface.http_POST_blobs(request);
-          return applySecurityHeaders(httpResultToResponse(result, (v: any) => v as JsonValue), __security_api);
+          return applySecurityHeaders(httpResultToResponse(result, (__v: any) => __v as JsonValue), __security_api);
         }
       }
       if (path === "/blobs") {

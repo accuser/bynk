@@ -1309,7 +1309,7 @@ fn emit_http_route_dispatch(
     );
     let _ = route.service.as_str();
     let inner = http_result_inner(&h.return_type);
-    let ser_fn = http_value_serialiser(&inner);
+    let ser_fn = crate::emitter::serialisation::serialise_ref_via(&inner, "handlers.", ru);
     // v0.140 (ADR 0163): a `GET` response carries a weak `ETag` (an `Ok` body gets
     // the validator via `weakEtag`), an optional `@cache` `Cache-Control`
     // (`applyCache`), and is answered `304` when the request revalidates
@@ -1521,45 +1521,6 @@ fn http_result_inner(t: &TypeRef) -> TypeRef {
     }
 }
 
-/// TypeScript expression that serialises a value of the `HttpResult[T]`
-/// payload type to a `JsonValue`. Wraps the per-type serialise helper for
-/// named types; uses pass-through for base types.
-fn http_value_serialiser(t: &TypeRef) -> String {
-    match t {
-        TypeRef::Base(_, _) => "(v: any) => v as JsonValue".to_string(),
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        // v0.174 (#592): a generic-record instantiation delegates to its
-        // monomorphised codec.
-        TypeRef::App { .. } => {
-            let inst_name = inner_ts_name(t);
-            format!("handlers.serialise_{inst_name}")
-        }
-        TypeRef::Unit(_) => "(_v: any) => null".to_string(),
-        TypeRef::Named(id) => format!("handlers.serialise_{}", id.name),
-        TypeRef::Result(_, _, _)
-        | TypeRef::Option(_, _)
-        | TypeRef::List(_, _)
-        | TypeRef::Map(_, _, _) => {
-            let inst_name = inner_ts_name(t);
-            format!("handlers.serialise_{inst_name}")
-        }
-        TypeRef::Effect(inner, _) => http_value_serialiser(inner),
-        TypeRef::HttpResult(_, _)
-        | TypeRef::QueueResult(_)
-        | TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_) => "(v: any) => v as JsonValue".to_string(),
-    }
-}
-
 /// v0.176 (#642): the callee side of the workers cross-context boundary. Both
 /// of these used to be a *parallel* dispatch that shadowed
 /// `serialisation.rs`'s — and drifted from it. `serialise_call` cast a `Bytes`
@@ -1578,43 +1539,6 @@ pub(crate) fn deserialise_call(
 
 fn serialise_call(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
     crate::emitter::serialisation::serialise_expr_via(t, value, "handlers.", ru)
-}
-
-fn inner_ts_name(t: &TypeRef) -> String {
-    match t {
-        TypeRef::Base(b, _) => b.name().to_string(),
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        // v0.174 (#592): a generic-record instantiation names its monomorphised
-        // codec — `Paginated[User]` → `Paginated_User`.
-        TypeRef::App { name, args, .. } => {
-            let mut s = name.name.clone();
-            for a in args {
-                s.push('_');
-                s.push_str(&inner_ts_name(a));
-            }
-            s
-        }
-        TypeRef::Named(id) => id.name.clone(),
-        TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),
-        TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),
-        TypeRef::Effect(a, _) => format!("Effect_{}", inner_ts_name(a)),
-        TypeRef::HttpResult(a, _) => format!("HttpResult_{}", inner_ts_name(a)),
-        TypeRef::List(a, _) => format!("List_{}", inner_ts_name(a)),
-        TypeRef::Map(k, v, _) => format!("Map_{}_{}", inner_ts_name(k), inner_ts_name(v)),
-        TypeRef::QueueResult(_) => "QueueResult".to_string(),
-        TypeRef::ValidationError(_) => "ValidationError".to_string(),
-        TypeRef::JsonError(_) => "JsonError".to_string(),
-        TypeRef::Unit(_) => "Unit".to_string(),
-    }
 }
 
 /// v0.176 (#642): re-assert a deserialised value into this context's *branded*

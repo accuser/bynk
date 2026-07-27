@@ -579,49 +579,10 @@ fn emit_inline_refinement_checks(
 /// owner-side one; only the error envelope differs (`BoundaryError` here,
 /// `ValidationError` there).
 fn emit_inline_pred_check(out: &mut String, pred: &PredKind, violation: &dyn Fn(&str) -> String) {
-    let mut check = |cond: &str, msg: String| {
-        writeln!(out, "  if (!({cond})) {{").unwrap();
-        writeln!(out, "    {}", violation(&msg)).unwrap();
-        writeln!(out, "  }}").unwrap();
-    };
-    match pred {
-        PredKind::NonNegative => check("json >= 0", "must be non-negative".to_string()),
-        PredKind::Positive => check("json > 0", "must be positive".to_string()),
-        PredKind::InRange(a, b) => {
-            let (a, b) = (a.value, b.value);
-            check(
-                &format!("json >= {a} && json <= {b}"),
-                format!("must be in range [{a}, {b}]"),
-            );
-        }
-        PredKind::InRangeF(a, b) => {
-            let (a, b) = (&a.lexeme, &b.lexeme);
-            check(
-                &format!("json >= {a} && json <= {b}"),
-                format!("must be in range [{a}, {b}]"),
-            );
-        }
-        PredKind::NonEmpty => check("json.length > 0", "must be non-empty".to_string()),
-        PredKind::MinLength(n) => check(
-            &format!("json.length >= {n}"),
-            format!("length must be at least {n}"),
-        ),
-        PredKind::MaxLength(n) => check(
-            &format!("json.length <= {n}"),
-            format!("length must be at most {n}"),
-        ),
-        PredKind::Length(n) => check(
-            &format!("json.length === {n}"),
-            format!("length must be exactly {n}"),
-        ),
-        PredKind::Matches(pat) => {
-            let escaped = super::escape_ts_string(pat);
-            check(
-                &format!("new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test(json)"),
-                format!("must match /{}/", super::escape_ts_string(pat)),
-            );
-        }
-    }
+    let (cond, msg) = super::pred_condition_and_message(pred, "json");
+    writeln!(out, "  if (!({cond})) {{").unwrap();
+    writeln!(out, "    {}", violation(&msg)).unwrap();
+    writeln!(out, "  }}").unwrap();
 }
 
 fn emit_record(out: &mut String, name: &str, body: &RecordBody, qual: &Qual, ru: &RuntimeUse) {
@@ -1193,6 +1154,27 @@ pub fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
         other => format!(
             "(__j: JsonValue) => {}",
             deserialise_expr_via(other, "__j", "$", ns, ru)
+        ),
+    }
+}
+
+/// v0.176 (#642) follow-up: a serialise **reference** for `ns`, shaped to
+/// `httpResultToResponse`'s serialiser parameter — the mirror image of
+/// `deserialise_ref_via` above. Replaces `workers_entry.rs`'s
+/// `http_value_serialiser`, a parallel dispatch that collapsed every base type
+/// to `(v: any) => v as JsonValue`, dropping the `Float` non-finite guard and
+/// `Bytes` base64 encoding that `serialise_field_expr_via` already carries.
+pub fn serialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
+    match strip_effect(t) {
+        TypeRef::Named(id) => format!("{ns}serialise_{}", id.name),
+        t @ (TypeRef::Result(..)
+        | TypeRef::Option(..)
+        | TypeRef::List(..)
+        | TypeRef::Map(..)
+        | TypeRef::App { .. }) => format!("{ns}serialise_{}", inner_ts_name(t)),
+        other => format!(
+            "(__v: any) => {}",
+            serialise_field_expr_via(other, "__v", ns, ru)
         ),
     }
 }

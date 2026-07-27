@@ -28,28 +28,28 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/config") {
           const result = await surface.http_GET_config();
-          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(applyCache(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), 300, "public"), request), __cors_api, request.headers.get("origin")), __security_api);
+          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(applyCache(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), 300, "public"), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/plain") {
           const result = await surface.http_GET_plain();
-          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
+          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/private") {
           const result = await surface.http_GET_private();
-          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(applyCache(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), 30, "private"), request), __cors_api, request.headers.get("origin")), __security_api);
+          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(applyCache(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), 30, "private"), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/ticks") {
           const result = await surface.http_GET_ticks();
-          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (_v: any) => null, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
+          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => null, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
@@ -65,7 +65,7 @@ export default {
           if (__r_body.tag === "Err") return applySecurityHeaders(applyCors(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __cors_api, request.headers.get("origin")), __security_api);
           const body = __r_body.value;
           const result = await surface.http_POST_items(body);
-          return applySecurityHeaders(applyCors(httpResultToResponse(result, (v: any) => v as JsonValue), __cors_api, request.headers.get("origin")), __security_api);
+          return applySecurityHeaders(applyCors(httpResultToResponse(result, (__v: any) => __v as JsonValue), __cors_api, request.headers.get("origin")), __security_api);
         }
       }
       if (path === "/config") {

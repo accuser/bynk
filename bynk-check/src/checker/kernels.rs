@@ -4,6 +4,7 @@
 //! re-exports these via `use kernels::*`.
 
 use super::*;
+use crate::kernel_methods::LIST_METHODS;
 
 /// v0.20b: `List.empty()` / `Map.empty()` — the built-in collection statics.
 /// Their element/key/value types are exactly as uninferable as an empty
@@ -739,11 +740,19 @@ pub(crate) fn check_list_kernel_method(
             Some(Ty::List(Box::new(elem.clone())))
         }
         _ => {
+            // Generated from `LIST_METHODS` (v0.30.2, ADR 0063) rather than
+            // hand-listed here, so the two can't drift the way this message
+            // and the table's `join`/`joinOn`/`leftJoin`/`groupBy` once did.
+            let kernel = LIST_METHODS
+                .iter()
+                .map(|k| format!("`{}`", k.name))
+                .collect::<Vec<_>>()
+                .join(", ");
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, `parTraverseAll`, `traverseTry`, `parTraverseTry`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is {kernel}",
                     elem.display(),
                     method.name
                 ),

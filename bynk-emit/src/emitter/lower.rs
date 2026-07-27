@@ -4055,7 +4055,68 @@ fn decode_map_key(k: Option<&Ty>, raw: &str) -> String {
     };
     match base {
         Some(BaseType::Int) => format!("Number({raw})"),
-        _ => raw.to_string(),
+        Some(BaseType::String) => raw.to_string(),
+        // #70/#71 review: `resolver.rs`'s `check_map_key_keyable` and
+        // `validate.rs`'s `@indexed`-field check both gate value-keyability
+        // (ADR 0110 D5) on exactly `String`/`Int` — the same pair this match
+        // now names explicitly. If either of those independent copies ever
+        // widens the accepted set without this one being taught the new
+        // type's wire shape, silently falling through to bare `raw` would
+        // *miscompile* rather than reject — e.g. a `Bool` key needs
+        // `raw === "true"`, not the raw string. Fail loudly instead.
+        Some(other) => unreachable!(
+            "map key base type {other:?} is not value-keyable (ADR 0110 D5) — \
+             decode_map_key has no wire-decode case for it"
+        ),
+        None => raw.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod decode_map_key_tests {
+    use super::*;
+
+    #[test]
+    fn int_key_is_parsed_with_number() {
+        assert_eq!(
+            decode_map_key(Some(&Ty::Base(BaseType::Int)), "k"),
+            "Number(k)"
+        );
+    }
+
+    #[test]
+    fn string_key_passes_through() {
+        assert_eq!(decode_map_key(Some(&Ty::Base(BaseType::String)), "k"), "k");
+    }
+
+    #[test]
+    fn refined_int_key_is_parsed_with_number() {
+        let refined = Ty::Named {
+            name: "UserId".to_string(),
+            kind: NamedKind::Refined(BaseType::Int),
+            args: Vec::new(),
+        };
+        assert_eq!(decode_map_key(Some(&refined), "k"), "Number(k)");
+    }
+
+    #[test]
+    fn opaque_string_key_passes_through() {
+        let opaque = Ty::Named {
+            name: "Slug".to_string(),
+            kind: NamedKind::Opaque(BaseType::String),
+            args: Vec::new(),
+        };
+        assert_eq!(decode_map_key(Some(&opaque), "k"), "k");
+    }
+
+    // #70/#71 review: a non-`String`/`Int` base reaching here means the
+    // value-keyable set widened elsewhere (`resolver.rs`/`validate.rs`)
+    // without teaching this decode the new type's wire shape — it must fail
+    // loudly, not silently emit a wrong pass-through.
+    #[test]
+    #[should_panic(expected = "is not value-keyable")]
+    fn a_widened_non_string_int_base_panics_instead_of_silently_passing_through() {
+        decode_map_key(Some(&Ty::Base(BaseType::Bool)), "k");
     }
 }
 

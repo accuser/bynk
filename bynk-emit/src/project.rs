@@ -67,7 +67,6 @@ pub use paths::{
 };
 pub use symbols::{FileDeclIndex, UnitTable};
 pub use validate::check_function_type_boundary_items;
-pub(crate) use validate::type_refs_match;
 pub(crate) use validate::{collect_type_decls, type_ref_is_held};
 
 /// One generated TypeScript file.
@@ -2231,10 +2230,36 @@ fn phase_validate_providers(
                     ));
                     continue;
                 }
-                for (i, (cap_p, prov_p)) in
-                    cap_op.params.iter().zip(prov_op.params.iter()).enumerate()
+                // Resolved-`Ty` equality, not surface-syntax comparison: two
+                // signatures that spell a type differently (an alias, or a
+                // generic application written out) but resolve to the same
+                // `Ty` must not be flagged as a mismatch, and — the bug this
+                // replaces — a `TypeRef` shape `type_refs_match` didn't cover
+                // (List/Map/Query/Stream/Connection/…) must not be silently
+                // treated as *matching* just because it fell through to
+                // `_ => false` on both sides of an `!`. A Bynk-bodied
+                // provider op has no type params of its own (checked above),
+                // so its params/return type resolve with no vars in scope.
+                let cap_info = build_capability_op_info(cap_op, &table.types);
+                let no_vars = HashSet::new();
+                let prov_params: Vec<Ty> = prov_op
+                    .params
+                    .iter()
+                    .map(|p| {
+                        checker::resolve_type_ref_in(&p.type_ref, &table.types, &no_vars)
+                            .unwrap_or(Ty::Unit)
+                    })
+                    .collect();
+                let prov_return_ty =
+                    checker::resolve_type_ref_in(&prov_op.return_type, &table.types, &no_vars)
+                        .unwrap_or(Ty::Unit);
+                for (i, (cap_ty, (prov_p, prov_ty))) in cap_info
+                    .params
+                    .iter()
+                    .zip(prov_op.params.iter().zip(prov_params.iter()))
+                    .enumerate()
                 {
-                    if !type_refs_match(&cap_p.type_ref, &prov_p.type_ref) {
+                    if cap_ty != prov_ty {
                         errors.push_for(provider_file, CompileError::new(
                             "bynk.provider.signature_mismatch",
                             prov_p.span,
@@ -2244,12 +2269,12 @@ fn phase_validate_providers(
                                 prov_op.name.name,
                                 i + 1,
                                 ts_type_ref_display(&prov_p.type_ref),
-                                ts_type_ref_display(&cap_p.type_ref)
+                                ts_type_ref_display(&cap_op.params[i].type_ref)
                             ),
                         ));
                     }
                 }
-                if !type_refs_match(&cap_op.return_type, &prov_op.return_type) {
+                if cap_info.return_ty != prov_return_ty {
                     errors.push_for(provider_file, CompileError::new(
                         "bynk.provider.signature_mismatch",
                         prov_op.return_type.span(),
@@ -2545,24 +2570,26 @@ fn collect_history_target_agents(parsed: &[ParsedFile]) -> HashSet<String> {
 /// mode (the caller's analyse-mode `continue` gates this off); the block is
 /// straight-line with no `continue`s of its own.
 #[allow(clippy::too_many_arguments)]
-fn emit_unit(
+/// Emit-prologue tables that depend only on the *unit* (`name`/`unit_info`/
+/// `target`) — never on which file within the unit is being emitted. Building
+/// one of these once per unit, ahead of the per-file loop, replaces what used
+/// to be an identical rebuild (several nested nested loops over `unit_info`)
+/// on every emitted file of a multi-file context.
+struct EmitUnitCtx {
+    imported_methods: HashMap<String, Vec<FnDecl>>,
+    /// The workers-mode-rewritten view is the only one `emit_unit` reads —
+    /// the pre-rewrite table is an intermediate of computing it, not exposed
+    /// separately.
+    imported_decl_paths_emit: HashMap<String, HashMap<String, PathBuf>>,
+    exports_for_consumed: HashMap<String, HashMap<String, Visibility>>,
+    file_decl_index: FileDeclIndex,
+}
+
+fn build_emit_unit_ctx(
     name: &str,
-    kind: UnitKind,
-    pf: &ParsedFile,
-    parsed: &[ParsedFile],
     unit_info: &BTreeMap<String, UnitInfo>,
-    imported_from: &HashMap<String, String>,
-    imported_from_kind: &HashMap<String, UnitKind>,
-    owning_context_for_emit: &Option<String>,
-    cross_context_for_file: &resolver::CrossContextInfo,
-    typed: &checker::TypedCommons,
     target: BuildTarget,
-    import_ext: ImportExt,
-    contracts: bool,
-    agent_deps_plan: Option<&AgentDepsPlan>,
-    compiled: &mut Vec<CompiledFile>,
-) {
-    // Build the emitter context.
+) -> EmitUnitCtx {
     let info = &unit_info[name];
     // v0.132.1 (#481): gather the attached methods of every `uses`-imported type
     // (one level, matching the symbol-table merge). `emit_context_rebrands`
@@ -2630,22 +2657,11 @@ fn emit_unit(
             )
         })
         .collect();
-    let cross_context_info = cross_context_for_file.clone();
 
-    // v0.8: in workers mode, a context's *output* lands under
-    // workers/<dashes>/handlers.ts. Use that path as the synthetic
-    // source_path so the emitter's depth/relative-path logic and
-    // imported_decl_paths produce correct relative imports.
-    let workers_mode = matches!(target, BuildTarget::Workers);
-    let emit_source_path = if workers_mode && kind == UnitKind::Context {
-        worker_handlers_source_path(name)
-    } else {
-        pf.source_path.clone()
-    };
     // In workers mode, rewrite imported_decl_paths for consumed
     // contexts to point at the consumed Worker's handlers.ts.
     let mut imported_decl_paths_emit = imported_decl_paths.clone();
-    if workers_mode {
+    if matches!(target, BuildTarget::Workers) {
         for (unit, decls) in imported_decl_paths.iter() {
             let target_kind = unit_info.get(unit).map(|i| i.kind);
             if target_kind == Some(UnitKind::Context) {
@@ -2658,6 +2674,48 @@ fn emit_unit(
             }
         }
     }
+
+    EmitUnitCtx {
+        imported_methods,
+        imported_decl_paths_emit,
+        exports_for_consumed,
+        file_decl_index: info.file_index.clone(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_unit(
+    name: &str,
+    kind: UnitKind,
+    pf: &ParsedFile,
+    unit_ctx: &EmitUnitCtx,
+    history_target_agents: &HashSet<String>,
+    unit_info: &BTreeMap<String, UnitInfo>,
+    imported_from: &HashMap<String, String>,
+    imported_from_kind: &HashMap<String, UnitKind>,
+    owning_context_for_emit: &Option<String>,
+    cross_context_for_file: &resolver::CrossContextInfo,
+    typed: &checker::TypedCommons,
+    target: BuildTarget,
+    import_ext: ImportExt,
+    contracts: bool,
+    agent_deps_plan: Option<&AgentDepsPlan>,
+    compiled: &mut Vec<CompiledFile>,
+) {
+    // Build the emitter context.
+    let info = &unit_info[name];
+    let cross_context_info = cross_context_for_file.clone();
+
+    // v0.8: in workers mode, a context's *output* lands under
+    // workers/<dashes>/handlers.ts. Use that path as the synthetic
+    // source_path so the emitter's depth/relative-path logic and
+    // imported_decl_paths produce correct relative imports.
+    let workers_mode = matches!(target, BuildTarget::Workers);
+    let emit_source_path = if workers_mode && kind == UnitKind::Context {
+        worker_handlers_source_path(name)
+    } else {
+        pf.source_path.clone()
+    };
 
     // message-bundles slice 1 (#859): a `messages` block's generated `render`
     // needs `bynk.locale`'s own `render` in scope for its fallback rung, but
@@ -2675,7 +2733,8 @@ fn emit_unit(
         .iter()
         .any(|it| matches!(it, CommonsItem::Messages(_)))
     {
-        let render_path = imported_decl_paths_emit
+        let render_path = unit_ctx
+            .imported_decl_paths_emit
             .get("bynk.locale")
             .and_then(|m| m.get("render"))
             .cloned()
@@ -2693,14 +2752,14 @@ fn emit_unit(
     let emit_ctx = EmitProjectCtx {
         source_path: emit_source_path,
         commons_name: name.to_string(),
-        file_decl_index: info.file_index.clone(),
+        file_decl_index: unit_ctx.file_decl_index.clone(),
         imported_from: imported_from.clone(),
         imported_from_kind: imported_from_kind.clone(),
-        imported_decl_paths: imported_decl_paths_emit,
+        imported_decl_paths: unit_ctx.imported_decl_paths_emit.clone(),
         unit_kind: kind,
         owning_context: owning_context_for_emit.clone(),
-        exports_for_consumed,
-        imported_methods,
+        exports_for_consumed: unit_ctx.exports_for_consumed.clone(),
+        imported_methods: unit_ctx.imported_methods.clone(),
         cross_context: cross_context_info,
         target,
         local_agents: info.table.agents.keys().cloned().collect(),
@@ -2736,7 +2795,7 @@ fn emit_unit(
             .collect(),
         import_ext,
         contracts,
-        history_target_agents: collect_history_target_agents(parsed),
+        history_target_agents: history_target_agents.clone(),
         runtime_use: Default::default(),
     };
     // v0.72: the map's `source` is the absolute path the compiler read the file
@@ -2786,6 +2845,7 @@ fn check_unit_files(
     import_ext: ImportExt,
     contracts: bool,
     agent_deps_plan: Option<&AgentDepsPlan>,
+    history_target_agents: &HashSet<String>,
     mode: Mode,
     errors: &mut ErrorSink,
     refs: &mut RefSink,
@@ -2795,6 +2855,9 @@ fn check_unit_files(
     requirements: &mut RequirementSink,
     compiled: &mut Vec<CompiledFile>,
 ) {
+    // Emit-prologue tables invariant across every file of this unit — built
+    // once here rather than once per file (see `EmitUnitCtx`).
+    let unit_ctx = build_emit_unit_ctx(name, unit_info, target);
     // v0.29.4: `build_cross_context_info` (and its `combined_types_for` helper)
     // is a general map-based function — the test-emission path calls it with
     // *synthetic* harness maps, not `unit_info` — so it keeps its parallel-map
@@ -3088,7 +3151,8 @@ fn check_unit_files(
             name,
             kind,
             pf,
-            parsed,
+            &unit_ctx,
+            history_target_agents,
             unit_info,
             imported_from,
             imported_from_kind,
@@ -3434,6 +3498,13 @@ fn run_checks(
     //       resolve+check per source file. --
     let mut compiled: Vec<CompiledFile> = Vec::new();
 
+    // v0.119 (testing track slice 7, ADR 0155): a project-wide fold over every
+    // parsed file, producing the identical `HashSet` regardless of which unit
+    // or file is currently emitting — computed once here rather than once per
+    // emitted file (`collect_history_target_agents` used to be called from
+    // inside the per-file emit prologue).
+    let history_target_agents = collect_history_target_agents(&parsed);
+
     for (name, info) in &unit_info {
         let kind = info.kind;
         let indices = info.files.as_slice();
@@ -3506,6 +3577,7 @@ fn run_checks(
             import_ext,
             contracts,
             agent_deps_plan.as_ref(),
+            &history_target_agents,
             mode,
             &mut errors,
             &mut refs,

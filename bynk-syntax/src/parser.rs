@@ -52,6 +52,40 @@ impl TriviaTable {
     fn take_epilogue(&mut self) -> Vec<String> {
         std::mem::take(&mut self.epilogue)
     }
+
+    /// True when every entry has been drained via `take_leading`/
+    /// `take_trailing`/`take_epilogue` — i.e. no comment was silently
+    /// dropped. Each harvest is already a `mem::take`, so anything still
+    /// present here is exactly the set of comments that never reached an
+    /// AST `Trivia` field.
+    ///
+    /// Deliberately **not** wired into a `debug_assert!` in the general parse
+    /// path: expressions carry no per-node trivia (§ "Comment trivia" in the
+    /// 2026-07-27 pipeline review), so an ordinary, valid program with a
+    /// comment inside a `match`/list/record/binop — a common, accepted
+    /// pattern `bynk-fmt`'s own comment-loss guard already handles
+    /// gracefully — would leave `leading`/`trailing` non-empty and trip it on
+    /// every compile, not just on formatting. Kept as a query for tooling
+    /// that wants to inspect drain state (e.g. a future lint) without
+    /// asserting on it here. [`Self::epilogue_is_empty`] is the narrower,
+    /// safe-to-assert check.
+    #[allow(dead_code)]
+    fn is_fully_drained(&self) -> bool {
+        self.leading.iter().all(Vec::is_empty)
+            && self.trailing.iter().all(Option::is_none)
+            && self.epilogue.is_empty()
+    }
+
+    /// True when no file-trailing comment was left stranded. Unlike
+    /// [`Self::is_fully_drained`], this is safe to assert unconditionally: a
+    /// clean file's epilogue is empty by construction (nothing pending at
+    /// EOF), and the one shape that legitimately populates it — a top-level
+    /// trailing comment — is drained by every parse path that calls
+    /// `take_epilogue`. A brace-form declaration that forgets to is exactly
+    /// the bug this catches.
+    fn epilogue_is_empty(&self) -> bool {
+        self.epilogue.is_empty()
+    }
 }
 
 /// Remove `Comment` trivia tokens from `tokens` and bin them into a
@@ -227,7 +261,15 @@ pub fn parse_unit_with_warnings(
     // ADR 0117: warnings (e.g. orphan doc blocks) ride alongside a successful
     // parse — severity governs gating at the caller, not here.
     match result {
-        Ok(u) => Ok((u, warnings)),
+        Ok(u) => {
+            // See `parse_units_with_warnings`: a file-trailing comment must
+            // have been drained by `take_epilogue`.
+            debug_assert!(
+                p.trivia.epilogue_is_empty(),
+                "a file-trailing comment was left undrained after a successful parse"
+            );
+            Ok((u, warnings))
+        }
         Err(mut errs) => {
             errs.append(&mut warnings);
             Err(errs)
@@ -284,6 +326,17 @@ pub fn parse_units_with_warnings(
             "expected `commons`, `context`, or `suite` to start the file, found end of file",
         )]);
     }
+    // A file-trailing comment must have been drained by `take_epilogue` — the
+    // one brace-form declarations forgot to call (a live comment-loss bug,
+    // not the fundamentally-unfixed expression-interior case: expressions
+    // carry no trivia at all, so asserting full drainage here would fire on
+    // any ordinary program with a comment inside a `match`/list/record, which
+    // `bynk-fmt`'s own comment-loss guard already handles gracefully rather
+    // than as a hard failure).
+    debug_assert!(
+        p.trivia.epilogue_is_empty(),
+        "a file-trailing comment was left undrained after a successful parse"
+    );
     Ok((units, warnings))
 }
 
@@ -1633,6 +1686,39 @@ mod tests {
         let src = "commons x\n\ntype T = Int where Positive\n-- afterword\n";
         let c = parse_str(src).unwrap();
         assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
+    }
+
+    #[test]
+    fn trailing_file_comment_after_a_brace_form_commons_is_not_dropped() {
+        // Regression: the brace form's item loop exits on `RBrace`, never
+        // reaching the fragment form's end-of-input case that drains the
+        // trivia table's epilogue — so a comment after the closing `}` was
+        // silently discarded (and, per `epilogue_is_empty`'s debug_assert,
+        // would panic a debug build instead of round-tripping through
+        // `bynk-fmt`).
+        let src = "commons x {\n  type T = Int where Positive\n}\n-- afterword\n";
+        let c = parse_str(src).unwrap();
+        assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
+    }
+
+    #[test]
+    fn trailing_file_comment_after_a_brace_form_context_is_not_dropped() {
+        // Same regression as the commons case, for `parse_context_brace`.
+        let src = "context x {\n  type T = Int where Positive\n}\n-- afterword\n";
+        let SourceUnit::Context(c) = parse_unit_str(src).unwrap() else {
+            panic!("expected context");
+        };
+        assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
+    }
+
+    #[test]
+    fn trailing_file_comment_after_a_brace_form_suite_is_not_dropped() {
+        // Same regression as the commons case, for `parse_test_brace`.
+        let src = "suite x {\n  case \"c\" {\n    expect 1 == 1\n  }\n}\n-- afterword\n";
+        let SourceUnit::Suite(s) = parse_unit_str(src).unwrap() else {
+            panic!("expected suite");
+        };
+        assert_eq!(s.trailing_comments, vec![" afterword".to_string()]);
     }
 
     // ---- #636: `if`/`match` condition vs record construction ----
