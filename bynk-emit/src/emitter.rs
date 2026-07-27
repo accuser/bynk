@@ -289,6 +289,21 @@ pub fn emit_project(
             emit_type(&mut out, t, commons, ctx);
         }
     }
+    // Events track, slice 0 (spine #936): an `event` is checker-visible as
+    // a type (via `EventDecl::as_type_decl`, so exports/consumes/
+    // construction all worked from day one), but nothing emitted its actual
+    // TS declaration — this loop only ever matched `CommonsItem::Type`, so
+    // a subscriber importing an event type across contexts (`from
+    // Events(E)`, or `E` named in a cross-context signature) got a real
+    // `tsc` "has no exported member" error. Reuses the identical synthetic
+    // `TypeDecl` the checker already builds.
+    for item in &commons.commons.items {
+        if let CommonsItem::Event(e) = item {
+            let t = e.as_type_decl();
+            smb.borrow_mut().record(out.len(), t.span);
+            emit_type(&mut out, &t, commons, ctx);
+        }
+    }
     for item in &commons.commons.items {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name

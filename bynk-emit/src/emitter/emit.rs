@@ -1646,6 +1646,37 @@ pub(crate) fn emit_service(
                 )
             };
         }
+        // Events track, slice 0 (spine #936): a handler whose body uses
+        // `Events.emit` receives a compose-supplied `__eventsDispatch`
+        // callback in its deps — the actual fanout delivery mechanism
+        // (a Cloudflare Durable Object per publishing context, or an
+        // in-process dispatch on Bundle/node) lives at the composition
+        // layer, which already knows how to build any capability's
+        // provider; the handler itself only needs to hand its buffered
+        // `__events` to whatever composed it. Mirrors `__exec`'s threading
+        // for `~>` exactly. Gated on more than this handler's own body: a
+        // handler with no direct `Events.emit` call but that invokes a
+        // *local agent* method which itself emits (`Ledger(id).bump(...)`)
+        // still needs `__eventsDispatch` threaded through, to hand onward —
+        // `cx.agent_given_caps_used` is exactly the existing mechanism that
+        // already propagates an invoked agent method's other `given`
+        // capabilities up to the caller (`effective_given`, just below);
+        // `Events` rides the same path since it's declared as an ordinary
+        // `given Events` on the agent handler.
+        let needs_events_dispatch = cx.is_first_party_events()
+            && (crate::emitter::block_uses_emit(&handler.body)
+                || cx.agent_given_caps_used.contains_key("Events"));
+        if needs_events_dispatch {
+            let field = "__eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>";
+            deps_ty = if deps_ty == "{}" {
+                format!("{{ {field} }}")
+            } else {
+                format!(
+                    "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_type_ref(&handler.return_type);
         let async_kw = if is_effectful_return(&handler.return_type) {
@@ -1664,15 +1695,15 @@ pub(crate) fn emit_service(
         // §3.0) needs a completion boundary services never had before — the
         // body runs inside an IIFE so its own `return`s resolve `__result`
         // rather than the outer method, and only a handler that completes
-        // without throwing reaches past it. `__events` is buffered here but
-        // not yet flushed anywhere: the fanout dispatch (the Cloudflare DO /
-        // non-Cloudflare equivalent that actually delivers it) is #939's
-        // next remaining piece. Gated on `block_uses_emit` so a handler that
-        // never emits keeps byte-identical output, mirroring `__exec`'s gate
-        // on `block_uses_send`.
-        let uses_emit =
-            cx.is_first_party_events() && crate::emitter::block_uses_emit(&handler.body);
-        if uses_emit {
+        // without throwing reaches past it, then flushes `__events` to
+        // whatever composed it (`deps.__eventsDispatch`, threaded above).
+        // Gated on `block_uses_emit` specifically (not the broader
+        // `needs_events_dispatch` above) — a handler that only *forwards*
+        // `__eventsDispatch` to an agent it calls has nothing of its own to
+        // buffer or flush, so it keeps byte-identical output, mirroring
+        // `__exec`'s gate on `block_uses_send`.
+        let body_emits_directly = crate::emitter::block_uses_emit(&handler.body);
+        if body_emits_directly {
             writeln!(
                 out,
                 "    const __events: Array<{{ type: string; payload: unknown }}> = [];"
@@ -1687,8 +1718,11 @@ pub(crate) fn emit_service(
                 .borrow_mut()
                 .merge(&body_smb.borrow(), &body_out, out, base, 0);
         }
-        if uses_emit {
+        if body_emits_directly {
             writeln!(out, "    }})();").unwrap();
+            writeln!(out, "    if (__events.length > 0) {{").unwrap();
+            writeln!(out, "      await deps.__eventsDispatch(__events);").unwrap();
+            writeln!(out, "    }}").unwrap();
             writeln!(out, "    return __result;").unwrap();
         }
         writeln!(out, "  }},").unwrap();
@@ -1711,6 +1745,25 @@ fn cap_ref_ty(c: &CapRef, info: &bynk_check::resolver::CrossContextInfo) -> Stri
             None => c.key().to_string(),
         },
     }
+}
+
+/// Events track, slice 0 (spine #936): does any service or agent handler in
+/// this commons emit — the same predicate `block_uses_emit` answers per
+/// handler body, rolled up to "does the context-level `__eventsDispatch`
+/// deps field need to exist at all." Syntactic, like its sibling: a false
+/// positive here just adds an unused interface field, not a miscompile.
+pub(crate) fn commons_uses_emit(commons: &TypedCommons) -> bool {
+    commons.commons.items.iter().any(|item| match item {
+        CommonsItem::Service(s) => s
+            .handlers
+            .iter()
+            .any(|h| crate::emitter::block_uses_emit(&h.body)),
+        CommonsItem::Agent(a) => a
+            .handlers
+            .iter()
+            .any(|h| crate::emitter::block_uses_emit(&h.body)),
+        _ => false,
+    })
 }
 
 /// v0.15: collect the cross-context capabilities a context's **handlers**
@@ -2018,6 +2071,25 @@ fn emit_context_deps_interface(
             "  readonly surface: {};",
             surface_ty(&ctx.cross_context)
         ));
+    }
+    // Events track, slice 0 (spine #936): a context with any handler that
+    // emits needs `__eventsDispatch` threaded all the way from `makeSurface`
+    // down to that handler's own `deps` param (`emit_service`/`emit_agent`'s
+    // matching field) — otherwise `svc.call(args, deps)` inside `makeSurface`
+    // fails to typecheck, since `deps`'s static type there is this interface,
+    // not whatever compose actually constructs.
+    let is_first_party_events = ctx.commons_name == "bynk"
+        || ctx
+            .cross_context
+            .flattened_caps
+            .get("Events")
+            .map(String::as_str)
+            == Some("bynk");
+    if is_first_party_events && commons_uses_emit(commons) {
+        fields.push(
+            "  readonly __eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>;"
+                .to_string(),
+        );
     }
     writeln!(out, "export interface {deps_name} {{").unwrap();
     for f in &fields {
@@ -3147,12 +3219,30 @@ pub(crate) fn emit_agent(
             async_tail,
             Some(&h.return_type),
         );
-        let deps_ty = build_deps_object_ty_with_surface(
+        let mut deps_ty = build_deps_object_ty_with_surface(
             &effective_given(&h.given, &cx),
             &cx,
             &ctx.cross_context,
             ctx.target,
         );
+        // Events track, slice 0 (spine #936): see the matching field on the
+        // service path (`emit_service`) — an agent handler that emits, or
+        // that calls another local agent method which itself emits, gets
+        // the same compose-supplied `__eventsDispatch` callback.
+        let needs_events_dispatch = cx.is_first_party_events()
+            && (crate::emitter::block_uses_emit(&h.body)
+                || cx.agent_given_caps_used.contains_key("Events"));
+        if needs_events_dispatch {
+            let field = "__eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>";
+            deps_ty = if deps_ty == "{}" {
+                format!("{{ {field} }}")
+            } else {
+                format!(
+                    "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_type_ref(&h.return_type);
         let async_kw = if is_effectful_return(&h.return_type) {
@@ -3201,9 +3291,16 @@ pub(crate) fn emit_agent(
         // buffer the service path declares (see `emit_service`'s
         // `block_uses_emit` gate) — an agent handler needs the same
         // completion boundary, and a writing store-agent already has one
-        // (`commitState`), so `__events` just rides alongside it there.
-        let uses_emit = cx.is_first_party_events() && crate::emitter::block_uses_emit(&h.body);
+        // (`commitState`), so `__events` just rides alongside it there,
+        // flushing to `deps.__eventsDispatch` (threaded above) once the
+        // state commit itself has succeeded. Gated on `body_emits_directly`
+        // specifically (not the broader `needs_events_dispatch` above) —
+        // a handler that only *forwards* `__eventsDispatch` to another
+        // local agent it calls has nothing of its own to buffer or flush;
+        // `deps` (typed with the field) simply passes through unchanged.
+        let body_emits_directly = crate::emitter::block_uses_emit(&h.body);
         let events_decl = "    const __events: Array<{ type: string; payload: unknown }> = [];";
+        let flush = "    if (__events.length > 0) { await deps.__eventsDispatch(__events); }";
         if is_store_agent {
             if writes_state {
                 writeln!(
@@ -3211,31 +3308,36 @@ pub(crate) fn emit_agent(
                     "    const __state = {{ ...(await this.loadState()) }};"
                 )
                 .unwrap();
-                if uses_emit {
+                if body_emits_directly {
                     writeln!(out, "{events_decl}").unwrap();
                 }
                 writeln!(out, "    const __result = await (async () => {{").unwrap();
                 splice(out);
                 writeln!(out, "    }})();").unwrap();
                 writeln!(out, "    await this.commitState(__state);").unwrap();
+                if body_emits_directly {
+                    writeln!(out, "{flush}").unwrap();
+                }
                 writeln!(out, "    return __result;").unwrap();
-            } else if uses_emit {
+            } else if body_emits_directly {
                 writeln!(out, "    const __state = await this.loadState();").unwrap();
                 writeln!(out, "{events_decl}").unwrap();
                 writeln!(out, "    const __result = await (async () => {{").unwrap();
                 splice(out);
                 writeln!(out, "    }})();").unwrap();
+                writeln!(out, "{flush}").unwrap();
                 writeln!(out, "    return __result;").unwrap();
             } else {
                 writeln!(out, "    const __state = await this.loadState();").unwrap();
                 splice(out);
             }
-        } else if uses_emit {
+        } else if body_emits_directly {
             writeln!(out, "    const currentState = await this.loadState();").unwrap();
             writeln!(out, "{events_decl}").unwrap();
             writeln!(out, "    const __result = await (async () => {{").unwrap();
             splice(out);
             writeln!(out, "    }})();").unwrap();
+            writeln!(out, "{flush}").unwrap();
             writeln!(out, "    return __result;").unwrap();
         } else {
             writeln!(out, "    const currentState = await this.loadState();").unwrap();

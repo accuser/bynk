@@ -20,7 +20,7 @@
 //!      `uses` cycles trivial — there is no order-of-evaluation, only
 //!      declarative mixin.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -4359,6 +4359,70 @@ pub(crate) fn instantiate_provider_expr(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Events track, slice 0 (spine #936): does any handler in this unit emit —
+/// the `UnitTable`-level analogue of `emitter::commons_uses_emit`, needed
+/// here because compose works from the project-wide `UnitTable` map, not a
+/// single unit's `TypedCommons`.
+fn unit_table_uses_emit(table: &UnitTable) -> bool {
+    table
+        .services
+        .values()
+        .any(|s| s.handlers.iter().any(|h| crate::emitter::block_uses_emit(&h.body)))
+        || table
+            .agents
+            .values()
+            .any(|a| a.handlers.iter().any(|h| crate::emitter::block_uses_emit(&h.body)))
+}
+
+/// Events track, slice 0 (spine #936): project-wide "who subscribes to
+/// what" — for every `service ... from Events(E) { on event ... }`
+/// anywhere in the project, resolve `E` to its *owning* context (the one
+/// whose `events` table actually declares it — bare-name resolution, since
+/// `TypeRef` has no dotted form) and group subscribers under
+/// `(owning_context, event_type_name)`. No prior art to reuse: cross-context
+/// wiring elsewhere is driven by an explicit author-written `consumes`
+/// clause, resolved eagerly in `phase_resolve_consumes`; this is the first
+/// wiring driven by an *implicit* relationship (a bare event-type name
+/// shared between a publisher's `event` declaration and a subscriber's
+/// `from Events(E)` header).
+fn discover_event_subscribers(
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+) -> BTreeMap<(String, String), Vec<(String, String)>> {
+    let mut out: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
+    for (ctx_name, table) in unit_tables {
+        for (svc_name, svc) in &table.services {
+            let ServiceProtocol::Events { event_type } = &svc.protocol else {
+                continue;
+            };
+            let TypeRef::Named(id) = event_type else {
+                continue;
+            };
+            let name = &id.name;
+            let owner = if table.events.contains_key(name) {
+                Some(ctx_name.clone())
+            } else {
+                unit_consumes.get(ctx_name).and_then(|consumed| {
+                    consumed
+                        .iter()
+                        .find(|c| {
+                            unit_tables
+                                .get(c.as_str())
+                                .is_some_and(|t| t.events.contains_key(name))
+                        })
+                        .cloned()
+                })
+            };
+            if let Some(owner) = owner {
+                out.entry((owner, name.clone()))
+                    .or_default()
+                    .push((ctx_name.clone(), svc_name.clone()));
+            }
+        }
+    }
+    out
+}
+
 fn emit_composition_root(
     groups: &HashMap<String, Vec<usize>>,
     kinds: &HashMap<String, UnitKind>,
@@ -4413,6 +4477,15 @@ fn emit_composition_root(
                             || (g.prefix().is_none() && flattened.contains_key(g.key()))
                     })
                 })
+                // Events track, slice 0 (spine #936): a context whose
+                // handlers emit needs its own `__eventsDispatch` closure
+                // built by compose (§ `discover_event_subscribers`) even
+                // when it consumes nothing and no other context consumes
+                // it — `Events` is filtered out of `handler_cross_caps`
+                // (there is no `EventsProvider`), so without this check a
+                // publish-only context would never get a compose entry and
+                // its service would simply never be called.
+                || unit_table_uses_emit(table)
             {
                 needs_compose = true;
                 break;
@@ -4470,6 +4543,11 @@ fn emit_composition_root(
     for c in &contexts {
         visit(c, unit_consumes, &mut visited, &mut ordered);
     }
+
+    // Events track, slice 0 (spine #936): the project-wide subscriber table,
+    // built once — every publishing context's `__eventsDispatch` closure
+    // (below) looks up its own declared event types in it.
+    let event_subscribers = discover_event_subscribers(unit_tables, unit_consumes);
 
     for ctx_name in &ordered {
         if kinds.get(ctx_name.as_str()) != Some(&UnitKind::Context) {
@@ -4538,6 +4616,39 @@ fn emit_composition_root(
                     )
                 ));
             }
+        }
+        // Events track, slice 0 (spine #936): a context whose handlers emit
+        // gets an `__eventsDispatch` closure built here — Bundle/node mode
+        // has no isolate boundary to cross, so this dispatches in-process
+        // directly into each subscriber's own `on event` handler (`.event`,
+        // the object method `emit_service` gives `HandlerKind::Event`),
+        // reusing whatever deps that subscriber context already builds in
+        // this same loop (referenced by name; the arrow function body isn't
+        // evaluated until well after every `const ...Deps` in `composeApp`
+        // has run, so declaration order here doesn't matter). A publisher
+        // with no subscribers still gets the field — its type is required —
+        // just with an empty switch.
+        if unit_table_uses_emit(table) {
+            let mut cases = String::new();
+            for name in table.events.keys() {
+                let Some(subs) = event_subscribers.get(&(ctx_name.clone(), name.clone())) else {
+                    continue;
+                };
+                let calls: Vec<String> = subs
+                    .iter()
+                    .map(|(sub_ctx, sub_svc)| {
+                        let sub_ns = sub_ctx.replace('.', "_");
+                        format!("await {sub_ns}.{sub_svc}.event(ev.payload as any, {sub_ns}Deps);")
+                    })
+                    .collect();
+                cases.push_str(&format!(
+                    "case {name:?}: {{ {} break; }} ",
+                    calls.join(" ")
+                ));
+            }
+            deps_entries.push(format!(
+                "__eventsDispatch: async (events: Array<{{ type: string; payload: unknown }}>) => {{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}"
+            ));
         }
         deps_entries.sort();
 
