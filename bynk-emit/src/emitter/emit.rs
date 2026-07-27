@@ -590,7 +590,7 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
     // Precondition guards — parameters are the TS function params, in scope.
     for c in &f.requires {
         let mut stmts = Vec::new();
-        let pred = lower_expr(&c.predicate, &mut stmts, cx);
+        let pred = lower_expr_into(&c.predicate, &mut stmts, cx);
         for s in &stmts {
             writeln!(out, "  {s}").unwrap();
         }
@@ -620,7 +620,7 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
     // Postcondition guards — `result` (and the parameters) are in scope.
     for c in &f.ensures {
         let mut stmts = Vec::new();
-        let pred = lower_expr(&c.predicate, &mut stmts, cx);
+        let pred = lower_expr_into(&c.predicate, &mut stmts, cx);
         for s in &stmts {
             writeln!(out, "  {s}").unwrap();
         }
@@ -2199,7 +2199,7 @@ pub(crate) fn lower_workers_cross_context_call(
 
     let mut args_serialised: Vec<String> = Vec::new();
     for (i, a) in args.iter().enumerate() {
-        let lowered = lower_expr(a, stmts, cx);
+        let lowered = lower_expr_into(a, stmts, cx);
         let (_, param_ty) = &svc.params[i];
         args_serialised.push(serialise_expr_via(param_ty, &lowered, &ns, cx.runtime_use));
     }
@@ -2749,7 +2749,7 @@ pub(crate) fn emit_agent(
                 icx.local_agents = ctx.local_agents.clone();
                 icx.agent_method_givens = ctx.agent_method_givens.clone();
                 icx.set_rebrand_info(commons, ctx);
-                let expr = lower_expr(init, &mut stmts, &mut icx);
+                let expr = lower_expr_into(init, &mut stmts, &mut icx);
                 // A static initialiser lowers to a pure expression (no setup
                 // statements); if any appear, fall back to inlining them as a
                 // comma sequence so the record stays valid.
@@ -2999,7 +2999,7 @@ pub(crate) fn emit_agent(
             let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
             cx.invariant_state = Some(("s".to_string(), field_names.clone()));
             let mut pre = Vec::new();
-            let pred = lower_expr(&inv.predicate, &mut pre, &mut cx);
+            let pred = lower_expr_into(&inv.predicate, &mut pre, &mut cx);
             for s in &pre {
                 writeln!(out, "    {s}").unwrap();
             }
@@ -3041,7 +3041,7 @@ pub(crate) fn emit_agent(
             let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
             cx.transition_states = Some(("__old".to_string(), "__new".to_string()));
             let mut pre = Vec::new();
-            let pred = lower_expr(&tr.predicate, &mut pre, &mut cx);
+            let pred = lower_expr_into(&tr.predicate, &mut pre, &mut cx);
             for s in &pre {
                 writeln!(out, "      {s}").unwrap();
             }

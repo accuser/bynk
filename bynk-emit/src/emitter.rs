@@ -596,7 +596,7 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
 /// Driven off the exhaustive `walk_block_exprs`/`walk_exprs` visitor rather
 /// than a hand-rolled `ExprKind` match — a bespoke match here previously
 /// covered only `MethodCall`/`Block`/`If`/`Match`/`Lambda` and silently
-/// disagreed with `lower_expr` (which recurses into every expression
+/// disagreed with `lower_expr_into` (which recurses into every expression
 /// position), so `do (Events.emit[E](event))` — one added paren — compiled
 /// clean but emitted a body that referenced an undeclared `__events` local
 /// (`tsc`-only failure, no bynk diagnostic). Riding the walker means this
@@ -1964,7 +1964,7 @@ fn collect_refs_in_expr(
 /// If `name` at `span` is a bare reference to a variant of a sum type (per
 /// the checker's expression type), return the owning sum's name — the same
 /// test the lowering uses to qualify it as `Type.Variant` (see the
-/// `ExprKind::Ident` arm of `lower_expr`).
+/// `ExprKind::Ident` arm of `lower_expr_into`).
 fn sum_owner_of_variant(
     name: &str,
     span: bynk_syntax::span::Span,
@@ -2934,10 +2934,39 @@ impl<'a> LowerCtx<'a> {
     /// `span`, until the next checkpoint (ADR 0103 D2, nearest-enclosing). A
     /// no-op when no builder is attached. `out_len` is the buffer length *before*
     /// the statement's text is appended.
+    ///
+    /// `out_len` only means something relative to the *top-level module
+    /// buffer* the attached builder is tracking. A caller building an IIFE
+    /// into its own local `String` — `lower_if`'s value-position wrapper,
+    /// `build_match_iife`'s — before splicing it elsewhere must not call this
+    /// with that buffer's own length; see [`Self::without_source_map`].
     fn record_span(&self, out_len: usize, span: bynk_syntax::span::Span) {
         if let Some(map) = self.source_map {
             map.borrow_mut().record(out_len, span);
         }
+    }
+
+    /// #4 review: run `f` with source-map recording suppressed, restoring it
+    /// after. For lowering into a local IIFE buffer that will later be
+    /// spliced into the real module text at some other offset — `record_span`
+    /// has no way to know that offset, so a checkpoint taken here would
+    /// silently corrupt the map with a position relative to the wrong
+    /// buffer. `SourceMapBuilder::merge` already solves the equivalent
+    /// problem one level up (a handler/test body's own local buffer, spliced
+    /// into the module) by recording into a *sub*-builder and rebasing at the
+    /// splice — but that needs a builder that outlives the call, and
+    /// `source_map` is `Option<&'a RefCell<SourceMapBuilder>>` tied to the
+    /// whole emission's lifetime, so a function-local sub-builder can't be
+    /// substituted in. Suppressing instead of mis-recording means the
+    /// nearest-enclosing-checkpoint rule (ADR 0103 D2) falls back to whatever
+    /// was correctly mapped just before the IIFE started, rather than a wrong
+    /// one silently taking over — degraded stepping through the IIFE's own
+    /// lines in `bynkc test --inspect`, not a corrupted map.
+    fn without_source_map<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let saved = self.source_map.take();
+        let result = f(self);
+        self.source_map = saved;
+        result
     }
     /// v0.9.2: lower an agent instantiation `AgentName(key)` to its factory
     /// call. Bundle/test mode passes only the key; workers mode also threads
@@ -3074,7 +3103,7 @@ impl<'a> LowerCtx<'a> {
         if let Some(t) = self.is_receiver_temps.get(&value.span) {
             return t.clone();
         }
-        let lowered = lower_expr(value, stmts, self);
+        let lowered = lower_expr_into(value, stmts, self);
         if is_simple_is_receiver(value) {
             return lowered;
         }
@@ -3093,7 +3122,7 @@ impl<'a> LowerCtx<'a> {
         if let Some(t) = self.is_receiver_temps.get(&value.span) {
             return t.clone();
         }
-        let lowered = lower_expr(value, stmts, self);
+        let lowered = lower_expr_into(value, stmts, self);
         let tmp = self.fresh();
         stmts.push(format!("const {tmp} = {lowered};"));
         self.is_receiver_temps.insert(value.span, tmp.clone());
