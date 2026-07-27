@@ -57,7 +57,7 @@ jobs:
       # arbitrary crate code below (stamp, build, test — build.rs, proc macros,
       # test binaries) has run, so a compromised transitive dependency can never
       # read a push-to-protected-`main` credential off disk. See #727.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history for the rebase-retry push.
           fetch-depth: 0
