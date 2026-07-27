@@ -773,6 +773,7 @@ fn check_integration_case_body(
         // Test-scaffold body, not a real context emission — never rebranded.
         is_context: false,
         uses_commons_type_names: HashSet::new(),
+        event_type_names: HashSet::new(),
     };
 
     let unit_span = case.span;
@@ -1934,6 +1935,7 @@ fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::T
                 ServiceProtocol::Cron => Some("cron".to_string()),
                 ServiceProtocol::Queue { .. } => Some("queue".to_string()),
                 ServiceProtocol::WebSocket { .. } => Some("websocket".to_string()),
+                ServiceProtocol::Events { .. } => Some("events".to_string()),
             };
             let handlers = decl
                 .handlers
@@ -3182,6 +3184,7 @@ fn build_privileged_resolved(
         // real context emission subject to the rebrand.
         is_context: false,
         uses_commons_type_names: HashSet::new(),
+        event_type_names: HashSet::new(),
     };
     Some((resolved, ()))
 }

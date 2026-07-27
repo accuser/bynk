@@ -919,6 +919,20 @@ impl<'a> Formatter<'a> {
             CommonsItem::Agent(a) => self.format_agent(a),
             CommonsItem::Actor(a) => self.format_actor(a),
             CommonsItem::Messages(m) => self.format_messages(m),
+            CommonsItem::Event(e) => self.format_event_decl(e),
+        }
+    }
+
+    fn format_event_decl(&mut self, e: &EventDecl) {
+        self.emit_leading_comments(&e.trivia.leading);
+        if let Some(doc) = &e.documentation {
+            self.emit_doc(doc);
+        }
+        self.push(&format!("event {} = ", e.name.name));
+        self.format_record_body(&e.body);
+        self.emit_trailing_comment(e.trivia.trailing.as_deref());
+        if e.trivia.trailing.is_none() {
+            self.newline();
         }
     }
 
@@ -1355,6 +1369,9 @@ impl<'a> Formatter<'a> {
                     type_ref_to_string(out_type)
                 )
             }
+            ServiceProtocol::Events { event_type } => {
+                format!(" from Events({})", type_ref_to_string(event_type))
+            }
         };
         // v0.155: the optional service-level `by`/`given` defaults follow the
         // protocol on the header, `by` first — the ambient contract every handler
@@ -1656,6 +1673,9 @@ impl<'a> Formatter<'a> {
             }
             HandlerKind::Close => {
                 self.push("on close");
+            }
+            HandlerKind::Event => {
+                self.push("on event");
             }
         }
         // The param list follows the kind prefix directly — `on call(params)`,

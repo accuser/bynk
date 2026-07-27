@@ -242,6 +242,17 @@ fn push_item(out: &mut Vec<DocEntry>, item: &CommonsItem) {
             documented: m.documentation.is_some(),
             span: m.tag_span,
         }),
+        // Events track, slice 0 (spine #936): an `event` documents exactly
+        // like a `type` whose body is a record — same synthetic `TypeDecl`
+        // `EventDecl::as_type_decl` builds elsewhere.
+        CommonsItem::Event(e) => out.push(DocEntry {
+            name: e.name.name.clone(),
+            kind: "event",
+            depth: 0,
+            markdown: symbols::describe_type(&e.as_type_decl()),
+            documented: e.documentation.is_some(),
+            span: e.name.span,
+        }),
     }
 }
 

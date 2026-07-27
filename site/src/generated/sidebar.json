@@ -260,6 +260,19 @@
         ]
       },
       {
+        "label": "Events",
+        "items": [
+          {
+            "label": "Overview",
+            "link": "/book/guides/events/"
+          },
+          {
+            "label": "Understand events",
+            "link": "/book/guides/events/understand-events/"
+          }
+        ]
+      },
+      {
         "label": "Testing",
         "items": [
           {

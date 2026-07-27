@@ -100,6 +100,13 @@ fn walk_item(item: &CommonsItem, out: &mut Vec<(Span, bool)>) {
         CommonsItem::Messages(m) => {
             out.push((m.span, true));
         }
+        // Events track, slice 0 (spine #936): an `event` folds exactly like
+        // a `type` with a record body — it always has one (no sum/refined/
+        // opaque event forms in slice 0).
+        CommonsItem::Event(e) => {
+            out.push((e.span, true));
+            out.push((e.body.span, true));
+        }
     }
 }
 

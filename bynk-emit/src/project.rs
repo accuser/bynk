@@ -20,7 +20,7 @@
 //!      `uses` cycles trivial — there is no order-of-evaluation, only
 //!      declarative mixin.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -2865,6 +2865,10 @@ fn check_unit_files(
             .iter()
             .filter_map(|it| match it {
                 CommonsItem::Type(t) => Some(t.name.name.clone()),
+                // Events track, slice 0 (spine #936): an `event` shares the
+                // `types` namespace, so a multi-file context's method
+                // dispatch treats its name the same as a `type`'s.
+                CommonsItem::Event(e) => Some(e.name.name.clone()),
                 _ => None,
             })
             .collect();
@@ -2900,6 +2904,9 @@ fn check_unit_files(
                 }
                 CommonsItem::Messages(m) => {
                     emit_items.push(CommonsItem::Messages(m.clone()));
+                }
+                CommonsItem::Event(e) => {
+                    emit_items.push(CommonsItem::Event(e.clone()));
                 }
             }
         }
@@ -2952,6 +2959,16 @@ fn check_unit_files(
             resolver::CrossContextInfo::default()
         };
 
+        // Events track, slice 0 (spine #936): this unit's own declared event
+        // names — mirrors `local_names`/`local_type_names` but answers "is
+        // this specifically an event", which `Events.emit[E]` needs on top
+        // of owner-only emission (an ordinary local type must not pass as an
+        // emit target just because it's locally declared).
+        let event_type_names: HashSet<String> = unit_info
+            .get(name)
+            .map(|i| i.table.events.keys().cloned().collect())
+            .unwrap_or_default();
+
         let resolved = ResolvedCommons {
             commons: synthetic_commons,
             types: combined_types.clone(),
@@ -2964,6 +2981,7 @@ fn check_unit_files(
             imported_from: imported_from.clone(),
             is_context: kind == UnitKind::Context,
             uses_commons_type_names: uses_commons_type_names.clone(),
+            event_type_names,
         };
         refs.enter_file(&pf.identity_path, name, pf.synthetic);
         // v0.27: synthetic and test/integration files record no hints —
@@ -3362,6 +3380,19 @@ fn run_checks(
         &mut errors,
     );
 
+    // -- 6a'''. Events track, slice 0 (spine #936): a `from Events(E)`
+    //           subscription must name a real, declared event — needs
+    //           `unit_tables` + `unit_consumes` together, so it runs here
+    //           rather than in the per-context `check_service_protocols`.
+    check_event_subscriptions(
+        &parsed,
+        &groups,
+        &kinds,
+        &unit_tables,
+        &unit_consumes,
+        &mut errors,
+    );
+
     // -- 6b. Validate exports clauses (each name is a locally-declared type;
     //         no duplicates within or across opaque/transparent). --
     let exports_visibility = phase_validate_type_exports(
@@ -3687,6 +3718,13 @@ fn build_output(
         })
         .collect();
 
+    // Events track, slice 0 (spine #936): project-wide "who subscribes to
+    // what", built once and shared by both targets — Bundle mode's
+    // `composeApp` dispatches in-process; Workers mode uses it to size each
+    // publishing context's fan-out DO routing table and wrangler.toml
+    // Service Bindings.
+    let event_subscribers = discover_event_subscribers(&unit_tables, &unit_consumes);
+
     match target {
         BuildTarget::Bundle => {
             // v0.6 §6.3: emit a composition root when the project has at
@@ -3706,6 +3744,7 @@ fn build_output(
                 // resource is consumed, so native-free programs are
                 // byte-identical to v0.18 output.
                 !context_native.is_empty(),
+                &event_subscribers,
             ) {
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from("compose.bynk"),
@@ -3802,11 +3841,30 @@ fn build_output(
                 );
                 // Adapters are not Workers, so they get no Service Binding in
                 // the consumer's wrangler config — drop them from the list.
-                let service_consumes: Vec<String> = consumes_targets
+                let mut service_consumes: BTreeSet<String> = consumes_targets
                     .iter()
                     .filter(|t| !binding_modules.contains_key(*t))
                     .cloned()
                     .collect();
+                // Events track, slice 0 (spine #936, ADR 0284): this
+                // context's own published events → their subscribers,
+                // sliced from the project-wide table. A subscriber
+                // `consumes` the publisher for the event *type*; nothing
+                // upstream gives the publisher a binding back to the
+                // subscriber, so its Worker needs one added here — the
+                // reverse direction of an ordinary `consumes` edge.
+                let own_event_routes: BTreeMap<String, Vec<(String, String)>> = event_subscribers
+                    .iter()
+                    .filter(|((owner, _), _)| owner == ctx_name)
+                    .map(|((_, name), subs)| (name.clone(), subs.clone()))
+                    .collect();
+                service_consumes.extend(
+                    own_event_routes
+                        .values()
+                        .flatten()
+                        .map(|(sub_ctx, _)| sub_ctx.clone()),
+                );
+                let service_consumes: Vec<String> = service_consumes.into_iter().collect();
                 let wrangler =
                     emitter::emit_wrangler_toml(ctx_name, table, &service_consumes, needs_kv);
                 compiled.push(CompiledFile {
@@ -3816,6 +3874,21 @@ fn build_output(
                     source_map: None,
                     debug_metadata: None,
                 });
+                // Events track, slice 0: this context's fan-out Durable
+                // Object — emitted only when it actually publishes (mirrors
+                // `emit_worker_compose`'s own `unit_table_uses_emit` gate on
+                // `deps.__eventsDispatch`, so the two never disagree about
+                // whether `env.EVENTS_FANOUT` is real).
+                if unit_table_uses_emit(table) {
+                    let fanout_ts = emitter::emit_events_fanout_do(ctx_name, &own_event_routes);
+                    compiled.push(CompiledFile {
+                        source_path: PathBuf::from(format!("workers/{dashes}/<events-fanout>")),
+                        output_path: PathBuf::from(format!("workers/{dashes}/events_fanout.ts")),
+                        typescript: fanout_ts,
+                        source_map: None,
+                        debug_metadata: None,
+                    });
+                }
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<compose>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/compose.ts")),
@@ -4002,6 +4075,14 @@ fn handler_cross_caps(
     let mut out = std::collections::BTreeMap::new();
     let mut scan = |given: &[CapRef]| {
         for c in given {
+            // Events track, slice 0 (spine #936): `Events.emit` is
+            // intercepted entirely at the call site (release-at-commit
+            // buffering) and never calls through a constructed provider —
+            // there is no `EventsProvider` for compose to build, so the
+            // first-party `Events` must never become a compose deps entry.
+            if c.key() == "Events" && flattened.get(c.key()).map(String::as_str) == Some("bynk") {
+                continue;
+            }
             if let Some(p) = c.prefix() {
                 if let Some(ctx) = resolve_consume_prefix(&p, consumed, aliases) {
                     out.entry(c.key().to_string()).or_insert(ctx);
@@ -4134,6 +4215,15 @@ fn plan_agent_given_deps(
             std::collections::BTreeMap::new();
         for h in &a.handlers {
             for g in &h.given {
+                // Events track, slice 0 (spine #936): see the matching skip
+                // in `handler_cross_caps` — no `EventsProvider` exists for
+                // compose (or a synthesised DO's own reconstructed deps) to
+                // build.
+                if g.key() == "Events"
+                    && info.flattened.get(g.key()).map(String::as_str) == Some("bynk")
+                {
+                    continue;
+                }
                 caps.entry(g.key().to_string()).or_insert_with(|| g.clone());
             }
         }
@@ -4336,6 +4426,79 @@ pub(crate) fn instantiate_provider_expr(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Events track, slice 0 (spine #936): does any handler in this unit emit —
+/// the `UnitTable`-level analogue of `emitter::commons_uses_emit`, needed
+/// here because compose works from the project-wide `UnitTable` map, not a
+/// single unit's `TypedCommons`.
+pub(crate) fn unit_table_uses_emit(table: &UnitTable) -> bool {
+    table.services.values().any(|s| {
+        s.handlers
+            .iter()
+            .any(|h| crate::emitter::block_uses_emit(&h.body))
+    }) || table.agents.values().any(|a| {
+        a.handlers
+            .iter()
+            .any(|h| crate::emitter::block_uses_emit(&h.body))
+    })
+}
+
+/// Events track, slice 0 (spine #936): project-wide "who subscribes to
+/// what" — for every `service ... from Events(E) { on event ... }`
+/// anywhere in the project, resolve `E` to its *owning* context (the one
+/// whose `events` table actually declares it — bare-name resolution, since
+/// `TypeRef` has no dotted form) and group subscribers under
+/// `(owning_context, event_type_name)`. No prior art to reuse: cross-context
+/// wiring elsewhere is driven by an explicit author-written `consumes`
+/// clause, resolved eagerly in `phase_resolve_consumes`; this is the first
+/// wiring driven by an *implicit* relationship (a bare event-type name
+/// shared between a publisher's `event` declaration and a subscriber's
+/// `from Events(E)` header).
+fn discover_event_subscribers(
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+) -> BTreeMap<(String, String), Vec<(String, String)>> {
+    let mut out: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
+    for (ctx_name, table) in unit_tables {
+        for (svc_name, svc) in &table.services {
+            let ServiceProtocol::Events { event_type } = &svc.protocol else {
+                continue;
+            };
+            let TypeRef::Named(id) = event_type else {
+                continue;
+            };
+            let name = &id.name;
+            let owner = if table.events.contains_key(name) {
+                Some(ctx_name.clone())
+            } else {
+                unit_consumes.get(ctx_name).and_then(|consumed| {
+                    consumed
+                        .iter()
+                        .find(|c| {
+                            unit_tables
+                                .get(c.as_str())
+                                .is_some_and(|t| t.events.contains_key(name))
+                        })
+                        .cloned()
+                })
+            };
+            if let Some(owner) = owner {
+                out.entry((owner, name.clone()))
+                    .or_default()
+                    .push((ctx_name.clone(), svc_name.clone()));
+            }
+        }
+    }
+    // `unit_tables`/`table.services` are `HashMap`s, so the pushes above race
+    // across builds — a multi-subscriber event's dispatch order (and so the
+    // emitted `__eventsDispatch` closure's `await sub1; await sub2;`
+    // sequence) would otherwise vary build to build with no source change.
+    for subs in out.values_mut() {
+        subs.sort();
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
 fn emit_composition_root(
     groups: &HashMap<String, Vec<usize>>,
     kinds: &HashMap<String, UnitKind>,
@@ -4350,6 +4513,10 @@ fn emit_composition_root(
     // Worker with `env` at its entry; native-free programs emit the v0.18
     // no-parameter signature unchanged.
     thread_env: bool,
+    // Events track, slice 0 (spine #936): the project-wide subscriber table,
+    // computed once by the caller (Workers mode needs the same table for its
+    // own per-Worker fan-out wiring, so it is shared rather than rebuilt).
+    event_subscribers: &BTreeMap<(String, String), Vec<(String, String)>>,
 ) -> Option<String> {
     // Identify contexts that consume something whose surface has services.
     let mut needs_compose = false;
@@ -4390,6 +4557,15 @@ fn emit_composition_root(
                             || (g.prefix().is_none() && flattened.contains_key(g.key()))
                     })
                 })
+                // Events track, slice 0 (spine #936): a context whose
+                // handlers emit needs its own `__eventsDispatch` closure
+                // built by compose (§ `discover_event_subscribers`) even
+                // when it consumes nothing and no other context consumes
+                // it — `Events` is filtered out of `handler_cross_caps`
+                // (there is no `EventsProvider`), so without this check a
+                // publish-only context would never get a compose entry and
+                // its service would simply never be called.
+                || unit_table_uses_emit(table)
             {
                 needs_compose = true;
                 break;
@@ -4515,6 +4691,44 @@ fn emit_composition_root(
                     )
                 ));
             }
+        }
+        // Events track, slice 0 (spine #936): a context whose handlers emit
+        // gets an `__eventsDispatch` closure built here — Bundle/node mode
+        // has no isolate boundary to cross, so this dispatches in-process
+        // directly into each subscriber's own `on event` handler (`.event`,
+        // the object method `emit_service` gives `HandlerKind::Event`),
+        // reusing whatever deps that subscriber context already builds in
+        // this same loop (referenced by name; the arrow function body isn't
+        // evaluated until well after every `const ...Deps` in `composeApp`
+        // has run, so declaration order here doesn't matter). A publisher
+        // with no subscribers still gets the field — its type is required —
+        // just with an empty switch.
+        if unit_table_uses_emit(table) {
+            let mut cases = String::new();
+            for name in table.events.keys() {
+                let Some(subs) = event_subscribers.get(&(ctx_name.clone(), name.clone())) else {
+                    continue;
+                };
+                // ADR 0284: subscriber failure isolation — one subscriber's
+                // throw is caught and logged, not left to abort delivery to
+                // its siblings or propagate into the already-committed
+                // publishing handler. Mirrors the Cloudflare fan-out DO's own
+                // per-subscriber try/catch (`emit_events_fanout_do`) so the
+                // two targets agree on this guarantee, not just on delivery.
+                let calls: Vec<String> = subs
+                    .iter()
+                    .map(|(sub_ctx, sub_svc)| {
+                        let sub_ns = sub_ctx.replace('.', "_");
+                        format!(
+                            "try {{ await {sub_ns}.{sub_svc}.event(ev.payload as any, {sub_ns}Deps); }} catch (e) {{ console.error(\"EventsFanout delivery failed\", {{ event: ev.type, service: {sub_svc:?}, error: String(e) }}); }}"
+                        )
+                    })
+                    .collect();
+                cases.push_str(&format!("case {name:?}: {{ {} break; }} ", calls.join(" ")));
+            }
+            deps_entries.push(format!(
+                "__eventsDispatch: async (events: Array<{{ type: string; payload: unknown }}>) => {{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}"
+            ));
         }
         deps_entries.sort();
 

@@ -62,6 +62,8 @@
     - [Understand localisation](guides/localisation/understand-localisation.md)
     - [Declare a message bundle](guides/localisation/declare-a-message-bundle.md)
     - [Format with ICU](guides/localisation/format-with-icu.md)
+  - [Events](guides/events/index.md)
+    - [Understand events](guides/events/understand-events.md)
   - [Testing](guides/testing/index.md)
     - [The testing philosophy](guides/testing/philosophy.md)
     - [Write tests and mock collaborators](guides/testing/write-tests.md)

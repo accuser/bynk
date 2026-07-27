@@ -33,12 +33,14 @@ use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
 
 pub mod contracts;
+pub mod events_fanout;
 pub mod secrets;
 pub mod serialisation;
 pub mod workers;
 pub mod workers_entry;
 pub mod wrangler;
 
+pub use events_fanout::emit_events_fanout_do;
 pub use secrets::emit_secrets_manifest;
 pub use workers::emit_worker_compose;
 pub use workers_entry::emit_worker_entry;
@@ -287,6 +289,21 @@ pub fn emit_project(
         if let CommonsItem::Type(t) = item {
             smb.borrow_mut().record(out.len(), t.span);
             emit_type(&mut out, t, commons, ctx);
+        }
+    }
+    // Events track, slice 0 (spine #936): an `event` is checker-visible as
+    // a type (via `EventDecl::as_type_decl`, so exports/consumes/
+    // construction all worked from day one), but nothing emitted its actual
+    // TS declaration — this loop only ever matched `CommonsItem::Type`, so
+    // a subscriber importing an event type across contexts (`from
+    // Events(E)`, or `E` named in a cross-context signature) got a real
+    // `tsc` "has no exported member" error. Reuses the identical synthetic
+    // `TypeDecl` the checker already builds.
+    for item in &commons.commons.items {
+        if let CommonsItem::Event(e) = item {
+            let t = e.as_type_decl();
+            smb.borrow_mut().record(out.len(), t.span);
+            emit_type(&mut out, &t, commons, ctx);
         }
     }
     for item in &commons.commons.items {
@@ -656,6 +673,48 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
         }
     }
     b.statements.iter().any(stmt) || expr(&b.tail)
+}
+
+/// Events track, slice 0 (spine #936): does this block contain an
+/// `Events.emit[...]` call anywhere — including nested branches, match arms,
+/// lambdas, and any other expression position (a `Paren`, an `Ok`/`Err`
+/// wrapper, a `Call`/`RecordConstruction` argument, a `BinOp` operand, …)?
+/// Gates release-at-commit buffer threading (`deps.__events`) so a handler
+/// that never emits keeps byte-identical output, mirroring `block_uses_send`'s
+/// gate on `deps.__exec`.
+///
+/// Driven off the exhaustive `walk_block_exprs`/`walk_exprs` visitor rather
+/// than a hand-rolled `ExprKind` match — a bespoke match here previously
+/// covered only `MethodCall`/`Block`/`If`/`Match`/`Lambda` and silently
+/// disagreed with `lower_expr` (which recurses into every expression
+/// position), so `do (Events.emit[E](event))` — one added paren — compiled
+/// clean but emitted a body that referenced an undeclared `__events` local
+/// (`tsc`-only failure, no bynk diagnostic). Riding the walker means this
+/// can't drift from the lowering again: a new `ExprKind` variant fails to
+/// compile here until `walk_exprs` itself is taught to visit it.
+///
+/// Syntactic, like `block_uses_send`: matches a bare-`Events`-receiver
+/// `.emit` call by name, not by resolving the receiver against `given` — a
+/// locally-shadowed `Events` would be a false positive, an accepted
+/// approximation matching `block_uses_send`'s own precedent (it doesn't
+/// verify `~>`'s target either).
+pub(crate) fn block_uses_emit(b: &Block) -> bool {
+    fn is_events_emit_call(receiver: &Expr, method: &Ident) -> bool {
+        matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "Events")
+            && method.name == "emit"
+    }
+    let mut found = false;
+    walk_block_exprs(b, &mut |e| {
+        if !found
+            && let ExprKind::MethodCall {
+                receiver, method, ..
+            } = &e.kind
+            && is_events_emit_call(receiver, method)
+        {
+            found = true;
+        }
+    });
+    found
 }
 
 /// v0.81–v0.87: does this block write durable state — a `:=` `Cell` write, a
@@ -1556,6 +1615,12 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
             CommonsItem::Type(t) => {
                 collect_refs_in_type_decl(t, &local_to_file, ctx, &mut refs);
             }
+            // Events track, slice 0 (spine #936): an `event`'s field types
+            // are collected exactly like a `type`'s, via the same synthetic
+            // `TypeDecl` `EventDecl::as_type_decl` builds.
+            CommonsItem::Event(e) => {
+                collect_refs_in_type_decl(&e.as_type_decl(), &local_to_file, ctx, &mut refs);
+            }
             CommonsItem::Fn(f) => {
                 collect_refs_in_fn(f, &local_to_file, commons, ctx, &mut refs);
             }
@@ -2095,6 +2160,23 @@ fn emit_project_imports(
     ctx: &EmitProjectCtx,
     refs: &ExternalReferences,
 ) {
+    // Events track, slice 0 (spine #936): the bare event-type names this
+    // context's own `from Events(E)` service headers name — see the
+    // Workers type-only-import narrowing below.
+    let subscribed_event_type_names: HashSet<String> = commons
+        .commons
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            CommonsItem::Service(s) => match &s.protocol {
+                ServiceProtocol::Events {
+                    event_type: TypeRef::Named(id),
+                } => Some(id.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
     // Sibling imports: relative path within the same commons/context directory.
     let mut sibling_paths: Vec<(&PathBuf, &HashSet<String>)> = refs.by_sibling.iter().collect();
     sibling_paths.sort_by(|a, b| a.0.cmp(b.0));
@@ -2135,11 +2217,31 @@ fn emit_project_imports(
             let mut parts: Vec<String> = Vec::new();
             for n in &name_list {
                 let from_kind = ctx.imported_from_kind.get(n.as_str()).copied();
+                let is_subscribed_event_type = ctx.target == BuildTarget::Workers
+                    && subscribed_event_type_names.contains(n.as_str());
                 if ctx.unit_kind == UnitKind::Context
                     && from_kind == Some(UnitKind::Commons)
                     && commons.types.contains_key(n.as_str())
                 {
                     parts.push(format!("{n} as __Commons{n}"));
+                } else if is_subscribed_event_type {
+                    // Events track, slice 0 (spine #936): under Workers, a
+                    // context deploys as its own separate Worker script —
+                    // there is no shared module graph to import a peer
+                    // context's *value* across (the #661 hazard this
+                    // mirrors: a caller generates its own codec rather than
+                    // importing the callee's runtime code). `from
+                    // Events(E)`'s `E` is the one plain named type crossing
+                    // a context boundary directly by name (every other
+                    // cross-context reference goes through a generated
+                    // Service-Binding codec instead) — used only in type
+                    // position (`e: E`), so this specific name is type-only.
+                    // Narrowly scoped to event types specifically, not every
+                    // cross-context import: a `type`/`enum` crossing via
+                    // `uses`/`consumes` (e.g. `bynk`'s `Method`) is often
+                    // used as a *value* too (`Method.Get`), which a blanket
+                    // `import type` would wrongly break.
+                    parts.push(format!("type {}", ts_ident(n)));
                 } else {
                     parts.push(ts_ident(n));
                 }
@@ -2299,6 +2401,20 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         }
         if has_agent_invariants {
             parts.push("invariantViolation");
+        }
+        // Events track, slice 0 (spine #936): an agent whose own handler body
+        // emits directly needs its Workers-mode DO fetch dispatcher to
+        // rebuild `deps.__eventsDispatch` from `env.EVENTS_FANOUT` (mirrors
+        // the `#527` `given`-provider rebuild — see `emit_agent`) — a
+        // function does not survive the JSON wire any better than a
+        // provider does.
+        let has_agent_uses_emit = workers
+            && commons.commons.items.iter().any(|i| match i {
+                CommonsItem::Agent(a) => a.handlers.iter().any(|h| block_uses_emit(&h.body)),
+                _ => false,
+            });
+        if has_agent_uses_emit {
+            parts.push("dispatchToEventsFanout");
         }
         // v0.96 (ADR 0124): an agent whose load-time validation gate fires imports
         // the `rehydrationViolation` fault helper.
@@ -2778,6 +2894,27 @@ impl<'a> LowerCtx<'a> {
     /// `(v as T)` form, which cannot resolve `T` in the test module's scope.
     pub(crate) fn in_test_scaffold(&self) -> bool {
         self.test_scaffold
+    }
+
+    /// Events track, slice 0 (spine #936): true when a bare `Events`
+    /// receiver in this unit is genuinely the first-party `bynk.Events`
+    /// capability — declared here because this unit *is* `bynk`, or
+    /// flattened in from it (`consumes bynk { Events }`) — not some other,
+    /// unrelated capability that merely happens to share the name. Mirrors
+    /// #934's `Idempotency` distinction (`is_first_party` at the
+    /// `Idempotency.dedup`/`remember` lowering site). Both the call-site
+    /// interception (`lower.rs`) and the `__events` buffer declaration
+    /// (`block_uses_emit`'s gate in `emit.rs`) must agree on this, or a
+    /// custom same-named `Events` capability's calls get silently rewritten
+    /// into a buffer nothing constructs a provider for.
+    pub(crate) fn is_first_party_events(&self) -> bool {
+        self.in_bynk_unit
+            || self
+                .cross_context
+                .flattened_caps
+                .get("Events")
+                .map(String::as_str)
+                == Some("bynk")
     }
 
     fn new(

@@ -1079,6 +1079,73 @@ pub(crate) fn check_static_call(
             }
             for (tp, ta) in op_clone.type_params.iter().zip(type_args) {
                 let ty = resolve_expr_type_ref(ta, ctx)?;
+                // Events track, slice 0 (spine #936): owner-only emission —
+                // `Events.emit[E]` may only name an event `E` declared in
+                // *this* context, even though a `consumes`-visible foreign
+                // event resolves here just as validly for every other
+                // purpose. `is_local_type` already distinguishes "declared
+                // here" from "visible via uses/consumes" (the same table
+                // ADR 0256's locale-types-split gap analysis used), so this
+                // is a check over existing data, not new provenance
+                // plumbing — the primary boundary guarantee the threat
+                // model (events.md §6) names.
+                //
+                // First-party-gated like every other Events-special-cased
+                // site (mirrors #934's Idempotency precedent): a bare
+                // `type_name.name == "Events"` string match would also fire
+                // for a third-party capability that happens to declare its
+                // own `Events` with an `emit` method — only bynk's own
+                // capability (declared here, in `bynk` itself, or flattened
+                // in via `consumes bynk { Events }`) gets this check.
+                let is_first_party_events = type_name.name == "Events"
+                    && method.name == "emit"
+                    && (ctx.input.commons.name.joined() == crate::firstparty::BYNK_UNIT
+                        || ctx
+                            .input
+                            .cross_context
+                            .flattened_caps
+                            .get("Events")
+                            .map(String::as_str)
+                            == Some(crate::firstparty::BYNK_UNIT));
+                if is_first_party_events && let Ty::Named { name: ename, .. } = &ty {
+                    if ctx.input.is_local_event(ename) {
+                        // Locally-declared event — the owner. Fine.
+                    } else if ctx.input.is_local_type(ename) {
+                        // Events track, slice 0: `UnitTable`/`ResolvedCommons`
+                        // record which local names are specifically events
+                        // (as opposed to any other locally-declared type) —
+                        // `Events.emit[SomeLocalRecord]` compiled clean before
+                        // this check existed, silently buffering an emission
+                        // no `from Events(...)` subscriber could ever match
+                        // (`discover_event_subscribers` finds no owner for a
+                        // non-event name and just drops it).
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.event.emit_not_an_event",
+                                ta.span(),
+                                format!(
+                                    "`{ename}` is not a declared `event` — `Events.emit` may only name an event type"
+                                ),
+                            )
+                            .with_note(
+                                "declare it with `event Name = { ... }`, or check that the type argument names the event you meant",
+                            ),
+                        );
+                    } else {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.event.emit_outside_owner",
+                                ta.span(),
+                                format!(
+                                    "`{ename}` is not declared in this context — only the context that declares an event may emit it"
+                                ),
+                            )
+                            .with_note(
+                                "a foreign event is visible via `consumes` for subscription (`from Events(...)`), but only its owning context may `Events.emit` it",
+                            ),
+                        );
+                    }
+                }
                 subst.insert(tp.clone(), ty);
             }
         }

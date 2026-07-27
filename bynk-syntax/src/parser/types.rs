@@ -122,6 +122,25 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// `event Name = { fields }` (Events track, slice 0, spine #936). Record
+    /// body only — no type parameters, no refined/opaque/sum forms; §7 never
+    /// shows any of those for an event, and admitting them is a strictly
+    /// later, additive grammar change if ever needed, not a slice-0 gap.
+    pub(crate) fn parse_event_decl(&mut self) -> Result<EventDecl, CompileError> {
+        let kw = self.expect(TokenKind::Event, "to start an event declaration")?;
+        let name = self.expect_ident("after `event`")?;
+        self.expect(TokenKind::Eq, "after the event name")?;
+        let body = self.parse_record_body()?;
+        let span = kw.span.merge(body.span);
+        Ok(EventDecl {
+            name,
+            body,
+            documentation: None,
+            span,
+            trivia: Trivia::default(),
+        })
+    }
+
     /// Parse the body of a record type: `{ field, field, ... }`.
     /// Each field is `name : type-ref (where refinement)?`; trailing
     /// comma after the last field is allowed.

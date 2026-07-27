@@ -877,6 +877,28 @@ mod tests {
     }
 
     #[test]
+    fn reserved_contextual_keywords_readable_in_expression_position() {
+        // Events track, slice 0 (#939): `expect_ident`'s `RESERVED_CONTEXTUAL`
+        // exemption (`keywords::RESERVED_CONTEXTUAL`: case/event/messages/on/
+        // suite) covers *declaring* a binding with one of these names — a
+        // parameter, a `let` — but the primary-expression parser previously
+        // only admitted plain `TokenKind::Ident` when *reading one back*.
+        // Latent since messages/on/case/suite shipped (no fixture happened to
+        // name a binding after one of them and read it back inside the body);
+        // surfaced concretely when `event` joined the tier and collided with
+        // `examples/event-log`'s pre-existing `add(event: Event)` handler.
+        for kw in ["case", "event", "messages", "on", "suite"] {
+            let src = format!("commons x\n\nfn f({kw}: Int) -> Int {{\n  {kw}\n}}\n");
+            let result = parse_str(&src);
+            assert!(
+                result.is_ok(),
+                "a parameter named `{kw}` must be readable in expression position: {:?}",
+                result.err()
+            );
+        }
+    }
+
+    #[test]
     fn recovery_skips_garbage_between_decls() {
         // Two `type` declarations separated by garbage. Recovery should
         // accept both and report one error for the garbage between them.

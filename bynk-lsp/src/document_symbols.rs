@@ -114,6 +114,9 @@ fn item_symbol(pm: &PositionMap, item: &CommonsItem) -> DocumentSymbol {
         CommonsItem::Agent(a) => agent_symbol(pm, a),
         CommonsItem::Actor(a) => actor_symbol(pm, a),
         CommonsItem::Messages(m) => messages_symbol(pm, m),
+        // Events track, slice 0 (spine #936): an `event` outlines exactly
+        // like a `type` — same synthetic `TypeDecl` used elsewhere.
+        CommonsItem::Event(e) => type_symbol(pm, &e.as_type_decl()),
     }
 }
 

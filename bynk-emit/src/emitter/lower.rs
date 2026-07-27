@@ -1508,6 +1508,34 @@ fn lower_method_call(
     if let Some(s) = lower_cross_context_service_call(receiver, method, args, stmts, cx) {
         return s;
     }
+    // Events track, slice 0 (spine #936): `Events.emit[E](event)` never
+    // calls through a provider like an ordinary capability op — release-
+    // at-commit (events.md §3.0) buffers it into the handler's own
+    // `__events` local instead, flushed only if the handler completes
+    // without throwing. The local is declared by the outer body wrapper
+    // whenever `block_uses_emit` is true (the same syntactic check this
+    // receiver/method match mirrors), so the two stay in lockstep by
+    // construction. The flush calls `deps.__eventsDispatch`, which the
+    // publishing context's own compose wires to the Cloudflare fan-out DO
+    // (Workers) or an in-process dispatch closure (Bundle) — see
+    // `emit_events_fanout_do`/`project.rs`'s `__eventsDispatch` construction.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == "Events"
+        && method.name == "emit"
+        && cx.is_first_party_events()
+    {
+        let event_name = type_args
+            .first()
+            .and_then(|t| match t {
+                TypeRef::Named(ident) => Some(ident.name.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let payload = lower_expr(&args[0], stmts, cx);
+        return format!(
+            "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload} }}); }})()"
+        );
+    }
     // Capability call: receiver is a bare ident naming a declared
     // capability in `given`. Lower to `<deps>.Capability.op(args)`,
     // where `<deps>` is `deps` in a handler body and `this.deps` in a

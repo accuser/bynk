@@ -153,3 +153,24 @@ export async function callService<T, E>(
   }
   return result.value;
 }
+
+// Events track, slice 0: the fan-out DO's own delivery to one subscriber,
+// over that subscriber's Service Binding. Subscriber failure isolation (ADR
+// 0284) is the caller's responsibility — the fan-out DO catches per-subscriber
+// so one subscriber's rejection does not stop delivery to its siblings; this
+// helper itself just throws on a non-`ok` response.
+export async function deliverEvent(
+  binding: ServiceBinding,
+  servicePath: string,
+  payload: unknown,
+): Promise<void> {
+  const request = new Request(`http://internal/_bynk/event/${servicePath}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const response = await binding.fetch(request);
+  if (!response.ok) {
+    throw new Error(`event delivery to ${servicePath} failed: ${response.status}`);
+  }
+}
