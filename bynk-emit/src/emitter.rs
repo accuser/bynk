@@ -206,7 +206,6 @@ fn single_file_ctx() -> EmitProjectCtx {
         contracts: false,
         source_path: PathBuf::new(),
         commons_name: String::new(),
-        local_files: Vec::new(),
         file_decl_index: crate::project::FileDeclIndex {
             types: HashMap::new(),
             fns: HashMap::new(),
@@ -215,16 +214,11 @@ fn single_file_ctx() -> EmitProjectCtx {
         imported_from: HashMap::new(),
         imported_from_kind: HashMap::new(),
         imported_decl_paths: HashMap::new(),
-        commons_dir: PathBuf::new(),
         unit_kind: UnitKind::Commons,
         owning_context: None,
-        exports_local: HashMap::new(),
         exports_for_consumed: HashMap::new(),
-        consumed_types: HashMap::new(),
         cross_context: bynk_check::resolver::CrossContextInfo::default(),
-        is_consumed_by_others: false,
         target: BuildTarget::Bundle,
-        boundary_type_owners: HashMap::new(),
         local_agents: HashSet::new(),
         agent_given_deps: HashMap::new(),
         extra_import_lines: Vec::new(),
@@ -247,7 +241,7 @@ fn single_file_ctx() -> EmitProjectCtx {
 /// each recorded span to a `(line, col)` and embed `sourcesContent`. Returns the
 /// generated TS and the serialised source-map v3 JSON (`None` when nothing
 /// mapped — e.g. a unit whose items all came from sibling files).
-pub fn emit_project(
+pub(crate) fn emit_project(
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     source_text: &str,
@@ -739,6 +733,9 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
                 expr(receiver, m) || args.iter().any(|x| expr(x, m))
             }
             ExprKind::Call { args, .. } => args.iter().any(|x| expr(x, m)),
+            // A store mutation inside a lambda passed to `forEach`/`map`/etc.
+            // still needs the end-of-handler commit flush.
+            ExprKind::Lambda(l) => expr(&l.body, m),
             _ => false,
         }
     }
@@ -2956,6 +2953,14 @@ impl<'a> LowerCtx<'a> {
             .iter()
             .rev()
             .find_map(|f| f.get(name).cloned())
+    }
+    /// Whether `name` is bound by an enclosing local (a `let`, match-arm/`is`
+    /// binding, or lambda param) rather than free to refer to a store field.
+    /// A local always wins: store-field dispatch by bare receiver name must
+    /// check this first, or a parameter/binding that happens to share a store
+    /// field's name is silently treated as the store field.
+    pub(crate) fn is_local(&self, name: &str) -> bool {
+        self.shadow_scopes.iter().any(|f| f.contains_key(name))
     }
     /// #908: register a non-`let` binder (a match-arm/`is` pattern binding, or
     /// a lambda param) into the current frame under its natural `ts_ident`

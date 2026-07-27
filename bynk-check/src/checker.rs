@@ -2827,6 +2827,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // effectful storage-map operations, dispatched by receiver provenance
             // (a bare ident that names a store map; not in the value scope).
             if let ExprKind::Ident(id) = &receiver.kind
+                && ctx.lookup(id.name.as_str()).is_none()
                 && let Some((k, v)) = ctx.store_maps.get(&id.name).cloned()
             {
                 // v0.91 (ADR 0115): a query builder/terminal lifts the store map
@@ -2851,6 +2852,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // v0.83: `<set>.<op>(…)` on a `store Set[T]` field — effectful
             // storage-set ops, dispatched by receiver provenance.
             else if let ExprKind::Ident(id) = &receiver.kind
+                && ctx.lookup(id.name.as_str()).is_none()
                 && let Some(t) = ctx.store_sets.get(&id.name).cloned()
             {
                 check_store_set_op(method, args, &t, expr.span, ctx)
@@ -2858,6 +2860,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // v0.87 (ADR 0113): `<cache>.<op>(…)` on a `store Cache[K, V]` field —
             // the storage-map ops plus a `given Clock` requirement (eviction).
             else if let ExprKind::Ident(id) = &receiver.kind
+                && ctx.lookup(id.name.as_str()).is_none()
                 && let Some((k, v, _ttl)) = ctx.store_caches.get(&id.name).cloned()
             {
                 check_store_cache_op(method, args, &k, &v, expr.span, ctx)
@@ -2867,6 +2870,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // time-window roots and general builders lift the log into a lazy
             // `Query[T]` over its entry values.
             else if let ExprKind::Ident(id) = &receiver.kind
+                && ctx.lookup(id.name.as_str()).is_none()
                 && let Some(t) = ctx.store_logs.get(&id.name).cloned()
             {
                 check_store_log_op(method, args, &t, expr.span, ctx)
@@ -2874,6 +2878,12 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // v0.98 (ADR 0125): `<cell>.update(f)` on a `store Cell[T]` field — the
             // one method-shaped cell op (read is the bare name, write is `:=`).
             // Dispatched by receiver provenance.
+            // Note: unlike the other store kinds, a `Cell` field is
+            // deliberately bound into scope by `self_scope` (v0.81: "each
+            // `Cell` store field is a bare local of its element type") so a
+            // bare read derefs it — so `ctx.lookup` legitimately finds it and
+            // no `is_none()` guard belongs here; a local sharing a cell's name
+            // is a scope-construction question, not a dispatch-order one.
             else if let ExprKind::Ident(id) = &receiver.kind
                 && let Some(t) = ctx.store_cells.get(&id.name).cloned()
             {

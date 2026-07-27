@@ -198,10 +198,17 @@ impl CompileError {
         source: &str,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
         let primary_span = (filename, self.span.range());
+        // ADR 0117: a warning-severity diagnostic must render as a warning, not
+        // an error — `report_with_config` is the only `ReportKind` in the
+        // workspace, so this is the one place that decides it.
+        let kind = match Severity::for_error(self) {
+            Severity::Error => ReportKind::Error,
+            Severity::Warning => ReportKind::Warning,
+        };
         // Spans are byte offsets into the UTF-8 source; ariadne 0.6 defaults
         // to character indexing, which misplaces the underline on any line
         // with non-ASCII text before the span.
-        let mut builder = Report::build(ReportKind::Error, primary_span.clone())
+        let mut builder = Report::build(kind, primary_span.clone())
             .with_config(config.with_index_type(IndexType::Byte))
             .with_code(self.category)
             .with_message(&self.message)
@@ -248,5 +255,53 @@ mod warning_channel_tests {
         assert_eq!(errors[0].category, "bynk.types.argument_mismatch");
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].category, "bynk.given.unused_capability");
+    }
+
+    /// `report_with_config` (the only `ReportKind` in the workspace) hardcoded
+    /// `ReportKind::Error`, so a warning-severity diagnostic printed "Error:"
+    /// and there was no way for a renderer built on `report_for` to tell them
+    /// apart. It must pick the `ReportKind` from `Severity::for_error`.
+    #[test]
+    fn report_for_renders_warning_severity_as_a_warning_not_an_error() {
+        let source = "commons w\n\nfn f() -> Int { 1 }\n";
+        let warn = CompileError::new(
+            "bynk.given.unused_capability",
+            Span::default(),
+            "unused",
+        );
+        let rendered = {
+            let mut out = Vec::new();
+            let mut cache = ("w.bynk", ariadne::Source::from(source));
+            warn.report_plain_for("w.bynk", source)
+                .write(&mut cache, &mut out)
+                .unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        assert!(
+            rendered.contains("Warning:"),
+            "expected a `Warning:` report for a warning-severity category, got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Error:"),
+            "a warning-severity category must not render as `Error:`, got:\n{rendered}"
+        );
+
+        let err = CompileError::new(
+            "bynk.types.argument_mismatch",
+            Span::default(),
+            "mismatch",
+        );
+        let rendered_err = {
+            let mut out = Vec::new();
+            let mut cache = ("w.bynk", ariadne::Source::from(source));
+            err.report_plain_for("w.bynk", source)
+                .write(&mut cache, &mut out)
+                .unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        assert!(
+            rendered_err.contains("Error:"),
+            "an error-severity category must still render as `Error:`, got:\n{rendered_err}"
+        );
     }
 }

@@ -1,0 +1,36 @@
+context shop.payment
+
+-- Regression: `bynkc test` runs a second, workers-target compile for
+-- integration suites (everything outside `tests/`, since integration cases
+-- import the workers-mode output). That second compile must keep
+-- `contracts: true`, the same as the first — `rate`'s deliberately-violated
+-- `ensures` below only fires at runtime if the call-site guard survived into
+-- *this* module's workers-mode emission.
+
+exports transparent { PayError }
+
+type PayError = enum { Declined }
+
+capability Bank {
+  fn charge(cents: Int) -> Effect[Result[Int, PayError]]
+}
+
+provides Bank = StubBank {
+  fn charge(cents: Int) -> Effect[Result[Int, PayError]] {
+    Ok(rate(cents))
+  }
+}
+
+fn rate(cents: Int) -> Int
+  requires nonneg: cents >= 0
+  ensures halved: result == cents / 2
+{
+  cents
+}
+
+service authorise {
+  on call(cents: Int) -> Effect[Result[Int, PayError]] given Bank {
+    let r <- Bank.charge(cents)
+    r
+  }
+}

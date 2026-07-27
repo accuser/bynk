@@ -17,8 +17,11 @@ use clap::Parser;
 /// layout works the same from any of them. Test-ness is structural — a `suite`
 /// is discovered wherever it sits and stripped from the production build — so
 /// tests need no dedicated directory.
-fn project_options(input: &Path) -> bynkc::CompileOptions {
-    bynk_driver::project_options(input)
+///
+/// A malformed `bynk.toml` fails loudly here rather than silently falling
+/// back to the conventional layout.
+fn try_project_options(input: &Path) -> Result<bynkc::CompileOptions, bynkc::ProjectPathsError> {
+    bynk_driver::try_project_options(input)
 }
 
 fn main() -> ExitCode {
@@ -130,7 +133,17 @@ fn run_test(
         // v0.115: `bynkc test` compiles the dev/test profile — the function
         // contract call-site guard is emitted (DECISION J). `bynkc compile`
         // leaves it off, so contract checks never reach production.
-        let o = project_options(&input).contracts(true);
+        let o = match try_project_options(&input) {
+            Ok(o) => o.contracts(true),
+            Err(e) => {
+                if json {
+                    print!("{}", TestRun::runtime_error(e.to_string(), None).render());
+                } else {
+                    eprintln!("bynkc test: {e}");
+                }
+                return ExitCode::FAILURE;
+            }
+        };
         if inspect {
             o.import_ext(bynkc::ImportExt::Ts)
         } else {
@@ -192,8 +205,12 @@ fn run_test(
     // the bundle output). The workers commons are a strict superset of the
     // bundle ones, so overwriting them is safe for the bundle code too.
     if has_integration {
-        let workers_out =
-            bynkc::compile_project(&project_options(&input).target(bynkc::BuildTarget::Workers));
+        // v0.115/slice 2: reuse `options` (not a fresh `project_options(&input)`)
+        // so this second compile keeps `contracts(true)` and, under `--inspect`,
+        // `import_ext(Ts)` — a from-scratch rebuild silently dropped both.
+        let workers_out = bynkc::compile_project(
+            &options.clone().target(bynkc::BuildTarget::Workers),
+        );
         let workers_out = match workers_out {
             Ok(o) => o,
             Err(failure) => {
@@ -642,8 +659,15 @@ fn run_compile(
     emit: EmitFormat,
 ) -> ExitCode {
     if input.is_dir() {
+        let options = match try_project_options(&input) {
+            Ok(o) => o.target(target).platform(platform),
+            Err(e) => {
+                eprintln!("bynkc: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
         // Multi-file project compile.
-        match bynkc::compile_project(&project_options(&input).target(target).platform(platform)) {
+        match bynkc::compile_project(&options) {
             Ok(out) => {
                 // `--emit js` (the in-browser track, slice 1, ADR 0137): the
                 // emitter always produces TypeScript; a JS artefact is that same
@@ -663,7 +687,7 @@ fn run_compile(
                 match bynkc::write_output(&out, &output) {
                     Ok(()) => {
                         // ADR 0117: surface non-failing warnings; the build succeeds.
-                        bynkc::print_project_warnings(&out.warnings);
+                        bynkc::print_project_warnings(&out.warnings, &out.snapshots);
                         ExitCode::SUCCESS
                     }
                     Err(e) => {

@@ -385,7 +385,13 @@ pub fn compile_once(compiler: &Compiler, project_root: &Path, build_dir: &Path) 
             }
         };
     }
-    let options = bynk_driver::project_options(project_root).target(BuildTarget::Workers);
+    let options = match bynk_driver::try_project_options(project_root) {
+        Ok(o) => o.target(BuildTarget::Workers),
+        Err(e) => {
+            eprintln!("bynk: {e}");
+            return false;
+        }
+    };
     let output = match bynk_emit::project::compile_project(&options) {
         Ok(out) => out,
         Err(failure) => {
@@ -403,6 +409,9 @@ pub fn compile_once(compiler: &Compiler, project_root: &Path, build_dir: &Path) 
         );
         return false;
     }
+    // ADR 0117: surface non-failing warnings — the `BYNK_BYNKC` override above
+    // already does, via the shelled `bynkc compile`'s own stdout/stderr.
+    crate::diagnostics::print_project_warnings(&output.warnings, &output.snapshots);
     true
 }
 

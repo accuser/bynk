@@ -72,8 +72,8 @@ pub(crate) fn check_platform_lock(
     target: BuildTarget,
     selected: Platform,
     parsed: &[ParsedFile],
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
@@ -214,8 +214,8 @@ pub(crate) fn check_platform_lock(
 /// declarations) through instead.
 pub(crate) fn check_messages_bundles(
     parsed: &[ParsedFile],
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     unit_uses: &HashMap<String, Vec<String>>,
     errors: &mut ErrorSink,
 ) {
@@ -479,8 +479,8 @@ pub(crate) fn check_messages_bundles(
 /// has nothing ambiguous to resolve.
 pub(crate) fn check_locale_bundle_ambiguity(
     parsed: &[ParsedFile],
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     errors: &mut ErrorSink,

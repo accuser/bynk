@@ -1114,6 +1114,7 @@ fn lower_method_call(
     // record mutation is staged in `__state` and flushed by the same end-of-handler
     // commit as any other persisted field.
     if let ExprKind::Ident(id) = &receiver.kind
+        && !cx.is_local(&id.name)
         && let Some(f_ts) = cx.agent_held_maps.get(&id.name).cloned()
     {
         let var = cx
@@ -1160,6 +1161,7 @@ fn lower_method_call(
     // awaited expression suffices. `update` on an absent key throws (a fault →
     // nothing commits).
     if let ExprKind::Ident(id) = &receiver.kind
+        && !cx.is_local(&id.name)
         && cx.agent_store_maps.contains(&id.name)
     {
         let var = cx
@@ -1231,6 +1233,7 @@ fn lower_method_call(
     // Lowers to an entry op over `__state.<set>` (a `Record<string, boolean>`):
     // `add`/`remove` mutate the working record, `contains`/`size` read it.
     if let ExprKind::Ident(id) = &receiver.kind
+        && !cx.is_local(&id.name)
         && cx.agent_store_sets.contains(&id.name)
     {
         let var = cx
@@ -1255,6 +1258,7 @@ fn lower_method_call(
     // op is an async IIFE. `put`/`update`/`upsert` stamp `exp = now() + ttl`;
     // `get`/`contains`/`size` treat an entry past `exp` as absent.
     if let ExprKind::Ident(id) = &receiver.kind
+        && !cx.is_local(&id.name)
         && let Some(ttl) = cx.agent_store_caches.get(&id.name).copied()
     {
         let var = cx
@@ -1298,6 +1302,7 @@ fn lower_method_call(
     // and pushes (pruning past `@retain`); the time-window roots and the general
     // query vocabulary lower to a lazy pipeline over the entry values.
     if let ExprKind::Ident(id) = &receiver.kind
+        && !cx.is_local(&id.name)
         && let Some(retain) = cx.agent_store_logs.get(&id.name).copied()
     {
         let var = cx
@@ -1354,6 +1359,11 @@ fn lower_method_call(
     // synchronous against the working state (read-your-writes); the single
     // end-of-handler `commitState` flush runs the invariant gate before the
     // durable write, exactly as `:=` does.
+    // Note: unlike the other store kinds, a `Cell` field is deliberately bound
+    // into checker scope (self_scope) as a bare local of its element type, so
+    // the checker always resolves a same-named identifier to the cell — no
+    // `is_local` guard belongs here without also changing that scope
+    // construction, or the emitter would disagree with what the checker typed.
     if let ExprKind::Ident(id) = &receiver.kind
         && cx
             .agent_store_state
@@ -3566,7 +3576,9 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // `Record<K, connId>` mapped through `resolveConnection`, keeping the present
     // ones. Checked before the persisted-`Map` branch (held maps are excluded from
     // `agent_store_maps`).
-    if let Some(f_ts) = cx.agent_held_maps.get(&id.name) {
+    if !cx.is_local(&id.name)
+        && let Some(f_ts) = cx.agent_held_maps.get(&id.name)
+    {
         let var = cx
             .agent_store_state
             .as_ref()
@@ -3581,7 +3593,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // method receiver (those are handled in the method dispatch) — is a lazy
     // `Query` over the whole map, e.g. the `other` side of a join. It lowers to
     // the same deferred thunk a query builder yields: `() => Object.values(map)`.
-    if cx.agent_store_maps.contains(&id.name) {
+    if !cx.is_local(&id.name) && cx.agent_store_maps.contains(&id.name) {
         let var = cx
             .agent_store_state
             .as_ref()
@@ -3591,7 +3603,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     }
     // v0.95 (ADR 0121): a bare `store Log` ident used as a value is a lazy
     // `Query` over its entry values — `() => log.map((__e) => __e.v)`.
-    if cx.agent_store_logs.contains_key(&id.name) {
+    if !cx.is_local(&id.name) && cx.agent_store_logs.contains_key(&id.name) {
         let var = cx
             .agent_store_state
             .as_ref()
@@ -4042,22 +4054,21 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     for p in &lambda.params {
         cx.declare_binder(&p.name.name);
     }
+    // v0.154 (ADR 0178): a lambda is its own return scope — a `return` in its
+    // body (from a `?`) exits the arrow, not the enclosing function. Rebind
+    // `return_ty` to the lambda's own return (its `Fn` type's `ret`) so an
+    // embedding `?` anywhere in the body — block-bodied or expression-bodied —
+    // uses that, not the outer one; restore after either form.
+    let lam_ret = match cx.commons.expr_types.get(&e.span) {
+        Some(bynk_check::checker::Ty::Fn { ret, .. }) => Some((**ret).clone()),
+        _ => None,
+    };
+    let saved = cx.return_ty.take();
+    cx.return_ty = lam_ret;
     let result = match &lambda.body.kind {
         ExprKind::Block(b) => {
             let mut out = format!("{prefix}({params}) => {{\n");
-            // v0.154 (ADR 0178): a lambda is its own return scope — a `return`
-            // in its body (from a `?`) exits the arrow, not the enclosing
-            // function. Rebind `return_ty` to the lambda's own return (its `Fn`
-            // type's `ret`) so an embedding `?` uses that, not the outer one;
-            // restore after.
-            let lam_ret = match cx.commons.expr_types.get(&e.span) {
-                Some(bynk_check::checker::Ty::Fn { ret, .. }) => Some((**ret).clone()),
-                _ => None,
-            };
-            let saved = cx.return_ty.take();
-            cx.return_ty = lam_ret;
             emit_block_as_function_body(&mut out, b, cx, INDENT_STEP * 2, is_async);
-            cx.return_ty = saved;
             for _ in 0..INDENT_STEP {
                 out.push(' ');
             }
@@ -4087,6 +4098,7 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
             }
         }
     };
+    cx.return_ty = saved;
     cx.shadow_scopes.pop();
     result
 }

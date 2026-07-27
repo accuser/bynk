@@ -20,7 +20,7 @@
 //!      `uses` cycles trivial — there is no order-of-evaluation, only
 //!      declarative mixin.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -62,8 +62,8 @@ use validate::*;
 // module (emitter, main, lib) must stay reachable at that path.
 pub use diagnostics::{AttributedError, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
 pub use paths::{
-    ProjectPaths, read_project_paths, worker_dir_name, worker_handlers_output_path,
-    worker_handlers_source_path,
+    ProjectPaths, ProjectPathsError, read_project_paths, try_read_project_paths, worker_dir_name,
+    worker_handlers_output_path, worker_handlers_source_path,
 };
 pub use symbols::{FileDeclIndex, UnitTable};
 pub use validate::check_function_type_boundary_items;
@@ -100,6 +100,11 @@ pub struct ProjectOutput {
     /// v0.89 (ADR 0117): non-failing warnings emitted on a successful build —
     /// surfaced (the CLI prints them, the LSP shows them) but not gating.
     pub warnings: Vec<AttributedError>,
+    /// Per-file source snapshots, keyed the same way `ProjectFailure::snapshots`
+    /// is — lets a warning render with real file/line/col context (ariadne or
+    /// `path:line:col:`) instead of the position-free `warning[category]: …`
+    /// fallback a successful build previously had no way to avoid.
+    pub snapshots: Vec<(PathBuf, String)>,
     /// v0.67: the test manifest — every discovered suite and case, retained at
     /// emit time so `bynkc test --no-run --format json` can render a discovery
     /// document without running the suite. Built from the same names + spans the
@@ -193,6 +198,7 @@ impl UnitKind {
 }
 
 /// Where a project's `.bynk` files live.
+#[derive(Clone)]
 pub enum Roots {
     /// A single tree walked as one root (in-memory builds and legacy
     /// single-file/single-tree inputs).
@@ -331,6 +337,7 @@ impl ImportExt {
 /// Options for [`compile_project`]. Construct with [`CompileOptions::single`] or
 /// [`CompileOptions::split`], then chain `.target(…)` / `.platform(…)` /
 /// `.import_ext(…)` to override the bundle/default-platform/`.js` defaults.
+#[derive(Clone)]
 pub struct CompileOptions {
     pub target: BuildTarget,
     pub platform: Platform,
@@ -603,6 +610,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
         }),
         RunChecks::Checked {
             errors,
+            snapshots,
             parsed,
             compiled,
             runnable_tests,
@@ -641,6 +649,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             // ADR 0117: surface non-failing warnings on the successful build
             // (errors is empty here — the guard arm above caught any).
             out.warnings = errors.into_warnings();
+            out.snapshots = snapshots;
             Ok(out)
         }
     }
@@ -1248,22 +1257,22 @@ fn phase_group(
     consumes_cloudflare: bool,
     errors: &mut ErrorSink,
 ) -> (
-    HashMap<String, Vec<usize>>,
-    HashMap<String, UnitKind>,
-    HashMap<String, Vec<usize>>,
-    HashMap<String, Vec<usize>>,
+    BTreeMap<String, Vec<usize>>,
+    BTreeMap<String, UnitKind>,
+    BTreeMap<String, Vec<usize>>,
+    BTreeMap<String, Vec<usize>>,
     HashMap<String, AdapterBinding>,
     std::collections::BTreeMap<String, String>,
 ) {
     // Tests (v0.7) are tracked separately from production units. Their
     // `target` joined-name can intentionally coincide with a commons or
     // context name; they don't enter the production groups/kinds maps.
-    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut kinds: HashMap<String, UnitKind> = HashMap::new();
-    let mut test_groups: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut kinds: BTreeMap<String, UnitKind> = BTreeMap::new();
+    let mut test_groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     // v0.16: integration tests are tracked by suite name, separately again from
     // unit tests — their `name()` is the synthetic `integration <suite>`.
-    let mut integration_groups: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut integration_groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, pf) in parsed.iter().enumerate() {
         let name = pf.unit.name().joined();
         if pf.kind == UnitKind::Integration {
@@ -1460,8 +1469,8 @@ fn phase_group(
 /// Phase 4: build each production unit's combined symbol table from its files,
 /// pushing any table-construction errors into `errors`.
 fn phase_symbol_tables(
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
     errors: &mut ErrorSink,
 ) -> HashMap<String, UnitTable> {
@@ -1483,8 +1492,8 @@ fn phase_symbol_tables(
 /// a commons, and is not self-referential. Returns unit → deduplicated list of
 /// used commons; diagnostics go into `errors`.
 fn phase_resolve_uses(
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
     unit_tables: &HashMap<String, UnitTable>,
     errors: &mut ErrorSink,
@@ -1553,8 +1562,8 @@ fn phase_resolve_uses(
 /// unit; diagnostics go into `errors` and clause-position references into `refs`.
 #[allow(clippy::type_complexity)]
 fn phase_resolve_consumes(
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
     unit_tables: &HashMap<String, UnitTable>,
     errors: &mut ErrorSink,
@@ -1746,8 +1755,8 @@ fn phase_resolve_consumes(
 /// any alias that clashes with a locally-declared type/fn/capability/service/agent
 /// (5b''). Returns the per-context alias maps; diagnostics go into `errors`.
 fn phase_consumes_aliases(
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
     unit_tables: &HashMap<String, UnitTable>,
     errors: &mut ErrorSink,
@@ -1841,7 +1850,7 @@ fn phase_uses_name_conflicts(
     unit_uses: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
     parsed: &[ParsedFile],
-    groups: &HashMap<String, Vec<usize>>,
+    groups: &BTreeMap<String, Vec<usize>>,
     errors: &mut ErrorSink,
 ) {
     for (name, targets) in unit_uses {
@@ -1907,8 +1916,8 @@ fn phase_uses_name_conflicts(
 /// (type → visibility); diagnostics go into `errors` and export references into
 /// `refs`.
 fn phase_validate_type_exports(
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
     unit_tables: &HashMap<String, UnitTable>,
     errors: &mut ErrorSink,
@@ -2014,8 +2023,8 @@ fn phase_validate_type_exports(
 /// provides, with no duplicate exports. Diagnostics go into `errors` and export
 /// references into `refs`.
 fn phase_validate_capability_exports(
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     parsed: &[ParsedFile],
     unit_tables: &HashMap<String, UnitTable>,
     errors: &mut ErrorSink,
@@ -2100,7 +2109,7 @@ fn phase_validate_providers(
     // #696: the merged `UnitTable` has flattened a unit's files away, so provider
     // diagnostics need the group's files to recover which one declares each
     // provider and attribute the diagnostic to it.
-    groups: &HashMap<String, Vec<usize>>,
+    groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
     errors: &mut ErrorSink,
 ) {
@@ -2261,7 +2270,7 @@ fn phase_validate_providers(
 /// Phase 7: build each production unit's file-declaration index (which file in
 /// the unit declares which name), for cross-file lookups in the back half.
 fn phase_file_index(
-    groups: &HashMap<String, Vec<usize>>,
+    groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
 ) -> HashMap<String, FileDeclIndex> {
     let mut unit_file_index: HashMap<String, FileDeclIndex> = HashMap::new();
@@ -2298,8 +2307,8 @@ struct UnitInfo {
 /// `.unwrap_or(empty)` read semantics as a total field.
 #[allow(clippy::too_many_arguments)]
 fn assemble_unit_info(
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
@@ -2307,7 +2316,7 @@ fn assemble_unit_info(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
     unit_file_index: &HashMap<String, FileDeclIndex>,
-) -> HashMap<String, UnitInfo> {
+) -> BTreeMap<String, UnitInfo> {
     groups
         .iter()
         .map(|(name, indices)| {
@@ -2364,7 +2373,7 @@ fn collect_unit_methods(indices: &[usize], parsed: &[ParsedFile]) -> HashMap<Str
 fn merge_consumed_exports(
     name: &str,
     parsed: &[ParsedFile],
-    unit_info: &HashMap<String, UnitInfo>,
+    unit_info: &BTreeMap<String, UnitInfo>,
     combined_types: &mut HashMap<String, TypeDecl>,
     combined_methods: &mut HashMap<String, ResolverMethodTable>,
     imported_from: &mut HashMap<String, String>,
@@ -2450,7 +2459,7 @@ fn merge_consumed_exports(
 fn compose_unit_symbols(
     name: &str,
     local_table: &UnitTable,
-    unit_info: &HashMap<String, UnitInfo>,
+    unit_info: &BTreeMap<String, UnitInfo>,
 ) -> (
     HashMap<String, TypeDecl>,
     HashMap<String, FnDecl>,
@@ -2539,15 +2548,12 @@ fn collect_history_target_agents(parsed: &[ParsedFile]) -> HashSet<String> {
 fn emit_unit(
     name: &str,
     kind: UnitKind,
-    i: usize,
     pf: &ParsedFile,
-    indices: &[usize],
     parsed: &[ParsedFile],
-    unit_info: &HashMap<String, UnitInfo>,
+    unit_info: &BTreeMap<String, UnitInfo>,
     imported_from: &HashMap<String, String>,
     imported_from_kind: &HashMap<String, UnitKind>,
     owning_context_for_emit: &Option<String>,
-    consumed_types: &HashMap<String, ConsumedType>,
     cross_context_for_file: &resolver::CrossContextInfo,
     typed: &checker::TypedCommons,
     target: BuildTarget,
@@ -2611,7 +2617,6 @@ fn emit_unit(
         }
     }
 
-    let exports_local = info.exports.clone();
     let exports_for_consumed = info
         .consumes
         .iter()
@@ -2637,23 +2642,6 @@ fn emit_unit(
     } else {
         pf.source_path.clone()
     };
-    let emit_local_files = if workers_mode && kind == UnitKind::Context {
-        // Each context becomes one Worker; the body collapses into
-        // one handlers.ts so there are no siblings to import from.
-        Vec::new()
-    } else {
-        indices
-            .iter()
-            .filter_map(|&j| {
-                if j == i {
-                    None
-                } else {
-                    Some(parsed[j].source_path.clone())
-                }
-            })
-            .collect()
-    };
-
     // In workers mode, rewrite imported_decl_paths for consumed
     // contexts to point at the consumed Worker's handlers.ts.
     let mut imported_decl_paths_emit = imported_decl_paths.clone();
@@ -2670,15 +2658,6 @@ fn emit_unit(
             }
         }
     }
-
-    // v0.8: pre-compute boundary type owners so the emitter can
-    // generate serialise/deserialise helper imports correctly. Only
-    // relevant in workers mode for contexts.
-    let boundary_type_owners = if workers_mode && kind == UnitKind::Context {
-        compute_boundary_type_owners(name, unit_info, parsed)
-    } else {
-        HashMap::new()
-    };
 
     // message-bundles slice 1 (#859): a `messages` block's generated `render`
     // needs `bynk.locale`'s own `render` in scope for its fallback rung, but
@@ -2714,24 +2693,16 @@ fn emit_unit(
     let emit_ctx = EmitProjectCtx {
         source_path: emit_source_path,
         commons_name: name.to_string(),
-        local_files: emit_local_files,
         file_decl_index: info.file_index.clone(),
         imported_from: imported_from.clone(),
         imported_from_kind: imported_from_kind.clone(),
         imported_decl_paths: imported_decl_paths_emit,
-        commons_dir: commons_dir_for(name),
         unit_kind: kind,
         owning_context: owning_context_for_emit.clone(),
-        exports_local,
         exports_for_consumed,
         imported_methods,
-        consumed_types: consumed_types.clone(),
         cross_context: cross_context_info,
-        is_consumed_by_others: unit_info
-            .values()
-            .any(|i| i.consumes.iter().any(|t| t == name)),
         target,
-        boundary_type_owners,
         local_agents: info.table.agents.keys().cloned().collect(),
         agent_given_deps: agent_deps_plan.map(|p| p.exprs.clone()).unwrap_or_default(),
         extra_import_lines,
@@ -2801,7 +2772,7 @@ fn check_unit_files(
     kind: UnitKind,
     indices: &[usize],
     parsed: &[ParsedFile],
-    unit_info: &HashMap<String, UnitInfo>,
+    unit_info: &BTreeMap<String, UnitInfo>,
     combined_types: &HashMap<String, TypeDecl>,
     combined_fns: &HashMap<String, FnDecl>,
     combined_methods: &HashMap<String, ResolverMethodTable>,
@@ -2828,23 +2799,37 @@ fn check_unit_files(
     // is a general map-based function — the test-emission path calls it with
     // *synthetic* harness maps, not `unit_info` — so it keeps its parallel-map
     // signature. `check_unit_files` only has `unit_info`, so materialise the
-    // four views that one call needs, once per unit ahead of the file loop.
-    let unit_tables: HashMap<String, UnitTable> = unit_info
-        .iter()
-        .map(|(n, i)| (n.clone(), i.table.clone()))
-        .collect();
-    let unit_uses: HashMap<String, Vec<String>> = unit_info
-        .iter()
-        .map(|(n, i)| (n.clone(), i.uses.clone()))
-        .collect();
-    let unit_consumes: HashMap<String, Vec<String>> = unit_info
-        .iter()
-        .map(|(n, i)| (n.clone(), i.consumes.clone()))
-        .collect();
-    let unit_consumes_aliases: HashMap<String, HashMap<String, String>> = unit_info
-        .iter()
-        .map(|(n, i)| (n.clone(), i.aliases.clone()))
-        .collect();
+    // four views that one call needs, once per unit ahead of the file loop —
+    // but only for a context/adapter, `build_cross_context_info`'s only caller
+    // below. `UnitTable` owns every declaration body in the unit, so for every
+    // other unit kind (including the seven injected first-party commons) this
+    // was a whole-project deep clone, performed and discarded, once per unit.
+    let cross_context_views = if kind == UnitKind::Context || kind == UnitKind::Adapter {
+        let unit_tables: HashMap<String, UnitTable> = unit_info
+            .iter()
+            .map(|(n, i)| (n.clone(), i.table.clone()))
+            .collect();
+        let unit_uses: HashMap<String, Vec<String>> = unit_info
+            .iter()
+            .map(|(n, i)| (n.clone(), i.uses.clone()))
+            .collect();
+        let unit_consumes: HashMap<String, Vec<String>> = unit_info
+            .iter()
+            .map(|(n, i)| (n.clone(), i.consumes.clone()))
+            .collect();
+        let unit_consumes_aliases: HashMap<String, HashMap<String, String>> = unit_info
+            .iter()
+            .map(|(n, i)| (n.clone(), i.aliases.clone()))
+            .collect();
+        Some((
+            unit_tables,
+            unit_uses,
+            unit_consumes,
+            unit_consumes_aliases,
+        ))
+    } else {
+        None
+    };
     // #907: the exact set of type names `emit_context_rebrands` rebrands for
     // this unit — names brought in via `uses` of a *commons* specifically
     // (not a local declaration, and not a type surfaced via `consumes`,
@@ -2938,13 +2923,15 @@ fn check_unit_files(
         // for the resolver, checker, and emitter. v0.18: adapters get it
         // too, so an external provider's `given` resolves against the
         // adapter's flattened consumed capabilities (spec §4.5).
-        let cross_context_for_file = if kind == UnitKind::Context || kind == UnitKind::Adapter {
+        let cross_context_for_file = if let Some((unit_tables, unit_uses, unit_consumes, unit_consumes_aliases)) =
+            &cross_context_views
+        {
             let mut cci = build_cross_context_info(
                 name,
-                &unit_consumes,
-                &unit_consumes_aliases,
-                &unit_uses,
-                &unit_tables,
+                unit_consumes,
+                unit_consumes_aliases,
+                unit_uses,
+                unit_tables,
             );
             cci.flattened_caps = unit_info[name].flattened.clone();
             cci
@@ -3086,15 +3073,12 @@ fn check_unit_files(
         emit_unit(
             name,
             kind,
-            i,
             pf,
-            indices,
             parsed,
             unit_info,
             imported_from,
             imported_from_kind,
             owning_context_for_emit,
-            consumed_types,
             &cross_context_for_file,
             &typed,
             target,
@@ -3136,8 +3120,8 @@ enum RunChecks {
         runnable_tests: Vec<RunnableTest>,
         integration_outputs: Vec<CompiledFile>,
         integration_runnables: Vec<RunnableTest>,
-        groups: HashMap<String, Vec<usize>>,
-        kinds: HashMap<String, UnitKind>,
+        groups: BTreeMap<String, Vec<usize>>,
+        kinds: BTreeMap<String, UnitKind>,
         unit_uses: HashMap<String, Vec<String>>,
         unit_consumes: HashMap<String, Vec<String>>,
         unit_consumes_aliases: HashMap<String, HashMap<String, String>>,
@@ -3632,8 +3616,8 @@ fn build_output(
     mut runnable_tests: Vec<RunnableTest>,
     integration_outputs: Vec<CompiledFile>,
     integration_runnables: Vec<RunnableTest>,
-    groups: HashMap<String, Vec<usize>>,
-    kinds: HashMap<String, UnitKind>,
+    groups: BTreeMap<String, Vec<usize>>,
+    kinds: BTreeMap<String, UnitKind>,
     unit_consumes: HashMap<String, Vec<String>>,
     unit_consumes_aliases: HashMap<String, HashMap<String, String>>,
     unit_tables: HashMap<String, UnitTable>,
@@ -3969,6 +3953,9 @@ fn build_output(
         discovered,
         // Populated by `compile_project` from the run's warning sink (ADR 0117).
         warnings: Vec::new(),
+        // Populated by `finish_build` from the same `RunChecks::Checked` this
+        // whole `ProjectOutput` was built from.
+        snapshots: Vec::new(),
     }
 }
 
@@ -4102,7 +4089,7 @@ pub struct AgentDepsPlan {
 /// agent has `given` capabilities.
 fn plan_agent_given_deps(
     name: &str,
-    unit_info: &HashMap<String, UnitInfo>,
+    unit_info: &BTreeMap<String, UnitInfo>,
     adapter_bindings: &HashMap<String, AdapterBinding>,
 ) -> Option<AgentDepsPlan> {
     let info = unit_info.get(name)?;
@@ -4337,8 +4324,8 @@ pub(crate) fn instantiate_provider_expr(
 
 #[allow(clippy::too_many_arguments)]
 fn emit_composition_root(
-    groups: &HashMap<String, Vec<usize>>,
-    kinds: &HashMap<String, UnitKind>,
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_tables: &HashMap<String, UnitTable>,
@@ -4641,50 +4628,13 @@ fn emit_composition_root(
 
 // -- internals --
 
-/// v0.8: collect the boundary-type owners visible to a given consuming
-/// context. Every consumed-context type and every commons type referenced
-/// in cross-context positions has an owner; that owner emits the
-/// serialise/deserialise helpers.
-fn compute_boundary_type_owners(
-    consumer: &str,
-    unit_info: &HashMap<String, UnitInfo>,
-    parsed: &[ParsedFile],
-) -> HashMap<String, BoundaryOwner> {
-    let mut out: HashMap<String, BoundaryOwner> = HashMap::new();
-    let Some(consumer_info) = unit_info.get(consumer) else {
-        return out;
-    };
-    let _ = parsed;
-    for t in &consumer_info.consumes {
-        let Some(target_info) = unit_info.get(t) else {
-            continue;
-        };
-        // Types declared in the consumed context (records, sums, refined,
-        // opaque) — record them with the consumed context as owner.
-        for type_name in target_info.table.types.keys() {
-            out.insert(
-                type_name.clone(),
-                BoundaryOwner::Context { context: t.clone() },
-            );
-        }
-        // Commons types `uses`-imported by the consumed context: their
-        // file lookup is unit_file_index keyed by commons name.
-    }
-    // For consumer-side commons types (used in this context's exposed
-    // signatures), look them up via this consumer's file index.
-    let _ = &consumer_info.file_index;
-    out
-}
-
 /// Context passed to the emitter so it can resolve cross-file and
 /// cross-unit references into TypeScript import statements.
-pub struct EmitProjectCtx {
+pub(crate) struct EmitProjectCtx {
     /// Source path of the file being emitted (relative to project root).
     pub source_path: PathBuf,
     /// Joined name of the commons or context this file belongs to.
     pub commons_name: String,
-    /// Sibling files in the same unit (project-relative paths).
-    pub local_files: Vec<PathBuf>,
     /// Which file declares each name in the local unit.
     pub file_decl_index: FileDeclIndex,
     /// For each imported name, the joined name of the unit it came from.
@@ -4693,36 +4643,21 @@ pub struct EmitProjectCtx {
     pub imported_from_kind: HashMap<String, UnitKind>,
     /// For each imported unit, the file path that declares each name.
     pub imported_decl_paths: HashMap<String, HashMap<String, PathBuf>>,
-    /// The directory (project-relative) that holds this unit.
-    pub commons_dir: PathBuf,
     /// What kind of unit this is.
     pub unit_kind: UnitKind,
     /// For contexts: this context's qualified name (used as the brand for
     /// rebranded mixed-in types and exported types).
     pub owning_context: Option<String>,
-    /// For contexts: visibility of types declared in this context.
-    pub exports_local: HashMap<String, Visibility>,
     /// For contexts: exports of each consumed context (so the emitter knows
     /// which names to import and how).
     pub exports_for_consumed: HashMap<String, HashMap<String, Visibility>>,
-    /// For contexts: types imported via `consumes` clauses with their
-    /// visibility and owning-context metadata.
-    pub consumed_types: HashMap<String, ConsumedType>,
     /// For contexts: full cross-context information (consumed contexts,
     /// aliases, consumed services and types). Mirrors what the resolver
     /// and checker see (v0.6).
     pub cross_context: resolver::CrossContextInfo,
-    /// True when *this* context's surface is consumed by another context in
-    /// the project. Drives `makeSurface` emission (v0.6 §6.3).
-    pub is_consumed_by_others: bool,
     /// v0.8 build target. Workers mode reroutes cross-context calls through
     /// Service Bindings and adds per-Worker entry/composition artefacts.
     pub target: BuildTarget,
-    /// v0.8 (workers mode): for each cross-context type used in cross-context
-    /// positions, the type's owning context's qualified name. Lets the
-    /// emitter route serialise/deserialise helper imports to the owning
-    /// module.
-    pub boundary_type_owners: HashMap<String, BoundaryOwner>,
     /// Agent names declared in this unit. The body lowering uses this set
     /// to recognise `Agent(key)` construction and `agent_instance.method(...)`
     /// dispatch.
@@ -4778,15 +4713,6 @@ pub struct EmitProjectCtx {
     /// `emit_project` call, so the flags cannot leak between files. Replaces a
     /// substring scan of the generated text; see `emitter::runtime_use`.
     pub runtime_use: crate::emitter::RuntimeUse,
-}
-
-/// Where a boundary-crossing type was declared.
-#[derive(Debug, Clone)]
-pub enum BoundaryOwner {
-    /// Commons type. Path is project-relative to the `.bynk` file declaring it.
-    Commons { source_path: PathBuf },
-    /// Context type. Qualified context name (e.g., `commerce.payment`).
-    Context { context: String },
 }
 
 impl EmitProjectCtx {
@@ -5245,11 +5171,11 @@ mod tests {
     /// the old `.unwrap_or(empty)` read semantics as a total field.
     #[test]
     fn assemble_unit_info_yields_one_record_per_group_with_all_facets() {
-        let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         groups.insert("a.commons".to_string(), vec![0, 1]);
         groups.insert("a.context".to_string(), vec![2]);
 
-        let mut kinds: HashMap<String, UnitKind> = HashMap::new();
+        let mut kinds: BTreeMap<String, UnitKind> = BTreeMap::new();
         kinds.insert("a.commons".to_string(), UnitKind::Commons);
         kinds.insert("a.context".to_string(), UnitKind::Context);
 
