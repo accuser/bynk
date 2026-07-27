@@ -1521,6 +1521,7 @@ fn lower_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && id.name == "Events"
         && method.name == "emit"
+        && cx.is_first_party_events()
     {
         let event_name = type_args
             .first()

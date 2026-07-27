@@ -2840,6 +2840,22 @@ impl<'a> LowerCtx<'a> {
         self.test_scaffold
     }
 
+    /// Events track, slice 0 (spine #936): true when a bare `Events`
+    /// receiver in this unit is genuinely the first-party `bynk.Events`
+    /// capability — declared here because this unit *is* `bynk`, or
+    /// flattened in from it (`consumes bynk { Events }`) — not some other,
+    /// unrelated capability that merely happens to share the name. Mirrors
+    /// #934's `Idempotency` distinction (`is_first_party` at the
+    /// `Idempotency.dedup`/`remember` lowering site). Both the call-site
+    /// interception (`lower.rs`) and the `__events` buffer declaration
+    /// (`block_uses_emit`'s gate in `emit.rs`) must agree on this, or a
+    /// custom same-named `Events` capability's calls get silently rewritten
+    /// into a buffer nothing constructs a provider for.
+    pub(crate) fn is_first_party_events(&self) -> bool {
+        self.in_bynk_unit
+            || self.cross_context.flattened_caps.get("Events").map(String::as_str) == Some("bynk")
+    }
+
     fn new(
         commons: &'a TypedCommons,
         cross_context: &'a bynk_check::resolver::CrossContextInfo,

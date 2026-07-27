@@ -1670,7 +1670,8 @@ pub(crate) fn emit_service(
         // next remaining piece. Gated on `block_uses_emit` so a handler that
         // never emits keeps byte-identical output, mirroring `__exec`'s gate
         // on `block_uses_send`.
-        let uses_emit = crate::emitter::block_uses_emit(&handler.body);
+        let uses_emit =
+            cx.is_first_party_events() && crate::emitter::block_uses_emit(&handler.body);
         if uses_emit {
             writeln!(
                 out,
@@ -3201,7 +3202,7 @@ pub(crate) fn emit_agent(
         // `block_uses_emit` gate) — an agent handler needs the same
         // completion boundary, and a writing store-agent already has one
         // (`commitState`), so `__events` just rides alongside it there.
-        let uses_emit = crate::emitter::block_uses_emit(&h.body);
+        let uses_emit = cx.is_first_party_events() && crate::emitter::block_uses_emit(&h.body);
         let events_decl = "    const __events: Array<{ type: string; payload: unknown }> = [];";
         if is_store_agent {
             if writes_state {
