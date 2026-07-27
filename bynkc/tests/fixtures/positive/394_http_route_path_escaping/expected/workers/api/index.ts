@@ -28,7 +28,7 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/a\\b\\") {
           const result = await surface.http_GET_a_b_();
-          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
+          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
@@ -38,7 +38,7 @@ export default {
           const __raw_id = __m.params["id"];
           const id = __raw_id;
           const result = await surface.http_GET_c_d_Param_id(id);
-          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
+          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

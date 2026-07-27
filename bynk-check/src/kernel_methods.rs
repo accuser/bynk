@@ -82,6 +82,24 @@ pub const LIST_METHODS: &[KernelMethod] = &[
     m("min", "min(key: T -> K) -> Option[K]"),
     m("max", "max(key: T -> K) -> Option[K]"),
     m("average", "average(key: T -> K) -> Option[Float]"),
+    // v0.94 (ADR 0116/0120): joins & grouping, combiner form (eager — mirrors
+    // QUERY_METHODS' lazy `Query[V]` forms below, but returns `List[V]`).
+    m(
+        "joinOn",
+        "joinOn(other: List[U], on: (T, U) -> Bool, into: (T, U) -> V) -> List[V]",
+    ),
+    m(
+        "leftJoin",
+        "leftJoin(other: List[U], on: (T, U) -> Bool, into: (T, Option[U]) -> V) -> List[V]",
+    ),
+    m(
+        "join",
+        "join(other: List[U], on: (T, U) -> Bool, into: (T, U) -> V) -> List[V]",
+    ),
+    m(
+        "groupBy",
+        "groupBy(key: T -> K, into: (K, List[T]) -> V) -> List[V]",
+    ),
 ];
 
 /// `Map[K, V]` (v0.20b).

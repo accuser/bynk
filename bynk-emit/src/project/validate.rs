@@ -661,28 +661,30 @@ fn walk_block_for_constraints(
     local: &HashSet<String>,
     errors: &mut Vec<CompileError>,
 ) {
+    let mut exprs = Vec::new();
     for stmt in &block.statements {
-        match stmt {
-            Statement::Let(l) | Statement::EffectLet(l) => {
-                walk_expr_for_constraints(&l.value, typed, consumed, local, errors);
-            }
-            Statement::Expect(a) => {
-                walk_expr_for_constraints(&a.value, typed, consumed, local, errors);
-            }
-            Statement::Send(s) => {
-                walk_expr_for_constraints(&s.value, typed, consumed, local, errors);
-            }
-            Statement::Do(d) => {
-                walk_expr_for_constraints(&d.value, typed, consumed, local, errors);
-            }
-            Statement::Assign(a) => {
-                walk_expr_for_constraints(&a.value, typed, consumed, local, errors);
-            }
-        }
+        statement_exprs(stmt, &mut exprs);
     }
-    walk_expr_for_constraints(&block.tail, typed, consumed, local, errors);
+    exprs.push(&block.tail);
+    for e in exprs {
+        walk_expr_for_constraints(e, typed, consumed, local, errors);
+    }
 }
 
+/// Recurse an expression for the cross-context construction/inspection
+/// constraints, checking each node's own shape then descending through
+/// `ast::expr_children` — the exhaustive total child iterator — rather than a
+/// hand-matched recursion. A `_ => {}` below only opts a variant out of *this
+/// function's own* business-rule check; the recursion beneath it is
+/// unconditional and can't be silently skipped by a future `ExprKind` variant
+/// the way the equivalent hand-rolled match could.
+///
+/// `local` threads through unread — pre-existing (`check_context_constraints`'s
+/// `local_type_names` is part of the broader `ResolvedCommons`/local-type-name
+/// handling the review flags separately at #57), not introduced by this pass.
+/// Collapsing the old mutual block/expr recursion into one self-recursive
+/// function made clippy's `only_used_in_recursion` newly able to see it.
+#[allow(clippy::only_used_in_recursion)]
 fn walk_expr_for_constraints(
     e: &Expr,
     typed: &checker::TypedCommons,
@@ -691,23 +693,7 @@ fn walk_expr_for_constraints(
     errors: &mut Vec<CompileError>,
 ) {
     match &e.kind {
-        ExprKind::ListLit(elems) => {
-            for el in elems {
-                walk_expr_for_constraints(el, typed, consumed, local, errors);
-            }
-        }
-        ExprKind::Wire(inner) => {
-            walk_expr_for_constraints(inner, typed, consumed, local, errors);
-        }
-        // v0.43: a hole's expression is checked like any other.
-        ExprKind::InterpStr(parts) => {
-            for part in parts {
-                if let InterpPart::Hole(hole) = part {
-                    walk_expr_for_constraints(hole, typed, consumed, local, errors);
-                }
-            }
-        }
-        ExprKind::RecordConstruction { type_name, fields } => {
+        ExprKind::RecordConstruction { type_name, .. } => {
             if let Some(ct) = consumed.get(&type_name.name) {
                 errors.push(
                     CompileError::new(
@@ -723,16 +709,9 @@ fn walk_expr_for_constraints(
                     ),
                 );
             }
-            for f in fields {
-                if let Some(v) = &f.value {
-                    walk_expr_for_constraints(v, typed, consumed, local, errors);
-                }
-            }
         }
         ExprKind::ConstructorCall {
-            type_name,
-            method,
-            args,
+            type_name, method, ..
         } => {
             if let Some(ct) = consumed.get(&type_name.name) {
                 let is_construct = method.name == OF
@@ -757,17 +736,11 @@ fn walk_expr_for_constraints(
                     );
                 }
             }
-            for a in args {
-                walk_expr_for_constraints(a, typed, consumed, local, errors);
-            }
         }
+        // `T.method(...)` written as MethodCall with receiver Ident(T).
         ExprKind::MethodCall {
-            receiver,
-            method,
-            args,
-            ..
+            receiver, method, ..
         } => {
-            // `T.method(...)` written as MethodCall with receiver Ident(T).
             if let ExprKind::Ident(id) = &receiver.kind
                 && let Some(ct) = consumed.get(&id.name)
             {
@@ -793,22 +766,18 @@ fn walk_expr_for_constraints(
                     );
                 }
             }
-            walk_expr_for_constraints(receiver, typed, consumed, local, errors);
-            for a in args {
-                walk_expr_for_constraints(a, typed, consumed, local, errors);
-            }
         }
+        // For opaque-exported types from consumed contexts, field access is
+        // forbidden — but record types have field access anyway, so the
+        // visibility check applies only when the receiver's type is a
+        // consumed type. To do this rigorously, we'd consult the
+        // expr_types map. Easy path: peek at the receiver if it's an Ident
+        // referring to a binding whose declared type points to a consumed
+        // type.
+        // For v0.4 we use a simpler conservative rule: if the receiver is
+        // `T.X` syntax (FieldAccess from an Ident that's a type name) and
+        // `T` is consumed and opaque, reject it.
         ExprKind::FieldAccess { receiver, field } => {
-            // For opaque-exported types from consumed contexts, field
-            // access is forbidden — but record types have field access
-            // anyway, so the visibility check applies only when the
-            // receiver's type is a consumed type. To do this rigorously,
-            // we'd consult the expr_types map. Easy path: peek at the
-            // receiver if it's an Ident referring to a binding whose
-            // declared type points to a consumed type.
-            // For v0.4 we use a simpler conservative rule: if the
-            // receiver is `T.X` syntax (FieldAccess from an Ident that's
-            // a type name) and `T` is consumed and opaque, reject it.
             if let ExprKind::Ident(id) = &receiver.kind
                 && let Some(ct) = consumed.get(&id.name)
                 && ct.visibility == Visibility::Opaque
@@ -832,12 +801,10 @@ fn walk_expr_for_constraints(
                     ),
                 );
             }
-            walk_expr_for_constraints(receiver, typed, consumed, local, errors);
         }
-        ExprKind::Match { discriminant, arms } => {
-            // If the discriminant is typed as an opaquely-exported consumed
-            // type, the match is forbidden because we can't reveal the
-            // variants.
+        // If the discriminant is typed as an opaquely-exported consumed
+        // type, the match is forbidden because we can't reveal the variants.
+        ExprKind::Match { discriminant, .. } => {
             if let Some(ty) = typed.expr_types.get(&discriminant.span) {
                 let display = ty.display();
                 if let Some(ct) = consumed.get(&display)
@@ -858,94 +825,11 @@ fn walk_expr_for_constraints(
                     );
                 }
             }
-            walk_expr_for_constraints(discriminant, typed, consumed, local, errors);
-            for arm in arms {
-                match &arm.body {
-                    MatchBody::Expr(ex) => {
-                        walk_expr_for_constraints(ex, typed, consumed, local, errors);
-                    }
-                    MatchBody::Block(b) => {
-                        walk_block_for_constraints(b, typed, consumed, local, errors);
-                    }
-                }
-            }
         }
-        ExprKind::Is { value, pattern: _ } => {
-            walk_expr_for_constraints(value, typed, consumed, local, errors);
-        }
-        ExprKind::Call { args, .. } => {
-            for a in args {
-                walk_expr_for_constraints(a, typed, consumed, local, errors);
-            }
-        }
-        ExprKind::BinOp(_, l, r) => {
-            walk_expr_for_constraints(l, typed, consumed, local, errors);
-            walk_expr_for_constraints(r, typed, consumed, local, errors);
-        }
-        ExprKind::UnaryOp(_, i)
-        | ExprKind::Paren(i)
-        | ExprKind::Ok(i)
-        | ExprKind::Err(i)
-        | ExprKind::Some(i)
-        | ExprKind::Question(i) => {
-            walk_expr_for_constraints(i, typed, consumed, local, errors);
-        }
-        // v0.20a: walk a lambda's body for construction constraints.
-        ExprKind::Lambda(lambda) => {
-            walk_expr_for_constraints(&lambda.body, typed, consumed, local, errors)
-        }
-        ExprKind::Block(b) => walk_block_for_constraints(b, typed, consumed, local, errors),
-        ExprKind::If {
-            cond,
-            then_block,
-            else_block,
-        } => {
-            walk_expr_for_constraints(cond, typed, consumed, local, errors);
-            walk_block_for_constraints(then_block, typed, consumed, local, errors);
-            walk_block_for_constraints(else_block, typed, consumed, local, errors);
-        }
-        ExprKind::Ident(_)
-        | ExprKind::IntLit { .. }
-        | ExprKind::FloatLit { .. }
-        | ExprKind::DurationLit { .. }
-        | ExprKind::StrLit(_)
-        | ExprKind::BoolLit(_)
-        | ExprKind::None
-        | ExprKind::UnitLit => {}
-        ExprKind::EffectPure(inner) => {
-            walk_expr_for_constraints(inner, typed, consumed, local, errors);
-        }
-        ExprKind::Expect(inner) => {
-            walk_expr_for_constraints(inner, typed, consumed, local, errors);
-        }
-        ExprKind::Val { args, .. } => {
-            for a in args {
-                walk_expr_for_constraints(a, typed, consumed, local, errors);
-            }
-        }
-        // v0.117: observation/`trace` are test-only; constraint checks run over
-        // production code, but walk the predicate defensively for completeness.
-        ExprKind::Observation(o) => {
-            if let ObservationMatcher::Called { count, with_pred } = &o.matcher {
-                if let Some(c) = count {
-                    walk_expr_for_constraints(c, typed, consumed, local, errors);
-                }
-                if let Some(p) = with_pred {
-                    walk_expr_for_constraints(p, typed, consumed, local, errors);
-                }
-            }
-        }
-        ExprKind::Trace { .. } => {}
-        ExprKind::RecordSpread {
-            base, overrides, ..
-        } => {
-            walk_expr_for_constraints(base, typed, consumed, local, errors);
-            for f in overrides {
-                if let Some(v) = &f.value {
-                    walk_expr_for_constraints(v, typed, consumed, local, errors);
-                }
-            }
-        }
+        _ => {}
+    }
+    for child in expr_children(e) {
+        walk_expr_for_constraints(child, typed, consumed, local, errors);
     }
 }
 
@@ -1283,6 +1167,14 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
             let ServiceProtocol::WebSocket { in_type, .. } = &service.protocol else {
                 unreachable!("guarded by the enclosing match");
             };
+            // Resolved-`Ty` equality, not surface-syntax comparison — the
+            // param/route matching below must not silently treat two
+            // differently-spelled-but-equal types as a mismatch, nor two
+            // distinct types `type_refs_match`'s `_ => false` fallback
+            // couldn't classify (List/Map/Query/…) as matching.
+            let resolve_ty = |t: &TypeRef| {
+                checker::resolve_type_ref_in(t, &table.types, &HashSet::new()).unwrap_or(Ty::Unit)
+            };
             let messages: Vec<&Handler> = service
                 .handlers
                 .iter()
@@ -1317,7 +1209,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                 let frame_params = message
                     .params
                     .iter()
-                    .filter(|p| type_refs_match(&p.type_ref, in_type))
+                    .filter(|p| resolve_ty(&p.type_ref) == resolve_ty(in_type))
                     .count();
                 if frame_params != 1 {
                     errors.push(
@@ -1361,12 +1253,12 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                 if let [message] = messages.as_slice() {
                     let mut idx = 0usize;
                     for p in &message.params {
-                        if type_refs_match(&p.type_ref, in_type) {
+                        if resolve_ty(&p.type_ref) == resolve_ty(in_type) {
                             continue; // the decoded frame, not a route value
                         }
                         if !op
                             .get(idx)
-                            .is_some_and(|o| type_refs_match(&p.type_ref, &o.type_ref))
+                            .is_some_and(|o| resolve_ty(&p.type_ref) == resolve_ty(&o.type_ref))
                         {
                             route_mismatch(p, errors);
                         }
@@ -1377,7 +1269,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                     for (i, p) in close.params.iter().enumerate() {
                         if !op
                             .get(i)
-                            .is_some_and(|o| type_refs_match(&p.type_ref, &o.type_ref))
+                            .is_some_and(|o| resolve_ty(&p.type_ref) == resolve_ty(&o.type_ref))
                         {
                             route_mismatch(p, errors);
                         }
@@ -2827,20 +2719,20 @@ fn walk_block_for_index_filters(
     store_maps: &HashSet<String>,
     cb: &mut dyn FnMut(&str, &str, Span),
 ) {
+    let mut exprs = Vec::new();
     for stmt in &block.statements {
-        let v = match stmt {
-            Statement::Let(l) | Statement::EffectLet(l) => &l.value,
-            Statement::Expect(a) => &a.value,
-            Statement::Send(s) => &s.value,
-            Statement::Do(d) => &d.value,
-            Statement::Assign(a) => &a.value,
-        };
-        walk_expr_for_index_filters(v, store_maps, cb);
+        statement_exprs(stmt, &mut exprs);
     }
-    walk_expr_for_index_filters(&block.tail, store_maps, cb);
+    exprs.push(&block.tail);
+    for e in exprs {
+        walk_expr_for_index_filters(e, store_maps, cb);
+    }
 }
 
 /// Recurse an expression, invoking `cb` for each routable equality filter.
+/// Descends through `ast::expr_children` — the exhaustive total child
+/// iterator — rather than a hand-matched recursion, so a future `ExprKind`
+/// variant can't be silently skipped the way the old `_ => {}` here could.
 fn walk_expr_for_index_filters(
     e: &Expr,
     store_maps: &HashSet<String>,
@@ -2849,86 +2741,8 @@ fn walk_expr_for_index_filters(
     if let Some((map, field, span)) = routable_eq_filter(store_maps, e) {
         cb(map, field, span);
     }
-    match &e.kind {
-        ExprKind::MethodCall { receiver, args, .. } => {
-            walk_expr_for_index_filters(receiver, store_maps, cb);
-            for a in args {
-                walk_expr_for_index_filters(a, store_maps, cb);
-            }
-        }
-        ExprKind::FieldAccess { receiver, .. } => {
-            walk_expr_for_index_filters(receiver, store_maps, cb)
-        }
-        ExprKind::BinOp(_, l, r) => {
-            walk_expr_for_index_filters(l, store_maps, cb);
-            walk_expr_for_index_filters(r, store_maps, cb);
-        }
-        ExprKind::UnaryOp(_, x)
-        | ExprKind::Paren(x)
-        | ExprKind::Question(x)
-        | ExprKind::Ok(x)
-        | ExprKind::Err(x)
-        | ExprKind::Some(x)
-        | ExprKind::EffectPure(x)
-        | ExprKind::Expect(x) => walk_expr_for_index_filters(x, store_maps, cb),
-        ExprKind::Lambda(lam) => walk_expr_for_index_filters(&lam.body, store_maps, cb),
-        ExprKind::Block(b) => walk_block_for_index_filters(b, store_maps, cb),
-        ExprKind::If {
-            cond,
-            then_block,
-            else_block,
-        } => {
-            walk_expr_for_index_filters(cond, store_maps, cb);
-            walk_block_for_index_filters(then_block, store_maps, cb);
-            walk_block_for_index_filters(else_block, store_maps, cb);
-        }
-        ExprKind::Match { discriminant, arms } => {
-            walk_expr_for_index_filters(discriminant, store_maps, cb);
-            for arm in arms {
-                match &arm.body {
-                    MatchBody::Expr(x) => walk_expr_for_index_filters(x, store_maps, cb),
-                    MatchBody::Block(b) => walk_block_for_index_filters(b, store_maps, cb),
-                }
-            }
-        }
-        ExprKind::Is { value, .. } => walk_expr_for_index_filters(value, store_maps, cb),
-        ExprKind::Call { args, .. }
-        | ExprKind::ConstructorCall { args, .. }
-        | ExprKind::Val { args, .. } => {
-            for a in args {
-                walk_expr_for_index_filters(a, store_maps, cb);
-            }
-        }
-        ExprKind::RecordConstruction { fields, .. } => {
-            for fi in fields {
-                if let Some(v) = &fi.value {
-                    walk_expr_for_index_filters(v, store_maps, cb);
-                }
-            }
-        }
-        ExprKind::RecordSpread {
-            base, overrides, ..
-        } => {
-            walk_expr_for_index_filters(base, store_maps, cb);
-            for fi in overrides {
-                if let Some(v) = &fi.value {
-                    walk_expr_for_index_filters(v, store_maps, cb);
-                }
-            }
-        }
-        ExprKind::ListLit(elems) => {
-            for el in elems {
-                walk_expr_for_index_filters(el, store_maps, cb);
-            }
-        }
-        ExprKind::InterpStr(parts) => {
-            for part in parts {
-                if let InterpPart::Hole(h) = part {
-                    walk_expr_for_index_filters(h, store_maps, cb);
-                }
-            }
-        }
-        _ => {}
+    for child in expr_children(e) {
+        walk_expr_for_index_filters(child, store_maps, cb);
     }
 }
 
@@ -3401,26 +3215,6 @@ fn check_agent_decls(
                 },
             );
         }
-    }
-}
-
-/// Structural equality for TypeRef, used by v0.5 capability/provider signature
-/// matching. Doesn't resolve names — it compares the surface syntax. Named
-/// types match by their literal identifier; built-ins match by variant.
-pub(crate) fn type_refs_match(a: &TypeRef, b: &TypeRef) -> bool {
-    match (a, b) {
-        (TypeRef::Base(x, _), TypeRef::Base(y, _)) => x == y,
-        (TypeRef::Named(x), TypeRef::Named(y)) => x.name == y.name,
-        (TypeRef::Result(t1, e1, _), TypeRef::Result(t2, e2, _)) => {
-            type_refs_match(t1, t2) && type_refs_match(e1, e2)
-        }
-        (TypeRef::Option(t1, _), TypeRef::Option(t2, _)) => type_refs_match(t1, t2),
-        (TypeRef::Effect(t1, _), TypeRef::Effect(t2, _)) => type_refs_match(t1, t2),
-        (TypeRef::HttpResult(t1, _), TypeRef::HttpResult(t2, _)) => type_refs_match(t1, t2),
-        (TypeRef::ValidationError(_), TypeRef::ValidationError(_)) => true,
-        (TypeRef::JsonError(_), TypeRef::JsonError(_)) => true,
-        (TypeRef::Unit(_), TypeRef::Unit(_)) => true,
-        _ => false,
     }
 }
 

@@ -24,7 +24,7 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/ticks") {
           const result = await surface.http_GET_ticks();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (_v: any) => null, { weakEtag: true }), request), __security_Feed);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => null, { weakEtag: true }), request), __security_Feed);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
@@ -34,7 +34,7 @@ export default {
           const __raw_mode = __m.params["mode"];
           const mode = __raw_mode;
           const result = await surface.http_GET_feed_Param_mode(mode);
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (_v: any) => null, { weakEtag: true }), request), __security_Feed);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => null, { weakEtag: true }), request), __security_Feed);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

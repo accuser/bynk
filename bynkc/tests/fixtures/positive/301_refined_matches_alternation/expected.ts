@@ -7,7 +7,7 @@ export type Code = string & { readonly __brand: "Code" };
 
 export const Code = {
   of(value: string): Result<Code, ValidationError> {
-    if (!new RegExp("^(?:" + "ab|cd" + ")$").test(value)) {
+    if (!(new RegExp("^(?:" + "ab|cd" + ")$").test(value))) {
       return Err({ field: "Code", message: "must match /ab|cd/", value });
     }
     return Ok(value as Code);

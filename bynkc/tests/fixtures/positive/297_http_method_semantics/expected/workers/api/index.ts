@@ -24,21 +24,21 @@ export default {
       {
         if ((method === "GET" || method === "HEAD") && path === "/logo") {
           const result = await surface.http_GET_logo();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (_v: any) => null, { weakEtag: true }), request), __security_routes);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => null, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/notes") {
           const result = await surface.http_GET_notes();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __security_routes);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/ticks") {
           const result = await surface.http_GET_ticks();
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (_v: any) => null, { weakEtag: true }), request), __security_routes);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => null, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
@@ -54,7 +54,7 @@ export default {
           if (__r_body.tag === "Err") return applySecurityHeaders(new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } }), __security_routes);
           const body = __r_body.value;
           const result = await surface.http_POST_notes(body);
-          return applySecurityHeaders(httpResultToResponse(result, (v: any) => v as JsonValue), __security_routes);
+          return applySecurityHeaders(httpResultToResponse(result, (__v: any) => __v as JsonValue), __security_routes);
         }
       }
       {
@@ -63,7 +63,7 @@ export default {
           const __raw_id = __m.params["id"];
           const id = __raw_id;
           const result = await surface.http_GET_notes_Param_id(id);
-          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (v: any) => v as JsonValue, { weakEtag: true }), request), __security_routes);
+          const __response = applySecurityHeaders(notModifiedIfMatch(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), request), __security_routes);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }

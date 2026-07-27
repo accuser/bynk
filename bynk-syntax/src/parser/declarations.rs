@@ -286,6 +286,11 @@ impl<'a> Parser<'a> {
             }
         }
         let end = self.expect(TokenKind::RBrace, "to close the commons body")?;
+        // A comment after the closing `}` (this being the last declaration in
+        // the file) is a no-op `take_epilogue` unless it truly is the last
+        // content in the file — see `parse_commons_fragment`'s matching call.
+        let mut trailing_comments = trailing_comments;
+        trailing_comments.extend(self.trivia.take_epilogue());
         Ok(Commons {
             name,
             items,
@@ -723,6 +728,9 @@ impl<'a> Parser<'a> {
             }
         }
         let end = self.expect(TokenKind::RBrace, "to close the test body")?;
+        // See `parse_commons_brace`'s matching call.
+        let mut trailing_comments = trailing_comments;
+        trailing_comments.extend(self.trivia.take_epilogue());
         Ok(SuiteDecl {
             target,
             uses,
@@ -1343,6 +1351,9 @@ impl<'a> Parser<'a> {
             }
         }
         let end = self.expect(TokenKind::RBrace, "to close the context body")?;
+        // See `parse_commons_brace`'s matching call.
+        let mut trailing_comments = trailing_comments;
+        trailing_comments.extend(self.trivia.take_epilogue());
         Ok(Context {
             name,
             items,

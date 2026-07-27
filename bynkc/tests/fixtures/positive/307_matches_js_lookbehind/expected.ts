@@ -7,7 +7,7 @@ export type Gerund = string & { readonly __brand: "Gerund" };
 
 export const Gerund = {
   of(value: string): Result<Gerund, ValidationError> {
-    if (!new RegExp("^(?:" + "[a-z]+(?<=ing)" + ")$").test(value)) {
+    if (!(new RegExp("^(?:" + "[a-z]+(?<=ing)" + ")$").test(value))) {
       return Err({ field: "Gerund", message: "must match /[a-z]+(?<=ing)/", value });
     }
     return Ok(value as Gerund);

@@ -209,97 +209,14 @@ fn emit_refined_checks(
 }
 
 fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
-    match pred {
-        PredKind::NonNegative => {
-            writeln!(out, "    if (!(value >= 0)) {{").unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"must be non-negative\", value }});",
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-        PredKind::Positive => {
-            writeln!(out, "    if (!(value > 0)) {{").unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"must be positive\", value }});",
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-        PredKind::InRange(a, b) => {
-            let (a, b) = (a.value, b.value);
-            writeln!(out, "    if (!(value >= {a} && value <= {b})) {{").unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"must be in range [{a}, {b}]\", value }});",
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-        PredKind::InRangeF(a, b) => {
-            let (a, b) = (&a.lexeme, &b.lexeme);
-            writeln!(out, "    if (!(value >= {a} && value <= {b})) {{").unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"must be in range [{a}, {b}]\", value }});",
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-        PredKind::NonEmpty => {
-            writeln!(out, "    if (!(value.length > 0)) {{").unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"must be non-empty\", value }});",
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-        PredKind::MinLength(n) => {
-            writeln!(out, "    if (!(value.length >= {n})) {{").unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"length must be at least {n}\", value }});",
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-        PredKind::MaxLength(n) => {
-            writeln!(out, "    if (!(value.length <= {n})) {{").unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"length must be at most {n}\", value }});",
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-        PredKind::Length(n) => {
-            writeln!(out, "    if (!(value.length === {n})) {{").unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"length must be exactly {n}\", value }});",
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-        PredKind::Matches(pat) => {
-            let escaped = escape_ts_string(pat);
-            writeln!(
-                out,
-                "    if (!new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test(value)) {{"
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "      return Err({{ field: \"{type_name}\", message: \"must match /{}/\", value }});",
-                escape_ts_string(pat),
-            )
-            .unwrap();
-            writeln!(out, "    }}").unwrap();
-        }
-    }
+    let (cond, msg) = crate::emitter::pred_condition_and_message(pred, "value");
+    writeln!(out, "    if (!({cond})) {{").unwrap();
+    writeln!(
+        out,
+        "      return Err({{ field: \"{type_name}\", message: \"{msg}\", value }});",
+    )
+    .unwrap();
+    writeln!(out, "    }}").unwrap();
 }
 
 /// v0.157 (ADR 0183): the erased TS type-parameter list for a generic
@@ -3511,7 +3428,7 @@ pub(crate) fn emit_agent(
         // frame against `in:` (reject-and-close on failure), recover the sender
         // identity + route args from the socket attachment, and run the body.
         for host in &ws_open_hosts {
-            emit_ws_dispatch_handlers(out, host, &ctx.runtime_use);
+            emit_ws_dispatch_handlers(out, host, &ctx.runtime_use, &commons.types);
         }
     }
     writeln!(out, "}}").unwrap();
@@ -3933,7 +3850,12 @@ fn ws_attachment_deps_arg(seam: &Option<bynk_check::actors::BearerSeam>) -> Stri
 /// decodes the raw frame against the service's `in:` type first — a malformed frame
 /// closes the socket (`1003`/`1008`) and is never dispatched (the client-bytes trust
 /// boundary).
-fn emit_ws_dispatch_handlers(out: &mut String, host: &WsOpenHost<'_>, runtime_use: &RuntimeUse) {
+fn emit_ws_dispatch_handlers(
+    out: &mut String,
+    host: &WsOpenHost<'_>,
+    runtime_use: &RuntimeUse,
+    types: &HashMap<String, TypeDecl>,
+) {
     if !host.has_inbound() {
         return;
     }
@@ -3984,8 +3906,20 @@ fn emit_ws_dispatch_handlers(out: &mut String, host: &WsOpenHost<'_>, runtime_us
         // route values recovered (positionally) from the attachment args.
         let mut call_args = vec!["connection".to_string()];
         let mut route_idx = 0usize;
+        // Resolved-`Ty` equality (not `type_refs_match`'s surface-syntax
+        // comparison, which fell through to `_ => false` for a `List`/`Map`/
+        // `Query`/… frame type — a false negative here emits every param as
+        // a route value, silently wrong for a frame type that shape covers):
+        // must agree with `check_service_protocols`'s identical resolved
+        // check, or the checker's "exactly one frame param" could accept a
+        // program this picks a different (or no) param's argument for.
+        let no_vars = HashSet::new();
+        let resolve_ty = |t: &TypeRef| {
+            bynk_check::checker::resolve_type_ref_in(t, types, &no_vars)
+                .unwrap_or(bynk_check::checker::Ty::Unit)
+        };
         for p in &m.params {
-            if crate::project::type_refs_match(&p.type_ref, host.in_type) {
+            if resolve_ty(&p.type_ref) == resolve_ty(host.in_type) {
                 call_args.push("__dec.value".to_string());
             } else {
                 call_args.push(format!(

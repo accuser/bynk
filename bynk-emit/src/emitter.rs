@@ -528,115 +528,32 @@ fn missing_bindings(existing: &str, extra: &str) -> String {
 }
 
 /// v0.22b: pre-order expression visitor — visits `e`, then every
-/// sub-expression, including statements and tails of nested blocks.
+/// sub-expression, including statements and tails of nested blocks. Driven by
+/// `ast::expr_children`, the exhaustive total child iterator, rather than a
+/// hand-matched recursion duplicating it — a new `ExprKind` variant fails to
+/// compile in `expr_children` until it is taught to visit it, instead of
+/// silently under-visiting here.
 pub(crate) fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
     f(e);
-    match &e.kind {
-        ExprKind::IntLit { .. }
-        | ExprKind::FloatLit { .. }
-        | ExprKind::DurationLit { .. }
-        | ExprKind::StrLit(_)
-        | ExprKind::BoolLit(_)
-        | ExprKind::Ident(_)
-        | ExprKind::None
-        | ExprKind::UnitLit => {}
-        // v0.43: visit each interpolation hole's expression.
-        ExprKind::InterpStr(parts) => {
-            for part in parts {
-                if let InterpPart::Hole(hole) = part {
-                    walk_exprs(hole, f);
-                }
-            }
-        }
-        ExprKind::Lambda(l) => walk_exprs(&l.body, f),
-        ExprKind::EffectPure(i)
-        | ExprKind::Expect(i)
-        | ExprKind::UnaryOp(_, i)
-        | ExprKind::Paren(i)
-        | ExprKind::Ok(i)
-        | ExprKind::Err(i)
-        | ExprKind::Some(i)
-        | ExprKind::Wire(i)
-        | ExprKind::Question(i) => walk_exprs(i, f),
-        ExprKind::Val { args, .. }
-        | ExprKind::Call { args, .. }
-        | ExprKind::ConstructorCall { args, .. } => {
-            for a in args {
-                walk_exprs(a, f);
-            }
-        }
-        ExprKind::ListLit(elems) => {
-            for el in elems {
-                walk_exprs(el, f);
-            }
-        }
-        // v0.117: observations visit their optional count/with predicate; a
-        // `trace(Cap.op)` has no sub-expressions.
-        ExprKind::Observation(o) => {
-            if let ObservationMatcher::Called { count, with_pred } = &o.matcher {
-                if let Some(c) = count {
-                    walk_exprs(c, f);
-                }
-                if let Some(p) = with_pred {
-                    walk_exprs(p, f);
-                }
-            }
-        }
-        ExprKind::Trace { .. } => {}
-        ExprKind::RecordConstruction { fields, .. } => {
-            for fld in fields {
-                if let Some(v) = &fld.value {
-                    walk_exprs(v, f);
-                }
-            }
-        }
-        ExprKind::RecordSpread {
-            base, overrides, ..
-        } => {
-            walk_exprs(base, f);
-            for fld in overrides {
-                if let Some(v) = &fld.value {
-                    walk_exprs(v, f);
-                }
-            }
-        }
-        ExprKind::BinOp(_, l, r) => {
-            walk_exprs(l, f);
-            walk_exprs(r, f);
-        }
-        ExprKind::Block(b) => walk_block_exprs(b, f),
-        ExprKind::If {
-            cond,
-            then_block,
-            else_block,
-        } => {
-            walk_exprs(cond, f);
-            walk_block_exprs(then_block, f);
-            walk_block_exprs(else_block, f);
-        }
-        ExprKind::FieldAccess { receiver, .. } => walk_exprs(receiver, f),
-        ExprKind::MethodCall { receiver, args, .. } => {
-            walk_exprs(receiver, f);
-            for a in args {
-                walk_exprs(a, f);
-            }
-        }
-        ExprKind::Match { discriminant, arms } => {
-            walk_exprs(discriminant, f);
-            for arm in arms {
-                match &arm.body {
-                    MatchBody::Expr(e) => walk_exprs(e, f),
-                    MatchBody::Block(b) => walk_block_exprs(b, f),
-                }
-            }
-        }
-        ExprKind::Is { value, .. } => walk_exprs(value, f),
+    for child in expr_children(e) {
+        walk_exprs(child, f);
     }
 }
 
 /// v0.79: does this block contain a `~>` send anywhere — including nested
 /// branches, match arms, and lambdas? Gates execution-context threading
 /// (`deps.__exec`) so a context that never sends keeps byte-identical output.
+///
+/// A `~>` send is a [`Statement`] variant, not an [`ExprKind`] one, and a bare
+/// `{ … }` block is only parseable in a handful of positions (an `if`/`else`
+/// body, a `match` arm, a lambda body) — never as an arbitrary sub-expression
+/// — so `Block`/`If`/`Match`/`Lambda` were already the complete reachable set
+/// and the old `_ => false` tail never actually dropped a send. It is
+/// rewritten to recurse over `expr_children`, the total child iterator,
+/// anyway: a `Statement`-only construct like this is exactly the shape that
+/// silently drifts if a later `ExprKind` variant *does* start admitting a
+/// nested block and this list isn't updated to match — see
+/// `block_writes_state`, converted alongside this for the same reason.
 pub(crate) fn block_uses_send(b: &Block) -> bool {
     fn stmt(s: &Statement) -> bool {
         match s {
@@ -662,8 +579,7 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
                         MatchBody::Block(b) => block_uses_send(b),
                     })
             }
-            ExprKind::Lambda(l) => expr(&l.body),
-            _ => false,
+            _ => expr_children(e).into_iter().any(expr),
         }
     }
     b.statements.iter().any(stmt) || expr(&b.tail)
@@ -765,6 +681,17 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
             Statement::Do(d) => expr(&d.value, m),
         }
     }
+    // `Block`/`If`/`Match` stay hand-matched so crossing a nested block
+    // re-enters the statement-aware `block_writes_state` — an
+    // `expr_children` descent flattens a block straight to its statements'
+    // *values*, losing exactly the `Statement::Assign` tag `stmt` above
+    // checks for. Everywhere else recurses over `expr_children`, the total
+    // child iterator, rather than the previous `Paren`/`MethodCall`/`Call`/
+    // `Lambda`-only list with a `_ => false` tail: the domain's `Effect`
+    // typing means a mutating op can only actually reach those four
+    // positions today, so this isn't a live-bug fix the way the `Lambda` arm
+    // was — it closes the same *class* of gap pre-emptively, the way
+    // `block_uses_send` and `walk_exprs` needed to for gaps that are live.
     fn expr(e: &Expr, m: StoreKinds<'_>) -> bool {
         if mutating_op(e, m) {
             return true;
@@ -787,31 +714,21 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
                         MatchBody::Block(b) => block_writes_state(b, m),
                     })
             }
-            ExprKind::Paren(inner) => expr(inner, m),
-            ExprKind::MethodCall { receiver, args, .. } => {
-                expr(receiver, m) || args.iter().any(|x| expr(x, m))
-            }
-            ExprKind::Call { args, .. } => args.iter().any(|x| expr(x, m)),
-            // A store mutation inside a lambda passed to `forEach`/`map`/etc.
-            // still needs the end-of-handler commit flush.
-            ExprKind::Lambda(l) => expr(&l.body, m),
-            _ => false,
+            _ => expr_children(e).into_iter().any(|c| expr(c, m)),
         }
     }
     b.statements.iter().any(|s| stmt(s, m)) || expr(&b.tail, m)
 }
 
 pub(crate) fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
+    let mut exprs = Vec::new();
     for s in &b.statements {
-        match s {
-            Statement::Let(l) | Statement::EffectLet(l) => walk_exprs(&l.value, f),
-            Statement::Expect(a) => walk_exprs(&a.value, f),
-            Statement::Send(s) => walk_exprs(&s.value, f),
-            Statement::Do(d) => walk_exprs(&d.value, f),
-            Statement::Assign(a) => walk_exprs(&a.value, f),
-        }
+        statement_exprs(s, &mut exprs);
     }
-    walk_exprs(&b.tail, f);
+    exprs.push(&b.tail);
+    for e in exprs {
+        walk_exprs(e, f);
+    }
 }
 
 /// v0.22b: whether any signature or type declaration in this file names
@@ -846,6 +763,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
         CommonsItem::Fn(f) => sig(&f.params, &f.return_type),
         CommonsItem::Service(s) => s.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
         CommonsItem::Agent(a) => a.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
+        CommonsItem::Capability(c) => c.ops.iter().any(|op| sig(&op.params, &op.return_type)),
         CommonsItem::Provider(p) => p.ops.iter().any(|op| sig(&op.params, &op.return_type)),
         CommonsItem::Type(t) => match &t.body {
             TypeBody::Record(r) => r.fields.iter().any(|f| in_type_ref(&f.type_ref)),
@@ -855,7 +773,10 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
                 .any(|v| v.payload.iter().any(|p| in_type_ref(&p.type_ref))),
             TypeBody::Refined { .. } | TypeBody::Opaque { .. } => false,
         },
-        _ => false,
+        // An `event` registers into the `types` table and is checked over
+        // the same record-field path as `CommonsItem::Type`'s `Record` arm.
+        CommonsItem::Event(e) => e.body.fields.iter().any(|f| in_type_ref(&f.type_ref)),
+        CommonsItem::Actor(_) | CommonsItem::Messages(_) => false,
     })
 }
 
@@ -878,7 +799,14 @@ fn file_mentions_http_result(commons: &TypedCommons) -> bool {
             | TypeRef::History(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
-            _ => false,
+            // v0.157 (ADR 0183): recurse into a generic application's arguments.
+            TypeRef::App { args, .. } => args.iter().any(in_type_ref),
+            TypeRef::Base(..)
+            | TypeRef::Named(_)
+            | TypeRef::QueueResult(_)
+            | TypeRef::ValidationError(_)
+            | TypeRef::JsonError(_)
+            | TypeRef::Unit(_) => false,
         }
     }
     let sig = |params: &[Param], ret: &TypeRef| {
@@ -898,7 +826,10 @@ fn file_mentions_http_result(commons: &TypedCommons) -> bool {
                 .any(|v| v.payload.iter().any(|p| in_type_ref(&p.type_ref))),
             TypeBody::Refined { .. } | TypeBody::Opaque { .. } => false,
         },
-        _ => false,
+        // An `event` registers into the `types` table and is checked over
+        // the same record-field path as `CommonsItem::Type`'s `Record` arm.
+        CommonsItem::Event(e) => e.body.fields.iter().any(|f| in_type_ref(&f.type_ref)),
+        CommonsItem::Actor(_) | CommonsItem::Messages(_) => false,
     })
 }
 
@@ -916,9 +847,17 @@ fn file_mentions_connection(commons: &TypedCommons) -> bool {
             | TypeRef::HttpResult(a, _)
             | TypeRef::Query(a, _)
             | TypeRef::Stream(a, _)
+            | TypeRef::History(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
-            _ => false,
+            // v0.157 (ADR 0183): recurse into a generic application's arguments.
+            TypeRef::App { args, .. } => args.iter().any(in_type_ref),
+            TypeRef::Base(..)
+            | TypeRef::Named(_)
+            | TypeRef::QueueResult(_)
+            | TypeRef::ValidationError(_)
+            | TypeRef::JsonError(_)
+            | TypeRef::Unit(_) => false,
         }
     }
     let sig = |params: &[Param], ret: &TypeRef| {
@@ -935,7 +874,13 @@ fn file_mentions_connection(commons: &TypedCommons) -> bool {
         }
         CommonsItem::Capability(c) => c.ops.iter().any(|op| sig(&op.params, &op.return_type)),
         CommonsItem::Provider(p) => p.ops.iter().any(|op| sig(&op.params, &op.return_type)),
-        _ => false,
+        // A `Connection` is a held resource storable only in a `store` field
+        // (handled above) — never in a plain record field, so `Type`/`Event`
+        // need no case here; `Actor`/`Messages` carry no `TypeRef` at all.
+        CommonsItem::Type(_)
+        | CommonsItem::Actor(_)
+        | CommonsItem::Messages(_)
+        | CommonsItem::Event(_) => false,
     })
 }
 
@@ -3616,6 +3561,62 @@ pub(crate) fn escape_ts_string(s: &str) -> String {
         }
     }
     out
+}
+
+/// #661 (Decision D)/#70 review: the one `PredKind` → runtime-check mapping,
+/// shared by the owner-side check (`emit::emit_pred_check`, over a `value`
+/// binding) and the boundary-side inline check
+/// (`serialisation::emit_inline_pred_check`, over a `json` binding) — the
+/// two used to hand-roll this mapping independently, pinned identical only by
+/// a comment, so amending one (e.g. the `Matches` regex's `^(?:…)$` anchoring)
+/// could silently drift from the other. `receiver` is the bound name the
+/// generated condition reads (`value` or `json`); the returned message is the
+/// same either side of the boundary by construction.
+pub(crate) fn pred_condition_and_message(pred: &PredKind, receiver: &str) -> (String, String) {
+    match pred {
+        PredKind::NonNegative => (
+            format!("{receiver} >= 0"),
+            "must be non-negative".to_string(),
+        ),
+        PredKind::Positive => (format!("{receiver} > 0"), "must be positive".to_string()),
+        PredKind::InRange(a, b) => {
+            let (a, b) = (a.value, b.value);
+            (
+                format!("{receiver} >= {a} && {receiver} <= {b}"),
+                format!("must be in range [{a}, {b}]"),
+            )
+        }
+        PredKind::InRangeF(a, b) => {
+            let (a, b) = (&a.lexeme, &b.lexeme);
+            (
+                format!("{receiver} >= {a} && {receiver} <= {b}"),
+                format!("must be in range [{a}, {b}]"),
+            )
+        }
+        PredKind::NonEmpty => (
+            format!("{receiver}.length > 0"),
+            "must be non-empty".to_string(),
+        ),
+        PredKind::MinLength(n) => (
+            format!("{receiver}.length >= {n}"),
+            format!("length must be at least {n}"),
+        ),
+        PredKind::MaxLength(n) => (
+            format!("{receiver}.length <= {n}"),
+            format!("length must be at most {n}"),
+        ),
+        PredKind::Length(n) => (
+            format!("{receiver}.length === {n}"),
+            format!("length must be exactly {n}"),
+        ),
+        PredKind::Matches(pat) => {
+            let escaped = escape_ts_string(pat);
+            (
+                format!("new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test({receiver})"),
+                format!("must match /{escaped}/"),
+            )
+        }
+    }
 }
 
 #[allow(dead_code)]
