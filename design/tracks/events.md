@@ -5,18 +5,25 @@
   **spine issue** is
   [#936](https://github.com/accuser/bynk/issues/936); this doc lands via a
   draft PR referencing it (*"Part of #936"*, never `Closes`). §3.1, §3.2, §3.3,
-  and §3.6 are now genuinely settled, with their foundational ADRs recorded in
-  `design/pending/events-foundational-adrs.md` (pre-stamp); §3.4 stays open
-  until slice 0 has a substrate to measure, and §3.5 is a named slice-3
-  concern. **Slice 0 has shipped** (#939): `event` declarations, `given
-  Events` emission with owner-only enforcement, and unpatterned `from
+  and §3.6 are now genuinely settled, with their foundational ADRs landed as
+  [ADR 0284](../decisions/0284-events-fanout-substrate.md),
+  [ADR 0285](../decisions/0285-events-protocol-set-extension.md),
+  [ADR 0286](../decisions/0286-events-pattern-dispatch-deliver-and-filter.md),
+  and [ADR 0287](../decisions/0287-events-replay-out-of-scope.md); §3.5 is a
+  named slice-3 concern. **Slice 0 has shipped** (#939): `event` declarations,
+  `given Events` emission with owner-only enforcement, and unpatterned `from
   Events(E)` subscription, across contexts and across all three platforms —
   its own implementation decisions (the concrete fan-out mechanism per
-  platform, and the owner-only checker pass) are recorded in
-  `design/pending/events-slice0-implementation.md` (pre-stamp). Structural
+  platform, and the owner-only checker pass) landed as
+  [ADR 0288](../decisions/0288-events-slice0-fanout-implementation.md) and
+  [ADR 0289](../decisions/0289-events-owner-only-emission-check.md). **§3.4 is
+  now also settled, empirically:** per-publisher FIFO holds within one
+  emission batch and across successive non-overlapping calls to one agent,
+  but not across concurrent invocations of the same agent — narrower than §7
+  originally asserted, measured on real `workerd` and recorded in
+  `design/pending/events-per-publisher-fifo-scope.md` (pre-stamp). Structural
   pattern refinement on the subscription header (§3.3's deliver-and-filter),
-  the envelope, additive versioning, and per-publisher FIFO's own empirical
-  proof (§3.4) remain later slices.
+  the envelope, and additive versioning remain later slices.
 - **The one scope decision made up front.** This track delivers the **live
   pub-sub core** — declaration, emission, subscription with pattern refinement,
   the envelope, and additive versioning. It **splits event replay / backfill
@@ -150,12 +157,13 @@ the only one of the two that can *honestly* deliver §7's per-publisher ordering
 and failure-isolation guarantees rather than approximate them — and the
 follow-on replay track (§3.6) needs a durable log-owner anyway, so the DO is not
 throwaway. The queue path stays a documented future optimisation for the
-high-fanout, ordering-relaxed case, not slice 0's substrate. Recorded as the
-`events-fanout-substrate` ADR,
-`design/pending/events-foundational-adrs.md` (pre-stamp) — the **foundational
-ADR landed before slice 0** (§5); everything else composes above it. This
-settles the substrate choice itself; per-publisher FIFO as a *verified*
-guarantee (§3.4) is a separate, still-open, empirical decision.
+high-fanout, ordering-relaxed case, not slice 0's substrate. Recorded as
+[ADR 0284 — events-fanout-substrate](../decisions/0284-events-fanout-substrate.md)
+— the **foundational ADR landed before slice 0** (§5); everything else
+composes above it. This settles the substrate choice itself; per-publisher
+FIFO as a *verified* guarantee (§3.4) was a separate empirical decision, now
+also settled — scoped narrower than this section's rationale implies (see
+§3.4).
 
 ### 3.2 — Admitting Events to the closed protocol set — SETTLED, precedented
 
@@ -173,8 +181,8 @@ surface (the WebSocket track). Events differs in one real way: `from Events(E)`
 **parameterises the protocol by an event type**, and (§3.3) by a pattern — no
 shipped protocol takes a type argument on the header. That parameterisation is
 the genuinely new grammar/checker slice-0 work; the closed-set membership itself
-is a one-line extension. Recorded as the `events-protocol-set-extension` ADR,
-`design/pending/events-foundational-adrs.md` (pre-stamp).
+is a one-line extension. Recorded as
+[ADR 0285 — events-protocol-set-extension](../decisions/0285-events-protocol-set-extension.md).
 
 ### 3.3 — Subscription pattern refinement — SETTLED, leaned hard on precedent
 
@@ -197,11 +205,10 @@ where the filter runs — §7 wants "server-side filtering where the platform
 supports it, deliver-and-filter as a transparent fallback" (line 227). Slice 1
 ships the **deliver-and-filter fallback** only (the DO delivers, the
 subscriber's generated guard filters), with server-side pre-filtering a later
-optimisation that cannot change observable semantics. Recorded as the
-`events-pattern-dispatch-deliver-and-filter` ADR,
-`design/pending/events-foundational-adrs.md` (pre-stamp).
+optimisation that cannot change observable semantics. Recorded as
+[ADR 0286 — events-pattern-dispatch-deliver-and-filter](../decisions/0286-events-pattern-dispatch-deliver-and-filter.md).
 
-### 3.4 — Per-publisher FIFO: the contract vs. what Cloudflare delivers — OPEN, needs an empirical check
+### 3.4 — Per-publisher FIFO: the contract vs. what Cloudflare delivers — SETTLED empirically (scoped narrower than asserted)
 
 **The question.** §7 asserts a specific ordering *contract* (line 231): events
 from the same publishing agent are delivered to each subscriber in emission
@@ -210,17 +217,31 @@ context. This composes with the atomic-handler invariant (events within a handle
 release at commit in emission order; events from successive handlers of one agent
 release in handler order).
 
-**Why it is open, not settled.** This is a *claim about runtime behaviour on
-Cloudflare*, and Cloudflare Queues do not guarantee cross-message ordering. The
-deploy track's discipline applies directly here — it settled "Cloudflare resolves
-bindings at upload — a hard barrier, not a soft nicety" **empirically**, not by
-assertion ([ADR 0193](../decisions/0193-multi-context-deploy-ordering.md)). The
-per-publisher FIFO guarantee needs the same treatment: an integration fixture
-that emits an ordered burst from one agent and asserts delivery order at a
-subscriber, run against the chosen substrate, **before** the guarantee is written
-into the spec as shipped. The §3.1 leaning (fanout DO, single-threaded) is partly
-motivated by making this guarantee *achievable* rather than aspirational — a DO
-can sequence a publisher's emissions; a bare shared queue cannot.
+**Settled, by measurement, and narrower than asserted.** The deploy track's
+discipline applies directly here — it settled "Cloudflare resolves bindings
+at upload — a hard barrier, not a soft nicety" **empirically**, not by
+assertion ([ADR 0193](../decisions/0193-multi-context-deploy-ordering.md)),
+and its headline finding was "the assumption was wrong." This guarantee got
+the same treatment: `bynkc/tests/events_ordering_workerd.rs` runs a
+two-context project on real `workerd` under two `wrangler dev` processes and
+measures three cases. **Holds:** emissions within one handler body (one
+batch, one sequential delivery loop); successive, sequentially-awaited
+invocations of one agent (each flush completes before the next begins).
+**Does not hold:** two *overlapping* invocations of the same agent —
+interleaving was observed in every trial run. The mechanism: the fan-out DO
+(§3.1) is a **stateless router** with no storage operation and no
+`blockConcurrencyWhile`, so it yields at every delivery instead of gating on
+one; the publisher's own flush happens *after* `commitState` reopens that
+agent's storage gate, so two concurrent invocations can have both flushes in
+flight at once with nothing to serialise them. Single-threaded DO execution
+prevents parallelism, not interleaving across `await`-separated batches — the
+§3.1 rationale ("a DO can sequence a publisher's emissions") holds for a
+*single* batch, not across concurrent ones. Recorded as the
+`events-per-publisher-fifo-scope` ADR,
+`design/pending/events-per-publisher-fifo-scope.md` (pre-stamp), including
+the decision **not** to change the emitter to close this gap (a substrate
+redesign, not a documentation increment — see §6 for the consequence a
+subscriber needs to know).
 
 ### 3.5 — The cross-build schema registry — OPEN
 
@@ -276,10 +297,9 @@ split:
 envelope (§4 slice 2) must carry `eventId` and `schemaVersion` from day one, and
 the fan-out substrate (§3.1) must not foreclose a durable log — the §3.1 fanout
 DO is chosen partly because it is the natural future log-owner. This track ships
-the *seams* replay will need; it does not ship replay. Recorded as the
-`events-replay-out-of-scope` ADR,
-`design/pending/events-foundational-adrs.md` (pre-stamp) — durable and citable
-rather than implicit in a diff.
+the *seams* replay will need; it does not ship replay. Recorded as
+[ADR 0287 — events-replay-out-of-scope](../decisions/0287-events-replay-out-of-scope.md)
+— durable and citable rather than implicit in a diff.
 
 ## 4. Candidate slice decomposition
 
@@ -320,15 +340,17 @@ so this track's scope stays honest about what it delivers — the same disciplin
 `idempotency-capability.md` applied to its durable provider.
 
 **Ordering is not a slice.** Per-publisher FIFO (§3.4) is a *property* every slice
-must preserve and slice 0 must **establish and verify empirically** against the
-chosen substrate before it is asserted as shipped.
+must preserve; it is now established and verified empirically against the
+chosen substrate, scoped to what the substrate actually delivers (§3.4).
 
 ## 5. Front-loaded ADR candidates
 
 The load-bearing, hard-to-reverse decisions to land up front (ADR 0076/0167's
-"foundational ADRs"). Four of the five are **written**, recorded in
-`design/pending/events-foundational-adrs.md` (pre-stamp) ahead of any slice-0
-code; one remains open, deliberately, until there is something to measure.
+"foundational ADRs"). Four of the five landed as ADRs 0284–0287 ahead of any
+slice-0 code; the fifth — deliberately deferred until there was something to
+measure — has now landed too, recorded in
+`design/pending/events-per-publisher-fifo-scope.md` (pre-stamp; its ADR
+number is assigned at merge).
 
 - **[Written] The Events fan-out substrate** (§3.1, `events-fanout-substrate`) —
   records the fanout-DO-vs-queue choice and *why*, because per-publisher
@@ -340,11 +362,13 @@ code; one remains open, deliberately, until there is something to measure.
   [ADR 0079](../decisions/0079-protocols-closed-set.md) to a sixth protocol and
   the new event-type-parameterised `from Events(E)` header shape (no prior
   protocol parameterises on a type).
-- **[Still open] Per-publisher FIFO is a verified guarantee, not an assertion**
-  (§3.4) — records the empirical fixture that backs the ordering claim on the
-  chosen substrate, in the deploy track's evidence-not-assertion tradition
-  ([ADR 0193](../decisions/0193-multi-context-deploy-ordering.md)). Cannot be
-  written until slice 0 has a substrate to run the fixture against.
+- **[Written] Per-publisher FIFO is a verified guarantee, scoped to what was
+  measured** (§3.4, `events-per-publisher-fifo-scope`) — records the
+  empirical fixture that backs the ordering claim on the chosen substrate, in
+  the deploy track's evidence-not-assertion tradition
+  ([ADR 0193](../decisions/0193-multi-context-deploy-ordering.md)), and the
+  finding that the guarantee holds only within a batch and across
+  non-overlapping calls — not across concurrent invocations of one agent.
 - **[Written] Subscription pattern dispatch reuses auth/refined-pattern
   machinery** (§3.3, `events-pattern-dispatch-deliver-and-filter`) — records
   that no bespoke matching engine is introduced for Events; deliver-and-filter
@@ -389,11 +413,15 @@ receives *exactly* the emissions its pattern admits.
   hidden.
 - **Mis-ordered delivery corrupting state.** A subscriber that assumes emission
   order (e.g. a `Created` before an `Updated`) breaks if the substrate reorders.
-  *Mitigation:* the per-publisher FIFO guarantee (§3.4) — but *only* to the extent
-  it is empirically verified on the chosen substrate, which is exactly why §3.4 is
-  an up-front ADR and not an assumption. Cross-publisher ordering is explicitly
-  **not** guaranteed; a subscriber depending on it is a design error the docs must
-  call out.
+  *Mitigation, and its real scope (§3.4, empirically measured):* order is
+  preserved within one emission batch and across successive,
+  non-overlapping calls to one agent — **not** across *concurrent*
+  invocations of the same agent, which the fan-out DO's stateless,
+  yield-at-every-`await` delivery loop can interleave. Cross-publisher
+  ordering is explicitly **not** guaranteed either. A subscriber that must
+  not observe either of these reorderings needs its own sequence number in
+  the payload; this is a design constraint the docs must call out, not
+  something the runtime absorbs on the subscriber's behalf.
 - **Payload validation at the boundary.** An event is a value crossing a trust
   boundary; refined fields in the payload are validated on receipt, malformed
   events routed to the platform dead-letter policy (§7 line 286, the shipped
@@ -423,8 +451,11 @@ receives *exactly* the emissions its pattern admits.
   ([ADR 0079](../decisions/0079-protocols-closed-set.md)) with the
   event-type-parameterised header; the per-protocol handler-shape check rejects a
   malformed `on event` handler. Shipped in slice 0 (#939).
-- [ ] Per-publisher FIFO (§3.4) is backed by an **empirical** integration fixture
-  on the chosen substrate, not asserted — before it enters the spec as shipped.
+- [x] Per-publisher FIFO (§3.4) is backed by an **empirical** integration fixture
+  on the chosen substrate, not asserted (`bynkc/tests/events_ordering_workerd.rs`).
+  The guarantee entering the spec is **narrower** than §7 originally asserted:
+  ordered within a batch and across non-overlapping calls to one agent, not
+  across concurrent invocations of one agent.
 - [ ] The envelope carries `eventId`, `publisherId`, `emittedAt`, `schemaVersion`;
   effectful subscribers dedup on `env.eventId` via the shipped `Idempotency`
   capability (no new dedup mechanism built here).
@@ -436,12 +467,12 @@ receives *exactly* the emissions its pattern admits.
   this track — named as a future track with its durable-`Idempotency` dependency,
   not silently dropped.
 - [x] Foundational ADRs (§5) written that do not depend on slice-0 code —
-  the substrate ADR (§3.1), the closed-protocol-set extension (§3.2), the
-  deliver-and-filter dispatch commitment (§3.3), and the replay split (§3.6) —
-  landed **before** slice 0 (`design/pending/events-foundational-adrs.md`,
-  pre-stamp).
-- [ ] The ordering-evidence ADR (§3.4) landed, backed by the empirical fixture,
-  before per-publisher FIFO is documented as shipped.
+  the substrate ADR (§3.1, ADR 0284), the closed-protocol-set extension
+  (§3.2, ADR 0285), the deliver-and-filter dispatch commitment (§3.3, ADR
+  0286), and the replay split (§3.6, ADR 0287) — landed **before** slice 0.
+- [x] The ordering-evidence ADR (§3.4, `events-per-publisher-fifo-scope`)
+  landed, backed by the empirical fixture, before per-publisher FIFO is
+  documented as shipped — in its measured, scoped form.
   Spec-in-place updates for the Events protocol are a per-slice follow-on.
   **On retire:** remove this doc; append its closing summary to
   [`../archive/retired-tracks.md`](../archive/retired-tracks.md); close the spine

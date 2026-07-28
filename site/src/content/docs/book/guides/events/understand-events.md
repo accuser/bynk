@@ -135,14 +135,16 @@ does not — the same source compiles and runs the same way on every platform:
 
 | Target | Mechanism |
 |---|---|
-| **Cloudflare Workers** | Each publishing context gets its own compiler-synthesised fan-out Durable Object. Being a Durable Object, it is single-threaded — emissions from one publishing context are sequenced, and one subscriber's delivery failure is caught and logged without blocking delivery to its siblings. |
+| **Cloudflare Workers** | Each publishing context gets its own compiler-synthesised fan-out Durable Object. One subscriber's delivery failure is caught and logged without blocking delivery to its siblings. Ordering is preserved *within* one emission (everything a single handler invocation emits) and *across* successive, non-overlapping calls to one agent — but **not** across concurrent invocations of the same agent, since the Durable Object delivers by making an outbound call per subscriber and does not serialise two overlapping deliveries against each other. |
 | **Bundle** (node, browser) | Dispatch is in-process — no Durable Object, no wire. The composed program calls directly into each subscriber's handler. |
 
 What slice 0 does **not** yet give you: a delivery retry, a durable log to
-replay from, or an empirically-proven ordering guarantee under real concurrent
-load. A subscriber that must not miss an event needs its own idempotent
-handling of "ran zero times" today — the same discipline any other
-best-effort delivery already asks for.
+replay from, or ordering across *concurrent* invocations of the same
+publishing agent — measured, not assumed, and found not to hold. A subscriber
+that needs a total order across concurrent publishes must carry its own
+sequence number in the event payload. A subscriber that must not miss an
+event needs its own idempotent handling of "ran zero times" today — the same
+discipline any other best-effort delivery already asks for.
 
 **See also:**
 [First-party `bynk` capabilities](/book/reference/bynk-capabilities/),
