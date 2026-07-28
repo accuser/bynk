@@ -1296,7 +1296,9 @@ pub(crate) fn check_static_call(
                 type_name.name, method.name
             ),
         )
-        .with_label(decl.name.span, "type declared here"),
+        // Finding #46: `decl` comes from the combined cross-file symbol
+        // table — see resolver.rs:1029 for the full rationale.
+        .with_note("type declared here"),
     );
     None
 }
@@ -2621,8 +2623,7 @@ fn check_test_service_address(
             return None;
         };
         let params = handler.params.clone();
-        let hspan = handler.span;
-        check_address_args(&id.name, "call", &params, hspan, args, method.span, ctx);
+        check_address_args(&id.name, "call", &params, args, method.span, ctx);
         return None;
     }
 
@@ -2704,14 +2705,12 @@ fn check_test_service_address(
             return None;
         };
         let params = handler.params.clone();
-        let hspan = handler.span;
         // Type the route-pattern string as an ordinary string; check the rest.
         let _ = type_of(&args[0], None, ctx);
         check_address_args(
             &id.name,
             &method.name,
             &params,
-            hspan,
             &args[1..],
             method.span,
             ctx,
@@ -2754,17 +2753,8 @@ fn check_test_service_address(
             return None;
         };
         let params = handler.params.clone();
-        let hspan = handler.span;
         let _ = type_of(&args[0], None, ctx);
-        check_address_args(
-            &id.name,
-            "schedule",
-            &params,
-            hspan,
-            &args[1..],
-            method.span,
-            ctx,
-        );
+        check_address_args(&id.name, "schedule", &params, &args[1..], method.span, ctx);
         return None;
     }
 
@@ -2786,8 +2776,7 @@ fn check_test_service_address(
             return None;
         };
         let params = handler.params.clone();
-        let hspan = handler.span;
-        check_address_args(&id.name, "message", &params, hspan, args, method.span, ctx);
+        check_address_args(&id.name, "message", &params, args, method.span, ctx);
         return None;
     }
 
@@ -3129,7 +3118,6 @@ fn check_address_args(
     svc: &str,
     addr: &str,
     params: &[bynk_syntax::ast::Param],
-    handler_span: Span,
     positional: &[Expr],
     err_span: Span,
     ctx: &mut Ctx,
@@ -3145,7 +3133,9 @@ fn check_address_args(
                     positional.len()
                 ),
             )
-            .with_label(handler_span, "handler declared here"),
+            // Finding #46: `handler_span` is the target unit's handler — a
+            // test file and the unit it tests are normally different files.
+            .with_note("handler declared here"),
         );
         for a in positional {
             let _ = type_of(a, None, ctx);
@@ -3498,7 +3488,12 @@ fn check_cross_context_call(
                     args.len()
                 ),
             )
-            .with_label(service.span, "service declared here"),
+            // Finding #46: `service` belongs to the *consumed*
+            // context — a different unit/file than this call, almost
+            // always. A label would risk underlining unrelated text
+            // there; a note carries the information safely (per-label
+            // file identity is a Wave 8 follow-up).
+            .with_note("service declared here"),
         );
         for a in args {
             let _ = type_of(a, None, ctx);
@@ -3543,7 +3538,8 @@ fn check_cross_context_call(
                         consumed,
                     ),
                 )
-                .with_label(service.span, "service declared here")
+                // Finding #46: same cross-unit provenance as above.
+                .with_note("service declared here")
                 .with_note(
                     "values crossing a context boundary must have structurally compatible types (same commons-derived type, or identical record/sum shape)",
                 ),

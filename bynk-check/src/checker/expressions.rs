@@ -2366,7 +2366,6 @@ pub(crate) fn check_record_construction(
         type_name,
         fields,
         r,
-        decl.name.span,
         span,
         |n| scopes.iter().rev().any(|s| s.contains_key(n)),
         ctx.errors,
@@ -2761,7 +2760,9 @@ pub(crate) fn check_field_access(
                 field.span,
                 format!("record type `{}` has no field `{}`", name, field.name),
             )
-            .with_label(decl.name.span, "type declared here"),
+            // Finding #46: `decl` comes from the combined cross-file symbol
+            // table — see resolver.rs:1029 for the full rationale.
+            .with_note("type declared here"),
         );
         return None;
     };

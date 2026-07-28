@@ -56,6 +56,13 @@ pub struct Diagnostic {
     /// The stable diagnostic category (e.g. `bynk.parse.expected_token`).
     pub category: String,
     pub message: String,
+    /// Finding #47: previously dropped entirely for the playground. Plain
+    /// text, not positioned — the CLI/LSP renderers already carry the
+    /// harder problem of a label's span belonging to a different module
+    /// than `path` (finding #46); this flattening keeps to text only rather
+    /// than getting that wrong here too.
+    pub notes: Vec<String>,
+    pub labels: Vec<String>,
 }
 
 /// The outcome of compiling one in-memory source.
@@ -100,6 +107,8 @@ fn panic_diagnostic(payload: Box<dyn std::any::Any + Send>) -> Diagnostic {
         severity: "error".to_string(),
         category: "bynk.wasm.panic".to_string(),
         message: format!("internal compiler panic: {}", panic_message(&*payload)),
+        notes: Vec::new(),
+        labels: Vec::new(),
     }
 }
 
@@ -114,6 +123,13 @@ fn panic_diagnostic(payload: Box<dyn std::any::Any + Send>) -> Diagnostic {
 /// console error and location) set in the wasm entry points, and this wrapper
 /// becomes effective for free if the playground build ever adopts wasm exception
 /// handling. Fixing the underlying panic sites remains the real fix (#717).
+///
+/// `Diagnostic` grew past clippy's large-`Err` threshold once `notes`/`labels`
+/// (finding #47) joined it; boxing it here would need every one of this
+/// module's several `Diagnostic { .. }` construction sites and its `serde`
+/// serialisation to route through a `Box` for one lint, so it's overridden
+/// instead — this is a single-error return on the panic path, not a hot loop.
+#[allow(clippy::result_large_err)]
 fn catch_panic<T>(f: impl FnOnce() -> T) -> Result<T, Diagnostic> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(panic_diagnostic)
 }
@@ -146,6 +162,8 @@ fn to_diagnostics(
                 severity: severity_str(&a.error).to_string(),
                 category: a.error.category.to_string(),
                 message: a.error.message.clone(),
+                notes: a.error.notes.clone(),
+                labels: a.error.labels.iter().map(|(_, msg)| msg.clone()).collect(),
             }
         })
         .collect()
@@ -199,6 +217,8 @@ fn compile_inner(source: &str, platform: Platform) -> CompileResult {
                     severity: "error".to_string(),
                     category: "bynk.wasm.strip_failed".to_string(),
                     message: e.to_string(),
+                    notes: Vec::new(),
+                    labels: Vec::new(),
                 }],
             },
         },

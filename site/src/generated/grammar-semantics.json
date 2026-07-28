@@ -111,11 +111,15 @@
     },
     {
       "code": "bynk.types.argument_mismatch",
-      "summary": "A function argument has the wrong type."
+      "summary": "A call, method, capability, or constructor argument has the wrong type."
     },
     {
       "code": "bynk.types.call_arity",
       "summary": "A function value was applied with the wrong number of arguments."
+    },
+    {
+      "code": "bynk.types.combinator_return_mismatch",
+      "summary": "A callback passed to a combinator (`map`/`andThen`/`flatMap`/`traverseAll`/…) returns the wrong type."
     }
   ],
   "capability_decl": [

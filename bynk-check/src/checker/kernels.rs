@@ -471,7 +471,7 @@ pub(crate) fn check_list_kernel_method(
                     r @ Ty::Result(_, _) => r.clone(),
                     other => {
                         ctx.errors.push(CompileError::new(
-                            "bynk.types.argument_mismatch",
+                            "bynk.types.combinator_return_mismatch",
                             args[0].span,
                             format!(
                                 "the `List.{}` function must return `Effect[Result[B, E]]`, but returns `Effect[{}]`",
@@ -484,7 +484,7 @@ pub(crate) fn check_list_kernel_method(
                 },
                 other => {
                     ctx.errors.push(CompileError::new(
-                        "bynk.types.argument_mismatch",
+                        "bynk.types.combinator_return_mismatch",
                         args[0].span,
                         format!(
                             "the `List.{}` function must return `Effect[Result[B, E]]`, but returns `{}`",
@@ -582,7 +582,7 @@ pub(crate) fn check_list_kernel_method(
                 Ty::List(_) => Some(ret),
                 other => {
                     ctx.errors.push(CompileError::new(
-                        "bynk.types.argument_mismatch",
+                        "bynk.types.combinator_return_mismatch",
                         args[0].span,
                         format!(
                             "the `List.flatMap` function must return a `List`, but returns `{}`",
@@ -876,7 +876,7 @@ pub(crate) fn check_query_kernel_method(
                 Ty::Query(_) => Some(ret),
                 other => {
                     ctx.errors.push(CompileError::new(
-                        "bynk.types.argument_mismatch",
+                        "bynk.types.combinator_return_mismatch",
                         args[0].span,
                         format!(
                             "the `Query.flatMap` function must return a `Query`, but returns `{}`",
@@ -1058,7 +1058,7 @@ pub(crate) fn check_query_kernel_method(
                     r @ Ty::Result(_, _) => r.clone(),
                     other => {
                         ctx.errors.push(CompileError::new(
-                            "bynk.types.argument_mismatch",
+                            "bynk.types.combinator_return_mismatch",
                             args[0].span,
                             format!(
                                 "the `Query.{}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
@@ -1071,7 +1071,7 @@ pub(crate) fn check_query_kernel_method(
                 },
                 other => {
                     ctx.errors.push(CompileError::new(
-                        "bynk.types.argument_mismatch",
+                        "bynk.types.combinator_return_mismatch",
                         args[0].span,
                         format!(
                             "the `Query.{}` function must return `Effect[Result[U, E]]`, but returns `{}`",
@@ -1649,7 +1649,7 @@ fn check_kernel_fn_arg(arg: &Expr, params: Vec<Ty>, label: &str, ctx: &mut Ctx) 
 /// v0.150 (ADR 0174): infer a `traverseTry`/`parTraverseTry` function argument's
 /// return type, which MUST be `Effect[Result[U, E]]`, and peel it to `(U, E)`.
 /// `recv` is the collection's element type; `kind` is `"List"` or `"Query"` (for
-/// the diagnostic). A non-`Result` effect is `bynk.types.argument_mismatch`.
+/// the diagnostic). A non-`Result` effect is `bynk.types.combinator_return_mismatch`.
 fn check_try_fn_arg(
     arg: &Expr,
     elem: &Ty,
@@ -1668,7 +1668,7 @@ fn check_try_fn_arg(
             Ty::Result(ok, err) => Some(((**ok).clone(), (**err).clone())),
             other => {
                 ctx.errors.push(CompileError::new(
-                    "bynk.types.argument_mismatch",
+                    "bynk.types.combinator_return_mismatch",
                     arg.span,
                     format!(
                         "the `{kind}.{method}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
@@ -1680,7 +1680,7 @@ fn check_try_fn_arg(
         },
         other => {
             ctx.errors.push(CompileError::new(
-                "bynk.types.argument_mismatch",
+                "bynk.types.combinator_return_mismatch",
                 arg.span,
                 format!(
                     "the `{kind}.{method}` function must return `Effect[Result[U, E]]`, but returns `{}`",
@@ -1748,7 +1748,7 @@ pub(crate) fn check_option_kernel_method(
                 Ty::Option(_) => Some(ret),
                 other => {
                     ctx.errors.push(CompileError::new(
-                        "bynk.types.argument_mismatch",
+                        "bynk.types.combinator_return_mismatch",
                         args[0].span,
                         format!(
                             "the `Option.andThen` function must return an `Option`, but returns `{}`",
@@ -1849,7 +1849,7 @@ pub(crate) fn check_result_kernel_method(
                 Ty::Result(b, e2) => {
                     if !compatible(&e2, err) && !compatible(err, &e2) {
                         ctx.errors.push(CompileError::new(
-                            "bynk.types.argument_mismatch",
+                            "bynk.types.combinator_return_mismatch",
                             args[0].span,
                             format!(
                                 "the `Result.andThen` function's error type `{}` does not match the receiver's `{}`",
@@ -1863,7 +1863,7 @@ pub(crate) fn check_result_kernel_method(
                 }
                 other => {
                     ctx.errors.push(CompileError::new(
-                        "bynk.types.argument_mismatch",
+                        "bynk.types.combinator_return_mismatch",
                         args[0].span,
                         format!(
                             "the `Result.andThen` function must return a `Result`, but returns `{}`",
@@ -2005,7 +2005,7 @@ pub(crate) fn check_effect_result_kernel_method(
             let (u, e2) = check_effect_result_fn_arg(&args[0], ok, &method.name, ctx)?;
             if !compatible(&e2, err) && !compatible(err, &e2) {
                 ctx.errors.push(CompileError::new(
-                    "bynk.types.argument_mismatch",
+                    "bynk.types.combinator_return_mismatch",
                     args[0].span,
                     format!(
                         "the `Effect[Result].flatMapOk` function's error type `{}` does not match the receiver's `{}`",
@@ -2029,7 +2029,7 @@ pub(crate) fn check_effect_result_kernel_method(
             let (t2, f) = check_effect_result_fn_arg(&args[0], err, &method.name, ctx)?;
             if !compatible(&t2, ok) && !compatible(ok, &t2) {
                 ctx.errors.push(CompileError::new(
-                    "bynk.types.argument_mismatch",
+                    "bynk.types.combinator_return_mismatch",
                     args[0].span,
                     format!(
                         "the `Effect[Result].flatMapErr` recovery must produce the receiver's success type `{}`, but produces `{}`",
@@ -2068,8 +2068,8 @@ pub(crate) fn check_effect_result_kernel_method(
 /// MUST be `Effect[Result[U, F]]`, peeling it to `(U, F)`. `param` is the
 /// single parameter type the receiver dictates (the `Ok` type for `flatMapOk`,
 /// the `Err` type for `flatMapErr`). A non-`Effect[Result]` return is
-/// `bynk.types.argument_mismatch`. Mirrors [`check_try_fn_arg`], with the
-/// `Effect[Result]` diagnostic wording.
+/// `bynk.types.combinator_return_mismatch`. Mirrors [`check_try_fn_arg`], with
+/// the `Effect[Result]` diagnostic wording.
 fn check_effect_result_fn_arg(
     arg: &Expr,
     param: &Ty,
@@ -2087,7 +2087,7 @@ fn check_effect_result_fn_arg(
             Ty::Result(ok, err) => Some(((**ok).clone(), (**err).clone())),
             other => {
                 ctx.errors.push(CompileError::new(
-                    "bynk.types.argument_mismatch",
+                    "bynk.types.combinator_return_mismatch",
                     arg.span,
                     format!(
                         "the `Effect[Result].{method}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
@@ -2099,7 +2099,7 @@ fn check_effect_result_fn_arg(
         },
         other => {
             ctx.errors.push(CompileError::new(
-                "bynk.types.argument_mismatch",
+                "bynk.types.combinator_return_mismatch",
                 arg.span,
                 format!(
                     "the `Effect[Result].{method}` function must return `Effect[Result[U, E]]`, but returns `{}`",
