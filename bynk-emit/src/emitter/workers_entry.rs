@@ -7,6 +7,7 @@
 //! Validation and uncaught errors map to 400 / 500 respectively.
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use crate::emitter::http_handler_method_name;
 use crate::emitter::ts_ident;
@@ -1367,7 +1368,7 @@ fn emit_call_handler_dispatch(
     sname: &str,
     h: &Handler,
     actors: &std::collections::HashMap<String, bynk_syntax::ast::ActorDecl>,
-    local_types: &std::collections::HashMap<String, TypeDecl>,
+    local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
 ) {
     // v0.54: a `by c: Caller` handler reads the caller's context name from the
@@ -1570,7 +1571,7 @@ fn serialise_call(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
 /// (`List[Money]`) TypeScript resolves the brand through the intersection.
 fn brand_assertion(
     t: &TypeRef,
-    local_types: &std::collections::HashMap<String, TypeDecl>,
+    local_types: &std::collections::HashMap<String, Arc<TypeDecl>>,
 ) -> String {
     match crate::emitter::emit::type_ref_named_root(t) {
         Some(name) if !local_types.contains_key(name) => {

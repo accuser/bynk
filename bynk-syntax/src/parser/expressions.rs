@@ -180,7 +180,7 @@ impl<'a> Parser<'a> {
         };
         let end = self.prev_span();
         Ok(Expr {
-            kind: ExprKind::Observation(ObservationExpr { cap, op, matcher }),
+            kind: ExprKind::Observation(Box::new(ObservationExpr { cap, op, matcher })),
             span: start.merge(end),
         })
     }
@@ -299,7 +299,7 @@ impl<'a> Parser<'a> {
             return Ok(Expr {
                 kind: ExprKind::Is {
                     value: Box::new(lhs),
-                    pattern,
+                    pattern: Box::new(pattern),
                 },
                 span,
             });
@@ -1551,13 +1551,21 @@ impl<'a> Parser<'a> {
                 self.parse_block("to open the `else` branch")?
             }
         } else {
+            // Finding #28: a zero-width span at the then-block's end, not
+            // `then_block.span` itself — reusing the then-block's span here
+            // aliased this synthetic block (and its `UnitLit` tail) with the
+            // then-block in `expr_types`, keyed by `Span`, so checking the
+            // else branch after the then branch clobbered the then-block's
+            // own (more specific) recorded type. Hovering the then-branch of
+            // an else-less `if` showed `()` instead of the real `Effect[()]`.
+            let synth_span = Span::new(then_block.span.end, then_block.span.end);
             Block {
                 statements: Vec::new(),
                 tail: Box::new(Expr {
                     kind: ExprKind::UnitLit,
-                    span: then_block.span,
+                    span: synth_span,
                 }),
-                span: then_block.span,
+                span: synth_span,
                 tail_leading_comments: Vec::new(),
                 implicit_tail: true,
             }

@@ -153,11 +153,7 @@ pub(crate) fn check_fn(
         test_services: HashMap::new(),
         test_actors: HashMap::new(),
         type_vars: vars.clone(),
-        store_cells: HashMap::new(),
-        store_maps: HashMap::new(),
-        store_sets: HashMap::new(),
-        store_caches: HashMap::new(),
-        store_logs: HashMap::new(),
+        store_fields: HashMap::new(),
     };
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
         return;
@@ -239,11 +235,7 @@ pub fn check_state_initialiser(
             test_services: HashMap::new(),
             test_actors: HashMap::new(),
             type_vars: HashSet::new(),
-            store_cells: HashMap::new(),
-            store_maps: HashMap::new(),
-            store_sets: HashMap::new(),
-            store_caches: HashMap::new(),
-            store_logs: HashMap::new(),
+            store_fields: HashMap::new(),
         };
         type_of(init, Some(&field_ty), &mut ctx)
     };
@@ -376,6 +368,7 @@ pub(crate) fn check_call(
         .input
         .types
         .values()
+        .map(std::sync::Arc::as_ref)
         .filter(|t| matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == name.name)))
         .collect();
     if owners.len() == 1 {

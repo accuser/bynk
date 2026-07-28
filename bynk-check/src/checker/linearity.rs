@@ -14,6 +14,7 @@
 //! API-discipline linearity over a general affine system).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use bynk_syntax::ast::{
     Block, Expr, ExprKind, Ident, MatchBody, Param, Pattern, Statement, TypeDecl,
@@ -58,7 +59,7 @@ fn held_value(ty: &Ty) -> bool {
 pub(crate) fn check(
     body: &Block,
     params: &[Param],
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     expr_types: &HashMap<Span, Ty>,
     // v0.106 (slice 3b-iii): names of held params that are **borrowed**, not owned
     // — e.g. the firing `connection` of a `from websocket` `on message`/`on close`,

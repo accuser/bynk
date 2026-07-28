@@ -23,6 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 use crate::emitter;
@@ -2511,7 +2512,7 @@ fn merge_consumed_exports(
     name: &str,
     parsed: &[ParsedFile],
     unit_info: &BTreeMap<String, UnitInfo>,
-    combined_types: &mut HashMap<String, TypeDecl>,
+    combined_types: &mut HashMap<String, Arc<TypeDecl>>,
     combined_methods: &mut HashMap<String, ResolverMethodTable>,
     imported_from: &mut HashMap<String, String>,
     imported_from_kind: &mut HashMap<String, UnitKind>,
@@ -2598,8 +2599,8 @@ fn compose_unit_symbols(
     local_table: &UnitTable,
     unit_info: &BTreeMap<String, UnitInfo>,
 ) -> (
-    HashMap<String, TypeDecl>,
-    HashMap<String, FnDecl>,
+    HashMap<String, Arc<TypeDecl>>,
+    HashMap<String, Arc<FnDecl>>,
     HashMap<String, ResolverMethodTable>,
     HashMap<String, String>,
     HashMap<String, UnitKind>,
@@ -2715,8 +2716,8 @@ fn build_emit_unit_ctx(
         };
         for (type_name, mt) in &used.table.methods {
             let entry = imported_methods.entry(type_name.clone()).or_default();
-            entry.extend(mt.instance.values().cloned());
-            entry.extend(mt.statics.values().cloned());
+            entry.extend(mt.instance.values().map(|f| f.as_ref().clone()));
+            entry.extend(mt.statics.values().map(|f| f.as_ref().clone()));
         }
     }
     let method_key = |f: &FnDecl| match &f.name {
@@ -2944,8 +2945,8 @@ fn check_unit_files(
     indices: &[usize],
     parsed: &[ParsedFile],
     unit_info: &BTreeMap<String, UnitInfo>,
-    combined_types: &HashMap<String, TypeDecl>,
-    combined_fns: &HashMap<String, FnDecl>,
+    combined_types: &HashMap<String, Arc<TypeDecl>>,
+    combined_fns: &HashMap<String, Arc<FnDecl>>,
     combined_methods: &HashMap<String, ResolverMethodTable>,
     local_names: &HashSet<String>,
     local_methods_for_type: &HashMap<String, Vec<FnDecl>>,
@@ -5202,7 +5203,7 @@ fn called_cross_context_services(
 /// fires on every call instead of only on real skew.
 fn own_contract_hashes(
     table: &UnitTable,
-    own_types: &HashMap<String, bynk_syntax::ast::TypeDecl>,
+    own_types: &HashMap<String, Arc<bynk_syntax::ast::TypeDecl>>,
 ) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
     for (sname, sdecl) in &table.services {

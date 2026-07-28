@@ -481,7 +481,10 @@ fn emit_method(
     )
     .unwrap();
     let empty = bynk_check::resolver::CrossContextInfo::default();
-    let mut cx = LowerCtx::new(commons, &empty, runtime_use);
+    let mut cx = LowerCtx::new(
+        ModuleCtx::new(commons, &empty, runtime_use),
+        BodyMode::Method,
+    );
     // Methods are emitted as plain (non-async) members on an object literal;
     // any `Effect.pure(...)` in tail position must still wrap as
     // `Promise.resolve(...)` because there's no surrounding `async` to absorb
@@ -544,7 +547,11 @@ pub(crate) fn emit_free_fn(
     )
     .unwrap();
     let empty = bynk_check::resolver::CrossContextInfo::default();
-    let mut cx = LowerCtx::new(commons, &empty, runtime_use).with_source_map(source_map);
+    let mut cx = LowerCtx::new(
+        ModuleCtx::new(commons, &empty, runtime_use),
+        BodyMode::FreeFn,
+    )
+    .with_source_map(source_map);
     let async_tail = is_effectful_return(&f.return_type);
     let guarded = contracts && (!f.requires.is_empty() || !f.ensures.is_empty());
     if guarded {
@@ -1176,25 +1183,36 @@ pub(crate) fn emit_provider(
         .unwrap();
         // v0.70: provider operation bodies lower directly into `out`, so attaching
         // the module builder records correct offsets — no splice merge needed.
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
-            .with_source_map(source_map);
+        let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
+        module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.set_rebrand_info(commons, ctx);
+        module.target = ctx.target;
+        module.in_bynk_unit = ctx.commons_name == "bynk";
+        let mut cx = LowerCtx::new(
+            module,
+            BodyMode::ProviderOp {
+                handler: HandlerShared {
+                    // The provider's `given` capabilities are in scope in its
+                    // bodies, and resolve against the injected `this.deps`.
+                    capabilities: p.given.iter().map(|c| c.key().to_string()).collect(),
+                    cap_deps_expr: if p.given.is_empty() {
+                        "deps".to_string()
+                    } else {
+                        "this.deps".to_string()
+                    },
+                    // #934: a provider's own op body can itself call a `given`
+                    // capability (e.g. a provider that dedups its own work via
+                    // `Idempotency`).
+                    handler_scope: Some(format!(
+                        "{}.provides.{}.{}",
+                        ctx.commons_name, p.capability.name, op.name.name
+                    )),
+                    ..HandlerShared::default()
+                },
+            },
+        )
+        .with_source_map(source_map);
         cx.local_agents = ctx.local_agents.clone();
-        cx.agent_method_givens = ctx.agent_method_givens.clone();
-        cx.set_rebrand_info(commons, ctx);
-        cx.target = ctx.target;
-        // The provider's `given` capabilities are in scope in its bodies, and
-        // resolve against the injected `this.deps`.
-        cx.capabilities = p.given.iter().map(|c| c.key().to_string()).collect();
-        if !p.given.is_empty() {
-            cx.cap_deps_expr = "this.deps".to_string();
-        }
-        // #934: a provider's own op body can itself call a `given` capability
-        // (e.g. a provider that dedups its own work via `Idempotency`).
-        cx.handler_scope = Some(format!(
-            "{}.provides.{}.{}",
-            ctx.commons_name, p.capability.name, op.name.name
-        ));
-        cx.in_bynk_unit = ctx.commons_name == "bynk";
         let async_tail = is_effectful_return(&op.return_type);
         emit_block_as_function_body_with_return(
             out,
@@ -1305,24 +1323,6 @@ pub(crate) fn emit_service(
         // splice below so handler statements map per-statement, not to the
         // `service` declaration line.
         let body_smb = RefCell::new(SourceMapBuilder::new());
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
-            .with_source_map(Some(&body_smb));
-        cx.capabilities = handler
-            .given
-            .iter()
-            .map(|c| c.key().to_string())
-            .collect::<HashSet<_>>();
-        // #934: the qualified handler name `Idempotency.dedup`/`remember` key
-        // scoping prefixes onto the developer-supplied key.
-        cx.handler_scope = Some(format!(
-            "{}.{}.{}",
-            ctx.commons_name, s.name.name, kind_name
-        ));
-        cx.in_bynk_unit = ctx.commons_name == "bynk";
-        cx.local_agents = ctx.local_agents.clone();
-        cx.agent_method_givens = ctx.agent_method_givens.clone();
-        cx.set_rebrand_info(commons, ctx);
-        cx.target = ctx.target;
         // v0.52: a multi-actor sum handler's resolved actor is threaded through
         // `deps.who`; the binder ident lowers to it so the body can `match`. A
         // sum supersedes the single-actor Bearer identity path (the per-arm
@@ -1343,16 +1343,6 @@ pub(crate) fn emit_service(
         } else {
             bynk_check::actors::oidc_seam_for(handler, &ctx.actors)
         };
-        cx.deps_identity_binder = bearer_seam
-            .as_ref()
-            .and_then(|s| s.binder.clone())
-            .or_else(|| oidc_seam.as_ref().and_then(|s| s.binder.clone()));
-        if sum_members.is_some()
-            && let Some(by) = &handler.by_clause
-            && let Some(binder) = &by.binder
-        {
-            cx.actor_sum_binder = Some(binder.name.clone());
-        }
         // v0.54: a cross-context `on call … by c: Caller` handler reads a live
         // `CallerId` (the calling context's name) threaded through
         // `deps.identity`, exactly like the Bearer identity. Only when it binds.
@@ -1361,9 +1351,50 @@ pub(crate) fn emit_service(
         } else {
             None
         };
-        if let Some(binder) = &caller_binder {
-            cx.deps_identity_binder = Some(binder.clone());
-        }
+        let deps_identity_binder = caller_binder.clone().or_else(|| {
+            bearer_seam
+                .as_ref()
+                .and_then(|s| s.binder.clone())
+                .or_else(|| oidc_seam.as_ref().and_then(|s| s.binder.clone()))
+        });
+        let actor_sum_binder = if sum_members.is_some() {
+            handler
+                .by_clause
+                .as_ref()
+                .and_then(|by| by.binder.as_ref())
+                .map(|binder| binder.name.clone())
+        } else {
+            None
+        };
+        let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
+        module.in_bynk_unit = ctx.commons_name == "bynk";
+        module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.set_rebrand_info(commons, ctx);
+        module.target = ctx.target;
+        let mut cx = LowerCtx::new(
+            module,
+            BodyMode::ServiceHandler {
+                handler: HandlerShared {
+                    capabilities: handler
+                        .given
+                        .iter()
+                        .map(|c| c.key().to_string())
+                        .collect::<HashSet<_>>(),
+                    // #934: the qualified handler name `Idempotency.dedup`/
+                    // `remember` key scoping prefixes onto the developer-supplied
+                    // key.
+                    handler_scope: Some(format!(
+                        "{}.{}.{}",
+                        ctx.commons_name, s.name.name, kind_name
+                    )),
+                    ..HandlerShared::default()
+                },
+                deps_identity_binder,
+                actor_sum_binder,
+            },
+        )
+        .with_source_map(Some(&body_smb));
+        cx.local_agents = ctx.local_agents.clone();
         let async_tail = is_effectful_return(&handler.return_type);
         emit_block_as_function_body_with_return(
             &mut body_out,
@@ -1474,7 +1505,9 @@ pub(crate) fn emit_service(
         // `given Events` on the agent handler.
         let needs_events_dispatch = cx.is_first_party_events()
             && (crate::emitter::block_uses_emit(&handler.body)
-                || cx.agent_given_caps_used.contains_key("Events"));
+                || cx
+                    .agent_given_caps_used()
+                    .is_some_and(|m| m.contains_key("Events")));
         if needs_events_dispatch {
             let field = "__eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>";
             deps_ty = if deps_ty == "{}" {
@@ -1663,7 +1696,7 @@ pub(crate) fn cross_context_cap_namespaces(
 fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
     let mut out = declared.to_vec();
     let have: HashSet<String> = declared.iter().map(|c| c.key().to_string()).collect();
-    for (key, cap) in &cx.agent_given_caps_used {
+    for (key, cap) in cx.agent_given_caps_used().into_iter().flatten() {
         if !have.contains(key) {
             out.push(cap.clone());
         }
@@ -1678,9 +1711,9 @@ fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
     // first-party `Events` from an unrelated same-named capability.
     out.retain(|c| {
         c.key() != "Events"
-            || !(cx.in_bynk_unit
+            || !(cx.in_bynk_unit()
                 || cx
-                    .cross_context
+                    .cross_context()
                     .flattened_caps
                     .get(c.key())
                     .map(String::as_str)
@@ -1701,7 +1734,7 @@ fn build_deps_object_ty_with_surface(
         .collect();
     match target {
         BuildTarget::Bundle => {
-            if cx.cross_context_used {
+            if cx.cross_context_used() {
                 parts.push(format!("surface: {}", surface_ty(cross_context)));
             }
         }
@@ -1710,8 +1743,8 @@ fn build_deps_object_ty_with_surface(
             // Service Bindings and the local agents' Durable Object namespaces.
             // It is threaded into deps whenever the handler makes a
             // cross-context call or instantiates an agent.
-            if cx.cross_context_used || cx.agents_instantiated {
-                let agents = if cx.agents_instantiated {
+            if cx.cross_context_used() || cx.agents_instantiated() {
+                let agents = if cx.agents_instantiated() {
                     sorted_local_agents(cx)
                 } else {
                     Vec::new()
@@ -1730,7 +1763,7 @@ fn build_deps_object_ty_with_surface(
 /// in workers mode.
 fn sorted_local_agents(cx: &LowerCtx<'_>) -> Vec<String> {
     let mut names: Vec<String> = cx
-        .commons
+        .commons()
         .commons
         .items
         .iter()
@@ -2028,7 +2061,7 @@ pub(crate) fn lower_workers_cross_context_call(
 ) -> String {
     use crate::emitter::serialisation::{deserialise_ref_via, serialise_expr_via};
 
-    let info = cx.cross_context;
+    let info = cx.cross_context();
     let binding = crate::emitter::wrangler::consumed_binding_name(consumed);
 
     // Look up the service signature on the consumed context.
@@ -2090,7 +2123,12 @@ pub(crate) fn lower_workers_cross_context_call(
     for (i, a) in args.iter().enumerate() {
         let lowered = lower_expr_into(a, stmts, cx);
         let (_, param_ty) = &svc.params[i];
-        args_serialised.push(serialise_expr_via(param_ty, &lowered, &ns, cx.runtime_use));
+        args_serialised.push(serialise_expr_via(
+            param_ty,
+            &lowered,
+            &ns,
+            cx.runtime_use(),
+        ));
     }
     let args_json = if args_serialised.len() == 1 {
         args_serialised.into_iter().next().unwrap()
@@ -2105,12 +2143,12 @@ pub(crate) fn lower_workers_cross_context_call(
         format!("{{ {} }}", pairs.join(", "))
     };
 
-    let deser_ref = deserialise_ref_via(&svc.return_type, &ns, cx.runtime_use);
+    let deser_ref = deserialise_ref_via(&svc.return_type, &ns, cx.runtime_use());
 
     // v0.54: stamp the calling context's qualified name so the callee's
     // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
     // constant; the args body is unchanged.
-    let caller = escape_ts_string(&cx.commons.commons.name.joined());
+    let caller = escape_ts_string(&cx.commons().commons.name.joined());
 
     // v0.177 (#643): stamp this context's compiled view of the callee's
     // contract, so the callee can fail closed when the deployed pair disagree.
@@ -2145,7 +2183,7 @@ pub(crate) fn cross_context_lowering_prefix(
     cx: &LowerCtx<'_>,
 ) -> Option<(String, String)> {
     let chain = flatten_emit_ident_chain(receiver)?;
-    let info = cx.cross_context;
+    let info = cx.cross_context();
     if info.consumed_contexts.is_empty() && info.aliases.is_empty() {
         return None;
     }
@@ -2249,7 +2287,7 @@ fn is_codecable(t: &TypeRef) -> bool {
 /// Whether an agent emits a rehydration gate (and so imports `rehydrationViolation`).
 /// Mirrors the per-field validation the gate builds, so the header import and the
 /// emitted gate agree exactly (a mismatch is an unused / undefined import).
-pub(crate) fn agent_needs_rehydrate(a: &AgentDecl, types: &HashMap<String, TypeDecl>) -> bool {
+pub(crate) fn agent_needs_rehydrate(a: &AgentDecl, types: &HashMap<String, Arc<TypeDecl>>) -> bool {
     // v0.105 (slice 3b-ii): a held `Map[K, Connection]` persists `K → connId` and
     // is rehydrated like any map — no value check (the connId is opaque) but the
     // textual `K` key is validated. The `Map` arm already counts that via the key,
@@ -2319,7 +2357,7 @@ fn store_field_key_type<'a>(a: &'a AgentDecl, field: &str) -> Option<&'a TypeRef
 /// opaque alias. A textual key persists as its own string in a storage `Record`,
 /// so the rehydration gate can validate it; a non-textual key persists as a
 /// `String(k)` structural key, whose refinement validation is deferred (ADR 0124).
-fn type_base_is_string(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
+fn type_base_is_string(t: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> bool {
     match t {
         TypeRef::Base(BaseType::String, _) => true,
         TypeRef::Named(id) => matches!(
@@ -2337,7 +2375,7 @@ fn type_base_is_string(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
 }
 
 /// True when `t` is `Int` or a refined/opaque type over `Int`.
-fn type_base_is_int(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
+fn type_base_is_int(t: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> bool {
     match t {
         TypeRef::Base(BaseType::Int, _) => true,
         TypeRef::Named(id) => matches!(
@@ -2360,7 +2398,7 @@ fn type_base_is_int(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
 /// (the same rule the contract attacker follows; the refinement brand is
 /// compile-time only, so `Number(...)` is a no-op at runtime). Everything else —
 /// `String`/refined-`String`, `Bool` — passes through.
-fn history_arg_ts(p: &Param, i: usize, types: &HashMap<String, TypeDecl>) -> String {
+fn history_arg_ts(p: &Param, i: usize, types: &HashMap<String, Arc<TypeDecl>>) -> String {
     if type_base_is_int(&p.type_ref, types) {
         format!("Number(__st.args[{i}])")
     } else {
@@ -2633,11 +2671,12 @@ pub(crate) fn emit_agent(
         for f in &effective_fields {
             let val = if let Some(init) = &f.init {
                 let mut stmts = Vec::new();
-                let mut icx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
-                icx.target = ctx.target;
+                let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
+                module.target = ctx.target;
+                module.agent_method_givens = ctx.agent_method_givens.clone();
+                module.set_rebrand_info(commons, ctx);
+                let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
                 icx.local_agents = ctx.local_agents.clone();
-                icx.agent_method_givens = ctx.agent_method_givens.clone();
-                icx.set_rebrand_info(commons, ctx);
                 let expr = lower_expr_into(init, &mut stmts, &mut icx);
                 // A static initialiser lowers to a pure expression (no setup
                 // statements); if any appear, fall back to inlining them as a
@@ -2885,8 +2924,13 @@ pub(crate) fn emit_agent(
             .map(|f| f.name.name.clone())
             .collect();
         for inv in &a.invariants {
-            let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
-            cx.invariant_state = Some(("s".to_string(), field_names.clone()));
+            let mut cx = LowerCtx::new(
+                ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
+                BodyMode::Invariant {
+                    name: "s".to_string(),
+                    fields: field_names.clone(),
+                },
+            );
             let mut pre = Vec::new();
             let pred = lower_expr_into(&inv.predicate, &mut pre, &mut cx);
             for s in &pre {
@@ -2927,8 +2971,13 @@ pub(crate) fn emit_agent(
         writeln!(out, "      const __old = {{ ...{zero_fn}(), ...__prior }};").unwrap();
         writeln!(out, "      const __new = s;").unwrap();
         for tr in &a.transitions {
-            let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
-            cx.transition_states = Some(("__old".to_string(), "__new".to_string()));
+            let mut cx = LowerCtx::new(
+                ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use),
+                BodyMode::Transition {
+                    old: "__old".to_string(),
+                    new: "__new".to_string(),
+                },
+            );
             let mut pre = Vec::new();
             let pred = lower_expr_into(&tr.predicate, &mut pre, &mut cx);
             for s in &pre {
@@ -2973,17 +3022,6 @@ pub(crate) fn emit_agent(
         let mut body_out = String::new();
         // v0.70: per-statement maps for the spliced handler body (see emit_service).
         let body_smb = RefCell::new(SourceMapBuilder::new());
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
-            .with_source_map(Some(&body_smb));
-        cx.in_agent_handler = true;
-        // A handler param is emitted at its natural `ts_ident` name (above), so
-        // it must be declared into scope the same way: otherwise a param that
-        // shares a name with a `store Map`/`Set`/`Cache`/`Log` field is
-        // invisible to `LowerCtx::is_local`, and the store-field dispatch
-        // below silently wins over the parameter.
-        for p in &h.params {
-            cx.declare_binder(&p.name.name);
-        }
         // v0.81: a store-agent handler reads/writes cells over a mutable working
         // record `__state`; a state-record handler uses `currentState`/`self.state`.
         // A store handler that performs any `:=` wraps its body in a closure so an
@@ -2991,8 +3029,8 @@ pub(crate) fn emit_agent(
         // v0.105 (slice 3b-ii): a held `Map[K, Connection]` is persisted (a connId
         // record), so writing one (`put`/`remove`) must trigger the commit flush —
         // include the held maps in the write-detection set. (They are *not* in
-        // `agent_store_maps`: their entry ops use the connId-resolution lowering, not
-        // the plain `Record<string, V>` ops.)
+        // `AgentStoreState::maps`: their entry ops use the connId-resolution
+        // lowering, not the plain `Record<string, V>` ops.)
         let writes_map_names: HashSet<String> = map_names.union(&held_map_names).cloned().collect();
         let writes_state = is_store_agent
             && block_writes_state(
@@ -3005,23 +3043,17 @@ pub(crate) fn emit_agent(
                     &cell_names,
                 ),
             );
-        if is_store_agent {
-            cx.agent_store_state = Some(("__state".to_string(), cell_names.clone()));
-            cx.agent_store_maps = map_names.clone();
-            cx.agent_store_sets = set_names.clone();
-            cx.agent_store_caches = cache_ttls.clone();
-            cx.agent_store_logs = log_retains.clone();
-            cx.agent_store_indexes = store_map_indexes.clone();
-            cx.agent_held_maps = held_maps_ts.clone();
-        } else {
-            cx.agent_state_var = Some("currentState".to_string());
-        }
-        cx.agent_key_field = Some(a.key_name.name.clone());
-        cx.capabilities = h
-            .given
-            .iter()
-            .map(|c| c.key().to_string())
-            .collect::<HashSet<_>>();
+        let store = is_store_agent.then(|| {
+            Box::new(AgentStoreState {
+                state: ("__state".to_string(), cell_names.clone()),
+                maps: map_names.clone(),
+                sets: set_names.clone(),
+                caches: cache_ttls.clone(),
+                logs: log_retains.clone(),
+                indexes: store_map_indexes.clone(),
+                held_maps: held_maps_ts.clone(),
+            })
+        });
         // #934: mirrors the `method` name resolved below (all non-`method_name`
         // agent handler kinds resolve to `"call"`), computed here so it's
         // available before the body lowers.
@@ -3030,14 +3062,40 @@ pub(crate) fn emit_agent(
             .as_ref()
             .map(|m| m.name.clone())
             .unwrap_or_else(|| "call".to_string());
-        cx.handler_scope = Some(format!(
-            "{}.{}.{}",
-            ctx.commons_name, a.name.name, scope_method
-        ));
-        cx.in_bynk_unit = ctx.commons_name == "bynk";
+        let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
+        module.in_bynk_unit = ctx.commons_name == "bynk";
+        module.agent_method_givens = ctx.agent_method_givens.clone();
+        module.set_rebrand_info(commons, ctx);
+        let mut cx = LowerCtx::new(
+            module,
+            BodyMode::AgentHandler {
+                handler: HandlerShared {
+                    capabilities: h
+                        .given
+                        .iter()
+                        .map(|c| c.key().to_string())
+                        .collect::<HashSet<_>>(),
+                    handler_scope: Some(format!(
+                        "{}.{}.{}",
+                        ctx.commons_name, a.name.name, scope_method
+                    )),
+                    ..HandlerShared::default()
+                },
+                in_agent_handler: true,
+                agent_key_field: Some(a.key_name.name.clone()),
+                store,
+            },
+        )
+        .with_source_map(Some(&body_smb));
         cx.local_agents = ctx.local_agents.clone();
-        cx.agent_method_givens = ctx.agent_method_givens.clone();
-        cx.set_rebrand_info(commons, ctx);
+        // A handler param is emitted at its natural `ts_ident` name (above), so
+        // it must be declared into scope the same way: otherwise a param that
+        // shares a name with a `store Map`/`Set`/`Cache`/`Log` field is
+        // invisible to `LowerCtx::is_local`, and the store-field dispatch
+        // below silently wins over the parameter.
+        for p in &h.params {
+            cx.declare_binder(&p.name.name);
+        }
         let async_tail = is_effectful_return(&h.return_type);
         // A writing store handler's body sits one level deeper, inside the
         // implicit-commit closure.
@@ -3066,7 +3124,9 @@ pub(crate) fn emit_agent(
         // the same compose-supplied `__eventsDispatch` callback.
         let needs_events_dispatch = cx.is_first_party_events()
             && (crate::emitter::block_uses_emit(&h.body)
-                || cx.agent_given_caps_used.contains_key("Events"));
+                || cx
+                    .agent_given_caps_used()
+                    .is_some_and(|m| m.contains_key("Events")));
         if needs_events_dispatch {
             let field = "__eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>";
             deps_ty = if deps_ty == "{}" {
@@ -3584,25 +3644,34 @@ fn emit_ws_do_method(
         ));
     }
     let body_smb = RefCell::new(SourceMapBuilder::new());
-    let mut cx = LowerCtx::new(commons, &ctx.cross_context, &ctx.runtime_use)
-        .with_source_map(Some(&body_smb));
-    cx.capabilities = h
-        .given
-        .iter()
-        .map(|c| c.key().to_string())
-        .collect::<HashSet<_>>();
-    // #934: the hosting agent + lifecycle method name (`open`/`message`/`close`).
-    cx.handler_scope = Some(format!(
-        "{}.{}.{}",
-        ctx.commons_name, agent.name.name, method
-    ));
-    cx.in_bynk_unit = ctx.commons_name == "bynk";
+    let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
+    module.in_bynk_unit = ctx.commons_name == "bynk";
+    module.agent_method_givens = ctx.agent_method_givens.clone();
+    module.set_rebrand_info(commons, ctx);
+    module.target = ctx.target;
+    let mut cx = LowerCtx::new(
+        module,
+        BodyMode::WsDoMethod {
+            handler: HandlerShared {
+                capabilities: h
+                    .given
+                    .iter()
+                    .map(|c| c.key().to_string())
+                    .collect::<HashSet<_>>(),
+                // #934: the hosting agent + lifecycle method name
+                // (`open`/`message`/`close`).
+                handler_scope: Some(format!(
+                    "{}.{}.{}",
+                    ctx.commons_name, agent.name.name, method
+                )),
+                ..HandlerShared::default()
+            },
+            deps_identity_binder: host.seam.as_ref().and_then(|s| s.binder.clone()),
+            ws_self_agent: Some(agent.name.name.clone()),
+        },
+    )
+    .with_source_map(Some(&body_smb));
     cx.local_agents = ctx.local_agents.clone();
-    cx.agent_method_givens = ctx.agent_method_givens.clone();
-    cx.set_rebrand_info(commons, ctx);
-    cx.target = ctx.target;
-    cx.ws_self_agent = Some(agent.name.name.clone());
-    cx.deps_identity_binder = host.seam.as_ref().and_then(|s| s.binder.clone());
     let async_tail = is_effectful_return(&h.return_type);
     let mut body_out = String::new();
     emit_block_as_function_body_with_return(
@@ -3743,7 +3812,7 @@ fn emit_ws_dispatch_handlers(
     out: &mut String,
     host: &WsOpenHost<'_>,
     runtime_use: &RuntimeUse,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
 ) {
     if !host.has_inbound() {
         return;

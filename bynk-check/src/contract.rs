@@ -26,6 +26,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use bynk_syntax::ast::{PredKind, Refinement, TypeBody, TypeDecl, TypeRef};
 
@@ -38,7 +39,10 @@ use crate::resolver::CrossContextService;
 /// a multi-argument call sends an object keyed by parameter name, and a
 /// single-argument call sends the bare value — so a rename or a reorder is a
 /// genuine wire change, not a refactor.
-pub fn service_normal_form(svc: &CrossContextService, types: &HashMap<String, TypeDecl>) -> String {
+pub fn service_normal_form(
+    svc: &CrossContextService,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> String {
     let mut out = String::new();
     let _ = write!(out, "{}(", svc.name);
     for (i, (pname, pty)) in svc.params.iter().enumerate() {
@@ -71,7 +75,7 @@ pub fn service_normal_form(svc: &CrossContextService, types: &HashMap<String, Ty
 /// reach a deploy without the consumer being rebuilt too.
 fn canon_type(
     t: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     seen: &mut HashSet<String>,
 ) -> String {
     canon_type_in(t, types, seen, &HashMap::new())
@@ -90,7 +94,7 @@ fn canon_type(
 /// ("semantically-equal contracts must hash equal") forbids.
 fn canon_type_in(
     t: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     seen: &mut HashSet<String>,
     subst: &HashMap<String, String>,
 ) -> String {
@@ -161,7 +165,7 @@ fn canon_type_in(
 
 fn canon_named_in(
     name: &str,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     seen: &mut HashSet<String>,
     subst: &HashMap<String, String>,
 ) -> String {
@@ -312,7 +316,7 @@ pub fn contract_hash(normal_form: &str) -> String {
 /// The stamped contract hash for one consumed service.
 pub fn service_contract_hash(
     svc: &CrossContextService,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
 ) -> String {
     contract_hash(&service_normal_form(svc, types))
 }
@@ -391,14 +395,16 @@ mod tests {
 
     /// Build a type table by parsing a `commons`, so these tests exercise real
     /// declarations rather than hand-assembled AST.
-    fn types_of(src: &str) -> HashMap<String, TypeDecl> {
+    fn types_of(src: &str) -> HashMap<String, Arc<TypeDecl>> {
         let tokens = bynk_syntax::lexer::tokenize(src).expect("lex");
         let commons = bynk_syntax::parser::parse(&tokens, src).expect("parse");
         commons
             .items
             .iter()
             .filter_map(|i| match i {
-                bynk_syntax::ast::CommonsItem::Type(t) => Some((t.name.name.clone(), t.clone())),
+                bynk_syntax::ast::CommonsItem::Type(t) => {
+                    Some((t.name.name.clone(), Arc::new(t.clone())))
+                }
                 _ => None,
             })
             .collect()

@@ -283,8 +283,8 @@ fn symbol_modifiers(
 pub struct UnitTable {
     #[allow(dead_code)]
     pub kind: Option<UnitKind>,
-    pub types: HashMap<String, TypeDecl>,
-    pub fns: HashMap<String, FnDecl>,
+    pub types: HashMap<String, Arc<TypeDecl>>,
+    pub fns: HashMap<String, Arc<FnDecl>>,
     pub methods: HashMap<String, ResolverMethodTable>,
     /// Per-context capabilities (v0.5). Empty for commons.
     pub capabilities: HashMap<String, CapabilityDecl>,
@@ -369,7 +369,7 @@ pub(crate) fn build_unit_table(
                         };
                         table.events.insert(name.name.clone(), e.clone());
                     }
-                    table.types.insert(name.name.clone(), decl);
+                    table.types.insert(name.name.clone(), Arc::new(decl));
                 }
             }
         }
@@ -589,7 +589,7 @@ pub(crate) fn build_unit_table(
                             .with_label(prev.name.span, "type declared here"),
                         );
                     } else {
-                        table.fns.insert(id.name.clone(), f.clone());
+                        table.fns.insert(id.name.clone(), Arc::new(f.clone()));
                     }
                 }
                 FnName::Method {
@@ -631,7 +631,7 @@ pub(crate) fn build_unit_table(
                             .with_label(prev.name.ident().span, "previously declared here"),
                         );
                     } else {
-                        bucket.insert(method_name.name.clone(), f.clone());
+                        bucket.insert(method_name.name.clone(), Arc::new(f.clone()));
                     }
                 }
             }
@@ -681,7 +681,7 @@ pub(crate) fn build_unit_table(
         } else {
             table
                 .fns
-                .insert("render".to_string(), synthetic_render_fn());
+                .insert("render".to_string(), Arc::new(synthetic_render_fn()));
         }
     }
     table
@@ -846,7 +846,7 @@ pub(crate) fn build_cross_context_info(
         unit_consumes_aliases.get(name).cloned().unwrap_or_default();
     let mut consumed_services: HashMap<String, HashMap<String, resolver::CrossContextService>> =
         HashMap::new();
-    let mut consumed_types: HashMap<String, HashMap<String, TypeDecl>> = HashMap::new();
+    let mut consumed_types: HashMap<String, HashMap<String, Arc<TypeDecl>>> = HashMap::new();
     let mut consumed_capabilities: HashMap<
         String,
         HashMap<String, resolver::CrossContextCapability>,
@@ -1084,8 +1084,8 @@ pub(crate) fn combined_types_for(
     unit: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
-) -> HashMap<String, TypeDecl> {
-    let mut out: HashMap<String, TypeDecl> = HashMap::new();
+) -> HashMap<String, Arc<TypeDecl>> {
+    let mut out: HashMap<String, Arc<TypeDecl>> = HashMap::new();
     if let Some(table) = unit_tables.get(unit) {
         for (n, d) in &table.types {
             out.insert(n.clone(), d.clone());

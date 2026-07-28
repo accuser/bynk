@@ -2139,7 +2139,7 @@ fn recursive_generic_error(name: &str, span: bynk_syntax::span::Span) -> Compile
 /// rather than the generic `json_uncodable`.
 fn first_recursive_generic(
     t: &Ty,
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
 ) -> Option<String> {
     match t {
         Ty::Named { name, args, .. } => {

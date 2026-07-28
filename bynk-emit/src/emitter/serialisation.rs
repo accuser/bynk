@@ -11,6 +11,7 @@
 //! commons types, context modules emit helpers for the types they declare.
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use bynk_syntax::ast::*;
 
@@ -41,7 +42,7 @@ fn qual_prefix(qual: &Qual, name: &str) -> String {
 /// context, walked through record fields, sum payloads, and the generic
 /// type parameters of Result/Option/Effect.
 pub(crate) fn collect_boundary_types(
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     services: &std::collections::HashMap<String, ServiceDecl>,
     // v0.96 (ADR 0124): rehydration is a trust boundary — an agent's persisted
     // `store`-field types are validated on load, so they need their deserialisers
@@ -112,7 +113,7 @@ pub(crate) fn collect_boundary_types(
 /// collector so the per-`App` guard in the codec walks is an O(1) membership test
 /// rather than a fresh graph reachability walk at every occurrence.
 fn recursive_generic_names(
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
 ) -> std::collections::HashSet<String> {
     types
         .iter()
@@ -125,7 +126,7 @@ fn recursive_generic_names(
 fn collect_type_names(
     t: &TypeRef,
     stack: &mut Vec<String>,
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     recursive: &std::collections::HashSet<String>,
 ) {
     match t {
@@ -243,7 +244,7 @@ fn subst_type_ref(t: &TypeRef, subst: &std::collections::HashMap<String, TypeRef
 fn record_inst_fields(
     name: &str,
     args: &[TypeRef],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
 ) -> Option<Vec<(String, TypeRef)>> {
     let decl = types.get(name)?;
     let TypeBody::Record(r) = &decl.body else {
@@ -275,7 +276,7 @@ fn record_inst_fields(
 fn sum_inst_variants(
     name: &str,
     args: &[TypeRef],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
 ) -> Option<Vec<(String, Vec<(String, TypeRef)>)>> {
     let decl = types.get(name)?;
     let TypeBody::Sum(s) = &decl.body else {
@@ -325,7 +326,7 @@ fn app_ts_name(name: &str, args: &[TypeRef]) -> String {
 pub(crate) fn emit_helpers_for_owner(
     out: &mut String,
     type_names: &[String],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     owner_qualified: &str,
     ru: &RuntimeUse,
 ) {
@@ -342,7 +343,7 @@ pub(crate) fn emit_helpers_for_owner(
 pub(crate) fn emit_helpers_for_owner_qualified(
     out: &mut String,
     type_names: &[String],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     _owner_qualified: &str,
     qual: &Qual,
     ru: &RuntimeUse,
@@ -1053,7 +1054,7 @@ fn inner_ts_name(t: &TypeRef) -> String {
 /// collectors, rooted at expressions instead of service signatures.
 pub(crate) fn collect_codec_closure(
     roots: &[TypeRef],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
 ) -> (Vec<String>, Vec<GenericInst>) {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
@@ -1352,7 +1353,7 @@ pub(crate) fn collect_generic_instantiations(
     // generic helper emitted just like a boundary signature does.
     agents: &std::collections::HashMap<String, AgentDecl>,
     boundary_type_names: &[String],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
 ) -> Vec<GenericInst> {
     let mut out: Vec<GenericInst> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1476,7 +1477,7 @@ fn walk_generic_inst(
     t: &TypeRef,
     out: &mut Vec<GenericInst>,
     seen: &mut std::collections::HashSet<String>,
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     recursive: &std::collections::HashSet<String>,
 ) {
     match t {
@@ -1592,7 +1593,7 @@ fn walk_generic_inst(
 pub(crate) fn emit_generic_helpers(
     out: &mut String,
     insts: &[GenericInst],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
 ) {
     emit_generic_helpers_qualified(out, insts, types, &Qual::new(), ru);
@@ -1608,7 +1609,7 @@ pub(crate) fn emit_generic_helpers(
 pub(crate) fn emit_generic_helpers_qualified(
     out: &mut String,
     insts: &[GenericInst],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     qual: &Qual,
     ru: &RuntimeUse,
 ) {

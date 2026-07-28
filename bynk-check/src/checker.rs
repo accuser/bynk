@@ -13,6 +13,7 @@
 //! - The built-in generic `Option[T]`.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::builtin_names::map_query;
 use crate::builtin_names::methods::*;
@@ -235,8 +236,8 @@ impl Ty {
 /// Output of type checking.
 pub struct TypedCommons {
     pub commons: Commons,
-    pub types: HashMap<String, TypeDecl>,
-    pub fns: HashMap<String, FnDecl>,
+    pub types: HashMap<String, Arc<TypeDecl>>,
+    pub fns: HashMap<String, Arc<FnDecl>>,
     pub methods: HashMap<String, MethodTable>,
     pub expr_types: HashMap<Span, Ty>,
     /// v0.89 (ADR 0117): non-failing warnings produced while checking this unit
@@ -310,6 +311,25 @@ pub fn check_record(
     // surfaced but non-gating. Only error-severity diagnostics fail the check;
     // on that path the warnings are appended so a failed build still renders
     // them.
+    // Finding #28 (debug-only): `Span` is `expr_types`'s key, but nothing
+    // enforces that no two AST nodes needing a type share one — bug #844 and
+    // the else-less-`if` synthesis both did, silently, before either was
+    // caught. Walk every checked function/method body with the total child
+    // iterator `ast::expr_children` and assert no two nodes recorded here
+    // collide; a release build doesn't pay for the walk. Scoped per item,
+    // not across the whole commons: a multi-file commons's merged item list
+    // legitimately re-walks the same function more than once (its own,
+    // separate redundancy, outside this finding's scope), and both known
+    // collisions (#844, the else-less-`if` synthesis) are contained within a
+    // single function/handler body regardless.
+    #[cfg(debug_assertions)]
+    for item in &input.commons.items {
+        if let CommonsItem::Fn(f) = item {
+            let mut seen: HashSet<Span> = HashSet::new();
+            assert_expr_types_disjoint_in_block(&f.body, &expr_types, &mut seen);
+        }
+    }
+
     let (hard_errors, warnings) = bynk_syntax::partition_by_severity(errors);
     if hard_errors.is_empty() {
         RecordCheck {
@@ -332,6 +352,43 @@ pub fn check_record(
             result: Err(all),
             partial_expr_types: expr_types,
         }
+    }
+}
+
+/// Finding #28 (debug-only): the block-level half of the `expr_types`
+/// span-uniqueness walk — visits every statement expression and the tail.
+#[cfg(debug_assertions)]
+fn assert_expr_types_disjoint_in_block(
+    block: &Block,
+    expr_types: &HashMap<Span, Ty>,
+    seen: &mut HashSet<Span>,
+) {
+    let mut roots: Vec<&Expr> = Vec::new();
+    for s in &block.statements {
+        bynk_syntax::ast::statement_exprs(s, &mut roots);
+    }
+    roots.push(&block.tail);
+    for e in roots {
+        assert_expr_types_disjoint(e, expr_types, seen);
+    }
+}
+
+/// Finding #28 (debug-only): recurses over an expression with the total
+/// child iterator `ast::expr_children`, asserting no two nodes recorded into
+/// `expr_types` share a `Span` — a collision means one node's recorded type
+/// silently clobbered another's (bug #844's class of bug).
+#[cfg(debug_assertions)]
+fn assert_expr_types_disjoint(e: &Expr, expr_types: &HashMap<Span, Ty>, seen: &mut HashSet<Span>) {
+    if expr_types.contains_key(&e.span) {
+        assert!(
+            seen.insert(e.span),
+            "bynk internal error (finding #28): two typed AST nodes share span {:?} in \
+             `expr_types` — one node's recorded type silently clobbered another's",
+            e.span
+        );
+    }
+    for child in bynk_syntax::ast::expr_children(e) {
+        assert_expr_types_disjoint(child, expr_types, seen);
     }
 }
 
@@ -370,27 +427,11 @@ pub struct HandlerBodyCheck<'a> {
     /// (so `binder.identity` type-checks), or `Ty::ActorSum(members)` for a sum
     /// (so the body `match`es on it). `None` for handlers without a `by` binder.
     pub actor_binding: Option<(String, Ty)>,
-    /// v0.81 (storage track): the agent's `store` `Cell` fields (name → element
-    /// type), so the `:=` write form can resolve its target and type its value.
-    /// Empty for service/test bodies and `state { }` agents.
-    pub store_cells: HashMap<String, Ty>,
-    /// v0.82 (ADR 0110): the agent's `store` `Map` fields (name → (key, value)),
-    /// so `<map>.put/get/update/upsert/remove/contains/size` resolve to the
-    /// effectful storage-map ops. Empty outside `store`-map agent handlers.
-    pub store_maps: HashMap<String, (Ty, Ty)>,
-    /// v0.83: the agent's `store` `Set` fields (name → element). `<set>.add/
-    /// remove/contains/size` resolve to the effectful storage-set ops.
-    pub store_sets: HashMap<String, Ty>,
-    /// v0.87 (ADR 0113): the agent's `store` `Cache` fields (name → (key,
-    /// value, ttl millis)). `<cache>.put/get/update/upsert/remove/contains/size`
-    /// resolve to the effectful cache ops, which additionally require `given
-    /// Clock`.
-    pub store_caches: HashMap<String, (Ty, Ty, i64)>,
-    /// v0.95 (ADR 0121): the agent's `store` `Log` fields (name → element
-    /// type). `<log>.append` is the effectful, non-idempotent write (requires
-    /// `given Clock`); the time-window roots and general builders lift the log
-    /// into a lazy `Query[T]` over its entry values.
-    pub store_logs: HashMap<String, Ty>,
+    /// The agent's `store` fields, by name (finding #36 — see [`StoreField`]),
+    /// so the `:=` write form, `<field>.<op>(…)`, and the map query accessors
+    /// can resolve their target. Empty for service/test bodies and `state {
+    /// }` agents.
+    pub store_fields: HashMap<String, StoreField>,
     /// v0.106 (slice 3b-iii): held params that are **borrowed**, not owned —
     /// the firing `connection` of a `from websocket` `on message`/`on close`.
     /// Borrowed bindings admit non-consuming ops (`send`) but carry no disposal
@@ -420,11 +461,7 @@ impl<'a> HandlerBodyCheck<'a> {
             agent_state_ty: None,
             agent_self_scope: None,
             actor_binding: None,
-            store_cells: HashMap::new(),
-            store_maps: HashMap::new(),
-            store_sets: HashMap::new(),
-            store_caches: HashMap::new(),
-            store_logs: HashMap::new(),
+            store_fields: HashMap::new(),
             borrowed_held: HashSet::new(),
         }
     }
@@ -448,11 +485,7 @@ pub fn check_handler_body(
         agent_state_ty,
         agent_self_scope,
         actor_binding,
-        store_cells,
-        store_maps,
-        store_sets,
-        store_caches,
-        store_logs,
+        store_fields,
         borrowed_held,
     } = check;
     let CheckSinks {
@@ -535,11 +568,7 @@ pub fn check_handler_body(
         test_services: HashMap::new(),
         test_actors: HashMap::new(),
         type_vars: HashSet::new(),
-        store_cells,
-        store_maps,
-        store_sets,
-        store_caches,
-        store_logs,
+        store_fields,
     };
     // Check the body and validate it matches the return type.
     let Some(body_ty) = type_of_block(body, Some(&return_ty), &mut ctx) else {
@@ -662,11 +691,7 @@ pub fn check_body(
         test_services,
         test_actors,
         type_vars: HashSet::new(),
-        store_cells: HashMap::new(),
-        store_maps: HashMap::new(),
-        store_sets: HashMap::new(),
-        store_caches: HashMap::new(),
-        store_logs: HashMap::new(),
+        store_fields: HashMap::new(),
     };
     if let Some(w) = where_pred {
         let bool_ty = Ty::Base(BaseType::Bool);
@@ -809,11 +834,7 @@ pub fn check_invariants(
             test_services: HashMap::new(),
             test_actors: HashMap::new(),
             type_vars: HashSet::new(),
-            store_cells: HashMap::new(),
-            store_maps: HashMap::new(),
-            store_sets: HashMap::new(),
-            store_caches: HashMap::new(),
-            store_logs: HashMap::new(),
+            store_fields: HashMap::new(),
         };
         let pred_ty = type_of(&inv.predicate, Some(&bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -949,11 +970,7 @@ pub fn check_contracts(
             test_services: HashMap::new(),
             test_actors: HashMap::new(),
             type_vars: type_vars.clone(),
-            store_cells: HashMap::new(),
-            store_maps: HashMap::new(),
-            store_sets: HashMap::new(),
-            store_caches: HashMap::new(),
-            store_logs: HashMap::new(),
+            store_fields: HashMap::new(),
         };
         let pred_ty = type_of(&c.predicate, Some(&bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -1169,11 +1186,7 @@ pub fn check_transitions(
             test_services: HashMap::new(),
             test_actors: HashMap::new(),
             type_vars: HashSet::new(),
-            store_cells: HashMap::new(),
-            store_maps: HashMap::new(),
-            store_sets: HashMap::new(),
-            store_caches: HashMap::new(),
-            store_logs: HashMap::new(),
+            store_fields: HashMap::new(),
         };
         let pred_ty = type_of(&tr.predicate, Some(&bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -1357,10 +1370,28 @@ impl TestServiceSig {
     }
 }
 
+/// One agent `store` field's kind and shape (finding #36) — the checker's
+/// dispatch keys off this instead of five separate per-kind maps, so a new
+/// storage kind is one new variant rather than a sixth map threaded through
+/// every constructor and lookup site.
+#[derive(Debug, Clone)]
+pub enum StoreField {
+    /// `store <name>: Cell[T]` — element type.
+    Cell(Ty),
+    /// `store <name>: Map[K, V]` — key, value.
+    Map(Ty, Ty),
+    /// `store <name>: Set[T]` — element type.
+    Set(Ty),
+    /// `store <name>: Cache[K, V] @ttl(...)` — key, value, TTL in milliseconds.
+    Cache(Ty, Ty, i64),
+    /// `store <name>: Log[T]` — element type.
+    Log(Ty),
+}
+
 /// The checker's working context. `pub(crate)`: every caller outside this
 /// crate goes through [`check_handler_body`] or [`check_body`] instead of
-/// hand-building one — adding a field (five `store_*` maps have accreted
-/// this way) no longer needs auditing every external construction site.
+/// hand-building one — adding a field no longer needs auditing every
+/// external construction site.
 pub(crate) struct Ctx<'a> {
     pub input: &'a ResolvedCommons,
     pub expr_types: &'a mut HashMap<Span, Ty>,
@@ -1428,25 +1459,14 @@ pub(crate) struct Ctx<'a> {
     /// nested explicit type arguments (`identity[A](x)` inside a generic
     /// body) resolve. Empty outside generic fn bodies.
     pub type_vars: HashSet<String>,
-    /// v0.81 (storage track): the agent's `store` `Cell` fields (name → element
-    /// type). A `:=` write resolves its target here and types its value against
-    /// the element type. Empty outside `store`-bearing agent handlers.
-    pub store_cells: HashMap<String, Ty>,
-    /// v0.82 (ADR 0110): the agent's `store` `Map` fields (name → (key, value)).
-    /// A `<map>.<op>(…)` call resolves against the storage-map op set here, by
-    /// receiver provenance. Empty outside `store`-map agent handlers.
-    pub store_maps: HashMap<String, (Ty, Ty)>,
-    /// v0.83: the agent's `store` `Set` fields (name → element). A `<set>.<op>(…)`
-    /// call resolves against the storage-set op set here, by receiver provenance.
-    pub store_sets: HashMap<String, Ty>,
-    /// v0.87 (ADR 0113): the agent's `store` `Cache` fields (name → (key, value,
-    /// ttl millis)). A `<cache>.<op>(…)` resolves against the cache op set and
-    /// requires `given Clock`.
-    pub store_caches: HashMap<String, (Ty, Ty, i64)>,
-    /// v0.95 (ADR 0121): the agent's `store` `Log` fields (name → element type).
-    /// `<log>.append` is the effectful non-idempotent write; the time-window
-    /// roots / builders lift the log into a lazy `Query[T]` over its values.
-    pub store_logs: HashMap<String, Ty>,
+    /// The agent's `store` fields, by name (finding #36: collapses the five
+    /// former per-kind maps — `store_cells`/`store_maps`/`store_sets`/
+    /// `store_caches`/`store_logs` — into one, since a field name can only
+    /// ever be one kind). A `:=` write, a `<field>.<op>(…)` call, and the
+    /// `.entries`/`.keys`/`.values` map accessors all resolve their target
+    /// here, by receiver provenance. Empty outside `store`-bearing agent
+    /// handlers.
+    pub store_fields: HashMap<String, StoreField>,
 }
 
 /// Per-capability info for checker dispatch within a handler body.
@@ -1509,13 +1529,7 @@ impl<'a> Ctx<'a> {
     /// `map.entries` query accessor is not mistaken for a service call.
     pub fn root_ident_is_store_field(&self, expr: &Expr) -> bool {
         match &expr.kind {
-            ExprKind::Ident(id) => {
-                self.store_maps.contains_key(&id.name)
-                    || self.store_sets.contains_key(&id.name)
-                    || self.store_logs.contains_key(&id.name)
-                    || self.store_caches.contains_key(&id.name)
-                    || self.store_cells.contains_key(&id.name)
-            }
+            ExprKind::Ident(id) => self.store_fields.contains_key(&id.name),
             ExprKind::FieldAccess { receiver, .. } | ExprKind::MethodCall { receiver, .. } => {
                 self.root_ident_is_store_field(receiver)
             }
@@ -1537,7 +1551,7 @@ impl<'a> Ctx<'a> {
 // ==== Type-system core (resolution, unification, compatibility, inference) ====
 
 /// Build a `Ty` from a TypeDecl name reference.
-pub fn type_from_decl(id: &Ident, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
+pub fn type_from_decl(id: &Ident, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Ty> {
     let decl = types.get(&id.name)?;
     Some(named_ty(decl))
 }
@@ -1597,7 +1611,7 @@ pub fn instantiate_field_ty(
     decl: &TypeDecl,
     args: &[Ty],
     field_ref: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
 ) -> Option<Ty> {
     if decl.type_params.is_empty() {
         return resolve_type_ref(field_ref, types);
@@ -1623,7 +1637,7 @@ pub fn instantiate_field_ty(
 /// same-named declaration; the collision is diagnosed at the declaration).
 pub fn resolve_type_ref_in(
     r: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     vars: &HashSet<String>,
 ) -> Option<Ty> {
     match r {
@@ -1864,7 +1878,7 @@ pub(crate) fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) 
 /// recording point; where both passes run, assembly dedupes.
 pub fn record_type_refs(
     r: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     skip: &HashSet<String>,
     refs: &mut RefSink,
 ) {
@@ -1942,7 +1956,7 @@ pub(crate) fn resolve_expr_type_ref(r: &TypeRef, ctx: &mut Ctx) -> Option<Ty> {
 /// → the `Missing` span), falling back to the whole reference otherwise.
 fn unresolved_type_ref_error(
     r: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     vars: &HashSet<String>,
 ) -> CompileError {
     match first_unresolved_type_name(r, types, vars) {
@@ -1967,7 +1981,7 @@ fn unresolved_type_ref_error(
 /// in-scope type variable — the reason `resolve_type_ref_in` returned `None`.
 fn first_unresolved_type_name<'a>(
     r: &'a TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     vars: &HashSet<String>,
 ) -> Option<&'a Ident> {
     match r {
@@ -2016,7 +2030,7 @@ fn first_unresolved_type_name<'a>(
 pub fn embedding_for(
     target_err: &Ty,
     source_err: &Ty,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
 ) -> Option<(String, String)> {
     let Ty::Named { name, .. } = target_err else {
         return None;
@@ -2035,7 +2049,7 @@ pub fn embedding_for(
     None
 }
 
-pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
+pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Ty> {
     match r {
         TypeRef::Base(b, _) => Some(Ty::Base(*b)),
         TypeRef::Named(id) => type_from_decl(id, types),
@@ -2521,8 +2535,16 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                 // write. The target must be a `store Cell` field; the value must
                 // match the cell's element type; and (the §10 read-modify-write
                 // rule) the RHS must not read the cell being written.
-                match ctx.store_cells.get(&a.target.name).cloned() {
-                    None => {
+                match ctx.store_fields.get(&a.target.name).cloned() {
+                    // A name that isn't a store field at all, or is one of a
+                    // different kind, is the same "not a Cell" diagnostic.
+                    None
+                    | Some(
+                        StoreField::Map(..)
+                        | StoreField::Set(_)
+                        | StoreField::Cache(..)
+                        | StoreField::Log(_),
+                    ) => {
                         ctx.errors.push(
                             CompileError::new(
                                 "bynk.cell.invalid_target",
@@ -2538,7 +2560,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                         );
                         type_of(&a.value, None, ctx);
                     }
-                    Some(elem_ty) => {
+                    Some(StoreField::Cell(elem_ty)) => {
                         // §10: a `:=` whose RHS reads its own LHS is a hidden
                         // read-modify-write — require `.update(fn)` instead, so the
                         // dependency is visible (and retry-safe).
@@ -2734,7 +2756,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
             // `Query[V]` over the whole map (e.g. the `other` side of a join). It
             // is not in the value scope, so it never shadows a local.
             if ctx.lookup(id.name.as_str()).is_none()
-                && let Some((_, v)) = ctx.store_maps.get(&id.name).cloned()
+                && let Some(StoreField::Map(_, v)) = ctx.store_fields.get(&id.name).cloned()
             {
                 Some(Ty::Query(Box::new(v)))
             }
@@ -2906,71 +2928,72 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
             type_args,
             args,
         } => {
-            // v0.82 (ADR 0110): `<map>.<op>(…)` on a `store Map[K, V]` field —
-            // effectful storage-map operations, dispatched by receiver provenance
-            // (a bare ident that names a store map; not in the value scope).
-            if let ExprKind::Ident(id) = &receiver.kind
-                && ctx.lookup(id.name.as_str()).is_none()
-                && let Some((k, v)) = ctx.store_maps.get(&id.name).cloned()
-            {
-                // v0.91 (ADR 0115): a query builder/terminal lifts the store map
-                // into a lazy `Query[V]` over its values; an entry op
-                // (`put`/`get`/…) stays the effectful map operation.
-                if is_query_op(&method.name) {
-                    // v0.107 (slice 4): record the receiver's lifted `Query[V]` type
-                    // (otherwise unrecorded — the dispatch keys off the store field,
-                    // not a typed receiver). This is the receiver's true type for any
-                    // query op; its load-bearing use is the linearity pass, which now
-                    // sees a held-bearing collection and lends the closure parameter of
-                    // `forEach`/`parTraverse` as borrowed — otherwise `ty_of(receiver)`
-                    // is `None` and the no-consume-in-a-broadcast rule is silently
-                    // unenforced.
-                    ctx.expr_types
-                        .insert(receiver.span, Ty::Query(Box::new(v.clone())));
-                    check_query_kernel_method(method, args, &v, expr.span, ctx)
-                } else {
-                    check_store_map_op(method, args, &k, &v, expr.span, ctx)
-                }
-            }
-            // v0.83: `<set>.<op>(…)` on a `store Set[T]` field — effectful
-            // storage-set ops, dispatched by receiver provenance.
-            else if let ExprKind::Ident(id) = &receiver.kind
-                && ctx.lookup(id.name.as_str()).is_none()
-                && let Some(t) = ctx.store_sets.get(&id.name).cloned()
-            {
-                check_store_set_op(method, args, &t, expr.span, ctx)
-            }
-            // v0.87 (ADR 0113): `<cache>.<op>(…)` on a `store Cache[K, V]` field —
-            // the storage-map ops plus a `given Clock` requirement (eviction).
-            else if let ExprKind::Ident(id) = &receiver.kind
-                && ctx.lookup(id.name.as_str()).is_none()
-                && let Some((k, v, _ttl)) = ctx.store_caches.get(&id.name).cloned()
-            {
-                check_store_cache_op(method, args, &k, &v, expr.span, ctx)
-            }
-            // v0.95 (ADR 0121): `<log>.<op>(…)` on a `store Log[T]` field —
-            // `append` is the effectful non-idempotent write (`given Clock`); the
-            // time-window roots and general builders lift the log into a lazy
-            // `Query[T]` over its entry values.
-            else if let ExprKind::Ident(id) = &receiver.kind
-                && ctx.lookup(id.name.as_str()).is_none()
-                && let Some(t) = ctx.store_logs.get(&id.name).cloned()
-            {
-                check_store_log_op(method, args, &t, expr.span, ctx)
-            }
-            // v0.98 (ADR 0125): `<cell>.update(f)` on a `store Cell[T]` field — the
-            // one method-shaped cell op (read is the bare name, write is `:=`).
-            // Dispatched by receiver provenance.
+            // `<field>.<op>(…)` on a `store` field — effectful storage
+            // operations, dispatched by receiver provenance (a bare ident
+            // naming a store field). Finding #36: one lookup into the unified
+            // `store_fields` map, then dispatch by kind, instead of five
+            // sequential per-kind lookups.
+            //
             // Note: unlike the other store kinds, a `Cell` field is
             // deliberately bound into scope by `self_scope` (v0.81: "each
             // `Cell` store field is a bare local of its element type") so a
             // bare read derefs it — so `ctx.lookup` legitimately finds it and
-            // no `is_none()` guard belongs here; a local sharing a cell's name
-            // is a scope-construction question, not a dispatch-order one.
-            else if let ExprKind::Ident(id) = &receiver.kind
-                && let Some(t) = ctx.store_cells.get(&id.name).cloned()
+            // no `is_none()` guard belongs there; a local sharing a cell's
+            // name is a scope-construction question, not a dispatch-order
+            // one. Every other kind requires `ctx.lookup(...).is_none()` so a
+            // local that happens to share a store field's name is not
+            // shadowed by the store dispatch.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && let Some(field) = ctx.store_fields.get(&id.name).cloned()
+                && (matches!(field, StoreField::Cell(_)) || ctx.lookup(id.name.as_str()).is_none())
             {
-                check_store_cell_op(method, args, &t, expr.span, ctx)
+                match field {
+                    // v0.82 (ADR 0110): `<map>.<op>(…)` on a `store Map[K, V]`
+                    // field — effectful storage-map operations.
+                    StoreField::Map(k, v) => {
+                        // v0.91 (ADR 0115): a query builder/terminal lifts the
+                        // store map into a lazy `Query[V]` over its values; an
+                        // entry op (`put`/`get`/…) stays the effectful map
+                        // operation.
+                        if is_query_op(&method.name) {
+                            // v0.107 (slice 4): record the receiver's lifted
+                            // `Query[V]` type (otherwise unrecorded — the
+                            // dispatch keys off the store field, not a typed
+                            // receiver). This is the receiver's true type for
+                            // any query op; its load-bearing use is the
+                            // linearity pass, which now sees a held-bearing
+                            // collection and lends the closure parameter of
+                            // `forEach`/`parTraverse` as borrowed —
+                            // otherwise `ty_of(receiver)` is `None` and the
+                            // no-consume-in-a-broadcast rule is silently
+                            // unenforced.
+                            ctx.expr_types
+                                .insert(receiver.span, Ty::Query(Box::new(v.clone())));
+                            check_query_kernel_method(method, args, &v, expr.span, ctx)
+                        } else {
+                            check_store_map_op(method, args, &k, &v, expr.span, ctx)
+                        }
+                    }
+                    // v0.83: `<set>.<op>(…)` on a `store Set[T]` field —
+                    // effectful storage-set ops.
+                    StoreField::Set(t) => check_store_set_op(method, args, &t, expr.span, ctx),
+                    // v0.87 (ADR 0113): `<cache>.<op>(…)` on a `store
+                    // Cache[K, V]` field — the storage-map ops plus a `given
+                    // Clock` requirement (eviction).
+                    StoreField::Cache(k, v, _ttl) => {
+                        check_store_cache_op(method, args, &k, &v, expr.span, ctx)
+                    }
+                    // v0.95 (ADR 0121): `<log>.<op>(…)` on a `store Log[T]`
+                    // field — `append` is the effectful non-idempotent write
+                    // (`given Clock`); the time-window roots and general
+                    // builders lift the log into a lazy `Query[T]` over its
+                    // entry values.
+                    StoreField::Log(t) => check_store_log_op(method, args, &t, expr.span, ctx),
+                    // v0.98 (ADR 0125): `<cell>.update(f)` on a `store
+                    // Cell[T]` field — the one method-shaped cell op (read is
+                    // the bare name, write is `:=`).
+                    StoreField::Cell(t) => check_store_cell_op(method, args, &t, expr.span, ctx),
+                }
             }
             // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
             else if let ExprKind::Ident(id) = &receiver.kind
@@ -3127,7 +3150,7 @@ struct VariantInfo {
 /// Project a return type produced in the consumed context's namespace into
 /// the caller's namespace by re-resolving named types that exist on both
 /// sides. The structural shape stays the same; the brand changes.
-fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
+fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, Arc<TypeDecl>>) -> Ty {
     match t {
         Ty::Named { name, kind, args } => {
             // If the caller's namespace has the same name, prefer the caller's
@@ -3182,8 +3205,8 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
 fn structurally_compatible(
     arg: &Ty,
     param: &Ty,
-    arg_types: &HashMap<String, TypeDecl>,
-    param_types: &HashMap<String, TypeDecl>,
+    arg_types: &HashMap<String, Arc<TypeDecl>>,
+    param_types: &HashMap<String, Arc<TypeDecl>>,
 ) -> bool {
     structurally_compatible_inner(arg, param, arg_types, param_types, &mut HashSet::new())
 }
@@ -3191,8 +3214,8 @@ fn structurally_compatible(
 fn structurally_compatible_inner(
     arg: &Ty,
     param: &Ty,
-    arg_types: &HashMap<String, TypeDecl>,
-    param_types: &HashMap<String, TypeDecl>,
+    arg_types: &HashMap<String, Arc<TypeDecl>>,
+    param_types: &HashMap<String, Arc<TypeDecl>>,
     visited: &mut HashSet<(String, String)>,
 ) -> bool {
     match (arg, param) {
@@ -3297,8 +3320,8 @@ fn structurally_compatible_inner(
 fn structural_compare_named(
     arg_name: &str,
     param_name: &str,
-    arg_types: &HashMap<String, TypeDecl>,
-    param_types: &HashMap<String, TypeDecl>,
+    arg_types: &HashMap<String, Arc<TypeDecl>>,
+    param_types: &HashMap<String, Arc<TypeDecl>>,
     visited: &mut HashSet<(String, String)>,
 ) -> bool {
     // The "same nominal name" case is the most common: both sides derive
@@ -3433,7 +3456,7 @@ fn refinements_match(a: Option<&Refinement>, b: Option<&Refinement>) -> bool {
     }
 }
 
-fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<VariantInfo>> {
+fn variants_of(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Vec<VariantInfo>> {
     match ty {
         Ty::Named {
             kind: NamedKind::Sum,

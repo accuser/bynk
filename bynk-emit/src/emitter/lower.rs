@@ -31,8 +31,16 @@ pub fn lower_block_to_async_body(
     // the caller merges it into the module map at the splice offset.
     let smb = RefCell::new(SourceMapBuilder::new());
     {
-        let mut cx = LowerCtx::new(typed, cross_context, runtime_use).with_source_map(Some(&smb));
-        cx.test_scaffold = true;
+        let mut cx = LowerCtx::new(
+            ModuleCtx::new(typed, cross_context, runtime_use),
+            BodyMode::PredicateScaffold {
+                test: TestShared {
+                    test_scaffold: true,
+                    assert_loc: None,
+                },
+            },
+        )
+        .with_source_map(Some(&smb));
         let async_tail = is_effectful_return(return_type);
         emit_block_as_function_body_with_return(
             &mut out,
@@ -64,19 +72,25 @@ pub fn lower_test_case_body(
     let mut out = String::new();
     let smb = RefCell::new(SourceMapBuilder::new());
     {
-        let mut cx = LowerCtx::new(typed, cross_context, runtime_use).with_source_map(Some(&smb));
-        cx.test_services = test_services;
-        cx.test_service_handlers = test_service_handlers;
-        cx.local_agents = test_agents.clone();
-        cx.test_agents = test_agents;
-        // v0.117: observations and `trace` in the body read the per-case recorded
-        // trace object declared by the runner scaffold.
-        cx.observation_trace = Some("__obs".to_string());
-        cx.assert_loc = Some(crate::emitter::AssertLoc {
-            source: source.to_string(),
-            rel_path: rel_path.to_string(),
-        });
-        cx.test_scaffold = true;
+        let mut cx = LowerCtx::new(
+            ModuleCtx::new(typed, cross_context, runtime_use),
+            BodyMode::TestCase {
+                test: TestShared {
+                    test_scaffold: true,
+                    assert_loc: Some(crate::emitter::AssertLoc {
+                        source: source.to_string(),
+                        rel_path: rel_path.to_string(),
+                    }),
+                },
+                // v0.117: observations and `trace` in the body read the per-case
+                // recorded trace object declared by the runner scaffold.
+                observation_trace: Some("__obs".to_string()),
+                test_services,
+                test_service_handlers,
+            },
+        )
+        .with_source_map(Some(&smb));
+        cx.local_agents = test_agents;
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -117,17 +131,25 @@ pub fn lower_integration_case_body(
     let mut out = String::new();
     let smb = RefCell::new(SourceMapBuilder::new());
     {
-        let mut cx = LowerCtx::new(typed, cross_context, runtime_use).with_source_map(Some(&smb));
-        cx.target = BuildTarget::Workers;
-        cx.system_http_services = system_http_services;
-        cx.system_http_routes = system_http_routes;
-        cx.system_http_route_body = system_http_route_body;
-        cx.system_http_type_ns = system_http_type_ns;
-        cx.assert_loc = Some(crate::emitter::AssertLoc {
-            source: source.to_string(),
-            rel_path: rel_path.to_string(),
-        });
-        cx.test_scaffold = true;
+        let mut module = ModuleCtx::new(typed, cross_context, runtime_use);
+        module.target = BuildTarget::Workers;
+        let mut cx = LowerCtx::new(
+            module,
+            BodyMode::IntegrationCase {
+                test: TestShared {
+                    test_scaffold: true,
+                    assert_loc: Some(crate::emitter::AssertLoc {
+                        source: source.to_string(),
+                        rel_path: rel_path.to_string(),
+                    }),
+                },
+                system_http_services,
+                system_http_routes,
+                system_http_route_body,
+                system_http_type_ns,
+            },
+        )
+        .with_source_map(Some(&smb));
         for stmt in &block.statements {
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
@@ -177,7 +199,7 @@ pub(crate) fn emit_block_as_function_body_with_return(
 ) {
     let prev = cx.return_ty.take();
     cx.return_ty =
-        return_type.and_then(|rt| bynk_check::checker::resolve_type_ref(rt, &cx.commons.types));
+        return_type.and_then(|rt| bynk_check::checker::resolve_type_ref(rt, &cx.commons().types));
     emit_block_inner(out, block, cx, indent, async_tail);
     cx.return_ty = prev;
 }
@@ -202,7 +224,7 @@ fn embed_conversion(
     if bynk_check::checker::compatible(e, f_err) {
         return None;
     }
-    bynk_check::checker::embedding_for(f_err, e, &cx.commons.types)
+    bynk_check::checker::embedding_for(f_err, e, &cx.commons().types)
 }
 
 /// Peel `Result[_, E]` / `Effect[Result[_, E]]` to the error type `E`.
@@ -440,7 +462,10 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             write_line(
                 out,
                 indent,
-                &format!("{deps}.__exec.waitUntil({value});", deps = cx.cap_deps_expr),
+                &format!(
+                    "{deps}.__exec.waitUntil({value});",
+                    deps = cx.cap_deps_expr()
+                ),
             );
         }
         Statement::Do(d) => {
@@ -465,7 +490,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             for st in &stmts {
                 write_line(out, indent, st);
             }
-            let lhs = match &cx.agent_store_state {
+            let lhs = match cx.agent_store_cells() {
                 Some((var, _)) => format!("{var}.{}", a.target.name),
                 // Defensive: the checker resolves `:=` to a store cell, so a
                 // write outside a store-agent handler does not reach emission.
@@ -482,7 +507,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
 /// otherwise it falls back to the bare byte offset (`expect`s only appear in test
 /// bodies, so the fallback is defensive).
 fn expect_location(cx: &LowerCtx, offset: usize) -> String {
-    match &cx.assert_loc {
+    match cx.assert_loc() {
         Some(loc) => {
             let (line, col) = bynk_syntax::span::line_col(&loc.source, offset);
             // Normalise to forward slashes so the location is identical on
@@ -500,7 +525,7 @@ fn expect_location(cx: &LowerCtx, offset: usize) -> String {
 /// double-quoted TS string literal (no surrounding quotes); empty when no
 /// test-body source is in scope (defensive — `expect`s only appear in test bodies).
 fn expect_source_text(cx: &LowerCtx, span: bynk_syntax::span::Span) -> String {
-    match &cx.assert_loc {
+    match cx.assert_loc() {
         Some(loc) => {
             let raw = loc.source.get(span.start..span.end).unwrap_or("").trim();
             crate::emitter::escape_ts_string(raw)
@@ -536,7 +561,7 @@ fn write_line(out: &mut String, indent: usize, line: &str) {
 /// to an ordinary function that merely *returns* the sum (e.g.
 /// `classify(n) -> Outcome`). Only the former is qualified to `Sum.Variant(...)`.
 fn call_is_sum_variant(cx: &LowerCtx, sum_name: &str, call_name: &str) -> bool {
-    if let Some(decl) = cx.commons.types.get(sum_name)
+    if let Some(decl) = cx.commons().types.get(sum_name)
         && let TypeBody::Sum(s) = &decl.body
     {
         s.variants.iter().any(|v| v.name.name == call_name)
@@ -638,7 +663,7 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
         name,
         kind: NamedKind::Refined(_),
         ..
-    }) = cx.commons.expr_types.get(&e.span)
+    }) = cx.commons().expr_types.get(&e.span)
         && let Some(raw) = lower_const_literal_raw(e)
     {
         // ADR 0182: in GENERATED TEST scaffolding a branded type is in scope only
@@ -696,7 +721,10 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
             let s = lower_expr_into(inner, stmts, cx);
             // v0.9: `Ok` is overloaded — use the checker's recorded type to
             // decide between `Result.Ok` and `HttpResult.Ok`.
-            if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_))) {
+            if matches!(
+                cx.commons().expr_types.get(&e.span),
+                Some(Ty::HttpResult(_))
+            ) {
                 format!("HttpResult.Ok({s})")
             } else {
                 format!("Ok({s})")
@@ -720,7 +748,7 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
             // always present — assert it, so a future gap surfaces loudly in
             // tests rather than silently emitting the `Result` branch (which on
             // an untyped `Option` would leak `None` → `undefined`).
-            let operand_ty = cx.commons.expr_types.get(&inner.span).cloned();
+            let operand_ty = cx.commons().expr_types.get(&inner.span).cloned();
             debug_assert!(
                 matches!(operand_ty, Some(Ty::Option(_) | Ty::Result(_, _))),
                 "`?` operand has no `Option`/`Result` checked type at {:?}: {operand_ty:?}",
@@ -816,8 +844,8 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
             // `trace(Cap.op)` → the recorded calls mapped to per-call records
             // whose fields are the operation's parameters (positionally).
             let obs = cx
-                .observation_trace
-                .clone()
+                .observation_trace()
+                .map(str::to_string)
                 .unwrap_or_else(|| "__obs".to_string());
             let key = format!("{}.{}", cap.name, op.name);
             let names = cap_op_param_names(cx, &cap.name, &op.name);
@@ -836,7 +864,7 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
 /// declarations in scope (v0.117). Used to destructure a recorded call's
 /// arguments for a `with` predicate and to build `trace(Cap.op)` records.
 fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
-    for item in &cx.commons.commons.items {
+    for item in &cx.commons().commons.items {
         if let bynk_syntax::ast::CommonsItem::Capability(c) = item
             && c.name.name == cap
             && let Some(o) = c.ops.iter().find(|o| o.name.name == op)
@@ -852,8 +880,8 @@ fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
 /// compares call order.
 fn lower_observation(o: &ObservationExpr, cx: &mut LowerCtx) -> String {
     let obs = cx
-        .observation_trace
-        .clone()
+        .observation_trace()
+        .map(str::to_string)
         .unwrap_or_else(|| "__obs".to_string());
     let key = format!("{}.{}", o.cap.name, o.op.name);
     let calls = format!("({obs}.log[{key:?}] ?? [])");
@@ -1009,7 +1037,7 @@ fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
         Ty::Base(BaseType::Bool) => "true".to_string(),
         Ty::Base(BaseType::Float) => "0".to_string(),
         Ty::Named { name, .. } => {
-            let Some(decl) = cx.commons.types.get(name) else {
+            let Some(decl) = cx.commons().types.get(name) else {
                 return "undefined".to_string();
             };
             match &decl.body {
@@ -1030,7 +1058,7 @@ fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
                             .map(|f| {
                                 bynk_check::checker::resolve_type_ref(
                                     &f.type_ref,
-                                    &cx.commons.types,
+                                    &cx.commons().types,
                                 )
                                 .map(|t| mock_value(&t, cx, depth - 1))
                                 .unwrap_or_else(|| "undefined".to_string())
@@ -1046,7 +1074,7 @@ fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
                         .map(|f| {
                             let fv = bynk_check::checker::resolve_type_ref(
                                 &f.type_ref,
-                                &cx.commons.types,
+                                &cx.commons().types,
                             )
                             .map(|t| mock_value(&t, cx, depth - 1))
                             .unwrap_or_else(|| "undefined".to_string());
@@ -1119,8 +1147,7 @@ fn scope_idempotency_key(
         return;
     }
     let scope = cx
-        .handler_scope
-        .as_deref()
+        .handler_scope()
         .unwrap_or_else(|| panic!("Idempotency.{method} lowered with no handler_scope set"));
     args_lowered[0] = format!("`{scope}::${{{}}}`", args_lowered[0]);
 }
@@ -1146,13 +1173,9 @@ fn lower_method_call(
     // commit as any other persisted field.
     if let ExprKind::Ident(id) = &receiver.kind
         && !cx.is_local(&id.name)
-        && let Some(f_ts) = cx.agent_held_maps.get(&id.name).cloned()
+        && let Some(f_ts) = cx.agent_held_map_frame(&id.name).cloned()
     {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.clone())
-            .unwrap_or_else(|| "__state".to_string());
+        let var = cx.agent_store_var().to_string();
         let m = format!("{var}.{}", id.name);
         let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
         return match method.name.as_str() {
@@ -1176,7 +1199,7 @@ fn lower_method_call(
                 ),
                 method,
                 &a,
-                cx.commons.expr_types.get(&e.span),
+                cx.commons().expr_types.get(&e.span),
             )
             .unwrap_or_else(|| {
                 format!("(/* unsupported held Map op {} */ undefined)", method.name)
@@ -1193,20 +1216,12 @@ fn lower_method_call(
     // nothing commits).
     if let ExprKind::Ident(id) = &receiver.kind
         && !cx.is_local(&id.name)
-        && cx.agent_store_maps.contains(&id.name)
+        && cx.is_agent_store_map(&id.name)
     {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.clone())
-            .unwrap_or_else(|| "__state".to_string());
+        let var = cx.agent_store_var().to_string();
         let m = format!("{var}.{}", id.name);
         // v0.93 (ADR 0118): the value-record fields this map is `@indexed(by:)` on.
-        let idx_fields: Vec<String> = cx
-            .agent_store_indexes
-            .get(&id.name)
-            .cloned()
-            .unwrap_or_default();
+        let idx_fields: Vec<String> = cx.agent_store_index_fields(&id.name);
         // Route an equality `filter` on an indexed field to a posting-list lookup
         // (`<map>__idx_<f>[v]`) instead of a full `Object.values` scan. The lookup
         // reads the staged map, so it stays read-your-writes (the index is
@@ -1255,7 +1270,7 @@ fn lower_method_call(
                 format!("Object.values({m})"),
                 method,
                 &a,
-                cx.commons.expr_types.get(&e.span),
+                cx.commons().expr_types.get(&e.span),
             )
             .unwrap_or_else(|| format!("(/* unsupported Map op {} */ undefined)", method.name)),
         };
@@ -1265,13 +1280,9 @@ fn lower_method_call(
     // `add`/`remove` mutate the working record, `contains`/`size` read it.
     if let ExprKind::Ident(id) = &receiver.kind
         && !cx.is_local(&id.name)
-        && cx.agent_store_sets.contains(&id.name)
+        && cx.is_agent_store_set(&id.name)
     {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.clone())
-            .unwrap_or_else(|| "__state".to_string());
+        let var = cx.agent_store_var().to_string();
         let s = format!("{var}.{}", id.name);
         let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
         return match method.name.as_str() {
@@ -1290,15 +1301,11 @@ fn lower_method_call(
     // `get`/`contains`/`size` treat an entry past `exp` as absent.
     if let ExprKind::Ident(id) = &receiver.kind
         && !cx.is_local(&id.name)
-        && let Some(ttl) = cx.agent_store_caches.get(&id.name).copied()
+        && let Some(ttl) = cx.agent_store_cache_ttl(&id.name)
     {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.clone())
-            .unwrap_or_else(|| "__state".to_string());
+        let var = cx.agent_store_var().to_string();
         let c = format!("{var}.{}", id.name);
-        let now = format!("await {}.Clock.now()", cx.cap_deps_expr);
+        let now = format!("await {}.Clock.now()", cx.cap_deps_expr());
         let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
         return match method.name.as_str() {
             "remove" => format!("((delete {c}[{}]), undefined)", a[0]),
@@ -1334,17 +1341,13 @@ fn lower_method_call(
     // query vocabulary lower to a lazy pipeline over the entry values.
     if let ExprKind::Ident(id) = &receiver.kind
         && !cx.is_local(&id.name)
-        && let Some(retain) = cx.agent_store_logs.get(&id.name).copied()
+        && let Some(retain) = cx.agent_store_log_retain(&id.name)
     {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.clone())
-            .unwrap_or_else(|| "__state".to_string());
+        let var = cx.agent_store_var().to_string();
         let g = format!("{var}.{}", id.name);
         let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
         if method.name == "append" {
-            let now = format!("await {}.Clock.now()", cx.cap_deps_expr);
+            let now = format!("await {}.Clock.now()", cx.cap_deps_expr());
             let prune = match retain {
                 Some(ms) => format!(
                     " for (let __i = {g}.length - 1; __i >= 0; __i--) {{ if ({g}[__i].t < __now - {ms}) {g}.splice(__i, 1); }}"
@@ -1379,7 +1382,7 @@ fn lower_method_call(
             )),
             "reversed" => thunk(format!("[...{g}].reverse().map((__e) => __e.v)")),
             // The general query vocabulary over the entry values.
-            _ => lower_query_method(values, method, &a, cx.commons.expr_types.get(&e.span))
+            _ => lower_query_method(values, method, &a, cx.commons().expr_types.get(&e.span))
                 .unwrap_or_else(|| format!("(/* unsupported Log op {} */ undefined)", method.name)),
         };
     }
@@ -1397,15 +1400,10 @@ fn lower_method_call(
     // construction, or the emitter would disagree with what the checker typed.
     if let ExprKind::Ident(id) = &receiver.kind
         && cx
-            .agent_store_state
-            .as_ref()
+            .agent_store_cells()
             .is_some_and(|(_, cells)| cells.contains(&id.name))
     {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.clone())
-            .unwrap_or_else(|| "__state".to_string());
+        let var = cx.agent_store_var().to_string();
         let n = format!("{var}.{}", id.name);
         let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
         return match method.name.as_str() {
@@ -1432,9 +1430,9 @@ fn lower_method_call(
         && (id.name == LIST || id.name == MAP)
         && method.name == "empty"
         && args.is_empty()
-        && !cx.commons.types.contains_key(&id.name)
+        && !cx.commons().types.contains_key(&id.name)
     {
-        match cx.commons.expr_types.get(&e.span) {
+        match cx.commons().expr_types.get(&e.span) {
             Some(Ty::List(t)) => return format!("([] as readonly {}[])", ts_ty(t)),
             Some(Ty::Map(k, v)) => {
                 return format!("new Map<{}, {}>()", ts_ty(k), ts_ty(v));
@@ -1527,7 +1525,7 @@ fn lower_method_call(
     // `<deps>.<Cap>.op(args)` exactly like a local capability call —
     // the consumed-context prefix is resolved away.
     if let Some(chain) = flatten_emit_ident_chain(receiver)
-        && let Some((consumed, cap)) = cx.cross_context.resolve_cross_capability(&chain)
+        && let Some((consumed, cap)) = cx.cross_context().resolve_cross_capability(&chain)
     {
         let mut args_lowered: Vec<String> =
             args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
@@ -1539,7 +1537,7 @@ fn lower_method_call(
         );
         return format!(
             "{}.{}.{}{}({})",
-            cx.cap_deps_expr,
+            cx.cap_deps_expr(),
             cap,
             method.name,
             capability_call_type_args_ts(type_args),
@@ -1584,7 +1582,7 @@ fn lower_method_call(
     // where `<deps>` is `deps` in a handler body and `this.deps` in a
     // provider body (v0.12 provider composition).
     if let ExprKind::Ident(id) = &receiver.kind
-        && cx.capabilities.contains(&id.name)
+        && cx.has_capability(&id.name)
     {
         let mut args_lowered: Vec<String> =
             args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
@@ -1595,9 +1593,9 @@ fn lower_method_call(
         // or context (e.g. the #926/#931 generic-op test fixtures' own
         // illustrative `capability Idempotency`) must not be scoped.
         let is_first_party = id.name == "Idempotency"
-            && (cx.in_bynk_unit
+            && (cx.in_bynk_unit()
                 || cx
-                    .cross_context
+                    .cross_context()
                     .flattened_caps
                     .get(&id.name)
                     .map(String::as_str)
@@ -1605,7 +1603,7 @@ fn lower_method_call(
         scope_idempotency_key(is_first_party, &method.name, &mut args_lowered, cx);
         return format!(
             "{}.{}.{}{}({})",
-            cx.cap_deps_expr,
+            cx.cap_deps_expr(),
             id.name,
             method.name,
             capability_call_type_args_ts(type_args),
@@ -1614,7 +1612,7 @@ fn lower_method_call(
     }
     // Static call: receiver is a bare ident naming a declared type.
     if let ExprKind::Ident(id) = &receiver.kind
-        && cx.commons.types.contains_key(&id.name)
+        && cx.commons().types.contains_key(&id.name)
     {
         let args_lowered: Vec<String> =
             args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
@@ -1627,7 +1625,7 @@ fn lower_method_call(
     // Slice B: a `system`-tier http address drives a real `worker.fetch` through
     // a driver (`__sysdrive_<svc>_<key>(rest, sub)`), not a direct handler call.
     if let ExprKind::Ident(id) = &receiver.kind
-        && cx.system_http_services.contains(&id.name)
+        && cx.is_system_http_service(&id.name)
         && let Some(verb) = bynk_syntax::ast::HttpMethod::from_ident(&method.name)
         && let Some(first) = args.first()
         && let ExprKind::StrLit(path) = &first.kind
@@ -1636,11 +1634,8 @@ fn lower_method_call(
         // method has no handler is a **wrong-method** call — drive the generic
         // `405` driver. The checker has already rejected a path that is not
         // declared for any method, so an absent route here means wrong method.
-        let route_declared = cx.system_http_routes.contains(&(
-            id.name.clone(),
-            verb.as_str().to_string(),
-            path.clone(),
-        ));
+        let route_declared =
+            cx.has_system_http_route(&(id.name.clone(), verb.as_str().to_string(), path.clone()));
         if !route_declared {
             return format!(
                 "__sysdrive_wrongmethod_{}({:?}, {:?})",
@@ -1682,8 +1677,7 @@ fn lower_method_call(
         // matches a `Wire`d one byte-for-byte); any other (path) param just
         // coerces via `String(...)`.
         let body_info = if is_raw {
-            cx.system_http_route_body
-                .get(&(id.name.clone(), verb.as_str().to_string(), path.clone()))
+            cx.system_http_route_body(&(id.name.clone(), verb.as_str().to_string(), path.clone()))
                 .cloned()
         } else {
             None
@@ -1709,8 +1703,8 @@ fn lower_method_call(
                         crate::emitter::serialisation::serialise_expr_via(
                             ty,
                             &format!("({lowered} as any)"),
-                            &cx.system_http_type_ns,
-                            cx.runtime_use
+                            cx.system_http_type_ns(),
+                            cx.runtime_use()
                         )
                     ),
                     _ => format!("String({lowered})"),
@@ -1722,7 +1716,7 @@ fn lower_method_call(
         return format!("{}_{}_{}({})", driver, id.name, key, all.join(", "));
     }
     if let ExprKind::Ident(id) = &receiver.kind
-        && cx.test_services.contains(&id.name)
+        && cx.is_test_service(&id.name)
     {
         let deps_expr = match cx.call_site_identity.clone() {
             Some(identity) => format!("{{ ...deps, identity: ({identity} as any) }}"),
@@ -1748,7 +1742,7 @@ fn lower_method_call(
         // cron/queue address: the emitted key is position-indexed among the
         // service's same-kind handlers, so recover the index from the handler
         // list. cron drops the leading schedule string; queue passes the message.
-        if let Some(handlers) = cx.test_service_handlers.get(&id.name) {
+        if let Some(handlers) = cx.test_service_handlers(&id.name) {
             if method.name == "schedule"
                 && let Some(ExprKind::StrLit(expr)) = args.first().map(|a| &a.kind)
             {
@@ -1809,7 +1803,7 @@ fn lower_method_call(
         // constraint (`bynk.ws.open_transfer_shape`, D2) restricts it to a
         // request-derivable param ident — side-effect-free and equal to this
         // instance's own key — so dropping it is sound.
-        if cx.ws_self_agent.as_deref() == Some(name.name.as_str()) {
+        if cx.ws_self_agent() == Some(name.name.as_str()) {
             cx.record_agent_call(&name.name, &method.name);
             let args_lowered: Vec<String> =
                 args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
@@ -1863,7 +1857,7 @@ fn lower_method_call(
     // dispatched on the receiver's checked type. Emitted inline
     // (typed IIFEs / spreads) — no runtime imports, so files that
     // never touch collections emit byte-identically to v0.20a.
-    if let Some(recv_ty) = cx.commons.expr_types.get(&receiver.span).cloned() {
+    if let Some(recv_ty) = cx.commons().expr_types.get(&receiver.span).cloned() {
         match &recv_ty {
             Ty::List(elem) => {
                 if let Some(s) = lower_list_kernel(e, receiver, method, args, elem, stmts, cx) {
@@ -1875,7 +1869,7 @@ fn lower_method_call(
             Ty::Query(_) => {
                 let recv = lower_expr_into(receiver, stmts, cx);
                 let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
-                let result_ty = cx.commons.expr_types.get(&e.span).cloned();
+                let result_ty = cx.commons().expr_types.get(&e.span).cloned();
                 if let Some(s) =
                     lower_query_method(format!("({recv})()"), method, &a, result_ty.as_ref())
                 {
@@ -1980,7 +1974,7 @@ fn lower_method_call(
                 kind: NamedKind::Refined(base),
                 ..
             } if !cx
-                .commons
+                .commons()
                 .methods
                 .get(name)
                 .is_some_and(|t| t.instance.contains_key(&method.name)) =>
@@ -2033,7 +2027,7 @@ fn lower_json_codec_call(
         && args.len() == 1
     {
         if method.name == "encode"
-            && let Some(arg_ty) = cx.commons.expr_types.get(&args[0].span).cloned()
+            && let Some(arg_ty) = cx.commons().expr_types.get(&args[0].span).cloned()
             && let Some(tref) = ty_to_type_ref(&arg_ty)
         {
             // #917: a test-scaffold module's target/`uses` types export no codec
@@ -2041,37 +2035,37 @@ fn lower_json_codec_call(
             // body in can generate its own `serialise_*`/`deserialise_*` closure,
             // the same way a workers cross-context caller generates one for a
             // consumed context's boundary types (#661).
-            if cx.test_scaffold {
-                cx.runtime_use.note_json_codec_root(tref.clone());
+            if cx.in_test_scaffold() {
+                cx.runtime_use().note_json_codec_root(tref.clone());
             }
             let v = lower_expr_into(&args[0], stmts, cx);
-            let ser = serialisation::serialise_expr(&tref, &v, cx.runtime_use);
+            let ser = serialisation::serialise_expr(&tref, &v, cx.runtime_use());
             return Some(format!("JSON.stringify({ser})"));
         }
         if method.name == "decode"
-            && let Some(Ty::Result(t, _)) = cx.commons.expr_types.get(&e.span).cloned()
+            && let Some(Ty::Result(t, _)) = cx.commons().expr_types.get(&e.span).cloned()
             && let Some(tref) = ty_to_type_ref(&t)
         {
             // #917: in a test-scaffold module `T` may be foreign (owned by the
             // suite target or one of its `uses`, never declared locally), so its
             // TS type positions reach through the module's namespace qualifier —
             // empty everywhere else, where this renders identically to `ts_ty`.
-            let ts = if cx.test_scaffold {
-                let qual = cx.runtime_use.json_codec_qual();
+            let ts = if cx.in_test_scaffold() {
+                let qual = cx.runtime_use().json_codec_qual();
                 serialisation::ts_type_ref_qualified(&tref, &qual)
             } else {
                 ts_ty(&t)
             };
-            if cx.test_scaffold {
-                cx.runtime_use.note_json_codec_root(tref.clone());
+            if cx.in_test_scaffold() {
+                cx.runtime_use().note_json_codec_root(tref.clone());
             }
             // #914: the wrapper below names `Result`, `JsonValue` and `JsonError`
             // in its own signature and body, whichever arm the inner deserialiser
             // takes — including the delegating ones, which record nothing. A
             // module that curates its import list (the test-scaffold modules)
             // otherwise emits all three unimported.
-            cx.runtime_use.note_json_codec();
-            let des = serialisation::deserialise_expr(&tref, "__j", "$", cx.runtime_use);
+            cx.runtime_use().note_json_codec();
+            let des = serialisation::deserialise_expr(&tref, "__j", "$", cx.runtime_use());
             let arg = lower_expr_into(&args[0], stmts, cx);
             return Some(format!(
                 "((__s: string): Result<{ts}, JsonError> => {{ \
@@ -2104,15 +2098,15 @@ fn lower_cross_context_service_call(
     cx: &mut LowerCtx,
 ) -> Option<String> {
     if let Some((consumed, key)) = cross_context_lowering_prefix(receiver, cx) {
-        cx.cross_context_used = true;
-        match cx.target {
+        cx.note_cross_context_used();
+        match cx.target() {
             BuildTarget::Bundle => {
                 let args_lowered: Vec<String> = args
                     .iter()
                     .enumerate()
                     .map(|(i, a)| {
                         let lowered = lower_expr_into(a, stmts, cx);
-                        param_cast(&consumed, cx.cross_context, method, i, lowered)
+                        param_cast(&consumed, cx.cross_context(), method, i, lowered)
                     })
                     .collect();
                 Some(format!(
@@ -2143,7 +2137,7 @@ fn lower_val(
     // checker's `expr_types` side-table — the static type table is always
     // populated, whereas a test body's per-expression types may not be visible
     // to the emitter.
-    let ty = match bynk_check::checker::resolve_type_ref(type_ref, &cx.commons.types) {
+    let ty = match bynk_check::checker::resolve_type_ref(type_ref, &cx.commons().types) {
         Some(t) => t,
         None => return "undefined /* mock: unresolved type */".to_string(),
     };
@@ -2228,10 +2222,10 @@ fn gather_is_bindings_for_emit(
         ExprKind::Is { value, pattern } => {
             *found = true;
             let value_text = cx.is_receiver_text(value);
-            let disc_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let disc_ty = cx.commons().expr_types.get(&value.span).cloned();
             if let Pattern::Variant {
                 variant, bindings, ..
-            } = pattern
+            } = pattern.as_ref()
             {
                 // v0.13: refinement narrowing re-binds the value's name to the
                 // branded refined type, read from the forced receiver temp.
@@ -2284,7 +2278,7 @@ fn gather_is_bindings_for_emit(
             // existing `is` limitation as the `Variant` case above): an
             // alternative that isn't itself a flat `Variant` contributes no
             // bindings, only its tag test.
-            if let Pattern::Or(alts, _) = pattern {
+            if let Pattern::Or(alts, _) = pattern.as_ref() {
                 let names = pattern.bound_names();
                 if names.is_empty() {
                     return;
@@ -2424,11 +2418,17 @@ fn lower_list_kernel(
         ("fold", [init, f]) => {
             // The call's checked type is the accumulator type.
             let acc_ts = cx
-                .commons
+                .commons()
                 .expr_types
                 .get(&e.span)
                 .map(ts_ty)
-                .unwrap_or_else(|| "unknown".to_string());
+                .unwrap_or_else(|| {
+                    panic!(
+                        "bynk internal error (finding #28): emitter has no recorded type for a \
+                     `fold` call at {:?} — the checker should already have typed it",
+                        e.span
+                    )
+                });
             let recv = lower_expr_into(receiver, stmts, cx);
             let init = lower_expr_into(init, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
@@ -2439,10 +2439,14 @@ fn lower_list_kernel(
         (FOLD_EFF, [init, f]) => {
             // The call's checked type is `Effect[Acc]` — peel for the TS
             // accumulator annotation.
-            let acc_ts = match cx.commons.expr_types.get(&e.span) {
+            let acc_ts = match cx.commons().expr_types.get(&e.span) {
                 Some(Ty::Effect(acc)) => ts_ty(acc),
                 Some(other) => ts_ty(other),
-                _ => "unknown".to_string(),
+                None => panic!(
+                    "bynk internal error (finding #28): emitter has no recorded type for a \
+                     `foldEff` call at {:?} — the checker should already have typed it",
+                    e.span
+                ),
             };
             let recv = lower_expr_into(receiver, stmts, cx);
             let init = lower_expr_into(init, stmts, cx);
@@ -2480,12 +2484,17 @@ fn lower_list_kernel(
         (TRAVERSE_ALL, [f]) => {
             // The call's checked type is `Effect[List[Result[B, E]]]` — peel to
             // the `Result[B, E]` TS for the output-array annotation.
-            let res_ts = match cx.commons.expr_types.get(&e.span) {
+            let res_ts = match cx.commons().expr_types.get(&e.span) {
                 Some(Ty::Effect(inner)) => match &**inner {
                     Ty::List(el) => ts_ty(el),
                     other => ts_ty(other),
                 },
-                _ => "unknown".to_string(),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Effect[List[_]]` \
+                     recorded for a `traverseAll` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
             };
             let recv = lower_expr_into(receiver, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
@@ -2505,7 +2514,7 @@ fn lower_list_kernel(
         // awaits each in order, bailing on the first `Err`; `parTraverseTry`
         // issues all at once, then scans the resolved `Result`s in input order.
         (TRAVERSE_TRY, [f]) => {
-            let u_ts = list_ok_elem_ts(cx.commons.expr_types.get(&e.span));
+            let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.span));
             let recv = lower_expr_into(receiver, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
             Some(format!(
@@ -2513,7 +2522,7 @@ fn lower_list_kernel(
             ))
         }
         (PAR_TRAVERSE_TRY, [f]) => {
-            let u_ts = list_ok_elem_ts(cx.commons.expr_types.get(&e.span));
+            let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.span));
             let recv = lower_expr_into(receiver, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
             Some(format!(
@@ -2625,7 +2634,7 @@ fn lower_list_kernel(
         ("average", [key]) => {
             // D3: Duration averages round to integer millis; Int/Float -> Float.
             let round = matches!(
-                cx.commons.expr_types.get(&e.span),
+                cx.commons().expr_types.get(&e.span),
                 Some(Ty::Option(inner)) if matches!(inner.as_ref(), Ty::Base(BaseType::Duration))
             );
             let mean = if round {
@@ -2694,7 +2703,7 @@ fn lower_list_kernel(
 /// `List`/`Query` element), for typing the hash-map buckets. Falls back to
 /// `unknown` if the checker recorded no type (an already-diagnosed program).
 fn join_other_elem_ts(args: &[Expr], cx: &LowerCtx) -> String {
-    match cx.commons.expr_types.get(&args[0].span) {
+    match cx.commons().expr_types.get(&args[0].span) {
         Some(Ty::List(u) | Ty::Query(u)) => ts_ty(u),
         _ => "unknown".to_string(),
     }
@@ -3209,9 +3218,14 @@ fn lower_option_kernel(
     match (method.name.as_str(), args) {
         ("map", [f]) => {
             // The call's checked type is `Option[B]` — peel for B.
-            let b = match cx.commons.expr_types.get(&e.span) {
+            let b = match cx.commons().expr_types.get(&e.span) {
                 Some(Ty::Option(b)) => ts_ty(b),
-                _ => "unknown".to_string(),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Option[_]` recorded \
+                     for an `Option.map` call at {:?}, but found {other:?} — the checker \
+                     should already have typed it",
+                    e.span
+                ),
             };
             let recv = lower_expr_into(receiver, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
@@ -3220,9 +3234,14 @@ fn lower_option_kernel(
             ))
         }
         ("andThen", [f]) => {
-            let b = match cx.commons.expr_types.get(&e.span) {
+            let b = match cx.commons().expr_types.get(&e.span) {
                 Some(Ty::Option(b)) => ts_ty(b),
-                _ => "unknown".to_string(),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Option[_]` recorded \
+                     for an `Option.andThen` call at {:?}, but found {other:?} — the checker \
+                     should already have typed it",
+                    e.span
+                ),
             };
             let recv = lower_expr_into(receiver, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
@@ -3243,9 +3262,14 @@ fn lower_option_kernel(
         }
         ("okOr", [error]) => {
             // The call's checked type is `Result[T, E]` — peel for E.
-            let err = match cx.commons.expr_types.get(&e.span) {
+            let err = match cx.commons().expr_types.get(&e.span) {
                 Some(Ty::Result(_, err)) => ts_ty(err),
-                _ => "unknown".to_string(),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Result[_, _]` \
+                     recorded for an `Option.okOr` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
             };
             let recv = lower_expr_into(receiver, stmts, cx);
             let error = lower_expr_into(error, stmts, cx);
@@ -3276,9 +3300,14 @@ fn lower_result_kernel(
     match (method.name.as_str(), args) {
         ("map", [f]) => {
             // The call's checked type is `Result[B, E]` — peel for B.
-            let b = match cx.commons.expr_types.get(&e.span) {
+            let b = match cx.commons().expr_types.get(&e.span) {
                 Some(Ty::Result(b, _)) => ts_ty(b),
-                _ => "unknown".to_string(),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Result[_, _]` \
+                     recorded for a `Result.map` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
             };
             let recv = lower_expr_into(receiver, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
@@ -3287,9 +3316,14 @@ fn lower_result_kernel(
             ))
         }
         ("andThen", [f]) => {
-            let b = match cx.commons.expr_types.get(&e.span) {
+            let b = match cx.commons().expr_types.get(&e.span) {
                 Some(Ty::Result(b, _)) => ts_ty(b),
-                _ => "unknown".to_string(),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Result[_, _]` \
+                     recorded for a `Result.andThen` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
             };
             let recv = lower_expr_into(receiver, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
@@ -3299,9 +3333,14 @@ fn lower_result_kernel(
         }
         ("mapErr", [f]) => {
             // The call's checked type is `Result[T, F]` — peel for F.
-            let fts = match cx.commons.expr_types.get(&e.span) {
+            let fts = match cx.commons().expr_types.get(&e.span) {
                 Some(Ty::Result(_, f)) => ts_ty(f),
-                _ => "unknown".to_string(),
+                other => panic!(
+                    "bynk internal error (finding #28): emitter expected `Result[_, _]` \
+                     recorded for a `Result.mapErr` call at {:?}, but found {other:?} — the \
+                     checker should already have typed it",
+                    e.span
+                ),
             };
             let recv = lower_expr_into(receiver, stmts, cx);
             let f = lower_expr_into(f, stmts, cx);
@@ -3346,12 +3385,22 @@ fn lower_effect_result_kernel(
     let et = ts_ty(err);
     // The call's checked type is `Effect[Result[a, b]]`; peel `(a, b)` for the
     // transformed parameter's TS type.
-    let (a_ts, b_ts) = match cx.commons.expr_types.get(&e.span) {
+    let (a_ts, b_ts) = match cx.commons().expr_types.get(&e.span) {
         Some(Ty::Effect(inner)) => match inner.as_ref() {
             Ty::Result(a, b) => (ts_ty(a), ts_ty(b)),
-            _ => ("unknown".to_string(), "unknown".to_string()),
+            other => panic!(
+                "bynk internal error (finding #28): emitter expected `Effect[Result[_, _]]` \
+                 recorded for an effectful `Result` combinator call at {:?}, but found \
+                 `Effect[{other:?}]` — the checker should already have typed it",
+                e.span
+            ),
         },
-        _ => ("unknown".to_string(), "unknown".to_string()),
+        other => panic!(
+            "bynk internal error (finding #28): emitter expected `Effect[Result[_, _]]` \
+             recorded for an effectful `Result` combinator call at {:?}, but found {other:?} \
+             — the checker should already have typed it",
+            e.span
+        ),
     };
     match (method.name.as_str(), args) {
         ("mapOk", [f]) => {
@@ -3635,7 +3684,7 @@ fn simple_expr(e: &Expr, cx: &LowerCtx) -> bool {
         }),
         ExprKind::Is { value, pattern } => {
             let always_hoists = matches!(
-                pattern,
+                pattern.as_ref(),
                 Pattern::Variant { variant, bindings, .. }
                     if bindings.is_empty() && cx.is_refined_is_check(value, &variant.name)
             );
@@ -3650,18 +3699,18 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // are the pre-/post-commit state records, lowered to their JS names (`new` is
     // reserved, so both are renamed). Field access `old.<f>` reads off the record.
     // Checked first so `old`/`new` never collide with the heuristics below.
-    if let Some((old_var, new_var)) = &cx.transition_states {
+    if let Some((old_var, new_var)) = cx.transition_states() {
         if id.name == "old" {
-            return old_var.clone();
+            return old_var.to_string();
         }
         if id.name == "new" {
-            return new_var.clone();
+            return new_var.to_string();
         }
     }
     // v0.80: inside an invariant predicate, a bare ident naming a state field
     // reads it off the proposed-state value (`s.<field>`). Checked first so a
     // field never collides with the variant-constructor heuristics below.
-    if let Some((var, fields)) = &cx.invariant_state
+    if let Some((var, fields)) = cx.invariant_state()
         && fields.contains(&id.name)
     {
         return format!("{var}.{}", id.name);
@@ -3669,7 +3718,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // v0.81: inside a `store`-agent handler, a bare ident naming a `Cell` field
     // reads it off the mutable working state (`__state.<cell>`), so a read after
     // a `:=` write in the same handler sees the written value (read-your-writes).
-    if let Some((var, cells)) = &cx.agent_store_state
+    if let Some((var, cells)) = cx.agent_store_cells()
         && cells.contains(&id.name)
     {
         return format!("{var}.{}", id.name);
@@ -3680,13 +3729,9 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // ones. Checked before the persisted-`Map` branch (held maps are excluded from
     // `agent_store_maps`).
     if !cx.is_local(&id.name)
-        && let Some(f_ts) = cx.agent_held_maps.get(&id.name)
+        && let Some(f_ts) = cx.agent_held_map_frame(&id.name)
     {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.as_str())
-            .unwrap_or("__state");
+        let var = cx.agent_store_var();
         return format!(
             "(() => Object.values({var}.{name}).flatMap((__cid) => {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); return __c.tag === \"Some\" ? [__c.value] : []; }}))",
             name = id.name
@@ -3696,33 +3741,27 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // method receiver (those are handled in the method dispatch) — is a lazy
     // `Query` over the whole map, e.g. the `other` side of a join. It lowers to
     // the same deferred thunk a query builder yields: `() => Object.values(map)`.
-    if !cx.is_local(&id.name) && cx.agent_store_maps.contains(&id.name) {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.as_str())
-            .unwrap_or("__state");
+    if !cx.is_local(&id.name) && cx.is_agent_store_map(&id.name) {
+        let var = cx.agent_store_var();
         return format!("(() => Object.values({var}.{}))", id.name);
     }
     // v0.95 (ADR 0121): a bare `store Log` ident used as a value is a lazy
     // `Query` over its entry values — `() => log.map((__e) => __e.v)`.
-    if !cx.is_local(&id.name) && cx.agent_store_logs.contains_key(&id.name) {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.as_str())
-            .unwrap_or("__state");
+    if !cx.is_local(&id.name) && cx.is_agent_store_log(&id.name) {
+        let var = cx.agent_store_var();
         return format!("(() => {var}.{}.map((__e) => __e.v))", id.name);
     }
     // v0.9: a nullary HttpResult variant (whose checker type is
     // `HttpResult[_]`) constructs an HttpResult.<Variant>.
-    if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
-        && http_variant(&id.name).is_some()
+    if matches!(
+        cx.commons().expr_types.get(&e.span),
+        Some(Ty::HttpResult(_))
+    ) && http_variant(&id.name).is_some()
     {
         return format!("HttpResult.{}", id.name);
     }
     // v0.44: a nullary QueueResult variant (`Ack`) constructs `QueueResult.Ack`.
-    if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::QueueResult))
+    if matches!(cx.commons().expr_types.get(&e.span), Some(Ty::QueueResult))
         && bynk_syntax::ast::queue_variant(&id.name).is_some()
     {
         return format!("QueueResult.{}", id.name);
@@ -3735,8 +3774,8 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         kind: NamedKind::Sum,
         name: type_name,
         ..
-    }) = cx.commons.expr_types.get(&e.span)
-        && let Some(decl) = cx.commons.types.get(type_name)
+    }) = cx.commons().expr_types.get(&e.span)
+        && let Some(decl) = cx.commons().types.get(type_name)
         && let TypeBody::Sum(s) = &decl.body
         && s.variants.iter().any(|v| v.name.name == id.name)
     {
@@ -3745,8 +3784,8 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // v0.52: the multi-actor sum binder is not a runtime local — the resolved
     // actor is threaded through `deps.who` at the boundary wrapper, so the
     // binder ident lowers to it (the tagged union the body `match`es).
-    if cx.actor_sum_binder.as_deref() == Some(id.name.as_str())
-        && matches!(cx.commons.expr_types.get(&e.span), Some(Ty::ActorSum(_)))
+    if cx.actor_sum_binder() == Some(id.name.as_str())
+        && matches!(cx.commons().expr_types.get(&e.span), Some(Ty::ActorSum(_)))
     {
         return "deps.who".to_string();
     }
@@ -3767,13 +3806,15 @@ fn lower_call(
     // Bare variant constructor with payload → qualify.
     let args_lowered: Vec<String> = args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
     // v0.9: HttpResult variant call.
-    if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
-        && http_variant(&name.name).is_some()
+    if matches!(
+        cx.commons().expr_types.get(&e.span),
+        Some(Ty::HttpResult(_))
+    ) && http_variant(&name.name).is_some()
     {
         return format!("HttpResult.{}({})", name.name, args_lowered.join(", "));
     }
     // v0.44: a QueueResult variant call (`Retry(reason)`) → `QueueResult.Retry(...)`.
-    if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::QueueResult))
+    if matches!(cx.commons().expr_types.get(&e.span), Some(Ty::QueueResult))
         && bynk_syntax::ast::queue_variant(&name.name).is_some()
     {
         return format!("QueueResult.{}({})", name.name, args_lowered.join(", "));
@@ -3791,7 +3832,7 @@ fn lower_call(
         kind: NamedKind::Sum,
         name: type_name,
         ..
-    }) = cx.commons.expr_types.get(&e.span)
+    }) = cx.commons().expr_types.get(&e.span)
         && type_name != &name.name
         && call_is_sum_variant(cx, type_name, &name.name)
     {
@@ -3803,10 +3844,10 @@ fn lower_call(
     // is phantom — the value is identical. Pure fns only: an effectful call
     // is awaited by its caller, and the assertion would need to target the
     // Promise, not the value.
-    if cx.commons_imported_fns.contains(&name.name)
-        && let Some(f) = cx.commons.fns.get(&name.name)
+    if cx.commons_imported_fns().contains(&name.name)
+        && let Some(f) = cx.commons().fns.get(&name.name)
         && !matches!(f.return_type, TypeRef::Effect(..))
-        && typeref_mentions_any(&f.return_type, &cx.rebranded_types)
+        && typeref_mentions_any(&f.return_type, cx.rebranded_types())
     {
         return format!(
             "({}({}) as {})",
@@ -3958,15 +3999,24 @@ fn lower_bin_op(
         // true-divides; `Int` keeps truncating. The checker rejects
         // mixed operands, so the left operand decides; a missing
         // type entry falls back to the `Int` (truncating) lowering.
-        let lhs_is_float =
-            cx.commons.expr_types.get(&lhs.span).and_then(|t| t.base()) == Some(BaseType::Float);
+        let lhs_is_float = cx
+            .commons()
+            .expr_types
+            .get(&lhs.span)
+            .and_then(|t| t.base())
+            == Some(BaseType::Float);
         if lhs_is_float {
             format!("{l} / {r}")
         } else {
             format!("Math.trunc({l} / {r})")
         }
     } else if matches!(op, BinOp::Eq | BinOp::NotEq)
-        && cx.commons.expr_types.get(&lhs.span).and_then(|t| t.base()) == Some(BaseType::Bytes)
+        && cx
+            .commons()
+            .expr_types
+            .get(&lhs.span)
+            .and_then(|t| t.base())
+            == Some(BaseType::Bytes)
     {
         // v0.110 (ADR 0142 D4): `Bytes` is the one base type whose `==` is not
         // host `===`. It erases to `Uint8Array`, so `===` is reference equality
@@ -4044,18 +4094,14 @@ fn lower_field_access(
     // `Int`-typed key is decoded back with `Number(...)`; a `String`-typed key
     // is already correct.
     if let ExprKind::Ident(id) = &receiver.kind
-        && cx.agent_store_maps.contains(&id.name)
-        && !cx.agent_held_maps.contains_key(&id.name)
+        && cx.is_agent_store_map(&id.name)
+        && !cx.is_agent_held_map(&id.name)
         && matches!(
             field.name.as_str(),
             map_query::ENTRIES | map_query::KEYS | map_query::VALUES
         )
     {
-        let var = cx
-            .agent_store_state
-            .as_ref()
-            .map(|(v, _)| v.clone())
-            .unwrap_or_else(|| "__state".to_string());
+        let var = cx.agent_store_var().to_string();
         let m = format!("{var}.{}", id.name);
         return match field.name.as_str() {
             map_query::VALUES => format!("(() => Object.values({m}))"),
@@ -4084,10 +4130,10 @@ fn lower_field_access(
         return format!("HttpResult.{}", field.name);
     }
     // Agent-handler `self.<key>` rewrite.
-    if cx.in_agent_handler
+    if cx.in_agent_handler()
         && let ExprKind::Ident(id) = &receiver.kind
         && id.name == "self"
-        && let Some(k) = &cx.agent_key_field
+        && let Some(k) = cx.agent_key_field()
         && field.name == *k
     {
         return format!("(this.state.id.toString() as {})", k);
@@ -4104,12 +4150,12 @@ fn lower_field_access(
     // stay the unit value `undefined`.
     if field.name == "identity"
         && matches!(
-            cx.commons.expr_types.get(&receiver.span),
+            cx.commons().expr_types.get(&receiver.span),
             Some(Ty::Actor(_))
         )
     {
-        if let (Some(binder), ExprKind::Ident(id)) = (&cx.deps_identity_binder, &receiver.kind)
-            && &id.name == binder
+        if let (Some(binder), ExprKind::Ident(id)) = (cx.deps_identity_binder(), &receiver.kind)
+            && id.name == binder
         {
             return "deps.identity".to_string();
         }
@@ -4124,7 +4170,7 @@ fn lower_field_access(
         && let Some(Ty::Named {
             kind: NamedKind::Opaque(base),
             ..
-        }) = cx.commons.expr_types.get(&receiver.span)
+        }) = cx.commons().expr_types.get(&receiver.span)
     {
         return format!("({r} as {})", ts_base(*base));
     }
@@ -4141,7 +4187,7 @@ fn lower_field_access(
 /// that: the fallback identity decode must never be reached for an `Int` key,
 /// which would silently emit a string where a `number` is expected.
 fn map_key_ty<'a>(e: &Expr, cx: &'a LowerCtx) -> Option<&'a Ty> {
-    match cx.commons.expr_types.get(&e.span)? {
+    match cx.commons().expr_types.get(&e.span)? {
         Ty::Query(inner) => match &**inner {
             Ty::Named { name, args, .. } if name == MAP_ENTRY && !args.is_empty() => Some(&args[0]),
             k => Some(k),
@@ -4241,7 +4287,7 @@ mod decode_map_key_tests {
 
 fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     let is_async = matches!(
-        cx.commons.expr_types.get(&e.span),
+        cx.commons().expr_types.get(&e.span),
         Some(bynk_check::checker::Ty::Fn { ret, .. }) if ret.is_effect()
     );
     let prefix = if is_async { "async " } else { "" };
@@ -4267,7 +4313,7 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     // `return_ty` to the lambda's own return (its `Fn` type's `ret`) so an
     // embedding `?` anywhere in the body — block-bodied or expression-bodied —
     // uses that, not the outer one; restore after either form.
-    let lam_ret = match cx.commons.expr_types.get(&e.span) {
+    let lam_ret = match cx.commons().expr_types.get(&e.span) {
         Some(bynk_check::checker::Ty::Fn { ret, .. }) => Some((**ret).clone()),
         _ => None,
     };
@@ -4386,7 +4432,7 @@ fn lower_match_as_iife(
     stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
 ) -> String {
-    let disc_ty = cx.commons.expr_types.get(&discriminant.span).cloned();
+    let disc_ty = cx.commons().expr_types.get(&discriminant.span).cloned();
     let disc = lower_expr_into(discriminant, stmts, cx);
     // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, so a
     // `return` in an arm exits the arrow, not the function — clear `return_ty`
@@ -4529,7 +4575,7 @@ fn emit_match_tail(
     cx.record_span(out.len(), discriminant.span);
     let mut pre = Vec::new();
     let mut disc = lower_expr_into(discriminant, &mut pre, cx);
-    let disc_ty = cx.commons.expr_types.get(&discriminant.span).cloned();
+    let disc_ty = cx.commons().expr_types.get(&discriminant.span).cloned();
     for s in &pre {
         write_line(out, indent, s);
     }
@@ -5069,7 +5115,11 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
         && cx.is_refined_is_check(value, &variant.name)
         && let Some(TypeBody::Refined {
             base, refinement, ..
-        }) = cx.commons.types.get(&variant.name).map(|d| d.body.clone())
+        }) = cx
+            .commons()
+            .types
+            .get(&variant.name)
+            .map(|d| d.body.clone())
     {
         let recv = cx.is_receiver_ref_forced(value, stmts);
         return refined_check_as_bool(&recv, base, refinement.as_ref());
@@ -5091,7 +5141,7 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
         // (which already handles `Pattern::Refined` — inner tests plus the
         // predicate via `refined_check_as_bool`).
         Pattern::Refined { .. } => {
-            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let scrut_ty = cx.commons().expr_types.get(&value.span).cloned();
             let mut tests = Vec::new();
             pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
             if tests.is_empty() {
@@ -5109,7 +5159,7 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
         // outcome — the single-field `"value"` fallback matches the runtime
         // `{ tag, value }` shape, so the nested test lands without a static type.
         Pattern::Variant { .. } => {
-            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let scrut_ty = cx.commons().expr_types.get(&value.span).cloned();
             let mut tests = Vec::new();
             // For a loose scrutinee, a *multi*-payload nested pattern would map
             // every positional field to the single-field `"value"` fallback; that
@@ -5134,7 +5184,7 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
         // already knows how to OR its alternatives together (pushing one
         // combined `(...) || (...)` term), so this is a thin wrapper.
         Pattern::Or(..) => {
-            let scrut_ty = cx.commons.expr_types.get(&value.span).cloned();
+            let scrut_ty = cx.commons().expr_types.get(&value.span).cloned();
             let mut tests = Vec::new();
             pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
             tests.join(" && ")
@@ -5224,7 +5274,10 @@ mod idempotency_scoping_tests {
         let commons = empty_commons();
         let cross_context = bynk_check::resolver::CrossContextInfo::default();
         let runtime_use = RuntimeUse::default();
-        let cx = LowerCtx::new(&commons, &cross_context, &runtime_use);
+        let cx = LowerCtx::new(
+            ModuleCtx::new(&commons, &cross_context, &runtime_use),
+            BodyMode::Method,
+        );
         let mut args = vec!["orderId".to_string()];
         scope_idempotency_key(true, "dedup", &mut args, &cx);
     }
@@ -5237,8 +5290,17 @@ mod idempotency_scoping_tests {
         let commons = empty_commons();
         let cross_context = bynk_check::resolver::CrossContextInfo::default();
         let runtime_use = RuntimeUse::default();
-        let mut cx = LowerCtx::new(&commons, &cross_context, &runtime_use);
-        cx.handler_scope = Some("shop.reserve.ordering.call".to_string());
+        let cx = LowerCtx::new(
+            ModuleCtx::new(&commons, &cross_context, &runtime_use),
+            BodyMode::ServiceHandler {
+                handler: HandlerShared {
+                    handler_scope: Some("shop.reserve.ordering.call".to_string()),
+                    ..HandlerShared::default()
+                },
+                deps_identity_binder: None,
+                actor_sum_binder: None,
+            },
+        );
         let mut args = vec!["orderId".to_string()];
         scope_idempotency_key(true, "dedup", &mut args, &cx);
         assert_eq!(args[0], "`shop.reserve.ordering.call::${orderId}`");
@@ -5253,7 +5315,10 @@ mod idempotency_scoping_tests {
         let commons = empty_commons();
         let cross_context = bynk_check::resolver::CrossContextInfo::default();
         let runtime_use = RuntimeUse::default();
-        let cx = LowerCtx::new(&commons, &cross_context, &runtime_use);
+        let cx = LowerCtx::new(
+            ModuleCtx::new(&commons, &cross_context, &runtime_use),
+            BodyMode::Method,
+        );
         let mut args = vec!["orderId".to_string()];
         scope_idempotency_key(false, "dedup", &mut args, &cx);
         assert_eq!(args[0], "orderId");

@@ -18,6 +18,7 @@
 //! symbol tables the type checker consumes.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::index::{RefSink, SymbolKind};
 use bynk_syntax::ast::*;
@@ -43,15 +44,19 @@ impl Sinks<'_> {
 /// values are clones of the [`FnDecl`] for that method.
 #[derive(Debug, Default, Clone)]
 pub struct MethodTable {
-    pub instance: HashMap<String, FnDecl>,
-    pub statics: HashMap<String, FnDecl>,
+    pub instance: HashMap<String, Arc<FnDecl>>,
+    pub statics: HashMap<String, Arc<FnDecl>>,
 }
 
 /// Output of resolution: the AST plus the symbol tables the checker needs.
 pub struct ResolvedCommons {
     pub commons: Commons,
-    pub types: HashMap<String, TypeDecl>,
-    pub fns: HashMap<String, FnDecl>,
+    /// Finding #10/#51: `Arc`-wrapped (not owned) so cloning this map — done
+    /// once per synthetic per-handler `ResolvedCommons` during emission — is
+    /// a pointer bump, not a deep copy of every declaration body in the unit.
+    pub types: HashMap<String, Arc<TypeDecl>>,
+    /// Finding #10/#51: `Arc`-wrapped for the same reason as `types`.
+    pub fns: HashMap<String, Arc<FnDecl>>,
     /// Per-type method tables (instance + static).
     pub methods: HashMap<String, MethodTable>,
     /// Names of types declared in *this* commons (as opposed to imported via
@@ -125,7 +130,7 @@ pub struct CrossContextInfo {
     /// context's local types, plus the types it brings in via `uses`).
     /// Used by the checker for structural shape comparisons across the
     /// boundary (v0.6 §4.3).
-    pub consumed_types: HashMap<String, HashMap<String, TypeDecl>>,
+    pub consumed_types: HashMap<String, HashMap<String, Arc<TypeDecl>>>,
     /// v0.15: for each consumed context, the capabilities it `exports
     /// capability { … }` — keyed by capability name. Used to resolve and
     /// type-check `given B.Cap` references and `B.Cap.op(…)` calls, and by
@@ -250,9 +255,9 @@ impl ResolvedCommons {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         commons: Commons,
-        types: HashMap<String, TypeDecl>,
-        local_types: &HashMap<String, TypeDecl>,
-        fns: HashMap<String, FnDecl>,
+        types: HashMap<String, Arc<TypeDecl>>,
+        local_types: &HashMap<String, Arc<TypeDecl>>,
+        fns: HashMap<String, Arc<FnDecl>>,
         methods: HashMap<String, MethodTable>,
         agents: HashMap<String, AgentDecl>,
         local_events: &HashMap<String, EventDecl>,
@@ -283,8 +288,8 @@ impl ResolvedCommons {
 /// pre-built combined symbol table.
 pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
     let mut errors = Vec::new();
-    let mut types: HashMap<String, TypeDecl> = HashMap::new();
-    let mut fns: HashMap<String, FnDecl> = HashMap::new();
+    let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+    let mut fns: HashMap<String, Arc<FnDecl>> = HashMap::new();
     let mut methods: HashMap<String, MethodTable> = HashMap::new();
 
     // First pass: collect declarations and detect duplicates / name overlap.
@@ -325,7 +330,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                         .with_label(prev.name.ident().span, "function declared here"),
                     );
                 } else {
-                    types.insert(t.name.name.clone(), t.clone());
+                    types.insert(t.name.name.clone(), Arc::new(t.clone()));
                     methods.insert(t.name.name.clone(), MethodTable::default());
                 }
             }
@@ -361,7 +366,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                     );
                 } else {
                     methods.insert(t.name.name.clone(), MethodTable::default());
-                    types.insert(t.name.name.clone(), t);
+                    types.insert(t.name.name.clone(), Arc::new(t));
                 }
             }
             CommonsItem::Fn(f) => match &f.name {
@@ -388,7 +393,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                             .with_label(prev.name.span, "type declared here"),
                         );
                     } else {
-                        fns.insert(id.name.clone(), f.clone());
+                        fns.insert(id.name.clone(), Arc::new(f.clone()));
                     }
                 }
                 FnName::Method {
@@ -458,7 +463,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                             .with_label(prev.name.ident().span, "previously declared here"),
                         );
                     } else {
-                        bucket.insert(method_name.name.clone(), f.clone());
+                        bucket.insert(method_name.name.clone(), Arc::new(f.clone()));
                     }
                 }
             },
@@ -603,7 +608,7 @@ fn direct_record_head(tr: &TypeRef) -> Option<&str> {
 /// to reject indirect record cycles (`A = { b: B }`, `B = { a: A }`); a
 /// `visited` set bounds the walk on graphs that already contain cycles
 /// elsewhere.
-fn record_field_reaches(start: &str, target: &str, types: &HashMap<String, TypeDecl>) -> bool {
+fn record_field_reaches(start: &str, target: &str, types: &HashMap<String, Arc<TypeDecl>>) -> bool {
     let mut visited: HashSet<String> = HashSet::new();
     let mut stack = vec![start.to_string()];
     while let Some(name) = stack.pop() {
@@ -652,7 +657,7 @@ fn check_duplicate_type_params(params: &[TypeParam], owner: &str, errors: &mut S
 
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
-fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
+fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, Arc<TypeDecl>>, errors: &mut Sinks) {
     // A `type` declaration may not reuse a compiler-known built-in type name
     // (`List`, `Map`, `Query`, …). Those names are dispatched on by the type
     // parser (`parser/types.rs`), so any *reference* to the alias would be
@@ -843,8 +848,8 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
 
 fn check_fn_refs(
     f: &FnDecl,
-    types: &HashMap<String, TypeDecl>,
-    fns: &HashMap<String, FnDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    fns: &HashMap<String, Arc<FnDecl>>,
     methods: &HashMap<String, MethodTable>,
     errors: &mut Sinks,
 ) {
@@ -914,18 +919,17 @@ fn check_fn_refs(
         params.insert("self".to_string(), ());
     }
     let in_method = matches!(f.name, FnName::Method { .. });
-    let mut scopes: Vec<HashMap<String, ()>> = Vec::new();
-    check_block_references(
-        &f.body,
-        &params,
+    let mut cx = RefCheckCtx {
+        params: &params,
         in_method,
-        &mut scopes,
         types,
-        &type_params,
+        type_params: &type_params,
         fns,
         methods,
+        scopes: Vec::new(),
         errors,
-    );
+    };
+    check_block_references(&f.body, &mut cx);
 }
 
 fn unknown_type_error(id: &Ident) -> CompileError {
@@ -957,7 +961,11 @@ fn bare_generic_type_error(id: &Ident, arity: usize) -> CompileError {
 }
 
 /// Recursively check that every type reference resolves.
-fn check_type_ref_resolves(r: &TypeRef, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
+fn check_type_ref_resolves(
+    r: &TypeRef,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    errors: &mut Sinks,
+) {
     check_type_ref_resolves_in(r, types, &HashSet::new(), errors)
 }
 
@@ -966,7 +974,7 @@ fn check_type_ref_resolves(r: &TypeRef, types: &HashMap<String, TypeDecl>, error
 /// variable, not an unknown type.
 fn check_type_ref_resolves_in(
     r: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     type_params: &HashSet<String>,
     errors: &mut Sinks,
 ) {
@@ -1118,7 +1126,7 @@ fn check_type_ref_resolves_in(
 /// concrete `Map[K, V]` reference elsewhere, and that site is checked.
 fn check_map_key_keyable(
     k: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     type_params: &HashSet<String>,
     errors: &mut Sinks,
 ) {
@@ -1330,37 +1338,32 @@ fn field_default_init(field: &RecordField) -> Option<String> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn check_block_references(
-    block: &Block,
-    params: &HashMap<String, ()>,
+/// Bundles the reference-walk's read-only lookup tables and mutable
+/// traversal state (finding #37): threading nine positional parameters
+/// through a ~900-line walk meant 313 of resolver.rs's 2,346 lines were
+/// argument names at recursive call sites.
+struct RefCheckCtx<'a, 'b> {
+    params: &'a HashMap<String, ()>,
     in_method: bool,
-    scopes: &mut Vec<HashMap<String, ()>>,
-    types: &HashMap<String, TypeDecl>,
-    type_params: &HashSet<String>,
-    fns: &HashMap<String, FnDecl>,
-    methods: &HashMap<String, MethodTable>,
-    errors: &mut Sinks,
-) {
-    scopes.push(HashMap::new());
+    types: &'a HashMap<String, Arc<TypeDecl>>,
+    type_params: &'a HashSet<String>,
+    fns: &'a HashMap<String, Arc<FnDecl>>,
+    methods: &'a HashMap<String, MethodTable>,
+    scopes: Vec<HashMap<String, ()>>,
+    errors: &'a mut Sinks<'b>,
+}
+
+fn check_block_references(block: &Block, cx: &mut RefCheckCtx) {
+    cx.scopes.push(HashMap::new());
     for stmt in &block.statements {
         match stmt {
             Statement::Let(l) | Statement::EffectLet(l) => {
-                check_expr_references(
-                    &l.value,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(&l.value, cx);
                 if let Some(annot) = &l.type_annot {
-                    check_type_ref_resolves_in(annot, types, type_params, errors);
+                    check_type_ref_resolves_in(annot, cx.types, cx.type_params, cx.errors);
                 }
-                if let Some(prev) = types.get(&l.name.name) {
-                    errors.push(
+                if let Some(prev) = cx.types.get(&l.name.name) {
+                    cx.errors.push(
                         CompileError::new(
                             "bynk.resolve.let_shadows_type",
                             l.name.span,
@@ -1372,8 +1375,8 @@ fn check_block_references(
                         .with_label(prev.name.span, "type declared here")
                         .with_note("choose a different name for the let binding"),
                     );
-                } else if let Some(prev) = fns.get(&l.name.name) {
-                    errors.push(
+                } else if let Some(prev) = cx.fns.get(&l.name.name) {
+                    cx.errors.push(
                         CompileError::new(
                             "bynk.resolve.let_shadows_fn",
                             l.name.span,
@@ -1386,107 +1389,40 @@ fn check_block_references(
                         .with_note("choose a different name for the let binding"),
                     );
                 } else if l.name.name != "_" {
-                    scopes.last_mut().unwrap().insert(l.name.name.clone(), ());
+                    cx.scopes
+                        .last_mut()
+                        .unwrap()
+                        .insert(l.name.name.clone(), ());
                 }
             }
             Statement::Expect(a) => {
-                check_expr_references(
-                    &a.value,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(&a.value, cx);
             }
             Statement::Send(s) => {
-                check_expr_references(
-                    &s.value,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(&s.value, cx);
             }
             Statement::Do(d) => {
-                check_expr_references(
-                    &d.value,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(&d.value, cx);
             }
             Statement::Assign(a) => {
                 // v0.81: walk the RHS for references; the target resolves to a
                 // `store` field, handled in the storage-track checker slice.
-                check_expr_references(
-                    &a.value,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(&a.value, cx);
             }
         }
     }
-    check_expr_references(
-        &block.tail,
-        params,
-        in_method,
-        scopes,
-        types,
-        type_params,
-        fns,
-        methods,
-        errors,
-    );
-    scopes.pop();
+    check_expr_references(&block.tail, cx);
+    cx.scopes.pop();
 }
 
-#[allow(clippy::too_many_arguments)]
-fn check_expr_references(
-    expr: &Expr,
-    params: &HashMap<String, ()>,
-    in_method: bool,
-    scopes: &mut Vec<HashMap<String, ()>>,
-    types: &HashMap<String, TypeDecl>,
-    type_params: &HashSet<String>,
-    fns: &HashMap<String, FnDecl>,
-    methods: &HashMap<String, MethodTable>,
-    errors: &mut Sinks,
-) {
+#[allow(clippy::too_many_lines)]
+fn check_expr_references(expr: &Expr, cx: &mut RefCheckCtx) {
     match &expr.kind {
         // v0.43: resolve names referenced inside each interpolation hole.
         ExprKind::InterpStr(parts) => {
             for part in parts {
                 if let InterpPart::Hole(hole) = part {
-                    check_expr_references(
-                        hole,
-                        params,
-                        in_method,
-                        scopes,
-                        types,
-                        type_params,
-                        fns,
-                        methods,
-                        errors,
-                    );
+                    check_expr_references(hole, cx);
                 }
             }
         }
@@ -1500,33 +1436,13 @@ fn check_expr_references(
         // v0.20b: a list literal — each element resolves as a value.
         ExprKind::ListLit(elems) => {
             for el in elems {
-                check_expr_references(
-                    el,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(el, cx);
             }
         }
         // Slice C: `Wire(<String>)` — the raw inner expression resolves as an
         // ordinary value (a string literal in practice).
         ExprKind::Wire(inner) => {
-            check_expr_references(
-                inner,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(inner, cx);
         }
         // v0.20a: a lambda introduces a scope frame holding its params; the
         // body walks with the frame in place. Annotated param types resolve
@@ -1534,68 +1450,28 @@ fn check_expr_references(
         ExprKind::Lambda(lambda) => {
             for p in &lambda.params {
                 if let Some(tr) = &p.type_ref {
-                    check_type_ref_resolves_in(tr, types, type_params, errors);
+                    check_type_ref_resolves_in(tr, cx.types, cx.type_params, cx.errors);
                 }
             }
             let mut frame: HashMap<String, ()> = HashMap::new();
             for p in &lambda.params {
                 frame.insert(p.name.name.clone(), ());
             }
-            scopes.push(frame);
-            check_expr_references(
-                &lambda.body,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
-            scopes.pop();
+            cx.scopes.push(frame);
+            check_expr_references(&lambda.body, cx);
+            cx.scopes.pop();
         }
         ExprKind::EffectPure(inner) => {
-            check_expr_references(
-                inner,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(inner, cx);
         }
         ExprKind::Expect(inner) => {
-            check_expr_references(
-                inner,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(inner, cx);
         }
         ExprKind::Val { args, .. } => {
             // v0.9.4: the mocked type is validated by the checker; resolve any
             // pin-argument references here.
             for a in args {
-                check_expr_references(
-                    a,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(a, cx);
             }
         }
         ExprKind::Observation(_) => {
@@ -1612,41 +1488,21 @@ fn check_expr_references(
             overrides,
         } => {
             if let Some(tn) = type_name
-                && !types.contains_key(&tn.name)
+                && !cx.types.contains_key(&tn.name)
             {
-                errors.push(unknown_type_error(tn));
+                cx.errors.push(unknown_type_error(tn));
             }
-            check_expr_references(
-                base,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(base, cx);
             for f in overrides {
                 if let Some(v) = &f.value {
-                    check_expr_references(
-                        v,
-                        params,
-                        in_method,
-                        scopes,
-                        types,
-                        type_params,
-                        fns,
-                        methods,
-                        errors,
-                    );
+                    check_expr_references(v, cx);
                 }
             }
         }
         ExprKind::Ident(id) => {
             if id.name == "self" {
-                if !in_method {
-                    errors.push(
+                if !cx.in_method {
+                    cx.errors.push(
                         CompileError::new(
                             "bynk.resolve.self_outside_method",
                             id.span,
@@ -1659,19 +1515,19 @@ fn check_expr_references(
                 }
                 return;
             }
-            if name_in_scope(&id.name, params, scopes) {
+            if name_in_scope(&id.name, cx.params, &cx.scopes) {
                 // OK.
             } else if http_variant(&id.name).is_some() {
                 // v0.9: predeclared HttpResult variant (e.g. `NoContent`,
                 // `Unauthorized`). The checker validates payload arity and
                 // expected-type disambiguation.
-            } else if let Some(sum_owner) = find_unique_variant_owner(&id.name, types) {
+            } else if let Some(sum_owner) = find_unique_variant_owner(&id.name, cx.types) {
                 // It's a bare variant reference. We treat it as a valid
                 // expression in resolver — the type checker will assign
                 // the correct sum type. Mark with no error.
                 let _ = sum_owner;
-            } else if types.contains_key(&id.name) {
-                errors.push(
+            } else if cx.types.contains_key(&id.name) {
+                cx.errors.push(
                     CompileError::new(
                         "bynk.resolve.type_in_expr",
                         id.span,
@@ -1682,16 +1538,16 @@ fn check_expr_references(
                          use `TypeName.of(value)` or `TypeName { ... }` to construct values",
                     ),
                 );
-            } else if fns.contains_key(&id.name) {
+            } else if cx.fns.contains_key(&id.name) {
                 // v0.20a: a bare named-function reference may be a function
                 // VALUE where a function type is expected. The resolver has
                 // no type information, so the judgment (and the
                 // `bynk.resolve.fn_without_call` diagnostic for non-function
                 // positions) now lives in the checker's ident rule. Silent
                 // pass here keeps `unknown_name` from misfiring.
-                errors.refs.record(id.span, SymbolKind::Fn, &id.name);
-            } else if find_ambiguous_variant_owners(&id.name, types).len() > 1 {
-                errors.push(
+                cx.errors.refs.record(id.span, SymbolKind::Fn, &id.name);
+            } else if find_ambiguous_variant_owners(&id.name, cx.types).len() > 1 {
+                cx.errors.push(
                     CompileError::new(
                         "bynk.resolve.ambiguous_variant",
                         id.span,
@@ -1702,7 +1558,7 @@ fn check_expr_references(
                     ),
                 );
             } else {
-                errors.push(
+                cx.errors.push(
                     CompileError::new(
                         "bynk.resolve.unknown_name",
                         id.span,
@@ -1726,13 +1582,13 @@ fn check_expr_references(
             // `fn`/method bodies are covered; the checker backstops handler
             // bodies (which never reach this walk).
             for ta in type_args {
-                check_type_ref_resolves_in(ta, types, type_params, errors);
+                check_type_ref_resolves_in(ta, cx.types, cx.type_params, cx.errors);
             }
-            match fns.get(&name.name) {
+            match cx.fns.get(&name.name) {
                 Some(decl) => {
-                    errors.refs.record(name.span, SymbolKind::Fn, &name.name);
+                    cx.errors.refs.record(name.span, SymbolKind::Fn, &name.name);
                     if decl.params.len() != args.len() {
-                        errors.push(
+                        cx.errors.push(
                             CompileError::new(
                                 "bynk.resolve.arity_mismatch",
                                 name.span,
@@ -1754,14 +1610,14 @@ fn check_expr_references(
                 }
                 None => {
                     // Maybe it's a variant constructor with a payload (e.g., `Placed(at, total)`).
-                    let owners = find_ambiguous_variant_owners(&name.name, types);
+                    let owners = find_ambiguous_variant_owners(&name.name, cx.types);
                     if http_variant(&name.name).is_some() {
                         // v0.9: predeclared HttpResult variant constructor.
                     } else if owners.len() == 1 {
                         // Single owner — treat as variant construction. Type
                         // checker validates arg count and types.
                     } else if owners.len() > 1 {
-                        errors.push(CompileError::new(
+                        cx.errors.push(CompileError::new(
                             "bynk.resolve.ambiguous_variant",
                             name.span,
                             format!(
@@ -1769,8 +1625,8 @@ fn check_expr_references(
                                 name.name, name.name
                             ),
                         ));
-                    } else if types.contains_key(&name.name) {
-                        errors.push(CompileError::new(
+                    } else if cx.types.contains_key(&name.name) {
+                        cx.errors.push(CompileError::new(
                             "bynk.resolve.type_as_function",
                             name.span,
                             format!(
@@ -1778,7 +1634,7 @@ fn check_expr_references(
                                 name.name, name.name, name.name
                             ),
                         ));
-                    } else if name_in_scope(&name.name, params, scopes) {
+                    } else if name_in_scope(&name.name, cx.params, &cx.scopes) {
                         // v0.20a: an in-scope value being called may be a
                         // legal value application if its type is a function
                         // type. The resolver has no type information, so the
@@ -1786,7 +1642,7 @@ fn check_expr_references(
                         // non-function-typed values) lives in the checker's
                         // call dispatch. Silent pass.
                     } else {
-                        errors.push(
+                        cx.errors.push(
                             CompileError::new(
                                 "bynk.resolve.unknown_function",
                                 name.span,
@@ -1798,146 +1654,36 @@ fn check_expr_references(
                 }
             }
             for a in args {
-                check_expr_references(
-                    a,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(a, cx);
             }
         }
         ExprKind::BinOp(_, lhs, rhs) => {
-            check_expr_references(
-                lhs,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
-            check_expr_references(
-                rhs,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(lhs, cx);
+            check_expr_references(rhs, cx);
         }
-        ExprKind::UnaryOp(_, e) => check_expr_references(
-            e,
-            params,
-            in_method,
-            scopes,
-            types,
-            type_params,
-            fns,
-            methods,
-            errors,
-        ),
-        ExprKind::Paren(e) => check_expr_references(
-            e,
-            params,
-            in_method,
-            scopes,
-            types,
-            type_params,
-            fns,
-            methods,
-            errors,
-        ),
-        ExprKind::Block(b) => check_block_references(
-            b,
-            params,
-            in_method,
-            scopes,
-            types,
-            type_params,
-            fns,
-            methods,
-            errors,
-        ),
+        ExprKind::UnaryOp(_, e) => check_expr_references(e, cx),
+        ExprKind::Paren(e) => check_expr_references(e, cx),
+        ExprKind::Block(b) => check_block_references(b, cx),
         ExprKind::If {
             cond,
             then_block,
             else_block,
         } => {
-            check_expr_references(
-                cond,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(cond, cx);
             // `is`-pattern bindings inside the condition flow into the
             // then-branch's scope (v0.2 §3.9).
             let mut then_extra: HashMap<String, ()> = HashMap::new();
             collect_is_binding_names(cond, &mut then_extra);
-            scopes.push(then_extra);
-            check_block_references(
-                then_block,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
-            scopes.pop();
-            check_block_references(
-                else_block,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            cx.scopes.push(then_extra);
+            check_block_references(then_block, cx);
+            cx.scopes.pop();
+            check_block_references(else_block, cx);
         }
         ExprKind::Ok(inner) | ExprKind::Err(inner) | ExprKind::Question(inner) => {
-            check_expr_references(
-                inner,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(inner, cx);
         }
         ExprKind::Some(inner) => {
-            check_expr_references(
-                inner,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(inner, cx);
         }
         ExprKind::ConstructorCall {
             type_name,
@@ -1951,32 +1697,22 @@ fn check_expr_references(
             // The resolver only needs to ensure that *something* matches.
             if type_name.name == "HttpResult" {
                 if http_variant(&method.name).is_none() {
-                    errors.push(CompileError::new(
+                    cx.errors.push(CompileError::new(
                         "bynk.resolve.unknown_static_member",
                         method.span,
                         format!("`HttpResult` has no variant named `{}`", method.name),
                     ));
                 }
                 for a in args {
-                    check_expr_references(
-                        a,
-                        params,
-                        in_method,
-                        scopes,
-                        types,
-                        type_params,
-                        fns,
-                        methods,
-                        errors,
-                    );
+                    check_expr_references(a, cx);
                 }
                 return;
             }
-            if let Some(decl) = types.get(&type_name.name) {
-                errors
+            if let Some(decl) = cx.types.get(&type_name.name) {
+                cx.errors
                     .refs
                     .record(type_name.span, SymbolKind::Type, &type_name.name);
-                let table = methods.get(&type_name.name).cloned().unwrap_or_default();
+                let table = cx.methods.get(&type_name.name).cloned().unwrap_or_default();
                 let is_static_method = table.statics.contains_key(&method.name);
                 let is_of_constructor = method.name == "of"
                     && matches!(
@@ -1990,7 +1726,7 @@ fn check_expr_references(
                     _ => false,
                 };
                 if !(is_static_method || is_of_constructor || is_unsafe_constructor || is_variant) {
-                    errors.push(
+                    cx.errors.push(
                         CompileError::new(
                             "bynk.resolve.unknown_static_member",
                             method.span,
@@ -2004,26 +1740,16 @@ fn check_expr_references(
                     );
                 }
             } else {
-                errors.push(unknown_type_error(type_name));
+                cx.errors.push(unknown_type_error(type_name));
             }
             for a in args {
-                check_expr_references(
-                    a,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(a, cx);
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
-            match types.get(&type_name.name) {
+            match cx.types.get(&type_name.name) {
                 Some(decl) => {
-                    errors
+                    cx.errors
                         .refs
                         .record(type_name.span, SymbolKind::Type, &type_name.name);
                     match &decl.body {
@@ -2038,27 +1764,17 @@ fn check_expr_references(
                                 fields,
                                 r,
                                 expr.span,
-                                |n| name_in_scope(n, params, scopes),
-                                errors.errs,
+                                |n| name_in_scope(n, cx.params, &cx.scopes),
+                                cx.errors.errs,
                             );
                             for f in fields {
                                 if let Some(v) = &f.value {
-                                    check_expr_references(
-                                        v,
-                                        params,
-                                        in_method,
-                                        scopes,
-                                        types,
-                                        type_params,
-                                        fns,
-                                        methods,
-                                        errors,
-                                    );
+                                    check_expr_references(v, cx);
                                 }
                             }
                         }
                         TypeBody::Opaque { .. } => {
-                            errors.push(
+                            cx.errors.push(
                             CompileError::new(
                                 "bynk.resolve.opaque_record_construction",
                                 type_name.span,
@@ -2075,7 +1791,7 @@ fn check_expr_references(
                         );
                         }
                         _ => {
-                            errors.push(
+                            cx.errors.push(
                             CompileError::new(
                                 "bynk.resolve.not_a_record_type",
                                 type_name.span,
@@ -2090,17 +1806,17 @@ fn check_expr_references(
                         }
                     }
                 }
-                None => errors.push(unknown_type_error(type_name)),
+                None => cx.errors.push(unknown_type_error(type_name)),
             }
         }
         ExprKind::FieldAccess { receiver, field } => {
             // v0.9: `HttpResult.Variant` qualified nullary variant.
             if let ExprKind::Ident(id) = &receiver.kind
-                && !name_in_scope(&id.name, params, scopes)
+                && !name_in_scope(&id.name, cx.params, &cx.scopes)
                 && id.name == "HttpResult"
             {
                 if http_variant(&field.name).is_none() {
-                    errors.push(CompileError::new(
+                    cx.errors.push(CompileError::new(
                         "bynk.resolve.unknown_static_member",
                         field.span,
                         format!("`HttpResult` has no variant named `{}`", field.name),
@@ -2110,16 +1826,16 @@ fn check_expr_references(
             }
             // `TypeName.Variant` — qualified nullary variant reference.
             if let ExprKind::Ident(id) = &receiver.kind
-                && !name_in_scope(&id.name, params, scopes)
-                && let Some(decl) = types.get(&id.name)
+                && !name_in_scope(&id.name, cx.params, &cx.scopes)
+                && let Some(decl) = cx.types.get(&id.name)
             {
-                errors.refs.record(id.span, SymbolKind::Type, &id.name);
+                cx.errors.refs.record(id.span, SymbolKind::Type, &id.name);
                 let known_variant = match &decl.body {
                     TypeBody::Sum(s) => s.variants.iter().any(|v| v.name.name == field.name),
                     _ => false,
                 };
                 if !known_variant {
-                    errors.push(
+                    cx.errors.push(
                         CompileError::new(
                             "bynk.resolve.unknown_static_member",
                             field.span,
@@ -2133,17 +1849,7 @@ fn check_expr_references(
                     );
                 }
             } else {
-                check_expr_references(
-                    receiver,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(receiver, cx);
             }
         }
         ExprKind::MethodCall {
@@ -2154,28 +1860,18 @@ fn check_expr_references(
         } => {
             // v0.9: `HttpResult.Variant(args)` — qualified HttpResult constructor.
             if let ExprKind::Ident(id) = &receiver.kind
-                && !name_in_scope(&id.name, params, scopes)
+                && !name_in_scope(&id.name, cx.params, &cx.scopes)
                 && id.name == "HttpResult"
             {
                 if http_variant(&method.name).is_none() {
-                    errors.push(CompileError::new(
+                    cx.errors.push(CompileError::new(
                         "bynk.resolve.unknown_static_member",
                         method.span,
                         format!("`HttpResult` has no variant named `{}`", method.name),
                     ));
                 }
                 for a in args {
-                    check_expr_references(
-                        a,
-                        params,
-                        in_method,
-                        scopes,
-                        types,
-                        type_params,
-                        fns,
-                        methods,
-                        errors,
-                    );
+                    check_expr_references(a, cx);
                 }
                 return;
             }
@@ -2184,7 +1880,7 @@ fn check_expr_references(
             // against; the checker owns their typing). v0.22a adds the
             // numeric parse statics, `Int.parse(…)` / `Float.parse(…)`.
             if let ExprKind::Ident(id) = &receiver.kind
-                && !name_in_scope(&id.name, params, scopes)
+                && !name_in_scope(&id.name, cx.params, &cx.scopes)
                 && matches!(
                     id.name.as_str(),
                     "List"
@@ -2197,7 +1893,7 @@ fn check_expr_references(
                         | "Stream"
                         | "Bytes"
                 )
-                && !types.contains_key(&id.name)
+                && !cx.types.contains_key(&id.name)
             {
                 let allowed: &[&str] = match id.name.as_str() {
                     "List" | "Map" => &["empty"],
@@ -2214,7 +1910,7 @@ fn check_expr_references(
                 };
                 let only = allowed.join("`/`");
                 if !allowed.contains(&method.name.as_str()) {
-                    errors.push(CompileError::new(
+                    cx.errors.push(CompileError::new(
                         "bynk.resolve.unknown_static_member",
                         method.span,
                         format!(
@@ -2224,17 +1920,7 @@ fn check_expr_references(
                     ));
                 }
                 for a in args {
-                    check_expr_references(
-                        a,
-                        params,
-                        in_method,
-                        scopes,
-                        types,
-                        type_params,
-                        fns,
-                        methods,
-                        errors,
-                    );
+                    check_expr_references(a, cx);
                 }
                 return;
             }
@@ -2244,11 +1930,11 @@ fn check_expr_references(
             // ConstructorCall's resolver path. Otherwise recurse into the
             // receiver as a value expression.
             if let ExprKind::Ident(id) = &receiver.kind
-                && !name_in_scope(&id.name, params, scopes)
-                && let Some(decl) = types.get(&id.name)
+                && !name_in_scope(&id.name, cx.params, &cx.scopes)
+                && let Some(decl) = cx.types.get(&id.name)
             {
-                errors.refs.record(id.span, SymbolKind::Type, &id.name);
-                let table = methods.get(&id.name).cloned().unwrap_or_default();
+                cx.errors.refs.record(id.span, SymbolKind::Type, &id.name);
+                let table = cx.methods.get(&id.name).cloned().unwrap_or_default();
                 let is_static_method = table.statics.contains_key(&method.name);
                 let is_of_constructor = method.name == "of"
                     && matches!(
@@ -2262,7 +1948,7 @@ fn check_expr_references(
                     _ => false,
                 };
                 if !(is_static_method || is_of_constructor || is_unsafe_constructor || is_variant) {
-                    errors.push(
+                    cx.errors.push(
                         CompileError::new(
                             "bynk.resolve.unknown_static_member",
                             method.span,
@@ -2276,44 +1962,14 @@ fn check_expr_references(
                     );
                 }
             } else {
-                check_expr_references(
-                    receiver,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(receiver, cx);
             }
             for a in args {
-                check_expr_references(
-                    a,
-                    params,
-                    in_method,
-                    scopes,
-                    types,
-                    type_params,
-                    fns,
-                    methods,
-                    errors,
-                );
+                check_expr_references(a, cx);
             }
         }
         ExprKind::Match { discriminant, arms } => {
-            check_expr_references(
-                discriminant,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(discriminant, cx);
             for arm in arms {
                 // Pattern bindings introduce names in the arm body. The
                 // type checker validates the pattern against the discriminant
@@ -2321,46 +1977,16 @@ fn check_expr_references(
                 // body references resolve.
                 let mut arm_scope = HashMap::new();
                 collect_pattern_bindings(&arm.pattern, &mut arm_scope);
-                scopes.push(arm_scope);
+                cx.scopes.push(arm_scope);
                 match &arm.body {
-                    MatchBody::Expr(e) => check_expr_references(
-                        e,
-                        params,
-                        in_method,
-                        scopes,
-                        types,
-                        type_params,
-                        fns,
-                        methods,
-                        errors,
-                    ),
-                    MatchBody::Block(b) => check_block_references(
-                        b,
-                        params,
-                        in_method,
-                        scopes,
-                        types,
-                        type_params,
-                        fns,
-                        methods,
-                        errors,
-                    ),
+                    MatchBody::Expr(e) => check_expr_references(e, cx),
+                    MatchBody::Block(b) => check_block_references(b, cx),
                 }
-                scopes.pop();
+                cx.scopes.pop();
             }
         }
         ExprKind::Is { value, pattern } => {
-            check_expr_references(
-                value,
-                params,
-                in_method,
-                scopes,
-                types,
-                type_params,
-                fns,
-                methods,
-                errors,
-            );
+            check_expr_references(value, cx);
             // `is` pattern bindings flow through to the truthy branch of
             // an enclosing context; binding scope is handled by the type
             // checker. Resolver doesn't introduce anything here.
@@ -2422,7 +2048,7 @@ fn collect_pattern_bindings(pattern: &Pattern, into: &mut HashMap<String, ()>) {
 /// reported via `find_ambiguous_variant_owners`).
 fn find_unique_variant_owner<'a>(
     name: &str,
-    types: &'a HashMap<String, TypeDecl>,
+    types: &'a HashMap<String, Arc<TypeDecl>>,
 ) -> Option<&'a TypeDecl> {
     let owners = find_ambiguous_variant_owners(name, types);
     if owners.len() == 1 {
@@ -2434,14 +2060,14 @@ fn find_unique_variant_owner<'a>(
 
 fn find_ambiguous_variant_owners<'a>(
     name: &str,
-    types: &'a HashMap<String, TypeDecl>,
+    types: &'a HashMap<String, Arc<TypeDecl>>,
 ) -> Vec<&'a TypeDecl> {
     let mut out = Vec::new();
     for t in types.values() {
         if let TypeBody::Sum(s) = &t.body
             && s.variants.iter().any(|v| v.name.name == name)
         {
-            out.push(t);
+            out.push(t.as_ref());
         }
     }
     out

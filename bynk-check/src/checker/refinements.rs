@@ -7,7 +7,7 @@ use super::*;
 
 pub(crate) fn check_type_decl(
     t: &TypeDecl,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
 ) {
     match &t.body {
@@ -59,7 +59,7 @@ pub(crate) fn check_type_decl(
 pub(crate) fn check_embeds(
     sum_name: &str,
     s: &SumBody,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
 ) {
     let mut seen_sources: Vec<Ty> = Vec::new();
@@ -138,7 +138,7 @@ pub(crate) fn check_embeds(
 }
 
 /// The base type of a field's type-ref (chasing through named refined types).
-fn field_base_type(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<BaseType> {
+fn field_base_type(r: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> Option<BaseType> {
     match r {
         TypeRef::Base(b, _) => Some(*b),
         TypeRef::Named(id) => match types.get(&id.name).map(|t| &t.body) {
@@ -701,7 +701,7 @@ pub(crate) fn refinement_needs_pin(refinement: &Refinement) -> bool {
 pub fn zero_value_ts(
     type_ref: &TypeRef,
     inline: Option<&Refinement>,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
 ) -> Option<String> {
     zero_value_ts_inner(type_ref, inline, types, &mut Vec::new())
 }
@@ -709,7 +709,7 @@ pub fn zero_value_ts(
 fn zero_value_ts_inner(
     type_ref: &TypeRef,
     inline: Option<&Refinement>,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     visiting: &mut Vec<String>,
 ) -> Option<String> {
     match type_ref {
@@ -762,7 +762,7 @@ fn zero_value_ts_inner(
 /// any field is not zeroable.
 fn agent_state_zero_record(
     fields: &[RecordField],
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     visiting: &mut Vec<String>,
 ) -> Option<String> {
     let mut parts = Vec::new();
