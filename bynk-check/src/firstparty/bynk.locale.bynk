@@ -10,12 +10,17 @@ commons bynk.locale {
 	slice — it is not yet consulted.
 	---
 	fn render(tag: LocaleTag, msg: Message) -> String {
-		if msg.params.length() == 0 { msg.code } else {
+		if msg.params.length() == 0 {
+			msg.code
+		} else {
 			let init: List[String] = List.empty()
-			let parts = reverse(msg.params.keys().sortBy((k) => k).fold(init, (acc, k) => match msg.params.get(k) {
-			Some(arg) => acc.prepend(k.concat("=").concat(renderArg(arg))),
-			None => acc,
-		}))
+			let parts = reverse(msg.params
+				.keys()
+				.sortBy((k) => k)
+				.fold(init, (acc, k) => match msg.params.get(k) {
+					Some(arg) => acc.prepend(k.concat("=").concat(renderArg(arg))),
+					None => acc,
+				}))
 			msg.code.concat(" {").concat(join(parts, ", ")).concat("}")
 		}
 	}
@@ -41,11 +46,19 @@ commons bynk.locale {
 	---
 	fn message(code: String) -> Message { Message { code: code, params: Map.empty() } }
 
-	fn withText(msg: Message, key: String, value: String) -> Message { Message { code: msg.code, params: msg.params.insert(key, Text(value)) } }
+	fn withText(msg: Message, key: String, value: String) -> Message {
+		Message { code: msg.code, params: msg.params.insert(key, Text(value)) }
+	}
 
-	fn withWhole(msg: Message, key: String, value: Int) -> Message { Message { code: msg.code, params: msg.params.insert(key, Whole(value)) } }
+	fn withWhole(msg: Message, key: String, value: Int) -> Message {
+		Message { code: msg.code, params: msg.params.insert(key, Whole(value)) }
+	}
 
-	fn withNum(msg: Message, key: String, value: Float) -> Message { Message { code: msg.code, params: msg.params.insert(key, Num(value)) } }
+	fn withNum(msg: Message, key: String, value: Float) -> Message {
+		Message { code: msg.code, params: msg.params.insert(key, Num(value)) }
+	}
 
-	fn withMoment(msg: Message, key: String, value: Instant) -> Message { Message { code: msg.code, params: msg.params.insert(key, Moment(value)) } }
+	fn withMoment(msg: Message, key: String, value: Instant) -> Message {
+		Message { code: msg.code, params: msg.params.insert(key, Moment(value)) }
+	}
 }
