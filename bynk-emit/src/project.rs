@@ -23,6 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::emitter;
 use bynk_check::checker;
@@ -470,6 +471,82 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         options.contracts,
     );
     finish_build(run, options.import_ext)
+}
+
+/// Result of [`check_project`]: every diagnostic from a non-bailing project
+/// analysis — errors *and* warnings together (ADR 0117), unconditionally,
+/// unlike [`ProjectOutput`]/[`ProjectFailure`] where `errors`/`warnings` is
+/// picked by which variant the caller got. `bynk check`'s exit code is
+/// decided by [`Self::has_errors`], not by whether this was reached at all.
+pub struct ProjectCheck {
+    pub errors: Vec<AttributedError>,
+    pub snapshots: Vec<(PathBuf, String)>,
+}
+
+impl ProjectCheck {
+    /// Finding #64: `bynk check`'s exit-code gate is "does any error-severity
+    /// diagnostic exist in the project" — not "did the pipeline reach the end
+    /// without bailing", which is what `compile_project`'s `Result` encoded
+    /// and why a `bynk.toml`-wide structural error anywhere silently hid every
+    /// later diagnostic (including a test body's own type errors) from
+    /// `bynk check`, even though the editor (via `analyse_project_with`, the
+    /// same `Mode::Analyse` this runs) still reported them.
+    pub fn has_errors(&self) -> bool {
+        self.errors
+            .iter()
+            .any(|ae| bynk_syntax::Severity::for_error(&ae.error) == bynk_syntax::Severity::Error)
+    }
+}
+
+/// Check a project without building (finding #64) — never bails after
+/// discovery (`Mode::Analyse`, the same mode `analyse_project_with` already
+/// uses for the editor), so a diagnostic anywhere in the project does not
+/// suppress diagnostics elsewhere. `compile_project`'s `Mode::Build` bails at
+/// the first structural error and returns only what it collected up to that
+/// point — correct for `build`/`test`, which must not emit past a real
+/// error, but wrong for `check`, whose only job is to report everything.
+/// `bynk check`'s directory path calls this instead of `compile_project`.
+pub fn check_project(options: &CompileOptions) -> ProjectCheck {
+    let (src_root, tests_root) = options.roots.resolve();
+    let src_prefix = options.roots.src_prefix();
+    let tests_prefix = options.roots.tests_prefix();
+    let excludes = options.roots.excludes();
+    // Mirrors `compile_project`'s own `options.sources` handling.
+    let (overlay, discovered) = match &options.sources {
+        Some(sources) => {
+            let (src_files, tests_files): (Vec<PathBuf>, Vec<PathBuf>) = sources
+                .keys()
+                .cloned()
+                .partition(|p| src_root == tests_root || p.starts_with(&src_root));
+            (sources.clone(), Some((src_files, tests_files)))
+        }
+        None => (HashMap::new(), None),
+    };
+    let run = run_checks(
+        &src_root,
+        &tests_root,
+        &src_prefix,
+        &tests_prefix,
+        options.target,
+        options.platform,
+        options.import_ext,
+        Mode::Analyse,
+        &overlay,
+        &excludes,
+        discovered,
+        options.contracts,
+    );
+    match run {
+        RunChecks::Bailed {
+            errors, snapshots, ..
+        }
+        | RunChecks::Checked {
+            errors, snapshots, ..
+        } => ProjectCheck {
+            errors: errors.into_all(),
+            snapshots,
+        },
+    }
 }
 
 /// Compile a single **in-memory** Bynk source through the full project pipeline —
@@ -1020,6 +1097,38 @@ fn phase_discovery(
     Ok((src_files, tests_files))
 }
 
+/// A memoized parse of one first-party synthetic source, keyed by the
+/// call-site's own `cache` static — each of `phase_parse`'s 7 injection sites
+/// below passes a distinct one. Finding #55/#65: the source text is a fixed
+/// `include_str!` constant, so its parse is a pure function of that constant
+/// and only needs computing once per process, not once per compile/analyse
+/// round. The gating below (`consumes_bynk`, `uses_map`, etc.) is unaffected —
+/// it still runs fresh for every project from that project's own parsed
+/// `uses`/`consumes`; only the parse *result* being gated is cached.
+fn firstparty_parsed(
+    cache: &'static OnceLock<Result<ParsedFile, Vec<CompileError>>>,
+    identity_path: &'static str,
+    src: &'static str,
+    kind: UnitKind,
+) -> Result<ParsedFile, Vec<CompileError>> {
+    cache
+        .get_or_init(|| {
+            lexer::tokenize(src)
+                .map_err(|e| vec![e])
+                .and_then(|toks| parser::parse_unit(&toks, src))
+                .map(|unit| ParsedFile {
+                    identity_path: PathBuf::from(identity_path),
+                    source_path: PathBuf::from(identity_path),
+                    abs_path: None,
+                    source: src.to_string(),
+                    unit,
+                    kind,
+                    synthetic: true,
+                })
+        })
+        .clone()
+}
+
 /// Phase 2: parse every discovered file into a `ParsedFile`, recording each
 /// file's source text into `snapshots` and any parse errors into `errors`.
 /// Then inject the first-party synthetic units (the `bynk`/`bynk.cloudflare`
@@ -1115,19 +1224,14 @@ fn phase_parse(
             .any(|c| c.target.joined() == firstparty::BYNK_UNIT)
     });
     if consumes_bynk {
-        match lexer::tokenize(firstparty::BYNK_ADAPTER_SRC)
-            .map_err(|e| vec![e])
-            .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_ADAPTER_SRC))
-        {
-            Ok(unit) => parsed.push(ParsedFile {
-                identity_path: PathBuf::from("bynk.bynk"),
-                source_path: PathBuf::from("bynk.bynk"),
-                abs_path: None,
-                source: firstparty::BYNK_ADAPTER_SRC.to_string(),
-                unit,
-                kind: UnitKind::Adapter,
-                synthetic: true,
-            }),
+        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
+        match firstparty_parsed(
+            &CACHE,
+            "bynk.bynk",
+            firstparty::BYNK_ADAPTER_SRC,
+            UnitKind::Adapter,
+        ) {
+            Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
         }
     }
@@ -1140,19 +1244,14 @@ fn phase_parse(
             .any(|c| c.target.joined() == firstparty::CLOUDFLARE_UNIT)
     });
     if consumes_cloudflare {
-        match lexer::tokenize(firstparty::CLOUDFLARE_ADAPTER_SRC)
-            .map_err(|e| vec![e])
-            .and_then(|toks| parser::parse_unit(&toks, firstparty::CLOUDFLARE_ADAPTER_SRC))
-        {
-            Ok(unit) => parsed.push(ParsedFile {
-                identity_path: PathBuf::from("bynk/cloudflare.bynk"),
-                source_path: PathBuf::from("bynk/cloudflare.bynk"),
-                abs_path: None,
-                source: firstparty::CLOUDFLARE_ADAPTER_SRC.to_string(),
-                unit,
-                kind: UnitKind::Adapter,
-                synthetic: true,
-            }),
+        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
+        match firstparty_parsed(
+            &CACHE,
+            "bynk/cloudflare.bynk",
+            firstparty::CLOUDFLARE_ADAPTER_SRC,
+            UnitKind::Adapter,
+        ) {
+            Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
         }
     }
@@ -1180,55 +1279,40 @@ fn phase_parse(
     // gets from `bynk.map` into the `bynk.list` check just below.
     let uses_locale_types = uses_locale || uses_unit(&parsed, firstparty::LOCALE_TYPES_UNIT);
     if uses_map {
-        match lexer::tokenize(firstparty::BYNK_MAP_SRC)
-            .map_err(|e| vec![e])
-            .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_MAP_SRC))
-        {
-            Ok(unit) => parsed.push(ParsedFile {
-                identity_path: PathBuf::from("bynk/map.bynk"),
-                source_path: PathBuf::from("bynk/map.bynk"),
-                abs_path: None,
-                source: firstparty::BYNK_MAP_SRC.to_string(),
-                unit,
-                kind: UnitKind::Commons,
-                synthetic: true,
-            }),
+        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
+        match firstparty_parsed(
+            &CACHE,
+            "bynk/map.bynk",
+            firstparty::BYNK_MAP_SRC,
+            UnitKind::Commons,
+        ) {
+            Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
         }
     }
     if uses_map || uses_locale || uses_unit(&parsed, firstparty::LIST_UNIT) {
-        match lexer::tokenize(firstparty::BYNK_LIST_SRC)
-            .map_err(|e| vec![e])
-            .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_LIST_SRC))
-        {
-            Ok(unit) => parsed.push(ParsedFile {
-                identity_path: PathBuf::from("bynk/list.bynk"),
-                source_path: PathBuf::from("bynk/list.bynk"),
-                abs_path: None,
-                source: firstparty::BYNK_LIST_SRC.to_string(),
-                unit,
-                kind: UnitKind::Commons,
-                synthetic: true,
-            }),
+        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
+        match firstparty_parsed(
+            &CACHE,
+            "bynk/list.bynk",
+            firstparty::BYNK_LIST_SRC,
+            UnitKind::Commons,
+        ) {
+            Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
         }
     }
     // v0.22a: the first-party string commons — derived helpers over the
     // built-in string kernel (ADR 0046).
     if uses_locale || uses_unit(&parsed, firstparty::STRING_UNIT) {
-        match lexer::tokenize(firstparty::BYNK_STRING_SRC)
-            .map_err(|e| vec![e])
-            .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_STRING_SRC))
-        {
-            Ok(unit) => parsed.push(ParsedFile {
-                identity_path: PathBuf::from("bynk/string.bynk"),
-                source_path: PathBuf::from("bynk/string.bynk"),
-                abs_path: None,
-                source: firstparty::BYNK_STRING_SRC.to_string(),
-                unit,
-                kind: UnitKind::Commons,
-                synthetic: true,
-            }),
+        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
+        match firstparty_parsed(
+            &CACHE,
+            "bynk/string.bynk",
+            firstparty::BYNK_STRING_SRC,
+            UnitKind::Commons,
+        ) {
+            Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
         }
     }
@@ -1238,38 +1322,28 @@ fn phase_parse(
     // `LocaleTag`) and a message-bundle commons's `uses bynk.locale` (for
     // `render`) no longer have to be the same clause.
     if uses_locale_types {
-        match lexer::tokenize(firstparty::BYNK_LOCALE_TYPES_SRC)
-            .map_err(|e| vec![e])
-            .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_LOCALE_TYPES_SRC))
-        {
-            Ok(unit) => parsed.push(ParsedFile {
-                identity_path: PathBuf::from("bynk/locale/types.bynk"),
-                source_path: PathBuf::from("bynk/locale/types.bynk"),
-                abs_path: None,
-                source: firstparty::BYNK_LOCALE_TYPES_SRC.to_string(),
-                unit,
-                kind: UnitKind::Commons,
-                synthetic: true,
-            }),
+        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
+        match firstparty_parsed(
+            &CACHE,
+            "bynk/locale/types.bynk",
+            firstparty::BYNK_LOCALE_TYPES_SRC,
+            UnitKind::Commons,
+        ) {
+            Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
         }
     }
     // Locale capability track, slice 1 (#844): the bundle-free `render`
     // helper and the `message`/`with*` builder API.
     if uses_locale {
-        match lexer::tokenize(firstparty::BYNK_LOCALE_SRC)
-            .map_err(|e| vec![e])
-            .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_LOCALE_SRC))
-        {
-            Ok(unit) => parsed.push(ParsedFile {
-                identity_path: PathBuf::from("bynk/locale.bynk"),
-                source_path: PathBuf::from("bynk/locale.bynk"),
-                abs_path: None,
-                source: firstparty::BYNK_LOCALE_SRC.to_string(),
-                unit,
-                kind: UnitKind::Commons,
-                synthetic: true,
-            }),
+        static CACHE: OnceLock<Result<ParsedFile, Vec<CompileError>>> = OnceLock::new();
+        match firstparty_parsed(
+            &CACHE,
+            "bynk/locale.bynk",
+            firstparty::BYNK_LOCALE_SRC,
+            UnitKind::Commons,
+        ) {
+            Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
         }
     }
@@ -5160,6 +5234,114 @@ fn own_contract_hashes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- Finding #55/#65: memoized first-party parse must not leak gating ----
+
+    /// The first-party parse cache (`firstparty_parsed`) is keyed per-source,
+    /// not per-project — `phase_parse`'s `consumes`/`uses` gating still runs
+    /// fresh for every project. Two in-memory projects that gate in
+    /// *different* first-party units, compiled back-to-back in the same
+    /// process (so both share the same cache), must each see exactly their
+    /// own gated-in set: `bynk.map` (which itself `uses bynk.list`) for the
+    /// first, `bynk.string` alone for the second — never the other's.
+    #[test]
+    fn firstparty_cache_does_not_leak_gating_across_projects() {
+        let out = compile_in_memory(
+            "commons app.only_map\n\nuses bynk.map\n\nfn f() -> Int { 1 }\n",
+            BuildTarget::Bundle,
+            Default::default(),
+        )
+        .unwrap_or_else(|_| panic!("`uses bynk.map` should compile"));
+        let paths: Vec<String> = out
+            .files
+            .iter()
+            .map(|f| f.output_path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(paths.iter().any(|p| p == "bynk/map.ts"), "{paths:?}");
+        assert!(
+            paths.iter().any(|p| p == "bynk/list.ts"),
+            "bynk.map itself uses bynk.list, so list must be injected too: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("string")),
+            "a project that never uses bynk.string must not gain it: {paths:?}"
+        );
+
+        let out2 = compile_in_memory(
+            "commons app.only_string\n\nuses bynk.string\n\nfn f() -> String { \"x\" }\n",
+            BuildTarget::Bundle,
+            Default::default(),
+        )
+        .unwrap_or_else(|_| panic!("`uses bynk.string` should compile"));
+        let paths2: Vec<String> = out2
+            .files
+            .iter()
+            .map(|f| f.output_path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(paths2.iter().any(|p| p == "bynk/string.ts"), "{paths2:?}");
+        assert!(
+            !paths2.iter().any(|p| p.contains("map")),
+            "the shared first-party parse cache must not leak the first \
+             project's gating into this one: {paths2:?}"
+        );
+    }
+
+    // -- Finding #64: `check_project` must not bail past an earlier error --
+
+    /// `compile_project`'s `Mode::Build` bails at the first structural error
+    /// (here, `exports capability` naming an undeclared capability) and never
+    /// reaches the per-unit checking pass — so a completely separate file's
+    /// test-body type error is silently dropped. `check_project`'s
+    /// `Mode::Analyse` must report both.
+    #[test]
+    fn check_project_reports_a_test_body_error_past_an_earlier_structural_error() {
+        let root = scratch_project(
+            "check_past_error",
+            &[
+                ("bynk.toml", "[project]\nname = \"c\"\n"),
+                (
+                    "src/greet.bynk",
+                    "context greet {\n  exports capability { Bogus }\n}\n",
+                ),
+                (
+                    "src/math.bynk",
+                    "commons math {\n  fn double(n: Int) -> Int { n * 2 }\n}\n",
+                ),
+                (
+                    "tests/math_test.bynk",
+                    "suite math\n\ncase \"broken\" {\n  let x: Int = \"not an int\"\n  expect x == 1\n}\n",
+                ),
+            ],
+        );
+        let options = CompileOptions::split(root.to_path_buf(), read_project_paths(&root));
+
+        let check = check_project(&options);
+        assert!(check.has_errors());
+        let categories: Vec<&str> = check.errors.iter().map(|ae| ae.error.category).collect();
+        assert!(
+            categories.contains(&"bynk.exports.undeclared_capability"),
+            "{categories:?}"
+        );
+        assert!(
+            categories.contains(&"bynk.types.let_annotation_mismatch"),
+            "check_project must still report the test body's own type error \
+             past the earlier structural error: {categories:?}"
+        );
+
+        // The contrast: `compile_project`'s bail-fast `Mode::Build` is the
+        // defect `check_project` exists to route `bynk check` around.
+        let failure = match compile_project(&options) {
+            Err(f) => f,
+            Ok(_) => panic!("the structural error must still fail a real build"),
+        };
+        let failure_categories: Vec<&str> =
+            failure.errors.iter().map(|ae| ae.error.category).collect();
+        assert!(
+            !failure_categories.contains(&"bynk.types.let_annotation_mismatch"),
+            "compile_project must still bail before the test-body check runs \
+             (documents why check_project is a separate entry point): {failure_categories:?}"
+        );
+    }
 
     // -- Slice 0: file identity is not the unit-validation path ---------------
 

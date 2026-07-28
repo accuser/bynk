@@ -65,11 +65,10 @@ impl TriviaTable {
     /// comment inside a `match`/list/record/binop — a common, accepted
     /// pattern `bynk-fmt`'s own comment-loss guard already handles
     /// gracefully — would leave `leading`/`trailing` non-empty and trip it on
-    /// every compile, not just on formatting. Kept as a query for tooling
-    /// that wants to inspect drain state (e.g. a future lint) without
-    /// asserting on it here. [`Self::epilogue_is_empty`] is the narrower,
-    /// safe-to-assert check.
-    #[allow(dead_code)]
+    /// every compile, not just on formatting. Instead surfaced through
+    /// [`parse_units_with_drain_check`] (finding #66), whose one caller
+    /// (`bynk-fmt`) *does* care about exactly this signal.
+    /// [`Self::epilogue_is_empty`] is the narrower, safe-to-assert check.
     fn is_fully_drained(&self) -> bool {
         self.leading.iter().all(Vec::is_empty)
             && self.trailing.iter().all(Option::is_none)
@@ -187,40 +186,53 @@ pub fn parse_with_warnings(
 /// rather than just the first. Compared to [`parse_unit`], this never bails;
 /// if no SourceUnit could be parsed at all (e.g. the file is empty or the
 /// header itself fails) the returned `Option` is `None`.
+///
+/// Keeps only the *first* unit — v0.113 allows more than one top-level unit
+/// per file (an atomic `commons` + `suite`, DECISION S), and every existing
+/// caller here is keyed on the primary declaration. [`parse_units_with_recovery`]
+/// is the same recovery parse without that narrowing, for the one caller
+/// (finding #29/#30) that needs every unit a file declares.
 pub fn parse_unit_with_recovery(
     tokens: &[Token],
     source: &str,
 ) -> (Option<SourceUnit>, Vec<CompileError>) {
+    let (units, errors) = parse_units_with_recovery(tokens, source);
+    (units.into_iter().next(), errors)
+}
+
+/// [`parse_unit_with_recovery`], keeping **every** top-level unit instead of
+/// discarding all but the first (finding #29/#30). Used by the IDE's own parse
+/// entry point, which needs to see a trailing `suite` in an atomic
+/// `commons`+`suite` file, not just the primary declaration.
+pub fn parse_units_with_recovery(
+    tokens: &[Token],
+    source: &str,
+) -> (Vec<SourceUnit>, Vec<CompileError>) {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
     p.recover_mode = true;
-    let unit_opt = match p.parse_unit() {
-        Ok(u) => {
-            // v0.113: a file may hold more than one top-level unit (an atomic
-            // `commons` + `suite` file, DECISION S). Consume any further units
-            // so trailing declarations are not mis-reported as stray tokens; the
-            // editor view is keyed on the first (primary) unit. A genuinely
-            // malformed trailing declaration is still surfaced via recovery.
-            while p.peek().is_some() {
-                match p.parse_unit() {
-                    Ok(_) => {}
-                    Err(e) => {
-                        p.recovered_errors.push(e);
-                        break;
-                    }
-                }
+    let mut units = Vec::new();
+    loop {
+        match p.parse_unit() {
+            Ok(u) => units.push(u),
+            Err(e) => {
+                p.recovered_errors.push(e);
+                break;
             }
-            Some(u)
         }
-        Err(e) => {
-            p.recovered_errors.push(e);
-            None
+        // A genuinely malformed trailing declaration is still surfaced via
+        // recovery — checked *after* each successful parse, matching
+        // `parse_unit`'s own "at least once" attempt on the first unit (an
+        // empty file must still produce its usual unexpected-EOF diagnostic,
+        // not silently yield an empty `units` with no error at all).
+        if p.peek().is_none() {
+            break;
         }
-    };
+    }
     let mut all_errors = p.recovered_errors;
     all_errors.append(&mut warnings);
-    (unit_opt, all_errors)
+    (units, all_errors)
 }
 
 /// Parse a token slice into a [`SourceUnit`] — either a commons or a context.
@@ -298,6 +310,24 @@ pub fn parse_units_with_warnings(
     tokens: &[Token],
     source: &str,
 ) -> Result<(Vec<SourceUnit>, Vec<CompileError>), Vec<CompileError>> {
+    parse_units_with_drain_check(tokens, source)
+        .map(|(units, warnings, _drained)| (units, warnings))
+}
+
+/// [`parse_units_with_warnings`] plus whether every comment's trivia was
+/// drained into the AST (`TriviaTable::is_fully_drained`). Finding #66:
+/// `bynk-fmt`'s comment-preservation guard re-tokenized its own rendered
+/// output just to diff comment bodies against the input — wasted work in the
+/// overwhelming common case where nothing was left behind. That guard uses
+/// this drain signal, computed from the same parse it already needs for
+/// rendering, as a fast-path: `true` means every comment landed in the AST,
+/// so re-checking the output can be skipped outright. No other caller needs
+/// the signal, so it rides its own entry point rather than widening
+/// [`parse_units_with_warnings`].
+pub fn parse_units_with_drain_check(
+    tokens: &[Token],
+    source: &str,
+) -> Result<(Vec<SourceUnit>, Vec<CompileError>, bool), Vec<CompileError>> {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
@@ -313,6 +343,7 @@ pub fn parse_units_with_warnings(
         }
     }
     let eof = p.eof_span();
+    let fully_drained = p.trivia.is_fully_drained();
     // `p` (and thus its `&mut warnings` borrow) is no longer used past here, so
     // the local `warnings` are readable again.
     if !errors.is_empty() {
@@ -337,7 +368,7 @@ pub fn parse_units_with_warnings(
         p.trivia.epilogue_is_empty(),
         "a file-trailing comment was left undrained after a successful parse"
     );
-    Ok((units, warnings))
+    Ok((units, warnings, fully_drained))
 }
 
 /// A signed numeric literal in refinement-bound position (v0.21): `InRange`
@@ -382,6 +413,24 @@ struct Parser<'a> {
     /// delimited sub-expression (parentheses, call arguments, list, record
     /// field). Mirrors Rust's `NO_STRUCT_LITERAL` restriction.
     no_record_literal: bool,
+    /// Running count of unclosed `{` seen so far — maintained solely by
+    /// [`Self::bump`] (the one primitive that advances `self.pos`), so it
+    /// always reflects the true nesting depth no matter which parse function
+    /// is on the call stack. Finding #27/#30: `recover_to_top_item` reads it
+    /// against [`Self::item_loop_baseline`] to tell "the enclosing item
+    /// loop's own closing brace" apart from a still-unclosed nested
+    /// construct's — without it, a sync scan that started partway through
+    /// such a construct (an error deep inside a function body) stopped at the
+    /// first `}` it saw, however deeply nested, and the enclosing item loop
+    /// mistook that for its own body's end.
+    brace_depth: usize,
+    /// Stack of `brace_depth` snapshots, one per active item-loop body
+    /// (commons/context/adapter/suite) — pushed right after that body's own
+    /// `{` is consumed (or at loop entry, for a brace-free fragment form),
+    /// popped at the loop's normal exit. `recover_to_top_item` treats its top
+    /// entry as the depth an `}` must return to before it counts as the
+    /// enclosing body's own closing brace rather than a nested construct's.
+    item_loop_baseline: Vec<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -401,6 +450,8 @@ impl<'a> Parser<'a> {
             trivia,
             depth: 0,
             no_record_literal: false,
+            brace_depth: 0,
+            item_loop_baseline: Vec::new(),
         }
     }
 
@@ -548,34 +599,44 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Skip forward to the next top-level item boundary: either a top-level
-    /// declaration keyword (`type`, `fn`, `uses`, `consumes`, `exports`,
-    /// `capability`, `provides`, `service`, `agent`), a closing brace, or
-    /// end-of-input. Used only in recovery mode.
+    /// Skip forward to the next top-level item boundary: either an
+    /// [`is_item_start`] keyword at the enclosing item loop's own nesting
+    /// depth, a closing brace that returns to that depth, or end-of-input.
+    /// Used only in recovery mode.
+    ///
+    /// Finding #27/#30: brace-depth-gated against
+    /// [`Self::item_loop_baseline`], so a `}` deep inside a still-unclosed
+    /// nested construct (an error partway through a function body, itself
+    /// inside a `match` arm) is skipped over rather than mistaken for the
+    /// enclosing body's own closing brace — the old flat scan stopped at
+    /// literally the first `}` it saw, however deep, handing the item loop a
+    /// brace that did not belong to it and making it return with zero items.
     fn recover_to_top_item(&mut self) {
+        let baseline = self.item_loop_baseline.last().copied().unwrap_or(0);
         while let Some(t) = self.peek() {
             match t.kind {
-                TokenKind::Type
-                | TokenKind::Fn
-                | TokenKind::Messages
-                | TokenKind::Uses
-                | TokenKind::Consumes
-                | TokenKind::Exports
-                | TokenKind::Capability
-                | TokenKind::Provides
-                | TokenKind::Stub
-                | TokenKind::Service
-                | TokenKind::Agent
-                | TokenKind::Suite
-                | TokenKind::Case
-                | TokenKind::RBrace
-                | TokenKind::Commons
-                | TokenKind::Context => return,
+                TokenKind::RBrace if self.brace_depth == baseline => return,
+                _ if self.brace_depth == baseline && is_item_start(t.kind) => return,
                 _ => {
                     self.bump();
                 }
             }
         }
+    }
+
+    /// Mark the start of a top-level item loop (`declarations.rs`'s
+    /// `parse_commons_brace`/`_fragment`, `parse_context_brace`/`_fragment`,
+    /// `parse_test_brace`/`_fragment`, `parse_adapter_body`) — called right
+    /// after that body's own `{` is consumed (brace form) or at the loop's
+    /// own entry (fragment form, which has no enclosing brace of its own).
+    /// Paired with [`Self::exit_item_loop`] at the loop's normal exit.
+    fn enter_item_loop(&mut self) {
+        self.item_loop_baseline.push(self.brace_depth);
+    }
+
+    /// Pair of [`Self::enter_item_loop`].
+    fn exit_item_loop(&mut self) {
+        self.item_loop_baseline.pop();
     }
 
     fn peek(&self) -> Option<Token> {
@@ -616,7 +677,12 @@ impl<'a> Parser<'a> {
 
     fn bump(&mut self) -> Option<Token> {
         let t = self.peek();
-        if t.is_some() {
+        if let Some(t) = t {
+            match t.kind {
+                TokenKind::LBrace => self.brace_depth += 1,
+                TokenKind::RBrace => self.brace_depth = self.brace_depth.saturating_sub(1),
+                _ => {}
+            }
             self.pos += 1;
         }
         t
@@ -889,6 +955,33 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
     )
 }
 
+/// True when `kind` starts a top-level unit (`commons`/`context`/`adapter`/
+/// `suite`) or an item within one of their bodies — every keyword any of
+/// `parse_commons_brace`/`_fragment`, `parse_context_brace`/`_fragment`,
+/// `parse_test_brace`/`_fragment`, or `parse_adapter_body` dispatches on
+/// (`declarations.rs`). The single set [`Parser::recover_to_top_item`]'s sync
+/// scan checks against — finding #27/#30: that scan had drifted from what the
+/// item loops actually recognise (`Property`, `Actor`, `Event`, `Binding`,
+/// and the `adapter` unit keyword itself were all missing), so an error
+/// recovery sync could walk past a real item/unit boundary instead of
+/// stopping there.
+fn is_item_start(kind: TokenKind) -> bool {
+    use TokenKind::*;
+    matches!(
+        kind,
+        // Top-level unit keywords.
+        Commons | Context | Adapter | Suite
+        // Body items shared across commons/context/adapter.
+        | Type | Fn | Messages | Event | Uses
+        // Context/adapter-only body items.
+        | Consumes | Exports | Capability | Provides | Service | Agent | Actor
+        // Adapter-only.
+        | Binding
+        // Suite/test-only body items.
+        | Stub | Case | Property
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -905,6 +998,78 @@ mod tests {
             Err(e) => return (None, vec![e]),
         };
         parse_unit_with_recovery(&toks, src)
+    }
+
+    /// Finding #29/#30: `parse_units_with_recovery` keeps every top-level unit
+    /// an atomic `commons`+`suite` file declares (v0.113, DECISION S), where
+    /// `parse_unit_with_recovery` keeps only the first — the defect the IDE's
+    /// old single-unit parse entry point had (it silently discarded the
+    /// trailing `suite`).
+    #[test]
+    fn parse_units_with_recovery_keeps_every_top_level_unit() {
+        let src =
+            "commons m {\n  fn f() -> Int { 1 }\n}\n\nsuite m\n\ncase \"c\" {\n  expect true\n}\n";
+        let toks = tokenize(src).unwrap();
+        let (units, errors) = parse_units_with_recovery(&toks, src);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(units.len(), 2, "expected both units, got {units:?}");
+        assert!(matches!(units[0], SourceUnit::Commons(_)));
+        assert!(matches!(units[1], SourceUnit::Suite(_)));
+
+        // The singular wrapper still narrows to just the first, unchanged.
+        let (unit, errors) = parse_unit_with_recovery(&toks, src);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(matches!(unit, Some(SourceUnit::Commons(_))));
+    }
+
+    /// `parse_unit_with_recovery` always attempts at least one parse, even on
+    /// empty input — `parse_units_with_recovery`'s loop must preserve that
+    /// (its `while`-style peek check alone would skip the body entirely and
+    /// silently return no error), since 16+ existing callers rely on an empty
+    /// file still producing its usual diagnostic rather than a silent `None`
+    /// with no error at all.
+    #[test]
+    fn empty_input_still_reports_an_error_through_the_plural_entry_point() {
+        let toks = tokenize("").unwrap();
+        let (units, errors) = parse_units_with_recovery(&toks, "");
+        assert!(units.is_empty());
+        assert!(
+            !errors.is_empty(),
+            "an empty file must still produce a diagnostic, not silently no units and no error"
+        );
+
+        let (unit, unit_errors) = parse_unit_with_recovery(&toks, "");
+        assert!(unit.is_none());
+        assert_eq!(
+            errors.len(),
+            unit_errors.len(),
+            "the singular wrapper must see the same error(s) as the plural entry point"
+        );
+    }
+
+    /// Finding #66: `parse_units_with_drain_check`'s `fully_drained` flag is
+    /// `bynk-fmt`'s signal for whether its comment-loss guard can skip a
+    /// re-tokenize-and-diff of its own output. It must be `true` for an
+    /// ordinary file (every comment sits before a declaration/statement or
+    /// trails one) and `false` the moment a comment sits inside an expression
+    /// subtree, where `TriviaTable` has no field to attach it to.
+    #[test]
+    fn drain_check_reports_expression_interior_comments_as_undrained() {
+        let ordinary = "commons x {\n-- note\ntype T = Int where Positive\n}\n";
+        let toks = tokenize(ordinary).unwrap();
+        let (_, _, drained) = parse_units_with_drain_check(&toks, ordinary).unwrap();
+        assert!(
+            drained,
+            "a declaration-leading comment must be fully drained"
+        );
+
+        let lossy = "commons x {\n  fn f() -> Int {\n    1 + -- note\n    2\n  }\n}\n";
+        let toks = tokenize(lossy).unwrap();
+        let (_, _, drained) = parse_units_with_drain_check(&toks, lossy).unwrap();
+        assert!(
+            !drained,
+            "a comment inside a binop expression must be reported as undrained"
+        );
     }
 
     #[test]
@@ -1006,6 +1171,56 @@ mod tests {
             "B should be parsed after A's failure; got {names:?}"
         );
         assert!(!errors.is_empty(), "expected at least one parse error");
+    }
+
+    /// Finding #27/#30: an error two levels deep inside `f`'s body (a
+    /// `match` arm's own block) used to make `recover_to_top_item`'s flat,
+    /// depth-blind scan stop at the *first* `}` it saw — the arm block's own,
+    /// not `f`'s. Two more `}` (the match's, then `f`'s) then got consumed one
+    /// at a time across repeated recovery re-entries, and the outer item loop
+    /// eventually mistook the commons's *own* closing `}` for having arrived
+    /// early, returning zero items and a spurious second
+    /// `bynk.parse.expected_unit_header` error. With brace-depth tracking, `g`
+    /// is recovered as the sole item and only `f`'s own error is reported.
+    #[test]
+    fn recovery_skips_a_nested_blocks_own_closing_brace() {
+        let src = "commons m {\n  \
+                   fn f() -> Int {\n    \
+                   match 1 {\n      \
+                   is 1 -> { let z = }\n      \
+                   is _ -> 2\n    \
+                   }\n  \
+                   }\n  \
+                   fn g() -> Int { 2 }\n\
+                   }\n";
+        let (unit, errors) = parse_recover_str(src);
+        let unit = unit.expect("recovery should produce a partial AST");
+        let SourceUnit::Commons(c) = unit else {
+            panic!("expected commons")
+        };
+        let names: Vec<_> = c
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                CommonsItem::Fn(f) => match &f.name {
+                    FnName::Free(id) => Some(id.name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec!["g".to_string()],
+            "g must still be recovered as an item; got {names:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.category == "bynk.parse.expected_unit_header"),
+            "the outer body's own closing brace must not be mistaken for \
+             end-of-file: {errors:?}"
+        );
     }
 
     #[test]
@@ -1657,6 +1872,35 @@ mod tests {
         );
     }
 
+    /// Finding #27/#30: pins `is_item_start` to exactly the keyword set
+    /// `declarations.rs`'s six item loops (`parse_commons_brace`/`_fragment`,
+    /// `parse_context_brace`/`_fragment`, `parse_test_brace`/`_fragment`) plus
+    /// `parse_adapter_body` dispatch on, as of this writing — the drift this
+    /// finding fixed (`Property`, `Actor`, `Event`, `Binding`, and the
+    /// `adapter` unit keyword itself were all missing from
+    /// `recover_to_top_item`'s old hand-written sync list, even though every
+    /// one of them is a real item/unit start). Adding a new item keyword to
+    /// any of those loops should mean deliberately updating this list too,
+    /// not silently leaving recovery unable to resync at it.
+    #[test]
+    fn is_item_start_matches_the_pinned_keyword_set() {
+        use TokenKind::*;
+        let expected_true = [
+            Commons, Context, Adapter, Suite, Type, Fn, Messages, Event, Uses, Consumes, Exports,
+            Capability, Provides, Service, Agent, Actor, Binding, Stub, Case, Property,
+        ];
+        for kind in expected_true {
+            assert!(is_item_start(kind), "{kind:?} must be an item start");
+        }
+        let expected_false = [
+            Ident, Plus, Minus, Colon, Dot, Eq, LBrace, RBrace, LParen, RParen, If, Else, Let,
+            Where, True, False, Match, Is, On, Given,
+        ];
+        for kind in expected_false {
+            assert!(!is_item_start(kind), "{kind:?} must not be an item start");
+        }
+    }
+
     /// Fuzz-found (#516): a context-only keyword at item position in a
     /// commons errors without consuming the token, and the recovery sync
     /// stops at exactly that keyword — without a progress guard the item
@@ -1719,6 +1963,21 @@ mod tests {
             panic!("expected suite");
         };
         assert_eq!(s.trailing_comments, vec![" afterword".to_string()]);
+    }
+
+    /// Finding #30: unlike the three regressions just above,
+    /// `parse_adapter_body`'s brace-closing path never called
+    /// `take_epilogue` at all (not a regression from a shared pattern — it
+    /// simply never had the call), so a comment after a brace-form adapter's
+    /// closing `}` was silently dropped. The fragment form (no braces) was
+    /// already correct.
+    #[test]
+    fn trailing_file_comment_after_a_brace_form_adapter_is_not_dropped() {
+        let src = "adapter x {\n  binding \"./x.ts\"\n}\n-- afterword\n";
+        let SourceUnit::Adapter(a) = parse_unit_str(src).unwrap() else {
+            panic!("expected adapter");
+        };
+        assert_eq!(a.trailing_comments, vec![" afterword".to_string()]);
     }
 
     // ---- #636: `if`/`match` condition vs record construction ----

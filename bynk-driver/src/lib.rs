@@ -192,6 +192,62 @@ pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<Str
         .collect()
 }
 
+/// Render every diagnostic from a [`project::ProjectCheck`] (finding #64) with
+/// the same per-file ariadne context [`print_project_failure`] gives its own,
+/// errors-only list. Unlike that renderer, a `ProjectCheck`'s list can
+/// legitimately mix both severities — the unattributed fallback line names its
+/// actual severity ([`bynk_render::severity_word`]) rather than
+/// `print_project_failure`'s bare `[category]: message` (silently correct only
+/// because that list is errors-only by construction).
+pub fn print_project_check(check: &project::ProjectCheck) {
+    for ae in &check.errors {
+        match attributed_snapshot(ae, &check.snapshots) {
+            Some((label, text)) => {
+                bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
+            }
+            None => {
+                eprintln!(
+                    "{}[{}]: {}",
+                    bynk_render::severity_word(&ae.error),
+                    ae.error.category,
+                    ae.error.message
+                );
+                for note in &ae.error.notes {
+                    eprintln!("  note: {note}");
+                }
+                for (_, label) in &ae.error.labels {
+                    eprintln!("  label: {label}");
+                }
+            }
+        }
+    }
+}
+
+/// [`print_project_check`]'s `--format short` analogue, mirroring
+/// [`project_failure_short_lines`].
+pub fn project_check_short_lines(check: &project::ProjectCheck) -> Vec<String> {
+    check
+        .errors
+        .iter()
+        .map(|ae| match attributed_snapshot(ae, &check.snapshots) {
+            Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
+            None => format!(
+                "{}[{}]: {}",
+                bynk_render::severity_word(&ae.error),
+                ae.error.category,
+                ae.error.message
+            ),
+        })
+        .collect()
+}
+
+/// [`print_project_check`] via [`project_check_short_lines`].
+pub fn print_project_check_short(check: &project::ProjectCheck) {
+    for line in project_check_short_lines(check) {
+        eprintln!("{line}");
+    }
+}
+
 /// The `fmt` command body shared by `bynkc fmt` and `bynk fmt`: each input is
 /// formatted and rewritten only when it changes; `--check` reports
 /// non-canonical files without writing; `-` reads stdin and writes the
@@ -353,9 +409,12 @@ fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
 }
 
 /// The `check` command body shared by `bynkc check` and `bynk check`: a
-/// directory routes through [`project::compile_project`], a single file
-/// through [`bynk_emit::compile_with_warnings`]. `short` selects the one-line
-/// `--format short` rendering. `prog` prefixes messages (`bynk: …`).
+/// directory routes through [`project::check_project`] (finding #64 —
+/// non-bailing, so a structural error anywhere does not hide diagnostics
+/// elsewhere the way `compile_project`'s bail-fast `Mode::Build` would), a
+/// single file through [`bynk_emit::compile_with_warnings`]. `short` selects
+/// the one-line `--format short` rendering. `prog` prefixes messages
+/// (`bynk: …`).
 pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
     if input.is_dir() {
         let options = match try_project_options(input) {
@@ -365,23 +424,17 @@ pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        match project::compile_project(&options) {
-            Ok(out) => {
-                if short {
-                    print_project_warnings_short(&out.warnings, &out.snapshots);
-                } else {
-                    print_project_warnings(&out.warnings, &out.snapshots);
-                }
-                ExitCode::SUCCESS
-            }
-            Err(failure) => {
-                if short {
-                    print_project_failure_short(&failure);
-                } else {
-                    print_project_failure(&failure);
-                }
-                ExitCode::FAILURE
-            }
+        let check = project::check_project(&options);
+        let has_errors = check.has_errors();
+        if short {
+            print_project_check_short(&check);
+        } else {
+            print_project_check(&check);
+        }
+        if has_errors {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
         }
     } else {
         let source = match std::fs::read_to_string(input) {

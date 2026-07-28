@@ -728,10 +728,19 @@ pub fn contract_clause_kind(line: &str) -> Option<bool> {
 /// The record fields of a project (or embedded-surface) type named `name`, as
 /// field-name completions — the construction-position half of what
 /// [`value_member_candidates`] offers on a value receiver.
+///
+/// Finding #62: stops at the first unit declaring `name` rather than unioning
+/// fields across every matching unit — `for_each_unit` can otherwise yield
+/// the live buffer *and* that same file's stale on-disk copy, and a name
+/// removed from the buffer's declaration must not resurface from the disk
+/// copy's fields.
 fn record_field_names(name: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut found = false;
     for_each_unit(doc_text, files, |unit| {
+        if found {
+            return;
+        }
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -743,15 +752,15 @@ fn record_field_names(name: &str, doc_text: &str, files: Option<&[PathBuf]>) -> 
                 && t.name.name == name
                 && let TypeBody::Record(r) = &t.body
             {
+                found = true;
                 for f in &r.fields {
-                    if seen.insert(f.name.name.clone()) {
-                        out.push(Completion::item(
-                            f.name.name.clone(),
-                            CompletionKind::Field,
-                            Some(format!("field of `{name}`")),
-                        ));
-                    }
+                    out.push(Completion::item(
+                        f.name.name.clone(),
+                        CompletionKind::Field,
+                        Some(format!("field of `{name}`")),
+                    ));
                 }
+                return;
             }
         }
     });
@@ -762,10 +771,16 @@ fn record_field_names(name: &str, doc_text: &str, files: Option<&[PathBuf]>) -> 
 /// named `name`, as pattern completions — the `is`/`match` candidate set once
 /// the scrutinee's type is known (resolved handler-side from `expr_types`).
 /// `pub` so the completion handler can offer them at an `is` position.
+///
+/// Finding #62: stops at the first unit declaring `name`, for the same
+/// buffer-vs-stale-disk-copy reason as `record_field_names` above.
 pub fn sum_type_variants(name: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut found = false;
     for_each_unit(doc_text, files, |unit| {
+        if found {
+            return;
+        }
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -777,15 +792,15 @@ pub fn sum_type_variants(name: &str, doc_text: &str, files: Option<&[PathBuf]>) 
                 && t.name.name == name
                 && let TypeBody::Sum(s) = &t.body
             {
+                found = true;
                 for v in &s.variants {
-                    if seen.insert(v.name.name.clone()) {
-                        out.push(Completion::item(
-                            v.name.name.clone(),
-                            CompletionKind::Variant,
-                            Some(format!("variant of `{name}`")),
-                        ));
-                    }
+                    out.push(Completion::item(
+                        v.name.name.clone(),
+                        CompletionKind::Variant,
+                        Some(format!("variant of `{name}`")),
+                    ));
                 }
+                return;
             }
         }
     });
@@ -1575,9 +1590,17 @@ fn consumable_units(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion
 }
 
 /// The capability names a unit `exports capability`.
+///
+/// Finding #62: a first-wins guard, for the same buffer-vs-stale-disk-copy
+/// reason as [`record_field_names`] — the `BTreeSet` still dedups a single
+/// matching unit's own (possibly repeated) export clauses.
 fn capabilities_of_unit(unit: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
+    let mut found = false;
     for_each_unit(doc_text, files, |u| {
+        if found {
+            return;
+        }
         let (name, exports) = match u {
             SourceUnit::Context(c) => (c.name.joined(), &c.exports),
             SourceUnit::Adapter(a) => (a.name.joined(), &a.exports),
@@ -1586,6 +1609,7 @@ fn capabilities_of_unit(unit: &str, doc_text: &str, files: Option<&[PathBuf]>) -
         if name != unit {
             return;
         }
+        found = true;
         for clause in exports {
             if clause.kind == ExportKind::Capability {
                 for n in &clause.names {
@@ -2712,6 +2736,78 @@ mod tests {
             names.iter().any(|n| n == "proj.sibling"),
             "project file: {names:?}"
         );
+    }
+
+    /// Finding #62: when the buffer and an on-disk file both declare a type
+    /// under the same name — the buffer's stale disk copy, or two distinct
+    /// files that happen to collide — `record_field_names` and
+    /// `sum_type_variants` must take the first match (the buffer, since
+    /// `for_each_unit` yields it before `files`) rather than unioning both,
+    /// so a field/variant removed from the live buffer does not resurface
+    /// from the stale copy.
+    #[test]
+    fn same_named_declarations_do_not_union_across_units() {
+        let dir =
+            std::env::temp_dir().join(format!("bynk-lsp-dedup-first-wins-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let stale = dir.join("stale.bynk");
+        std::fs::write(
+            &stale,
+            "commons m {\n  \
+             type Rec = { total: Int, old_field: Int }\n  \
+             type Status = enum { Pending, Retired }\n\
+             }\n",
+        )
+        .unwrap();
+
+        let buffer = "commons m {\n  \
+                       type Rec = { total: Int }\n  \
+                       type Status = enum { Pending, Shipped }\n\
+                       }\n";
+        let files = Some(std::slice::from_ref(&stale));
+
+        let fields: Vec<String> = record_field_names("Rec", buffer, files)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert_eq!(fields, vec!["total".to_string()], "{fields:?}");
+
+        let variants: Vec<String> = sum_type_variants("Status", buffer, files)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert_eq!(
+            variants,
+            vec!["Pending".to_string(), "Shipped".to_string()],
+            "{variants:?}"
+        );
+    }
+
+    /// Finding #62: `capabilities_of_unit` takes the first unit named `unit`
+    /// rather than unioning exports across every matching unit — the same
+    /// buffer-vs-stale-disk-copy reasoning as
+    /// `same_named_declarations_do_not_union_across_units`.
+    #[test]
+    fn capabilities_of_unit_does_not_union_across_units() {
+        let dir =
+            std::env::temp_dir().join(format!("bynk-lsp-cap-first-wins-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let stale = dir.join("stale.bynk");
+        std::fs::write(
+            &stale,
+            "adapter tokens {\n  \
+             exports capability { Jwt, Retired }\n\
+             }\n",
+        )
+        .unwrap();
+
+        let buffer = "adapter tokens {\n  exports capability { Jwt }\n}\n";
+        let files = Some(std::slice::from_ref(&stale));
+
+        let caps = capabilities_of_unit("tokens", buffer, files);
+        assert_eq!(caps, vec!["Jwt".to_string()], "{caps:?}");
     }
 
     #[test]

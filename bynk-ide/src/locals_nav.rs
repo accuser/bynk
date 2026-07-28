@@ -8,6 +8,7 @@
 //! inner binding's uses — and every binding's *def* token — are excluded).
 //! Pure over the analysed snapshot, like `index_queries`.
 
+use crate::symbols::is_dot_preceded;
 use bynk_check::locals::{LocalBinding, LocalKind, binding_at_def, locals_at};
 use bynk_syntax::lexer::{self, TokenKind};
 use bynk_syntax::span::Span;
@@ -15,10 +16,20 @@ use bynk_syntax::span::Span;
 /// The identifier-token name covering `offset`, if any. Interpolation holes are
 /// expanded (issue #473), so a cursor inside `"… \(name) …"` resolves to the
 /// hole's `name` identifier rather than the opaque `InterpStr` token.
+///
+/// Finding #63: a field-access member name (`items` in `p.items`) is lexically
+/// indistinguishable from a bare identifier — excluded via `is_dot_preceded`
+/// (the same guard `symbols.rs` uses for state/store-op token matching, #596)
+/// so the cursor sitting on a field name never resolves to a same-named local.
 fn ident_at(text: &str, offset: usize) -> Option<(&str, Span)> {
     let toks = lexer::tokenize_expanding_holes(text).ok()?;
     toks.into_iter()
-        .find(|t| t.kind == TokenKind::Ident && t.span.start <= offset && offset <= t.span.end)
+        .find(|t| {
+            t.kind == TokenKind::Ident
+                && t.span.start <= offset
+                && offset <= t.span.end
+                && !is_dot_preceded(text, t.span.start)
+        })
         .map(|t| (&text[t.span.start..t.span.end], t.span))
 }
 
@@ -56,6 +67,11 @@ pub fn local_sites_at(locals: &[LocalBinding], text: &str, offset: usize) -> Opt
         }
         // A binding's own def token is not a use of anything.
         if locals.iter().any(|b| b.def_span == t.span) {
+            continue;
+        }
+        // Finding #63: a field-access member name (`r.total`) is not a use of
+        // a same-named local, even when one is in scope.
+        if is_dot_preceded(text, t.span.start) {
             continue;
         }
         if t.span.start < target.scope.start || t.span.end > target.scope.end {
@@ -109,10 +125,14 @@ pub fn local_token_sites(locals: &[LocalBinding], text: &str) -> Vec<(Span, bool
         let name = &text[t.span.start..t.span.end];
         if locals.iter().any(|b| b.def_span == t.span) {
             out.push((t.span, true)); // a binding's def
-        } else if locals_at(locals, t.span.start)
-            .into_iter()
-            .any(|b| b.name == name)
+        } else if !is_dot_preceded(text, t.span.start)
+            && locals_at(locals, t.span.start)
+                .into_iter()
+                .any(|b| b.name == name)
         {
+            // Finding #63: a field-access member name is excluded — a def
+            // token is never dot-preceded (it's a fresh binding, not an
+            // access), so that branch above is unaffected by this guard.
             out.push((t.span, false)); // a use that resolves to a local
         }
     }
@@ -175,6 +195,54 @@ mod tests {
     fn not_on_a_local_yields_none() {
         let locals = bindings();
         assert!(local_sites_at(&locals, TEXT, 0).is_none()); // on `fn`
+    }
+
+    /// Finding #63: `total` is both a local *and*, unrelated, a record field
+    /// name — the `r.total` field access must never be mistaken for a use of
+    /// the local, in any of the three query surfaces this module exposes.
+    #[test]
+    fn field_access_is_not_mistaken_for_a_local_use() {
+        const TEXT: &str = "fn f(r: Rec) -> Int {\n  let total = 1\n  r.total\n}";
+        let total_let = TEXT.find("total").unwrap();
+        let field_total = TEXT.rfind("total").unwrap();
+        assert_ne!(field_total, total_let, "def and field access are distinct");
+        let locals = vec![LocalBinding {
+            name: "total".into(),
+            def_span: Span {
+                start: total_let,
+                end: total_let + "total".len(),
+            },
+            kind: LocalKind::Let,
+            ty: "Int".into(),
+            scope: Span {
+                start: total_let,
+                end: TEXT.len(),
+            },
+        }];
+        let field_span = Span {
+            start: field_total,
+            end: field_total + "total".len(),
+        };
+
+        // Cursor on the field access resolves to nothing — not the local.
+        assert!(
+            local_definition_at(&locals, TEXT, field_total).is_none(),
+            "a field-access member name must not resolve to the same-named local"
+        );
+
+        // The local's own use-site list must not include the field access.
+        let sites = local_sites_at(&locals, TEXT, total_let).expect("on the local's own def");
+        assert!(
+            !sites.contains(&field_span),
+            "field access wrongly counted as a use: {sites:?}"
+        );
+
+        // Semantic-token colouring must not mark the field access as a use.
+        let token_sites = local_token_sites(&locals, TEXT);
+        assert!(
+            !token_sites.contains(&(field_span, false)),
+            "field access wrongly coloured as a local use: {token_sites:?}"
+        );
     }
 
     #[test]

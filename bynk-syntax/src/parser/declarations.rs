@@ -119,6 +119,7 @@ impl<'a> Parser<'a> {
         documentation: Option<String>,
     ) -> Result<Commons, CompileError> {
         self.expect(TokenKind::LBrace, "after the commons name")?;
+        self.enter_item_loop();
         let mut items = Vec::new();
         let mut uses = Vec::new();
         let trailing_comments: Vec<String>;
@@ -286,6 +287,7 @@ impl<'a> Parser<'a> {
             }
         }
         let end = self.expect(TokenKind::RBrace, "to close the commons body")?;
+        self.exit_item_loop();
         // A comment after the closing `}` (this being the last declaration in
         // the file) is a no-op `take_epilogue` unless it truly is the last
         // content in the file — see `parse_commons_fragment`'s matching call.
@@ -309,6 +311,7 @@ impl<'a> Parser<'a> {
         name: QualifiedName,
         documentation: Option<String>,
     ) -> Result<Commons, CompileError> {
+        self.enter_item_loop();
         let mut items = Vec::new();
         let mut uses = Vec::new();
         // Cover the header (`commons <name>`) so the unit span stays valid even
@@ -490,6 +493,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        self.exit_item_loop();
         Ok(Commons {
             name,
             items,
@@ -622,6 +626,7 @@ impl<'a> Parser<'a> {
         tier: Option<TestTier>,
     ) -> Result<SuiteDecl, CompileError> {
         self.expect(TokenKind::LBrace, "after the test target name")?;
+        self.enter_item_loop();
         let mut uses = Vec::new();
         let mut stubs = Vec::new();
         let mut cases = Vec::new();
@@ -728,6 +733,7 @@ impl<'a> Parser<'a> {
             }
         }
         let end = self.expect(TokenKind::RBrace, "to close the test body")?;
+        self.exit_item_loop();
         // See `parse_commons_brace`'s matching call.
         let mut trailing_comments = trailing_comments;
         trailing_comments.extend(self.trivia.take_epilogue());
@@ -753,6 +759,7 @@ impl<'a> Parser<'a> {
         documentation: Option<String>,
         tier: Option<TestTier>,
     ) -> Result<SuiteDecl, CompileError> {
+        self.enter_item_loop();
         let mut uses = Vec::new();
         let mut stubs = Vec::new();
         let mut cases = Vec::new();
@@ -871,6 +878,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        self.exit_item_loop();
         Ok(SuiteDecl {
             target,
             uses,
@@ -1131,6 +1139,7 @@ impl<'a> Parser<'a> {
         documentation: Option<String>,
     ) -> Result<Context, CompileError> {
         self.expect(TokenKind::LBrace, "after the context name")?;
+        self.enter_item_loop();
         let mut items = Vec::new();
         let mut uses = Vec::new();
         let mut consumes = Vec::new();
@@ -1351,6 +1360,7 @@ impl<'a> Parser<'a> {
             }
         }
         let end = self.expect(TokenKind::RBrace, "to close the context body")?;
+        self.exit_item_loop();
         // See `parse_commons_brace`'s matching call.
         let mut trailing_comments = trailing_comments;
         trailing_comments.extend(self.trivia.take_epilogue());
@@ -1374,6 +1384,7 @@ impl<'a> Parser<'a> {
         name: QualifiedName,
         documentation: Option<String>,
     ) -> Result<Context, CompileError> {
+        self.enter_item_loop();
         let mut items = Vec::new();
         let mut uses = Vec::new();
         let mut consumes = Vec::new();
@@ -1657,6 +1668,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        self.exit_item_loop();
         Ok(Context {
             name,
             items,
@@ -1687,6 +1699,7 @@ impl<'a> Parser<'a> {
         if brace {
             self.expect(TokenKind::LBrace, "after the adapter name")?;
         }
+        self.enter_item_loop();
         let mut items = Vec::new();
         let mut uses = Vec::new();
         let mut exports = Vec::new();
@@ -1928,10 +1941,19 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        let mut trailing_comments = trailing_comments;
         let span = if brace {
             let end = self.expect(TokenKind::RBrace, "to close the adapter body")?;
+            self.exit_item_loop();
+            // Finding #30: unlike `parse_commons_brace`/`parse_context_brace`/
+            // `parse_test_brace`, this brace-closing path never drained a
+            // file-trailing comment — the fragment path just above already
+            // does (`None if !brace`'s own `take_epilogue` call), so only an
+            // `adapter … { … }` (not `adapter …\n\n…`) lost its last comment.
+            trailing_comments.extend(self.trivia.take_epilogue());
             start.merge(end.span)
         } else {
+            self.exit_item_loop();
             start.merge(last_span)
         };
         Ok(AdapterDecl {

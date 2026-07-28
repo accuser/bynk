@@ -19,12 +19,21 @@ pub(crate) fn suite_effective_tier_is_system(suite: &SuiteDecl) -> bool {
 /// Read a source file, honouring the overlay (keyed by canonicalised
 /// absolute path; falls back to the literal path so a not-yet-created
 /// overlay entry still matches).
+///
+/// Finding #55/#65: tries the literal path first, `canonicalize()` only on a
+/// miss — an in-memory/wasm project's synthetic overlay keys never exist on
+/// disk, so `canonicalize()` was a guaranteed-failing syscall on every read of
+/// every such file, for no benefit (the literal-path lookup below already
+/// finds the same entry).
 pub(crate) fn read_source(
     path: &Path,
     overlay: &HashMap<PathBuf, String>,
 ) -> std::io::Result<String> {
+    if let Some(text) = overlay.get(path) {
+        return Ok(text.clone());
+    }
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if let Some(text) = overlay.get(&canonical).or_else(|| overlay.get(path)) {
+    if let Some(text) = overlay.get(&canonical) {
         return Ok(text.clone());
     }
     fs::read_to_string(path)
@@ -36,6 +45,7 @@ pub(crate) fn read_source(
 /// conflating them is what made a two-root project's file identity ambiguous.
 /// They coincide for a single-root project, which is why one field sufficed
 /// until `include` could hold two entries.
+#[derive(Clone)]
 pub(crate) struct ParsedFile {
     /// The path **relative to the `include` root that contains this file** —
     /// the form unit validation requires. `src/todos.bynk` under the `src`
@@ -345,5 +355,24 @@ pub(crate) fn check_file_directory_conflicts(
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Finding #55/#65: a synthetic path that never exists on disk (the
+    /// in-memory/wasm case) must still resolve via the overlay's literal-path
+    /// entry — `canonicalize()` on such a path always fails, so the fix tries
+    /// the literal path first rather than paying for that failing syscall on
+    /// every read.
+    #[test]
+    fn read_source_finds_a_synthetic_overlay_path_that_does_not_exist_on_disk() {
+        let path = PathBuf::from("./__bynk_in_memory__/t.bynk");
+        let mut overlay = HashMap::new();
+        overlay.insert(path.clone(), "context t\n".to_string());
+        let got = read_source(&path, &overlay).expect("the overlay entry must be found");
+        assert_eq!(got, "context t\n");
     }
 }

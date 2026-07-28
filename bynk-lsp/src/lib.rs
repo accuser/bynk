@@ -783,11 +783,25 @@ impl Backend {
     /// The owning project's `.bynk` files, from the compiler's discovery —
     /// `exclude` and the `out`/`node_modules` caches honoured. Backs the unit
     /// enumeration completion does; `None` in single-file mode.
+    ///
+    /// Finding #62: the cursor's own file is filtered out here, once, for
+    /// every caller — `bynk-ide`'s completion helpers already parse it fresh
+    /// from the buffer (`for_each_unit`'s `doc_text`), so leaving it in
+    /// `files` would additionally read its stale on-disk copy, mirroring the
+    /// same skip `find_declaration_cross_file` already does for the same
+    /// reason.
     async fn project_files(&self, uri: &Url) -> Option<Vec<PathBuf>> {
         let roots = self.analysis_roots_for(uri).await?;
-        tokio::task::spawn_blocking(move || bynk_ide::discover_files(&roots))
-            .await
-            .ok()
+        let current = uri.to_file_path().ok();
+        tokio::task::spawn_blocking(move || {
+            let mut files = bynk_ide::discover_files(&roots);
+            if let Some(current) = current {
+                files.retain(|p| p != &current);
+            }
+            files
+        })
+        .await
+        .ok()
     }
 
     /// v0.31: the def + use spans of the local under the cursor (def first), or
@@ -4282,6 +4296,37 @@ mod tests {
                 "…and that file must be in the round",
             );
         }
+    }
+
+    /// Finding #62: `project_files` must exclude the calling file's own path —
+    /// `bynk-ide`'s completion helpers already parse it fresh from the live
+    /// buffer, so leaving it in `files` would additionally serve its on-disk
+    /// copy (stale relative to any unsaved edit) alongside the buffer parse.
+    #[tokio::test]
+    async fn project_files_excludes_the_calling_file() {
+        let s = scratch_project(
+            "self_excl",
+            &[
+                ("bynk.toml", "[project]\nname = \"self_excl\"\n"),
+                ("a.bynk", "context a\n"),
+                ("b.bynk", "context b\n"),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let abs = s.0.join("a.bynk");
+        let uri = Url::from_file_path(abs.canonicalize().unwrap_or(abs)).unwrap();
+        let files = backend
+            .project_files(&uri)
+            .await
+            .expect("a project root resolves to a file list");
+        assert!(
+            !files.iter().any(|p| p.file_name().unwrap() == "a.bynk"),
+            "the calling file's own path must not be in its own project file list: {files:?}"
+        );
+        assert!(
+            files.iter().any(|p| p.file_name().unwrap() == "b.bynk"),
+            "a sibling project file must still be present: {files:?}"
+        );
     }
 
     /// `exclude` reaches the server, not just the compiler. `project.rs` used to

@@ -287,7 +287,7 @@ fn receiver_segment_at(text: &str, member_span: Span) -> Option<(&str, usize)> {
 
 /// True when the identifier starting at `start` is itself the member of a
 /// further access (the `items` of `p.items`) rather than a bare name.
-fn is_dot_preceded(text: &str, start: usize) -> bool {
+pub(crate) fn is_dot_preceded(text: &str, start: usize) -> bool {
     text[..start].ends_with('.')
 }
 

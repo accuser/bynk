@@ -29,7 +29,7 @@
 use bynk_syntax::ast::*;
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer::{Token, TokenKind, tokenize};
-use bynk_syntax::parser::parse_units;
+use bynk_syntax::parser::{parse_units, parse_units_with_drain_check};
 use bynk_syntax::span::Span;
 
 /// Indentation style: tabs or spaces. Mirrors the LSP spec's `[fmt].indent`
@@ -77,14 +77,20 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
     // line. Each unit's output already ends in exactly one newline, so joining
     // with `"\n"` inserts one blank line between units and leaves a single-unit
     // file byte-identical.
-    let units = parse_units(&tokens, source).map_err(|errors| FormatError { errors })?;
+    let (units, _warnings, fully_drained) =
+        parse_units_with_drain_check(&tokens, source).map_err(|errors| FormatError { errors })?;
     let output = render_units(&units, opts);
-    // #523 guard: trivia is only attached at declaration/statement
+    // #523/#66 guard: trivia is only attached at declaration/statement
     // granularity, so a comment inside an expression subtree can be silently
-    // dropped. Losing user text is worse than leaving a file unformatted —
-    // when the output holds fewer comments than the input, refuse with a
-    // diagnostic pointing at the first comment that would vanish.
-    if let Some(error) = comment_loss(source, &tokens, &output) {
+    // dropped. Losing user text is worse than leaving a file unformatted — when
+    // the output holds fewer comments than the input, refuse with a diagnostic
+    // pointing at the first comment that would vanish. `fully_drained` is the
+    // same parse's own answer to "did every comment reach a `Trivia` field?";
+    // when it's `true`, nothing could have been lost and `comment_loss`'s own
+    // re-tokenize-and-diff of `output` would only ever confirm that, so it is
+    // skipped outright — the common case for a file with no comment sitting
+    // inside a `match`/list/record/binop.
+    if !fully_drained && let Some(error) = comment_loss(source, &tokens, &output) {
         return Err(FormatError {
             errors: vec![error],
         });
@@ -97,7 +103,7 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
     // structure — every comment stripped from both sides, so trivia re-flow is
     // ignored — against the input. When the output fails to re-parse, or a
     // shape round-trips to a different AST, refuse rather than corrupt.
-    if let Some(error) = roundtrip_divergence(source, &output, opts) {
+    if let Some(error) = roundtrip_divergence(&tokens, source, &output, opts) {
         return Err(FormatError {
             errors: vec![error],
         });
@@ -130,9 +136,22 @@ fn render_units(units: &[SourceUnit], opts: &FormatOptions) -> String {
 /// parse errors when `source` does not tokenize or parse.
 fn code_only_canonical(source: &str, opts: &FormatOptions) -> Result<String, Vec<CompileError>> {
     let tokens = tokenize(source).map_err(|e| vec![e])?;
+    code_only_canonical_from_tokens(&tokens, source, opts)
+}
+
+/// [`code_only_canonical`], given an already-tokenized `source` — finding #66:
+/// `format_source` tokenizes `source` once up front for the real render;
+/// `roundtrip_divergence` reuses that token list here instead of tokenizing
+/// `source` from scratch a second time.
+fn code_only_canonical_from_tokens(
+    tokens: &[Token],
+    source: &str,
+    opts: &FormatOptions,
+) -> Result<String, Vec<CompileError>> {
     let code: Vec<Token> = tokens
-        .into_iter()
+        .iter()
         .filter(|t| t.kind != TokenKind::Comment)
+        .cloned()
         .collect();
     let units = parse_units(&code, source)?;
     Ok(render_units(&units, opts))
@@ -152,7 +171,12 @@ fn code_only_canonical(source: &str, opts: &FormatOptions) -> Result<String, Vec
 /// change to break it on some shape, this guard would *refuse* an otherwise
 /// valid file rather than corrupt it — it fails safe (file unchanged + a
 /// diagnostic), but the surprise would be a formatter bug to fix upstream.
-fn roundtrip_divergence(source: &str, output: &str, opts: &FormatOptions) -> Option<CompileError> {
+fn roundtrip_divergence(
+    tokens: &[Token],
+    source: &str,
+    output: &str,
+    opts: &FormatOptions,
+) -> Option<CompileError> {
     // The output MUST re-parse to the same structure; a failure here is the
     // core corruption vector this guard exists to stop.
     let canon_out = match code_only_canonical(output, opts) {
@@ -163,10 +187,12 @@ fn roundtrip_divergence(source: &str, output: &str, opts: &FormatOptions) -> Opt
             ));
         }
     };
-    // The input already tokenized and parsed in `format_source`, so its
-    // canonical form should always compute. If it unexpectedly does not, do not
-    // block a valid format on our own guard failing — leave the file writable.
-    let canon_in = code_only_canonical(source, opts).ok()?;
+    // The input already tokenized (and parsed) in `format_source` — `tokens` is
+    // that same token list, reused rather than tokenizing `source` a second
+    // time (finding #66). If its canonical form unexpectedly fails to compute,
+    // do not block a valid format on our own guard failing — leave the file
+    // writable.
+    let canon_in = code_only_canonical_from_tokens(tokens, source, opts).ok()?;
     (canon_in != canon_out)
         .then(|| roundtrip_error("the formatter's output does not round-trip to the same code"))
 }
@@ -2567,6 +2593,47 @@ mod tests {
         assert_eq!(out, fmt(&out));
     }
 
+    // -- Finding #66: the drain-check fast path must not weaken the
+    // comment-loss guard --
+
+    /// A comment strictly inside an expression subtree (here, a binop chain)
+    /// is the one shape `TriviaTable` genuinely cannot drain — `fully_drained`
+    /// must be `false` for it, so `format_source`'s fast path does not skip
+    /// `comment_loss` and the file is still refused rather than silently
+    /// losing the comment.
+    #[test]
+    fn expression_interior_comment_is_not_fully_drained_and_still_refused() {
+        let src = "commons x {\n  fn f() -> Int {\n    1 + -- note\n    2\n  }\n}\n";
+        let tokens = tokenize(src).unwrap();
+        let (_, _, fully_drained) = parse_units_with_drain_check(&tokens, src)
+            .expect("a comment inside an expression is still a valid parse");
+        assert!(
+            !fully_drained,
+            "an expression-interior comment must leave the trivia table undrained"
+        );
+        let err = format_source(src, &FormatOptions::default())
+            .expect_err("formatting must still refuse rather than lose the comment");
+        assert_eq!(err.errors[0].category, "bynk.fmt.comment_loss");
+    }
+
+    /// The mirror image: an ordinary file with no expression-interior comment
+    /// (every comment sits before a declaration/statement, or trailing one) is
+    /// `fully_drained`, so `format_source`'s fast path is what actually runs —
+    /// and formatting must still succeed and preserve the comment.
+    #[test]
+    fn ordinary_comment_is_fully_drained_and_formats_normally() {
+        let src = "commons x {\n-- note\ntype T = Int where Positive\n}\n";
+        let tokens = tokenize(src).unwrap();
+        let (_, _, fully_drained) =
+            parse_units_with_drain_check(&tokens, src).expect("should parse");
+        assert!(
+            fully_drained,
+            "a declaration-leading comment must be fully drained"
+        );
+        let out = fmt(src);
+        assert!(out.contains("-- note"));
+    }
+
     // -- #735 round-trip guard --
 
     #[test]
@@ -2589,7 +2656,8 @@ mod tests {
         let opts = FormatOptions::default();
         let src = "commons x { fn add(a: Int, b: Int) -> Int { a + b } }";
         let out = format_source(src, &opts).unwrap();
-        assert!(roundtrip_divergence(src, &out, &opts).is_none());
+        let tokens = tokenize(src).unwrap();
+        assert!(roundtrip_divergence(&tokens, src, &out, &opts).is_none());
     }
 
     #[test]
@@ -2608,8 +2676,9 @@ mod tests {
             corrupt.len() > src.len(),
             "output must be the longer buffer"
         );
-        let err =
-            roundtrip_divergence(src, corrupt, &opts).expect("must reject non-parsing output");
+        let tokens = tokenize(src).unwrap();
+        let err = roundtrip_divergence(&tokens, src, corrupt, &opts)
+            .expect("must reject non-parsing output");
         assert_eq!(err.category, "bynk.fmt.roundtrip");
         assert!(
             err.span.end <= src.len(),
@@ -2626,8 +2695,9 @@ mod tests {
         let opts = FormatOptions::default();
         let src = "commons x { type T = Int where Positive }";
         let wrong = "commons x { type T = Bool }";
-        let err =
-            roundtrip_divergence(src, wrong, &opts).expect("must reject structural divergence");
+        let tokens = tokenize(src).unwrap();
+        let err = roundtrip_divergence(&tokens, src, wrong, &opts)
+            .expect("must reject structural divergence");
         assert_eq!(err.category, "bynk.fmt.roundtrip");
         assert!(err.span.end <= src.len(), "span escapes the source buffer");
     }
