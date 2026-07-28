@@ -1,0 +1,6 @@
+suite math
+
+case "broken" {
+  let x: Int = "not an int"
+  expect x == 1
+}
