@@ -86,7 +86,7 @@ use bynk_syntax::ast::TypeRef;
 /// One instance per emitted module (it lives on that module's emission context),
 /// so flags never leak between files.
 #[derive(Default)]
-pub struct RuntimeUse {
+pub(crate) struct RuntimeUse {
     bytes: Cell<bool>,
     icu: Cell<bool>,
     boundary_codec: Cell<bool>,

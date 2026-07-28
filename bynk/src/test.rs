@@ -11,27 +11,21 @@
 //! is accepted; the driver at least resolves it more richly than any editor.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::cli::TestFormatArg;
-use crate::compiler::Compiler;
+use bynk_driver::test_runner::TestArgs;
 
-/// Parsed `bynk test` flags, forwarded to `bynkc test`.
-pub struct TestArgs {
-    pub input: PathBuf,
-    pub output: Option<PathBuf>,
-    pub no_run: bool,
-    pub format: TestFormatArg,
-    pub inspect: bool,
-    pub seed: Option<String>,
-    pub case: Option<String>,
-    pub coverage: bool,
-}
+use crate::compiler::Compiler;
 
 /// Run `bynk test` by shelling the resolved `bynkc`. When no `bynkc` could be
 /// located, point the developer at `bynk doctor` rather than emitting a raw
 /// spawn error.
+///
+/// Wave 5 §5.4 (findings #40/#72): `args` is the one contract `bynkc test`
+/// and `bynk test` both flatten (`bynk_driver::test_runner::TestArgs`) —
+/// this function's whole body is re-spelling its fields back out as argv
+/// tokens for the shell-out, so a field added there needs no matching change
+/// here beyond this list.
 pub fn run(compiler: &Compiler, args: TestArgs) -> ExitCode {
     let Some(bynkc) = compiler.path.as_deref() else {
         eprintln!(

@@ -253,10 +253,27 @@ pub fn diagnose_project_with(
     roots: &AnalysisRoots,
     overlay: &HashMap<PathBuf, String>,
 ) -> ProjectDiagnostics {
-    let analysis = bynk_emit::project::analyse_project_with(&roots.lower(), overlay);
+    // #43: destructured (not `analysis.field`-by-field) so that a field added
+    // to `ProjectAnalysis` without a matching update *here* is a compile
+    // error (an unmentioned field in a struct pattern), not a silently
+    // stale `ProjectDiagnostics` — the six fields below are one-for-one
+    // identical between the two types precisely because this site can't
+    // forget one.
+    let bynk_emit::project::ProjectAnalysis {
+        snapshots,
+        errors,
+        index,
+        hints,
+        expr_types,
+        locals,
+        requirements,
+        unit_sources,
+        sequence_info,
+        doc_scope,
+    } = bynk_emit::project::analyse_project_with(&roots.lower(), overlay);
     let mut by_file: HashMap<PathBuf, Vec<Diagnostic>> = HashMap::new();
     let mut unattributed = Vec::new();
-    for ae in analysis.errors {
+    for ae in errors {
         let d = Diagnostic {
             severity: Severity::for_error(&ae.error),
             error: ae.error,
@@ -266,8 +283,7 @@ pub fn diagnose_project_with(
             None => unattributed.push(d),
         }
     }
-    let files = analysis
-        .snapshots
+    let files = snapshots
         .into_iter()
         .map(|(source_path, text)| FileDiagnostics {
             diagnostics: by_file.remove(&source_path).unwrap_or_default(),
@@ -283,13 +299,13 @@ pub fn diagnose_project_with(
     ProjectDiagnostics {
         files,
         unattributed,
-        index: analysis.index,
-        hints: analysis.hints,
-        requirements: analysis.requirements,
-        expr_types: analysis.expr_types,
-        locals: analysis.locals,
-        unit_sources: analysis.unit_sources,
-        sequence_info: analysis.sequence_info,
-        doc_scope: analysis.doc_scope,
+        index,
+        hints,
+        requirements,
+        expr_types,
+        locals,
+        unit_sources,
+        sequence_info,
+        doc_scope,
     }
 }

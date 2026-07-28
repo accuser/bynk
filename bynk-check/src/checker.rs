@@ -607,6 +607,84 @@ pub fn check_handler_body(
     }
 }
 
+/// Type-check a bare body against `return_ty` in `scope`, with `caps`
+/// available as both in-scope and declared capabilities and (if non-empty)
+/// `test_services`/`test_actors` in scope for a test-case body's `svc.call`/
+/// `by <Actor>(...)` resolution (§32/#33: the one shape every hand-rolled
+/// `Ctx` outside this crate needed, letting `Ctx` itself stay `pub(crate)`).
+/// `where_pred`, if present, is checked first against `Bool` (a property's
+/// optional `for all ... where` filter — `bynk.property.where_not_bool` on
+/// mismatch), sharing `ctx` with the main body so both populate the same
+/// `expr_types`/`errors` sinks. Unlike [`check_handler_body`], this skips
+/// the linearity pass, the return-type-mismatch diagnostic, and the
+/// unused-`given` diagnostic — nothing outside this crate that built its
+/// own `Ctx` ran those either, and adding them here would be a behaviour
+/// change, not a refactor.
+#[allow(clippy::too_many_arguments)]
+pub fn check_body(
+    input: &ResolvedCommons,
+    body: &Block,
+    return_ty: &Ty,
+    return_ty_span: Span,
+    scope: HashMap<String, Ty>,
+    caps: CapabilityCtx,
+    test_services: HashMap<String, TestServiceSig>,
+    test_actors: HashMap<String, bynk_syntax::ast::ActorDecl>,
+    where_pred: Option<&Expr>,
+    sinks: CheckSinks<'_>,
+) -> Option<Ty> {
+    let CheckSinks {
+        expr_types,
+        errors,
+        refs,
+        hints,
+        locals,
+        requirements,
+    } = sinks;
+    let mut ctx = Ctx {
+        input,
+        expr_types,
+        errors,
+        refs,
+        hints,
+        locals,
+        requirements,
+        scopes: vec![scope],
+        is_binding_cache: HashMap::new(),
+        return_ty: return_ty.clone(),
+        return_ty_span,
+        effectful: matches!(return_ty, Ty::Effect(_)),
+        agent_state_ty: None,
+        commit_seen: false,
+        caps,
+        in_test_body: true,
+        test_services,
+        test_actors,
+        type_vars: HashSet::new(),
+        store_cells: HashMap::new(),
+        store_maps: HashMap::new(),
+        store_sets: HashMap::new(),
+        store_caches: HashMap::new(),
+        store_logs: HashMap::new(),
+    };
+    if let Some(w) = where_pred {
+        let bool_ty = Ty::Base(BaseType::Bool);
+        if let Some(actual) = type_of(w, Some(&bool_ty), &mut ctx)
+            && actual.base() != Some(BaseType::Bool)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.property.where_not_bool",
+                w.span,
+                format!(
+                    "a `for all ... where` filter has type `{}`, but a `Bool` is required",
+                    actual.display()
+                ),
+            ));
+        }
+    }
+    type_of_block(body, Some(return_ty), &mut ctx)
+}
+
 /// Check an agent's invariant declarations (v0.80 §14). Each predicate is a pure
 /// `Bool`-typed expression over the agent's state fields (referenced by bare
 /// name), plus `implies`/`is`. The pass enforces:
@@ -1213,8 +1291,8 @@ impl ConstLit {
 
 /// Mutable per-function context.
 /// Capability bookkeeping for the checker — the `given`-clause lifecycle and
-/// capability dispatch, grouped out of [`Ctx`] (v0.29.10). Empty (`Default`)
-/// for pure functions / non-context code.
+/// capability dispatch, grouped out of the checker's working context
+/// (v0.29.10). Empty (`Default`) for pure functions / non-context code.
 #[derive(Default)]
 pub struct CapabilityCtx {
     /// Capabilities in scope for the current handler, as a name → CapabilityInfo
@@ -1278,7 +1356,11 @@ impl TestServiceSig {
     }
 }
 
-pub struct Ctx<'a> {
+/// The checker's working context. `pub(crate)`: every caller outside this
+/// crate goes through [`check_handler_body`] or [`check_body`] instead of
+/// hand-building one — adding a field (five `store_*` maps have accreted
+/// this way) no longer needs auditing every external construction site.
+pub(crate) struct Ctx<'a> {
     pub input: &'a ResolvedCommons,
     pub expr_types: &'a mut HashMap<Span, Ty>,
     pub errors: &'a mut Vec<CompileError>,
@@ -2123,7 +2205,7 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
     }
 }
 
-pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
     ctx.push_scope();
     for stmt in &block.statements {
         match stmt {
@@ -2544,7 +2626,7 @@ fn interpolable(ty: &Ty) -> bool {
     )
 }
 
-pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
     let ty = match &expr.kind {
         // v0.9.4: a literal in a refined-expected position takes the refined
         // type (validated now); otherwise it keeps its base type.

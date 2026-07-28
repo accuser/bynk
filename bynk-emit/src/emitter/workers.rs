@@ -31,7 +31,7 @@ use bynk_syntax::ast::*;
 const COMPOSE_RUNTIME_SPECIFIER: &str = "../../runtime.js";
 
 #[allow(clippy::too_many_arguments)]
-pub fn emit_worker_compose(
+pub(crate) fn emit_worker_compose(
     context: &str,
     table: &UnitTable,
     consumes: &[String],

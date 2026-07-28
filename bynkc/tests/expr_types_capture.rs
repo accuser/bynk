@@ -18,7 +18,10 @@ fn fixture_root(which: &str) -> PathBuf {
 }
 
 /// A fixture file's `(expr span, Ty)` entries alongside its analysed text.
-fn types_for(result: &bynkc::ProjectDiagnostics, file: &str) -> Option<(Vec<(Span, Ty)>, String)> {
+fn types_for(
+    result: &bynk_ide::ProjectDiagnostics,
+    file: &str,
+) -> Option<(Vec<(Span, Ty)>, String)> {
     let text = result
         .files
         .iter()
@@ -37,7 +40,7 @@ fn types_for(result: &bynkc::ProjectDiagnostics, file: &str) -> Option<(Vec<(Spa
 fn unit_sources_maps_project_units_excluding_synthetic() {
     // ADR 0095: the analysis exposes a unit→source map. The clean fixture has a
     // `commons shop.util` and a `context billing.charge`.
-    let result = bynkc::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
     let rel = |unit: &str| -> String {
         result.unit_sources[unit][0]
             .to_string_lossy()
@@ -55,7 +58,7 @@ fn unit_sources_maps_project_units_excluding_synthetic() {
 
 #[test]
 fn a_clean_file_records_its_receiver_types() {
-    let result = bynkc::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
     let (entries, text) = types_for(&result, "shop/util.bynk").expect("clean file recorded");
     assert!(!entries.is_empty(), "clean file has expression types");
 
@@ -75,7 +78,7 @@ fn an_erroring_file_still_records_its_well_typed_expressions() {
     // expressions elsewhere (`good`'s `n * 2`) are still captured in Analyse mode,
     // so `.`-member completion / signature help work on a buffer with an unrelated
     // error. The diagnostic is still reported.
-    let result = bynkc::diagnose_project(&fixture_root("broken"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("broken"), &HashMap::new());
     assert!(
         result
             .files
@@ -102,7 +105,7 @@ fn an_erroring_handler_body_records_its_well_typed_receivers() {
     // exit than `check_record`. Here `check_record` is clean (no top-level fns)
     // but the handler errors (`cents + true`); the receiver `cents` still types as
     // `Int`, recorded at the declaration-check exit.
-    let result = bynkc::diagnose_project(&fixture_root("broken_handler"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("broken_handler"), &HashMap::new());
     assert!(
         result
             .files

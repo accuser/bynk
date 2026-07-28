@@ -30,18 +30,12 @@ pub enum DiagFormat {
     Short,
 }
 
-/// v0.59: `bynkc test --format` selector. A per-command subset whose value
-/// names match [`DiagFormat`] (`rich` is the human rendering across `bynkc`),
-/// rather than sharing the enum — `test` has no `short` behaviour yet, so it
-/// must not expose a value that parses but does nothing.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
-pub enum TestFormat {
-    /// The grouped `✓ / ✗` human output (the default; unchanged behaviour).
-    #[default]
-    Rich,
-    /// A single pinned JSON document of results, for tooling and CI.
-    Json,
-}
+/// v0.59: `bynkc test --format` selector, and the `test` subcommand's flags —
+/// [`bynk_driver::test_runner::TestFormat`]/[`TestArgs`], re-exported so
+/// existing `bynkc::cli::TestFormat` paths resolve unchanged (Wave 5 §5.4:
+/// the `test` subcommand's contract, findings #40/#72, is now shared with
+/// `bynk test` rather than a per-command near-duplicate).
+pub use bynk_driver::test_runner::{TestArgs, TestFormat};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum CliTarget {
@@ -155,53 +149,8 @@ pub enum Command {
     /// Node.js on the aggregated runner script. Requires `tsc` and `node`
     /// to be on PATH.
     Test {
-        /// Input project root directory. Defaults to the current directory.
-        #[arg(default_value = ".")]
-        input: PathBuf,
-        /// Where to write compiled TypeScript test runner modules.
-        /// Defaults to `<input>/out`.
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        /// Skip the runner invocation. With `--format rich` this emits the
-        /// generated test files (for CI flows that drive the runner separately);
-        /// with `--format json` it emits a discovery document listing every
-        /// suite and case (each `outcome: "discovered"`) without running them —
-        /// a pure compile, no `tsc`/Node.
-        #[arg(long)]
-        no_run: bool,
-        /// Output format. `rich` (default) is the grouped ✓ / ✗ human output;
-        /// `json` is a single pinned JSON document of results, for tooling.
-        #[arg(long, value_enum, default_value = "rich")]
-        format: TestFormat,
-        /// Compile a debug build and launch the test runner under Node's
-        /// inspector (`node --inspect-brk`), printing the inspector URL for a
-        /// JavaScript debugger to attach (slice 2, ADR 0104). The emitted `.ts`
-        /// runs directly under Node's line-preserving type-stripping, so source
-        /// maps resolve breakpoints back to `.bynk`. Requires Node ≥ 22.18 (or
-        /// ≥ 23.6 unflagged). Does not run `tsc`.
-        #[arg(long)]
-        inspect: bool,
-        /// v0.114: the root seed for generative `property` tests, as hex (e.g.
-        /// `0x5f3a`). A failing property prints the seed it used; re-running with
-        /// `--seed <hex>` reproduces that run byte-for-byte. Omitted, each run
-        /// draws a fresh random seed.
-        #[arg(long)]
-        seed: Option<String>,
-        /// v0.127 (editor-currency slice 6): run only test cases whose name
-        /// matches `<name>`, skipping the rest — the filter behind the editor's
-        /// per-case `▷ Run Test` lens. Matches by exact case name across suites;
-        /// omitted, every case runs. No effect with `--no-run` (discovery lists
-        /// all cases regardless).
-        #[arg(long, value_name = "NAME")]
-        case: Option<String>,
-        /// #854: after the suite runs, report statement/line coverage attributed
-        /// to `.bynk` source (a rich summary table, or a `coverage` block in
-        /// `--format json`). Collected via V8's `NODE_V8_COVERAGE` and remapped
-        /// through the emitted source maps, so the generated TypeScript is
-        /// invisible. Requires the `tsc → node` path: incompatible with
-        /// `--inspect` and `--no-run`, and errors if only `tsx` is available.
-        #[arg(long)]
-        coverage: bool,
+        #[command(flatten)]
+        args: bynk_driver::test_runner::TestArgs,
     },
 }
 

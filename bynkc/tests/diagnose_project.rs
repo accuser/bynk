@@ -13,7 +13,7 @@ fn fixture_root() -> PathBuf {
 
 #[test]
 fn context_diagnostic_is_attributed_to_its_file() {
-    let result = bynkc::diagnose_project(&fixture_root(), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root(), &HashMap::new());
 
     // Every discovered file appears, clean ones with an empty list.
     let by_path: HashMap<_, _> = result
@@ -76,7 +76,7 @@ service charge {
     let mut overlay = HashMap::new();
     overlay.insert(canonical, fixed.to_string());
 
-    let result = bynkc::diagnose_project(&fixture_root(), &overlay);
+    let result = bynk_ide::diagnose_project(&fixture_root(), &overlay);
     let broken = result
         .files
         .iter()
@@ -108,7 +108,7 @@ fn analysis_does_not_bail_at_the_first_failure() {
         "commons shop.util\n\nfn broken( -> Int {\n  1\n}\n".to_string(),
     );
 
-    let result = bynkc::diagnose_project(&root, &overlay);
+    let result = bynk_ide::diagnose_project(&root, &overlay);
     let cats: Vec<(String, &'static str)> = result
         .files
         .iter()
@@ -145,7 +145,7 @@ fn multi_file_commons_src_tree_analyses_clean() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/positive/252_multi_file_commons_dotted_test/src");
 
-    let result = bynkc::diagnose_project(&src, &HashMap::new());
+    let result = bynk_ide::diagnose_project(&src, &HashMap::new());
 
     // Both sibling files are discovered and analysed.
     let seen: Vec<String> = result

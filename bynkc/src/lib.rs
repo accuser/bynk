@@ -14,8 +14,14 @@
 //! commons.
 
 pub mod cli;
-pub mod coverage;
-pub mod test_json;
+
+// `coverage`/`test_json` moved down into `bynk-driver` (Wave 5 §5.4, findings
+// #40/#72): `bynk` needs the same `TestRun` document and V8-coverage
+// attribution for its own (in-process-capable) test path, and `bynk-driver`
+// is the crate both `bynkc` and `bynk` already depend on. Re-exported here so
+// `bynkc`'s own `crate::coverage`/`crate::test_json` paths (main.rs) and its
+// public API resolve unchanged.
+pub use bynk_driver::{coverage, test_json};
 
 // The syntax foundation now lives in the `bynk-syntax` leaf crate (slice 1 of
 // the crate-decomposition track). Re-export its modules at the crate root so
@@ -40,15 +46,6 @@ pub use bynk_check::{
 // every internal `crate::emitter` / `crate::project` path is preserved — the CLI
 // and compile/diagnose glue see no change.
 pub use bynk_emit::{emitter, project};
-
-// The IDE/LSP analysis surface moved down into the `bynk-ide` crate (slice 5):
-// the non-bailing single-file and project diagnostics. Re-export them so
-// `bynkc`'s public API and its index/diagnose integration tests resolve
-// unchanged (the binary itself does not use this surface).
-pub use bynk_ide::{
-    AnalysisRoots, Diagnostic, FileDiagnostics, ProjectDiagnostics, diagnose, diagnose_project,
-    diagnose_project_with, discover_files,
-};
 
 // The formatter moved down into the `bynk-fmt` leaf (slice 2). Re-export it as
 // `bynkc::fmt` so the `bynkc fmt` command and existing `bynkc::fmt::…` consumers

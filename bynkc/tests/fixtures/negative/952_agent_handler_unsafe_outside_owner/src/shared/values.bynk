@@ -1,0 +1,3 @@
+commons shared.values
+
+type Token = opaque String

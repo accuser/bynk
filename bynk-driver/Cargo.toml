@@ -15,3 +15,14 @@ homepage.workspace = true
 bynk-emit.workspace = true
 bynk-fmt.workspace = true
 bynk-render.workspace = true
+# `test_json`'s `TestRun` document + `coverage`'s V8-coverage JSON parsing
+# (moved down from `bynkc`, Wave 5 §5.4 — both `bynkc` and `bynk` need them).
+serde.workspace = true
+serde_json.workspace = true
+# `probe`'s tool detection (moved down from `bynk`, Wave 5 §5.4 — `bynkc`
+# needs it too, replacing its old PATH-only `tool_exists`).
+which.workspace = true
+# The shared `test` subcommand contract (Wave 5 §5.4, findings #40/#72): one
+# `#[derive(Args)]` struct both `bynkc::cli` and `bynk::cli` flatten instead
+# of hand-spelling the same 8 flags twice.
+clap.workspace = true

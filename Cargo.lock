@@ -191,6 +191,10 @@ dependencies = [
  "bynk-emit",
  "bynk-fmt",
  "bynk-render",
+ "clap",
+ "serde",
+ "serde_json",
+ "which",
 ]
 
 [[package]]
