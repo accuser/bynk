@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Per-publisher event ordering is scoped to non-concurrent emission from one agent — verified empirically on real workerd, and narrowed from the broader claim design/tracks/events.md §7 originally asserted
----
+# 0290 — Per-publisher event FIFO holds within a batch and across non-overlapping calls, not across concurrent invocations of one agent
 
-## ADR: events-per-publisher-fifo-scope
-title: Per-publisher event FIFO holds within a batch and across non-overlapping calls, not across concurrent invocations of one agent
-summary: The §3.4 empirical check (spine #936), run against a real Cloudflare Durable Object under workerd — the guarantee ships narrower than design/bynk-design-notes.md §7 asserted
+- **Status:** Accepted (v0.238.1)
 
 **Context.** Events slice 0 (#939, PR #951, ADR 0284/0288) shipped the
 fan-out Durable Object but deliberately left `design/tracks/events.md` §3.4

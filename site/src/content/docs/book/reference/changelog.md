@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.238.1** | Per-publisher event ordering is scoped to non-concurrent emission from one agent — verified empirically on real workerd, and narrowed from the broader claim design/tracks/events.md §7 originally asserted |
 | **v0.238.0** | The `Events` capability, slice 0 — `event` declarations, `given Events` emission with owner-only enforcement, and `from Events(E)` subscription, across contexts and across all three platforms |
 | **v0.237.1** | The Events track's foundational ADRs — fan-out substrate, closed-protocol-set extension, pattern-dispatch semantics, and the replay split — land before slice 0 |
 | **v0.237.0** | Idempotency.dedup/remember scope the caller's key to the calling handler's own qualified name, so two unrelated handlers can't collide on the same literal key |
