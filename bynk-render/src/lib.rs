@@ -67,6 +67,11 @@ pub fn print_project_errors(root: &Path, errors: &[CompileError]) {
         for note in &err.notes {
             eprintln!("  note: {note}");
         }
+        // Finding #47: a label's *text* survives even with nowhere to
+        // underline it (there is no single file to render against here).
+        for (_, label) in &err.labels {
+            eprintln!("  label: {label}");
+        }
     }
 }
 
@@ -82,6 +87,12 @@ pub fn print_errors_short(errors: &[CompileError], source: &str, filename: &str)
 /// The string form of [`print_errors_short`] — one `…[category]: message` line
 /// per error, each newline-terminated. The renderer behind the CLI's `--format
 /// short`, exposed for testing.
+///
+/// Finding #47 doesn't reach this one: `tests/check_format_short.rs` locks
+/// `short` to *exactly* one line per diagnostic (the VS Code problem-matcher's
+/// contract), so notes/labels can't grow extra lines here without breaking a
+/// real machine consumer — unlike [`print_project_errors`]/[`render_project_errors`],
+/// which have no such one-line contract.
 pub fn render_errors_short(errors: &[CompileError], source: &str, filename: &str) -> String {
     let mut out = String::new();
     for err in errors {
@@ -113,13 +124,16 @@ pub fn severity_word(err: &CompileError) -> &'static str {
 }
 
 /// Render a list of compile errors as plain `[category] message` lines (with
-/// notes), for test assertion.
+/// notes and labels), for test assertion.
 pub fn render_project_errors(errors: &[CompileError]) -> String {
     let mut out = String::new();
     for err in errors {
         out.push_str(&format!("[{}] {}\n", err.category, err.message));
         for note in &err.notes {
             out.push_str(&format!("  note: {note}\n"));
+        }
+        for (_, label) in &err.labels {
+            out.push_str(&format!("  label: {label}\n"));
         }
     }
     out

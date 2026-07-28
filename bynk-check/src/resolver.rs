@@ -1016,6 +1016,14 @@ fn check_type_ref_resolves_in(
                 Some(decl) => {
                     errors.refs.record(name.span, SymbolKind::Type, &name.name);
                     let expected = decl.type_params.len();
+                    // Finding #46: `decl` comes from the combined cross-file
+                    // symbol table (`uses`/multi-file siblings), so its span
+                    // may belong to a different file than `name` — a label
+                    // can't express that without per-label file identity (a
+                    // Wave 8 follow-up). A note keeps the same conservative
+                    // choice `bynk-emit/src/project/consistency.rs` already
+                    // makes for its own always-cross-file diagnostics,
+                    // rather than risk underlining unrelated text.
                     if expected == 0 {
                         errors.push(
                             CompileError::new(
@@ -1026,7 +1034,7 @@ fn check_type_ref_resolves_in(
                                     name.name
                                 ),
                             )
-                            .with_label(decl.name.span, "type declared here"),
+                            .with_note("type declared here"),
                         );
                     } else if expected != args.len() {
                         errors.push(
@@ -1042,7 +1050,7 @@ fn check_type_ref_resolves_in(
                                     if args.len() == 1 { "was" } else { "were" },
                                 ),
                             )
-                            .with_label(decl.name.span, "type declared here"),
+                            .with_note("type declared here"),
                         );
                     }
                 }
@@ -1171,7 +1179,6 @@ pub(crate) fn check_record_field_set(
     type_name: &Ident,
     fields: &[FieldInit],
     record: &RecordBody,
-    decl_name_span: Span,
     // #852: the span of the whole `TypeName { … }` literal, so the missing-field
     // quick-fix knows where to insert a new field (before the closing brace when
     // the literal is empty).
@@ -1196,7 +1203,13 @@ pub(crate) fn check_record_field_set(
                         type_name.name, f.name.name
                     ),
                 )
-                .with_label(decl_name_span, "type declared here"),
+                // Finding #46: `decl_name_span` may name a declaration in a
+                // different file than this construction site (both callers
+                // resolve against the combined cross-file symbol table) — a
+                // note instead of a label, matching the same conservative
+                // choice made elsewhere for cross-file provenance without
+                // per-label file identity (a Wave 8 follow-up).
+                .with_note("type declared here"),
             );
         }
         if let Some(prev) = provided.get(f.name.name.as_str()) {
@@ -1730,7 +1743,12 @@ fn check_expr_references(
                                     args.len()
                                 ),
                             )
-                            .with_label(decl.name.ident().span, "function declared here"),
+                            // Finding #46: `decl` is looked up in the
+                            // combined cross-file symbol table, so its span
+                            // may belong to a different file than this call
+                            // — see the same note at the type-arity checks
+                            // above.
+                            .with_note("function declared here"),
                         );
                     }
                 }
@@ -1981,7 +1999,8 @@ fn check_expr_references(
                                 type_name.name, method.name
                             ),
                         )
-                        .with_label(decl.name.span, "type declared here"),
+                        // Finding #46: cross-file table lookup — see resolver.rs:1029.
+                        .with_note("type declared here"),
                     );
                 }
             } else {
@@ -2018,7 +2037,6 @@ fn check_expr_references(
                                 type_name,
                                 fields,
                                 r,
-                                decl.name.span,
                                 expr.span,
                                 |n| name_in_scope(n, params, scopes),
                                 errors.errs,
@@ -2049,7 +2067,8 @@ fn check_expr_references(
                                     type_name.name
                                 ),
                             )
-                            .with_label(decl.name.span, "type declared here")
+                            // Finding #46: cross-file table lookup — see resolver.rs:1029.
+                            .with_note("type declared here")
                             .with_note(
                                 "construct opaque values via `T.of(value)` (validated) or `T.unsafe(value)` (inside the defining commons)",
                             ),
@@ -2065,7 +2084,8 @@ fn check_expr_references(
                                     type_name.name
                                 ),
                             )
-                            .with_label(decl.name.span, "type declared here"),
+                            // Finding #46: cross-file table lookup — see resolver.rs:1029.
+                            .with_note("type declared here"),
                         );
                         }
                     }
@@ -2108,7 +2128,8 @@ fn check_expr_references(
                                 id.name, field.name
                             ),
                         )
-                        .with_label(decl.name.span, "type declared here"),
+                        // Finding #46: cross-file table lookup — see resolver.rs:1029.
+                        .with_note("type declared here"),
                     );
                 }
             } else {
@@ -2250,7 +2271,8 @@ fn check_expr_references(
                                 id.name, method.name
                             ),
                         )
-                        .with_label(decl.name.span, "type declared here"),
+                        // Finding #46: cross-file table lookup — see resolver.rs:1029.
+                        .with_note("type declared here"),
                     );
                 }
             } else {

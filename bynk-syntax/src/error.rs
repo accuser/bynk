@@ -59,24 +59,16 @@ pub enum Severity {
 }
 
 impl Severity {
-    /// Classify a [`CompileError`] by its category prefix.
-    ///
-    /// `bynk.parse.orphan_doc_block`, `bynk.given.unused_capability`,
-    /// `bynk.list.deprecated_function`, and the `bynk.index.*` hygiene hints
-    /// (`missing`/`unused`, ADR 0118 D4) are warnings; everything else is an
-    /// error. Future categories can be added as the diagnostic surface grows.
+    /// Classify a [`CompileError`] by its category's registered severity
+    /// (`crate::diagnostics::REGISTRY`) — the registry entry built via `warn`
+    /// is the single source of truth for which codes are non-failing
+    /// warnings (ADR 0117); everything else defaults to `Error`, including a
+    /// category that isn't registered at all (which `tests/diagnostics_registry.rs`
+    /// asserts cannot happen for a code actually emitted in source).
     pub fn for_error(err: &CompileError) -> Severity {
-        match err.category {
-            "bynk.parse.orphan_doc_block"
-            | "bynk.given.unused_capability"
-            | "bynk.list.deprecated_function"
-            | "bynk.index.missing"
-            | "bynk.index.unused"
-            // A computed secret name is legal and sometimes reasonable; the
-            // program is correct, `deploy` simply cannot see it (ADR 0196 D1).
-            | "bynk.secrets.computed_name" => Severity::Warning,
-            _ => Severity::Error,
-        }
+        crate::diagnostics::lookup(err.category)
+            .map(|d| d.severity)
+            .unwrap_or(Severity::Error)
     }
 }
 
@@ -235,6 +227,15 @@ impl CompileError {
 
         for note in &self.notes {
             builder = builder.with_note(note);
+        }
+
+        // Finding #49 (ADR 0054): a structured suggestion previously reached
+        // only the LSP's code-action surface; the CLI never rendered it at
+        // all. Shown as a `help:`-prefixed note — mirrors rustc's own
+        // note/help distinction — rather than a new ariadne builder call, so
+        // it composes with an arbitrary number of suggestions.
+        for suggestion in &self.suggestions {
+            builder = builder.with_note(format!("help: {}", suggestion.message));
         }
 
         builder.finish()

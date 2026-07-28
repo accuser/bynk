@@ -59,25 +59,20 @@ pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectPathsE
 /// [`bynk_render::print_errors`]. The `ProjectFailure → CompileError` flattening
 /// stays here, above `bynk-render`, so there is no `render → emit` edge.
 pub fn print_project_failure(failure: &project::ProjectFailure) {
-    let texts: std::collections::HashMap<&Path, &str> = failure
-        .snapshots
-        .iter()
-        .map(|(p, t)| (p.as_path(), t.as_str()))
-        .collect();
     for ae in &failure.errors {
-        match ae
-            .source_path
-            .as_deref()
-            .and_then(|p| texts.get(p).map(|t| (p, *t)))
-        {
-            Some((path, text)) => {
-                let label = path.to_string_lossy().replace('\\', "/");
+        match attributed_snapshot(ae, &failure.snapshots) {
+            Some((label, text)) => {
                 bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
             }
             None => {
                 eprintln!("[{}] {}", ae.error.category, ae.error.message);
                 for note in &ae.error.notes {
                     eprintln!("  note: {note}");
+                }
+                // Finding #47: a label's text still surfaces even with no
+                // file to underline it against.
+                for (_, label) in &ae.error.labels {
+                    eprintln!("  label: {label}");
                 }
             }
         }
@@ -108,14 +103,20 @@ pub fn print_project_warnings(
                 for note in &w.error.notes {
                     eprintln!("  note: {note}");
                 }
+                for (_, label) in &w.error.labels {
+                    eprintln!("  label: {label}");
+                }
             }
         }
     }
 }
 
 /// [`print_project_warnings`]'s `--format short` analogue: one
-/// `path:line:col: warning[category]: message` line per warning, falling back
-/// to `warning[category]: message` when unattributed.
+/// `path:line:col: warning[category]: message` line per warning, falling
+/// back to `warning[category]: message` when unattributed. Strictly one
+/// line per warning throughout (like [`bynk_render::render_errors_short`],
+/// this mirrors the VS Code problem-matcher's contract), so — unlike
+/// [`print_project_warnings`] — finding #47 doesn't reach this one.
 pub fn print_project_warnings_short(
     warnings: &[project::AttributedError],
     snapshots: &[(PathBuf, String)],
@@ -123,18 +124,29 @@ pub fn print_project_warnings_short(
     for w in warnings {
         match attributed_snapshot(w, snapshots) {
             Some((label, text)) => eprintln!("{}", bynk_render::short_line(&label, text, &w.error)),
-            None => eprintln!("warning[{}]: {}", w.error.category, w.error.message),
+            // Every entry in `warnings` is warning-severity by construction
+            // (ADR 0117's own split), so `severity_word` here is always
+            // "warning" — read off the shared helper (finding #48) rather
+            // than hardcoding the string a second time.
+            None => eprintln!(
+                "{}[{}]: {}",
+                bynk_render::severity_word(&w.error),
+                w.error.category,
+                w.error.message
+            ),
         }
     }
 }
 
-/// The `(label, source text)` a warning's `source_path` resolves to in
-/// `snapshots`, if any — the same attribution [`print_project_failure`] does.
+/// The `(label, source text)` an `AttributedError`'s `source_path` resolves
+/// to in `snapshots`, if any — the one attribution lookup every renderer in
+/// this file shares (finding #48; previously `print_project_failure` and
+/// [`project_failure_short_lines`] each hand-rolled their own copy).
 fn attributed_snapshot<'a>(
-    w: &project::AttributedError,
+    ae: &project::AttributedError,
     snapshots: &'a [(PathBuf, String)],
 ) -> Option<(String, &'a str)> {
-    let path = w.source_path.as_deref()?;
+    let path = ae.source_path.as_deref()?;
     let text = snapshots
         .iter()
         .find(|(p, _)| p.as_path() == path)
@@ -155,36 +167,27 @@ pub fn print_project_failure_short(failure: &project::ProjectFailure) {
 /// severity[category]: message` line per attributed error (an unattributed
 /// project-level error falls back to `severity[category]: message`). Backs both
 /// the printer above and the `bynkc test --format json` compile-error document,
-/// whose `diagnostics` the VS Code `bynkc` problem-matcher re-parses.
+/// whose `diagnostics` the VS Code `bynkc` problem-matcher re-parses — each
+/// `Vec` entry is exactly one line by that contract, so unlike the other
+/// renderers in this file this one deliberately does *not* grow note/label
+/// continuation lines (finding #47): doing so would break a machine consumer
+/// that re-parses every entry as a single diagnostic line.
 ///
 /// The flattening layer (ADR 0100): it delegates the per-error formatting to
-/// [`bynk_render::short_line`] / [`bynk_render::severity_word`].
+/// [`bynk_render::short_line`] / [`bynk_render::severity_word`], and the
+/// attribution lookup to the crate-private `attributed_snapshot` (finding #48).
 pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<String> {
-    let texts: std::collections::HashMap<&Path, &str> = failure
-        .snapshots
-        .iter()
-        .map(|(p, t)| (p.as_path(), t.as_str()))
-        .collect();
     failure
         .errors
         .iter()
-        .map(|ae| {
-            match ae
-                .source_path
-                .as_deref()
-                .and_then(|p| texts.get(p).map(|t| (p, *t)))
-            {
-                Some((path, text)) => {
-                    let label = path.to_string_lossy().replace('\\', "/");
-                    bynk_render::short_line(&label, text, &ae.error)
-                }
-                None => format!(
-                    "{}[{}]: {}",
-                    bynk_render::severity_word(&ae.error),
-                    ae.error.category,
-                    ae.error.message
-                ),
-            }
+        .map(|ae| match attributed_snapshot(ae, &failure.snapshots) {
+            Some((label, text)) => bynk_render::short_line(&label, text, &ae.error),
+            None => format!(
+                "{}[{}]: {}",
+                bynk_render::severity_word(&ae.error),
+                ae.error.category,
+                ae.error.message
+            ),
         })
         .collect()
 }

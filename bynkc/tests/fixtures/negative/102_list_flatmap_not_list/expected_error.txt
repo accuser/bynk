@@ -1,2 +1,2 @@
-bynk.types.argument_mismatch
+bynk.types.combinator_return_mismatch
 must return a `List`

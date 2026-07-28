@@ -465,7 +465,6 @@ pub(crate) fn check_refinement(
                                 lo.value, hi.value
                             ),
                         )
-                        .with_note("swap the arguments, e.g. `InRange(min, max)`")
                         // v0.40 (ADR 0073): a machine-applicable swap — replace
                         // each bound's text with the other's, in place.
                         .with_suggestion(
@@ -490,7 +489,6 @@ pub(crate) fn check_refinement(
                                 lo.lexeme, hi.lexeme
                             ),
                         )
-                        .with_note("swap the arguments, e.g. `InRange(min, max)`")
                         .with_suggestion(
                             "swap the bounds",
                             vec![(lo.span, hi.lexeme.clone()), (hi.span, lo.lexeme.clone())],

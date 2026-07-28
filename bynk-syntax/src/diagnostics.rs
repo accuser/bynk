@@ -8,11 +8,14 @@
 //! here, and a removed code cannot linger in the docs.
 //!
 //! Each entry is a `(code, summary)` pair, optionally tagged with the grammar
-//! production(s) it constrains (`grammar_symbol`). The category shown in the
-//! generated reference is derived from the second dotted segment of the code;
-//! the grammar weave (`docs/grammar-semantics.json`, the
+//! production(s) it constrains (`grammar_symbol`), and carries a severity
+//! (`Error` unless built via the crate-private `warn` helper). The category
+//! shown in the generated reference is derived from the second dotted segment
+//! of the code; the grammar weave (`docs/grammar-semantics.json`, the
 //! `{{#grammar-semantics}}` directive, and the diagnostics page's Construct
 //! column) is generated from `grammar_symbol`.
+
+use crate::error::Severity;
 
 /// One documented diagnostic: its stable code and a one-line summary of the
 /// cause. Richer "cause and fix" material for the common diagnostics lives in
@@ -28,6 +31,14 @@ pub struct DiagnosticInfo {
     /// (e.g. `bynk.boundary.structural_mismatch`). Every non-empty name is
     /// checked against the grammar by `tests/diagnostics_registry.rs`.
     pub grammar_symbol: &'static [&'static str],
+    /// This code's severity (ADR 0117): `Error` rejects the program; `Warning`
+    /// surfaces but never fails the build. The single source of truth for
+    /// [`crate::error::Severity::for_error`], which looks a code up here
+    /// instead of hardcoding its own copy of the (small) warning set —
+    /// `tests/diagnostics_registry.rs` asserts the two never drift apart.
+    /// Defaults to `Error` via the crate-private `d`/`dg` constructors; only
+    /// the crate-private `warn` helper's six call sites override it.
+    pub severity: Severity,
 }
 
 /// The hosted Book, the stable target for `codeDescription` links (#853,
@@ -183,6 +194,13 @@ pub const EXPLANATIONS: &[Explain] = &[
 /// no explanation yet (the designed graceful-fallback state, DECISION B).
 pub fn explain(code: &str) -> Option<&'static Explain> {
     EXPLANATIONS.iter().find(|e| e.code == code)
+}
+
+/// Look up a code's registry entry by exact match — the one place
+/// [`crate::error::Severity::for_error`] reads a code's severity, instead of
+/// hardcoding its own copy of the (small) warning set.
+pub fn lookup(code: &str) -> Option<&'static DiagnosticInfo> {
+    REGISTRY.iter().find(|d| d.code == code)
 }
 
 /// Every diagnostic code the compiler emits, sorted by code.
@@ -657,11 +675,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "`given` names a capability that does not exist.",
         &["given_clause"],
     ),
-    dg(
+    warn(dg(
         "bynk.given.unused_capability",
         "A `given` capability is never used (warning).",
         &["given_clause"],
-    ),
+    )),
     d(
         "bynk.held.branch_divergence",
         "Branches of a conditional leave a held value (e.g. `Connection[F]`) in inconsistent ownership states — one consumes or stores it, another leaves it owned (§2.9.5, real-time track slice 2).",
@@ -834,10 +852,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.index.bad_argument",
         "An `@indexed` argument is not a `by: <field>` label.",
     ),
-    d(
+    warn(d(
         "bynk.index.missing",
         "A query filters a map by equality on a field that is not `@indexed` (a perf-hint warning).",
-    ),
+    )),
     d(
         "bynk.index.unkeyable_key",
         "An `@indexed(by: k)` field is not value-keyable.",
@@ -846,10 +864,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.index.unknown_key",
         "An `@indexed(by: k)` field is not a field of the map's value type.",
     ),
-    d(
+    warn(d(
         "bynk.index.unused",
         "A declared `@indexed(by: k)` is never used by an equality filter (a hygiene warning).",
-    ),
+    )),
     d(
         "bynk.invariant.cross_agent_reference",
         "An invariant predicate references another agent; invariants are per-agent.",
@@ -909,10 +927,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A string literal is not terminated.",
         &["string_literal"],
     ),
-    d(
+    warn(d(
         "bynk.list.deprecated_function",
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
-    ),
+    )),
     d(
         "bynk.locale.multiple_message_bundles",
         "A context consumes `Locale` but its direct `uses` reaches two or more message-bundle commons — there is no single bundle to negotiate against.",
@@ -1117,10 +1135,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A non-associative operator was chained (e.g. `a == b == c`).",
         &["binary_expr"],
     ),
-    d(
+    warn(d(
         "bynk.parse.orphan_doc_block",
         "A documentation block is not attached to a declaration (warning).",
-    ),
+    )),
     dg(
         "bynk.parse.refined_pattern_inner",
         "A refined pattern's inner form is something other than `_`.",
@@ -1482,10 +1500,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.resolve.unknown_type",
         "Referenced a type that does not exist.",
     ),
-    d(
+    warn(d(
         "bynk.secrets.computed_name",
         "A `bynk.Secrets` read names its secret with a computed expression rather than a literal, so `bynk deploy` cannot plan it (warning).",
-    ),
+    )),
     dg(
         "bynk.send.in_pure_context",
         "A `~>` send was used in a pure (non-effectful) context.",
@@ -1725,7 +1743,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "bynk.types.argument_mismatch",
-        "A function argument has the wrong type.",
+        "A call, method, capability, or constructor argument has the wrong type.",
         &["call"],
     ),
     dg(
@@ -1746,6 +1764,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.types.catastrophic_regex",
         "A `Matches` predicate nests unbounded quantifiers, risking catastrophic backtracking (ReDoS).",
         &["refinement"],
+    ),
+    dg(
+        "bynk.types.combinator_return_mismatch",
+        "A callback passed to a combinator (`map`/`andThen`/`flatMap`/`traverseAll`/…) returns the wrong type.",
+        &["call"],
     ),
     d(
         "bynk.types.constructor_arity",
@@ -2169,16 +2192,17 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
 ];
 
-/// A diagnostic with no single governing grammar construct.
+/// A diagnostic with no single governing grammar construct. `Error` severity.
 const fn d(code: &'static str, summary: &'static str) -> DiagnosticInfo {
     DiagnosticInfo {
         code,
         summary,
         grammar_symbol: &[],
+        severity: Severity::Error,
     }
 }
 
-/// A diagnostic that constrains one or more grammar productions.
+/// A diagnostic that constrains one or more grammar productions. `Error` severity.
 const fn dg(
     code: &'static str,
     summary: &'static str,
@@ -2188,7 +2212,16 @@ const fn dg(
         code,
         summary,
         grammar_symbol,
+        severity: Severity::Error,
     }
+}
+
+/// Downgrades a [`d`]/[`dg`]-built entry to `Warning` severity (ADR 0117) —
+/// non-failing, surfaced alongside a clean build. The six call sites here are
+/// the single source of truth [`crate::error::Severity::for_error`] reads.
+const fn warn(mut info: DiagnosticInfo) -> DiagnosticInfo {
+    info.severity = Severity::Warning;
+    info
 }
 
 /// The category segment of a code (the part between the first two dots), e.g.
@@ -2268,7 +2301,7 @@ pub fn render_markdown() -> String {
 
     for (title, infos) in &by_category {
         out.push_str(&format!("\n## {title}\n\n"));
-        out.push_str("| Code | Summary | Construct |\n|---|---|---|\n");
+        out.push_str("| Code | Summary | Construct | Severity |\n|---|---|---|---|\n");
         for info in infos {
             // The construct column deep-links each governing production to its
             // entry in the annotated grammar reference; generated from
@@ -2288,9 +2321,17 @@ pub fn render_markdown() -> String {
                 Some(e) => format!("[`{}`]({})", info.code, e.in_site_link()),
                 None => format!("`{}`", info.code),
             };
+            // ADR 0117/finding #50: every code's severity, straight from the
+            // registry — `Error` (the overwhelming majority) renders as "—"
+            // to keep the common case unobtrusive; only a `warn`-built entry
+            // shows "Warning".
+            let severity = match info.severity {
+                Severity::Error => "—",
+                Severity::Warning => "Warning",
+            };
             out.push_str(&format!(
-                "| {} | {} | {} |\n",
-                code_cell, info.summary, construct
+                "| {} | {} | {} | {} |\n",
+                code_cell, info.summary, construct, severity
             ));
         }
     }

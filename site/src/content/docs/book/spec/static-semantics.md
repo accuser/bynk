@@ -217,7 +217,7 @@ error (its recovery MUST produce the receiver's success type `T`). The naming is
 verb-first, matching `map`/`mapErr` on `Result`. A method outside the four is
 `bynk.types.method_not_found`; a `flatMapOk`/`flatMapErr` argument that does not
 return `Effect[Result[…]]`, or whose error/success side does not line up, is
-`bynk.types.argument_mismatch` (no new diagnostic). Only an `Effect` wrapping a
+`bynk.types.combinator_return_mismatch`. Only an `Effect` wrapping a
 `Result` carries these — any other `Effect[_]` has no kernel methods. Unlike the
 eager `List.forEach`/`traverseTry` iterators, these **produce** an `Effect`
 rather than running one, so they are **not** effectful-context-confined: a pure
@@ -1196,7 +1196,7 @@ into the result list in input order. Because a `Result` `Err` is a **value**, no
 a fault, neither short-circuits: `traverseAll` awaits each element in turn,
 `parTraverseAll` issues all at once and collects them together (its interleaving
 order, like `parTraverse`, unspecified). The function *must* return
-`Effect[Result[U, E]]`; a non-`Result` effect is `bynk.types.argument_mismatch`.
+`Effect[Result[U, E]]`; a non-`Result` effect is `bynk.types.combinator_return_mismatch`.
 They are the fault-gathering counterpart to `traverse` (the short-circuiting
 sequential collect); the collecting **short-circuit** `parTraverse` overload and
 `traverse`'s `Result` overload remain a later slice. Like `forEach`/`parTraverse`,

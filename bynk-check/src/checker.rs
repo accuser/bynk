@@ -589,9 +589,10 @@ pub fn check_handler_body(
                 return_ty_span,
                 format!("capability `{c}` is declared in `given` but never used in the body"),
             )
-            .with_note(
-                "remove the capability from the `given` clause, or use it in the handler body",
-            )
+            // Finding #49: the CLI now renders `.with_suggestion` below, so
+            // this note carries only the alternative fix the suggestion
+            // doesn't (removing the capability from `given`).
+            .with_note("alternatively, use the capability in the handler body")
             // v0.26 (ADR 0054): the removal is list-aware — only `report_unused`
             // sites are handlers, where the clause follows the return type, so
             // `return_ty_span` anchors the only-entry case.
