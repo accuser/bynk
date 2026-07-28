@@ -10,7 +10,31 @@
 //! - No blank lines between fields within a record or arms within a match.
 //! - Doc blocks immediately above their declaration, no blank line between.
 //! - One space around binary operators, after commas, no space inside parens.
-//! - Soft 100-column line width — long parameter lists wrap across lines.
+//! - Soft 100-column line width — see below.
+//!
+//! Line width (#963). Every fit test measures the *whole* line: the column the
+//! construct starts at, its own width, and the width of whatever the caller
+//! will still emit after it (a `-> Ret {` signature tail, a closing `)`, a
+//! match arm's `,`). A construct that does not fit is re-emitted vertically,
+//! breaking only where the grammar tolerates a newline:
+//!
+//! - Record constructions, list literals, `exports`/`enum` bodies, and agent
+//!   scheme configuration take one entry per line, with a trailing comma.
+//! - Parameter and argument lists take one entry per line **without** a
+//!   trailing comma — the grammar rejects one there.
+//! - A `&&` / `||` / `implies` run breaks before each operator. Arithmetic and
+//!   comparison operators never break: a continuation line opening with `+`
+//!   does not re-attach to the line above on re-parse.
+//! - A `.`-chain of two or more calls breaks before each call, unless the
+//!   overflow belongs to a trailing argument that can open its body on the
+//!   chain's own line (`xs.fold(init, (acc, x) => match acc {`).
+//! - An `if` sends both branches vertical; a block sends its statements
+//!   vertical.
+//!
+//! The target is soft: a construct with no break point inside it — a long
+//! string literal, a `Matches("…")` regex — is left over-long rather than
+//! mangled. Every layout choice is a function of the AST and the current
+//! column, so the result is stable under re-formatting.
 //!
 //! The formatter is idempotent: format → format yields the same text.
 //!
@@ -383,6 +407,71 @@ impl<'a> Formatter<'a> {
         self.indent_level += 1;
         f(self);
         self.indent_level -= 1;
+    }
+
+    /// Render `body` into a detached formatter positioned at this one's exact
+    /// column and indent, and commit it only if every line it produces stays
+    /// inside the budget (the last line counting `reserve` further columns for
+    /// whatever the caller will append). Returns whether it was committed.
+    ///
+    /// A candidate layout is often only judgeable once rendered: whether a
+    /// `.`-chain needs breaking at its dots depends on how its arguments wrap,
+    /// which depends on the column they start at. Measuring a real rendering
+    /// beats predicting one (#963).
+    fn try_layout<F: FnOnce(&mut Self)>(&mut self, reserve: usize, body: F) -> bool {
+        self.try_layout_if(reserve, body, || true)
+    }
+
+    /// [`Self::try_layout`] with a second condition, evaluated after the
+    /// rendering, for a caller that judges the candidate on more than its
+    /// width — a chain that fits but only by exploding an argument list.
+    fn try_layout_if<F: FnOnce(&mut Self), A: FnOnce() -> bool>(
+        &mut self,
+        reserve: usize,
+        body: F,
+        accept: A,
+    ) -> bool {
+        let line_start = self.out.rfind('\n').map_or(0, |i| i + 1);
+        let mut sub = Formatter {
+            opts: self.opts,
+            out: self.out[line_start..].to_string(),
+            indent_level: self.indent_level,
+            at_line_start: self.at_line_start,
+        };
+        let produced_from = sub.out.len();
+        body(&mut sub);
+        if !sub.every_line_within_budget(reserve) || !accept() {
+            return false;
+        }
+        // Splice the raw text: `sub` already emitted its own indentation, so
+        // going through `push` would double it.
+        self.out.push_str(&sub.out[produced_from..]);
+        self.at_line_start = sub.at_line_start;
+        true
+    }
+
+    /// Does every line of this (detached) formatter's buffer fit, with
+    /// `reserve` columns still free on the last one?
+    fn every_line_within_budget(&self, reserve: usize) -> bool {
+        let tab = self.indent_width();
+        let mut lines = self.out.split('\n').peekable();
+        let mut last = "";
+        while let Some(line) = lines.next() {
+            if lines.peek().is_none() {
+                last = line;
+                break;
+            }
+            if display_width(line, tab) > self.opts.max_line_width as usize {
+                return false;
+            }
+        }
+        let last_width = if self.at_line_start {
+            // The trailing indent is not in the buffer yet; `push` adds it.
+            self.indent_level as usize * tab
+        } else {
+            display_width(last, tab)
+        };
+        last_width + reserve <= self.opts.max_line_width as usize
     }
 
     // -- Doc block --
@@ -905,7 +994,7 @@ impl<'a> Formatter<'a> {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        if self.line_fits(&oneline) {
+        if self.fits(&oneline, 0) {
             self.push(&oneline);
             self.newline();
             return;
@@ -926,13 +1015,45 @@ impl<'a> Formatter<'a> {
         self.newline();
     }
 
-    fn line_fits(&self, candidate: &str) -> bool {
-        let unit_len = match self.opts.indent {
-            IndentStyle::Tab => 4, // Approximate tab width for width estimation.
+    /// The rendered width of one indent level. A tab is counted as four
+    /// columns for width estimation (the file stores one byte; editors render
+    /// it at the reader's chosen width, so any fixed number is an estimate).
+    fn indent_width(&self) -> usize {
+        match self.opts.indent {
+            IndentStyle::Tab => 4,
             IndentStyle::Spaces(n) => n as usize,
+        }
+    }
+
+    /// The column the next character pushed would land on. Everything already
+    /// emitted on the current line counts — #963: measuring only
+    /// `indent_level` (as this did before) made every fit test blind to the
+    /// prefix its caller had already printed, so a body measured as "fits"
+    /// while sitting behind `fn name(params) -> Ret ` routinely overflowed.
+    fn current_column(&self) -> usize {
+        if self.at_line_start {
+            // `push` has yet to emit this line's indent; account for it here.
+            return self.indent_level as usize * self.indent_width();
+        }
+        let line = match self.out.rfind('\n') {
+            Some(i) => &self.out[i + 1..],
+            None => self.out.as_str(),
         };
-        let column = self.indent_level as usize * unit_len + candidate.len();
-        column as u32 <= self.opts.max_line_width
+        display_width(line, self.indent_width())
+    }
+
+    /// Does `candidate`, emitted at the current column, leave `reserve`
+    /// further columns inside the line budget? `reserve` is the width of text
+    /// the caller knows will follow on the same line — a closing `)`, a
+    /// `-> Ret {` suffix, an arm's `,`. A multi-line candidate never "fits":
+    /// its own line breaks are the decision the caller is trying to make.
+    fn fits(&self, candidate: &str, reserve: usize) -> bool {
+        if candidate.contains('\n') {
+            return false;
+        }
+        let column =
+            self.current_column() + display_width(candidate, self.indent_width()) + reserve;
+        column <= self.opts.max_line_width as usize
     }
 
     fn format_item(&mut self, item: &CommonsItem) {
@@ -1078,7 +1199,7 @@ impl<'a> Formatter<'a> {
             .map(|f| self.format_record_field_oneline(f))
             .collect();
         let oneline = format!("{{ {} }}", oneline_fields.join(", "));
-        if self.line_fits(&oneline) && !oneline.contains('\n') {
+        if self.fits(&oneline, 0) {
             self.push(&oneline);
             return;
         }
@@ -1133,7 +1254,7 @@ impl<'a> Formatter<'a> {
             // Enum-style.
             let names: Vec<&str> = s.variants.iter().map(|v| v.name.name.as_str()).collect();
             let oneline = format!("enum {{ {} }}", names.join(", "));
-            if self.line_fits(&oneline) {
+            if self.fits(&oneline, 0) {
                 self.push(&oneline);
                 return;
             }
@@ -1210,7 +1331,16 @@ impl<'a> Formatter<'a> {
                 .collect();
             self.push(&format!("[{}]", names.join(", ")));
         }
-        self.format_params(&f.params, f.has_self);
+        // The signature tail that shares the parameter list's line: ` -> Ret`
+        // plus the body's ` {` (a contract clause moves the body to its own
+        // line, so only the return type counts then).
+        let tail = format!(" -> {}", type_ref_to_string(&f.return_type));
+        let reserve = if f.requires.is_empty() && f.ensures.is_empty() {
+            tail.chars().count() + " {".len()
+        } else {
+            tail.chars().count()
+        };
+        self.format_params(&f.params, f.has_self, reserve);
         self.push(" -> ");
         self.format_type_ref(&f.return_type);
         // v0.115: contract clauses on their own indented lines between the
@@ -1245,7 +1375,11 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn format_params(&mut self, params: &[Param], has_self: bool) {
+    /// Emit a parameter list. `reserve` is the width of the signature tail that
+    /// will follow it on the same line — `-> Ret`, any `by`/`given` clauses,
+    /// and the body's opening brace — so a list that only "fits" by ignoring
+    /// what comes after it wraps instead (#963).
+    fn format_params(&mut self, params: &[Param], has_self: bool, reserve: usize) {
         let mut rendered: Vec<String> = Vec::new();
         if has_self {
             rendered.push("self".to_string());
@@ -1260,7 +1394,16 @@ impl<'a> Formatter<'a> {
             ));
         }
         let oneline = format!("({})", rendered.join(", "));
-        if self.line_fits(&oneline) || rendered.len() <= 1 {
+        // An empty list has nothing to wrap onto; `()` always stays put.
+        if rendered.is_empty() || self.fits(&oneline, reserve) {
+            self.push(&oneline);
+            return;
+        }
+        // Wrapping moves the reserved tail onto the `)` line. When that line
+        // would overflow anyway — a `given` list long enough on its own — the
+        // wrap costs lines and buys nothing, so keep the single-line form.
+        let closing_line = self.indent_level as usize * self.indent_width() + 1 + reserve;
+        if closing_line > self.opts.max_line_width as usize {
             self.push(&oneline);
             return;
         }
@@ -1310,7 +1453,8 @@ impl<'a> Formatter<'a> {
                         .collect();
                     f.push(&format!("[{}]", names.join(", ")));
                 }
-                f.format_params(&op.params, false);
+                let reserve = 4 + type_ref_to_string(&op.return_type).chars().count();
+                f.format_params(&op.params, false, reserve);
                 f.push(" -> ");
                 f.format_type_ref(&op.return_type);
                 f.emit_trailing_comment(op.trivia.trailing.as_deref());
@@ -1358,7 +1502,8 @@ impl<'a> Formatter<'a> {
                 f.emit_leading_comments(&op.trivia.leading);
                 f.push("fn ");
                 f.push(&op.name.name);
-                f.format_params(&op.params, false);
+                let reserve = 4 + type_ref_to_string(&op.return_type).chars().count() + 2;
+                f.format_params(&op.params, false, reserve);
                 f.push(" -> ");
                 f.format_type_ref(&op.return_type);
                 f.push(" ");
@@ -1457,11 +1602,9 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for field in &cors.fields {
-                f.push(&format!(
-                    "{}: {},",
-                    field.name.name,
-                    expr_to_string(&field.value)
-                ));
+                f.push(&format!("{}: ", field.name.name));
+                f.format_expr_at(&field.value, 0, 1);
+                f.push(",");
                 f.newline();
             }
         });
@@ -1477,11 +1620,9 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for field in &security.fields {
-                f.push(&format!(
-                    "{}: {},",
-                    field.name.name,
-                    expr_to_string(&field.value)
-                ));
+                f.push(&format!("{}: ", field.name.name));
+                f.format_expr_at(&field.value, 0, 1);
+                f.push(",");
                 f.newline();
             }
         });
@@ -1498,11 +1639,9 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for field in &limits.fields {
-                f.push(&format!(
-                    "{}: {},",
-                    field.name.name,
-                    expr_to_string(&field.value)
-                ));
+                f.push(&format!("{}: ", field.name.name));
+                f.format_expr_at(&field.value, 0, 1);
+                f.push(",");
                 f.newline();
             }
         });
@@ -1574,7 +1713,8 @@ impl<'a> Formatter<'a> {
             self.push(&format!(" {}", annotation_to_string(ann)));
         }
         if let Some(init) = &sf.init {
-            self.push(&format!(" = {}", expr_with_prec(init, 0)));
+            self.push(" = ");
+            self.format_expr(init);
         }
         self.emit_trailing_comment(sf.trivia.trailing.as_deref());
     }
@@ -1589,7 +1729,7 @@ impl<'a> Formatter<'a> {
         self.push(&format!("invariant {}:", inv.name.name));
         self.newline();
         self.indented(|f| {
-            f.push(&expr_to_string(&inv.predicate));
+            f.format_expr(&inv.predicate);
         });
         self.emit_trailing_comment(inv.trivia.trailing.as_deref());
         if inv.trivia.trailing.is_none() {
@@ -1607,7 +1747,7 @@ impl<'a> Formatter<'a> {
         self.push(&format!("transition {}:", tr.name.name));
         self.newline();
         self.indented(|f| {
-            f.push(&expr_to_string(&tr.predicate));
+            f.format_expr(&tr.predicate);
         });
         self.emit_trailing_comment(tr.trivia.trailing.as_deref());
         if tr.trivia.trailing.is_none() {
@@ -1631,26 +1771,64 @@ impl<'a> Formatter<'a> {
         } else {
             // Normal form: `actor Name { auth = Scheme(, identity = Type)? }`.
             let auth = a.auth.as_ref().map(|i| i.name.as_str()).unwrap_or("None");
-            self.push(&format!("actor {} {{ auth = {auth}", a.name.name));
-            if !a.auth_config.is_empty() {
-                let args: Vec<String> = a
-                    .auth_config
-                    .iter()
-                    .map(|arg| match &arg.value {
-                        bynk_syntax::ast::SchemeArgValue::Str(s) => {
-                            format!("{} = \"{}\"", arg.key.name, escape_string(s))
+            let args: Vec<String> = a
+                .auth_config
+                .iter()
+                .map(|arg| match &arg.value {
+                    bynk_syntax::ast::SchemeArgValue::Str(s) => {
+                        format!("{} = \"{}\"", arg.key.name, escape_string(s))
+                    }
+                    bynk_syntax::ast::SchemeArgValue::Int(n) => {
+                        format!("{} = {n}", arg.key.name)
+                    }
+                })
+                .collect();
+            let config = if args.is_empty() {
+                String::new()
+            } else {
+                format!("({})", args.join(", "))
+            };
+            let identity = a
+                .identity
+                .as_ref()
+                .map(|id| format!(", identity = {}", type_ref_to_string(id)))
+                .unwrap_or_default();
+            let oneline = format!(
+                "actor {} {{ auth = {auth}{config}{identity} }}",
+                a.name.name
+            );
+            if args.is_empty() || self.fits(&oneline, 0) {
+                self.push(&oneline);
+            } else {
+                // An OIDC-style scheme carries issuer / audience / JWKS URLs
+                // that blow past any line budget on one line (#963): open the
+                // braces and give each scheme argument its own line.
+                self.push(&format!("actor {} {{", a.name.name));
+                self.newline();
+                self.indented(|f| {
+                    f.push(&format!("auth = {auth}("));
+                    f.newline();
+                    f.indented(|f2| {
+                        for (i, arg) in args.iter().enumerate() {
+                            f2.push(arg);
+                            if i + 1 < args.len() {
+                                f2.push(",");
+                            }
+                            f2.newline();
                         }
-                        bynk_syntax::ast::SchemeArgValue::Int(n) => {
-                            format!("{} = {n}", arg.key.name)
-                        }
-                    })
-                    .collect();
-                self.push(&format!("({})", args.join(", ")));
+                    });
+                    f.push(")");
+                    if !identity.is_empty() {
+                        // `identity` is a sibling of `auth`, so its comma stays
+                        // with `auth`'s closing paren and it starts a new line.
+                        f.push(",");
+                        f.newline();
+                        f.push(identity.trim_start_matches(", "));
+                    }
+                    f.newline();
+                });
+                self.push("}");
             }
-            if let Some(id) = &a.identity {
-                self.push(&format!(", identity = {}", type_ref_to_string(id)));
-            }
-            self.push(" }");
         }
         self.emit_trailing_comment(a.trivia.trailing.as_deref());
         if a.trivia.trailing.is_none() {
@@ -1708,20 +1886,20 @@ impl<'a> Formatter<'a> {
         // `on open(params)` — while the Http/Cron prefixes already emit a trailing
         // space (`on GET("/x") (params)`). (v0.155: the `by` clause no longer sits
         // here, so no separating space is needed.)
-        self.format_params(&h.params, false);
-        self.push(" -> ");
-        self.format_type_ref(&h.return_type);
-        // v0.155: the ambient `by`/`given` clauses follow the return type, `by`
-        // first — relocated from before the parameter list to end the
-        // `by Actor (params)` call illusion.
+        // Everything from `-> Ret` to the body's `{` shares the parameter
+        // list's line and none of it can wrap (the `given` list in particular
+        // is newline-sensitive), so the whole tail is reserved up front and the
+        // parameters are what gives (#963).
+        let mut tail = format!(" -> {}", type_ref_to_string(&h.return_type));
         if let Some(by) = &h.by_clause {
-            self.push(&format!(" {}", by_clause_src(by)));
+            tail.push_str(&format!(" {}", by_clause_src(by)));
         }
         if !h.given.is_empty() {
-            self.push(" given ");
             let names: Vec<String> = h.given.iter().map(cap_ref_src).collect();
-            self.push(&names.join(", "));
+            tail.push_str(&format!(" given {}", names.join(", ")));
         }
+        self.format_params(&h.params, false, tail.chars().count() + " {".len());
+        self.push(&tail);
         self.push(" ");
         self.format_block(&h.body);
         self.emit_trailing_comment(h.trivia.trailing.as_deref());
@@ -1733,6 +1911,13 @@ impl<'a> Formatter<'a> {
     // -- Blocks, statements, expressions --
 
     fn format_block(&mut self, b: &Block) {
+        self.format_block_with_reserve(b, 0);
+    }
+
+    /// Format a block, knowing that `reserve` columns of text will follow its
+    /// closing brace on the same line (` else {` on an `if`'s then-branch, an
+    /// arm's `,`). Only a block that fits *including* that tail stays inline.
+    fn format_block_with_reserve(&mut self, b: &Block, reserve: usize) {
         // A block with no statements, no trivia, and a simple tail
         // expression can be emitted inline if it fits; otherwise multi-line.
         let tail_oneline = expr_to_string(&b.tail);
@@ -1740,14 +1925,21 @@ impl<'a> Formatter<'a> {
         if b.statements.is_empty()
             && b.tail_leading_comments.is_empty()
             && !any_stmt_trivia
-            && self.line_fits(&format!("{{ {tail_oneline} }}"))
-            && !tail_oneline.contains('\n')
+            && self.fits(&format!("{{ {tail_oneline} }}"), reserve)
         {
             self.push("{ ");
-            self.format_expr(&b.tail);
+            self.push(&tail_oneline);
             self.push(" }");
             return;
         }
+        self.format_block_multiline(b);
+    }
+
+    /// The multi-line block form: brace, one statement per indented line, the
+    /// tail expression, closing brace. Split out of [`Self::format_block`] so
+    /// the wrapped-expression printer can force it (#963) for an `if`/lambda
+    /// body whose single-line form would overflow.
+    fn format_block_multiline(&mut self, b: &Block) {
         self.push("{");
         self.newline();
         self.indented(|f| {
@@ -1796,9 +1988,15 @@ impl<'a> Formatter<'a> {
                     self.format_type_ref(t);
                 }
                 self.push(" <- ");
-                self.format_expr(&l.value);
-                if let Some(p) = &l.principal {
-                    self.push(&format!(" {}", call_site_actor_src(p)));
+                // The `by <Actor>` clause trails the value on the same line.
+                let principal = l
+                    .principal
+                    .as_ref()
+                    .map(|p| format!(" {}", call_site_actor_src(p)));
+                let reserve = principal.as_deref().map_or(0, |p| p.chars().count());
+                self.format_expr_at(&l.value, 0, reserve);
+                if let Some(principal) = principal {
+                    self.push(&principal);
                 }
             }
             Statement::Expect(a) => {
@@ -1822,15 +2020,410 @@ impl<'a> Formatter<'a> {
     }
 
     fn format_expr(&mut self, e: &Expr) {
-        // `match` renders multi-line, so it must go through the indent-aware
-        // emitter rather than `expr_to_string` — the latter builds a flat
-        // string with hardcoded single-tab arms that ignores the current
+        self.format_expr_at(e, 0, 0);
+    }
+
+    /// Emit `e` at the current column, breaking it across lines when its
+    /// single-line form would overrun the line budget (#963).
+    ///
+    /// `parent_prec` is the enclosing operator's precedence, exactly as in
+    /// [`expr_with_prec`] — it decides parenthesisation. `reserve` is the width
+    /// of text the caller will emit after this expression on the same line (a
+    /// closing `)`, an arm's `,`, ` else {`), so a sub-expression is not judged
+    /// to fit on the strength of a line it does not in fact end.
+    ///
+    /// The flat form always wins when it fits: this only ever *adds* line
+    /// breaks, and only at points the grammar accepts (verified by the
+    /// round-trip guard in [`format_source`]).
+    fn format_expr_at(&mut self, e: &Expr, parent_prec: u8, reserve: usize) {
+        // `match` renders multi-line unconditionally, so it must go through the
+        // indent-aware emitter rather than `expr_to_string` — the latter builds
+        // a flat string with hardcoded single-tab arms that ignores the current
         // nesting depth (the closing brace and every arm would land at column
-        // one regardless of how deeply the `match` is nested). Everything else
-        // is single-line and renders fine as a string.
+        // one regardless of how deeply the `match` is nested).
+        if let ExprKind::Match { discriminant, arms } = &e.kind {
+            self.format_match(discriminant, arms);
+            return;
+        }
+        let flat = expr_with_prec(e, parent_prec);
+        if self.fits(&flat, reserve) {
+            self.push(&flat);
+            return;
+        }
+        // Too wide. Re-emit broken across lines — inside the parentheses the
+        // flat form would have added, if precedence calls for them.
+        if needs_parens(e, parent_prec) {
+            self.push("(");
+            self.format_expr_broken(e, reserve + 1);
+            self.push(")");
+        } else {
+            self.format_expr_broken(e, reserve);
+        }
+    }
+
+    /// The multi-line rendering of an expression that does not fit. Each arm
+    /// breaks at a point the grammar tolerates a newline; anything with no such
+    /// point (a long string literal, an identifier) falls through to the flat
+    /// form, which simply overruns — the 100-column target is soft.
+    fn format_expr_broken(&mut self, e: &Expr, reserve: usize) {
         match &e.kind {
-            ExprKind::Match { discriminant, arms } => self.format_match(discriminant, arms),
-            _ => self.push(&expr_to_string(e)),
+            // `T { field: value, … }` — one field per line.
+            ExprKind::RecordConstruction { type_name, fields } if !fields.is_empty() => {
+                self.push(&format!("{} {{", type_name.name));
+                self.format_field_inits(fields.iter(), None);
+            }
+            // `T { ...base, field: value, … }` — the spread first, then the
+            // overrides, one per line.
+            ExprKind::RecordSpread {
+                type_name,
+                base,
+                overrides,
+            } => {
+                match type_name {
+                    Some(tn) => self.push(&format!("{} {{", tn.name)),
+                    None => self.push("{"),
+                }
+                let spread = format!("...{}", expr_with_prec(base, 0));
+                self.format_field_inits(overrides.iter(), Some(&spread));
+            }
+            // A call's arguments, one per line. Unlike a record body an
+            // argument list does NOT accept a trailing comma (the grammar
+            // rejects it), so the wrapped form never emits one.
+            ExprKind::Call {
+                name,
+                type_args,
+                args,
+            } if !args.is_empty() => {
+                self.push(&format!("{}{}(", name.name, type_args_src(type_args)));
+                self.format_arg_list(args, reserve);
+            }
+            ExprKind::ConstructorCall {
+                type_name,
+                method,
+                args,
+            } if !args.is_empty() => {
+                self.push(&format!("{}.{}(", type_name.name, method.name));
+                self.format_arg_list(args, reserve);
+            }
+            ExprKind::Val { type_ref, args } if !args.is_empty() => {
+                self.push(&format!("Val[{}](", type_ref_to_string(type_ref)));
+                self.format_arg_list(args, reserve);
+            }
+            // A `.`-chain: `receiver.a().b()` — kept on one line where the
+            // overflow is an argument's, broken before each call where it is
+            // the chain's own (see `format_chain`).
+            ExprKind::MethodCall { .. } | ExprKind::FieldAccess { .. } => {
+                self.format_chain(e, reserve);
+            }
+            // `[a, b, c]` — one element per line.
+            ExprKind::ListLit(elems) if !elems.is_empty() => {
+                self.push("[");
+                self.newline();
+                self.indented(|f| {
+                    for (i, elem) in elems.iter().enumerate() {
+                        let last = i + 1 == elems.len();
+                        f.format_expr_at(elem, 0, if last { 0 } else { 1 });
+                        if !last || f.opts.trailing_comma {
+                            f.push(",");
+                        }
+                        f.newline();
+                    }
+                });
+                self.push("]");
+            }
+            // A run of `&&` / `||` / `implies` breaks before each operator, per
+            // the spec's "wraps at `&&`/`||` boundaries". Only these: a
+            // continuation line starting with an arithmetic or comparison
+            // operator does not re-attach to the line above on re-parse.
+            ExprKind::BinOp(op, ..) if is_logical(*op) => {
+                let prec = binop_prec(*op);
+                let mut operands = Vec::new();
+                flatten_binop(e, *op, &mut operands);
+                self.format_expr_at(operands[0], prec, 0);
+                self.indented(|f| {
+                    for (i, operand) in operands.iter().enumerate().skip(1) {
+                        f.newline();
+                        f.push(&format!("{} ", op.name()));
+                        let last = i + 1 == operands.len();
+                        f.format_expr_at(operand, prec + 1, if last { reserve } else { 0 });
+                    }
+                });
+            }
+            // Any other binary operator stays on one line, but its operands may
+            // still break internally (a record or call on either side).
+            ExprKind::BinOp(op, lhs, rhs) => {
+                let prec = binop_prec(*op);
+                let tail = format!(" {} {}", op.name(), expr_with_prec(rhs, prec + 1));
+                // The right-hand side shares the operator's line whenever it is
+                // itself unbroken, so charge it to the left-hand side's budget.
+                let lhs_reserve = if tail.contains('\n') {
+                    0
+                } else {
+                    tail.chars().count() + reserve
+                };
+                self.format_expr_at(lhs, prec, lhs_reserve);
+                self.push(&format!(" {} ", op.name()));
+                self.format_expr_at(rhs, prec + 1, reserve);
+            }
+            ExprKind::Is { value, pattern } => {
+                let pat = format!(" is {}", pattern_to_string(pattern));
+                self.format_expr_at(value, 4, pat.chars().count() + reserve);
+                self.push(&pat);
+            }
+            // `if cond { … } else { … }` — both branches go vertical. Once the
+            // one-line form is over budget, splitting only one branch leaves a
+            // lopsided line that is no easier to read.
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                self.push("if ");
+                self.format_expr_at(cond, 0, 2);
+                self.push(" ");
+                self.format_block_multiline(then_block);
+                // v0.146 (ADR 0170): an `if` with no `else` carries a
+                // synthesised unit else-branch — omit it, as the flat form does.
+                if !else_block.is_synth_unit() {
+                    self.push(" else ");
+                    self.format_block_multiline(else_block);
+                }
+            }
+            ExprKind::Block(b) => self.format_block_multiline(b),
+            ExprKind::Lambda(lambda) => {
+                let params: Vec<String> = lambda
+                    .params
+                    .iter()
+                    .map(|p| match &p.type_ref {
+                        Some(tr) => format!("{}: {}", p.name.name, type_ref_to_string(tr)),
+                        None => p.name.name.clone(),
+                    })
+                    .collect();
+                self.push(&format!("({}) => ", params.join(", ")));
+                self.format_expr_at(&lambda.body, 0, reserve);
+            }
+            // Single-argument wrappers: nothing to break at the wrapper itself,
+            // so recurse and let the payload wrap inside the parentheses.
+            ExprKind::Ok(v) => self.wrap_call("Ok(", v, reserve),
+            ExprKind::Err(v) => self.wrap_call("Err(", v, reserve),
+            ExprKind::Some(v) => self.wrap_call("Some(", v, reserve),
+            ExprKind::EffectPure(v) => self.wrap_call("Effect.pure(", v, reserve),
+            ExprKind::Wire(v) => self.wrap_call("Wire(", v, reserve),
+            ExprKind::Paren(v) => self.wrap_call("(", v, reserve),
+            ExprKind::Question(v) => {
+                self.format_expr_at(v, 8, reserve + 1);
+                self.push("?");
+            }
+            ExprKind::Expect(v) => {
+                self.push("expect ");
+                self.format_expr_at(v, 0, reserve);
+            }
+            // Nothing breakable — a literal, an identifier, an interpolated
+            // string. Emit it as-is and overrun.
+            _ => self.push(&expr_with_prec(e, 0)),
+        }
+    }
+
+    /// `<head><inner>)` where `inner` wraps inside the parentheses.
+    fn wrap_call(&mut self, head: &str, inner: &Expr, reserve: usize) {
+        self.push(head);
+        self.format_expr_at(inner, 0, reserve + 1);
+        self.push(")");
+    }
+
+    /// The body of a wrapped record construction or spread: one `name: value`
+    /// per indented line, then the closing brace. `spread` is the leading
+    /// `...base` entry, when there is one. The brace and any type name are the
+    /// caller's to emit.
+    fn format_field_inits<'f, I>(&mut self, fields: I, spread: Option<&str>)
+    where
+        I: ExactSizeIterator<Item = &'f FieldInit>,
+    {
+        let total = fields.len() + usize::from(spread.is_some());
+        self.newline();
+        self.indented(|f| {
+            let mut emitted = 0usize;
+            if let Some(spread) = spread {
+                f.push(spread);
+                emitted += 1;
+                if emitted < total || f.opts.trailing_comma {
+                    f.push(",");
+                }
+                f.newline();
+            }
+            for field in fields {
+                f.push(&field.name.name);
+                if let Some(v) = &field.value {
+                    f.push(": ");
+                    f.format_expr_at(v, 0, 1);
+                }
+                emitted += 1;
+                if emitted < total || f.opts.trailing_comma {
+                    f.push(",");
+                }
+                f.newline();
+            }
+        });
+        self.push("}");
+    }
+
+    /// The arguments of a wrapped call plus its closing `)` — the caller has
+    /// already emitted the `name(` head.
+    ///
+    /// A trailing argument hugs the call — the earlier arguments stay on the
+    /// call's line and it opens its own body there, so
+    /// `xs.fold(init, (acc, x) => match acc {` reads as one construct instead
+    /// of being pushed down a level. Hugging is attempted for a sole argument
+    /// (there is no sibling for it to misalign against) and, past that, only
+    /// for a trailing lambda / record / block / `match` / `if`, whose opening
+    /// line is short. It is taken only if every line it produces fits;
+    /// otherwise each argument goes on its own indented line.
+    ///
+    /// Never a trailing comma — the grammar rejects one in an argument list,
+    /// and the wrapped output has to re-parse.
+    fn format_arg_list(&mut self, args: &[Expr], reserve: usize) -> bool {
+        if let Some((last, leading)) = args.split_last()
+            && (leading.is_empty() || is_block_like(last))
+            && self.try_layout(reserve, |f| {
+                for arg in leading {
+                    f.push(&expr_with_prec(arg, 0));
+                    f.push(", ");
+                }
+                f.format_expr_at(last, 0, 1);
+                f.push(")");
+            })
+        {
+            return false;
+        }
+        self.newline();
+        self.indented(|f| {
+            for (i, arg) in args.iter().enumerate() {
+                let last = i + 1 == args.len();
+                f.format_expr_at(arg, 0, if last { 0 } else { 1 });
+                if !last {
+                    f.push(",");
+                }
+                f.newline();
+            }
+        });
+        self.push(")");
+        true
+    }
+
+    /// Emit a `.`-chain (`receiver.a(…).b(…).c`) broken across lines.
+    ///
+    /// A single-call chain never breaks at its `.` — there is no pipeline to
+    /// read and the overflow belongs to the argument list. A multi-call chain
+    /// prefers to stay on one line too, and breaks before each call only when
+    /// staying inline would strand an exploded argument list mid-chain.
+    fn format_chain(&mut self, e: &Expr, reserve: usize) {
+        let (base, links) = flatten_chain(e);
+        let calls = links
+            .iter()
+            .filter(|l| matches!(l, ChainLink::Method { .. }))
+            .count();
+        if calls < 2 {
+            self.format_chain_inline(base, &links, reserve);
+            return;
+        }
+        // Keeping a multi-call chain intact is preferable when the overflow
+        // belongs to an argument rather than to the chain — the
+        // `xs.fold(init, (acc, x) => match acc {` shape, where a body opens on
+        // the chain's own line. That reading survives only while every step
+        // either fits or *hugs*. A step forced to put its arguments one per
+        // line strands a bare `)` mid-chain, at which point the chain itself is
+        // what is too long, and breaking at its dots reads better.
+        let exploded = std::cell::Cell::new(false);
+        if self.try_layout_if(
+            reserve,
+            |f| exploded.set(f.format_chain_inline(base, &links, reserve)),
+            || !exploded.get(),
+        ) {
+            return;
+        }
+        // Break before each *call*, not before each `.`. A field access is part
+        // of whatever it qualifies: a leading `msg.params` belongs to the
+        // receiver, and a `.rows.count()` reads as one step, so a line never
+        // opens with a bare `.field`.
+        let first_call = links
+            .iter()
+            .position(|l| matches!(l, ChainLink::Method { .. }))
+            .expect("a chain with two calls has one");
+        self.format_expr_at(base, 8, 0);
+        for link in &links[..first_call] {
+            self.format_chain_link(link, 0);
+        }
+        self.indented(|f| {
+            let mut i = first_call;
+            while i < links.len() {
+                let mut end = i;
+                while end < links.len() && matches!(links[end], ChainLink::Field(_)) {
+                    end += 1;
+                }
+                // …and the call those field accesses qualify, if any.
+                if end < links.len() {
+                    end += 1;
+                }
+                f.newline();
+                for (offset, link) in links[i..end].iter().enumerate() {
+                    let is_last = end == links.len() && i + offset + 1 == links.len();
+                    f.format_chain_link(link, if is_last { reserve } else { 0 });
+                }
+                i = end;
+            }
+        });
+    }
+
+    /// The chain on one line: the receiver, then every `.`-step in place. Any
+    /// step whose arguments do not fit wraps them, but no break is introduced
+    /// at a `.`. Reports whether any step had to put its arguments one per
+    /// line, which is what tells [`Self::format_chain`] this layout is a poor
+    /// fit for the chain.
+    fn format_chain_inline(
+        &mut self,
+        base: &Expr,
+        links: &[ChainLink<'_>],
+        reserve: usize,
+    ) -> bool {
+        self.format_expr_at(base, 8, 0);
+        let mut exploded = false;
+        for (i, link) in links.iter().enumerate() {
+            exploded |=
+                self.format_chain_link(link, if i + 1 == links.len() { reserve } else { 0 });
+        }
+        exploded
+    }
+
+    /// One `.field` or `.method(args)` step of a chain, wrapping the argument
+    /// list when the step does not fit on the current line. Reports whether
+    /// that wrapping was the one-argument-per-line form.
+    fn format_chain_link(&mut self, link: &ChainLink<'_>, reserve: usize) -> bool {
+        match link {
+            ChainLink::Field(name) => {
+                self.push(&format!(".{name}"));
+                false
+            }
+            ChainLink::Method {
+                method,
+                type_args,
+                args,
+            } => {
+                let head = format!(".{}{}", method, type_args_src(type_args));
+                let flat = format!(
+                    "{head}({})",
+                    args.iter()
+                        .map(|a| expr_with_prec(a, 0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                if args.is_empty() || self.fits(&flat, reserve) {
+                    self.push(&flat);
+                    return false;
+                }
+                self.push(&head);
+                self.push("(");
+                self.format_arg_list(args, reserve)
+            }
         }
     }
 
@@ -1839,7 +2432,7 @@ impl<'a> Formatter<'a> {
     /// `format_block` so their statements indent correctly in turn.
     fn format_match(&mut self, discriminant: &Expr, arms: &[MatchArm]) {
         self.push("match ");
-        self.format_expr(discriminant);
+        self.format_expr_at(discriminant, 0, " {".len());
         self.push(" {");
         self.newline();
         self.indented(|f| {
@@ -1848,18 +2441,124 @@ impl<'a> Formatter<'a> {
                 // ADR 0169: render an optional `if <guard>` before `=>`.
                 if let Some(guard) = &arm.guard {
                     f.push(" if ");
-                    f.push(&expr_with_prec(guard, 0));
+                    f.format_expr_at(guard, 0, " => ".len());
                 }
                 f.push(" => ");
+                // Every arm ends in a `,`, which counts against its budget.
                 match &arm.body {
-                    MatchBody::Expr(e) => f.format_expr(e),
-                    MatchBody::Block(b) => f.format_block(b),
+                    MatchBody::Expr(e) => f.format_expr_at(e, 0, 1),
+                    MatchBody::Block(b) => f.format_block_with_reserve(b, 1),
                 }
                 f.push(",");
                 f.newline();
             }
         });
         self.push("}");
+    }
+}
+
+/// One step of a `.`-chain, as collected by [`flatten_chain`].
+enum ChainLink<'e> {
+    Field(&'e str),
+    Method {
+        method: &'e str,
+        type_args: &'e [TypeRef],
+        args: &'e [Expr],
+    },
+}
+
+/// Split `receiver.a(…).b.c(…)` into its innermost receiver and the `.`-steps
+/// applied to it, outermost last. A non-chain expression yields itself and an
+/// empty list.
+fn flatten_chain(e: &Expr) -> (&Expr, Vec<ChainLink<'_>>) {
+    let mut links = Vec::new();
+    let mut cur = e;
+    loop {
+        match &cur.kind {
+            ExprKind::FieldAccess { receiver, field } => {
+                links.push(ChainLink::Field(field.name.as_str()));
+                cur = receiver;
+            }
+            ExprKind::MethodCall {
+                receiver,
+                method,
+                type_args,
+                args,
+            } => {
+                links.push(ChainLink::Method {
+                    method: method.name.as_str(),
+                    type_args,
+                    args,
+                });
+                cur = receiver;
+            }
+            _ => break,
+        }
+    }
+    links.reverse();
+    (cur, links)
+}
+
+/// The `[T, U]` type-argument suffix on a call, or the empty string.
+fn type_args_src(type_args: &[TypeRef]) -> String {
+    if type_args.is_empty() {
+        return String::new();
+    }
+    format!(
+        "[{}]",
+        type_args
+            .iter()
+            .map(type_ref_to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// The operators a wrapped expression may break *before*. A continuation line
+/// opening with `&&`, `||`, or `implies` re-attaches to the line above on
+/// re-parse; one opening with `+` or `==` does not.
+fn is_logical(op: BinOp) -> bool {
+    matches!(op, BinOp::And | BinOp::Or | BinOp::Implies)
+}
+
+/// Collect the operands of a left-nested run of the same operator, so
+/// `a && b && c` breaks into three lines rather than nesting two levels deep.
+fn flatten_binop<'e>(e: &'e Expr, op: BinOp, out: &mut Vec<&'e Expr>) {
+    if let ExprKind::BinOp(inner_op, lhs, rhs) = &e.kind
+        && *inner_op == op
+    {
+        flatten_binop(lhs, op, out);
+        out.push(rhs);
+        return;
+    }
+    out.push(e);
+}
+
+/// An expression whose wrapped form opens with a short header and a brace, so
+/// it reads correctly as the sole argument of a call it shares a line with —
+/// `xs.forEach((x) => {`, `Fetch.send(Request {`. Excludes anything whose first
+/// wrapped line is as long as the construct itself (a call, a `.`-chain), which
+/// would just move the overflow rather than remove it.
+fn is_block_like(e: &Expr) -> bool {
+    matches!(
+        e.kind,
+        ExprKind::Lambda(_)
+            | ExprKind::Block(_)
+            | ExprKind::RecordConstruction { .. }
+            | ExprKind::RecordSpread { .. }
+            | ExprKind::Match { .. }
+            | ExprKind::If { .. }
+    )
+}
+
+/// Whether [`expr_with_prec`] would parenthesise `e` in a `parent_prec`
+/// context. The wrapped printer emits those parentheses itself, since it
+/// bypasses the flat renderer that would otherwise add them.
+fn needs_parens(e: &Expr, parent_prec: u8) -> bool {
+    match &e.kind {
+        ExprKind::BinOp(op, ..) => binop_prec(*op) < parent_prec,
+        ExprKind::UnaryOp(..) => parent_prec > 7,
+        _ => false,
     }
 }
 
@@ -1981,6 +2680,22 @@ fn statement_trivia(s: &Statement) -> &Trivia {
 }
 
 // -- String-rendering helpers (used by inline single-line emission) --
+
+/// The rendered width of a single line: one column per character, except a
+/// tab, which advances to the next multiple of `tab`. Counting `char`s rather
+/// than bytes keeps a non-ASCII identifier or string literal from being
+/// over-measured and wrapped for no reason.
+fn display_width(line: &str, tab: usize) -> usize {
+    let mut col = 0usize;
+    for ch in line.chars() {
+        if ch == '\t' {
+            col += tab - (col % tab);
+        } else {
+            col += 1;
+        }
+    }
+    col
+}
 
 fn type_ref_to_string(t: &TypeRef) -> String {
     match t {
@@ -2753,5 +3468,184 @@ mod tests {
         assert!(!out.contains("state {"), "spurious state block: {out}");
         assert!(out.contains("store count: Cell[Int] = 0"), "{out}");
         assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    // -- #963: line-width-driven wrapping --
+
+    /// Every line of `out`, measured the way the formatter measures them.
+    fn widths(out: &str) -> Vec<usize> {
+        out.lines().map(|l| display_width(l, 4)).collect()
+    }
+
+    fn assert_within_budget(out: &str) {
+        let over: Vec<&str> = out.lines().filter(|l| display_width(l, 4) > 100).collect();
+        assert!(over.is_empty(), "lines over 100 columns: {over:?}\n{out}");
+    }
+
+    #[test]
+    fn fit_test_counts_the_prefix_already_on_the_line() {
+        // The body fits on its own but not behind the signature, which is what
+        // the pre-#963 fit test measured.
+        let src = "commons x {\nfn authorise(amount: Int, ceiling: Int, floor: Int) -> Result[Int, Error] { if amount > ceiling { Err(Declined) } else { Ok(amount) } }\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            out.contains("-> Result[Int, Error] {\n"),
+            "body not broken out: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn wraps_a_long_record_construction_one_field_per_line() {
+        let src = "commons x {\nfn make() -> R { R { alpha: \"first value here\", beta: \"second value here\", gamma: \"third value here\", delta: \"fourth value\" } }\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            out.contains("\t\talpha: \"first value here\",\n"),
+            "fields not one per line: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn wraps_a_long_argument_list_without_a_trailing_comma() {
+        // A parameter/argument list rejects a trailing comma in the grammar, so
+        // the wrapped form must not emit one — `format_source` would refuse the
+        // output on the round-trip guard if it did.
+        let src = "commons x {\nfn go() -> Int { combine(firstOperandValue, secondOperandValue, thirdOperandValue, fourthOperandValue) }\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            !out.contains(",\n\t\t)"),
+            "trailing comma in an argument list: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn wraps_long_parameter_lists_behind_the_return_type() {
+        let src = "context x {\nservice api from http {\non POST(\"/reservations/confirm\") (identifier: String, body: Reservation) -> Effect[HttpResult[Reservation]] by Visitor { Ok(body) }\n}\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            out.contains("\t\t\tidentifier: String,\n"),
+            "params not wrapped: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn breaks_a_long_chain_at_its_dots() {
+        let src = "commons x {\nfn go(rows: List[Row]) -> List[Int] { rows.filterOnlyTheInteresting((r) => r.nights > 0).mapEachOntoItsValue((r) => r.nights * r.rate).collect() }\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            out.contains("\n\t\t\t.collect()"),
+            "chain not broken at the dots: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn keeps_a_chain_intact_when_only_an_argument_needs_wrapping() {
+        // The chain itself is short; the `match` inside is what spans lines.
+        // Breaking at the dots here would be noise, so the chain stays put.
+        let src = "commons x {\nfn join(parts: List[String]) -> String {\nlet init: Option[String] = None\nparts.fold(init, (acc, p) => match acc {\nSome(s) => Some(s.concat(p)),\nNone => Some(p),\n}).getOrElse(\"\")\n}\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            out.contains("parts.fold(init, (acc, p) => match acc {"),
+            "chain broken needlessly: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn breaks_a_long_conjunction_before_each_operator() {
+        let src = "commons x {\nfn ok(a: Int, b: Int, c: Int, d: Int) -> Bool { aSufficientlyLongPredicateName(a) && anotherRatherLongPredicate(b) && yetAnotherLongishPredicate(c) && theFinalPredicateHere(d) }\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            out.lines().any(|l| l.trim_start().starts_with("&& ")),
+            "conjunction not broken at the operators: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn never_breaks_before_an_arithmetic_operator() {
+        // A continuation line opening with `+` does not re-attach on re-parse,
+        // so an arithmetic run stays on one line however long it gets.
+        let src = "commons x {\nfn total(a: Int, b: Int, c: Int, d: Int) -> Int { someLongFunctionName(a) + anotherLongFunction(b) + aThirdLongFunction(c) + lastOne(d) }\n}";
+        let out = fmt(src);
+        assert!(
+            !out.lines().any(|l| l.trim_start().starts_with("+ ")),
+            "broke before `+`, which does not re-parse: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn wraps_an_over_long_actor_auth_config() {
+        let src = "context x {\nactor Partner { auth = Oidc(issuer = \"https://issuer.example.test\", audience = \"reservations-api\", jwks = \"https://issuer.example.test/jwks.json\"), identity = PartnerId }\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            out.contains("\t\tissuer = "),
+            "scheme args not wrapped: {out}"
+        );
+        assert!(out.contains("identity = PartnerId"), "identity lost: {out}");
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn a_lone_block_like_argument_hugs_its_call() {
+        let src = "commons x {\nfn go(items: List[Item]) -> Effect[()] { items.forEachInTurnAndOrder((item: Item) => { let _ <- store.put(item.identifier, item) }) }\n}";
+        let out = fmt(src);
+        assert_within_budget(&out);
+        assert!(
+            out.contains("((item: Item) => {"),
+            "sole lambda argument did not hug its call: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn an_unbreakable_line_is_left_long_rather_than_mangled() {
+        // No break point exists inside a string literal; the 100-column target
+        // is soft, so the line simply overruns.
+        let long = "x".repeat(140);
+        let src = format!("commons x {{\nfn go() -> String {{ \"{long}\" }}\n}}");
+        let out = fmt(&src);
+        assert!(
+            widths(&out).iter().any(|w| *w > 100),
+            "expected an over-long line: {out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    #[test]
+    fn wrapping_is_idempotent_and_structure_preserving_across_widths() {
+        // The round-trip guard inside `format_source` already refuses output
+        // that re-parses differently, so a successful format at each width is
+        // itself the structural assertion.
+        let src = "context x {\ntype R = { id: String, name: String, size: Int }\nfn build(id: String, name: String, size: Int) -> R { R { id: id, name: name, size: size } }\nfn pick(rows: List[R]) -> List[String] { rows.filter((r) => r.size > 0).map((r) => r.name).collect() }\n}";
+        for width in [40u32, 60, 80, 100, 120] {
+            let opts = FormatOptions {
+                max_line_width: width,
+                ..FormatOptions::default()
+            };
+            let out = format_source(src, &opts).unwrap_or_else(|e| {
+                panic!("width {width}: format refused ({} errors)", e.errors.len())
+            });
+            let again = format_source(&out, &opts).unwrap_or_else(|e| {
+                panic!(
+                    "width {width}: reformat refused ({} errors)",
+                    e.errors.len()
+                )
+            });
+            assert_eq!(out, again, "width {width}: not idempotent:\n{out}");
+        }
     }
 }

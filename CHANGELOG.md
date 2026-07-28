@@ -53,6 +53,21 @@ The project, its toolchain, and its in-language surface were renamed from
   from `--inspect-port` under `--inspect`), so `--port` is no longer accepted
   through the `--` passthrough where the driver allocates it (#552).
 
+### Formatter
+
+- `bynk fmt` / `bynkc fmt` now honours the 100-column target across the board
+  (#963). Every fit test measures the whole line — the column a construct starts
+  at, and the signature tail, closing paren or arm comma that follows it — where
+  it previously measured the construct alone against the indent, so a body
+  behind `fn name(params) -> Ret ` was judged to fit and then overran. Long
+  constructs now go vertical: record constructions and list literals one entry
+  per line, parameter and argument lists one per line, `&&` / `||` runs broken
+  before each operator, `.`-chains broken before each call (unless a trailing
+  argument can open its body on the chain's own line), and `if` branches split.
+  Reformatting existing sources will produce diffs. The target stays soft — a
+  line with no legal break point in it (a long string literal, a `Matches("…")`
+  regex) is left long rather than mangled.
+
 ### In-language reserved surface (breaking)
 
 The reserved namespace `karn` is renamed to **`bynk`**. Update your sources:
