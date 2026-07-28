@@ -1,7 +1,0 @@
-bynk.toml
-src/
-  commerce/
-    values.bynk
-    inventory.bynk
-    orders.bynk
-    payments.bynk

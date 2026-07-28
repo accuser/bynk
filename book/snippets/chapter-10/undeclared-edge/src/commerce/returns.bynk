@@ -1,8 +1,0 @@
-context commerce.returns
-
-service accept {
-	on call(sku: String) -> Effect[Bool] {
-		do commerce.inventory.release(sku)
-		true
-	}
-}
