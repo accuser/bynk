@@ -1,7 +1,0 @@
-commons commerce.values
-
-type Quantity = Int where InRange(1, 100)
-
-fn defaultQuantity() -> Quantity {
-  0
-}

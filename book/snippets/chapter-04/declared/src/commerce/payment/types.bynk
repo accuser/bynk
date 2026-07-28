@@ -1,8 +1,0 @@
-context commerce.payment
-
-type Cents = Int where Positive
-
-type PaymentError = enum {
-  Declined,
-  ProviderUnavailable,
-}
