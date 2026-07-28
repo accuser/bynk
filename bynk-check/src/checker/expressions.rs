@@ -103,6 +103,7 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> O
         .input
         .types
         .values()
+        .map(std::sync::Arc::as_ref)
         .filter(|t| matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == id.name)))
         .collect();
     if owners.len() == 1 {
@@ -361,7 +362,7 @@ const MOCK_DEPTH: u32 = 12;
 /// not carry a `Matches` predicate (no default), and sums/records must have
 /// every (first-variant / field) component recursively mockable within the
 /// depth cap.
-fn can_mock_bare(ty: &Ty, types: &HashMap<String, TypeDecl>, depth: u32) -> bool {
+fn can_mock_bare(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>, depth: u32) -> bool {
     if depth == 0 {
         return false;
     }
@@ -2546,7 +2547,7 @@ pub(crate) fn check_field_access(
     // `.keys`/`.values` into `Query[K]`/`Query[V]`.
     if let ExprKind::Ident(id) = &receiver.kind
         && ctx.lookup(id.name.as_str()).is_none()
-        && let Some((k, v)) = ctx.store_maps.get(&id.name).cloned()
+        && let Some(StoreField::Map(k, v)) = ctx.store_fields.get(&id.name).cloned()
     {
         // The key-aware accessors are not offered on a held `Map[K, Connection]`
         // (v0.158, ADR 0184): a held resource has its own single-owner discipline
@@ -3812,7 +3813,7 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
                         type_name: None,
                         ..
                     },
-                ) = (&value.kind, pattern)
+                ) = (&value.kind, pattern.as_ref())
                     && bindings.is_empty()
                     && variants_of(&value_ty, &ctx.input.types)
                         .is_none_or(|vs| !vs.iter().any(|v| v.name == variant.name))
@@ -3845,7 +3846,7 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
 fn gather_pattern_bindings(
     value_ty: &Ty,
     pattern: &Pattern,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     out: &mut Vec<(String, Ty)>,
 ) {
     // #474: when Rule 2 holds, every alternative gives a shared name the same

@@ -709,8 +709,8 @@ fn check_integration_case_body(
     // Names in scope: types/fns/methods from `uses` commons (for constructing
     // arguments) plus each participant's types/methods (so return types rebrand
     // and variant patterns resolve).
-    let mut types: HashMap<String, TypeDecl> = HashMap::new();
-    let mut fns: HashMap<String, FnDecl> = HashMap::new();
+    let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+    let mut fns: HashMap<String, Arc<FnDecl>> = HashMap::new();
     let mut methods: HashMap<String, ResolverMethodTable> = HashMap::new();
     let mut merge = |src: Option<&UnitTable>, with_fns: bool| {
         let Some(t) = src else { return };
@@ -1474,8 +1474,8 @@ fn integration_typed_commons(
     participants: &[String],
     unit_tables: &HashMap<String, UnitTable>,
 ) -> checker::TypedCommons {
-    let mut types: HashMap<String, TypeDecl> = HashMap::new();
-    let mut fns: HashMap<String, FnDecl> = HashMap::new();
+    let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+    let mut fns: HashMap<String, Arc<FnDecl>> = HashMap::new();
     let mut methods: HashMap<String, ResolverMethodTable> = HashMap::new();
     let mut add = |t: Option<&UnitTable>, with_fns: bool| {
         let Some(t) = t else { return };
@@ -1876,7 +1876,7 @@ fn register_call_record_types(
             let name = checker::call_record_type_name(cap_name, &op.name.name);
             resolved.types.insert(
                 name.clone(),
-                TypeDecl {
+                Arc::new(TypeDecl {
                     type_params: Vec::new(),
                     name: Ident {
                         name,
@@ -1889,7 +1889,7 @@ fn register_call_record_types(
                     documentation: None,
                     span: op.name.span,
                     trivia: Trivia::default(),
-                },
+                }),
             );
         }
     }
@@ -2259,7 +2259,11 @@ const PROP_GEN_DEPTH: u32 = 12;
 /// types must not carry a `Matches` predicate (no refinement-driven generator),
 /// and sums/records must have every component recursively generable within the
 /// depth cap. Mirrors the checker's `can_mock_bare`.
-fn prop_binding_generable(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32) -> bool {
+fn prop_binding_generable(
+    ty: &checker::Ty,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    depth: u32,
+) -> bool {
     if depth == 0 {
         return false;
     }
@@ -2297,7 +2301,7 @@ fn prop_binding_generable(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, d
 /// conservative restates-refinement check.
 fn named_refinement<'a>(
     ty: &checker::Ty,
-    types: &'a HashMap<String, TypeDecl>,
+    types: &'a HashMap<String, Arc<TypeDecl>>,
 ) -> Option<&'a Refinement> {
     let checker::Ty::Named { name, .. } = ty else {
         return None;
@@ -2670,7 +2674,7 @@ fn check_history_binding(
         .collect();
     resolved.types.insert(
         state_name.clone(),
-        TypeDecl {
+        Arc::new(TypeDecl {
             type_params: Vec::new(),
             name: Ident {
                 name: state_name.clone(),
@@ -2683,7 +2687,7 @@ fn check_history_binding(
             documentation: None,
             span,
             trivia: Trivia::default(),
-        },
+        }),
     );
 
     // `.call` — a sum over the agent's handlers, each variant carrying the
@@ -2712,7 +2716,7 @@ fn check_history_binding(
         .collect();
     resolved.types.insert(
         call_name.clone(),
-        TypeDecl {
+        Arc::new(TypeDecl {
             type_params: Vec::new(),
             name: Ident {
                 name: call_name.clone(),
@@ -2726,7 +2730,7 @@ fn check_history_binding(
             documentation: None,
             span,
             trivia: Trivia::default(),
-        },
+        }),
     );
 
     // A `Step` — the driven edge: which call ran (`.call`), whether it committed
@@ -2784,7 +2788,7 @@ fn check_history_binding(
     ];
     resolved.types.insert(
         step_name.clone(),
-        TypeDecl {
+        Arc::new(TypeDecl {
             type_params: Vec::new(),
             name: Ident {
                 name: step_name.clone(),
@@ -2797,7 +2801,7 @@ fn check_history_binding(
             documentation: None,
             span,
             trivia: Trivia::default(),
-        },
+        }),
     );
 
     Ok(checker::Ty::List(Box::new(checker::Ty::Named {
@@ -3209,7 +3213,10 @@ fn is_attackable_contract(f: &FnDecl, resolved: &ResolvedCommons) -> bool {
 /// whether a generated argument needs `Number(…)` coercion before the call
 /// (`Int` generates a `bigint`, but functions do `number` arithmetic — v0.114's
 /// generator/erasure split, harmless until a generated value flows into a call).
-fn numeric_or_scalar_base(ty: &checker::Ty, types: &HashMap<String, TypeDecl>) -> Option<BaseType> {
+fn numeric_or_scalar_base(
+    ty: &checker::Ty,
+    types: &HashMap<String, Arc<TypeDecl>>,
+) -> Option<BaseType> {
     match ty {
         checker::Ty::Base(b) => Some(*b),
         checker::Ty::Named { name, .. } => match &types.get(name)?.body {
@@ -3240,6 +3247,7 @@ fn attackable_contracts(
     let mut fns: Vec<FnDecl> = table
         .fns
         .values()
+        .map(std::sync::Arc::as_ref)
         .filter(|f| is_attackable_contract(f, &resolved))
         .cloned()
         .collect();
@@ -3854,55 +3862,24 @@ fn relative_import_for_test(target_dir: &Path) -> String {
     }
 }
 
+/// Finding #17: the source lives at `emitter/test_runtime/expectation.ts` —
+/// a real, syntax-highlighted `.ts` file rather than a Rust string built
+/// line-by-line via `push_str`. `ExpectationError`'s fields are declared and
+/// assigned explicitly rather than via TS parameter properties: parameter
+/// properties are a transform-only construct that Node's strip-only
+/// type-stripping rejects (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`), and
+/// `bynkc test --inspect` runs this `.ts` directly under strip-only Node
+/// (slice 2, ADR 0104). The explicit form is equivalent and strip-clean.
 fn expectation_runtime_helpers() -> String {
-    let mut out = String::new();
-    // Fields are declared and assigned explicitly rather than via TS parameter
-    // properties: parameter properties are a transform-only construct that Node's
-    // strip-only type-stripping rejects (ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX), and
-    // `bynkc test --inspect` runs this `.ts` directly under strip-only Node (slice
-    // 2, ADR 0104). The explicit form is equivalent and strip-clean.
-    out.push_str("class ExpectationError extends Error {\n");
-    out.push_str("  location: string;\n");
-    out.push_str("  start: number;\n");
-    out.push_str("  end: number;\n");
-    out.push_str("  constructor(location: string, start: number, end: number, detail: string) {\n");
-    out.push_str("    super(`${detail}\\n  at ${location}`);\n");
-    out.push_str("    this.location = location;\n");
-    out.push_str("    this.start = start;\n");
-    out.push_str("    this.end = end;\n");
-    out.push_str("  }\n");
-    out.push_str("}\n");
-    out.push_str(
-        "function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {\n",
-    );
-    out.push_str("  return new ExpectationError(location, start, end, detail);\n");
-    out.push_str("}\n");
-    out.push_str(
-        "function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {\n",
-    );
-    out.push_str("  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }\n");
-    out.push_str("}\n");
-    // v0.112: render a runtime value for the expected-vs-actual failure report.
-    out.push_str("function __bynkShow(v: unknown): string {\n");
-    out.push_str(
-        "  try { return typeof v === \"bigint\" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }\n",
-    );
-    out.push_str("}\n\n");
-    out
+    include_str!("../emitter/test_runtime/expectation.ts").to_string()
 }
 
 /// v0.118: the runtime helper the `__Stub_<Cap>` stubs rely on — a
 /// structural deep-equality over lowered argument patterns (bigint-safe, since
-/// `Int` erases to `bigint` and `JSON.stringify` rejects it raw).
+/// `Int` erases to `bigint` and `JSON.stringify` rejects it raw). Finding
+/// #17: source lives at `emitter/test_runtime/stub.ts`.
 fn stub_runtime_helpers() -> String {
-    let mut out = String::new();
-    out.push_str("function __bynkDeepEqual(a: unknown, b: unknown): boolean {\n");
-    out.push_str(
-        "  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === \"bigint\" ? \"__bigint__\" + String(val) : val);\n",
-    );
-    out.push_str("  try { return s(a) === s(b); } catch { return a === b; }\n");
-    out.push_str("}\n");
-    out
+    include_str!("../emitter/test_runtime/stub.ts").to_string()
 }
 
 /// v0.118: emit the `__Stub_<Cap>` stub class for a capability seam
@@ -4722,155 +4699,13 @@ fn observation_call_record_types(
 /// v0.117: the observation runtime — wraps each observed capability operation on
 /// the test `deps` so every call records its arguments and a monotonic order
 /// index into the per-case trace `__obs`. Emitted once per module that observes.
+/// Finding #17: source lives at `emitter/test_runtime/observation.ts`.
 fn observation_runtime_helpers() -> String {
-    r#"function __bynkRecordDeps(deps: any, spec: Record<string, string[]>, obs: { log: Record<string, { args: any[]; order: number }[]>; n: number }): any {
-  for (const cap of Object.keys(spec)) {
-    if (!deps || !deps[cap]) continue;
-    for (const op of spec[cap]) {
-      const orig = deps[cap][op];
-      if (typeof orig !== "function") continue;
-      const key = cap + "." + op;
-      obs.log[key] = obs.log[key] ?? [];
-      deps[cap][op] = (...args: any[]) => {
-        obs.log[key].push({ args, order: obs.n++ });
-        return orig.apply(deps[cap], args);
-      };
-    }
-  }
-  return deps;
-}
-"#
-    .to_string()
+    include_str!("../emitter/test_runtime/observation.ts").to_string()
 }
 
 fn property_runtime_helpers() -> String {
-    r#"function __bynkRootSeed(): number {
-  const env = (globalThis as any) && (globalThis as any).process && (globalThis as any).process.env;
-  const s = env && env.BYNK_TEST_SEED;
-  if (s) { const n = parseInt(String(s), 16); if (Number.isFinite(n)) return n >>> 0; }
-  return (Math.floor(Math.random() * 0x100000000)) >>> 0;
-}
-const __bynkSeed: number = __bynkRootSeed();
-function __bynkMix(a: number, b: number): number {
-  let h = (a ^ Math.imul(b + 1, 0x9e3779b1)) >>> 0;
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
-  return (h ^ (h >>> 16)) >>> 0;
-}
-function __bynkRng(seed: number) {
-  let s = seed >>> 0;
-  const next = () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  return {
-    next,
-    int(lo: bigint, hi: bigint): bigint {
-      if (hi <= lo) return lo;
-      const span = hi - lo + 1n;
-      let r = 0n, bound = span;
-      while (bound > 0n) {
-        r = (r << 32n) | BigInt(Math.floor(next() * 0x100000000));
-        bound >>= 32n;
-      }
-      return lo + (r % span);
-    },
-    float(lo: number, hi: number): number { return lo + next() * (hi - lo); },
-    str(min: number, max: number): string {
-      const len = min + Math.floor(next() * (max - min + 1));
-      const alpha = "abcdefghijklmnopqrstuvwxyz";
-      let out = "";
-      for (let i = 0; i < len; i++) out += alpha[Math.floor(next() * alpha.length)];
-      return out;
-    },
-    bool(): boolean { return next() < 0.5; },
-    pick(thunks: Array<() => any>): any { return thunks[Math.floor(next() * thunks.length)](); },
-  };
-}
-function __bynkShrinkInt(v: bigint, floor: bigint): bigint[] {
-  const out: bigint[] = [];
-  if (v === floor) return out;
-  out.push(floor);
-  let cur = v;
-  for (let i = 0; i < 8; i++) {
-    const mid = floor + (cur - floor) / 2n;
-    if (mid === cur || mid === floor) break;
-    out.push(mid);
-    cur = mid;
-  }
-  if (v > floor) out.push(v - 1n);
-  return out;
-}
-function __bynkShrinkString(v: string, min: number): string[] {
-  const out: string[] = [];
-  if (v.length > min) {
-    out.push(v.slice(0, min));
-    if (v.length - 1 > min) out.push(v.slice(0, v.length - 1));
-  }
-  return out;
-}
-function __bynkIsFailure(e: any): e is Error {
-  // A shrinkable property/contract failure: an `expect` assertion, or a v0.115
-  // function-contract guard violation thrown from the attacked function. The
-  // `e is Error` predicate narrows the caught value so `e.message` type-checks.
-  return e instanceof ExpectationError || (!!e && e.name === "BynkContractError");
-}
-async function __bynkShrink(gens: any[], where: ((v: any[]) => boolean) | null, body: (v: any[]) => Promise<void>, vals: any[]): Promise<any[]> {
-  let current = vals.slice();
-  let improved = true;
-  let budget = 400;
-  while (improved && budget > 0) {
-    improved = false;
-    for (let i = 0; i < gens.length; i++) {
-      const cands = gens[i].shrink(current[i]);
-      for (const c of cands) {
-        if (--budget <= 0) break;
-        const trial = current.slice();
-        trial[i] = c;
-        if (where && !where(trial)) continue;
-        let failed = false;
-        try { await body(trial); } catch (e) { failed = __bynkIsFailure(e); }
-        if (failed) { current = trial; improved = true; break; }
-      }
-    }
-  }
-  return current;
-}
-async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[], where: ((v: any[]) => boolean) | null, body: (v: any[]) => Promise<void>, name: string, location: string, file: string }): Promise<{ pass: boolean, error?: { message: string, location: string } }> {
-  const rng = __bynkRng(spec.seed);
-  const maxAttempts = spec.cases * 25 + 50;
-  let ran = 0, attempts = 0;
-  while (ran < spec.cases && attempts < maxAttempts) {
-    const bi = attempts;
-    attempts++;
-    const vals = spec.gens.map((g) => (bi < g.boundaries.length ? g.boundaries[bi] : g.gen(rng)));
-    if (spec.where && !spec.where(vals)) continue;
-    ran++;
-    try {
-      await spec.body(vals);
-    } catch (e) {
-      if (!__bynkIsFailure(e)) {
-        return { pass: false, error: { message: String(e), location: spec.location } };
-      }
-      const shrunk = await __bynkShrink(spec.gens, spec.where, spec.body, vals);
-      // Report the run's *root* seed — each property derives its own from it via
-      // `__bynkMix`, so `--seed <root>` reproduces the whole run byte-for-byte.
-      const seedHex = "0x" + (__bynkSeed >>> 0).toString(16);
-      const shown = spec.gens.map((g, i) => `${g.name} = ${g.show(shrunk[i])}`).join(", ");
-      let detail = e.message;
-      try { await spec.body(shrunk); } catch (e2) { if (__bynkIsFailure(e2)) detail = (e2 as any).message; }
-      const firstLine = String(detail).split("\n")[0];
-      const message = `property failed after ${ran} cases (seed ${seedHex})\n  shrunk counterexample:  ${shown}\n  ${firstLine}\n  reproduce: bynkc test ${spec.file} --seed ${seedHex}`;
-      return { pass: false, error: { message, location: spec.location } };
-    }
-  }
-  return { pass: true };
-}
-"#
-    .to_string()
+    include_str!("../emitter/test_runtime/property.ts").to_string()
 }
 
 /// v0.119 (testing track slice 7, ADR 0155): the history-property runtime, emitted
@@ -4882,94 +4717,7 @@ async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[
 /// each reduction so the counterexample stays reachable) then shrinks the surviving
 /// arguments — reporting the seed, the shrunk sequence, and a reproduce line.
 fn history_runtime_helpers() -> String {
-    r#"type __BynkHistoryHandler = { tag: string, gens: Array<{ boundaries: any[], gen: (rng: any) => any, shrink: (v: any) => any[], show: (v: any) => string }> };
-type __BynkHistorySpec = { seed: number, cases: number, maxLen: number, handlers: __BynkHistoryHandler[], drive: (seq: any[]) => Promise<any[]>, body: (run: any[]) => Promise<void>, name: string, location: string, file: string };
-function __bynkGenHistory(rng: any, spec: __BynkHistorySpec): Array<{ h: number, args: any[] }> {
-  const len = Math.floor(rng.next() * (spec.maxLen + 1));
-  const seq: Array<{ h: number, args: any[] }> = [];
-  for (let i = 0; i < len; i++) {
-    const h = spec.handlers.length > 0 ? Math.floor(rng.next() * spec.handlers.length) : 0;
-    const args = spec.handlers[h] ? spec.handlers[h].gens.map((g) => g.gen(rng)) : [];
-    seq.push({ h, args });
-  }
-  return seq;
-}
-async function __bynkHistoryStillFails(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): Promise<boolean> {
-  let run: any[];
-  try { run = await spec.drive(seq); } catch { return false; }
-  try { await spec.body(run); return false; } catch (e) { return __bynkIsFailure(e); }
-}
-async function __bynkShrinkHistory(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): Promise<Array<{ h: number, args: any[] }>> {
-  let cur = seq.slice();
-  let budget = 300;
-  // Delta-debug the sequence: drop a step, re-drive, keep the reduction only if it
-  // still reproduces the failure (so the printed counterexample stays reachable).
-  let improved = true;
-  while (improved && budget > 0) {
-    improved = false;
-    for (let i = 0; i < cur.length && budget > 0; i++) {
-      budget--;
-      const trial = cur.slice(0, i).concat(cur.slice(i + 1));
-      if (await __bynkHistoryStillFails(spec, trial)) { cur = trial; improved = true; break; }
-    }
-  }
-  // Then shrink each surviving step's arguments with the value shrinker.
-  improved = true;
-  while (improved && budget > 0) {
-    improved = false;
-    for (let i = 0; i < cur.length; i++) {
-      const step = cur[i];
-      const gens = spec.handlers[step.h] ? spec.handlers[step.h].gens : [];
-      for (let j = 0; j < gens.length; j++) {
-        const cands = gens[j].shrink(step.args[j]);
-        for (const c of cands) {
-          if (--budget <= 0) break;
-          const nargs = step.args.slice(); nargs[j] = c;
-          const trial = cur.slice(); trial[i] = { h: step.h, args: nargs };
-          if (await __bynkHistoryStillFails(spec, trial)) { cur = trial; improved = true; break; }
-        }
-        if (budget <= 0) break;
-      }
-    }
-  }
-  return cur;
-}
-function __bynkShowHistory(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): string {
-  return "[" + seq.map((st) => {
-    const h = spec.handlers[st.h];
-    if (!h) return "?";
-    const args = st.args.map((a: any, j: number) => h.gens[j] ? h.gens[j].show(a) : __bynkShow(a)).join(", ");
-    return h.tag + "(" + args + ")";
-  }).join(", ") + "]";
-}
-async function __bynkRunHistory(spec: __BynkHistorySpec): Promise<{ pass: boolean, error?: { message: string, location: string } }> {
-  const rng = __bynkRng(spec.seed);
-  for (let c = 0; c < spec.cases; c++) {
-    const seq = __bynkGenHistory(rng, spec);
-    let run: any[];
-    try { run = await spec.drive(seq); } catch (e) {
-      return { pass: false, error: { message: String(e), location: spec.location } };
-    }
-    try {
-      await spec.body(run);
-    } catch (e) {
-      if (!__bynkIsFailure(e)) {
-        return { pass: false, error: { message: String(e), location: spec.location } };
-      }
-      const shrunk = await __bynkShrinkHistory(spec, seq);
-      const seedHex = "0x" + (__bynkSeed >>> 0).toString(16);
-      const shown = __bynkShowHistory(spec, shrunk);
-      let detail = (e as any).message;
-      try { const __r2 = await spec.drive(shrunk); await spec.body(__r2); } catch (e2) { if (__bynkIsFailure(e2)) detail = (e2 as any).message; }
-      const firstLine = String(detail).split("\n")[0];
-      const message = `history property failed after ${c + 1} runs (seed ${seedHex})\n  shrunk sequence:  ${shown}\n  ${firstLine}\n  reproduce: bynkc test ${spec.file} --seed ${seedHex}`;
-      return { pass: false, error: { message, location: spec.location } };
-    }
-  }
-  return { pass: true };
-}
-"#
-    .to_string()
+    include_str!("../emitter/test_runtime/history.ts").to_string()
 }
 
 /// Integer generation bounds `(lo, hi, floor)` derived from a refinement: `lo`
@@ -5091,7 +4839,7 @@ fn refined_gen_ts(
 /// A TypeScript expression drawing a random inhabitant of a resolved type using
 /// the in-scope `rng` — the property generator (DECISION P: a type is its own
 /// inhabitant space). Sums pick a random variant; records generate every field.
-fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32) -> String {
+fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, depth: u32) -> String {
     if depth == 0 {
         return canon_ts_for_ty(ty, types, 1);
     }
@@ -5169,7 +4917,7 @@ fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32
 /// A canonical (deterministic, boundary) inhabitant of a resolved type — the
 /// boundary value the runner draws first (refinement floor / minimum length /
 /// first variant), and the shrink target for sums.
-fn canon_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32) -> String {
+fn canon_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, depth: u32) -> String {
     if depth == 0 {
         return "undefined".to_string();
     }
@@ -5257,7 +5005,7 @@ struct BindingGen {
 }
 
 /// Build the generator descriptor for a binding whose resolved type is `ty`.
-fn binding_gen(ty: &checker::Ty, types: &HashMap<String, TypeDecl>) -> BindingGen {
+fn binding_gen(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>) -> BindingGen {
     let gen_ts = gen_ts_for_ty(ty, types, PROP_GEN_DEPTH);
     let (boundaries, shrink) = match ty {
         checker::Ty::Base(BaseType::Int) => {

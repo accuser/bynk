@@ -19,6 +19,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use self::source_map::SourceMapBuilder;
 
@@ -1472,7 +1473,11 @@ fn emit_context_rebrands(
         // value — delegating to the imported commons constructor but reporting
         // the context-branded type. (Without this, `ShortCode` is type-only in
         // the context and `.of` fails to resolve.)
-        if let Some(base) = commons.types.get(name).and_then(refined_or_opaque_base) {
+        if let Some(base) = commons
+            .types
+            .get(name)
+            .and_then(|d| refined_or_opaque_base(d))
+        {
             let ts_base = ts_base(base);
             let is_opaque = matches!(
                 commons.types.get(name).map(|d| &d.body),
@@ -1952,7 +1957,7 @@ fn collect_refs_in_expr(
             if let Pattern::Variant {
                 type_name: Some(tn),
                 ..
-            } = pattern
+            } = pattern.as_ref()
             {
                 record_name_ref(&tn.name, local_to_file, ctx, out);
             }
@@ -2557,170 +2562,367 @@ pub(crate) fn agent_factory_name(agent: &str) -> String {
     format!("__make{agent}")
 }
 
-/// Per-function lowering context: fresh-temp counter + typed-commons handle
-/// (used to look up receiver types for method-call UFCS lowering).
-pub(crate) struct LowerCtx<'a> {
-    next_tmp: u32,
+/// Lowering state that is genuinely **module-invariant**: the same value at
+/// every body-lowering site within one emitted module, and never written by the
+/// recursive lowering itself. Grouped out of [`LowerCtx`] so a new lowering kind
+/// inherits the whole set wholesale instead of re-deriving each default.
+///
+/// Nothing the lowering mutates *per body* may move in here — see the
+/// scratch-state fields at the bottom of [`LowerCtx`]. A `ModuleCtx` is still
+/// built fresh alongside each `LowerCtx` today, but filing a per-body counter
+/// under a name that says "module" is exactly how such state starts leaking
+/// between handler bodies.
+pub(crate) struct ModuleCtx<'a> {
+    /// Typed-commons handle (used to look up receiver types for method-call
+    /// UFCS lowering).
     commons: &'a TypedCommons,
-    /// v0.154 (ADR 0178): the enclosing function/handler's resolved return type,
-    /// set at each body-emission site. The `?` lowering reads it to decide
-    /// whether a declared error embedding (`embeds E as V`) converts the
-    /// propagated `Err` — via the same `embedding_for` rule the checker used.
-    return_ty: Option<bynk_check::checker::Ty>,
+    /// Cross-context info for v0.6 cross-context call lowering.
+    cross_context: &'a bynk_check::resolver::CrossContextInfo,
+    /// The emitted module's conditional-runtime-helper accumulator.
+    ///
+    /// The `Bytes` lowerings (kernel, `==`, base64 codec) call
+    /// [`RuntimeUse::note_bytes`] through this, so the module's import line is
+    /// decided from what lowering actually emitted rather than by scanning the
+    /// generated text for the helper's own name.
+    ///
+    /// Required rather than optional: a missing accumulator would make
+    /// `note_bytes` a silent no-op, which is exactly the failure this replaces —
+    /// a module that references `__bynkBytesEqual` without importing it. A
+    /// lowering whose imports are decided elsewhere (the test scaffolds) owns a
+    /// throwaway one, which reads as the deliberate choice it is.
+    runtime_use: &'a RuntimeUse,
+    /// v0.8 build target. In workers mode cross-context calls lower to
+    /// `callService(...)` instead of `deps.surface.<key>.<method>(...)`.
+    target: BuildTarget,
+    /// #527: agent → method → the method's `given` caps (mirrors
+    /// [`crate::project::EmitProjectCtx::agent_method_givens`]). Consulted by
+    /// the agent-call lowering to record capability requirements.
+    agent_method_givens: HashMap<String, HashMap<String, Vec<bynk_syntax::ast::CapRef>>>,
+    /// #527: type names this context *rebrands* (`uses`-imported commons
+    /// types re-exported as `T & { __ctxBrand }`). Drives brand-assertion
+    /// casts where unbranded commons values meet branded local positions.
+    rebranded_types: HashSet<String>,
+    /// #527: fn names imported from a commons. Such a fn's signature uses the
+    /// *unbranded* commons types, so calls whose return mentions a rebranded
+    /// type are asserted back into the local (branded) namespace.
+    commons_imported_fns: HashSet<String>,
+    /// #934: true when the unit being emitted is the reserved first-party
+    /// `bynk` adapter itself. `bynk` is a reserved namespace, so a capability
+    /// literally named `Idempotency` declared *in this unit* is unambiguously
+    /// the real one — used alongside `CrossContextInfo::flattened_caps` (the
+    /// consumed-from-elsewhere case) to confirm a flattened `Idempotency`
+    /// call is genuinely first-party before scoping its key, not a same-named
+    /// capability some other adapter or context happens to declare.
+    in_bynk_unit: bool,
+}
+
+impl<'a> ModuleCtx<'a> {
+    fn new(
+        commons: &'a TypedCommons,
+        cross_context: &'a bynk_check::resolver::CrossContextInfo,
+        runtime_use: &'a RuntimeUse,
+    ) -> Self {
+        Self {
+            commons,
+            cross_context,
+            runtime_use,
+            target: BuildTarget::Bundle,
+            agent_method_givens: HashMap::new(),
+            rebranded_types: HashSet::new(),
+            commons_imported_fns: HashSet::new(),
+            in_bynk_unit: false,
+        }
+    }
+
+    /// #527: derive which imported names this context rebrands and which fns
+    /// come from a commons (and so speak the unbranded types). Mirrors the
+    /// alias predicate in `emit_project_imports`.
+    pub(crate) fn set_rebrand_info(
+        &mut self,
+        commons: &TypedCommons,
+        ctx: &crate::project::EmitProjectCtx,
+    ) {
+        if ctx.unit_kind != UnitKind::Context {
+            return;
+        }
+        for (name, kind) in &ctx.imported_from_kind {
+            if *kind != UnitKind::Commons {
+                continue;
+            }
+            if commons.types.contains_key(name) {
+                self.rebranded_types.insert(name.clone());
+            } else if commons.fns.contains_key(name) {
+                self.commons_imported_fns.insert(name.clone());
+            }
+        }
+    }
+}
+
+/// The lowering state shared by the four **capability-bearing** body kinds — a
+/// service handler, a composed provider op, an agent handler, and a websocket
+/// lifecycle DO method. Every other kind carries no `HandlerShared` at all, and
+/// the [`LowerCtx`] accessors below hand those kinds the same defaults the flat
+/// struct used to give them (an empty capability set, no scope, `deps`).
+pub(crate) struct HandlerShared {
     /// Names of capabilities in scope as `given C1, C2, ...`. Used to lower
     /// `Capability.op(args)` calls to `deps.Capability.op(args)`.
     capabilities: HashSet<String>,
-    /// True when lowering an agent handler body. Used to rewrite `self.state`
-    /// and `self.<keyField>` access into the appropriate locals.
-    in_agent_handler: bool,
-    /// The local variable holding the loaded state inside an agent handler.
-    agent_state_var: Option<String>,
-    /// The name of the agent's `key id` field (so `self.<id>` resolves).
-    agent_key_field: Option<String>,
-    /// v0.80: when lowering an agent invariant predicate, the name of the
-    /// proposed-state variable (the `commitState` parameter) and the set of
-    /// state field names. A bare ident matching a state field lowers to
-    /// `<var>.<field>` — invariants read state fields directly (§14).
-    invariant_state: Option<(String, HashSet<String>)>,
-    /// v0.117 (testing track slice 5): when lowering a test `case` body, the name
-    /// of the recorded-call trace object (`__obs`), over which an observation
-    /// (`Cap.op called …`) and `trace(Cap.op)` are lowered.
-    observation_trace: Option<String>,
-    /// v0.116 (testing track slice 4): when lowering a `transition` predicate, the
-    /// JS names bound to the contextual `old` and `new` state records. The Bynk
-    /// identifiers `old`/`new` lower to these (`new` is a JS reserved word, so both
-    /// are renamed), and field access `old.<field>` reads off the `old` record.
-    transition_states: Option<(String, String)>,
-    /// v0.81 (storage track): when lowering a `store`-agent handler body, the
-    /// name of the mutable working-state variable (`__state`) and the set of
-    /// `Cell` field names. A bare `Cell` read lowers to `<var>.<cell>`, and a
-    /// `cell := v` write lowers to `<var>.<cell> = <v>` — read-your-writes via the
-    /// in-memory record, flushed once at handler end (ADR 0109).
-    agent_store_state: Option<(String, HashSet<String>)>,
+    /// #934: the calling handler's own qualified name (`<unit>.<service or
+    /// agent>.<handler>`, e.g. `shop.reserve.ordering.call`). Read only by the
+    /// `Idempotency.dedup`/`remember` lowering, which prefixes the
+    /// developer-supplied key with it so two unrelated handlers using the same
+    /// literal key never collide (design/tracks/idempotency-capability.md
+    /// §3.4). `None` anywhere a capability call cannot occur (a plain method, a
+    /// free fn, an invariant/transition predicate, a static field initialiser) —
+    /// those kinds carry no `HandlerShared`, and the accessor reports `None`.
+    handler_scope: Option<String>,
+    /// v0.12: the receiver expression a capability call resolves against —
+    /// `deps` in a handler body, `this.deps` in a composed provider body.
+    cap_deps_expr: String,
+    /// True if the current handler made at least one cross-context call
+    /// (drives whether `deps` gets a `surface` field type).
+    cross_context_used: bool,
+    /// v0.9.2: set when the body instantiates a local agent. In workers mode
+    /// this drives `env` (carrying the DO namespaces) into the handler's deps
+    /// type so the agent factory can reach its Durable Object binding.
+    agents_instantiated: bool,
+    /// #527: capabilities required by agent methods this body calls, keyed by
+    /// deps key. After body lowering these widen the handler's deps *type* to
+    /// match the runtime value compose builds (which always carried them).
+    agent_given_caps_used: std::collections::BTreeMap<String, bynk_syntax::ast::CapRef>,
+}
+
+impl Default for HandlerShared {
+    fn default() -> Self {
+        Self {
+            capabilities: HashSet::new(),
+            handler_scope: None,
+            cap_deps_expr: "deps".to_string(),
+            cross_context_used: false,
+            agents_instantiated: false,
+            agent_given_caps_used: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+/// The lowering state shared by the three **generated test-scaffold** body
+/// kinds — a `stub`/`where`/`requires` predicate value, a unit test case, and an
+/// integration test case.
+#[derive(Default)]
+pub(crate) struct TestShared {
+    /// True when lowering **any** generated test-scaffold body — distinct from
+    /// `assert_loc`, which is only ever `Some` for the two real `case` bodies
+    /// and carries an unrelated payload (a diagnostic location). Kept as its own
+    /// field (Locale capability track, slice 1, #844 review) rather than
+    /// overloading `assert_loc.is_some()`, since that conflated "has a location"
+    /// with "is test scaffolding" for a caller that has no location to give.
+    test_scaffold: bool,
+    /// v0.59: the source text and project-relative path of the file the body
+    /// came from, so an `assert` can emit a real `path:line:col` location (for
+    /// `--format json` click-through) rather than a bare byte offset. Stays
+    /// `None` for a predicate scaffold, which emits no `assert`.
+    assert_loc: Option<AssertLoc>,
+}
+
+/// The `store`-agent sub-state of an [`BodyMode::AgentHandler`] body: present
+/// only when the hosting agent is a `store` agent, absent for a plain
+/// state-record agent (whose handler reads `currentState`/`self.state` instead).
+pub(crate) struct AgentStoreState {
+    /// v0.81 (storage track): the name of the mutable working-state variable
+    /// (`__state`) and the set of `Cell` field names. A bare `Cell` read lowers
+    /// to `<var>.<cell>`, and a `cell := v` write lowers to `<var>.<cell> = <v>`
+    /// — read-your-writes via the in-memory record, flushed once at handler end
+    /// (ADR 0109).
+    state: (String, HashSet<String>),
     /// v0.82 (ADR 0110): the agent's `store` `Map` field names. A method call
     /// whose receiver is one lowers to an entry operation over `__state.<map>`
-    /// (a JSON-serialisable `Record<string, V>`), staged in the working record and
-    /// flushed at commit like any other state field.
-    agent_store_maps: HashSet<String>,
-    /// v0.83: the agent's `store` `Set` field names. A method call whose receiver
-    /// is one lowers to an entry operation over `__state.<set>` (a
+    /// (a JSON-serialisable `Record<string, V>`), staged in the working record
+    /// and flushed at commit like any other state field.
+    maps: HashSet<String>,
+    /// v0.83: the agent's `store` `Set` field names. A method call whose
+    /// receiver is one lowers to an entry operation over `__state.<set>` (a
     /// `Record<string, boolean>`), staged in the working record.
-    agent_store_sets: HashSet<String>,
+    sets: HashSet<String>,
     /// v0.87 (ADR 0113): the agent's `store` `Cache` fields (name → ttl millis).
     /// A method call whose receiver is one lowers to an entry op over
     /// `__state.<cache>` (a `Record<string, { v, exp }>`), applying TTL expiry
     /// against the injected `Clock`.
-    agent_store_caches: HashMap<String, i64>,
+    caches: HashMap<String, i64>,
     /// v0.95 (ADR 0121): the agent's `store` `Log` fields (name → optional
     /// `@retain` millis). `<log>.append` pushes `{ t: now(), v }` to
     /// `__state.<log>` (an array) and prunes past the retain horizon; the
     /// time-window roots / builders lower to a query pipeline over the array.
-    agent_store_logs: HashMap<String, Option<i64>>,
+    logs: HashMap<String, Option<i64>>,
     /// v0.93 (ADR 0118): the agent's `@indexed` secondary indexes (map name →
     /// the value-record fields indexed on). A mutating op on the map maintains a
     /// sibling posting-list `Record<string, string[]>` per field (`<map>__idx_<f>`);
     /// an equality `filter` on an indexed field routes to a posting lookup.
-    agent_store_indexes: HashMap<String, Vec<String>>,
-    /// v0.104 (real-time track slice 3b): when lowering a `from websocket`
-    /// `on open` body **into its hosting Durable Object** (the agent the upgrade
-    /// transfers the connection to), the name of that agent. A transfer call
-    /// `<Agent>(<key>).method(args)` whose `<Agent>` is this self-agent lowers to a
-    /// direct `this.method(args, deps)` self-call rather than the cross-instance
-    /// `__make<Agent>(key)` factory — the connection is already in this DO, so it
-    /// never crosses an RPC boundary (DECISION A). `None` everywhere else.
-    pub ws_self_agent: Option<String>,
+    indexes: HashMap<String, Vec<String>>,
     /// v0.104/v0.105 (real-time track slice 3b): the agent's held `store Map[K,
     /// Connection]` fields (name → the connection's **frame type** `F`, e.g.
     /// `ServerFrame`). On Workers these persist `K → connId` in the durable state
     /// record; a method call whose receiver is one lowers to an entry op over
     /// `__state.<map>` (the connId record) with `connIdOf`/`resolveConnection<F>` —
     /// not the plain `Record<string, V>` ops (held maps are excluded from
-    /// `agent_store_maps`).
-    pub agent_held_maps: HashMap<String, String>,
-    /// Cross-context info for v0.6 cross-context call lowering.
-    cross_context: &'a bynk_check::resolver::CrossContextInfo,
-    /// True if the current handler made at least one cross-context call
-    /// (drives whether `deps` gets a `surface` field type).
-    cross_context_used: bool,
-    /// v0.7: when lowering a test case body, the target context's local
-    /// service names. A `service.call(args)` or `service(args)` invocation
-    /// where `service` is in this set lowers to `<service>.call(args, deps)`
-    /// so the test wires its `deps` through.
-    pub test_services: HashSet<String>,
-    /// v0.182 (#664): while lowering an `EffectLet` whose value addresses a
-    /// service handler, the call-site principal's identity expression (already
-    /// lowered), if the statement carries `by <Actor>(<identity>)`. The
-    /// address-call lowering reads it to build the handler's `deps.identity`.
-    /// `None` for a unit-identity actor or a non-principal statement.
-    pub call_site_identity: Option<String>,
-    /// #706: the call-site principal is `by Nobody` — drive the route with no
-    /// `Authorization` header so the real auth seam rejects it (`401` →
-    /// `Rejected(Unauthorized)`). Routes a `system` http address to the no-auth
-    /// driver. `false` for any other (or no) principal.
-    pub call_site_no_credential: bool,
-    /// v0.182 (#664): the ordered handler kinds of each test service, so a cron
-    /// (`svc.schedule("…")`) or queue (`svc.message(m)`) address can recover the
-    /// position index the emitted key encodes (`cron_<svc>_<i>` / `queue_…`).
-    /// http keys are a pure function of verb + path and need no lookup here.
-    pub test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
-    /// v0.182 (Slice B, #667): the target's http service names when lowering a
-    /// `system` case. An http address on one of these lowers to a driver call
-    /// (`__sysdrive_<svc>_<key>(args, sub)`) that drives a real `worker.fetch`
-    /// with a signed credential, instead of the unit-tier direct handler call.
-    /// Empty at the unit tier.
-    pub system_http_services: std::collections::HashSet<String>,
-    /// #707: the declared `(service, method, path)` http routes of the system
-    /// target. A `(method, path)` call whose method is absent here but whose path
-    /// is present is a **wrong-method** call — it drives the `405` fall-through
-    /// through the generic `__sysdrive_wrongmethod_<svc>` driver.
-    pub system_http_routes: std::collections::HashSet<(String, String, String)>,
-    /// #708: for each declared `(service, method, path)` route that has a body
-    /// param, the body's zero-based position among the route's positional call
-    /// args (i.e. within `args[1..]`, matching handler-param declaration order)
-    /// and its declared type. The raw driver (`__sysdrive_raw_*`, Slice C)
-    /// forwards every slot as a `string`; a `Wire(…)` arg already lowers to that
-    /// raw string, but a *typed* arg mixed into the same call must be converted:
-    /// the body slot serialises through the same wire codec the typed driver
-    /// uses (`JSON.stringify(serialise_expr_via(...))`), any other (path) slot
-    /// just coerces via `String(...)`. Absent for a bodyless route.
-    pub system_http_route_body:
-        HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
-    /// #708: the type namespace (`<target>.`) `serialise_expr_via` needs to
-    /// resolve a body param's custom codec when converting a typed arg for the
-    /// raw driver. Mirrors the `type_ns` `emit_system_http_support` computes
-    /// from the same suite target. Empty string outside system http lowering.
-    pub system_http_type_ns: String,
-    /// v0.7: when lowering a test case body, the target context's local
-    /// agent names. `<Agent>(<key>).method(args)` lowers to
-    /// `new Agent(makeTestState(...)).method(args, {})`.
-    pub test_agents: HashSet<String>,
+    /// [`AgentStoreState::maps`]).
+    held_maps: HashMap<String, String>,
+}
+
+/// What [`LowerCtx`] is lowering *right now*. One variant per real body-emission
+/// site; each carries exactly the state that site populates and nothing else, so
+/// "not applicable to this kind" is expressed in the type rather than left
+/// indistinguishable from "deliberately defaulted".
+pub(crate) enum BodyMode {
+    /// A type's method body (`emit_method`).
+    Method,
+    /// A free function body (`emit_free_fn`).
+    FreeFn,
+    /// An agent field's static initialiser expression (`emit_agent`).
+    StaticInit,
+    /// v0.80: an agent invariant predicate. Carries the name of the
+    /// proposed-state variable (the `commitState` parameter) and the set of
+    /// state field names — a bare ident matching a state field lowers to
+    /// `<var>.<field>`, since invariants read state fields directly (§14).
+    Invariant {
+        name: String,
+        fields: HashSet<String>,
+    },
+    /// v0.116 (testing track slice 4): a `transition` predicate. Carries the JS
+    /// names bound to the contextual `old` and `new` state records. The Bynk
+    /// identifiers `old`/`new` lower to these (`new` is a JS reserved word, so
+    /// both are renamed), and field access `old.<field>` reads off the `old`
+    /// record.
+    Transition { old: String, new: String },
+    /// A service handler body (`emit_service`).
+    ServiceHandler {
+        handler: HandlerShared,
+        /// v0.47: the `by` binder whose `.identity` is threaded through `deps`
+        /// (so `<binder>.identity` lowers to `deps.identity` rather than the
+        /// unit-value `undefined`).
+        deps_identity_binder: Option<String>,
+        /// v0.52: when lowering a multi-actor sum handler body, the `by` binder
+        /// that names the resolved-actor value (threaded through `deps`, so the
+        /// binder ident lowers to `deps.who` — the tagged union the body
+        /// `match`es).
+        actor_sum_binder: Option<String>,
+    },
+    /// A composed provider's operation body (`emit_provider`).
+    ProviderOp { handler: HandlerShared },
+    /// An agent handler body (`emit_agent`).
+    AgentHandler {
+        handler: HandlerShared,
+        /// True when lowering an agent handler body. Used to rewrite
+        /// `self.<keyField>` access into the appropriate local.
+        in_agent_handler: bool,
+        /// The name of the agent's `key id` field (so `self.<id>` resolves).
+        agent_key_field: Option<String>,
+        /// The `store`-agent working-record state, when the hosting agent is a
+        /// `store` agent. Boxed: it is by far the largest payload in this enum,
+        /// and every other body kind would otherwise pay for it.
+        store: Option<Box<AgentStoreState>>,
+    },
+    /// A websocket lifecycle method on the hosting Durable Object
+    /// (`emit_ws_do_method`).
+    WsDoMethod {
+        handler: HandlerShared,
+        /// v0.47: as [`BodyMode::ServiceHandler::deps_identity_binder`].
+        deps_identity_binder: Option<String>,
+        /// v0.104 (real-time track slice 3b): when lowering a `from websocket`
+        /// `on open` body **into its hosting Durable Object** (the agent the
+        /// upgrade transfers the connection to), the name of that agent. A
+        /// transfer call `<Agent>(<key>).method(args)` whose `<Agent>` is this
+        /// self-agent lowers to a direct `this.method(args, deps)` self-call
+        /// rather than the cross-instance `__make<Agent>(key)` factory — the
+        /// connection is already in this DO, so it never crosses an RPC boundary
+        /// (DECISION A).
+        ws_self_agent: Option<String>,
+    },
+    /// A `stub`/`where`/`requires` predicate value lowered via
+    /// `lower_block_to_async_body` — test/property/contract scaffolding, never a
+    /// real production provider body.
+    PredicateScaffold { test: TestShared },
+    /// A unit test `case` body (`lower_test_case_body`).
+    TestCase {
+        test: TestShared,
+        /// v0.117 (testing track slice 5): the name of the recorded-call trace
+        /// object (`__obs`), over which an observation (`Cap.op called …`) and
+        /// `trace(Cap.op)` are lowered.
+        observation_trace: Option<String>,
+        /// v0.7: the target context's local service names. A `service.call(args)`
+        /// or `service(args)` invocation where `service` is in this set lowers to
+        /// `<service>.call(args, deps)` so the test wires its `deps` through.
+        test_services: HashSet<String>,
+        /// v0.182 (#664): the ordered handler kinds of each test service, so a
+        /// cron (`svc.schedule("…")`) or queue (`svc.message(m)`) address can
+        /// recover the position index the emitted key encodes (`cron_<svc>_<i>` /
+        /// `queue_…`). http keys are a pure function of verb + path and need no
+        /// lookup here.
+        test_service_handlers: HashMap<String, Vec<bynk_syntax::ast::HandlerKind>>,
+    },
+    /// An integration test `case` body (`lower_integration_case_body`).
+    IntegrationCase {
+        test: TestShared,
+        /// v0.182 (Slice B, #667): the target's http service names. An http
+        /// address on one of these lowers to a driver call
+        /// (`__sysdrive_<svc>_<key>(args, sub)`) that drives a real
+        /// `worker.fetch` with a signed credential, instead of the unit-tier
+        /// direct handler call. Empty at the unit tier.
+        system_http_services: std::collections::HashSet<String>,
+        /// #707: the declared `(service, method, path)` http routes of the system
+        /// target. A `(method, path)` call whose method is absent here but whose
+        /// path is present is a **wrong-method** call — it drives the `405`
+        /// fall-through through the generic `__sysdrive_wrongmethod_<svc>` driver.
+        system_http_routes: std::collections::HashSet<(String, String, String)>,
+        /// #708: for each declared `(service, method, path)` route that has a
+        /// body param, the body's zero-based position among the route's
+        /// positional call args (i.e. within `args[1..]`, matching handler-param
+        /// declaration order) and its declared type. The raw driver
+        /// (`__sysdrive_raw_*`, Slice C) forwards every slot as a `string`; a
+        /// `Wire(…)` arg already lowers to that raw string, but a *typed* arg
+        /// mixed into the same call must be converted: the body slot serialises
+        /// through the same wire codec the typed driver uses
+        /// (`JSON.stringify(serialise_expr_via(...))`), any other (path) slot
+        /// just coerces via `String(...)`. Absent for a bodyless route.
+        system_http_route_body:
+            HashMap<(String, String, String), (usize, bynk_syntax::ast::TypeRef)>,
+        /// #708: the type namespace (`<target>.`) `serialise_expr_via` needs to
+        /// resolve a body param's custom codec when converting a typed arg for
+        /// the raw driver. Mirrors the `type_ns` `emit_system_http_support`
+        /// computes from the same suite target.
+        system_http_type_ns: String,
+    },
+}
+
+/// Per-body lowering context: what module we are emitting into ([`ModuleCtx`]),
+/// what kind of body we are lowering ([`BodyMode`]), and the scratch state the
+/// recursive lowering accumulates as it goes.
+///
+/// Everything below `mode` is deliberately **not** in `ModuleCtx`: a fresh
+/// `LowerCtx` is built at every body-emission site and never reused across two
+/// bodies, so these are implicitly reset per body today. Moving any of them up a
+/// level would leak state between handlers in the same module — most visibly the
+/// `next_tmp` counter, which would stop restarting `__r0` at each function and
+/// so rename every generated temp in the emitted TypeScript.
+pub(crate) struct LowerCtx<'a> {
+    module: ModuleCtx<'a>,
+    mode: BodyMode,
     /// Agent names declared in the surrounding context. Drives lowering of
     /// `Agent(key)` (to `new Agent(makeTestState(String(key)))`) and of
     /// `agent_instance.method(args)` (to `instance.method(args, deps)`) in
     /// service and agent-handler bodies. Populated by the caller for non-test
-    /// emission and from `test_agents` in test emission.
+    /// emission and from the *test's own* agent set in test emission — which is
+    /// why this is not a [`ModuleCtx`] field despite being module-wide at the
+    /// nine non-test sites.
     pub local_agents: HashSet<String>,
-    /// #527: agent → method → the method's `given` caps (mirrors
-    /// [`crate::project::EmitProjectCtx::agent_method_givens`]). Consulted by
-    /// the agent-call lowering to record capability requirements.
-    pub agent_method_givens: HashMap<String, HashMap<String, Vec<bynk_syntax::ast::CapRef>>>,
-    /// #527: capabilities required by agent methods this body calls, keyed by
-    /// deps key. After body lowering these widen the handler's deps *type* to
-    /// match the runtime value compose builds (which always carried them).
-    pub agent_given_caps_used: std::collections::BTreeMap<String, bynk_syntax::ast::CapRef>,
-    /// #527: type names this context *rebrands* (`uses`-imported commons
-    /// types re-exported as `T & { __ctxBrand }`). Drives brand-assertion
-    /// casts where unbranded commons values meet branded local positions.
-    pub rebranded_types: HashSet<String>,
-    /// #527: fn names imported from a commons. Such a fn's signature uses the
-    /// *unbranded* commons types, so calls whose return mentions a rebranded
-    /// type are asserted back into the local (branded) namespace.
-    pub commons_imported_fns: HashSet<String>,
-    /// Variable bindings that point at agent instances. Updated by the
-    /// statement emitter when it sees `let x = AgentName(key)`. Used by
-    /// the method-call lowering so `x.method(args)` resolves through
-    /// the agent's class rather than via the receiver-namespace lookup.
-    pub local_agent_vars: HashMap<String, String>,
+    /// v0.154 (ADR 0178): the enclosing function/handler's resolved return type,
+    /// set at each body-emission site that has one. The `?` lowering reads it to
+    /// decide whether a declared error embedding (`embeds E as V`) converts the
+    /// propagated `Err` — via the same `embedding_for` rule the checker used.
+    /// Genuinely cross-cutting rather than kind-specific: it is saved/restored
+    /// around lambda bodies, `?`-embedding and match arms *within* whichever
+    /// kind is being lowered.
+    return_ty: Option<bynk_check::checker::Ty>,
+    next_tmp: u32,
     /// #908: a stack of per-block frames tracking `let`/`let <-` names that
     /// needed a fresh emitted identifier because the name was already bound
     /// by an enclosing (or the same) block's `let` — the checker allows
@@ -2736,13 +2938,6 @@ pub(crate) struct LowerCtx<'a> {
     /// by walking the stack innermost-out and falls back to the natural
     /// `ts_ident` name when no frame renamed it.
     pub shadow_scopes: Vec<HashMap<String, String>>,
-    /// v0.8 build target. In workers mode cross-context calls lower to
-    /// `callService(...)` instead of `deps.surface.<key>.<method>(...)`.
-    pub target: BuildTarget,
-    /// v0.9.2: set when the body instantiates a local agent. In workers mode
-    /// this drives `env` (carrying the DO namespaces) into the handler's deps
-    /// type so the agent factory can reach its Durable Object binding.
-    pub agents_instantiated: bool,
     /// When an `is` receiver is not a simple, repeatable lvalue (e.g. a call
     /// like `parse(x) is Ok(n)`), it is evaluated once into a temp; the temp
     /// name is cached here keyed by the receiver expression's span so the
@@ -2750,70 +2945,28 @@ pub(crate) struct LowerCtx<'a> {
     /// evaluation. Simple receivers (idents / field chains) are never cached
     /// and continue to be rendered inline as before.
     is_receiver_temps: HashMap<bynk_syntax::span::Span, String>,
-    /// v0.12: the receiver expression a capability call resolves against —
-    /// `deps` in a handler body, `this.deps` in a composed provider body.
-    cap_deps_expr: String,
-    /// #934: the calling handler's own qualified name (`<unit>.<service or
-    /// agent>.<handler>`, e.g. `shop.reserve.ordering.call`), set at every real
-    /// capability-call site — an ordinary service handler, an agent handler, a
-    /// composed provider op body, and a websocket lifecycle DO method. Read
-    /// only by the `Idempotency.dedup`/`remember` lowering, which prefixes the
-    /// developer-supplied key with it so two unrelated handlers using the same
-    /// literal key never collide (design/tracks/idempotency-capability.md
-    /// §3.4). `None` anywhere a capability call cannot occur (a plain method, a
-    /// free fn, an invariant/transition predicate, a static field initialiser).
-    pub handler_scope: Option<String>,
-    /// #934: true when the unit being emitted is the reserved first-party
-    /// `bynk` adapter itself. `bynk` is a reserved namespace, so a capability
-    /// literally named `Idempotency` declared *in this unit* is unambiguously
-    /// the real one — used alongside `CrossContextInfo::flattened_caps` (the
-    /// consumed-from-elsewhere case) to confirm a flattened `Idempotency`
-    /// call is genuinely first-party before scoping its key, not a same-named
-    /// capability some other adapter or context happens to declare.
-    pub in_bynk_unit: bool,
-    /// v0.47: when lowering a Bearer handler body, the `by` binder whose
-    /// `.identity` is threaded through `deps` (so `<binder>.identity` lowers to
-    /// `deps.identity` rather than the unit-value `undefined`).
-    pub deps_identity_binder: Option<String>,
-    /// v0.52: when lowering a multi-actor sum handler body, the `by` binder that
-    /// names the resolved-actor value (threaded through `deps`, so the binder
-    /// ident lowers to `deps.who` — the tagged union the body `match`es).
-    pub actor_sum_binder: Option<String>,
-    /// v0.59: when lowering a **test case body**, the source text and
-    /// project-relative path of the file the body came from, so an `assert`
-    /// can emit a real `path:line:col` location (for `--format json`
-    /// click-through) rather than a bare byte offset. `None` for non-test
-    /// emission, where `assert` doesn't appear.
-    pub assert_loc: Option<AssertLoc>,
-    /// True when lowering **any** generated test-scaffold body (a test-case
-    /// body, or a `stub`/`where`/`requires` predicate value lowered via
-    /// `lower_block_to_async_body`) — distinct from `assert_loc`, which is
-    /// only ever `Some` for the first of those and carries an unrelated
-    /// payload (a diagnostic location). Set alongside `assert_loc` at each of
-    /// the lowering entry points below; kept as its own field (Locale
-    /// capability track, slice 1, #844 review) rather than overloading
-    /// `assert_loc.is_some()`, since that conflated "has a location" with
-    /// "is test scaffolding" for a caller that has no location to give.
-    pub test_scaffold: bool,
+    /// Variable bindings that point at agent instances. Updated by the
+    /// statement emitter when it sees `let x = AgentName(key)`. Used by
+    /// the method-call lowering so `x.method(args)` resolves through
+    /// the agent's class rather than via the receiver-namespace lookup.
+    pub local_agent_vars: HashMap<String, String>,
+    /// v0.182 (#664): while lowering an `EffectLet` whose value addresses a
+    /// service handler, the call-site principal's identity expression (already
+    /// lowered), if the statement carries `by <Actor>(<identity>)`. The
+    /// address-call lowering reads it to build the handler's `deps.identity`.
+    /// `None` for a unit-identity actor or a non-principal statement.
+    pub call_site_identity: Option<String>,
+    /// #706: the call-site principal is `by Nobody` — drive the route with no
+    /// `Authorization` header so the real auth seam rejects it (`401` →
+    /// `Rejected(Unauthorized)`). Routes a `system` http address to the no-auth
+    /// driver. `false` for any other (or no) principal.
+    pub call_site_no_credential: bool,
     /// Slice 1 (ADR 0103): the source-map builder for the file being emitted, if
     /// any. The deep lowering chain records `(generated offset → source span)`
     /// checkpoints here; `emit_project` owns the `RefCell` and threads a shared
     /// borrow in. `None` for the single-file `emit()` path and any body emitted
     /// outside a project, where no map is produced.
     pub source_map: Option<&'a RefCell<SourceMapBuilder>>,
-    /// The emitted module's conditional-runtime-helper accumulator.
-    ///
-    /// The `Bytes` lowerings (kernel, `==`, base64 codec) call
-    /// [`RuntimeUse::note_bytes`] through this, so the module's import line is
-    /// decided from what lowering actually emitted rather than by scanning the
-    /// generated text for the helper's own name.
-    ///
-    /// Required rather than optional: a missing accumulator would make
-    /// `note_bytes` a silent no-op, which is exactly the failure this replaces —
-    /// a module that references `__bynkBytesEqual` without importing it. A
-    /// lowering whose imports are decided elsewhere (the test scaffolds) owns a
-    /// throwaway one, which reads as the deliberate choice it is.
-    pub runtime_use: &'a RuntimeUse,
 }
 
 /// v0.59: the source context an `assert` lowering needs to turn its span into a
@@ -2827,6 +2980,150 @@ pub(crate) struct AssertLoc {
 }
 
 impl<'a> LowerCtx<'a> {
+    fn new(module: ModuleCtx<'a>, mode: BodyMode) -> Self {
+        Self {
+            module,
+            mode,
+            local_agents: HashSet::new(),
+            return_ty: None,
+            // Every field below is per-body scratch state: a fresh `LowerCtx` is
+            // built at each body-emission site and never reused, so these must
+            // re-initialise here on every construction. In particular `next_tmp`
+            // restarting at 0 is what makes each emitted function's temps begin
+            // at `__r0`.
+            next_tmp: 0,
+            shadow_scopes: vec![HashMap::new()],
+            is_receiver_temps: HashMap::new(),
+            local_agent_vars: HashMap::new(),
+            call_site_identity: None,
+            call_site_no_credential: false,
+            source_map: None,
+        }
+    }
+
+    // ---- `ModuleCtx` passthroughs -----------------------------------------
+    //
+    // Returned with the `'a` module lifetime rather than the `&self` borrow, so
+    // a `&mut self` lowering step can hold onto a commons/runtime handle across
+    // its own recursive calls exactly as it did when these were plain fields.
+
+    /// Typed-commons handle for the module being emitted.
+    pub(crate) fn commons(&self) -> &'a TypedCommons {
+        self.module.commons
+    }
+
+    /// Cross-context info for v0.6 cross-context call lowering.
+    pub(crate) fn cross_context(&self) -> &'a bynk_check::resolver::CrossContextInfo {
+        self.module.cross_context
+    }
+
+    /// The emitted module's conditional-runtime-helper accumulator.
+    pub(crate) fn runtime_use(&self) -> &'a RuntimeUse {
+        self.module.runtime_use
+    }
+
+    /// v0.8 build target.
+    pub(crate) fn target(&self) -> BuildTarget {
+        self.module.target
+    }
+
+    /// #527: type names this context rebrands.
+    pub(crate) fn rebranded_types(&self) -> &HashSet<String> {
+        &self.module.rebranded_types
+    }
+
+    /// #527: fn names imported from a commons.
+    pub(crate) fn commons_imported_fns(&self) -> &HashSet<String> {
+        &self.module.commons_imported_fns
+    }
+
+    /// #934: true when the unit being emitted is the first-party `bynk` adapter.
+    pub(crate) fn in_bynk_unit(&self) -> bool {
+        self.module.in_bynk_unit
+    }
+
+    // ---- capability-bearing (`HandlerShared`) state ------------------------
+    //
+    // Every accessor here reports the same default a non-handler kind used to
+    // get from the flat struct (no capabilities, no scope, `deps`), so a caller
+    // that does not care which kind it is in reads unchanged.
+
+    fn handler(&self) -> Option<&HandlerShared> {
+        match &self.mode {
+            BodyMode::ServiceHandler { handler, .. }
+            | BodyMode::ProviderOp { handler }
+            | BodyMode::AgentHandler { handler, .. }
+            | BodyMode::WsDoMethod { handler, .. } => Some(handler),
+            _ => None,
+        }
+    }
+
+    fn handler_mut(&mut self) -> Option<&mut HandlerShared> {
+        match &mut self.mode {
+            BodyMode::ServiceHandler { handler, .. }
+            | BodyMode::ProviderOp { handler }
+            | BodyMode::AgentHandler { handler, .. }
+            | BodyMode::WsDoMethod { handler, .. } => Some(handler),
+            _ => None,
+        }
+    }
+
+    /// Whether `name` is a capability in scope as `given C1, C2, ...`.
+    pub(crate) fn has_capability(&self, name: &str) -> bool {
+        self.handler()
+            .is_some_and(|h| h.capabilities.contains(name))
+    }
+
+    /// #934: the calling handler's own qualified name, if a capability call can
+    /// occur in this body at all. `None` for every non-handler kind — the
+    /// `Idempotency` key-scoping lowering treats that as a compiler bug and
+    /// panics, exactly as it did when this was a flat `Option` field.
+    pub(crate) fn handler_scope(&self) -> Option<&str> {
+        self.handler().and_then(|h| h.handler_scope.as_deref())
+    }
+
+    /// v0.12: the receiver expression a capability call resolves against.
+    pub(crate) fn cap_deps_expr(&self) -> &str {
+        self.handler().map_or("deps", |h| h.cap_deps_expr.as_str())
+    }
+
+    /// Note that this body made a cross-context call. A no-op in a body kind
+    /// that carries no deps shape to widen (a plain method, a predicate, a test
+    /// case) — those never read the flag back.
+    pub(crate) fn note_cross_context_used(&mut self) {
+        if let Some(h) = self.handler_mut() {
+            h.cross_context_used = true;
+        }
+    }
+
+    /// True if this handler made at least one cross-context call.
+    pub(crate) fn cross_context_used(&self) -> bool {
+        self.handler().is_some_and(|h| h.cross_context_used)
+    }
+
+    /// v0.9.2: true if this body instantiated a local agent.
+    pub(crate) fn agents_instantiated(&self) -> bool {
+        self.handler().is_some_and(|h| h.agents_instantiated)
+    }
+
+    /// #527: capabilities required by agent methods this body calls.
+    pub(crate) fn agent_given_caps_used(
+        &self,
+    ) -> Option<&std::collections::BTreeMap<String, bynk_syntax::ast::CapRef>> {
+        self.handler().map(|h| &h.agent_given_caps_used)
+    }
+
+    // ---- test-scaffold (`TestShared`) state --------------------------------
+
+    fn test(&self) -> Option<&TestShared> {
+        match &self.mode {
+            BodyMode::PredicateScaffold { test }
+            | BodyMode::TestCase { test, .. }
+            | BodyMode::IntegrationCase { test, .. } => Some(test),
+            _ => None,
+        }
+    }
+
     /// True when lowering **generated test-scaffold** TypeScript (a test-case
     /// body, or a `stub`/`where`/`requires` predicate value), where branded
     /// types are destructured into `any`-typed value bindings rather than
@@ -2834,7 +3131,233 @@ impl<'a> LowerCtx<'a> {
     /// to pick `unchecked_construct_test` (→ `(v as any)`) over the production
     /// `(v as T)` form, which cannot resolve `T` in the test module's scope.
     pub(crate) fn in_test_scaffold(&self) -> bool {
-        self.test_scaffold
+        self.test().is_some_and(|t| t.test_scaffold)
+    }
+
+    /// v0.59: the test body's source context, for `assert`/`expect` locations.
+    pub(crate) fn assert_loc(&self) -> Option<&AssertLoc> {
+        self.test().and_then(|t| t.assert_loc.as_ref())
+    }
+
+    // ---- single-kind state -------------------------------------------------
+
+    /// v0.80: inside an invariant predicate, the proposed-state variable and the
+    /// agent's state field names.
+    pub(crate) fn invariant_state(&self) -> Option<(&str, &HashSet<String>)> {
+        match &self.mode {
+            BodyMode::Invariant { name, fields } => Some((name.as_str(), fields)),
+            _ => None,
+        }
+    }
+
+    /// v0.116: inside a `transition` predicate, the JS names bound to the
+    /// contextual `old`/`new` state records.
+    pub(crate) fn transition_states(&self) -> Option<(&str, &str)> {
+        match &self.mode {
+            BodyMode::Transition { old, new } => Some((old.as_str(), new.as_str())),
+            _ => None,
+        }
+    }
+
+    /// v0.117: the recorded-call trace object a test case's observations read.
+    pub(crate) fn observation_trace(&self) -> Option<&str> {
+        match &self.mode {
+            BodyMode::TestCase {
+                observation_trace, ..
+            } => observation_trace.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn agent_store(&self) -> Option<&AgentStoreState> {
+        match &self.mode {
+            BodyMode::AgentHandler { store, .. } => store.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// v0.81: the mutable working-state variable a `store`-agent handler stages
+    /// its writes into. `__state` is the name every real site uses; the fallback
+    /// keeps the (defensive) non-store paths rendering as they did before.
+    pub(crate) fn agent_store_var(&self) -> &str {
+        self.agent_store().map_or("__state", |s| s.state.0.as_str())
+    }
+
+    /// v0.81: the working-state variable plus the `Cell` field names it holds.
+    pub(crate) fn agent_store_cells(&self) -> Option<(&str, &HashSet<String>)> {
+        self.agent_store().map(|s| (s.state.0.as_str(), &s.state.1))
+    }
+
+    /// v0.82: whether `name` is a persisted `store Map` field (held connection
+    /// maps are deliberately excluded — they use the connId lowering).
+    pub(crate) fn is_agent_store_map(&self, name: &str) -> bool {
+        self.agent_store().is_some_and(|s| s.maps.contains(name))
+    }
+
+    /// v0.83: whether `name` is a `store Set` field.
+    pub(crate) fn is_agent_store_set(&self, name: &str) -> bool {
+        self.agent_store().is_some_and(|s| s.sets.contains(name))
+    }
+
+    /// v0.87: the ttl (millis) of the `store Cache` field `name`, if it is one.
+    pub(crate) fn agent_store_cache_ttl(&self, name: &str) -> Option<i64> {
+        self.agent_store().and_then(|s| s.caches.get(name).copied())
+    }
+
+    /// v0.95: the `@retain` horizon of the `store Log` field `name`, if it is
+    /// one. The outer `Option` is "is a log"; the inner is "has a retain".
+    pub(crate) fn agent_store_log_retain(&self, name: &str) -> Option<Option<i64>> {
+        self.agent_store().and_then(|s| s.logs.get(name).copied())
+    }
+
+    /// v0.95: whether `name` is a `store Log` field.
+    pub(crate) fn is_agent_store_log(&self, name: &str) -> bool {
+        self.agent_store()
+            .is_some_and(|s| s.logs.contains_key(name))
+    }
+
+    /// v0.93: the value-record fields the `store Map` `name` is `@indexed(by:)`
+    /// on — empty when it has no secondary index.
+    pub(crate) fn agent_store_index_fields(&self, name: &str) -> Vec<String> {
+        self.agent_store()
+            .and_then(|s| s.indexes.get(name).cloned())
+            .unwrap_or_default()
+    }
+
+    /// v0.105: the connection **frame type** of the held `store Map[K,
+    /// Connection]` field `name`, if it is one.
+    pub(crate) fn agent_held_map_frame(&self, name: &str) -> Option<&String> {
+        self.agent_store().and_then(|s| s.held_maps.get(name))
+    }
+
+    /// v0.105: whether `name` is a held `store Map[K, Connection]` field.
+    pub(crate) fn is_agent_held_map(&self, name: &str) -> bool {
+        self.agent_store()
+            .is_some_and(|s| s.held_maps.contains_key(name))
+    }
+
+    /// True when lowering an agent handler body — drives the `self.<keyField>`
+    /// rewrite.
+    pub(crate) fn in_agent_handler(&self) -> bool {
+        match &self.mode {
+            BodyMode::AgentHandler {
+                in_agent_handler, ..
+            } => *in_agent_handler,
+            _ => false,
+        }
+    }
+
+    /// The name of the agent's `key id` field, inside an agent handler body.
+    pub(crate) fn agent_key_field(&self) -> Option<&str> {
+        match &self.mode {
+            BodyMode::AgentHandler {
+                agent_key_field, ..
+            } => agent_key_field.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// v0.104: the agent hosting the websocket lifecycle body being lowered.
+    pub(crate) fn ws_self_agent(&self) -> Option<&str> {
+        match &self.mode {
+            BodyMode::WsDoMethod { ws_self_agent, .. } => ws_self_agent.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// v0.47: the `by` binder whose `.identity` is threaded through `deps`.
+    pub(crate) fn deps_identity_binder(&self) -> Option<&str> {
+        match &self.mode {
+            BodyMode::ServiceHandler {
+                deps_identity_binder,
+                ..
+            }
+            | BodyMode::WsDoMethod {
+                deps_identity_binder,
+                ..
+            } => deps_identity_binder.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// v0.52: the multi-actor sum handler's resolved-actor binder.
+    pub(crate) fn actor_sum_binder(&self) -> Option<&str> {
+        match &self.mode {
+            BodyMode::ServiceHandler {
+                actor_sum_binder, ..
+            } => actor_sum_binder.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// v0.7: whether `name` is a local service of the test case's target context.
+    pub(crate) fn is_test_service(&self, name: &str) -> bool {
+        match &self.mode {
+            BodyMode::TestCase { test_services, .. } => test_services.contains(name),
+            _ => false,
+        }
+    }
+
+    /// v0.182 (#664): the ordered handler kinds of the test service `name`.
+    pub(crate) fn test_service_handlers(
+        &self,
+        name: &str,
+    ) -> Option<&[bynk_syntax::ast::HandlerKind]> {
+        match &self.mode {
+            BodyMode::TestCase {
+                test_service_handlers,
+                ..
+            } => test_service_handlers.get(name).map(Vec::as_slice),
+            _ => None,
+        }
+    }
+
+    /// v0.182 (Slice B, #667): whether `name` is an http service of the system
+    /// target being driven.
+    pub(crate) fn is_system_http_service(&self, name: &str) -> bool {
+        match &self.mode {
+            BodyMode::IntegrationCase {
+                system_http_services,
+                ..
+            } => system_http_services.contains(name),
+            _ => false,
+        }
+    }
+
+    /// #707: whether `(service, verb, path)` is a declared route of the system
+    /// target — an undeclared one drives the `405` fall-through.
+    pub(crate) fn has_system_http_route(&self, route: &(String, String, String)) -> bool {
+        match &self.mode {
+            BodyMode::IntegrationCase {
+                system_http_routes, ..
+            } => system_http_routes.contains(route),
+            _ => false,
+        }
+    }
+
+    /// #708: the body param position and declared type of a system http route.
+    pub(crate) fn system_http_route_body(
+        &self,
+        route: &(String, String, String),
+    ) -> Option<&(usize, bynk_syntax::ast::TypeRef)> {
+        match &self.mode {
+            BodyMode::IntegrationCase {
+                system_http_route_body,
+                ..
+            } => system_http_route_body.get(route),
+            _ => None,
+        }
+    }
+
+    /// #708: the type namespace a system http body param's codec resolves in.
+    pub(crate) fn system_http_type_ns(&self) -> &str {
+        match &self.mode {
+            BodyMode::IntegrationCase {
+                system_http_type_ns,
+                ..
+            } => system_http_type_ns.as_str(),
+            _ => "",
+        }
     }
 
     /// Events track, slice 0 (spine #936): true when a bare `Events`
@@ -2849,75 +3372,18 @@ impl<'a> LowerCtx<'a> {
     /// custom same-named `Events` capability's calls get silently rewritten
     /// into a buffer nothing constructs a provider for.
     pub(crate) fn is_first_party_events(&self) -> bool {
-        self.in_bynk_unit
+        self.in_bynk_unit()
             || self
-                .cross_context
+                .cross_context()
                 .flattened_caps
                 .get("Events")
                 .map(String::as_str)
                 == Some("bynk")
     }
 
-    fn new(
-        commons: &'a TypedCommons,
-        cross_context: &'a bynk_check::resolver::CrossContextInfo,
-        runtime_use: &'a RuntimeUse,
-    ) -> Self {
-        Self {
-            next_tmp: 0,
-            commons,
-            return_ty: None,
-            capabilities: HashSet::new(),
-            in_agent_handler: false,
-            agent_state_var: None,
-            agent_key_field: None,
-            invariant_state: None,
-            observation_trace: None,
-            transition_states: None,
-            agent_store_state: None,
-            agent_store_maps: HashSet::new(),
-            agent_store_sets: HashSet::new(),
-            agent_store_caches: HashMap::new(),
-            agent_store_logs: HashMap::new(),
-            agent_store_indexes: HashMap::new(),
-            ws_self_agent: None,
-            agent_held_maps: HashMap::new(),
-            cross_context,
-            cross_context_used: false,
-            test_services: HashSet::new(),
-            call_site_identity: None,
-            call_site_no_credential: false,
-            test_service_handlers: HashMap::new(),
-            system_http_services: std::collections::HashSet::new(),
-            system_http_routes: std::collections::HashSet::new(),
-            system_http_route_body: HashMap::new(),
-            system_http_type_ns: String::new(),
-            test_agents: HashSet::new(),
-            local_agents: HashSet::new(),
-            agent_method_givens: HashMap::new(),
-            agent_given_caps_used: std::collections::BTreeMap::new(),
-            rebranded_types: HashSet::new(),
-            commons_imported_fns: HashSet::new(),
-            local_agent_vars: HashMap::new(),
-            shadow_scopes: vec![HashMap::new()],
-            target: BuildTarget::Bundle,
-            agents_instantiated: false,
-            is_receiver_temps: HashMap::new(),
-            cap_deps_expr: "deps".to_string(),
-            handler_scope: None,
-            in_bynk_unit: false,
-            deps_identity_binder: None,
-            actor_sum_binder: None,
-            assert_loc: None,
-            test_scaffold: false,
-            source_map: None,
-            runtime_use,
-        }
-    }
-
     /// Attach the file's source-map builder (slice 1, ADR 0103). Builder-style so
-    /// the existing `LowerCtx::new(commons, cross)` call sites stay untouched —
-    /// only the project-emission path that has a builder calls this.
+    /// the emission sites with no builder leave `LowerCtx::new(module, mode)`
+    /// untouched — only the project-emission path that has one calls this.
     fn with_source_map(mut self, map: Option<&'a RefCell<SourceMapBuilder>>) -> Self {
         self.source_map = map;
         self
@@ -2926,7 +3392,7 @@ impl<'a> LowerCtx<'a> {
     /// Record that this lowering emitted a reference to the `Bytes` runtime
     /// helpers, so the module imports them.
     fn note_bytes(&self) {
-        self.runtime_use.note_bytes();
+        self.runtime_use().note_bytes();
     }
 
     /// Record a checkpoint: generated text from `out_len` onward originates at
@@ -2971,51 +3437,34 @@ impl<'a> LowerCtx<'a> {
     /// call. Bundle/test mode passes only the key; workers mode also threads
     /// `deps.env` so the factory can reach the agent's DO namespace.
     fn agent_construct(&mut self, agent: &str, key_expr: &str) -> String {
-        self.agents_instantiated = true;
+        if let Some(h) = self.handler_mut() {
+            h.agents_instantiated = true;
+        }
         let factory = agent_factory_name(agent);
-        if matches!(self.target, BuildTarget::Workers) {
+        if matches!(self.target(), BuildTarget::Workers) {
             format!("{factory}({key_expr}, deps.env)")
         } else {
             format!("{factory}({key_expr})")
         }
     }
 
-    /// #527: derive which imported names this context rebrands and which fns
-    /// come from a commons (and so speak the unbranded types). Mirrors the
-    /// alias predicate in `emit_project_imports`.
-    pub(crate) fn set_rebrand_info(
-        &mut self,
-        commons: &TypedCommons,
-        ctx: &crate::project::EmitProjectCtx,
-    ) {
-        if ctx.unit_kind != UnitKind::Context {
-            return;
-        }
-        for (name, kind) in &ctx.imported_from_kind {
-            if *kind != UnitKind::Commons {
-                continue;
-            }
-            if commons.types.contains_key(name) {
-                self.rebranded_types.insert(name.clone());
-            } else if commons.fns.contains_key(name) {
-                self.commons_imported_fns.insert(name.clone());
-            }
-        }
-    }
-
     /// #527: note that the body calls `agent.method`, folding the method's
-    /// `given` capabilities into this handler's requirement set.
+    /// `given` capabilities into this handler's requirement set. A no-op in a
+    /// body kind that has no deps shape to widen — those never read it back.
     pub(crate) fn record_agent_call(&mut self, agent: &str, method: &str) {
         let givens = self
+            .module
             .agent_method_givens
             .get(agent)
             .and_then(|m| m.get(method))
             .cloned()
             .unwrap_or_default();
-        for c in givens {
-            self.agent_given_caps_used
-                .entry(c.key().to_string())
-                .or_insert(c);
+        if let Some(h) = self.handler_mut() {
+            for c in givens {
+                h.agent_given_caps_used
+                    .entry(c.key().to_string())
+                    .or_insert(c);
+            }
         }
     }
     fn fresh(&mut self) -> String {
@@ -3133,7 +3582,7 @@ impl<'a> LowerCtx<'a> {
     /// variant test. Mirrors the checker's disambiguation.
     fn is_refined_is_check(&self, value: &Expr, name: &str) -> bool {
         let value_baseish = matches!(
-            self.commons.expr_types.get(&value.span),
+            self.commons().expr_types.get(&value.span),
             Some(Ty::Base(_))
                 | Some(Ty::Named {
                     kind: NamedKind::Refined(_),
@@ -3141,7 +3590,7 @@ impl<'a> LowerCtx<'a> {
                 })
         );
         let name_refined = matches!(
-            self.commons.types.get(name).map(|d| &d.body),
+            self.commons().types.get(name).map(|d| &d.body),
             Some(TypeBody::Refined { .. })
         );
         value_baseish && name_refined
@@ -3159,7 +3608,7 @@ impl<'a> LowerCtx<'a> {
         value_text_for_is(value)
     }
     fn receiver_namespace(&self, e: &Expr) -> Option<String> {
-        let ty = self.commons.expr_types.get(&e.span)?;
+        let ty = self.commons().expr_types.get(&e.span)?;
         if let Ty::Named { name, .. } = ty {
             Some(name.clone())
         } else {
@@ -3190,7 +3639,7 @@ impl<'a> LowerCtx<'a> {
             name,
             ..
         }) = discriminant_ty
-            && let Some(decl) = self.commons.types.get(name)
+            && let Some(decl) = self.commons().types.get(name)
             && let TypeBody::Sum(s) = &decl.body
             && let Some(v) = s.variants.iter().find(|v| v.name.name == variant)
             && let Some(f) = v.payload.get(idx)
@@ -3219,7 +3668,7 @@ impl<'a> LowerCtx<'a> {
                 name,
                 args,
             }) => {
-                let decl = self.commons.types.get(name)?;
+                let decl = self.commons().types.get(name)?;
                 let TypeBody::Sum(s) = &decl.body else {
                     return None;
                 };
@@ -3235,7 +3684,7 @@ impl<'a> LowerCtx<'a> {
                     decl,
                     args,
                     &f.type_ref,
-                    &self.commons.types,
+                    &self.commons().types,
                 )
             }
             _ => None,

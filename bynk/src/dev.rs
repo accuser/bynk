@@ -27,13 +27,22 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Duration;
 
-use bynk_emit::project::{BuildTarget, read_project_paths};
+use bynk_emit::project::read_project_paths;
 
 use crate::compiler::Compiler;
 use crate::doctor::{self, Capability, Context, DoctorOptions, Report};
 use crate::probe::{self, DetectOpts, Provenance, Toolbox};
 use crate::report::{self, Format};
 use crate::shell::exit_status_byte;
+
+// The build/select/`wrangler` plumbing `dev` shares with `deploy` now lives in
+// [`crate::workers`] (it is neither command's to own). Re-exported rather than
+// merely imported, so `bynk::dev::compile_once` and `bynk::dev::select_contexts`
+// — the paths this crate's integration tests already use — keep resolving.
+pub use crate::workers::{
+    SelectError, compile_once, discover_workers, prepare_build_dir, select_contexts,
+    wrangler_command,
+};
 
 /// Parsed `bynk dev` flags (the project `PATH` is resolved into `project_root`
 /// before we get here).
@@ -359,62 +368,6 @@ fn reap(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// One compile of the project into `build_dir`, on the same rooting rule as
-/// `bynkc compile <project_root>` (#524, via [`bynk_driver::project_options`]).
-/// Default: in-process. Escape hatch: a `BYNK_BYNKC` override shells *that*
-/// binary instead — the only path on which a second, skewable compiler enters
-/// (doctor reports its skew only here). Returns `false` on failure with the
-/// diagnostics already rendered.
-pub fn compile_once(compiler: &Compiler, project_root: &Path, build_dir: &Path) -> bool {
-    let used_override = matches!(compiler.origin, Some(crate::compiler::Origin::Override));
-    if let (true, Some(bynkc)) = (used_override, compiler.path.as_deref()) {
-        let status = Command::new(bynkc)
-            .arg("compile")
-            .arg(project_root)
-            .arg("--output")
-            .arg(build_dir)
-            .arg("--target")
-            .arg("workers")
-            .status();
-        return match status {
-            Ok(s) if s.success() => true,
-            Ok(_) => false,
-            Err(e) => {
-                eprintln!("bynk: could not run bynkc ({}): {e}", bynkc.display());
-                false
-            }
-        };
-    }
-    let options = match bynk_driver::try_project_options(project_root) {
-        Ok(o) => o.target(BuildTarget::Workers),
-        Err(e) => {
-            eprintln!("bynk: {e}");
-            return false;
-        }
-    };
-    let output = match bynk_emit::project::compile_project(&options) {
-        Ok(out) => out,
-        Err(failure) => {
-            // Render with full source context, exactly as the shelled `bynkc
-            // compile` did — the front-end's flatten-then-delegate (ADR 0100),
-            // shared with `bynk check` (see `crate::diagnostics`).
-            crate::diagnostics::render_project_failure(&failure);
-            return false;
-        }
-    };
-    if let Err(e) = bynk_emit::write_output(&output, build_dir) {
-        eprintln!(
-            "bynk: could not write build output under `{}`: {e}",
-            build_dir.display()
-        );
-        return false;
-    }
-    // ADR 0117: surface non-failing warnings — the `BYNK_BYNKC` override above
-    // already does, via the shelled `bynkc compile`'s own stdout/stderr.
-    crate::diagnostics::print_project_warnings(&output.warnings, &output.snapshots);
-    true
-}
-
 /// #524: a change fingerprint over the project's watched inputs — every
 /// `.bynk` file under the `[paths] include` roots (author `exclude` subtrees
 /// and tool/VCS directories skipped) plus `bynk.toml` itself. Hashes each
@@ -485,120 +438,6 @@ pub fn preflight_failure_message(report: &Report) -> String {
     )
 }
 
-/// Ensure `.bynk/` is gitignored on first build (cargo's `target/.gitignore`
-/// precedent — a `dev` run never dirties `git status`), then clear the
-/// `workers/` tree so selection only ever sees this build's contexts (D1).
-pub fn prepare_build_dir(project_root: &Path, build_dir: &Path) -> std::io::Result<()> {
-    let bynk_dir = project_root.join(".bynk");
-    std::fs::create_dir_all(&bynk_dir)?;
-    let gitignore = bynk_dir.join(".gitignore");
-    if !gitignore.exists() {
-        std::fs::write(&gitignore, "*\n")?;
-    }
-    let workers = build_dir.join("workers");
-    match std::fs::remove_dir_all(&workers) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
-/// The worker directories under `<build>/workers/` that carry a `wrangler.toml`
-/// (the unit `wrangler dev` can serve), sorted for deterministic messages.
-pub fn discover_workers(workers_dir: &Path) -> Vec<String> {
-    let mut names = Vec::new();
-    let Ok(entries) = std::fs::read_dir(workers_dir) else {
-        return names;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.join("wrangler.toml").is_file()
-            && let Some(name) = path.file_name().and_then(|n| n.to_str())
-        {
-            names.push(name.to_string());
-        }
-    }
-    names.sort();
-    names
-}
-
-/// Why context selection failed — rendered to the user with the next step.
-#[derive(Debug, PartialEq, Eq)]
-pub enum SelectError {
-    /// No worker was produced by the compile (e.g. an empty project).
-    NoneBuilt,
-    /// `--context NAME` named a context that doesn't exist.
-    NotFound {
-        requested: String,
-        available: Vec<String>,
-    },
-}
-
-impl std::fmt::Display for SelectError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SelectError::NoneBuilt => {
-                write!(
-                    f,
-                    "no workers were built — does the project define any contexts?"
-                )
-            }
-            SelectError::NotFound {
-                requested,
-                available,
-            } => write!(
-                f,
-                "no context `{requested}` — available: {}",
-                available.join(", ")
-            ),
-        }
-    }
-}
-
-/// Match one requested context against the built worker dirs, accepting either
-/// the dotted name or its dasherised form (`commerce.payment` /
-/// `commerce-payment`).
-fn resolve_one(available: &[String], name: &str) -> Result<String, SelectError> {
-    let dashed = name.replace('.', "-");
-    available
-        .iter()
-        .find(|d| d.as_str() == name || d.as_str() == dashed)
-        .cloned()
-        .ok_or_else(|| SelectError::NotFound {
-            requested: name.to_string(),
-            available: available.to_vec(),
-        })
-}
-
-/// Pick the workers `dev` will serve **together** (#552). No `--context` serves
-/// every context in the project — the whole point of the increment, since a
-/// cross-context call only resolves when its callee is up too. `--context` is
-/// repeatable and narrows to a subset, in `available`'s deterministic order
-/// rather than the order they were typed, and duplicates collapse.
-///
-/// There is no `Ambiguous` case: several contexts is the expected shape, not a
-/// failure. Pure (the FS scan is the caller's) so the rule is unit-tested.
-pub fn select_contexts(
-    available: &[String],
-    requested: &[String],
-) -> Result<Vec<String>, SelectError> {
-    if available.is_empty() {
-        return Err(SelectError::NoneBuilt);
-    }
-    if requested.is_empty() {
-        return Ok(available.to_vec());
-    }
-    let mut chosen = Vec::new();
-    for name in requested {
-        let worker = resolve_one(available, name)?;
-        if !chosen.contains(&worker) {
-            chosen.push(worker);
-        }
-    }
-    chosen.sort();
-    Ok(chosen)
-}
-
 /// Allocate a port per worker (#552): `wrangler dev` binds one port per process,
 /// so serving N contexts means N distinct ports, assigned `base + i` over the
 /// deterministic worker order.
@@ -631,28 +470,6 @@ pub fn allocate(workers: &[String], base_port: Option<u16>, opts: &DevOptions) -
 fn passthrough_has(args: &[String], flag: &str) -> bool {
     args.iter()
         .any(|a| a == flag || a.starts_with(&format!("{flag}=")))
-}
-
-/// Build the `wrangler dev` invocation for a resolved provenance: an installed
-/// binary is run directly; an npx-provisionable one goes through `npx --yes`.
-/// `None` when wrangler is genuinely missing.
-pub fn wrangler_command(provenance: &Provenance, subcommand: &str) -> Option<Command> {
-    match provenance {
-        Provenance::Path(p) | Provenance::ProjectLocal(p) => {
-            let mut cmd = Command::new(p);
-            cmd.arg(subcommand);
-            Some(cmd)
-        }
-        Provenance::Npx => {
-            let mut cmd = Command::new("npx");
-            // #524: pinned provisioning, per the repo's npx convention — an
-            // unpinned `wrangler` here meant the dev server could drift from
-            // the wrangler the tests and deploys run.
-            cmd.arg("--yes").arg("wrangler@4").arg(subcommand);
-            Some(cmd)
-        }
-        Provenance::Missing => None,
-    }
 }
 
 /// The `wrangler dev` flags the driver injects for one worker: the ports it

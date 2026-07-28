@@ -10,7 +10,7 @@ use bynk_check::builtin_names::methods::{OF, UNSAFE};
 /// bodies targeting a context) so the vars-in-scope treatment can't drift.
 pub(crate) fn build_capability_op_info(
     op: &CapabilityOp,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
 ) -> CapabilityOpInfo {
     let vars: HashSet<String> = op.type_params.iter().map(|p| p.name.name.clone()).collect();
     CapabilityOpInfo {
@@ -990,7 +990,7 @@ pub(crate) fn check_context_declarations(
 /// spans to the declaring file at assembly).
 fn check_capability_decls(
     table: &UnitTable,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     no_vars: &HashSet<String>,
     refs: &mut RefSink,
 ) {
@@ -2392,7 +2392,7 @@ const ANNOTATIONS: &[AnnotationSpec] = &[
 fn validate_store_annotations(
     f: &StoreField,
     head: &str,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
 ) {
     for ann in &f.annotations {
@@ -2461,7 +2461,7 @@ fn validate_store_annotations(
 /// a diagnostic.
 fn validate_indexed_keys(
     f: &StoreField,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     ann: &Annotation,
     errors: &mut Vec<CompileError>,
 ) {
@@ -2535,7 +2535,7 @@ fn validate_indexed_keys(
 
 /// Whether a `TypeRef` is value-keyable (the Map-key / index-key rule, ADR 0110
 /// D5): `Int`/`String`, including a refined/opaque named type over them.
-fn type_ref_is_keyable(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
+fn type_ref_is_keyable(t: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> bool {
     match t {
         TypeRef::Base(BaseType::Int | BaseType::String, _) => true,
         TypeRef::Named(id) => matches!(
@@ -2560,7 +2560,7 @@ fn type_ref_is_keyable(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
 /// single-equality predicate (the only shape routed today) is never ambiguous.
 fn validate_index_hygiene(
     agent: &AgentDecl,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
 ) {
     let mut store_maps: HashSet<String> = HashSet::new();
@@ -2745,7 +2745,7 @@ fn walk_expr_for_index_filters(
 #[allow(clippy::type_complexity)]
 fn store_field_scopes(
     agent: &AgentDecl,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     no_vars: &HashSet<String>,
     refs: &mut RefSink,
     errors: &mut Vec<CompileError>,
@@ -2985,7 +2985,7 @@ fn check_agent_decls(
             trivia: Trivia::default(),
         };
         let mut types_for_handler = typed.types.clone();
-        types_for_handler.insert(agent_state_name.clone(), synthetic_state.clone());
+        types_for_handler.insert(agent_state_name.clone(), Arc::new(synthetic_state.clone()));
         // `local_type_names` is derived from `table.types` (the pre-merge
         // local table), NOT `types_for_handler` (local+uses+consumes, plus
         // the synthetic state record) — reusing the merged table here was
@@ -3078,7 +3078,7 @@ fn check_agent_decls(
             trivia: Trivia::default(),
         };
         let mut types_for_handler = resolved_for_handler.types.clone();
-        types_for_handler.insert(agent_self_name.clone(), self_decl.clone());
+        types_for_handler.insert(agent_self_name.clone(), Arc::new(self_decl.clone()));
         // Same fix as above: `local_type_names` comes from `table.types`
         // (pre-merge), not `types_for_handler` (merged, plus the synthetic
         // `self` record type).
@@ -3110,6 +3110,33 @@ fn check_agent_decls(
             self_scope.insert(name.clone(), ty.clone());
         }
         let _ = key_ty;
+
+        // Finding #36: `check_handler_body` takes the five kind-scopes as one
+        // `HashMap<String, StoreField>` — a field name is only ever one kind,
+        // so recombine them here rather than threading five parallel maps.
+        let store_fields: HashMap<String, checker::StoreField> = store_cells
+            .iter()
+            .map(|(name, t)| (name.clone(), checker::StoreField::Cell(t.clone())))
+            .chain(store_maps.iter().map(|(name, (k, v))| {
+                (name.clone(), checker::StoreField::Map(k.clone(), v.clone()))
+            }))
+            .chain(
+                store_sets
+                    .iter()
+                    .map(|(name, t)| (name.clone(), checker::StoreField::Set(t.clone()))),
+            )
+            .chain(store_caches.iter().map(|(name, (k, v, ttl))| {
+                (
+                    name.clone(),
+                    checker::StoreField::Cache(k.clone(), v.clone(), *ttl),
+                )
+            }))
+            .chain(
+                store_logs
+                    .iter()
+                    .map(|(name, t)| (name.clone(), checker::StoreField::Log(t.clone()))),
+            )
+            .collect();
 
         // v0.80/v0.81: invariant well-formedness — predicates are pure `Bool`
         // expressions over the agent's `store` cells (§14, ADR 0108 D5).
@@ -3190,11 +3217,7 @@ fn check_agent_decls(
                     agent_self_scope: Some(self_scope.clone()),
                     given_anchor: Some(handler.return_type.span()),
                     report_unused: true,
-                    store_cells: store_cells.clone(),
-                    store_maps: store_maps.clone(),
-                    store_sets: store_sets.clone(),
-                    store_caches: store_caches.clone(),
-                    store_logs: store_logs.clone(),
+                    store_fields: store_fields.clone(),
                     ..checker::HandlerBodyCheck::new(
                         &handler.body,
                         &handler.return_type,
@@ -3472,7 +3495,7 @@ fn validate_http_handler(
     handler: &Handler,
     method: HttpMethod,
     path: &str,
-    types: &HashMap<String, TypeDecl>,
+    types: &HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
 ) {
     if !path.starts_with('/') {
@@ -3905,7 +3928,7 @@ fn validate_queue_handler(handler: &Handler, name: &str, errors: &mut Vec<Compil
 
 /// True when `r` resolves to `String`, a refined-base `String`, or an
 /// opaque-base `String`. v0.9 path parameter requirement.
-fn is_string_constructible(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
+fn is_string_constructible(r: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> bool {
     match r {
         TypeRef::Base(BaseType::String, _) => true,
         TypeRef::Named(id) => match types.get(&id.name).map(|t| &t.body) {
@@ -3941,7 +3964,7 @@ pub(crate) fn type_ref_is_held(r: &TypeRef) -> bool {
 /// boundary check.
 fn validate_store_field_value_types(
     f: &StoreField,
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
 ) {
     let head = f.kind.head.name.as_str();
@@ -4000,7 +4023,7 @@ fn validate_store_field_value_types(
 fn reject_fn_types(
     r: &TypeRef,
     what: &str,
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
 ) {
     match r {
@@ -4160,19 +4183,20 @@ pub(crate) fn check_function_type_boundaries(
 /// recursive-generic boundary walk.
 pub(crate) fn collect_type_decls<'a>(
     items: impl Iterator<Item = &'a CommonsItem>,
-) -> std::collections::HashMap<String, TypeDecl> {
+) -> std::collections::HashMap<String, Arc<TypeDecl>> {
     let mut out = std::collections::HashMap::new();
     for item in items {
         match item {
             CommonsItem::Type(t) => {
-                out.entry(t.name.name.clone()).or_insert_with(|| t.clone());
+                out.entry(t.name.name.clone())
+                    .or_insert_with(|| Arc::new(t.clone()));
             }
             // Events track, slice 0 (spine #936): an event's synthetic
             // `TypeDecl` joins the same table, so a field referencing an
             // event type recurses into it exactly like any other type.
             CommonsItem::Event(e) => {
                 out.entry(e.name.name.clone())
-                    .or_insert_with(|| e.as_type_decl());
+                    .or_insert_with(|| Arc::new(e.as_type_decl()));
             }
             _ => {}
         }
@@ -4184,7 +4208,7 @@ pub(crate) fn collect_type_decls<'a>(
 /// (legacy) compile path in `bynkc`'s `lib.rs`.
 pub fn check_function_type_boundary_items(
     items: &[CommonsItem],
-    types: &std::collections::HashMap<String, TypeDecl>,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
 ) {
     {

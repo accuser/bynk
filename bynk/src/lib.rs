@@ -44,6 +44,7 @@ pub use bynk_driver::probe;
 pub mod report;
 pub mod shell;
 pub mod test;
+pub mod workers;
 
 /// The driver's own version, from Cargo. Compared against the resolved
 /// `bynkc`'s version to detect skew ([`compiler::Skew`]).
