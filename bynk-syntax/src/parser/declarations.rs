@@ -21,8 +21,10 @@ impl<'a> Parser<'a> {
                 let doc = self.finalize_doc(leading_doc, start.span);
                 let name = self.parse_qualified_name()?;
                 let mut c = match self.peek_kind() {
-                    Some(TokenKind::LBrace) => self.parse_commons_brace(start.span, name, doc)?,
-                    _ => self.parse_commons_fragment(start.span, name, doc)?,
+                    Some(TokenKind::LBrace) => {
+                        self.parse_commons_body(start.span, name, doc, true)?
+                    }
+                    _ => self.parse_commons_body(start.span, name, doc, false)?,
                 };
                 c.trivia = header_trivia;
                 Ok(SourceUnit::Commons(c))
@@ -32,8 +34,10 @@ impl<'a> Parser<'a> {
                 let doc = self.finalize_doc(leading_doc, start.span);
                 let name = self.parse_qualified_name()?;
                 let mut c = match self.peek_kind() {
-                    Some(TokenKind::LBrace) => self.parse_context_brace(start.span, name, doc)?,
-                    _ => self.parse_context_fragment(start.span, name, doc)?,
+                    Some(TokenKind::LBrace) => {
+                        self.parse_context_body(start.span, name, doc, true)?
+                    }
+                    _ => self.parse_context_body(start.span, name, doc, false)?,
                 };
                 c.trivia = header_trivia;
                 Ok(SourceUnit::Context(c))
@@ -67,9 +71,9 @@ impl<'a> Parser<'a> {
                 };
                 let mut t = match self.peek_kind() {
                     Some(TokenKind::LBrace) => {
-                        self.parse_test_brace(start.span, name, doc, tier)?
+                        self.parse_test_body(start.span, name, doc, tier, true)?
                     }
-                    _ => self.parse_test_fragment(start.span, name, doc, tier)?,
+                    _ => self.parse_test_body(start.span, name, doc, tier, false)?,
                 };
                 t.trivia = header_trivia;
                 Ok(SourceUnit::Suite(t))
@@ -112,22 +116,41 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_commons_brace(
+    /// Parse a commons body, brace or fragment form (`brace` selects which).
+    /// Unified from two near-duplicate functions (review Part 3, "the
+    /// six-fold item loop") behind the same `brace: bool` parameter
+    /// [`Self::parse_adapter_body`] already used — the fragment-only
+    /// bookkeeping (`last_span`, `seen_item`, `uses_after_decls`) is simply
+    /// unconditional now: it's harmless dead weight in brace form (whose own
+    /// `end.span` wins over `last_span`, and whose `uses` may interleave with
+    /// other items in either case — `seen_item`'s check is itself gated on
+    /// `!brace`).
+    fn parse_commons_body(
         &mut self,
         start: Span,
         name: QualifiedName,
         documentation: Option<String>,
+        brace: bool,
     ) -> Result<Commons, CompileError> {
-        self.expect(TokenKind::LBrace, "after the commons name")?;
+        if brace {
+            self.expect(TokenKind::LBrace, "after the commons name")?;
+        }
         self.enter_item_loop();
         let mut items = Vec::new();
         let mut uses = Vec::new();
+        // Cover the header (`commons <name>`) so the unit span stays valid even
+        // when every item is dropped by error recovery — the document-symbol
+        // selection range (the name span) must remain contained in this span.
+        // Only consulted in fragment form; brace form's span comes from its
+        // own closing `}` instead.
+        let mut last_span = start.merge(name.span);
+        let mut seen_item = false;
         let trailing_comments: Vec<String>;
         loop {
             // Optional doc block and leading line comments before the next item.
             let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
-                Some(TokenKind::RBrace) => {
+                Some(TokenKind::RBrace) if brace => {
                     // Doc not attachable; treat as orphan if present. Any
                     // leading comments at this position end up as the
                     // body's trailing comments.
@@ -141,6 +164,21 @@ impl<'a> Parser<'a> {
                     trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
+                None if !brace => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "bynk.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    // Comments we held as leading for the next item, plus
+                    // any held in the trivia table's epilogue, become the
+                    // commons body's trailing comments.
+                    leading.extend(self.trivia.take_epilogue());
+                    trailing_comments = leading;
+                    break;
+                }
                 Some(TokenKind::Uses) => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(
@@ -151,189 +189,7 @@ impl<'a> Parser<'a> {
                             ),
                         );
                     }
-                    match self.parse_uses_decl() {
-                        Ok(mut u) => {
-                            u.trivia.leading = leading;
-                            u.trivia.trailing = self.take_trailing_trivia();
-                            uses.push(u);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Type) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_type_decl() {
-                        Ok(mut t) => {
-                            t.documentation = doc;
-                            t.trivia.leading = leading;
-                            t.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Type(t));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Fn) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_fn_decl() {
-                        Ok(mut f) => {
-                            f.documentation = doc;
-                            f.trivia.leading = leading;
-                            f.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Fn(f));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Messages) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_messages_decl() {
-                        Ok(mut m) => {
-                            m.documentation = doc;
-                            m.trivia.leading = leading;
-                            m.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Messages(m));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                // Events track, slice 0 (spine #936): `event` parses into
-                // items too, so the checker can reject it precisely
-                // (`bynk.event.outside_context`) — same reasoning as
-                // `messages` above, mirrored to the opposite placement.
-                Some(TokenKind::Event) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_event_decl() {
-                        Ok(mut e) => {
-                            e.documentation = doc;
-                            e.trivia.leading = leading;
-                            e.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Event(e));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Capability) => {
-                    let err = CompileError::new(
-                        "bynk.capability.outside_context",
-                        self.peek().unwrap().span,
-                        "`capability` declarations are only allowed inside a context, not a commons",
-                    );
-                    self.handle_item_err(err)?;
-                }
-                Some(TokenKind::Provides) => {
-                    let err = CompileError::new(
-                        "bynk.provider.outside_context",
-                        self.peek().unwrap().span,
-                        "`provides` declarations are only allowed inside a context, not a commons",
-                    );
-                    self.handle_item_err(err)?;
-                }
-                Some(TokenKind::Service) => {
-                    let err = CompileError::new(
-                        "bynk.service.outside_context",
-                        self.peek().unwrap().span,
-                        "`service` declarations are only allowed inside a context, not a commons",
-                    );
-                    self.handle_item_err(err)?;
-                }
-                Some(TokenKind::Agent) => {
-                    let err = CompileError::new(
-                        "bynk.agent.outside_context",
-                        self.peek().unwrap().span,
-                        "`agent` declarations are only allowed inside a context, not a commons",
-                    );
-                    self.handle_item_err(err)?;
-                }
-                Some(TokenKind::Actor) => {
-                    let err = CompileError::new(
-                        "bynk.actor.outside_context",
-                        self.peek().unwrap().span,
-                        "`actor` declarations are only allowed inside a context, not a commons",
-                    );
-                    self.handle_item_err(err)?;
-                }
-                Some(_) => {
-                    let t = self.peek().unwrap();
-                    let err = CompileError::new(
-                        "bynk.parse.expected_item",
-                        t.span,
-                        format!(
-                            "expected `type`, `fn`, `messages`, or `uses` declaration, found {}",
-                            t.kind.describe()
-                        ),
-                    )
-                    .with_note(
-                        "the body of a commons contains zero or more `type`, `fn`, `messages`, or `uses` declarations",
-                    );
-                    if self.recover_mode {
-                        self.recovered_errors.push(err);
-                        self.bump();
-                        self.recover_to_top_item();
-                    } else {
-                        return Err(err);
-                    }
-                }
-                None => {
-                    return Err(CompileError::new(
-                        "bynk.parse.unexpected_eof",
-                        self.eof_span(),
-                        "expected `}` to close the commons body, found end of file",
-                    ));
-                }
-            }
-        }
-        let end = self.expect(TokenKind::RBrace, "to close the commons body")?;
-        self.exit_item_loop();
-        // A comment after the closing `}` (this being the last declaration in
-        // the file) is a no-op `take_epilogue` unless it truly is the last
-        // content in the file — see `parse_commons_fragment`'s matching call.
-        let mut trailing_comments = trailing_comments;
-        trailing_comments.extend(self.trivia.take_epilogue());
-        Ok(Commons {
-            name,
-            items,
-            uses,
-            documentation,
-            form: CommonsForm::Brace,
-            span: start.merge(end.span),
-            trivia: Trivia::default(),
-            trailing_comments,
-        })
-    }
-
-    fn parse_commons_fragment(
-        &mut self,
-        start: Span,
-        name: QualifiedName,
-        documentation: Option<String>,
-    ) -> Result<Commons, CompileError> {
-        self.enter_item_loop();
-        let mut items = Vec::new();
-        let mut uses = Vec::new();
-        // Cover the header (`commons <name>`) so the unit span stays valid even
-        // when every item is dropped by error recovery — the document-symbol
-        // selection range (the name span) must remain contained in this span.
-        let mut last_span = start.merge(name.span);
-        let mut seen_item = false;
-        let trailing_comments: Vec<String>;
-        loop {
-            let (mut leading, item_doc) = self.collect_item_lead();
-            match self.peek_kind() {
-                Some(TokenKind::Uses) => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(
-                            CompileError::new(
-                                "bynk.parse.orphan_doc_block",
-                                doc_span,
-                                "documentation block before `uses` is not allowed; only `type` and `fn` declarations carry docs",
-                            ),
-                        );
-                    }
-                    if seen_item {
+                    if !brace && seen_item {
                         let t = self.peek().unwrap();
                         return Err(CompileError::new(
                             "bynk.parse.uses_after_decls",
@@ -399,6 +255,10 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                // Events track, slice 0 (spine #936): `event` parses into
+                // items too, so the checker can reject it precisely
+                // (`bynk.event.outside_context`) — same reasoning as
+                // `messages` above, mirrored to the opposite placement.
                 Some(TokenKind::Event) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
@@ -413,21 +273,6 @@ impl<'a> Parser<'a> {
                         }
                         Err(e) => self.handle_item_err(e)?,
                     }
-                }
-                None => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block has no following declaration to attach to",
-                        ));
-                    }
-                    // Comments we held as leading for the next item, plus
-                    // any held in the trivia table's epilogue, become the
-                    // commons body's trailing comments.
-                    leading.extend(self.trivia.take_epilogue());
-                    trailing_comments = leading;
-                    break;
                 }
                 Some(TokenKind::Capability) => {
                     let err = CompileError::new(
@@ -469,8 +314,22 @@ impl<'a> Parser<'a> {
                     );
                     self.handle_item_err(err)?;
                 }
-                Some(_) => {
-                    let t = self.peek().unwrap();
+                _ => {
+                    let t = match self.peek() {
+                        Some(t) => t,
+                        None => {
+                            return Err(CompileError::new(
+                                "bynk.parse.unexpected_eof",
+                                self.eof_span(),
+                                "expected `}` to close the commons body, found end of file",
+                            ));
+                        }
+                    };
+                    let note = if brace {
+                        "the body of a commons contains zero or more `type`, `fn`, `messages`, or `uses` declarations"
+                    } else {
+                        "in fragment-form commons (no braces), the body is a sequence of `type`, `fn`, `messages`, or `uses` declarations to end of file"
+                    };
                     let err = CompileError::new(
                         "bynk.parse.expected_item",
                         t.span,
@@ -479,9 +338,7 @@ impl<'a> Parser<'a> {
                             t.kind.describe()
                         ),
                     )
-                    .with_note(
-                        "in fragment-form commons (no braces), the body is a sequence of `type`, `fn`, `messages`, or `uses` declarations to end of file",
-                    );
+                    .with_note(note);
                     if self.recover_mode {
                         self.recovered_errors.push(err);
                         // Force progress in recovery: bump at least one token, then sync.
@@ -493,14 +350,31 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        self.exit_item_loop();
+        let mut trailing_comments = trailing_comments;
+        let span = if brace {
+            let end = self.expect(TokenKind::RBrace, "to close the commons body")?;
+            self.exit_item_loop();
+            // A comment after the closing `}` (this being the last
+            // declaration in the file) is a no-op `take_epilogue` unless it
+            // truly is the last content in the file — see the fragment-form
+            // break arm's matching call above.
+            trailing_comments.extend(self.trivia.take_epilogue());
+            start.merge(end.span)
+        } else {
+            self.exit_item_loop();
+            start.merge(last_span)
+        };
         Ok(Commons {
             name,
             items,
             uses,
             documentation,
-            form: CommonsForm::Fragment,
-            span: start.merge(last_span),
+            form: if brace {
+                CommonsForm::Brace
+            } else {
+                CommonsForm::Fragment
+            },
+            span,
             trivia: Trivia::default(),
             trailing_comments,
         })
@@ -618,24 +492,36 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_test_brace(
+    /// Parse a suite/test body, brace or fragment form — see
+    /// [`Self::parse_commons_body`]. The `uses_after_decls` error here
+    /// carries no `.with_note(...)` (unlike its commons/context
+    /// counterparts) — a pre-existing asymmetry, carried over unchanged.
+    fn parse_test_body(
         &mut self,
         start: Span,
         target: QualifiedName,
         documentation: Option<String>,
         tier: Option<TestTier>,
+        brace: bool,
     ) -> Result<SuiteDecl, CompileError> {
-        self.expect(TokenKind::LBrace, "after the test target name")?;
+        if brace {
+            self.expect(TokenKind::LBrace, "after the test target name")?;
+        }
         self.enter_item_loop();
         let mut uses = Vec::new();
         let mut stubs = Vec::new();
         let mut cases = Vec::new();
         let mut properties = Vec::new();
+        // Cover the header (`test <target>`) so the unit span stays valid even
+        // when every item is dropped by error recovery. Only consulted in
+        // fragment form (see `parse_commons_body`).
+        let mut last_span = start.merge(target.span);
+        let mut seen_non_uses = false;
         let trailing_comments: Vec<String>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
-                Some(TokenKind::RBrace) => {
+                Some(TokenKind::RBrace) if brace => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
@@ -646,6 +532,18 @@ impl<'a> Parser<'a> {
                     trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
+                None if !brace => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "bynk.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    leading.extend(self.trivia.take_epilogue());
+                    trailing_comments = leading;
+                    break;
+                }
                 Some(TokenKind::Uses) => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
@@ -654,133 +552,7 @@ impl<'a> Parser<'a> {
                             "documentation block before `uses` is not allowed",
                         ));
                     }
-                    match self.parse_uses_decl() {
-                        Ok(mut u) => {
-                            u.trivia.leading = leading;
-                            u.trivia.trailing = self.take_trailing_trivia();
-                            uses.push(u);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Stub) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_stub_clause() {
-                        Ok(mut p) => {
-                            p.documentation = doc;
-                            p.trivia.leading = leading;
-                            p.trivia.trailing = self.take_trailing_trivia();
-                            stubs.push(p);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Case) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_test_case() {
-                        Ok(mut c) => {
-                            c.documentation = doc;
-                            c.trivia.leading = leading;
-                            c.trivia.trailing = self.take_trailing_trivia();
-                            cases.push(c);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Property) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_property() {
-                        Ok(mut p) => {
-                            p.documentation = doc;
-                            p.trivia.leading = leading;
-                            p.trivia.trailing = self.take_trailing_trivia();
-                            properties.push(p);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(_) => {
-                    let t = self.peek().unwrap();
-                    let err = CompileError::new(
-                        "bynk.parse.expected_item",
-                        t.span,
-                        format!(
-                            "expected `uses`, `stub`, `case \"name\"`, or `property \"name\"` declaration, found {}",
-                            t.kind.describe()
-                        ),
-                    )
-                    .with_note(
-                        "the body of a suite contains zero or more `uses`, `stub`, `case`, or `property` declarations",
-                    );
-                    if self.recover_mode {
-                        self.recovered_errors.push(err);
-                        self.bump();
-                        self.recover_to_top_item();
-                    } else {
-                        return Err(err);
-                    }
-                }
-                None => {
-                    return Err(CompileError::new(
-                        "bynk.parse.unexpected_eof",
-                        self.eof_span(),
-                        "expected `}` to close the test body, found end of file",
-                    ));
-                }
-            }
-        }
-        let end = self.expect(TokenKind::RBrace, "to close the test body")?;
-        self.exit_item_loop();
-        // See `parse_commons_brace`'s matching call.
-        let mut trailing_comments = trailing_comments;
-        trailing_comments.extend(self.trivia.take_epilogue());
-        Ok(SuiteDecl {
-            target,
-            uses,
-            stubs,
-            cases,
-            properties,
-            tier,
-            form: CommonsForm::Brace,
-            documentation,
-            span: start.merge(end.span),
-            trivia: Trivia::default(),
-            trailing_comments,
-        })
-    }
-
-    fn parse_test_fragment(
-        &mut self,
-        start: Span,
-        target: QualifiedName,
-        documentation: Option<String>,
-        tier: Option<TestTier>,
-    ) -> Result<SuiteDecl, CompileError> {
-        self.enter_item_loop();
-        let mut uses = Vec::new();
-        let mut stubs = Vec::new();
-        let mut cases = Vec::new();
-        let mut properties = Vec::new();
-        // Cover the header (`test <target>`) so the unit span stays valid even
-        // when every item is dropped by error recovery (see commons fragment).
-        let mut last_span = start.merge(target.span);
-        let mut seen_non_uses = false;
-        let trailing_comments: Vec<String>;
-        loop {
-            let (mut leading, item_doc) = self.collect_item_lead();
-            match self.peek_kind() {
-                Some(TokenKind::Uses) => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block before `uses` is not allowed",
-                        ));
-                    }
-                    if seen_non_uses {
+                    if !brace && seen_non_uses {
                         let t = self.peek().unwrap();
                         return Err(CompileError::new(
                             "bynk.parse.uses_after_decls",
@@ -843,20 +615,22 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                None => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block has no following declaration to attach to",
-                        ));
-                    }
-                    leading.extend(self.trivia.take_epilogue());
-                    trailing_comments = leading;
-                    break;
-                }
-                Some(_) => {
-                    let t = self.peek().unwrap();
+                _ => {
+                    let t = match self.peek() {
+                        Some(t) => t,
+                        None => {
+                            return Err(CompileError::new(
+                                "bynk.parse.unexpected_eof",
+                                self.eof_span(),
+                                "expected `}` to close the test body, found end of file",
+                            ));
+                        }
+                    };
+                    let note = if brace {
+                        "the body of a suite contains zero or more `uses`, `stub`, `case`, or `property` declarations"
+                    } else {
+                        "in fragment-form suites, the body is a sequence of `uses`, `stub`, `case`, or `property` declarations to end of file"
+                    };
                     let err = CompileError::new(
                         "bynk.parse.expected_item",
                         t.span,
@@ -865,9 +639,7 @@ impl<'a> Parser<'a> {
                             t.kind.describe()
                         ),
                     )
-                    .with_note(
-                        "in fragment-form suites, the body is a sequence of `uses`, `stub`, `case`, or `property` declarations to end of file",
-                    );
+                    .with_note(note);
                     if self.recover_mode {
                         self.recovered_errors.push(err);
                         self.bump();
@@ -878,7 +650,17 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        self.exit_item_loop();
+        let mut trailing_comments = trailing_comments;
+        let span = if brace {
+            let end = self.expect(TokenKind::RBrace, "to close the test body")?;
+            self.exit_item_loop();
+            // See `parse_commons_body`'s matching call.
+            trailing_comments.extend(self.trivia.take_epilogue());
+            start.merge(end.span)
+        } else {
+            self.exit_item_loop();
+            start.merge(last_span)
+        };
         Ok(SuiteDecl {
             target,
             uses,
@@ -886,9 +668,13 @@ impl<'a> Parser<'a> {
             cases,
             properties,
             tier,
-            form: CommonsForm::Fragment,
+            form: if brace {
+                CommonsForm::Brace
+            } else {
+                CommonsForm::Fragment
+            },
             documentation,
-            span: start.merge(last_span),
+            span,
             trivia: Trivia::default(),
             trailing_comments,
         })
@@ -1132,23 +918,40 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_context_brace(
+    /// Parse a context body, brace or fragment form — see
+    /// [`Self::parse_commons_body`], the same unification for its sibling.
+    /// Fragment form additionally orders `uses`/`consumes`/`exports` before
+    /// any declaration (three separate checks, since a context has all
+    /// three clause kinds where a commons has only `uses`); each is gated on
+    /// `!brace` the same way. `consumes`/`exports`-after-decls recover with
+    /// an explicit `continue` (retrying the loop) where `uses`-after-decls
+    /// hard-bails even in recovery mode — a pre-existing asymmetry, carried
+    /// over unchanged rather than "fixed" as part of this unification.
+    fn parse_context_body(
         &mut self,
         start: Span,
         name: QualifiedName,
         documentation: Option<String>,
+        brace: bool,
     ) -> Result<Context, CompileError> {
-        self.expect(TokenKind::LBrace, "after the context name")?;
+        if brace {
+            self.expect(TokenKind::LBrace, "after the context name")?;
+        }
         self.enter_item_loop();
         let mut items = Vec::new();
         let mut uses = Vec::new();
         let mut consumes = Vec::new();
         let mut exports = Vec::new();
+        // Cover the header (`context <name>`) so the unit span stays valid even
+        // when every item is dropped by error recovery. Only consulted in
+        // fragment form (see `parse_commons_body`).
+        let mut last_span = start.merge(name.span);
+        let mut seen_item = false;
         let trailing_comments: Vec<String>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
-                Some(TokenKind::RBrace) => {
+                Some(TokenKind::RBrace) if brace => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
@@ -1159,6 +962,18 @@ impl<'a> Parser<'a> {
                     trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
+                None if !brace => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "bynk.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    leading.extend(self.trivia.take_epilogue());
+                    trailing_comments = leading;
+                    break;
+                }
                 Some(TokenKind::Uses) => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
@@ -1167,245 +982,7 @@ impl<'a> Parser<'a> {
                             "documentation block before `uses` is not allowed; only `type` and `fn` declarations carry docs",
                         ));
                     }
-                    match self.parse_uses_decl() {
-                        Ok(mut u) => {
-                            u.trivia.leading = leading;
-                            u.trivia.trailing = self.take_trailing_trivia();
-                            uses.push(u);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Consumes) => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block before `consumes` is not allowed; only `type` and `fn` declarations carry docs",
-                        ));
-                    }
-                    match self.parse_consumes_decl() {
-                        Ok(mut c) => {
-                            c.trivia.leading = leading;
-                            c.trivia.trailing = self.take_trailing_trivia();
-                            consumes.push(c);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Exports) => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block before `exports` is not allowed; only `type` and `fn` declarations carry docs",
-                        ));
-                    }
-                    match self.parse_exports_decl() {
-                        Ok(mut e) => {
-                            e.trivia.leading = leading;
-                            e.trivia.trailing = self.take_trailing_trivia();
-                            exports.push(e);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Type) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_type_decl() {
-                        Ok(mut t) => {
-                            t.documentation = doc;
-                            t.trivia.leading = leading;
-                            t.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Type(t));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Fn) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_fn_decl() {
-                        Ok(mut f) => {
-                            f.documentation = doc;
-                            f.trivia.leading = leading;
-                            f.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Fn(f));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Capability) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_capability_decl() {
-                        Ok(mut c) => {
-                            c.documentation = doc;
-                            c.trivia.leading = leading;
-                            c.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Capability(c));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Provides) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_provider_decl() {
-                        Ok(mut p) => {
-                            p.documentation = doc;
-                            p.trivia.leading = leading;
-                            p.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Provider(p));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Service) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_service_decl() {
-                        Ok(mut s) => {
-                            s.documentation = doc;
-                            s.trivia.leading = leading;
-                            s.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Service(s));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Agent) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_agent_decl() {
-                        Ok(mut a) => {
-                            a.documentation = doc;
-                            a.trivia.leading = leading;
-                            a.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Agent(a));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Actor) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_actor_decl() {
-                        Ok(mut a) => {
-                            a.documentation = doc;
-                            a.trivia.leading = leading;
-                            a.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Actor(a));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                // v0.223 (message-bundles slice 1): `messages` parses
-                // syntactically in a context too — same shape as `Service`/
-                // `Agent` inside an `adapter` body — so the checker can
-                // reject it precisely (`bynk.messages.outside_commons`)
-                // rather than the parser rejecting it per unit kind.
-                Some(TokenKind::Messages) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_messages_decl() {
-                        Ok(mut m) => {
-                            m.documentation = doc;
-                            m.trivia.leading = leading;
-                            m.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Messages(m));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Event) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_event_decl() {
-                        Ok(mut e) => {
-                            e.documentation = doc;
-                            e.trivia.leading = leading;
-                            e.trivia.trailing = self.take_trailing_trivia();
-                            items.push(CommonsItem::Event(e));
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(_) => {
-                    let t = self.peek().unwrap();
-                    let err = CompileError::new(
-                        "bynk.parse.expected_item",
-                        t.span,
-                        format!(
-                            "expected a `type`, `fn`, `messages`, `uses`, `consumes`, `exports`, `capability`, `provides`, `service`, `agent`, or `actor` declaration, found {}",
-                            t.kind.describe()
-                        ),
-                    );
-                    if self.recover_mode {
-                        self.recovered_errors.push(err);
-                        self.bump();
-                        self.recover_to_top_item();
-                    } else {
-                        return Err(err);
-                    }
-                }
-                None => {
-                    return Err(CompileError::new(
-                        "bynk.parse.unexpected_eof",
-                        self.eof_span(),
-                        "expected `}` to close the context body, found end of file",
-                    ));
-                }
-            }
-        }
-        let end = self.expect(TokenKind::RBrace, "to close the context body")?;
-        self.exit_item_loop();
-        // See `parse_commons_brace`'s matching call.
-        let mut trailing_comments = trailing_comments;
-        trailing_comments.extend(self.trivia.take_epilogue());
-        Ok(Context {
-            name,
-            items,
-            uses,
-            consumes,
-            exports,
-            documentation,
-            form: CommonsForm::Brace,
-            span: start.merge(end.span),
-            trivia: Trivia::default(),
-            trailing_comments,
-        })
-    }
-
-    fn parse_context_fragment(
-        &mut self,
-        start: Span,
-        name: QualifiedName,
-        documentation: Option<String>,
-    ) -> Result<Context, CompileError> {
-        self.enter_item_loop();
-        let mut items = Vec::new();
-        let mut uses = Vec::new();
-        let mut consumes = Vec::new();
-        let mut exports = Vec::new();
-        // Cover the header (`context <name>`) so the unit span stays valid even
-        // when every item is dropped by error recovery (see commons fragment).
-        let mut last_span = start.merge(name.span);
-        let mut seen_item = false;
-        let trailing_comments: Vec<String>;
-        loop {
-            let (mut leading, item_doc) = self.collect_item_lead();
-            match self.peek_kind() {
-                Some(TokenKind::Uses) => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block before `uses` is not allowed; only `type` and `fn` declarations carry docs",
-                        ));
-                    }
-                    if seen_item {
+                    if !brace && seen_item {
                         let t = self.peek().unwrap();
                         return Err(CompileError::new(
                             "bynk.parse.uses_after_decls",
@@ -1434,7 +1011,7 @@ impl<'a> Parser<'a> {
                             "documentation block before `consumes` is not allowed; only `type` and `fn` declarations carry docs",
                         ));
                     }
-                    if seen_item {
+                    if !brace && seen_item {
                         let t = self.peek().unwrap();
                         let err = CompileError::new(
                             "bynk.parse.consumes_after_decls",
@@ -1471,7 +1048,7 @@ impl<'a> Parser<'a> {
                             "documentation block before `exports` is not allowed; only `type` and `fn` declarations carry docs",
                         ));
                     }
-                    if seen_item {
+                    if !brace && seen_item {
                         let t = self.peek().unwrap();
                         let err = CompileError::new(
                             "bynk.parse.exports_after_decls",
@@ -1605,7 +1182,11 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                // See parse_context_brace's matching arm.
+                // v0.223 (message-bundles slice 1): `messages` parses
+                // syntactically in a context too — same shape as `Service`/
+                // `Agent` inside an `adapter` body — so the checker can
+                // reject it precisely (`bynk.messages.outside_commons`)
+                // rather than the parser rejecting it per unit kind.
                 Some(TokenKind::Messages) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
@@ -1636,20 +1217,17 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                None => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block has no following declaration to attach to",
-                        ));
-                    }
-                    leading.extend(self.trivia.take_epilogue());
-                    trailing_comments = leading;
-                    break;
-                }
-                Some(_) => {
-                    let t = self.peek().unwrap();
+                _ => {
+                    let t = match self.peek() {
+                        Some(t) => t,
+                        None => {
+                            return Err(CompileError::new(
+                                "bynk.parse.unexpected_eof",
+                                self.eof_span(),
+                                "expected `}` to close the context body, found end of file",
+                            ));
+                        }
+                    };
                     let err = CompileError::new(
                         "bynk.parse.expected_item",
                         t.span,
@@ -1668,7 +1246,17 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        self.exit_item_loop();
+        let mut trailing_comments = trailing_comments;
+        let span = if brace {
+            let end = self.expect(TokenKind::RBrace, "to close the context body")?;
+            self.exit_item_loop();
+            // See `parse_commons_body`'s matching call.
+            trailing_comments.extend(self.trivia.take_epilogue());
+            start.merge(end.span)
+        } else {
+            self.exit_item_loop();
+            start.merge(last_span)
+        };
         Ok(Context {
             name,
             items,
@@ -1676,8 +1264,12 @@ impl<'a> Parser<'a> {
             consumes,
             exports,
             documentation,
-            form: CommonsForm::Fragment,
-            span: start.merge(last_span),
+            form: if brace {
+                CommonsForm::Brace
+            } else {
+                CommonsForm::Fragment
+            },
+            span,
             trivia: Trivia::default(),
             trailing_comments,
         })
