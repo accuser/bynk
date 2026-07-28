@@ -860,31 +860,24 @@ pub(crate) fn check_context_declarations(
 
     // Build a resolved-commons snapshot for the per-handler checker.
     // We synthesise a ResolvedCommons by reusing typed.types / typed.fns /
-    // typed.methods; the resolver wouldn't add anything new.
-    //
-    // `local_type_names` must be the *pre-merge* local table (`table.types`),
-    // not `typed.types` (already local+uses+consumes merged) — its own
-    // contract (`ResolvedCommons::local_type_names`) is "declared in this
-    // commons, not imported", which `typed.types` cannot answer. Events
-    // track, slice 0 (spine #936) found this in the course of implementing
-    // owner-only emission (`is_local_type` is exactly the provenance that
-    // check needs): reusing `typed.types` here made every consumed/used
-    // type read as "local", silently over-widening `.raw`/`.unsafe()`
-    // access on a consumed opaque type too — the field's original purpose.
-    let local_type_names: std::collections::HashSet<String> = table.types.keys().cloned().collect();
-    let resolved = ResolvedCommons {
-        commons: typed.commons.clone(),
-        types: typed.types.clone(),
-        fns: typed.fns.clone(),
-        methods: typed.methods.clone(),
-        local_type_names,
-        cross_context: cross_context.clone(),
-        agents: table.agents.clone(),
-        imported_from: HashMap::new(),
+    // typed.methods; the resolver wouldn't add anything new. `ResolvedCommons::new`
+    // derives `local_type_names`/`event_type_names` from `table` — the
+    // *pre-merge* local table — rather than `typed.types` (already
+    // local+uses+consumes merged); see its doc comment for why that
+    // distinction matters (owner-only emission, spine #936).
+    let resolved = ResolvedCommons::new(
+        typed.commons.clone(),
+        typed.types.clone(),
+        &table.types,
+        typed.fns.clone(),
+        typed.methods.clone(),
+        table.agents.clone(),
+        &table.events,
+        cross_context.clone(),
+        HashMap::new(),
         is_context,
-        uses_commons_type_names: uses_commons_type_names.clone(),
-        event_type_names: table.events.keys().cloned().collect(),
-    };
+        uses_commons_type_names.clone(),
+    );
 
     // v0.25: capability operation signatures reference types.
     check_capability_decls(table, &typed.types, &no_vars, refs);
@@ -1898,8 +1891,7 @@ fn check_actor_contracts(
             && let Some(id) = &actor.identity
         {
             let ownable = matches!(id, TypeRef::Named(n) if
-                resolved.local_type_names.contains(&n.name)
-                    || resolved.uses_commons_type_names.contains(&n.name));
+                resolved.is_local_type(&n.name) || resolved.is_uses_commons_type(&n.name));
             if !ownable {
                 errors.push(
                     CompileError::new(
@@ -2994,21 +2986,25 @@ fn check_agent_decls(
         };
         let mut types_for_handler = typed.types.clone();
         types_for_handler.insert(agent_state_name.clone(), synthetic_state.clone());
-        let local_names_for_handler: std::collections::HashSet<String> =
-            types_for_handler.keys().cloned().collect();
-        let resolved_for_handler = ResolvedCommons {
-            commons: typed.commons.clone(),
-            types: types_for_handler,
-            fns: typed.fns.clone(),
-            methods: typed.methods.clone(),
-            local_type_names: local_names_for_handler,
-            cross_context: cross_context.clone(),
-            agents: table.agents.clone(),
-            imported_from: HashMap::new(),
+        // `local_type_names` is derived from `table.types` (the pre-merge
+        // local table), NOT `types_for_handler` (local+uses+consumes, plus
+        // the synthetic state record) — reusing the merged table here was
+        // review finding #9: it silently over-widened `.raw`/`.unsafe()`/
+        // owner-only-event-emission to any consumed/used type inside an
+        // agent handler body, making all three gates unreachable there.
+        let resolved_for_handler = ResolvedCommons::new(
+            typed.commons.clone(),
+            types_for_handler,
+            &table.types,
+            typed.fns.clone(),
+            typed.methods.clone(),
+            table.agents.clone(),
+            &table.events,
+            cross_context.clone(),
+            HashMap::new(),
             is_context,
-            uses_commons_type_names: uses_commons_type_names.clone(),
-            event_type_names: table.events.keys().cloned().collect(),
-        };
+            uses_commons_type_names.clone(),
+        );
         // v0.81: the fresh-key rule for `store Cell[T]` fields — an
         // initialiser is checked against the element type `T` (which also types
         // the init expression so the emitter can qualify variant constructors),
@@ -3083,21 +3079,22 @@ fn check_agent_decls(
         };
         let mut types_for_handler = resolved_for_handler.types.clone();
         types_for_handler.insert(agent_self_name.clone(), self_decl.clone());
-        let local_names_for_handler: std::collections::HashSet<String> =
-            types_for_handler.keys().cloned().collect();
-        let resolved_for_handler = ResolvedCommons {
-            commons: typed.commons.clone(),
-            types: types_for_handler,
-            fns: typed.fns.clone(),
-            methods: typed.methods.clone(),
-            local_type_names: local_names_for_handler,
-            cross_context: cross_context.clone(),
-            agents: table.agents.clone(),
-            imported_from: HashMap::new(),
+        // Same fix as above: `local_type_names` comes from `table.types`
+        // (pre-merge), not `types_for_handler` (merged, plus the synthetic
+        // `self` record type).
+        let resolved_for_handler = ResolvedCommons::new(
+            typed.commons.clone(),
+            types_for_handler,
+            &table.types,
+            typed.fns.clone(),
+            typed.methods.clone(),
+            table.agents.clone(),
+            &table.events,
+            cross_context.clone(),
+            HashMap::new(),
             is_context,
-            uses_commons_type_names: uses_commons_type_names.clone(),
-            event_type_names: table.events.keys().cloned().collect(),
-        };
+            uses_commons_type_names.clone(),
+        );
         self_scope.insert(
             "self".to_string(),
             Ty::Named {

@@ -3043,30 +3043,36 @@ fn check_unit_files(
                 resolver::CrossContextInfo::default()
             };
 
-        // Events track, slice 0 (spine #936): this unit's own declared event
-        // names — mirrors `local_names`/`local_type_names` but answers "is
-        // this specifically an event", which `Events.emit[E]` needs on top
-        // of owner-only emission (an ordinary local type must not pass as an
-        // emit target just because it's locally declared).
-        let event_type_names: HashSet<String> = unit_info
-            .get(name)
-            .map(|i| i.table.events.keys().cloned().collect())
-            .unwrap_or_default();
+        // `ResolvedCommons::new` derives `local_type_names`/`event_type_names`
+        // from this unit's own pre-merge table (`unit_info[name].table`), not
+        // `combined_types` (already local+uses+consumes merged) — same
+        // distinction `local_names` (above) exists for, and the one review
+        // finding #9 turned on. `Events.emit[E]` additionally needs "is this
+        // specifically an event" on top of owner-only emission (an ordinary
+        // local type must not pass as an emit target just because it's
+        // locally declared), hence the separate `events` table. Both are
+        // empty for a unit absent from `unit_info` (mirrors `local_names`'s
+        // own default).
+        let empty_types = HashMap::new();
+        let empty_events = HashMap::new();
+        let local_table = unit_info.get(name).map(|i| &i.table);
+        let local_types = local_table.map(|t| &t.types).unwrap_or(&empty_types);
+        let local_events = local_table.map(|t| &t.events).unwrap_or(&empty_events);
 
-        let resolved = ResolvedCommons {
-            commons: synthetic_commons,
-            types: combined_types.clone(),
-            fns: combined_fns.clone(),
-            methods: combined_methods.clone(),
-            local_type_names: local_names.clone(),
-            cross_context: cross_context_for_file.clone(),
-            agents: HashMap::new(),
+        let resolved = ResolvedCommons::new(
+            synthetic_commons,
+            combined_types.clone(),
+            local_types,
+            combined_fns.clone(),
+            combined_methods.clone(),
+            HashMap::new(),
+            local_events,
+            cross_context_for_file.clone(),
             // ADR 0116 D6: provenance for the `bynk.list` deprecation lint.
-            imported_from: imported_from.clone(),
-            is_context: kind == UnitKind::Context,
-            uses_commons_type_names: uses_commons_type_names.clone(),
-            event_type_names,
-        };
+            imported_from.clone(),
+            kind == UnitKind::Context,
+            uses_commons_type_names.clone(),
+        );
         refs.enter_file(&pf.identity_path, name, pf.synthetic);
         // v0.27: synthetic and test/integration files record no hints —
         // neither surfaces in an editor (the `assemble_index` rule).

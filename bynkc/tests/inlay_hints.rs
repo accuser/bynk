@@ -14,7 +14,7 @@ fn fixture_root(which: &str) -> PathBuf {
 }
 
 /// The fixture file's hints alongside its analysed text.
-fn hints_for(result: &bynkc::ProjectDiagnostics, file: &str) -> (Vec<(usize, String)>, String) {
+fn hints_for(result: &bynk_ide::ProjectDiagnostics, file: &str) -> (Vec<(usize, String)>, String) {
     let text = result
         .files
         .iter()
@@ -61,7 +61,7 @@ fn label_at<'a>(
 
 /// v0.39: a fixture file's parameter-name hints as `(arg-start offset, label)`.
 fn param_hints_for(
-    result: &bynkc::ProjectDiagnostics,
+    result: &bynk_ide::ProjectDiagnostics,
     file: &str,
 ) -> (Vec<(usize, String)>, String) {
     let text = result
@@ -87,7 +87,7 @@ fn param_hints_for(
 
 #[test]
 fn parameter_name_hints_show_at_args_and_suppress_matching_identifiers() {
-    let result = bynkc::diagnose_project(&fixture_root("params"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("params"), &HashMap::new());
     let (hints, text) = param_hints_for(&result, "demo.bynk");
 
     let call = text.find("area(w, height)").expect("the call is present");
@@ -110,7 +110,7 @@ fn parameter_name_hints_show_at_args_and_suppress_matching_identifiers() {
 
 #[test]
 fn generic_instantiation_hints_show_inferred_args_only_when_omitted() {
-    let result = bynkc::diagnose_project(&fixture_root("generics"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("generics"), &HashMap::new());
     // Generic-instantiation hints are `Type`-kind, anchored on the fn name.
     let (hints, text) = hints_for(&result, "demo.bynk");
 
@@ -128,7 +128,7 @@ fn generic_instantiation_hints_show_inferred_args_only_when_omitted() {
 
 #[test]
 fn let_bindings_and_lambda_params_get_inferred_type_hints() {
-    let result = bynkc::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
     let (hints, text) = hints_for(&result, "shop/util.bynk");
 
     // `let =` with an inferred type — the headline.
@@ -146,7 +146,7 @@ fn let_bindings_and_lambda_params_get_inferred_type_hints() {
 
 #[test]
 fn labels_read_in_bynk_surface_syntax() {
-    let result = bynkc::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
     let (hints, text) = hints_for(&result, "shop/util.bynk");
 
     // Display fidelity: generic source syntax, not an internal rendering.
@@ -167,7 +167,7 @@ fn labels_read_in_bynk_surface_syntax() {
 
 #[test]
 fn effect_let_hints_show_the_peeled_payload() {
-    let result = bynkc::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
     let (hints, text) = hints_for(&result, "billing/charge.bynk");
 
     // `let stamp <- Clock.now()` binds the Effect payload — `Int`, never
@@ -180,7 +180,7 @@ fn effect_let_hints_show_the_peeled_payload() {
 
 #[test]
 fn annotated_and_underscore_bindings_get_no_hint() {
-    let result = bynkc::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
     let (hints, text) = hints_for(&result, "shop/util.bynk");
 
     // An explicit annotation needs no hint; `_` binds nothing.
@@ -194,7 +194,7 @@ fn annotated_and_underscore_bindings_get_no_hint() {
 fn clean_fixture_has_no_diagnostics() {
     // The hint fixtures must be diagnostically clean, or the other tests
     // assert against a half-checked project.
-    let result = bynkc::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
     for f in &result.files {
         assert!(
             f.diagnostics.is_empty(),
@@ -210,7 +210,7 @@ fn clean_fixture_has_no_diagnostics() {
 
 #[test]
 fn hints_survive_a_transient_error_at_reached_sites() {
-    let result = bynkc::diagnose_project(&fixture_root("broken"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root("broken"), &HashMap::new());
     let (hints, text) = hints_for(&result, "billing/charge.bynk");
 
     // The file has one fn-body type error (`n + true` in `bad`)...

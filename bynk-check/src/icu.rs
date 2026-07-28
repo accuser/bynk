@@ -1,13 +1,19 @@
 //! message-bundles slice 3 (#878): the ICU MessageFormat placeholder
-//! mini-parser. Self-contained and `bynk-syntax`-free by design (Decision B) —
-//! the whole ICU sub-grammar (`{name, plural, one {…} other {…}}`,
-//! `{name, select, …}`, `{name, number[, style]}`, `{name, date[, style]}`)
-//! lives entirely inside a `messages` template's `String` content, parsed
-//! here as plain `&str` and consumed by both the checker
+//! mini-parser, plus the plain-`{name}` template scanner (`split_template`)
+//! it dispatches from. Self-contained and `bynk-syntax`-free by design
+//! (Decision B) — the whole ICU sub-grammar (`{name, plural, one {…} other
+//! {…}}`, `{name, select, …}`, `{name, number[, style]}`, `{name,
+//! date[, style]}`) lives entirely inside a `messages` template's `String`
+//! content, parsed here as plain `&str` and consumed by both the checker
 //! (`bynk-emit/src/project/validate.rs`) and the emitter
 //! (`emit_message_entry_renderer`). No `bynk-syntax` grammar/lexer/AST
 //! change backs this — a template stays one opaque `String` all the way
 //! through parsing.
+//!
+//! Lives in `bynk-check` (moved here in the compiler-pipeline-review's Wave
+//! 5, batch 5.1) rather than `bynk-emit`, since its only consumer besides
+//! the emitter is checker-side (`validate.rs`'s malformed-syntax pass) and
+//! it has no emitter-specific dependency of its own.
 //!
 //! Quoting: a bare `'` toggles a "quoted" region; `''` inside either mode
 //! means a literal `'` and doesn't toggle; while quoted, `{`/`}`/`,`/`#` are
@@ -25,13 +31,13 @@
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IcuPlaceholder<'a> {
-    pub(crate) name: &'a str,
-    pub(crate) kind: PlaceholderKind<'a>,
+pub struct IcuPlaceholder<'a> {
+    pub name: &'a str,
+    pub kind: PlaceholderKind<'a>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PlaceholderKind<'a> {
+pub enum PlaceholderKind<'a> {
     Plural {
         arms: Vec<(PluralCategory, Vec<SubSegment>)>,
     },
@@ -52,7 +58,7 @@ pub(crate) enum PlaceholderKind<'a> {
 /// surface forms a placeholder uses. `Plain` covers the bare `{name}` fast
 /// path, which never calls into this parser at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum FormatKind {
+pub enum FormatKind {
     Plain,
     Plural,
     Select,
@@ -66,7 +72,7 @@ impl FormatKind {
     /// `message_template_placeholder_summary`) — not `{:?}`'s capitalized
     /// Rust enum name, which leaked into `bynk.messages.format_mismatch`'s
     /// message text.
-    pub(crate) fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Plain => "plain",
             Self::Plural => "plural",
@@ -78,7 +84,7 @@ impl FormatKind {
 }
 
 impl<'a> PlaceholderKind<'a> {
-    pub(crate) fn format_kind(&self) -> FormatKind {
+    pub fn format_kind(&self) -> FormatKind {
         match self {
             PlaceholderKind::Plural { .. } => FormatKind::Plural,
             PlaceholderKind::Select { .. } => FormatKind::Select,
@@ -89,7 +95,7 @@ impl<'a> PlaceholderKind<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum PluralCategory {
+pub enum PluralCategory {
     Zero,
     One,
     Two,
@@ -111,7 +117,7 @@ impl PluralCategory {
         }
     }
 
-    pub(crate) fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Zero => "zero",
             Self::One => "one",
@@ -124,13 +130,13 @@ impl PluralCategory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NumberStyle {
+pub enum NumberStyle {
     Integer,
     Percent,
 }
 
 impl NumberStyle {
-    pub(crate) fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Integer => "integer",
             Self::Percent => "percent",
@@ -139,7 +145,7 @@ impl NumberStyle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DateStyle {
+pub enum DateStyle {
     Short,
     Medium,
     Long,
@@ -147,7 +153,7 @@ pub(crate) enum DateStyle {
 }
 
 impl DateStyle {
-    pub(crate) fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Short => "short",
             Self::Medium => "medium",
@@ -161,7 +167,7 @@ impl DateStyle {
 /// ICU `''`-unescaping can shrink byte length, so a literal sub-segment
 /// cannot always borrow from the source template.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SubSegment {
+pub enum SubSegment {
     Literal(String),
     /// Only valid inside a `plural` arm — substitutes the argument's own
     /// value, run through `formatIcuNumber`.
@@ -169,14 +175,14 @@ pub(crate) enum SubSegment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IcuParseError {
+pub struct IcuParseError {
     /// Byte offset into the placeholder's `inner` text (the content between
     /// the outer `{`/`}`, NOT the outer template) — rebased by the caller
     /// against `MessageEntry::template_span` (message-bundles slice 3
     /// Decision C).
-    pub(crate) offset: usize,
-    pub(crate) len: usize,
-    pub(crate) kind: IcuParseErrorKind,
+    pub offset: usize,
+    pub len: usize,
+    pub kind: IcuParseErrorKind,
 }
 
 impl IcuParseError {
@@ -190,7 +196,7 @@ impl IcuParseError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum IcuParseErrorKind {
+pub enum IcuParseErrorKind {
     EmptyPlaceholderName,
     MissingFormatKeyword,
     UnknownFormatKeyword(String),
@@ -213,7 +219,7 @@ pub(crate) enum IcuParseErrorKind {
 }
 
 impl IcuParseErrorKind {
-    pub(crate) fn message(&self) -> String {
+    pub fn message(&self) -> String {
         match self {
             Self::EmptyPlaceholderName => "a message placeholder has no argument name before its first `,`".to_string(),
             Self::MissingFormatKeyword => {
@@ -301,7 +307,7 @@ fn find_top_level_comma(s: &str) -> Option<usize> {
 /// naive first `}`). Depth starts at 1 for the still-open outer brace;
 /// returns the byte offset of the true closing `}` (depth reaching 0),
 /// `None` if it never closes.
-pub(crate) fn find_icu_close(rest: &str) -> Option<usize> {
+pub fn find_icu_close(rest: &str) -> Option<usize> {
     let mut depth: i32 = 1;
     let mut quoted = false;
     let mut chars = rest.char_indices().peekable();
@@ -507,7 +513,7 @@ fn ensure_other_present(
 /// precondition for calling this at all is that `inner` contains at least
 /// one top-level comma (`split_template`'s own trigger for treating a
 /// placeholder as ICU-dispatch rather than a plain `{name}`).
-pub(crate) fn parse_icu_placeholder(inner: &str) -> Result<IcuPlaceholder<'_>, IcuParseError> {
+pub fn parse_icu_placeholder(inner: &str) -> Result<IcuPlaceholder<'_>, IcuParseError> {
     let name_end = find_top_level_comma(inner).ok_or_else(|| {
         IcuParseError::at(0, inner.len(), IcuParseErrorKind::MissingFormatKeyword)
     })?;
@@ -664,17 +670,128 @@ fn parse_optional_style<T>(
     })
 }
 
+// -- message-bundles slice 1 (#859) --
+
+/// A `{name}` placeholder (plain, or — message-bundles slice 3 (#878) — an
+/// ICU-dispatch placeholder whose `inner` text contains a `,`) or a run of
+/// literal text inside a message template. `offset` is the byte offset in
+/// the owning template where `inner`/the placeholder's content begins (right
+/// after the opening `{`) — used by slice 3's `icu_dispatch_placeholders`
+/// to rebase parse-error spans (Decision C).
+pub enum TemplateSegment<'a> {
+    Literal(&'a str),
+    Placeholder { offset: usize, inner: &'a str },
+}
+
+/// Compile-time string scan splitting a template into literal/placeholder
+/// segments (Decision D, message-bundles slice 1 — no new lexer/parser
+/// grammar; `{name}` is resolved by this Rust-side scan during lowering, not
+/// parsed as an expression). A `{` with no matching `}`, or an empty `{}`, is
+/// just literal text — malformed-placeholder checking is out of scope here.
+/// The name is taken verbatim, with no whitespace trimming: `{ name }` is a
+/// placeholder literally named `" name "`, which will never match a `params`
+/// key and so always renders as literal text (PR #872 review) — a real rough
+/// edge, left for a future slice rather than guessed at here.
+///
+/// message-bundles slice 3 (#878): if a `,` appears before the placeholder's
+/// naive (non-nested) closing `}`, it's treated as an ICU-dispatch
+/// placeholder instead of a plain one — the true close is then found via a
+/// quote+depth-aware scan (`find_icu_close`), since an ICU construct's
+/// arms can themselves contain nested `{…}` bodies. This is the *only*
+/// change from slice 1/2's behaviour: a template with no comma inside any
+/// `{…}` is scanned byte-for-byte identically to before.
+pub fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
+    let mut segments = Vec::new();
+    let mut literal_start = 0;
+    let mut i = 0;
+    while i < template.len() {
+        if template.as_bytes()[i] == b'{' {
+            let rest = &template[i + 1..];
+            let first_close = rest.find('}');
+            let first_comma = rest.find(',');
+            let is_icu = match (first_comma, first_close) {
+                (Some(c), Some(cl)) => c < cl,
+                (Some(_), None) => true,
+                (None, _) => false,
+            };
+            if is_icu {
+                if let Some(close_rel) = find_icu_close(rest) {
+                    let inner = &rest[..close_rel];
+                    if literal_start < i {
+                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
+                    }
+                    segments.push(TemplateSegment::Placeholder {
+                        offset: i + 1,
+                        inner,
+                    });
+                    i = i + 1 + close_rel + 1;
+                    literal_start = i;
+                    continue;
+                }
+                // No true close found anywhere — falls through to the
+                // one-char literal advance below, same as an unmatched `{`.
+            } else if let Some(rel_end) = first_close {
+                let name = &rest[..rel_end];
+                if !name.is_empty() && !name.contains('{') {
+                    if literal_start < i {
+                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
+                    }
+                    segments.push(TemplateSegment::Placeholder {
+                        offset: i + 1,
+                        inner: name,
+                    });
+                    i = i + 1 + rel_end + 1;
+                    literal_start = i;
+                    continue;
+                }
+            }
+        }
+        // Advance by one char (not one byte) to stay on UTF-8 boundaries.
+        i += template[i..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(1);
+    }
+    if literal_start < template.len() || segments.is_empty() {
+        segments.push(TemplateSegment::Literal(&template[literal_start..]));
+    }
+    segments
+}
+
+/// message-bundles slice 2 (#874): a template's placeholder-name *set*, for
+/// cross-locale agreement checking (`bynk-emit/src/project/validate.rs`).
+/// Exposes only the name set, not `TemplateSegment` itself, keeping the
+/// checker's dependency on the emitter narrow. message-bundles slice 3
+/// (#878): an ICU-dispatch placeholder's name is its `inner` text up to the
+/// first top-level comma, trimmed — a plain placeholder's `inner` never
+/// contains a comma (by construction of `split_template`'s `is_icu` decision
+/// above), so it's returned verbatim, preserving the untrimmed-name quirk
+/// documented on `split_template` exactly as before.
+pub fn placeholder_names(template: &str) -> std::collections::BTreeSet<&str> {
+    split_template(template)
+        .into_iter()
+        .filter_map(|s| match s {
+            TemplateSegment::Placeholder { inner, .. } => Some(match inner.find(',') {
+                None => inner,
+                Some(idx) => inner[..idx].trim(),
+            }),
+            TemplateSegment::Literal(_) => None,
+        })
+        .collect()
+}
+
 /// Every ICU-dispatch placeholder in `template` — `(byte offset of `inner`
 /// within `template`, `inner` text)` — for the checker's malformed-syntax
 /// pass (`bynk-emit/src/project/validate.rs`). A placeholder only reaches
 /// here if `split_template` already decided it was ICU-dispatch (its `inner`
 /// contains a top-level comma); a plain `{name}` never does, by construction
 /// (proven in `split_template`'s own doc comment).
-pub(crate) fn icu_dispatch_placeholders(template: &str) -> Vec<(usize, &str)> {
-    super::emit::split_template(template)
+pub fn icu_dispatch_placeholders(template: &str) -> Vec<(usize, &str)> {
+    split_template(template)
         .into_iter()
         .filter_map(|s| match s {
-            super::emit::TemplateSegment::Placeholder { offset, inner } if inner.contains(',') => {
+            TemplateSegment::Placeholder { offset, inner } if inner.contains(',') => {
                 Some((offset, inner))
             }
             _ => None,
@@ -687,11 +804,11 @@ pub(crate) fn icu_dispatch_placeholders(template: &str) -> Vec<(usize, &str)> {
 /// `check_entry_icu_syntax`'s job to report (once), not this pure helper's,
 /// so a caller comparing two locales' templates never double-reports a
 /// malformed one.
-pub(crate) fn template_format_kinds(template: &str) -> BTreeMap<&str, FormatKind> {
-    super::emit::split_template(template)
+pub fn template_format_kinds(template: &str) -> BTreeMap<&str, FormatKind> {
+    split_template(template)
         .into_iter()
         .filter_map(|s| match s {
-            super::emit::TemplateSegment::Placeholder { inner, .. } => {
+            TemplateSegment::Placeholder { inner, .. } => {
                 if let Some(comma) = inner.find(',') {
                     let name = inner[..comma].trim();
                     parse_icu_placeholder(inner)

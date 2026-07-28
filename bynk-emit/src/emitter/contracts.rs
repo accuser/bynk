@@ -28,7 +28,7 @@ pub const CONTRACTS_MANIFEST: &str = "bynk-contracts.json";
 /// The manifest schema version. Bumped only by a breaking shape change; the
 /// driver refuses a version it does not know rather than guessing, as the
 /// deploy ledger and the secrets manifest do.
-pub const MANIFEST_VERSION: u32 = 1;
+pub(crate) const MANIFEST_VERSION: u32 = 1;
 
 /// Render a context's contract manifest: what it **provides**, and what it
 /// **expects** of each context it consumes.
@@ -51,7 +51,7 @@ pub const MANIFEST_VERSION: u32 = 1;
 /// a file into every worker directory for a feature it does not use — and "no
 /// file" is the same answer as "empty" to a driver that must tolerate a build
 /// tree from a compiler predating this file anyway.
-pub fn emit_contracts_manifest(
+pub(crate) fn emit_contracts_manifest(
     provides: &BTreeMap<String, String>,
     expects: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> Option<String> {

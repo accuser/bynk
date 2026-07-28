@@ -12,7 +12,7 @@ fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/semantic/src")
 }
 
-fn modifiers_of(result: &bynkc::ProjectDiagnostics, name: &str) -> SymbolModifiers {
+fn modifiers_of(result: &bynk_ide::ProjectDiagnostics, name: &str) -> SymbolModifiers {
     result
         .index
         .symbols
@@ -25,7 +25,7 @@ fn modifiers_of(result: &bynkc::ProjectDiagnostics, name: &str) -> SymbolModifie
 
 #[test]
 fn type_modifiers_follow_the_declaration() {
-    let result = bynkc::diagnose_project(&fixture_root(), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root(), &HashMap::new());
 
     let m = |refined, opaque| SymbolModifiers {
         refined,
@@ -42,7 +42,7 @@ fn type_modifiers_follow_the_declaration() {
 
 #[test]
 fn first_party_references_land_in_the_side_table() {
-    let result = bynkc::diagnose_project(&fixture_root(), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root(), &HashMap::new());
 
     // The `Kv` references in cache/store.bynk (`consumes` clause, `given`
     // clause, `Kv.get`/`Kv.put` call sites) are dropped from `symbols`

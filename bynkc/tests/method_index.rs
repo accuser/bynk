@@ -15,7 +15,7 @@ fn fixture_root() -> PathBuf {
 }
 
 fn analyse(root: &Path) -> (ProjectIndex, HashMap<String, String>) {
-    let result = bynkc::diagnose_project(root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(root, &HashMap::new());
     for f in &result.files {
         assert!(
             f.diagnostics.is_empty(),

@@ -7,7 +7,7 @@
 //! `ts_*`/`LowerCtx` core stay in the parent and are reached via `use super::*`.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::project::EmitProjectCtx;
@@ -819,117 +819,6 @@ fn sanitise_path_segment(s: &str) -> String {
         }
     }
     out
-}
-
-// -- message-bundles slice 1 (#859) --
-
-/// A `{name}` placeholder (plain, or — message-bundles slice 3 (#878) — an
-/// ICU-dispatch placeholder whose `inner` text contains a `,`) or a run of
-/// literal text inside a message template. `offset` is the byte offset in
-/// the owning template where `inner`/the placeholder's content begins (right
-/// after the opening `{`) — used by slice 3's `icu::icu_dispatch_placeholders`
-/// to rebase parse-error spans (Decision C).
-pub(crate) enum TemplateSegment<'a> {
-    Literal(&'a str),
-    Placeholder { offset: usize, inner: &'a str },
-}
-
-/// Compile-time string scan splitting a template into literal/placeholder
-/// segments (Decision D, message-bundles slice 1 — no new lexer/parser
-/// grammar; `{name}` is resolved by this Rust-side scan during lowering, not
-/// parsed as an expression). A `{` with no matching `}`, or an empty `{}`, is
-/// just literal text — malformed-placeholder checking is out of scope here.
-/// The name is taken verbatim, with no whitespace trimming: `{ name }` is a
-/// placeholder literally named `" name "`, which will never match a `params`
-/// key and so always renders as literal text (PR #872 review) — a real rough
-/// edge, left for a future slice rather than guessed at here.
-///
-/// message-bundles slice 3 (#878): if a `,` appears before the placeholder's
-/// naive (non-nested) closing `}`, it's treated as an ICU-dispatch
-/// placeholder instead of a plain one — the true close is then found via a
-/// quote+depth-aware scan (`icu::find_icu_close`), since an ICU construct's
-/// arms can themselves contain nested `{…}` bodies. This is the *only*
-/// change from slice 1/2's behaviour: a template with no comma inside any
-/// `{…}` is scanned byte-for-byte identically to before.
-pub(crate) fn split_template(template: &str) -> Vec<TemplateSegment<'_>> {
-    let mut segments = Vec::new();
-    let mut literal_start = 0;
-    let mut i = 0;
-    while i < template.len() {
-        if template.as_bytes()[i] == b'{' {
-            let rest = &template[i + 1..];
-            let first_close = rest.find('}');
-            let first_comma = rest.find(',');
-            let is_icu = match (first_comma, first_close) {
-                (Some(c), Some(cl)) => c < cl,
-                (Some(_), None) => true,
-                (None, _) => false,
-            };
-            if is_icu {
-                if let Some(close_rel) = icu::find_icu_close(rest) {
-                    let inner = &rest[..close_rel];
-                    if literal_start < i {
-                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
-                    }
-                    segments.push(TemplateSegment::Placeholder {
-                        offset: i + 1,
-                        inner,
-                    });
-                    i = i + 1 + close_rel + 1;
-                    literal_start = i;
-                    continue;
-                }
-                // No true close found anywhere — falls through to the
-                // one-char literal advance below, same as an unmatched `{`.
-            } else if let Some(rel_end) = first_close {
-                let name = &rest[..rel_end];
-                if !name.is_empty() && !name.contains('{') {
-                    if literal_start < i {
-                        segments.push(TemplateSegment::Literal(&template[literal_start..i]));
-                    }
-                    segments.push(TemplateSegment::Placeholder {
-                        offset: i + 1,
-                        inner: name,
-                    });
-                    i = i + 1 + rel_end + 1;
-                    literal_start = i;
-                    continue;
-                }
-            }
-        }
-        // Advance by one char (not one byte) to stay on UTF-8 boundaries.
-        i += template[i..]
-            .chars()
-            .next()
-            .map(char::len_utf8)
-            .unwrap_or(1);
-    }
-    if literal_start < template.len() || segments.is_empty() {
-        segments.push(TemplateSegment::Literal(&template[literal_start..]));
-    }
-    segments
-}
-
-/// message-bundles slice 2 (#874): a template's placeholder-name *set*, for
-/// cross-locale agreement checking (`bynk-emit/src/project/validate.rs`).
-/// Exposes only the name set, not `TemplateSegment` itself, keeping the
-/// checker's dependency on the emitter narrow. message-bundles slice 3
-/// (#878): an ICU-dispatch placeholder's name is its `inner` text up to the
-/// first top-level comma, trimmed — a plain placeholder's `inner` never
-/// contains a comma (by construction of `split_template`'s `is_icu` decision
-/// above), so it's returned verbatim, preserving the untrimmed-name quirk
-/// documented on `split_template` exactly as before.
-pub(crate) fn placeholder_names(template: &str) -> BTreeSet<&str> {
-    split_template(template)
-        .into_iter()
-        .filter_map(|s| match s {
-            TemplateSegment::Placeholder { inner, .. } => Some(match inner.find(',') {
-                None => inner,
-                Some(idx) => inner[..idx].trim(),
-            }),
-            TemplateSegment::Literal(_) => None,
-        })
-        .collect()
 }
 
 /// One message entry's TS renderer: `(params) => <expr>`. A literal-only

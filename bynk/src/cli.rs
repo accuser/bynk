@@ -209,44 +209,8 @@ pub enum Command {
     /// richer compiler resolution instead of locating `bynkc` themselves.
     /// Requires `tsc` (with Node.js) or `tsx` on PATH, exactly as `bynkc test`.
     Test {
-        /// Input project root directory. Defaults to the current directory.
-        #[arg(default_value = ".")]
-        input: PathBuf,
-        /// Where to write compiled TypeScript test runner modules.
-        /// Defaults to `<input>/out`.
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        /// Skip the runner invocation. With `--format rich` this emits the
-        /// generated test files; with `--format json` it emits a discovery
-        /// document listing every suite and case without running them.
-        #[arg(long)]
-        no_run: bool,
-        /// Output format. `rich` (default) is the grouped ✓ / ✗ human output;
-        /// `json` is a single pinned JSON document of results, for tooling.
-        #[arg(long, value_enum, default_value = "rich")]
-        format: TestFormatArg,
-        /// Compile a debug build and launch the test runner under Node's
-        /// inspector (`node --inspect-brk`), printing the inspector URL for a
-        /// JavaScript debugger to attach. Requires Node ≥ 22.18 (or ≥ 23.6
-        /// unflagged). Does not run `tsc`.
-        #[arg(long)]
-        inspect: bool,
-        /// The root seed for generative `property` tests, as hex (e.g.
-        /// `0x5f3a`). A failing property prints the seed it used; re-running
-        /// with `--seed <hex>` reproduces that run byte-for-byte.
-        #[arg(long)]
-        seed: Option<String>,
-        /// Run only test cases whose name matches `<name>`, skipping the rest —
-        /// the filter behind the editor's per-case `▷ Run Test` lens. No effect
-        /// with `--no-run`.
-        #[arg(long, value_name = "NAME")]
-        case: Option<String>,
-        /// After the suite runs, report statement/line coverage attributed to
-        /// `.bynk` source (a rich summary table, or a `coverage` block in
-        /// `--format json`). Requires the `tsc → node` path: incompatible with
-        /// `--inspect` and `--no-run`, and errors if only `tsx` is available.
-        #[arg(long)]
-        coverage: bool,
+        #[command(flatten)]
+        args: bynk_driver::test_runner::TestArgs,
     },
     /// Explain a diagnostic code — the longer-form "what the rule is, why it
     /// exists, and how to fix it" behind a `bynk.*` error code (#853).
@@ -275,16 +239,6 @@ pub enum CheckFormatArg {
     Short,
 }
 
-/// `bynk test --format` selector, mirroring `bynkc`'s `TestFormat` (rich/json).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
-pub enum TestFormatArg {
-    /// The grouped `✓ / ✗` human output (the default).
-    #[default]
-    Rich,
-    /// A single pinned JSON document of results, for tooling and CI.
-    Json,
-}
-
 impl CheckFormatArg {
     /// The `bynkc check --format` token this maps to when the pinned compiler
     /// is shelled under `BYNK_BYNKC`.
@@ -292,17 +246,6 @@ impl CheckFormatArg {
         match self {
             CheckFormatArg::Rich => "rich",
             CheckFormatArg::Short => "short",
-        }
-    }
-}
-
-impl TestFormatArg {
-    /// The `bynkc test --format` token this maps to when `bynk test` shells the
-    /// resolved compiler.
-    pub fn as_bynkc_arg(self) -> &'static str {
-        match self {
-            TestFormatArg::Rich => "rich",
-            TestFormatArg::Json => "json",
         }
     }
 }

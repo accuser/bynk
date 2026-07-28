@@ -56,8 +56,13 @@ pub struct ResolvedCommons {
     pub methods: HashMap<String, MethodTable>,
     /// Names of types declared in *this* commons (as opposed to imported via
     /// `uses`). Used by the checker to gate access to `.raw` and `.unsafe()`
-    /// on opaque types.
-    pub local_type_names: std::collections::HashSet<String>,
+    /// on opaque types. Private: this field's contract is specifically
+    /// "declared here, not merely visible here", and a builder outside this
+    /// crate that populates it from the wrong (merged, rather than
+    /// pre-merge) table silently over-widens those gates — read it via
+    /// [`ResolvedCommons::is_local_type`], and build a `ResolvedCommons` via
+    /// [`ResolvedCommons::new`], which derives it correctly by construction.
+    pub(crate) local_type_names: std::collections::HashSet<String>,
     /// Cross-context call information for v0.6. None for commons and for
     /// single-file mode. For contexts, supplies the set of consumed contexts
     /// and any aliases introduced via `consumes ... as Alias`.
@@ -85,16 +90,18 @@ pub struct ResolvedCommons {
     /// `imported_from_kind.get(name) == Some(UnitKind::Commons)`. A type
     /// surfaced via `consumes` (a capability signature from an adapter or
     /// another context) is *not* rebranded and must not be gated by #907's
-    /// check — only this narrower set may be.
-    pub uses_commons_type_names: std::collections::HashSet<String>,
+    /// check — only this narrower set may be. Private for the same reason as
+    /// `local_type_names`; read via [`ResolvedCommons::is_uses_commons_type`].
+    pub(crate) uses_commons_type_names: std::collections::HashSet<String>,
     /// Events track, slice 0 (spine #936): names of `event` declarations in
     /// *this* commons specifically — as opposed to `local_type_names`, which
     /// answers "declared here" for any type, event-derived or not. Backs the
     /// `Events.emit[E]` check that `E` names a real event, not merely any
     /// local type (owner-only emission alone can't tell the two apart, since
     /// an event's synthetic `TypeDecl` sits in the same `types` table as
-    /// every ordinary type).
-    pub event_type_names: std::collections::HashSet<String>,
+    /// every ordinary type). Private for the same reason as
+    /// `local_type_names`; read via [`ResolvedCommons::is_local_event`].
+    pub(crate) event_type_names: std::collections::HashSet<String>,
 }
 
 /// Static information about the consuming context: the set of contexts it
@@ -223,6 +230,50 @@ impl ResolvedCommons {
     /// not merely any local type?
     pub fn is_local_event(&self, name: &str) -> bool {
         self.event_type_names.contains(name)
+    }
+
+    /// Is `name` in scope via `uses` of a *commons* specifically? See
+    /// `uses_commons_type_names`'s field doc for the exact predicate.
+    pub fn is_uses_commons_type(&self, name: &str) -> bool {
+        self.uses_commons_type_names.contains(name)
+    }
+
+    /// Build a `ResolvedCommons` from a merged (local + `uses`/`consumes`)
+    /// symbol table, deriving `local_type_names`/`event_type_names` from
+    /// `local_types`/`local_events` — the *pre-merge* tables — rather than
+    /// from `types`/`agents` (already merged). This is the one thing every
+    /// hand-rolled construction outside this crate got a chance to disagree
+    /// on: the pre-merge/merged distinction is exactly what backs
+    /// `.raw`/`.unsafe()`/owner-only-event-emission gating, and reusing the
+    /// merged table there silently widens all three to any consumed/used
+    /// type or event (found during the events track, slice 0, spine #936).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        commons: Commons,
+        types: HashMap<String, TypeDecl>,
+        local_types: &HashMap<String, TypeDecl>,
+        fns: HashMap<String, FnDecl>,
+        methods: HashMap<String, MethodTable>,
+        agents: HashMap<String, AgentDecl>,
+        local_events: &HashMap<String, EventDecl>,
+        cross_context: CrossContextInfo,
+        imported_from: HashMap<String, String>,
+        is_context: bool,
+        uses_commons_type_names: HashSet<String>,
+    ) -> Self {
+        Self {
+            commons,
+            local_type_names: local_types.keys().cloned().collect(),
+            event_type_names: local_events.keys().cloned().collect(),
+            types,
+            fns,
+            methods,
+            cross_context,
+            agents,
+            imported_from,
+            is_context,
+            uses_commons_type_names,
+        }
     }
 }
 

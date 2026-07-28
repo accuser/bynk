@@ -40,7 +40,7 @@ fn qual_prefix(qual: &Qual, name: &str) -> String {
 /// argument or return position of a service handler exposed by this
 /// context, walked through record fields, sum payloads, and the generic
 /// type parameters of Result/Option/Effect.
-pub fn collect_boundary_types(
+pub(crate) fn collect_boundary_types(
     types: &std::collections::HashMap<String, TypeDecl>,
     services: &std::collections::HashMap<String, ServiceDecl>,
     // v0.96 (ADR 0124): rehydration is a trust boundary — an agent's persisted
@@ -322,7 +322,7 @@ fn app_ts_name(name: &str, args: &[TypeRef]) -> String {
 /// owner declares that crosses a boundary. `owner_qualified` is the
 /// qualified name used as the brand path so that refinement-violation
 /// messages identify the origin context.
-pub fn emit_helpers_for_owner(
+pub(crate) fn emit_helpers_for_owner(
     out: &mut String,
     type_names: &[String],
     types: &std::collections::HashMap<String, TypeDecl>,
@@ -339,7 +339,7 @@ pub fn emit_helpers_for_owner(
 /// types: the qualified names reach through the `import type * as <ns>` alias,
 /// and refined validation inlines (transparent) or casts structurally (opaque)
 /// because the owner's `.of` is not importable.
-pub fn emit_helpers_for_owner_qualified(
+pub(crate) fn emit_helpers_for_owner_qualified(
     out: &mut String,
     type_names: &[String],
     types: &std::collections::HashMap<String, TypeDecl>,
@@ -1051,7 +1051,7 @@ fn inner_ts_name(t: &TypeRef) -> String {
 /// through record fields and sum payloads) plus the generic instantiations
 /// needing specialised helpers. The same closure logic as the boundary
 /// collectors, rooted at expressions instead of service signatures.
-pub fn collect_codec_closure(
+pub(crate) fn collect_codec_closure(
     roots: &[TypeRef],
     types: &std::collections::HashMap<String, TypeDecl>,
 ) -> (Vec<String>, Vec<GenericInst>) {
@@ -1125,7 +1125,7 @@ pub fn collect_codec_closure(
 
 /// v0.22b: an expression-form serialise for a codec target — the same
 /// dispatch as a record field's serialisation.
-pub fn serialise_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn serialise_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
     serialise_field_expr(t, value, ru)
 }
 
@@ -1135,7 +1135,7 @@ pub fn serialise_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
 /// (which dropped `List`/`Map` to a bare `as JsonValue` cast) and
 /// `workers_entry.rs`'s `serialise_call` (which did the same to `Bytes`, the
 /// asymmetry that forced `bynk.types.bytes_at_workers_boundary`).
-pub fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
     serialise_field_expr_via(t, value, ns, ru)
 }
 
@@ -1143,7 +1143,7 @@ pub fn serialise_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -
 /// `callService`'s `deserialiseResult` parameter. The inline arms become a
 /// lambda rather than the unvalidated `((j: any) => ({ tag: "Ok", value: j }))`
 /// identity the caller path used to fall back to.
-pub fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
     match strip_effect(t) {
         TypeRef::Named(id) => format!("{ns}deserialise_{}", id.name),
         t @ (TypeRef::Result(..)
@@ -1164,7 +1164,7 @@ pub fn deserialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
 /// `http_value_serialiser`, a parallel dispatch that collapsed every base type
 /// to `(v: any) => v as JsonValue`, dropping the `Float` non-finite guard and
 /// `Bytes` base64 encoding that `serialise_field_expr_via` already carries.
-pub fn serialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn serialise_ref_via(t: &TypeRef, ns: &str, ru: &RuntimeUse) -> String {
     match strip_effect(t) {
         TypeRef::Named(id) => format!("{ns}serialise_{}", id.name),
         t @ (TypeRef::Result(..)
@@ -1191,7 +1191,7 @@ fn strip_effect(t: &TypeRef) -> &TypeRef {
 /// v0.22b: an expression-form deserialise call for a codec target. Named
 /// types and generic instantiations go through their (module-local)
 /// helpers; bases inline the structural check.
-pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str, ru: &RuntimeUse) -> String {
+pub(crate) fn deserialise_expr(t: &TypeRef, json: &str, path: &str, ru: &RuntimeUse) -> String {
     deserialise_expr_via(t, json, path, "", ru)
 }
 
@@ -1204,7 +1204,7 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str, ru: &RuntimeUse) ->
 /// checker's codec-domain rule rejects them there but the cross-context
 /// boundary admits them: `Unit` (an `on call` may return `Effect[Result[(), E]]`)
 /// and the runtime-owned error types.
-pub fn deserialise_expr_via(
+pub(crate) fn deserialise_expr_via(
     t: &TypeRef,
     json: &str,
     path: &str,
@@ -1345,7 +1345,7 @@ pub fn deserialise_expr_via(
 /// boundary record or sum payload (e.g. the bynk surface's
 /// `Request.contentType: Option[String]`) — the per-type serialisers
 /// delegate to the specialised generic helpers, so walk those too.
-pub fn collect_generic_instantiations(
+pub(crate) fn collect_generic_instantiations(
     services: &std::collections::HashMap<String, ServiceDecl>,
     // v0.96 (ADR 0124): an agent's `store`-field element types are validated on
     // rehydration, so a `Cell[Option[Int]]` / `Log[List[T]]` needs its specialised
@@ -1418,7 +1418,8 @@ pub fn collect_generic_instantiations(
 }
 
 #[derive(Debug, Clone)]
-pub enum GenericInst {
+#[allow(clippy::enum_variant_names)]
+pub(crate) enum GenericInst {
     ResultInst {
         ok: TypeRef,
         err: TypeRef,
@@ -1453,7 +1454,7 @@ pub enum GenericInst {
 }
 
 impl GenericInst {
-    pub fn ts_name(&self) -> String {
+    pub(crate) fn ts_name(&self) -> String {
         match self {
             GenericInst::ResultInst { ok, err } => {
                 format!("Result_{}_{}", inner_ts_name(ok), inner_ts_name(err))
@@ -1588,7 +1589,7 @@ fn walk_generic_inst(
 /// v0.174 (#592): also emits a monomorphised record codec per generic
 /// instantiation (`RecordInst`), which needs the declarations to substitute
 /// its type parameters.
-pub fn emit_generic_helpers(
+pub(crate) fn emit_generic_helpers(
     out: &mut String,
     insts: &[GenericInst],
     types: &std::collections::HashMap<String, TypeDecl>,
@@ -1604,7 +1605,7 @@ pub fn emit_generic_helpers(
 /// codec calls stay local. The codec *suffix* (`Result_AuthId_PaymentError`) is
 /// namespace-independent by construction, which is exactly what keeps the
 /// caller's and callee's names in agreement across the wire.
-pub fn emit_generic_helpers_qualified(
+pub(crate) fn emit_generic_helpers_qualified(
     out: &mut String,
     insts: &[GenericInst],
     types: &std::collections::HashMap<String, TypeDecl>,
@@ -1864,7 +1865,7 @@ pub fn emit_generic_helpers_qualified(
 /// it through the same type-only namespace (`qual`) the module's own
 /// caller-generated codec helpers use. `qual` is empty on every other emission
 /// path, where this renders identically to a bare type.
-pub fn ts_type_ref_qualified(
+pub(crate) fn ts_type_ref_qualified(
     t: &TypeRef,
     qual: &std::collections::HashMap<String, String>,
 ) -> String {

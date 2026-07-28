@@ -57,7 +57,7 @@ const SECRETS_CAPABILITY: &str = "Secrets";
 
 /// What a context's handlers read through `bynk.Secrets`.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct SecretReads {
+pub(crate) struct SecretReads {
     /// Literal names, sorted. A census only while `complete` holds.
     pub names: BTreeSet<String>,
     /// False when at least one `Secrets.get` argument was not a literal, so no
@@ -89,7 +89,7 @@ impl SecretReads {
 /// a shared value — and a sum's `None` member (a catch-all such as `Visitor`)
 /// verifies nothing. Both are skipped rather than defaulted: inventing a name
 /// for them would ask the user to set a secret that nothing reads.
-pub fn declared_secrets(table: &UnitTable) -> BTreeSet<String> {
+pub(crate) fn declared_secrets(table: &UnitTable) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for handler in table.services.values().flat_map(|s| s.handlers.iter()) {
         if let Some(seam) = bynk_check::actors::bearer_seam_for(handler, &table.actors) {
@@ -149,7 +149,7 @@ fn reads_secrets_of_bynk(flattened: &std::collections::HashMap<String, String>) 
 /// manifest. Called twice over the same inputs rather than threaded through
 /// `RunChecks` — it is a cheap AST walk beside emitting TypeScript, and one
 /// function with one rule cannot disagree with itself.
-pub fn secret_reads(
+pub(crate) fn secret_reads(
     table: &UnitTable,
     flattened: &std::collections::HashMap<String, String>,
 ) -> (SecretReads, Vec<CompileError>) {
@@ -166,7 +166,7 @@ pub fn secret_reads(
 /// every file), while the warning wants one file's handlers at a time, because
 /// `extend_for` attributes a diagnostic to a path and a `UnitTable` has merged
 /// that away.
-pub fn secret_reads_of<'a>(
+pub(crate) fn secret_reads_of<'a>(
     handlers: impl Iterator<Item = &'a bynk_syntax::ast::Handler>,
     flattened: &std::collections::HashMap<String, String>,
 ) -> (SecretReads, Vec<CompileError>) {
@@ -260,7 +260,7 @@ fn computed_name_warning(span: Span) -> CompileError {
 /// non-empty `declared` — would have stayed silent for a context that reads
 /// secrets but declares none, which is exactly the context this file now exists
 /// to describe.
-pub fn emit_secrets_manifest(table: &UnitTable, reads: &SecretReads) -> Option<String> {
+pub(crate) fn emit_secrets_manifest(table: &UnitTable, reads: &SecretReads) -> Option<String> {
     render(&declared_secrets(table), reads)
 }
 

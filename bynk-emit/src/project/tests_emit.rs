@@ -761,20 +761,26 @@ fn check_integration_case_body(
         trivia: Trivia::default(),
         trailing_comments: Vec::new(),
     };
-    let resolved = bynk_check::resolver::ResolvedCommons {
-        commons: synthetic_commons,
+    // `synthetic_commons` declares nothing of its own (`items: Vec::new()`
+    // above) — every entry in `types`/`fns`/`methods` was merged in from a
+    // `uses`/participant unit, so an empty local table (no local types, no
+    // local events) is the correct answer here, not a stand-in for one.
+    let no_local_types = HashMap::new();
+    let no_local_events = HashMap::new();
+    let resolved = bynk_check::resolver::ResolvedCommons::new(
+        synthetic_commons,
         types,
+        &no_local_types,
         fns,
         methods,
-        local_type_names: HashSet::new(),
-        cross_context: cross_context.clone(),
-        agents: HashMap::new(),
-        imported_from: HashMap::new(),
+        HashMap::new(),
+        &no_local_events,
+        cross_context.clone(),
+        HashMap::new(),
         // Test-scaffold body, not a real context emission — never rebranded.
-        is_context: false,
-        uses_commons_type_names: HashSet::new(),
-        event_type_names: HashSet::new(),
-    };
+        false,
+        HashSet::new(),
+    );
 
     let unit_span = case.span;
     let synthetic_return = TypeRef::Effect(
@@ -792,36 +798,28 @@ fn check_integration_case_body(
     let mut no_locals = LocalsSink::new();
     // Test bodies record no capability requirements either — muted sink.
     let mut no_requirements = RequirementSink::new();
-    let mut ctx = checker::Ctx {
-        input: &resolved,
-        expr_types: &mut expr_types,
-        errors,
-        refs,
-        hints: &mut no_hints,
-        locals: &mut no_locals,
-        requirements: &mut no_requirements,
-        scopes: vec![HashMap::new()],
-        is_binding_cache: HashMap::new(),
-        return_ty: return_ty.clone(),
-        return_ty_span: case.span,
-        effectful: true,
-        agent_state_ty: None,
-        commit_seen: false,
-        caps: checker::CapabilityCtx::default(),
-        in_test_body: true,
+    let _ = checker::check_body(
+        &resolved,
+        &case.body,
+        &return_ty,
+        case.span,
+        HashMap::new(),
+        checker::CapabilityCtx::default(),
         // Slice B: a `system` case addresses the target's own service (`api.POST`)
         // and names a principal (`by User(...)`), so the checker needs the
         // target's services and actors — the same resolution the unit tier does.
-        test_services: target_test_services(participants.first().and_then(|t| unit_tables.get(t))),
-        test_actors: target_test_actors(participants.first().and_then(|t| unit_tables.get(t))),
-        type_vars: std::collections::HashSet::new(),
-        store_cells: std::collections::HashMap::new(),
-        store_maps: std::collections::HashMap::new(),
-        store_sets: std::collections::HashMap::new(),
-        store_caches: std::collections::HashMap::new(),
-        store_logs: std::collections::HashMap::new(),
-    };
-    let _ = checker::type_of_block(&case.body, Some(&return_ty), &mut ctx);
+        target_test_services(participants.first().and_then(|t| unit_tables.get(t))),
+        target_test_actors(participants.first().and_then(|t| unit_tables.get(t))),
+        None,
+        checker::CheckSinks {
+            expr_types: &mut expr_types,
+            errors,
+            refs,
+            hints: &mut no_hints,
+            locals: &mut no_locals,
+            requirements: &mut no_requirements,
+        },
+    );
 }
 
 /// Emit a single integration-test module plus its [`RunnableTest`] pointer.
@@ -2012,28 +2010,18 @@ fn typecheck_case_body(
 
     let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
     let return_ty_span = unit_span;
-    let effectful = matches!(return_ty, checker::Ty::Effect(_));
     // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
     let mut no_hints = HintSink::new();
     let mut no_locals = LocalsSink::new();
     // Test bodies record no capability requirements either — muted sink.
     let mut no_requirements = RequirementSink::new();
-    let mut ctx = checker::Ctx {
-        input: resolved,
-        expr_types: &mut expr_types,
-        errors,
-        refs,
-        hints: &mut no_hints,
-        locals: &mut no_locals,
-        requirements: &mut no_requirements,
-        scopes: vec![initial_scope],
-        is_binding_cache: HashMap::new(),
-        return_ty: return_ty.clone(),
+    let _ = checker::check_body(
+        resolved,
+        body,
+        &return_ty,
         return_ty_span,
-        effectful,
-        agent_state_ty: None,
-        commit_seen: false,
-        caps: checker::CapabilityCtx {
+        initial_scope,
+        checker::CapabilityCtx {
             capabilities: capability_info_map.clone(),
             declared_capabilities: capability_info_map,
             given_remaining: given_declared.iter().cloned().collect(),
@@ -2041,17 +2029,18 @@ fn typecheck_case_body(
             given_entries: Vec::new(),
             given_anchor: None,
         },
-        in_test_body: true,
-        test_services: target_test_services(unit_tables.get(target_name)),
-        test_actors: target_test_actors(unit_tables.get(target_name)),
-        type_vars: std::collections::HashSet::new(),
-        store_cells: std::collections::HashMap::new(),
-        store_maps: std::collections::HashMap::new(),
-        store_sets: std::collections::HashMap::new(),
-        store_caches: std::collections::HashMap::new(),
-        store_logs: std::collections::HashMap::new(),
-    };
-    let _ = checker::type_of_block(body, Some(&return_ty), &mut ctx);
+        target_test_services(unit_tables.get(target_name)),
+        target_test_actors(unit_tables.get(target_name)),
+        None,
+        checker::CheckSinks {
+            expr_types: &mut expr_types,
+            errors,
+            refs,
+            hints: &mut no_hints,
+            locals: &mut no_locals,
+            requirements: &mut no_requirements,
+        },
+    );
     expr_types
 }
 
@@ -2966,26 +2955,19 @@ fn check_property_body(
     let given_declared: Vec<String> = capability_info_map.keys().cloned().collect();
     let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
     let return_ty_span = prop.span;
-    let effectful = matches!(return_ty, checker::Ty::Effect(_));
     let mut no_hints = HintSink::new();
     let mut no_locals = LocalsSink::new();
     let mut no_requirements = RequirementSink::new();
-    let mut ctx = checker::Ctx {
-        input: &resolved,
-        expr_types: &mut expr_types,
-        errors,
-        refs,
-        hints: &mut no_hints,
-        locals: &mut no_locals,
-        requirements: &mut no_requirements,
-        scopes: vec![binding_scope],
-        is_binding_cache: HashMap::new(),
-        return_ty: return_ty.clone(),
+    // The optional `where` filter is checked first (against `Bool`), sharing
+    // `check_body`'s `Ctx` with the body below; the body is the one predicate
+    // surface: `expect`s self-check as `Bool`.
+    let _ = checker::check_body(
+        &resolved,
+        &prop.forall.body,
+        &return_ty,
         return_ty_span,
-        effectful,
-        agent_state_ty: None,
-        commit_seen: false,
-        caps: checker::CapabilityCtx {
+        binding_scope,
+        checker::CapabilityCtx {
             capabilities: capability_info_map.clone(),
             declared_capabilities: capability_info_map,
             given_remaining: given_declared.iter().cloned().collect(),
@@ -2993,35 +2975,18 @@ fn check_property_body(
             given_entries: Vec::new(),
             given_anchor: None,
         },
-        in_test_body: true,
-        test_services: target_test_services(unit_tables.get(target_name)),
-        test_actors: target_test_actors(unit_tables.get(target_name)),
-        type_vars: std::collections::HashSet::new(),
-        store_cells: std::collections::HashMap::new(),
-        store_maps: std::collections::HashMap::new(),
-        store_sets: std::collections::HashMap::new(),
-        store_caches: std::collections::HashMap::new(),
-        store_logs: std::collections::HashMap::new(),
-    };
-    // The optional `where` filter is a pure `Bool` over the bindings.
-    if let Some(w) = &prop.forall.where_pred {
-        let bool_ty = checker::Ty::Base(BaseType::Bool);
-        let t = checker::type_of(w, Some(&bool_ty), &mut ctx);
-        if let Some(actual) = t
-            && actual.base() != Some(BaseType::Bool)
-        {
-            ctx.errors.push(CompileError::new(
-                "bynk.property.where_not_bool",
-                w.span,
-                format!(
-                    "a `for all ... where` filter has type `{}`, but a `Bool` is required",
-                    actual.display()
-                ),
-            ));
-        }
-    }
-    // The body is the one predicate surface: `expect`s self-check as `Bool`.
-    let _ = checker::type_of_block(&prop.forall.body, Some(&return_ty), &mut ctx);
+        target_test_services(unit_tables.get(target_name)),
+        target_test_actors(unit_tables.get(target_name)),
+        prop.forall.where_pred.as_ref(),
+        checker::CheckSinks {
+            expr_types: &mut expr_types,
+            errors,
+            refs,
+            hints: &mut no_hints,
+            locals: &mut no_locals,
+            requirements: &mut no_requirements,
+        },
+    );
 
     // Conservative restates-refinement flag: a single-binding property whose
     // body is exactly `expect <pred>` restating the bound var's refinement.
@@ -3142,7 +3107,6 @@ fn build_privileged_resolved(
             }
         }
     }
-    let local_type_names: HashSet<String> = local.types.keys().cloned().collect();
     let cross_context = build_cross_context_info(
         owning_unit,
         unit_consumes,
@@ -3173,21 +3137,23 @@ fn build_privileged_resolved(
         .get(owning_unit)
         .map(|t| t.agents.clone())
         .unwrap_or_default();
-    let resolved = bynk_check::resolver::ResolvedCommons {
-        commons: synthetic_commons,
+    let no_local_events = HashMap::new();
+    let resolved = bynk_check::resolver::ResolvedCommons::new(
+        synthetic_commons,
         types,
+        &local.types,
         fns,
         methods,
-        local_type_names,
-        cross_context,
-        agents: agents_for_resolved,
-        imported_from: HashMap::new(),
+        agents_for_resolved,
         // "Privileged" test/stub-body resolved — deliberately relaxed, not a
-        // real context emission subject to the rebrand.
-        is_context: false,
-        uses_commons_type_names: HashSet::new(),
-        event_type_names: HashSet::new(),
-    };
+        // real context emission subject to the rebrand — so events stay
+        // empty rather than reading `local`'s.
+        &no_local_events,
+        cross_context,
+        HashMap::new(),
+        false,
+        HashSet::new(),
+    );
     Some((resolved, ()))
 }
 

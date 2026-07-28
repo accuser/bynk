@@ -21,11 +21,13 @@ pub mod contract;
 pub mod expr_types;
 pub mod firstparty;
 pub mod hints;
+pub mod icu;
 pub mod index;
 pub mod kernel_methods;
 pub mod locals;
 pub mod requirements;
 pub mod resolver;
 pub mod store_ops;
+pub mod websocket;
 
 pub use firstparty::Platform;

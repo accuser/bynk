@@ -26,14 +26,14 @@ const COMPATIBILITY_DATE: &str = "2024-11-01";
 /// `expected identifier after \`agent\`, found \`_\``), so an agent
 /// coincidentally named the same as this synthetic class is structurally
 /// impossible, not merely unlikely.
-pub const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
+pub(crate) const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
 
 /// Deploy-time sentinel in generated Worker configuration. The driver replaces
 /// this with the persistent Cloudflare KV namespace id immediately before a
 /// remote Wrangler command runs.
 pub const KV_NAMESPACE_ID_PLACEHOLDER: &str = "<KV_NAMESPACE_ID>";
 
-pub fn emit_wrangler_toml(
+pub(crate) fn emit_wrangler_toml(
     context: &str,
     table: &UnitTable,
     consumes: &[String],
@@ -171,14 +171,14 @@ fn escape_toml_basic_string(s: &str) -> String {
 
 /// Service Binding identifier for a consumed context: uppercase with
 /// underscores. `commerce.payment` → `COMMERCE_PAYMENT`.
-pub fn consumed_binding_name(target: &str) -> String {
+pub(crate) fn consumed_binding_name(target: &str) -> String {
     target.replace('.', "_").to_uppercase()
 }
 
 /// Durable Object binding identifier for an agent class. We use the
 /// class name in screaming snake case so handlers can grab it by a
 /// predictable name (`OrderEntity` → `ORDER_ENTITY`).
-pub fn agent_binding_name(class_name: &str) -> String {
+pub(crate) fn agent_binding_name(class_name: &str) -> String {
     let mut out = String::new();
     for (i, ch) in class_name.chars().enumerate() {
         if i > 0 && ch.is_uppercase() {

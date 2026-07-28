@@ -33,10 +33,6 @@ bynk-driver.workspace = true
 # track, slice 1). Isolated in its own crate so oxc stays out of `bynk-emit` and
 # the LSP, which need neither stripping nor JS output.
 bynk-strip.workspace = true
-# The IDE/LSP analysis surface (diagnose, diagnose_project) — extracted in
-# slice 5. `bynkc` re-exports it for API + test continuity (the binary itself
-# doesn't use it).
-bynk-ide.workspace = true
 # The diagnostic renderers (ariadne human + short/json) — extracted in slice 6.
 # `bynkc` re-exports them; its ProjectFailure flatteners delegate to them.
 bynk-render.workspace = true
@@ -44,13 +40,23 @@ bynk-render.workspace = true
 # it for the `bynkc fmt` command and re-exports it as `bynkc::fmt`.
 bynk-fmt.workspace = true
 clap.workspace = true
-# Serialises the `bynkc test --format json` document (test_json.rs).
-serde.workspace = true
-serde_json.workspace = true
-
-which.workspace = true
 
 [dev-dependencies]
 regex.workspace = true
 # The grammar reference (tests/grammar_reference.rs) is rendered by this crate.
 bynk-grammar.workspace = true
+# `test_json`/`coverage` moved down into `bynk-driver` (Wave 5 §5.4); the
+# integration tests still build/inspect `serde_json::Value` documents
+# directly (test_json.rs, source_map_bodies.rs, grammar_coverage.rs).
+serde.workspace = true
+serde_json.workspace = true
+# `tool_exists`/`probe` moved down into `bynk-driver` (Wave 5 §5.4); a couple
+# of integration tests still do their own PATH probe for a toolchain binary
+# (examples.rs, workers_runtime_smoke.rs).
+which.workspace = true
+# The IDE/LSP analysis surface (diagnose, diagnose_project) — extracted in
+# slice 5. Wave 5 §5.3 (compiler-pipeline review #41): nothing in the
+# workspace depended on `bynkc`'s re-export of it, and the binary itself
+# never called it — only `bynkc`'s own integration tests exercise it, so it
+# moves to a dev-dependency instead of shipping in the `bynkc` binary/library.
+bynk-ide.workspace = true

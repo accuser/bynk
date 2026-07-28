@@ -33,29 +33,28 @@ use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
 
 pub mod contracts;
-pub mod events_fanout;
+pub(crate) mod events_fanout;
 pub mod secrets;
-pub mod serialisation;
-pub mod workers;
-pub mod workers_entry;
+pub(crate) mod serialisation;
+pub(crate) mod workers;
+pub(crate) mod workers_entry;
 pub mod wrangler;
 
-pub use events_fanout::emit_events_fanout_do;
-pub use secrets::emit_secrets_manifest;
-pub use workers::emit_worker_compose;
-pub use workers_entry::emit_worker_entry;
-pub use wrangler::emit_wrangler_toml;
+pub(crate) use events_fanout::emit_events_fanout_do;
+pub(crate) use secrets::emit_secrets_manifest;
+pub(crate) use workers::emit_worker_compose;
+pub(crate) use workers_entry::emit_worker_entry;
+pub(crate) use wrangler::emit_wrangler_toml;
 
 mod lower;
-pub mod runtime_use;
-pub use runtime_use::RuntimeUse;
+pub(crate) mod runtime_use;
+pub(crate) use runtime_use::RuntimeUse;
 pub(crate) mod source_map;
 pub(crate) use lower::*;
 pub(crate) mod emit;
+pub(crate) use bynk_check::icu::{self, *};
+pub(crate) use bynk_check::websocket;
 pub(crate) use emit::*;
-pub(crate) mod icu;
-pub(crate) use icu::*;
-pub(crate) mod websocket;
 
 const INDENT_STEP: usize = 2;
 
@@ -138,7 +137,7 @@ pub fn message_template_placeholder_summary(template: &str) -> Vec<(String, &'st
 /// Compute the runtime import specifier for a module at `from_source`. For a
 /// file at `commerce/payment.ts` the runtime sits two levels up, so this
 /// returns `../runtime.js`; for a top-level file it returns `./runtime.js`.
-pub fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
+pub(crate) fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
     let depth = from_source
         .parent()
         .map(|p| {
@@ -157,7 +156,7 @@ pub fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
 }
 
 /// Emit TypeScript source for the typed commons (single-file mode).
-pub fn emit(commons: &TypedCommons) -> String {
+pub(crate) fn emit(commons: &TypedCommons) -> String {
     // Emit the body first so the header can decide which runtime helpers to
     // import from what the body actually referenced (v0.110: the `__bynkBytes*`
     // helpers are imported only when a `Bytes` value is constructed/compared).
@@ -2554,7 +2553,7 @@ fn agent_registry_name(agent: &str) -> String {
 }
 
 /// The exported agent-construction factory name for an agent class.
-pub fn agent_factory_name(agent: &str) -> String {
+pub(crate) fn agent_factory_name(agent: &str) -> String {
     format!("__make{agent}")
 }
 

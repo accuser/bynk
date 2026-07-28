@@ -1,0 +1,15 @@
+context commerce.notifications
+
+consumes commerce.order
+consumes bynk { Events }
+
+-- Review finding #9, same bug as fixtures 951/952 but for owner-only event
+-- emission — reachable from inside an agent handler specifically.
+agent Watcher {
+  key id: String
+  store notified: Cell[Int] = 0
+
+  on call notify() -> Effect[()] given Events {
+    Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: "x" })
+  }
+}

@@ -33,7 +33,14 @@ pub mod doctor;
 pub mod explain;
 pub mod fmt;
 pub mod new;
-pub mod probe;
+
+// The shared detection probe (Wave 5 §5.4, findings #40/#72) moved down into
+// `bynk-driver` — `bynkc` needs it too (replacing its old `tool_exists`
+// PATH-only check), and `bynk-driver` is the crate both binaries already
+// depend on (`bynk` cannot depend on `bynkc`, and vice versa). Re-exported
+// here so every `crate::probe`/`bynk::probe` path in this crate resolves
+// unchanged.
+pub use bynk_driver::probe;
 pub mod report;
 pub mod shell;
 pub mod test;

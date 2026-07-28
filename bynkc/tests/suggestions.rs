@@ -61,12 +61,12 @@ service handlers {{
 
 /// Diagnose the project with `text` overlaid on `file`, returning that
 /// file's diagnostics.
-fn diagnose_with(file: &str, text: &str) -> Vec<bynkc::Diagnostic> {
+fn diagnose_with(file: &str, text: &str) -> Vec<bynk_ide::Diagnostic> {
     let abs = fixture_root().join(file);
     let canonical = abs.canonicalize().unwrap_or(abs);
     let mut overlay = HashMap::new();
     overlay.insert(canonical, text.to_string());
-    let result = bynkc::diagnose_project(&fixture_root(), &overlay);
+    let result = bynk_ide::diagnose_project(&fixture_root(), &overlay);
     result
         .files
         .iter()
@@ -77,7 +77,7 @@ fn diagnose_with(file: &str, text: &str) -> Vec<bynkc::Diagnostic> {
 
 /// Exactly one diagnostic of `category`, carrying exactly one
 /// `MachineApplicable` suggestion — returned for application.
-fn sole_suggestion(diags: &[bynkc::Diagnostic], category: &str) -> Suggestion {
+fn sole_suggestion(diags: &[bynk_ide::Diagnostic], category: &str) -> Suggestion {
     let matching: Vec<_> = diags
         .iter()
         .filter(|d| d.error.category == category)
@@ -247,7 +247,7 @@ fn add_cross_context_capability_synthesises_an_absent_clause() {
 
 #[test]
 fn baseline_fixtures_carry_no_diagnostics() {
-    let result = bynkc::diagnose_project(&fixture_root(), &HashMap::new());
+    let result = bynk_ide::diagnose_project(&fixture_root(), &HashMap::new());
     for f in &result.files {
         assert!(
             f.diagnostics.is_empty(),
@@ -321,7 +321,7 @@ fn point_commons(body: &str) -> String {
 }
 
 /// The suggestions on the first `bynk.resolve.missing_field` diagnostic.
-fn missing_field_suggestions(diags: &[bynkc::Diagnostic]) -> Vec<Suggestion> {
+fn missing_field_suggestions(diags: &[bynk_ide::Diagnostic]) -> Vec<Suggestion> {
     diags
         .iter()
         .find(|d| d.error.category == "bynk.resolve.missing_field")

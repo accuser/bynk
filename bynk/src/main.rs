@@ -13,7 +13,7 @@ use bynk::fmt;
 use bynk::new::{self, NewOptions};
 use bynk::probe::{SystemToolbox, Toolbox, Version};
 use bynk::report::{self, Format};
-use bynk::test::{self, TestArgs};
+use bynk::test;
 use clap::Parser;
 
 fn main() -> ExitCode {
@@ -81,25 +81,7 @@ fn main() -> ExitCode {
         Command::New { path, name } => new::run(&NewOptions { path, name }),
         Command::Check { input, format } => run_check(input, format),
         Command::Fmt { inputs, check } => run_fmt(inputs, check),
-        Command::Test {
-            input,
-            output,
-            no_run,
-            format,
-            inspect,
-            seed,
-            case,
-            coverage,
-        } => run_test(TestArgs {
-            input,
-            output,
-            no_run,
-            format,
-            inspect,
-            seed,
-            case,
-            coverage,
-        }),
+        Command::Test { args } => run_test(args),
         Command::Explain { code } => bynk::explain::run(&code),
     }
 }
@@ -205,7 +187,7 @@ fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {
 
 /// `bynk test` (#487): delegate to the driver-resolved `bynkc`, forwarding every
 /// flag verbatim.
-fn run_test(args: TestArgs) -> ExitCode {
+fn run_test(args: bynk_driver::test_runner::TestArgs) -> ExitCode {
     let tb = SystemToolbox;
     let compiler = resolve_compiler(&tb);
     test::run(&compiler, args)

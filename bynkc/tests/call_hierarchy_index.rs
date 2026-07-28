@@ -22,7 +22,7 @@ fn capability_op_and_handler_fixture_root() -> PathBuf {
 }
 
 fn analyse(root: &Path) -> ProjectIndex {
-    let result = bynkc::diagnose_project(root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(root, &HashMap::new());
     for f in &result.files {
         assert!(
             f.diagnostics.is_empty(),

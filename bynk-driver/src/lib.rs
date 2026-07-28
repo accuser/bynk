@@ -14,6 +14,11 @@ use bynk_emit::project::{
 };
 use bynk_fmt::{FormatOptions, format_source};
 
+pub mod coverage;
+pub mod probe;
+pub mod test_json;
+pub mod test_runner;
+
 /// Root a directory project the way every project command should (#46): a
 /// `bynk.toml` or a `src/` subdir selects **project** mode, whose flat
 /// `[paths] include`/`exclude` layout (v0.113, DECISION S) defaults to the

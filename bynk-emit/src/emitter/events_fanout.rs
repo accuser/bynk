@@ -25,7 +25,7 @@ const EVENTS_FANOUT_RUNTIME_SPECIFIER: &str = "../../runtime.js";
 /// already sorted (`discover_event_subscribers` sorts each `Vec`), so the
 /// generated table (and so the fan-out order for a multi-subscriber event) is
 /// deterministic build to build.
-pub fn emit_events_fanout_do(
+pub(crate) fn emit_events_fanout_do(
     context: &str,
     routes: &BTreeMap<String, Vec<(String, String)>>,
 ) -> String {

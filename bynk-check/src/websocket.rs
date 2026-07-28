@@ -7,6 +7,10 @@
 //! connection to exactly one agent, by a key derivable from the request (D2).
 //! This module finds that single transfer; both the checker (to diagnose a bad
 //! shape) and the emitter (to route the upgrade) use it.
+//!
+//! Lives in `bynk-check` (moved here in the compiler-pipeline-review's Wave
+//! 5, batch 5.1) rather than `bynk-emit`: it depends only on `bynk-syntax`'s
+//! AST and is conceptually checker-side analysis, misfiled under the emitter.
 
 use std::collections::HashSet;
 
@@ -15,13 +19,13 @@ use bynk_syntax::ast::{Block, Expr, ExprKind, Statement};
 /// The single connection-transfer target a `from websocket` `on open` resolves
 /// to: the agent that will host the connection, and the key expression
 /// addressing the instance (`Room(roomId)` → agent `Room`, key `roomId`).
-pub(crate) struct WsOpenTarget<'a> {
+pub struct WsOpenTarget<'a> {
     pub agent: &'a str,
     pub key: &'a Expr,
 }
 
 /// The shape of an `on open` body's connection handling (D2).
-pub(crate) enum WsOpenShape<'a> {
+pub enum WsOpenShape<'a> {
     /// Exactly one top-level agent transfer — the routable case.
     One(WsOpenTarget<'a>),
     /// No top-level agent transfer (e.g. the connection is only closed, or
@@ -32,16 +36,13 @@ pub(crate) enum WsOpenShape<'a> {
 }
 
 /// The synthetic name of the held connection an `on open` handler receives.
-pub(crate) const CONNECTION_BINDING: &str = "connection";
+pub const CONNECTION_BINDING: &str = "connection";
 
 /// Analyse a `from websocket` `on open` body: find the **top-level** agent
 /// transfers of the `connection` binding (a `let _ <- Agent(key).m(…, connection)`
 /// statement). A transfer nested in a conditional is deliberately *not* counted —
 /// the host DO must be statically resolvable.
-pub(crate) fn analyse_open_shape<'a>(
-    body: &'a Block,
-    local_agents: &HashSet<String>,
-) -> WsOpenShape<'a> {
+pub fn analyse_open_shape<'a>(body: &'a Block, local_agents: &HashSet<String>) -> WsOpenShape<'a> {
     let mut targets: Vec<WsOpenTarget<'a>> = Vec::new();
     for stmt in &body.statements {
         let value = match stmt {

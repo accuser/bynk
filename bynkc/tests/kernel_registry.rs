@@ -55,7 +55,7 @@ fn kernel_registry_pins_dispatch() {
     }
     body += "    0\n  }\n";
 
-    let diags = bynkc::diagnose(&body);
+    let diags = bynk_ide::diagnose(&body);
     let phantom: Vec<_> = diags
         .iter()
         .filter(|d| d.error.category == "bynk.types.method_not_found")

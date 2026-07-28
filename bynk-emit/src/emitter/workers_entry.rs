@@ -15,7 +15,7 @@ use bynk_syntax::ast::*;
 
 use crate::emitter::RuntimeUse;
 
-pub fn emit_worker_entry(
+pub(crate) fn emit_worker_entry(
     context: &str,
     table: &UnitTable,
     // v0.177 (#643): this context's own contract hash per `on call` service.
