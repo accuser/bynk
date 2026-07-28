@@ -52,6 +52,42 @@ fn case_name(dir: &Path) -> String {
         .to_string()
 }
 
+/// The rendered width of a line, counting a tab as advancing to the next
+/// multiple of `tab` — the same estimate the formatter's own fit tests use.
+fn display_width(line: &str, tab: usize) -> usize {
+    let mut col = 0usize;
+    for ch in line.chars() {
+        if ch == '\t' {
+            col += tab - (col % tab);
+        } else {
+            col += 1;
+        }
+    }
+    col
+}
+
+/// Does this line hold somewhere the formatter is allowed to break — a
+/// comma-separated list, or a `&&` / `||` boundary? A line whose only content
+/// is one long token (a regex-bearing `Matches("…")`, an ICU message template)
+/// has no break point and is exempt from the width guard.
+fn breakable(line: &str) -> bool {
+    // Strip string literals, whose contents are unbreakable and can otherwise
+    // masquerade as break points (`"a, b"`, `"x && y"`).
+    let mut outside = String::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in line.chars() {
+        match ch {
+            _ if escaped => escaped = false,
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            _ if !in_string => outside.push(ch),
+            _ => {}
+        }
+    }
+    outside.contains(", ") || outside.contains(" && ") || outside.contains(" || ")
+}
+
 /// A minimal unified-ish diff: the first differing line plus a little context,
 /// enough to locate a formatting regression without pulling in a diff crate.
 fn first_difference(expected: &str, got: &str) -> String {
@@ -171,6 +207,22 @@ fn golden_fixtures_format_canonically() {
                 "{name}: expected.bynk does not tokenise: {}",
                 e.message
             )),
+        }
+
+        // 4. `expected` respects the line-width budget (#963). The 100-column
+        //    target is soft — a single over-long string literal has no break
+        //    point — so only lines the formatter *could* have broken count.
+        //    Anything else is a construct that failed to wrap.
+        for (i, line) in expected.lines().enumerate() {
+            let width = display_width(line, 4);
+            if width > opts.max_line_width as usize && breakable(line) {
+                failures.push(format!(
+                    "{name}: expected.bynk line {} is {width} columns, over the {}-column \
+                     budget, and holds a breakable construct\n  {line:?}",
+                    i + 1,
+                    opts.max_line_width
+                ));
+            }
         }
     }
 

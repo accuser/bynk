@@ -1,0 +1,62 @@
+context wrapping
+
+consumes bynk { Fetch, Logger }
+
+type Reservation = {
+	id: String,
+	guestName: String,
+	roomNumber: Int,
+	nights: Int,
+	ratePerNight: Int,
+}
+
+actor Partner {
+	auth = Oidc(
+		issuer = "https://issuer.example.test",
+		audience = "reservations-api",
+		jwks = "https://issuer.example.test/.well-known/jwks.json"
+	),
+	identity = PartnerId
+}
+
+fn isBookable(nights: Int, ratePerNight: Int, roomNumber: Int, guestName: String) -> Bool {
+	nights > 0 && ratePerNight > 0 && roomNumber > 0 && guestName.length() > 0 && nights < 30
+}
+
+fn describe(id: String, guestName: String, roomNumber: Int, nights: Int) -> String {
+	if nights > 1 {
+		"a longer stay booked by one guest"
+	} else {
+		"a single night for one guest in one room"
+	}
+}
+
+fn quote(nights: Int, ratePerNight: Int) -> Reservation {
+	Reservation {
+		id: "quote",
+		guestName: "unknown guest awaiting confirmation",
+		roomNumber: 0,
+		nights: nights,
+		ratePerNight: ratePerNight,
+	}
+}
+
+fn totals(reservations: List[Reservation]) -> List[Int] {
+	reservations.filter((r) => r.nights > 0).map((r) => r.nights * r.ratePerNight).collect()
+}
+
+fn summarise(reservations: List[Reservation]) -> List[String] {
+	reservations
+		.map((r) => r.guestName.concat(" in room ").concat(r.roomNumber.toString()))
+		.collect()
+}
+
+service api from http {
+	on POST("/reservations/:id/confirm") (
+		id: String,
+		body: Reservation
+	) -> Effect[HttpResult[Reservation]] by p: Partner given Logger {
+		let _ <- Logger.info("confirming a reservation for a guest staying several nights")
+		Ok(body)
+	}
+}
