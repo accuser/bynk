@@ -792,7 +792,16 @@ impl Backend {
     /// reason.
     async fn project_files(&self, uri: &Url) -> Option<Vec<PathBuf>> {
         let roots = self.analysis_roots_for(uri).await?;
-        let current = uri.to_file_path().ok();
+        // `discover_files` walks from a canonicalised root (`root_for_uri`), so
+        // on Windows every entry carries the `\\?\` verbatim-path prefix
+        // `std::fs::canonicalize` adds. `uri.to_file_path()` does not add that
+        // prefix, so comparing it against `files` as-is never matches on
+        // Windows and this exclusion silently no-ops — canonicalise it the
+        // same way before comparing.
+        let current = uri
+            .to_file_path()
+            .ok()
+            .and_then(|p| std::fs::canonicalize(&p).ok());
         tokio::task::spawn_blocking(move || {
             let mut files = bynk_ide::discover_files(&roots);
             if let Some(current) = current {
