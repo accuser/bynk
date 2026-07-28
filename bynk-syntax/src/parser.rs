@@ -1980,6 +1980,82 @@ mod tests {
         assert_eq!(a.trailing_comments, vec![" afterword".to_string()]);
     }
 
+    // -- Six-fold unification (review Part 3): the fragment-only ordering
+    // restrictions declarations.rs's brace/fragment pairs preserve, now that
+    // they share one function each behind `brace: bool`. None of these had
+    // any prior test coverage at all. --
+
+    /// Fragment-form commons: `uses` must precede every `type`/`fn`.
+    #[test]
+    fn commons_fragment_rejects_uses_after_a_decl() {
+        let src = "commons x\n\ntype T = Int where Positive\nuses bynk.list\n";
+        let errs = parse_str(src).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.category == "bynk.parse.uses_after_decls"),
+            "{errs:?}"
+        );
+    }
+
+    /// The same ordering is NOT enforced in brace form — `uses` may appear
+    /// anywhere in the body.
+    #[test]
+    fn commons_brace_allows_uses_after_a_decl() {
+        let src = "commons x {\n  type T = Int where Positive\n  uses bynk.list\n}\n";
+        parse_str(src).expect("brace form must not enforce fragment's uses-ordering rule");
+    }
+
+    /// Fragment-form context: `consumes` must precede every `type`/`fn`/etc.
+    #[test]
+    fn context_fragment_rejects_consumes_after_a_decl() {
+        let src = "context x\n\ntype T = Int where Positive\nconsumes bynk\n";
+        let errs = parse_unit_str(src).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.category == "bynk.parse.consumes_after_decls"),
+            "{errs:?}"
+        );
+    }
+
+    /// Fragment-form context: `exports` must precede every `type`/`fn`/etc.
+    #[test]
+    fn context_fragment_rejects_exports_after_a_decl() {
+        let src = "context x\n\ntype T = Int where Positive\nexports opaque { T }\n";
+        let errs = parse_unit_str(src).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.category == "bynk.parse.exports_after_decls"),
+            "{errs:?}"
+        );
+    }
+
+    /// Brace-form context enforces none of the three orderings.
+    #[test]
+    fn context_brace_allows_consumes_and_exports_after_a_decl() {
+        let src = "context x {\n  type T = Int where Positive\n  consumes bynk\n  exports opaque { T }\n}\n";
+        parse_unit_str(src)
+            .expect("brace form must not enforce fragment's consumes/exports-ordering rules");
+    }
+
+    /// Fragment-form suite/test: `uses` must precede every `stub`/`case`/`property`.
+    #[test]
+    fn test_fragment_rejects_uses_after_a_decl() {
+        let src = "suite m\n\ncase \"c\" {\n  expect true\n}\nuses bynk.list\n";
+        let errs = parse_unit_str(src).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.category == "bynk.parse.uses_after_decls"),
+            "{errs:?}"
+        );
+    }
+
+    /// Brace-form suite/test allows `uses` anywhere.
+    #[test]
+    fn test_brace_allows_uses_after_a_decl() {
+        let src = "suite m {\n  case \"c\" {\n    expect true\n  }\n  uses bynk.list\n}\n";
+        parse_unit_str(src).expect("brace form must not enforce fragment's uses-ordering rule");
+    }
+
     // ---- #636: `if`/`match` condition vs record construction ----
 
     /// Parse `body` as the tail expression of a fn and return its kind.
