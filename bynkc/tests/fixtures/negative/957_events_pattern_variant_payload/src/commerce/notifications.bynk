@@ -1,0 +1,9 @@
+context commerce.notifications
+
+consumes commerce.order
+
+service OnPayment from Events(PaymentConfirmed { region: Region.Refunded, .. }) {
+  on event(e: PaymentConfirmed) -> Effect[()] {
+    ()
+  }
+}

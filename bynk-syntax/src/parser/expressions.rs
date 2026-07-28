@@ -1423,9 +1423,21 @@ impl<'a> Parser<'a> {
     /// `true`/`false`. The caller has already confirmed the leading token is one
     /// of these forms.
     fn parse_literal_pattern(&mut self) -> Result<Pattern, CompileError> {
+        let (value, span) = self.parse_literal_value()?;
+        Ok(Pattern::Literal { value, span })
+    }
+
+    /// Parse a bare literal value: `31`, `-1`, `"english"`, `true`/`false`.
+    /// The caller has already confirmed the leading token is one of these
+    /// forms (see `parse_pattern_base`'s dispatch, and the Events track
+    /// slice-1 subscription-pattern value parser, spine #936). Factored out
+    /// of `parse_literal_pattern` so both call sites share the integer
+    /// overflow diagnostic and digit-separator handling (ADR 0166) rather
+    /// than duplicating them.
+    pub(crate) fn parse_literal_value(&mut self) -> Result<(LiteralValue, Span), CompileError> {
         // Optional leading `-` on an integer literal (ADR 0001).
         let neg = self.eat(TokenKind::Minus);
-        let t = self.bump().expect("literal-pattern lead token");
+        let t = self.bump().expect("literal-value lead token");
         let (value, end_span) = match t.kind {
             TokenKind::IntLit => {
                 let slice = self.slice(t.span);
@@ -1450,10 +1462,10 @@ impl<'a> Parser<'a> {
             }
             TokenKind::True => (LiteralValue::Bool(true), t.span),
             TokenKind::False => (LiteralValue::Bool(false), t.span),
-            _ => unreachable!("parse_literal_pattern called on a non-literal token"),
+            _ => unreachable!("parse_literal_value called on a non-literal token"),
         };
         let span = neg.map(|m| m.span).unwrap_or(t.span).merge(end_span);
-        Ok(Pattern::Literal { value, span })
+        Ok((value, span))
     }
 
     /// Parse a built-in variant pattern (Ok/Err/Some/None) — these are

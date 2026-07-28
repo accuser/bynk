@@ -1,0 +1,20 @@
+context commerce.order
+
+exports transparent { PaymentConfirmed, Region }
+consumes bynk { Events }
+
+type Region =
+  | Domestic
+  | International
+  | Refunded(reason: String)
+
+event PaymentConfirmed = {
+  orderId: String,
+  region: Region,
+}
+
+service markPaid {
+  on call(orderId: String) -> Effect[()] given Events {
+    Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId, region: Region.Domestic })
+  }
+}

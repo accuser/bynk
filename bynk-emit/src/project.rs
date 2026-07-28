@@ -3554,6 +3554,7 @@ fn run_checks(
         &kinds,
         &unit_tables,
         &unit_consumes,
+        &unit_uses,
         &mut errors,
     );
 
@@ -4635,7 +4636,7 @@ fn discover_event_subscribers(
     let mut out: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
     for (ctx_name, table) in unit_tables {
         for (svc_name, svc) in &table.services {
-            let ServiceProtocol::Events { event_type } = &svc.protocol else {
+            let ServiceProtocol::Events { event_type, .. } = &svc.protocol else {
                 continue;
             };
             let TypeRef::Named(id) = event_type else {

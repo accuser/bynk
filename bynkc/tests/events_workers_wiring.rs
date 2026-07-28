@@ -244,3 +244,128 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
 
     let _ = fs::remove_dir_all(&tmp);
 }
+
+// Events track, slice 1 (spine #936): the same fixture as above, but the
+// subscriber's header carries a structural pattern. Deliver-and-filter (ADR
+// 0286, unchanged by slice 1) means the fan-out DO's routing table and the
+// wrangler.toml wiring are unaffected by a pattern — the guard lives inside
+// the subscriber's own handler method, not in routing — so this asserts that
+// negative directly rather than assuming it, alongside confirming the guard
+// itself made it into the emitted TypeScript and still passes `tsc --strict`.
+const SOURCE_NOTIFICATIONS_PATTERNED: &str = r#"context commerce.notifications
+
+consumes commerce.order
+consumes bynk { Logger }
+
+service OnPayment from Events(PaymentConfirmed { orderId: "ledger-event", .. }) {
+  on event(e: PaymentConfirmed) -> Effect[()] given Logger {
+    Logger.info(e.orderId)
+  }
+}
+"#;
+
+#[test]
+fn workers_events_pattern_leaves_fanout_routing_unchanged() {
+    let tmp = std::env::temp_dir().join(format!(
+        "bynk-events-workers-wiring-pattern-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    let proj = tmp.join("proj/commerce");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("order.bynk"), SOURCE_ORDER).unwrap();
+    fs::write(
+        proj.join("notifications.bynk"),
+        SOURCE_NOTIFICATIONS_PATTERNED,
+    )
+    .unwrap();
+
+    let out = match bynkc::compile_project(
+        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+    ) {
+        Ok(o) => o,
+        Err(failure) => panic!(
+            "compile the patterned events project to workers:\n{}",
+            bynkc::render_project_errors(&failure.flatten())
+        ),
+    };
+
+    let find = |suffix: &str| -> String {
+        out.files
+            .iter()
+            .find(|f| f.output_path.to_string_lossy().ends_with(suffix))
+            .unwrap_or_else(|| panic!("no compiled file ends with {suffix:?}"))
+            .typescript
+            .clone()
+    };
+
+    // Byte-identical to the pattern-less fixture's own assertions: the
+    // routing table and wrangler.toml wiring do not know a pattern exists.
+    let order_wrangler = find("workers/commerce-order/wrangler.toml");
+    assert!(
+        order_wrangler.contains("name = \"___EVENTS_FANOUT\"")
+            && order_wrangler.contains("class_name = \"__EventsFanout\"")
+            && order_wrangler.contains("binding = \"COMMERCE_NOTIFICATIONS\""),
+        "a subscription pattern must not change the fan-out DO/Service Binding wiring:\n{order_wrangler}"
+    );
+    let fanout_ts = find("workers/commerce-order/events_fanout.ts");
+    assert!(
+        fanout_ts.contains("\"PaymentConfirmed\": [{ binding: \"COMMERCE_NOTIFICATIONS\", service: \"OnPayment\" }]"),
+        "a subscription pattern must not change the fan-out DO's routing table \
+         (deliver-and-filter, ADR 0286 — the guard lives in the subscriber's own \
+         handler, not in routing):\n{fanout_ts}"
+    );
+
+    // The guard itself must have made it into the subscriber's emitted
+    // handler on the Workers target too (not just Bundle, per
+    // `events_pattern_behaviour.rs`) — the generated handler method body
+    // lands in `handlers.ts`, not the routing `index.ts`.
+    let notif_handlers = find("workers/commerce-notifications/handlers.ts");
+    assert!(
+        notif_handlers.contains(r#"e.orderId === "ledger-event""#),
+        "the pattern's guard must appear in the emitted handler:\n{notif_handlers}"
+    );
+
+    // Real `tsc --strict` over the whole emitted tree — the guard string is
+    // hand-built (`event_pattern_guard`), so this is what actually catches a
+    // syntactically-broken guard.
+    let runner = match discover_tsc() {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "\n!!! EVENTS WORKERS WIRING (PATTERNED) TSC CHECK SKIPPED !!!\nno tsc runner.\n"
+            );
+            if std::env::var(REQUIRE_ENV).is_ok() {
+                panic!("{REQUIRE_ENV} is set but no tsc runner was found");
+            }
+            let _ = fs::remove_dir_all(&tmp);
+            return;
+        }
+    };
+
+    let run_dir = tmp.join("run");
+    for file in &out.files {
+        let target = run_dir.join(&file.output_path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, &file.typescript).unwrap();
+    }
+    fs::write(
+        run_dir.join("runtime.ts"),
+        bynkc::emitter::emit_runtime_module(),
+    )
+    .unwrap();
+
+    let (program, prefix) = &runner;
+    let (ok, msg) = run(
+        program,
+        prefix,
+        &["--strict", "--noEmit", "-p", "tsconfig.json"],
+        &run_dir,
+    );
+    assert!(
+        ok,
+        "tsc --strict failed on the patterned workers-target output:\n{msg}"
+    );
+
+    let _ = fs::remove_dir_all(&tmp);
+}

@@ -1540,9 +1540,17 @@ impl<'a> Formatter<'a> {
                     type_ref_to_string(out_type)
                 )
             }
-            ServiceProtocol::Events { event_type } => {
-                format!(" from Events({})", type_ref_to_string(event_type))
-            }
+            ServiceProtocol::Events {
+                event_type,
+                pattern,
+            } => match pattern {
+                Some(p) => format!(
+                    " from Events({} {})",
+                    type_ref_to_string(event_type),
+                    event_pattern_src(p)
+                ),
+                None => format!(" from Events({})", type_ref_to_string(event_type)),
+            },
         };
         // v0.155: the optional service-level `by`/`given` defaults follow the
         // protocol on the header, `by` first — the ambient contract every handler
@@ -2585,6 +2593,36 @@ fn by_clause_src(by: &ByClause) -> String {
     match &by.binder {
         Some(b) => format!("by {}: {actors}", b.name),
         None => format!("by {actors}"),
+    }
+}
+
+/// Render an events subscription pattern (Events track slice 1, spine
+/// #936): `{ field: value, .. }`. The trailing `..` is mandatory whenever any
+/// field is listed, so it always renders — there is no pattern-less `Some`
+/// case to omit it for (a pattern-less subscription is `pattern: None` on
+/// `ServiceProtocol::Events`, handled by the caller before this is reached).
+fn event_pattern_src(p: &EventPattern) -> String {
+    let fields: Vec<String> = p
+        .fields
+        .iter()
+        .map(|f| format!("{}: {}", f.name.name, event_pattern_value_src(&f.value)))
+        .collect();
+    format!("{{ {}, .. }}", fields.join(", "))
+}
+
+fn event_pattern_value_src(v: &EventPatternValue) -> String {
+    match v {
+        EventPatternValue::Literal { value, .. } => match value {
+            LiteralValue::Int(n) => n.to_string(),
+            LiteralValue::Str(s) => format!("\"{}\"", escape_string(s)),
+            LiteralValue::Bool(b) => b.to_string(),
+        },
+        EventPatternValue::Variant {
+            type_name, variant, ..
+        } => match type_name {
+            Some(t) => format!("{}.{}", t.name, variant.name),
+            None => variant.name.clone(),
+        },
     }
 }
 

@@ -1,0 +1,133 @@
+==========================
+event declaration and pattern-less subscription (slice 0, spine #936)
+==========================
+
+context commerce.order {
+  event PaymentConfirmed = {
+    orderId: String,
+    region: Region,
+  }
+
+  service OnPayment from Events(PaymentConfirmed) {
+    on event(e: PaymentConfirmed) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (event_decl
+      name: (identifier)
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (base_type))
+        (record_field
+          name: (identifier)
+          type: (identifier))))
+    (service_decl
+      name: (identifier)
+      protocol: (service_protocol
+        event_type: (identifier))
+      (handler
+        (event_handler
+          (param
+            name: (identifier)
+            type: (identifier))
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            tail: (effect_pure_expr
+              (unit_literal))))))))
+
+==========================
+subscription pattern — qualified nullary variant (slice 1, spine #936)
+==========================
+
+context commerce.notifications {
+  service OnDomesticPayment from Events(PaymentConfirmed { region: Region.Domestic, .. }) {
+    on event(e: PaymentConfirmed) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (service_decl
+      name: (identifier)
+      protocol: (service_protocol
+        event_type: (identifier)
+        pattern: (event_pattern
+          field: (event_pattern_field
+            name: (identifier)
+            value: (event_pattern_value
+              type: (identifier)
+              variant: (identifier)))))
+      (handler
+        (event_handler
+          (param
+            name: (identifier)
+            type: (identifier))
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            tail: (effect_pure_expr
+              (unit_literal))))))))
+
+==========================
+subscription pattern — multi-field, literal and bare variant (slice 1, spine #936)
+==========================
+
+context commerce.notifications {
+  service OnHighValue from Events(PaymentConfirmed { amount: 100, region: Domestic, .. }) {
+    on event(e: PaymentConfirmed) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (service_decl
+      name: (identifier)
+      protocol: (service_protocol
+        event_type: (identifier)
+        pattern: (event_pattern
+          field: (event_pattern_field
+            name: (identifier)
+            value: (event_pattern_value
+              (number_literal)))
+          field: (event_pattern_field
+            name: (identifier)
+            value: (event_pattern_value
+              variant: (identifier)))))
+      (handler
+        (event_handler
+          (param
+            name: (identifier)
+            type: (identifier))
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            tail: (effect_pure_expr
+              (unit_literal))))))))

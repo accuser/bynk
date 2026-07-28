@@ -563,8 +563,32 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "`Events.emit[E]` named an event `E` not declared in the emitting context — only an event's declaring context may emit it.",
     ),
     d(
+        "bynk.event.handler_param_type_mismatch",
+        "An `on event(e: T)` handler's declared parameter type does not match its `from Events(E)` header's event type.",
+    ),
+    d(
         "bynk.event.outside_context",
         "An `event` was declared outside a context.",
+    ),
+    d(
+        "bynk.event.pattern_duplicate_field",
+        "A `from Events(E { ... })` subscription pattern listed the same field more than once.",
+    ),
+    d(
+        "bynk.event.pattern_type_mismatch",
+        "A `from Events(E { ... })` subscription pattern field's matched value is not compatible with that field's declared type.",
+    ),
+    d(
+        "bynk.event.pattern_unknown_field",
+        "A `from Events(E { ... })` subscription pattern named a field that `E` does not declare.",
+    ),
+    d(
+        "bynk.event.pattern_unknown_variant",
+        "A `from Events(E { ... })` subscription pattern's variant value names a variant that does not exist on the field's declared sum type.",
+    ),
+    d(
+        "bynk.event.pattern_variant_payload",
+        "A `from Events(E { ... })` subscription pattern's variant value names a variant that carries a payload — only nullary variants are admitted, since testing the tag alone would silently ignore the payload.",
     ),
     d(
         "bynk.event.unknown_subscription",
@@ -1050,6 +1074,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.empty_service",
         "A `service` body is empty.",
         &["service_decl"],
+    ),
+    d(
+        "bynk.parse.event_pattern_empty",
+        "A `from Events(E { ... })` subscription pattern listed no fields — use `from Events(E)` (no braces) for an unfiltered subscription.",
     ),
     dg(
         "bynk.parse.expected_agent_key",

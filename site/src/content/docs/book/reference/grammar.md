@@ -708,6 +708,20 @@ One `"code" => "template"` entry inside a `messages` block. Both sides are
 plain string literals — a template's `{name}` placeholders are resolved by a
 compile-time string scan during lowering, not parsed as expressions.
 
+### event_decl {#rule-event_decl}
+
+{{#grammar event_decl}}
+
+`event Name = { fields }` (Events track, spine #936) — a typed fact a context
+may emit and other contexts' subscriber services may receive, via the
+`Events` capability (`Events.emit[Name](...)`) and `from Events(Name)`.
+Record body only. Context-only placement is a checker concern
+(`bynk.event.outside_context`), not a grammar one — this rule is
+syntactically permitted in a `commons`/`adapter` body too, the same way
+`service_decl`/`agent_decl` are.
+
+**See also.** [Understand events](/book/guides/events/understand-events/).
+
 ### provider_decl {#rule-provider_decl}
 
 {{#grammar provider_decl}}
@@ -833,9 +847,37 @@ service api from http by Visitor {
 {{#grammar service_protocol}}
 
 The `from <protocol>` header clause (v0.44): `from http`, `from cron`,
-`from queue("<name>")`, or `from websocket(in: I, out: O)` (v0.103, binding the
-inbound/outbound frame types). Absent ⇒ a contract-mediated, `on call`-only
-service.
+`from queue("<name>")`, `from websocket(in: I, out: O)` (v0.103, binding the
+inbound/outbound frame types), or `from Events(E)` (Events track, spine #936),
+optionally filtered by a structural [`event_pattern`](#rule-event_pattern)
+(slice 1). Absent ⇒ a contract-mediated, `on call`-only service.
+
+### event_pattern {#rule-event_pattern}
+
+{{#grammar event_pattern}}
+
+The structural delivery filter on a `from Events(E { field: value, .. })`
+subscription header (Events track slice 1, spine #936): every emission of `E`
+still reaches the fan-out mechanism (deliver-and-filter), and the
+subscriber's own generated handler evaluates this as a runtime guard before
+running its body — the handler's parameter is not narrowed to the matched
+values. A trailing `..` is required whenever any field is listed;
+`from Events(E)` (no braces) is the unfiltered form.
+
+### event_pattern_field {#rule-event_pattern_field}
+
+{{#grammar event_pattern_field}}
+
+One `name: value` entry in an [`event_pattern`](#rule-event_pattern).
+
+### event_pattern_value {#rule-event_pattern_value}
+
+{{#grammar event_pattern_value}}
+
+The value a pattern field is matched against: an `Int`/`String`/`Bool`
+literal, or a nullary sum-type variant reference, bare (`Domestic`) or
+qualified (`Region.Domestic`). A variant that carries a payload is rejected
+by the checker — no nested sub-patterns in this slice.
 
 ### cors_policy {#rule-cors_policy}
 
@@ -944,8 +986,8 @@ One `name: value` field inside a `limits { }` policy.
 
 {{#grammar handler}}
 
-A handler: a call, HTTP, cron, queue, or WebSocket (`on open`/`on close`, with
-`on message` shared with the queue form) entry point.
+A handler: a call, HTTP, cron, queue, WebSocket (`on open`/`on close`, with
+`on message` shared with the queue form), or Events (`on event`) entry point.
 
 **Static semantics.**
 {{#grammar-semantics handler}}
@@ -1015,6 +1057,17 @@ must dispose. The inbound-frame handler reuses the `on message` (queue) form.
 connection.
 
 **See also.** [WebSocket](/book/reference/websocket/) · [Handle a WebSocket connection](/book/guides/entry-points/websocket/).
+
+### event_handler {#rule-event_handler}
+
+{{#grammar event_handler}}
+
+`from Events(E)` — a subscriber's one handler (Events track, spine #936),
+`on event(e: E) -> Effect[()]`. Same generic shape as every other handler
+form (params/`by`/`given`/body all uniform); the checker verifies the
+parameter's type against the header's event type.
+
+**See also.** [Understand events](/book/guides/events/understand-events/).
 
 ## Agents
 

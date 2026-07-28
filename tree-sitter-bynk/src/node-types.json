@@ -249,6 +249,10 @@
           "named": true
         },
         {
+          "type": "event_decl",
+          "named": true
+        },
+        {
           "type": "exports_decl",
           "named": true
         },
@@ -1800,6 +1804,10 @@
           "named": true
         },
         {
+          "type": "event_decl",
+          "named": true
+        },
+        {
           "type": "fn_decl",
           "named": true
         },
@@ -1895,6 +1903,10 @@
         },
         {
           "type": "consumes_decl",
+          "named": true
+        },
+        {
+          "type": "event_decl",
           "named": true
         },
         {
@@ -3078,6 +3090,198 @@
     }
   },
   {
+    "type": "event_decl",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "record_type",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "event_handler",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "by": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "by_clause",
+            "named": true
+          }
+        ]
+      },
+      "given": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "given_clause",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "applied_type_ref",
+            "named": true
+          },
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "param",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "event_pattern",
+    "named": true,
+    "fields": {
+      "field": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "event_pattern_field",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "event_pattern_field",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "event_pattern_value",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "event_pattern_value",
+    "named": true,
+    "fields": {
+      "type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "variant": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "boolean_literal",
+          "named": true
+        },
+        {
+          "type": "number_literal",
+          "named": true
+        },
+        {
+          "type": "string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "expect_expr",
     "named": true,
     "fields": {
@@ -3997,6 +4201,10 @@
         },
         {
           "type": "cron_handler",
+          "named": true
+        },
+        {
+          "type": "event_handler",
           "named": true
         },
         {
@@ -8155,6 +8363,40 @@
     "type": "service_protocol",
     "named": true,
     "fields": {
+      "event_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "applied_type_ref",
+            "named": true
+          },
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
+            "named": true
+          }
+        ]
+      },
       "in_frame": {
         "multiple": false,
         "required": false,
@@ -8229,6 +8471,16 @@
           },
           {
             "type": "validation_error_type",
+            "named": true
+          }
+        ]
+      },
+      "pattern": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "event_pattern",
             "named": true
           }
         ]
@@ -8552,6 +8804,10 @@
         },
         {
           "type": "effect_send_stmt",
+          "named": true
+        },
+        {
+          "type": "event_decl",
           "named": true
         },
         {
@@ -10608,6 +10864,10 @@
     "named": false
   },
   {
+    "type": "..",
+    "named": false
+  },
+  {
     "type": "...",
     "named": false
   },
@@ -10689,6 +10949,10 @@
   },
   {
     "type": "Err",
+    "named": false
+  },
+  {
+    "type": "Events",
     "named": false
   },
   {
@@ -10914,6 +11178,10 @@
   },
   {
     "type": "enum",
+    "named": false
+  },
+  {
+    "type": "event",
     "named": false
   },
   {

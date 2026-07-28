@@ -2386,13 +2386,13 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RParen, "to close the WebSocket header")?;
                 Ok(ServiceProtocol::WebSocket { in_type, out_type })
             }
-            // Events track, slice 0 (spine #936): `from Events(E)`. `Events`,
-            // capitalised, is matched as plain `Ident` text the same way
-            // `websocket` is matched lowercase — it names the `Events`
-            // capability directly (every first-party capability is already
-            // an unreserved PascalCase identifier), so this costs no lexer
-            // reservation. No pattern yet (slice 1); the header takes one
-            // bare type reference.
+            // Events track, slice 0 (spine #936): `from Events(E)`, optionally
+            // filtered by a slice-1 structural pattern, `from Events(E {
+            // field: value, .. })`. `Events`, capitalised, is matched as plain
+            // `Ident` text the same way `websocket` is matched lowercase — it
+            // names the `Events` capability directly (every first-party
+            // capability is already an unreserved PascalCase identifier), so
+            // this costs no lexer reservation.
             Some(TokenKind::Ident)
                 if self.peek().is_some_and(|t| self.slice(t.span) == "Events") =>
             {
@@ -2402,8 +2402,16 @@ impl<'a> Parser<'a> {
                     "expected the subscribed event type `(EventType)` after `from Events`",
                 )?;
                 let event_type = self.parse_type_ref("as the `from Events(...)` event type")?;
+                let pattern = if self.peek_kind() == Some(TokenKind::LBrace) {
+                    Some(self.parse_event_pattern()?)
+                } else {
+                    None
+                };
                 self.expect(TokenKind::RParen, "to close the `from Events(...)` header")?;
-                Ok(ServiceProtocol::Events { event_type })
+                Ok(ServiceProtocol::Events {
+                    event_type,
+                    pattern,
+                })
             }
             _ => {
                 let (span, found) = match self.peek() {
@@ -2423,6 +2431,102 @@ impl<'a> Parser<'a> {
                 ))
             }
         }
+    }
+
+    /// Parse an events subscription pattern (Events track, slice 1, spine
+    /// #936): `{ field: value, .. }`. The caller has already confirmed the
+    /// leading token is `{`. A trailing `..` is required whenever any field
+    /// is listed — `from Events(E { })` is rejected, steering toward the
+    /// bare `from Events(E)` pattern-less form.
+    fn parse_event_pattern(&mut self) -> Result<EventPattern, CompileError> {
+        let open = self.expect(TokenKind::LBrace, "to start an events subscription pattern")?;
+        let mut fields = Vec::new();
+        loop {
+            // A `..` ends the field list normally; a `}` here means no
+            // fields were listed at all (`{ }`) — both fall through to the
+            // empty-pattern check below rather than `expect_ident` failing
+            // on `}` with a less specific message.
+            if matches!(
+                self.peek_kind(),
+                Some(TokenKind::DotDot) | Some(TokenKind::RBrace)
+            ) {
+                break;
+            }
+            let name = self.expect_ident("as an events subscription pattern field name")?;
+            self.expect(
+                TokenKind::Colon,
+                "expected `:` after an events subscription pattern field name",
+            )?;
+            let value = self.parse_event_pattern_value()?;
+            let field_span = name.span.merge(value.span());
+            fields.push(EventPatternField {
+                name,
+                value,
+                span: field_span,
+            });
+            if self.eat(TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        if fields.is_empty() {
+            let (span, found) = match self.peek() {
+                Some(t) => (t.span, t.kind.describe()),
+                None => (self.eof_span(), "end of file"),
+            };
+            return Err(CompileError::new(
+                "bynk.parse.event_pattern_empty",
+                span,
+                format!(
+                    "an events subscription pattern must list at least one field — found {found}"
+                ),
+            )
+            .with_note("use `from Events(EventType)` (no braces) for an unfiltered subscription"));
+        }
+        let rest = self.expect(
+            TokenKind::DotDot,
+            "after an events subscription pattern's fields — every listed field leaves the rest unconstrained, and that must be written explicitly",
+        )?;
+        let close = self.expect(TokenKind::RBrace, "to close an events subscription pattern")?;
+        Ok(EventPattern {
+            fields,
+            rest_span: rest.span,
+            span: open.span.merge(close.span),
+        })
+    }
+
+    /// Parse one events subscription pattern field's value: a literal
+    /// (`31`, `"english"`, `true`/`false`, an optional leading `-` on an
+    /// integer) or a nullary sum-variant reference, bare (`Domestic`) or
+    /// qualified (`Region.Domestic`). No nested record sub-patterns in v1.
+    fn parse_event_pattern_value(&mut self) -> Result<EventPatternValue, CompileError> {
+        if let Some(t) = self.peek() {
+            let is_literal_lead = matches!(
+                t.kind,
+                TokenKind::IntLit | TokenKind::StrLit | TokenKind::True | TokenKind::False
+            ) || (t.kind == TokenKind::Minus
+                && self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::IntLit));
+            if is_literal_lead {
+                let (value, span) = self.parse_literal_value()?;
+                return Ok(EventPatternValue::Literal { value, span });
+            }
+        }
+        let first = self.expect_ident("as an events subscription pattern field value")?;
+        let (type_name, variant) = if self.eat(TokenKind::Dot).is_some() {
+            let v = self.expect_ident("after `.` in a qualified events pattern variant")?;
+            (Some(first), v)
+        } else {
+            (None, first)
+        };
+        let span = type_name
+            .as_ref()
+            .map(|t| t.span)
+            .unwrap_or(variant.span)
+            .merge(variant.span);
+        Ok(EventPatternValue::Variant {
+            type_name,
+            variant,
+            span,
+        })
     }
 
     fn parse_agent_decl(&mut self) -> Result<AgentDecl, CompileError> {

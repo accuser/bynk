@@ -1,0 +1,9 @@
+context commerce.notifications
+
+consumes commerce.order
+
+service OnPayment from Events(PaymentConfirmed { region: Region.Domestic, region: Region.International, .. }) {
+  on event(e: PaymentConfirmed) -> Effect[()] {
+    ()
+  }
+}

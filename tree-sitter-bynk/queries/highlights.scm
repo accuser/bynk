@@ -23,6 +23,7 @@
   "websocket"
   "schedule"
   "message"
+  "Events"
 ] @keyword
 
 [
@@ -55,6 +56,7 @@
   "requires"
   "ensures"
   "messages"
+  "event"
 ] @keyword.declaration
 
 [
@@ -111,6 +113,12 @@
 
 ; User-defined type names appear in type positions.
 (type_decl name: (identifier) @type)
+; Events track slice 0/1 (spine #936): an `event` declaration names a type,
+; like `type_decl`; the header's `event_type` and a pattern field's
+; qualifier both reference one.
+(event_decl name: (identifier) @type)
+(service_protocol event_type: (identifier) @type)
+(event_pattern_value type: (identifier) @type)
 (opaque_type) @type
 (generic_type_ref arg: (identifier) @type)
 ; v0.157 (ADR 0183): a user generic-type application — the head name and each
@@ -159,6 +167,8 @@
 (field_init name: (identifier) @field)
 (field_init shorthand: (identifier) @field)
 (named_binding field: (identifier) @field)
+; Events track slice 1 (spine #936): a subscription pattern's field name.
+(event_pattern_field name: (identifier) @field)
 
 ; -- Variants & constants --
 
@@ -174,6 +184,13 @@
 ; `positional_binding` capture now that the payload position is a full pattern.
 ((variant_pattern variant: (identifier) @variable)
  (#match? @variable "^[a-z_]"))
+; Events track slice 1 (spine #936): a subscription pattern's variant value
+; (`region: Region.Domestic` / bare `Domestic`) — always a nullary reference
+; (the checker rejects a payload-carrying variant), so unlike
+; `variant_pattern` there is no binding-vs-tag ambiguity; still keyed on
+; capitalisation for consistency with every other variant reference.
+((event_pattern_value variant: (identifier) @constant)
+ (#match? @constant "^[A-Z]"))
 (boolean_literal) @constant.builtin
 
 ; -- Literals --

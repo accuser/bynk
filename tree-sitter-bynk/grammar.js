@@ -184,12 +184,16 @@ module.exports = grammar({
         $.fn_decl,
         $.messages_decl,
         // Permissive: capability/service/etc. can syntactically appear
-        // anywhere — the LSP reports semantic placement errors.
+        // anywhere — the LSP reports semantic placement errors. Events
+        // track slice 0 (spine #936): `event` follows the same permissive
+        // precedent (`bynk.event.outside_context` rejects it here, at the
+        // checker, not the grammar).
         $.capability_decl,
         $.provider_decl,
         $.service_decl,
         $.agent_decl,
         $.actor_decl,
+        $.event_decl,
       ),
 
     _context_body_item: ($) =>
@@ -205,6 +209,7 @@ module.exports = grammar({
         $.agent_decl,
         $.actor_decl,
         $.messages_decl,
+        $.event_decl,
       ),
 
     // v0.17: adapter items — a binding clause, capabilities, boundary types,
@@ -226,6 +231,7 @@ module.exports = grammar({
         $.agent_decl,
         $.actor_decl,
         $.messages_decl,
+        $.event_decl,
       ),
 
     _test_body_item: ($) =>
@@ -336,6 +342,18 @@ module.exports = grammar({
         // v0.11: an optional initial-value expression. Meaningful on agent
         // `store` fields; the checker restricts where it applies.
         optional(seq("=", field("init", $._expression))),
+      ),
+
+    // Events track, slice 0 (spine #936): `event Name = { fields }` — a
+    // typed fact a context may emit and other contexts' subscriber services
+    // may receive. Record body only (mirrors `record_type`, not the full
+    // `_type_body` choice — no sum/opaque/refined event shapes).
+    event_decl: ($) =>
+      seq(
+        "event",
+        field("name", $.identifier),
+        "=",
+        field("body", $.record_type),
       ),
 
     // v0.154 (ADR 0178): a sum body may carry a trailing `embeds E as V, …`
@@ -702,6 +720,12 @@ module.exports = grammar({
     // types. `websocket`, `in`, and `out` are contextual (resolved by `word`).
     // #548: `websocket` lowercased to match the other protocol sources (was
     // `WebSocket`).
+    // Events track, slice 0 (spine #936): `from Events(E)`, optionally
+    // filtered by a slice-1 structural pattern, `from Events(E { field:
+    // value, .. })`. `Events`, capitalised, is matched as plain `identifier`
+    // text the same way `websocket` is matched lowercase — it names the
+    // `Events` capability directly, not a built-in type name, so no lexer
+    // reservation.
     service_protocol: ($) =>
       seq(
         "from",
@@ -722,6 +746,47 @@ module.exports = grammar({
             optional(","),
             ")",
           ),
+          seq(
+            "Events",
+            "(",
+            field("event_type", $._type_ref),
+            optional(field("pattern", $.event_pattern)),
+            ")",
+          ),
+        ),
+      ),
+    // Events track, slice 1 (spine #936): the structural delivery filter on
+    // a subscription header. A trailing `..` is mandatory whenever any field
+    // is listed — mirrors the hand-written parser's `bynk.parse.
+    // event_pattern_empty` rejection of `Events(E { })`. `..` is one literal
+    // token here (not two `.`s), keeping this grammar in agreement with the
+    // Rust lexer's dedicated `DotDot` token.
+    event_pattern: ($) =>
+      seq(
+        "{",
+        repeat(seq(field("field", $.event_pattern_field), ",")),
+        "..",
+        "}",
+      ),
+    event_pattern_field: ($) =>
+      seq(
+        field("name", $.identifier),
+        ":",
+        field("value", $.event_pattern_value),
+      ),
+    // A closed set, mirroring `literal_pattern` plus a nullary-variant
+    // reference (`variant_pattern` without a payload list — no nested
+    // sub-patterns in v1). The checker separately rejects a payload-carrying
+    // variant (`bynk.event.pattern_variant_payload`) since the grammar has
+    // no payload-list position here to reject it structurally.
+    event_pattern_value: ($) =>
+      choice(
+        seq(optional("-"), $.number_literal),
+        $.string_literal,
+        $.boolean_literal,
+        seq(
+          optional(seq(field("type", $.identifier), ".")),
+          field("variant", $.identifier),
         ),
       ),
 
@@ -807,6 +872,27 @@ module.exports = grammar({
         // queue-handler shape (the protocol on the service header disambiguates).
         $.ws_open_handler,
         $.ws_close_handler,
+        // Events track, slice 0 (spine #936): a `from Events(E)` service's
+        // one handler.
+        $.event_handler,
+      ),
+    // Events track, slice 0 (spine #936): `on event(e: E) -> Effect[()] { … }`
+    // — a `from Events(E)` subscriber's one handler. Same generic shape as
+    // every other handler form (params/by/given/body all uniform); the
+    // checker verifies the param count/type against the service header.
+    event_handler: ($) =>
+      seq(
+        "on",
+        "event",
+        "(",
+        optional(sep1($.param, ",")),
+        optional(","),
+        ")",
+        "->",
+        field("return_type", $._type_ref),
+        optional(field("by", $.by_clause)),
+        optional(field("given", $.given_clause)),
+        field("body", $.block),
       ),
     call_handler: ($) =>
       seq(

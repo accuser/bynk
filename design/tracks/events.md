@@ -21,9 +21,15 @@
   emission batch and across successive non-overlapping calls to one agent,
   but not across concurrent invocations of the same agent — narrower than §7
   originally asserted, measured on real `workerd` and recorded in
-  `design/pending/events-per-publisher-fifo-scope.md` (pre-stamp). Structural
-  pattern refinement on the subscription header (§3.3's deliver-and-filter),
-  the envelope, and additive versioning remain later slices.
+  `design/pending/events-per-publisher-fifo-scope.md` (pre-stamp). **Slice 1
+  has shipped** (#966): `from Events(E { field: value, .. })` subscription
+  pattern filtering, via an Events-local pattern node rather than the shared
+  `Pattern`/refined-pattern machinery §3.3 originally claimed — an amendment
+  to ADR 0286's "no bespoke matching engine" wording, recorded in
+  `design/pending/events-subscription-pattern-filtering.md` (pre-stamp).
+  Delivery filtering only: the handler's parameter is **not** statically
+  narrowed to the matched values. The envelope and additive versioning
+  remain later slices.
 - **The one scope decision made up front.** This track delivers the **live
   pub-sub core** — declaration, emission, subscription with pattern refinement,
   the envelope, and additive versioning. It **splits event replay / backfill
@@ -184,29 +190,46 @@ the genuinely new grammar/checker slice-0 work; the closed-set membership itself
 is a one-line extension. Recorded as
 [ADR 0285 — events-protocol-set-extension](../decisions/0285-events-protocol-set-extension.md).
 
-### 3.3 — Subscription pattern refinement — SETTLED, leaned hard on precedent
+### 3.3 — Subscription pattern refinement — SHIPPED (slice 1), scoped narrower than asserted
 
 **The question.** `from Events(E { region: Domestic, .. })` filters emissions by a
-structural pattern (§7 lines 198–227). The pattern is type-checked against the
-event shape at compile time, enforced by the runtime before the handler runs, and
-its statically-known fields are available in the body (`e.region` is statically
-`Domestic`).
+structural pattern (§7 lines 198–227). §7 asserted the pattern is type-checked
+against the event shape at compile time, enforced by the runtime before the
+handler runs, *and* that its statically-known fields are available in the body
+(`e.region` is statically `Domestic`).
 
-**Why it leans on precedent.** §7 explicitly frames this as "mirroring the auth
-pattern on services" — and multi-actor sum dispatch
-([ADR 0090](../decisions/0090-multi-actor-sum-dispatch.md)) plus authorisation
-invariants ([ADR 0091](../decisions/0091-authorisation-invariants-refinement-actors.md))
-already establish structural, declarative, enforced-before-the-handler dispatch.
-The payload pattern itself reuses the shipped refined-pattern and nested-payload
-machinery (ADRs [0169](../decisions/0169-nested-payload-patterns-and-match-arm-guards.md),
-[0252](../decisions/0252-or-patterns.md),
-[0253](../decisions/0253-refined-patterns.md)). **The one thing settled here:**
-where the filter runs — §7 wants "server-side filtering where the platform
-supports it, deliver-and-filter as a transparent fallback" (line 227). Slice 1
-ships the **deliver-and-filter fallback** only (the DO delivers, the
-subscriber's generated guard filters), with server-side pre-filtering a later
-optimisation that cannot change observable semantics. Recorded as
-[ADR 0286 — events-pattern-dispatch-deliver-and-filter](../decisions/0286-events-pattern-dispatch-deliver-and-filter.md).
+**What §7/this section originally claimed, verified false by direct
+inspection of the code, before slice 1 was built.** "Mirrors the auth pattern
+on services" and "reuses the shipped refined-pattern and nested-payload
+machinery" (citing multi-actor sum dispatch, [ADR 0090](../decisions/0090-multi-actor-sum-dispatch.md);
+authorisation invariants, [ADR 0091](../decisions/0091-authorisation-invariants-refinement-actors.md);
+and the pattern machinery of ADRs [0169](../decisions/0169-nested-payload-patterns-and-match-arm-guards.md),
+[0252](../decisions/0252-or-patterns.md), [0253](../decisions/0253-refined-patterns.md))
+— none of that machinery fits. The shared `Pattern` AST has six variants,
+none a record/field pattern; ADR 0169 Decision F explicitly deferred record
+patterns as their own future slice; `Pattern::Variant` requires a sum-type
+tag and an `event` is a plain record, not a sum. Separately, static
+narrowing of `e.region` has no mechanism either — the closest shipped
+analogue (ADR 0253's refined patterns) is a runtime guard only, and static
+narrowing "waits on §2.5.4 (refinement propagation), which is still the
+specification's largest open question."
+
+**Shipped scope: filtering only, no static narrowing.** Slice 1 introduces a
+small, **Events-local** pattern node (`EventPattern`), deliberately separate
+from the shared `Pattern` enum — no exhaustiveness obligation, no shared-enum
+blast radius, honest about being new surface. `e`'s type is **not** narrowed
+in a matching handler body; only delivery is filtered. This amends
+[ADR 0286](../decisions/0286-events-pattern-dispatch-deliver-and-filter.md)'s
+"no bespoke matching engine is introduced for Events" claim — **its
+deliver-and-filter decision remains correct and unchanged**: the fan-out
+mechanism still delivers every emission of `E` to every subscriber
+unconditionally; the guard lives entirely inside the subscriber's own
+generated handler method (`emit_service`), covering all three delivery
+paths (Cloudflare Workers, Bundle/node, Bundle/browser) in one edit.
+Recorded as [ADR 0286 — events-pattern-dispatch-deliver-and-filter](../decisions/0286-events-pattern-dispatch-deliver-and-filter.md)
+(the deliver-and-filter decision) and the `events-subscription-pattern-local-node`
+ADR (the amendment; `design/pending/events-subscription-pattern-filtering.md`,
+pre-stamp — the bespoke-node correction and the no-narrowing scope decision).
 
 ### 3.4 — Per-publisher FIFO: the contract vs. what Cloudflare delivers — SETTLED empirically (scoped narrower than asserted)
 
@@ -314,10 +337,13 @@ MVP-first. Each slice is an ordinary increment proposal, a sub-issue of the spin
   that proves one publisher → one subscriber across contexts. Proven against a
   real `tsc --strict` project fixture (a two-context emit/receive), not
   golden-diffed alone.
-- **Slice 1 — subscription pattern refinement.** `from Events(E { field: X, .. })`
-  (§3.3), reusing the refined-pattern machinery; statically-known fields available
-  in the body; deliver-and-filter enforcement. Multi-dimensional refinement
-  composes; a pattern-less subscriber still matches all.
+- **Slice 1 — subscription pattern filtering — SHIPPED.** `from Events(E {
+  field: value, .. })` (§3.3), via a small **Events-local** pattern node, not
+  the shared `Pattern`/refined-pattern machinery (§3.3 records why). Delivery
+  filtering only — the handler's parameter is **not** statically narrowed to
+  the matched values (that half of §3.3's original claim is deferred, pending
+  §2.5.4 refinement propagation). Multi-field patterns compose with AND; a
+  pattern-less subscriber still matches all.
 - **Slice 2 — the envelope + the idempotency idiom.** `EventEnvelope`
   (`eventId`, `publisherId`, `emittedAt`, and `schemaVersion` reserved for slice
   3) passed alongside the payload; the documented `env.eventId` →
@@ -369,11 +395,20 @@ number is assigned at merge).
   ([ADR 0193](../decisions/0193-multi-context-deploy-ordering.md)), and the
   finding that the guarantee holds only within a batch and across
   non-overlapping calls — not across concurrent invocations of one agent.
-- **[Written] Subscription pattern dispatch reuses auth/refined-pattern
-  machinery** (§3.3, `events-pattern-dispatch-deliver-and-filter`) — records
-  that no bespoke matching engine is introduced for Events; deliver-and-filter
-  is the committed semantics, server-side pre-filter a later
-  semantics-preserving optimisation.
+- **[Written] Subscription pattern dispatch is deliver-and-filter, not
+  server-side pre-filtering** (§3.3, `events-pattern-dispatch-deliver-and-filter`)
+  — deliver-and-filter is the committed semantics, server-side pre-filter a
+  later semantics-preserving optimisation. **This ADR's other claim — "no
+  bespoke matching engine is introduced for Events," asserting the pattern
+  would reuse auth/refined-pattern machinery — was found false once slice 1
+  was actually built** (the shared `Pattern` enum cannot represent a record
+  field filter; see §3.3).
+- **[Written] The subscription pattern is an Events-local node, amending the
+  above** (§3.3, `events-subscription-pattern-local-node`,
+  `design/pending/events-subscription-pattern-filtering.md`, pre-stamp) —
+  records the correction: a small, purpose-built `EventPattern` node, not a
+  reuse, and the accompanying scope decision that slice 1 ships filtering
+  only, no static narrowing of the handler's parameter.
 - **[Deferred to slice 3] Event schema versioning + the cross-build registry**
   (§3.5) — slice-3 ADR; records where the registry lives and whether it reuses
   the ADR 0200 normal form. Not a slice-0 blocker, so not written now.
@@ -396,10 +431,13 @@ receives *exactly* the emissions its pattern admits.
 - **Over-delivery via a pattern-filter bug.** A subscriber whose generated guard
   admits emissions its declared pattern should exclude sees data outside its
   intended slice — a cross-context data exposure if the excluded emissions carry
-  data that subscriber should not react to. *Mitigation:* the filter is generated
-  from the type-checked pattern and enforced before the body runs (§3.3), and
-  deliver-and-filter keeps the guard in one generated place; slice 1's fixtures
-  must include negative cases (an emission that must **not** arrive).
+  data that subscriber should not react to. *Mitigation, shipped and verified
+  (slice 1, #966):* the filter is generated from the type-checked pattern and
+  enforced as the first line of the subscriber's own handler body, before any
+  user code runs; deliver-and-filter keeps the guard in one generated place.
+  `bynkc/tests/events_pattern_behaviour.rs` proves both directions in the same
+  run — a matching emission is delivered, a non-matching sibling subscriber's
+  emission is not — so the negative isn't asserted from reading the code alone.
 - **Forged/cross-context emission.** A context emitting another context's event
   type would let it fabricate facts attributed to a peer. *Mitigation:* owner-only
   emission is statically enforced (§3.0, §7 line 180) — this is a compile error,
@@ -431,7 +469,8 @@ receives *exactly* the emissions its pattern admits.
 ## 7. Slice status
 
 - [x] Slice 0 — emit/subscribe loop + closed-protocol-set extension (#939)
-- [ ] Slice 1 — subscription pattern refinement (deliver-and-filter)
+- [x] Slice 1 — subscription pattern filtering, deliver-and-filter (#966).
+  No static narrowing (scoped narrower than §3.3 originally claimed).
 - [ ] Slice 2 — `EventEnvelope` + the `env.eventId` idempotency idiom
 - [ ] Slice 3 — additive versioning + the cross-build schema registry
 - [ ] Slice 4 — `via schema(...)` version-aware dispatch
@@ -439,14 +478,16 @@ receives *exactly* the emissions its pattern admits.
 
 ## 8. Done when
 
-- [ ] `event` declarations, `given Events` emission, and pattern-refined
-  `from Events(...)` subscription are checked surface with their one first-party
-  provider; §7's `PaymentConfirmed` example compiles and runs end to end (a real
-  `tsc --strict` project fixture), **minus** replay. **Slice 0 done** (#939):
-  `event`/`given Events`/unpatterned `from Events(E)` ship, verified by a real
-  `tsc --strict` two-context project fixture on both Cloudflare and Bundle
-  targets. Still open: the pattern refinement on the subscription header
-  itself (§3.3/slice 1) — this bullet stays unchecked until that lands too.
+- [x] `event` declarations, `given Events` emission, and pattern-filtered
+  `from Events(...)` subscription are checked surface with their one
+  first-party provider; §7's `PaymentConfirmed` example compiles and runs
+  end to end (a real `tsc --strict` project fixture), **minus** replay.
+  **Slice 0 done** (#939): `event`/`given Events`/unpatterned
+  `from Events(E)` ship, verified by a real `tsc --strict` two-context
+  project fixture on both Cloudflare and Bundle targets. **Slice 1 done**
+  (#966): the subscription pattern filters delivery — **not** narrowed
+  static typing of the matched fields, which §7's own worked example implies
+  but which slice 1 deliberately does not build (§3.3).
 - [x] Events is a member of the closed protocol set
   ([ADR 0079](../decisions/0079-protocols-closed-set.md)) with the
   event-type-parameterised header; the per-protocol handler-shape check rejects a

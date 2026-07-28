@@ -1240,7 +1240,11 @@ fn service_protocol_suffix(p: &ServiceProtocol) -> String {
         ServiceProtocol::Cron => " from cron".to_string(),
         ServiceProtocol::Queue { name } => format!(" from queue(\"{name}\")"),
         ServiceProtocol::WebSocket { .. } => " from websocket".to_string(),
-        ServiceProtocol::Events { event_type } => {
+        // Events track slice 1 (spine #936): a subscription pattern is not
+        // rendered in this short suffix, matching how WebSocket's in/out
+        // types are also omitted here — this is a one-line summary label,
+        // not a full re-render of the header.
+        ServiceProtocol::Events { event_type, .. } => {
             format!(" from Events({})", type_ref_str(event_type))
         }
     }
