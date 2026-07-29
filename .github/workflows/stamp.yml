@@ -49,6 +49,7 @@ jobs:
   stamp:
     name: Stamp pending increments
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     # Skip the no-op re-run the stamp's own (App-pushed) commit triggers.
     if: ${{ !startsWith(github.event.head_commit.message, 'chore(stamp):') }}
     steps:

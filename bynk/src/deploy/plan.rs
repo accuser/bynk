@@ -202,7 +202,7 @@ pub fn run(
         eprintln!("bynk: could not prepare build directory: {e}");
         return ExitCode::FAILURE;
     }
-    if !workers::compile_once(compiler, project_root, &build_dir) {
+    if !workers::compile_once(compiler, project_root, &build_dir, true) {
         return ExitCode::FAILURE;
     }
     // Slice 2: every context, ordered — not the one context slice 0 demanded.

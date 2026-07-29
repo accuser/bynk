@@ -5,7 +5,8 @@ name: Release
 #
 #     git tag v0.16.0 && git push origin v0.16.0
 #
-#   -> verify (tests + tag/version match) -> build binaries + cut the GitHub
+#   -> verify (tag/version match + on-main) -> the test suite on all three OSes
+#      -> build binaries + cut the GitHub
 #      Release, AND publish the crates to crates.io and the grammar to npm
 #      (both via OIDC Trusted Publishing, both re-run-safe — a version already
 #      on a registry is skipped, so a partial publish can be retried by
@@ -16,9 +17,9 @@ name: Release
 # release tag is cut when a version is to be shipped — so the GitHub Release the
 # VS Code extension's bynkServerVersion pin points at always exists.
 #
-# The registry publishes are irreversible. The `verify` gate (tests + the
-# tag/version match + the tagged commit being on `main`) stands in for an
-# approval gate. Tags are NOT covered by the `main` ruleset, so the on-main
+# The registry publishes are irreversible. The `verify` + `test` gates (the
+# tag/version match, the tagged commit being on `main`, and a green suite on
+# all three host OSes) stand in for an approval gate. Tags are NOT covered by the `main` ruleset, so the on-main
 # ancestry check RAISES THE BAR against a `v*` tag (or a manual dispatch from a
 # branch) releasing an unreviewed commit — see #730. It is a partial mitigation,
 # not the whole fix: a tag-triggered (or branch-dispatched) run executes the
@@ -67,23 +68,19 @@ jobs:
   # the repo (single-version posture): the Cargo workspace, both npm packages,
   # and the extension's bynkServerVersion server-download pin.
   verify:
-    name: Verify (tests + tag/version + on-main)
+    name: Verify (tag/version + on-main)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history so the on-main ancestry check below can resolve
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # No Rust toolchain or tsc here any more: the test run moved to the
+      # cross-OS `test` job below, and what is left reads manifests (`node -p`)
+      # and walks history, so this leg stays cheap.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
-      # Global CLI install, not a `uses:` action, so there is no lockfile or
-      # commit-hash to pin against (Scorecard Pinned-Dependencies has no
-      # hash mechanism for `npm install -g`). Range-pinned to major 5 — the tsc
-      # used only to type-check emitted output in this job. Accepted risk, #828.
-      - name: Install TypeScript
-        run: npm install -g typescript@5
       - name: Check tag/version match
         run: |
           ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
@@ -111,8 +108,8 @@ jobs:
         # ancestor of origin/main means an *existing, honest* off-main commit
         # (e.g. an unmerged PR-branch head) can't be released without first
         # reaching main through branch protection. Every publish job has
-        # `needs: verify`, so failing here blocks the release (tag push AND
-        # dispatch). This is a PARTIAL mitigation: a tag-triggered run executes
+        # `needs: [verify, test]`, so failing here blocks the release (tag push
+        # AND dispatch). This is a PARTIAL mitigation: a tag-triggered run executes
         # this workflow from the tagged commit, so an attacker who authors that
         # commit can strip this check — closing that needs the deferred `v*` tag
         # ruleset (see the header). #730.
@@ -124,18 +121,53 @@ jobs:
             echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of origin/main — refusing to release an unreviewed commit"
             exit 1
           fi
+  # The test suite, on every OS a release actually ships a binary for.
+  #
+  # This used to be a step inside `verify`, on ubuntu-latest alone — so a release
+  # published Windows and macOS binaries from a tree whose suite had never been
+  # run on Windows or macOS. That is the same gap ci.yml's PR matrix had, with a
+  # larger blast radius: the last six CI failures on `main` were all the Windows
+  # leg, and the release gate could not have seen any of them. Split out here so
+  # `verify` stays a fast tag/version/ancestry check and the publish jobs can
+  # depend on both.
+  test:
+    name: Test suite (${{ matrix.os }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "20"
+      # Range-pinned to major 5, as in the verify job above — see #828.
+      - name: Install TypeScript
+        run: npm install -g typescript@5
       - name: Run tests
         run: cargo test --workspace --locked
         env:
           BYNK_REQUIRE_TSC: "1"
+          # Empty off Linux, and empty means "not required" — the contract lives
+          # in bynkc/tests/require/mod.rs. See the longer note in ci.yml,
+          # including why this is not a `shell: bash` conditional export.
+          BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
 
   # Build native binaries on each host (no cross-compilation). fail-fast off so
   # one platform's failure doesn't abandon the others' artifacts.
   binaries:
     name: Build ${{ matrix.target }}
-    needs: verify
+    needs: [verify, test]
     if: github.event_name == 'push' # tag push only — not the manual registry-publish dispatch
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -208,6 +240,7 @@ jobs:
     needs: binaries
     if: github.event_name == 'push' # tag push only — not the manual registry-publish dispatch
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write # create the release + upload assets
       id-token: write # OIDC for build-provenance attestation
@@ -258,9 +291,10 @@ jobs:
   # back here for every subsequent release.
   publish-crates:
     name: Publish to crates.io
-    needs: verify
+    needs: [verify, test]
     if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_crates) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
       id-token: write # OIDC for crates.io Trusted Publishing
     steps:
@@ -297,9 +331,10 @@ jobs:
   # Trusted Publisher can only be configured on an existing package.
   publish-npm:
     name: Publish to npm
-    needs: verify
+    needs: [verify, test]
     if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_npm) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write # OIDC trusted publishing

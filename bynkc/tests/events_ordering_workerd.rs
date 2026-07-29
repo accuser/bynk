@@ -68,6 +68,8 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod require;
+
 const REQUIRE_ENV: &str = "BYNK_REQUIRE_WORKERD";
 const WRANGLER: &str = "wrangler@4";
 
@@ -180,22 +182,14 @@ fn base_command(program: &str) -> Command {
 
 /// Is this run required to actually reach workerd?
 ///
-/// Presence alone is not enough: CI selects the OSes that must run this with
-/// `BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}`,
-/// and a GitHub Actions `env:` entry whose expression yields `''` is still
-/// *exported* — as an empty string. An `is_ok()` check therefore read as
-/// "required" on windows-latest and macos-latest too, so the skip this test
-/// deliberately grants them turned into a hard failure the first time
-/// `wrangler dev` failed to boot there (a broken npx cache on the Windows
-/// runner). Treat empty as unset, which is what the workflow means by it.
+/// Presence alone is not enough — empty counts as unset. The contract, and the
+/// history that made it necessary, live in [`require`].
 ///
-/// This is the same guard [`workers_runtime_smoke`] carries (#965). That fix
-/// landed on the one file that had gone red; this test gates on the same
-/// variable and kept the naive check, so it went red on the next Windows run
-/// where wrangler could not boot (#970's merge). Both files now agree — a
-/// third workerd-gated test must copy this, not `is_ok()`.
+/// This used to end "a third workerd-gated test must copy this, not `is_ok()`",
+/// which is the instruction that produced the bug twice. There is nothing left
+/// to copy: the decision has one implementation now.
 fn required() -> bool {
-    std::env::var(REQUIRE_ENV).is_ok_and(|v| !v.is_empty())
+    require::is_required(REQUIRE_ENV)
 }
 
 fn skip(reason: &str) -> bool {

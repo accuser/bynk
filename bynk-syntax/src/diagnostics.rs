@@ -583,6 +583,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An `on event(e: T)` handler's declared parameter type does not match its `from Events(E)` header's event type.",
     ),
     d(
+        "bynk.event.non_additive_schema_change",
+        "An event's field shape changed in a way the schema registry cannot evolve additively — a field was removed, retyped, added without a default, or lost a default it previously had. Give the new shape a new event type name, or make the change additive.",
+    ),
+    d(
         "bynk.event.outside_context",
         "An `event` was declared outside a context.",
     ),
@@ -605,6 +609,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.event.pattern_variant_payload",
         "A `from Events(E { ... })` subscription pattern's variant value names a variant that carries a payload — only nullary variants are admitted, since testing the tag alone would silently ignore the payload.",
+    ),
+    d(
+        "bynk.event.schema_version_mismatch",
+        "An event's `@schema(N)` annotation disagrees with the version the schema registry computes from the event's build history.",
     ),
     d(
         "bynk.event.unknown_annotation",
@@ -1276,6 +1284,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.project.read_failed",
         "A source file could not be read.",
+    ),
+    d(
+        "bynk.project.schema_registry_corrupt",
+        "`bynk.schema.lock` (the events schema registry) is missing its version field, empty, truncated, or otherwise unparseable — restore it from version control rather than deleting it, since deleting it would silently re-baseline every event's history.",
     ),
     dg(
         "bynk.property.restates_refinement",

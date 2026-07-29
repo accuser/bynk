@@ -145,7 +145,7 @@ pub fn run(
     // — the shared rooting rule over the full `[paths]` layout. `dev`
     // previously re-rooted on the first `include` entry only, silently
     // dropping further includes and the whole `exclude` list.
-    if !compile_once(compiler, project_root, &build_dir) {
+    if !compile_once(compiler, project_root, &build_dir, true) {
         return ExitCode::FAILURE;
     }
 
@@ -301,7 +301,7 @@ pub fn run(
         if now != fingerprint {
             fingerprint = now;
             eprintln!("bynk dev: change detected — rebuilding…");
-            if compile_once(compiler, project_root, &build_dir) {
+            if compile_once(compiler, project_root, &build_dir, true) {
                 eprintln!("bynk dev: rebuilt");
             }
             // On failure the diagnostics are already rendered; keep serving

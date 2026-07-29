@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0299](0299-events-schema-registry.md) | **The cross-build schema registry ships as an opt-in, reconcile-before-emission auto-write, verifying (not replacing) @schema(N)** (v0.243) — Events slice 3c's design — opt-in auto-write, reconcile before emission, bynk.schema.lock's shape, and why @schema(N) is now verified rather than trusted | Accepted (v0.243) |
 | [0298](0298-events-schema-annotation.md) | **Event schema versioning ships as manual @schema(N) pinning, not the auto-detecting registry — narrowing #978's own scope** (v0.242) — Why slice 3b builds only author-asserted versioning, and where the schema-version map had to be threaded to reach the mint site | Accepted (v0.242) |
 | [0297](0297-events-field-defaults.md) | **Event field defaults lower to their wire form, not a value-level reference — amending #972's Decision E** (v0.241) — Why a defaulted event field's fallback is JSON, not a reused `BodyMode::StaticInit` expression, and what that implies for where the lowering runs | Accepted (v0.241) |
 | [0296](0296-fmt-config-layering.md) | **Formatting options resolve as defaults, then `bynk.toml` `[fmt]`, then flags** (v0.240.2) — Where a `fmt` run's options come from, and which component reads `[fmt]` | Accepted (v0.240.2) |

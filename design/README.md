@@ -96,7 +96,8 @@ Per release:
 1. The **implementing PR** runs the bump script and lands the version bump
    with the increment (alongside the spec/changelog deltas).
 2. To ship a version, **tag `vX.Y.Z`** — the release workflow then does the
-   whole release from that one tag: `verify` (tests + tag/version match) →
+   whole release from that one tag: `verify` (tag/version match + the commit
+   being on `main`) → the test suite on all three host OSes →
    build the binaries + cut the GitHub Release, **and** publish the crates to
    crates.io and the grammar to npm (both via OIDC Trusted Publishing, both
    re-run-safe — a version already on a registry is skipped, so a partial
@@ -108,8 +109,20 @@ Per release:
 
 The release workflow's `verify` job refuses a tag whose version does not
 match **all** of the sites above. The registry publishes are irreversible; the
-`verify` gate stands in for an approval gate (an Environment with required
-reviewers can add a one-click pause once the repo is public).
+`verify` + `test` gates stand in for an approval gate (an Environment with
+required reviewers can add a one-click pause once the repo is public).
+
+## Branches
+
+Cut every branch from freshly-pulled `main`, and never reuse one after it has
+merged. Merges are squash-only with `delete_branch_on_merge`, so a reused branch
+restarts from a base `main` no longer contains — and the PR history stops
+meaning anything: `claude/bynk-fmt-line-length-akrp7n` was the head of four
+separate PRs across two days, one of which (#971) was a Windows CI fix that the
+branch name actively misdescribes.
+
+Name branches `<kind>/<slug>`, where `<kind>` is one of `feat`, `fix`, `track`,
+`chore`, or `docs`, and the slug describes *this* change.
 
 ## History
 

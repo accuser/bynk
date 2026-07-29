@@ -48,6 +48,8 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod require;
+
 const REQUIRE_ENV: &str = "BYNK_REQUIRE_WORKERD";
 const WRANGLER: &str = "wrangler@4";
 
@@ -156,11 +158,12 @@ fn base_command(program: &str) -> Command {
     }
 }
 
-/// Same guard as `events_ordering_workerd.rs`'s `required` — CI can export
-/// `BYNK_REQUIRE_WORKERD` as an empty string on OSes it deliberately allows
-/// to skip; treat empty as unset, not present.
+/// Is this run required to actually reach workerd?
+///
+/// Presence alone is not enough — empty counts as unset. The contract, and the
+/// history that made it necessary, live in [`require`].
 fn required() -> bool {
-    std::env::var(REQUIRE_ENV).is_ok_and(|v| !v.is_empty())
+    require::is_required(REQUIRE_ENV)
 }
 
 fn skip(reason: &str) -> bool {

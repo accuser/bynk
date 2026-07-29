@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **451** codes in total.
+There are **454** codes in total.
 
 ## Agents
 
@@ -238,12 +238,14 @@ There are **451** codes in total.
 | `bynk.event.emit_not_an_event` | `Events.emit[E]` named a type `E` that is declared in this context, but is not itself an `event` — only an `event` type may be emitted. |  | — |
 | `bynk.event.emit_outside_owner` | `Events.emit[E]` named an event `E` not declared in the emitting context — only an event's declaring context may emit it. |  | — |
 | `bynk.event.handler_param_type_mismatch` | An `on event(e: T)` handler's declared parameter type does not match its `from Events(E)` header's event type. |  | — |
+| `bynk.event.non_additive_schema_change` | An event's field shape changed in a way the schema registry cannot evolve additively — a field was removed, retyped, added without a default, or lost a default it previously had. Give the new shape a new event type name, or make the change additive. |  | — |
 | `bynk.event.outside_context` | An `event` was declared outside a context. |  | — |
 | `bynk.event.pattern_duplicate_field` | A `from Events(E { ... })` subscription pattern listed the same field more than once. |  | — |
 | `bynk.event.pattern_type_mismatch` | A `from Events(E { ... })` subscription pattern field's matched value is not compatible with that field's declared type. |  | — |
 | `bynk.event.pattern_unknown_field` | A `from Events(E { ... })` subscription pattern named a field that `E` does not declare. |  | — |
 | `bynk.event.pattern_unknown_variant` | A `from Events(E { ... })` subscription pattern's variant value names a variant that does not exist on the field's declared sum type. |  | — |
 | `bynk.event.pattern_variant_payload` | A `from Events(E { ... })` subscription pattern's variant value names a variant that carries a payload — only nullary variants are admitted, since testing the tag alone would silently ignore the payload. |  | — |
+| `bynk.event.schema_version_mismatch` | An event's `@schema(N)` annotation disagrees with the version the schema registry computes from the event's build history. |  | — |
 | `bynk.event.unknown_annotation` | An `event` declaration carried an `@`-annotation other than `@schema` — event annotations are a closed set. |  | — |
 | `bynk.event.unknown_subscription` | A `from Events(E)` subscription named `E`, which is not a declared event in this context or any consumed context. |  | — |
 | `bynk.generics.duplicate_type_param` | A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183). |  | — |
@@ -389,6 +391,7 @@ There are **451** codes in total.
 | `bynk.project.no_root` | No project root could be determined. |  | — |
 | `bynk.project.no_sources` | The project contains no source files. |  | — |
 | `bynk.project.read_failed` | A source file could not be read. |  | — |
+| `bynk.project.schema_registry_corrupt` | `bynk.schema.lock` (the events schema registry) is missing its version field, empty, truncated, or otherwise unparseable — restore it from version control rather than deleting it, since deleting it would silently re-baseline every event's history. |  | — |
 
 ## Properties (generative tests)
 

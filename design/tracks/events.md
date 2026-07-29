@@ -277,33 +277,55 @@ the decision **not** to change the emitter to close this gap (a substrate
 redesign, not a documentation increment — see §6 for the consequence a
 subscriber needs to know).
 
-### 3.5 — The cross-build schema registry — OPEN (narrowed to slice 3c)
+### 3.5 — The cross-build schema registry — CLOSED (shipped as slice 3c, #980)
 
-**The question.** §7 specifies "the compiler maintains a schema registry across
-builds, computing the version from the type's structural shape" (line 258),
-emitting a schema-evolution report when a version changes, with an *automatic*,
-non-hardcoded `env.schemaVersion`. This is **new persistent build-time
-state** — the family of the increment-allocation stamp
-([ADR 0206](../decisions/0206-allocation-on-main.md)) and the cross-context
-contract hash ([ADR 0200](../decisions/0200-cross-context-contract-hash.md)),
-which already computes a canonical structural normal form this could reuse.
+**The question, as it stood.** §7 specifies "the compiler maintains a schema
+registry across builds, computing the version from the type's structural
+shape" (line 258), emitting a schema-evolution report when a version changes,
+with an *automatic*, non-hardcoded `env.schemaVersion` — and, critically, that
+"explicit `@schema(N)` annotations... are available for teams that want to pin
+versions; the compiler verifies the declared version against what the schema
+would otherwise warrant" (line 260). Slice 3b (#978) shipped only the
+annotation half, with nothing to verify it against; this section tracked the
+remaining verification half as open.
 
-**Why it is open.** *Where* the registry lives (a committed file stamped on
-merge, like allocation? a derived build artifact?), *how* a version is computed
-(reuse the 0200 normal form, or a distinct event-schema hash?), and *what* counts
-as a version-bumping change all need settling. **Narrowed twice now:**
-slice 3a (#972) shipped default expressions on event fields — the other half
-of §3.0's additive-versioning story — needing none of this open state (a
-default is checked and lowered to its wire form at compile time, with no
-registry, no evolution report, and no version computation). Slice 3b (#978)
-then shipped the *manual* half of `env.schemaVersion` itself: an optional
-`@schema(N)` annotation the author asserts directly, embedded verbatim at
-emission — real and author-controlled, but not detected or verified against
-any prior build. This section now names only the still-open **slice-3c**
-work: *automatic* detection of a version bump from a structural shape change
-across builds, the registry that remembers the prior shape, and the
-evolution report — unfiled. Slice 4 (`via schema(...)`) does **not** depend
-on 3c; it already has a real integer to match against from 3b.
+**What shipped.** A committed `bynk.schema.lock` at the project root (TOML,
+atomic write — the same discipline as `bynk.deploy.lock`, a third,
+un-extracted copy of that pattern; extraction would need a new crate below
+`bynk-emit`, since both existing copies live in crates that depend on it —
+named as follow-up debt, not fixed here), auto-written by `bynkc compile`'s
+directory build and by `bynk dev`/`bynk deploy`'s build step — **not** by
+any in-memory, fixture, or LSP compile (`CompileOptions::schema_registry`,
+off by default: `bynkc/tests/e2e.rs` compiles hundreds of fixtures in place,
+and an unconditional write would litter a `bynk.schema.lock` into every one
+of them). Every build reconciles each event's current field shape against
+its stored entry: unchanged keeps the version, a purely additive change (new
+fields, all defaulted; nothing removed, retyped, or newly required) auto-
+bumps it by one, and anything else — a field removed, retyped, added
+without a default, or one that lost a default it had — fails the build
+(`bynk.event.non_additive_schema_change`). A declared `@schema(N)` is now
+genuinely **verified** against the computed value
+(`bynk.event.schema_version_mismatch` on disagreement) rather than trusted
+outright, closing the exact gap 3b left open. A brand-new event, or an
+existing one's first compile after this slice, baselines silently at its
+current `@schema(N)`-or-`1` — no migration hazard for what 3b already shipped.
+
+*Where* it lives and *how* a version is computed were resolved, not by
+reusing [ADR 0200](../decisions/0200-cross-context-contract-hash.md)'s
+canonical form as first guessed possible, but with a purpose-built shallow
+per-field snapshot: `canon_named_in`'s record rendering carries no signal
+for default-presence, so it cannot tell an additive change (new field, has a
+default) from a breaking one (new field, none) — they perturb an opaque
+hash identically. The registry's own diff needs that distinction directly.
+The reconcile step also has to run *before* emission (inside `run_checks`,
+not after `compile_project` gets its result back) — `EmitProjectCtx.event_
+schema_versions` is populated during the same per-unit pass that emits
+TypeScript, before `compile_project` ever sees a finished build to gate a
+write on. Only the write itself is deferred to a clean build. See this
+slice's own ADR for the full account, including the rejected full-registry-
+without-an-opt-in design and the deferred CI "fail instead of write" flag.
+Slice 4 (`via schema(...)`) still does not depend on this — it already had
+a real integer to match against from 3b.
 
 ### 3.6 — Replay / backfill — SPLIT OUT to a future track (the precedent move; recorded)
 
@@ -399,10 +421,15 @@ MVP-first. Each slice is an ordinary increment proposal, a sub-issue of the spin
   out of proportion to this increment). A malformed `@schema` (non-positive,
   non-literal, wrong arity, labelled, or duplicated) is a compile error; any
   annotation name on an event other than `schema` is too.
-- **Slice 3c — additive versioning's automatic-detection half — OPEN,
-  unfiled.** A version bump detected from a structural shape change across
-  builds, the cross-build schema registry (§3.5) that remembers the prior
-  shape, and the evolution report.
+- **Slice 3c — additive versioning's automatic-detection half — SHIPPED
+  (#980).** The cross-build schema registry (§3.5): a committed
+  `bynk.schema.lock`, auto-written on a clean `bynkc compile`/`bynk dev`/
+  `bynk deploy` build; a version bump auto-detected from a purely additive
+  structural shape change; a declared `@schema(N)` now verified against the
+  computed value instead of trusted outright; a non-additive change (field
+  removed, retyped, added without a default, or one that lost its default)
+  fails the build rather than silently versioning. The registry's own git
+  diff across a PR is the evolution report — no separate artefact.
 - **Slice 4 — `via` version-aware dispatch.** The `via schema(...)` envelope
   pattern clause (§7 lines 260–274): literal versions, ranges, `_`; a
   no-`via` subscriber receives any version. Generalisable `via <field>(pattern)`
@@ -556,13 +583,16 @@ receives *exactly* the emissions its pattern admits.
   subscriber's own codec substitutes the default before validation runs, and
   the request succeeds. Only a field with **no** declared default still fails
   structural-mismatch on a missing key, exactly as before this slice.
-- **`schemaVersion` is now a real, author-controlled value, not a hardcoded
-  constant.** **Amended by slice 3b (#978):** an event's `@schema(N)`
-  annotation is embedded verbatim into `env.schemaVersion` at emission (`1`
-  if absent). This is assertion, not verification — the compiler cannot
-  detect a shape change against a prior build (§3.5's narrowing to slice
-  3c), so a wrong or unbumped version is not itself a validation failure the
-  way a malformed payload is.
+- **`schemaVersion` is now a real, verified value, not a hardcoded
+  constant.** **Amended by slice 3b (#978), then closed by slice 3c
+  (#980):** an event's `@schema(N)` annotation, if present, is verified
+  against the version the cross-build schema registry computes from the
+  event's field-shape history rather than embedded verbatim and trusted; a
+  disagreement is now itself a build failure (`bynk.event.schema_version_
+  mismatch`), and an unsafe shape change (a field removed, retyped, added
+  without a default, or one that lost its default) fails the build outright
+  (`bynk.event.non_additive_schema_change`) rather than silently versioning
+  past it.
 
 ## 7. Slice status
 
@@ -583,8 +613,9 @@ receives *exactly* the emissions its pattern admits.
 - [x] Slice 3b — manual `@schema(N)` event versioning (#978). Author-
   asserted, embedded verbatim into `env.schemaVersion`; no persisted state,
   no drift detection (see §3.5, §4).
-- [ ] Slice 3c — automatic version-bump detection + the cross-build schema
-  registry — unfiled
+- [x] Slice 3c — the cross-build schema registry (#980). `bynk.schema.lock`,
+  auto-written on a clean build; auto-bump on a purely additive shape
+  change; a declared `@schema(N)` now verified, not trusted (see §3.5, §4).
 - [ ] Slice 4 — `via schema(...)` version-aware dispatch (buildable now
   that slice 3b ships a real `schemaVersion`; does not depend on 3c)
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)
@@ -633,8 +664,8 @@ receives *exactly* the emissions its pattern admits.
   (#978): an optional `@schema(N)` annotation (`N` a positive `Int`
   literal) embeds verbatim into `env.schemaVersion` at emission; absence
   still means version `1`, byte-identical to every event before this slice.
-  Author-asserted only — no cross-build state, no drift detection, no
-  evolution report (those are slice 3c, still unfiled). A malformed
+  Author-asserted at the time — no cross-build state, no drift detection, no
+  evolution report yet (slice 3c closed that gap). A malformed
   `@schema`, or any other annotation name on an event, is a new compile
   error (`bynk.event.bad_schema_version` / `bynk.event.unknown_annotation`).
   Proven behaviourally in-process, across both a service-handler and an
@@ -642,11 +673,23 @@ receives *exactly* the emissions its pattern admits.
   — a live-`workerd` boundary test cannot observe the mint site this slice
   changes, since it posts a hand-authored envelope directly to the
   receiving route, bypassing emission.
-- [ ] `env.schemaVersion` computed for real (structural-shape drift
-  detection, not author assertion) + the cross-build registry + the
-  evolution report ship (slice 3c, unfiled); `via schema(...)` dispatch
-  ships (slice 4 — already buildable against slice 3b's real value, not
-  blocked on 3c).
+- [x] `env.schemaVersion` computed for real (structural-shape drift
+  detection, not just author assertion) + the cross-build registry ship.
+  **Slice 3c done** (#980): `bynk.schema.lock`, auto-written on a clean
+  `bynkc compile`/`bynk dev`/`bynk deploy` build (never by an in-memory,
+  fixture, or LSP compile); unchanged shape keeps the version, a purely
+  additive change auto-bumps it, anything else fails the build
+  (`bynk.event.non_additive_schema_change`); a declared `@schema(N)` is
+  verified against the computed value (`bynk.event.schema_version_mismatch`
+  on disagreement) rather than trusted. The registry file's own diff across
+  a PR is the evolution report — no separate artefact was built. Proven at
+  two levels: `bynk-emit::project::schema_registry`'s own unit tests cover
+  every reconciliation-table row; `bynkc/tests/events_schema_registry_
+  behaviour.rs` proves the registry actually reaches the `Events.emit` mint
+  site across three real compiles of one on-disk project (baseline, additive
+  bump, blocked non-additive change).
+- [ ] `via schema(...)` dispatch ships (slice 4 — already buildable against
+  slice 3b's real value, not blocked on 3c).
 - [ ] The doc is explicit that **replay/backfill and the actors Q8**
   ([#260](https://github.com/accuser/bynk/issues/260)) are **not** delivered by
   this track — named as a future track with its durable-`Idempotency` dependency,

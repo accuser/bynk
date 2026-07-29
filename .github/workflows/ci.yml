@@ -4,12 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Merge queue: the full cross-OS test matrix runs here (see the `test` job's
+  # Merge queue: the full three-OS test matrix runs here (see the `test` job's
   # dynamic matrix). This trigger is currently DORMANT — no merge queue is
-  # enabled on the repo — so today the cross-OS matrix first runs on the
-  # post-merge push to `main`, not before a PR lands (see the `test_os` note).
-  # Wiring it now means that if a merge queue is ever enabled, cross-OS coverage
-  # moves pre-land with no further workflow change.
+  # enabled on the repo — so today macOS first runs on the post-merge push to
+  # `main`, not before a PR lands (Linux and Windows are both on the PR gate;
+  # see the `test_os` note). Wiring it now means that if a merge queue is ever
+  # enabled, full cross-OS coverage moves pre-land with no workflow change.
+  #
+  # `CI green` is the only required status check and this workflow reports it,
+  # so a queue cannot wedge waiting on a check that never arrives. codeql.yml
+  # has no `merge_group` trigger, which is safe precisely because it is not
+  # required — do not make it required without adding the trigger.
   merge_group:
   # Weekly health check: re-run the full pipeline so dependency/advisory drift
   # (a freshly published RUSTSEC advisory, a bitrotted dep) is caught even when
@@ -17,12 +22,23 @@ on:
   schedule:
     - cron: "0 7 * * 1"
 
-# A new push to a PR branch cancels the superseded run for that ref; the deploy
-# pipelines (deploy-site.yml / deploy-playground.yml) have their own
+# A new push to a PR branch cancels the superseded run for that ref.
+#
+# Cancellation is scoped to pull requests DELIBERATELY. When it applied to every
+# ref, a merge to `main` was routinely cancelled ~60s later by the stamp commit's
+# own run (same `refs/heads/main` group) — so the merge commit itself never
+# completed a run, and validation was silently deferred to the stamp commit and
+# made conditional on the stamp firing and succeeding. It does not always: a
+# stamp run went red on Windows on 2026-07-28, leaving neither commit validated.
+# Every commit on `main` now completes its own run. The cost is that an increment
+# merge completes two runs (the merge and the stamp) rather than one-and-a-stub;
+# that is what validating every commit costs, and it is the intended trade.
+#
+# The deploy pipelines (deploy-site.yml / deploy-playground.yml) have their own
 # non-cancelling concurrency groups.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least privilege by default; jobs that need more opt in (changes needs
 # pull-requests:read for the PR file list; dependency-review reads the diff).
@@ -53,6 +69,7 @@ jobs:
   changes:
     name: Detect changed paths
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -66,23 +83,34 @@ jobs:
       playground: ${{ steps.filter.outputs.playground }}
       site: ${{ steps.filter.outputs.site }}
       all: ${{ steps.all.outputs.value }}
-      # JSON array of OSes for the `test` matrix. PRs run Linux-only (fast,
-      # cheap — macOS is billed at 10x and Windows at 2x Linux minutes); every
-      # other event (push to main, merge_group, the weekly schedule) runs the
-      # full three-OS matrix.
+      # JSON array of OSes for the `test` matrix. PRs run Linux + Windows; every
+      # other event (push to main, merge_group, the weekly schedule) adds macOS.
       #
-      # Honest statement of the trade: with no merge queue enabled today, the
-      # per-PR gate is Linux-only, so a macOS/Windows-only regression (a path
-      # separator, a line ending, the `bynkc test` runner's Unix-centric bits)
-      # is NOT caught before merge — it first surfaces on the post-merge `main`
-      # build and is fixed forward. The saving is large (macOS+Windows are ~95%
-      # of the test leg's billed minutes); the cost is that cross-OS breakage
-      # lands on main rather than being blocked at the PR. Enable a merge queue
-      # (the merge_group trigger is already wired) to get the pre-land guarantee
-      # back without losing the per-PR saving.
+      # Windows is on the PR gate because the evidence said it had to be. This
+      # leg was Linux-only on PRs until 2026-07-29, on the theory that cross-OS
+      # breakage was rare enough to fix forward on `main`. It was not: the last
+      # six CI failures on `main` were ALL `Test suite (windows-latest)` — not
+      # most, all — and three of the last fifteen merged PRs (#961, #965, #971)
+      # were Windows-CI repair work. The gate was letting through the only class
+      # of defect that was actually reaching `main`.
+      #
+      # macOS stays post-merge: it has caught nothing in that window, and macOS
+      # runner concurrency is materially tighter than Linux/Windows.
+      #
+      # The cost, measured rather than guessed: across the last five green
+      # three-OS runs the Windows leg took 463-500s against Linux's 156-212s, so
+      # a healthy Windows leg is ~8 min and is the slowest job in the pipeline.
+      # The legs run in parallel, so the PR gate goes from ~5-6 min to ~8 min —
+      # about +2-3 min per PR, paid to stop shipping Windows breakage to `main`.
+      # (The old comment here justified the split on macOS billing at 10x and
+      # Windows at 2x Linux minutes. That reasoning predates the public flip —
+      # GitHub does not bill standard runners on public repos, which is why
+      # release.yml's arm64 leg was re-enabled at the same time.)
       test_os: ${{ steps.test-os.outputs.value }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
         with:
@@ -151,12 +179,12 @@ jobs:
           else
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
-      # Decide the `test` job's OS matrix from the event: Linux-only on PRs,
+      # Decide the `test` job's OS matrix from the event: Linux + Windows on PRs,
       # all three OSes on everything else (push/main, merge_group, schedule).
       - id: test-os
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo 'value=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'value=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
           else
             echo 'value=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
@@ -166,8 +194,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           components: rustfmt
@@ -180,8 +211,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           components: clippy
@@ -198,8 +232,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Build the crate API docs (strict)
@@ -219,14 +256,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.runtime == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        # Linux-only on PRs, all three OSes on push/merge_group/schedule — see
-        # the `test_os` output on the `changes` job.
+        # Linux + Windows on PRs, all three OSes on push/merge_group/schedule —
+        # see the `test_os` output on the `changes` job.
         os: ${{ fromJSON(needs.changes.outputs.test_os) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       # nextest runs one process pool across every test binary at once (the
@@ -260,11 +300,25 @@ jobs:
         run: cargo nextest run --workspace --locked --profile ci
         env:
           BYNK_REQUIRE_TSC: "1"
-          # The workerd smoke (#518) must actually run somewhere: required on
+          # The workerd smokes (#518) must actually run somewhere: required on
           # Linux, permitted to skip on the other OSes if wrangler cannot boot.
+          #
           # The `''` branch does not unset the variable — Actions exports it
-          # empty — so the test reads "required" as *non-empty*, not merely
-          # present. Keep the two halves of that contract in step.
+          # empty — so a workerd test must read "required" as *non-empty*, not
+          # merely present. That contract was got wrong twice (#965 fixed one
+          # guard; #971 fixed the identical guard in another test four days
+          # later, both only after the breakage had landed on `main`), because
+          # each test carried its own copy. It now has exactly one
+          # implementation: bynkc/tests/require/mod.rs, which is unit-tested on
+          # the empty case specifically. A new workerd test calls that, and the
+          # two halves of the contract cannot drift apart again.
+          #
+          # Deliberately NOT rewritten as a `shell: bash` conditional export.
+          # That would make the variable genuinely unset off Linux, but it would
+          # also run `cargo nextest` under Git Bash on windows-latest — a path
+          # this repo has never exercised, which reorders PATH and makes `which`
+          # resolvable, and several `bynkc test` runner paths branch on exactly
+          # that. Not worth the risk on the OS we just put on the PR gate.
           BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
 
   msrv:
@@ -289,8 +343,11 @@ jobs:
     # build (the main 1.95 legs already compile that code on the same toolchain).
     if: needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Derive the toolchain from the *declared* rust-version rather than a
       # hardcoded copy of the pin, so this leg cannot silently degrade into
       # re-running the main toolchain when the two drift apart (#520). Today
@@ -334,13 +391,25 @@ jobs:
     # fixtures can be aimed at unreached `bynk-check`/`bynk-emit` branches.
     # Deliberately NOT in ci-green's needs and marked continue-on-error —
     # coverage must inform, never gate.
+    #
+    # Off the PR path deliberately. It cannot block a merge (that is the point
+    # of report-only), yet it was spending ~5 min of a runner on every Rust PR.
+    # It now reports on pushes to `main` and the weekly schedule, where the
+    # summary is just as useful for aiming new fixtures. Note this buys COMPUTE,
+    # not latency: it ran in parallel with `test`, so removing it does not
+    # shorten the PR gate — `test` still sets the critical path.
     name: Coverage (report-only)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
+    if: >-
+      github.event_name != 'pull_request'
+      && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true')
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           components: llvm-tools-preview
@@ -362,8 +431,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           targets: wasm32-unknown-unknown
@@ -386,8 +458,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.playground == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           targets: wasm32-unknown-unknown
@@ -419,11 +494,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.site == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: site
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "22"
@@ -452,11 +530,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: vscode-bynk
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
@@ -486,6 +567,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.extension == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # The pinned VS Code build the suite runs against — `runTest.ts` reads this
       # and the cache below keys on it (one source of truth). Pinned to the recent
@@ -493,6 +575,8 @@ jobs:
       VSCODE_TEST_VERSION: "1.124.2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Build the language server + compiler + driver
@@ -527,11 +611,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.grammar == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: tree-sitter-bynk
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
@@ -539,6 +626,18 @@ jobs:
         run: npm ci
       - name: Generate parser
         run: npx tree-sitter generate
+      # `src/parser.c`, `src/grammar.json` and `src/node-types.json` are
+      # GENERATED but COMMITTED. Nothing else checks that the committed copies
+      # match what grammar.js currently produces, and `grammar.json` is what the
+      # Book's grammar appendix is rendered from — so a grammar.js edit whose
+      # regenerated output was never committed would leave the appendix silently
+      # describing the old grammar, with its own drift guard blessing it.
+      #
+      # Expect this to go red on Dependabot `tree-sitter-cli` bumps, when a new
+      # CLI generates the parser (or the vendored `src/tree_sitter/*.h`)
+      # differently. That is the guard working: commit the regenerated output.
+      - name: Committed parser matches grammar.js
+        run: git diff --exit-code -- src/
       - name: Test corpus
         run: npx tree-sitter test
 
@@ -554,11 +653,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.runtime == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: bynk-emit/runtime
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           # ≥ 22 so `node --test` runs the `.ts` suite directly under TypeScript
@@ -598,8 +700,11 @@ jobs:
       && needs.changes.outputs.rust != 'true'
       && needs.changes.outputs.all != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       # Left on `cargo test` (not nextest): each guard is a single test binary,
@@ -624,8 +729,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Define the toolchain explicitly (rust-toolchain.toml would otherwise
       # trigger an implicit download when `cargo audit` dispatches in-repo).
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -644,8 +752,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
@@ -661,6 +772,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.grammar == 'true' || needs.changes.outputs.runtime == 'true' || needs.changes.outputs.playground == 'true' || needs.changes.outputs.site == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -670,6 +782,8 @@ jobs:
         working-directory: ${{ matrix.package }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
@@ -688,8 +802,11 @@ jobs:
     name: Dependency review (PRs)
     if: github.event_name == 'pull_request' && !github.event.repository.private
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5
 
   ci-green:
@@ -720,7 +837,38 @@ jobs:
       - npm-audit
       - dependency-review
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The `needs:` list above is the whole gate, and it is hand-maintained: a
+      # job added to this workflow without a matching entry silently stops
+      # gating, and nothing about the PR looks wrong. Compare the workflow's job
+      # keys against the keys of `needs` (taken from the context at runtime, so
+      # only the job list is parsed out of the file) and fail on any job that is
+      # neither needed nor deliberately exempt.
+      #
+      # EXEMPT is the honest record of what does not gate: `coverage` is
+      # report-only by design (#520), and `ci-green` cannot need itself.
+      - name: Every job is gated (or explicitly exempt)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          EXEMPT="coverage ci-green"
+          jobs="$(sed -n '/^jobs:$/,$p' .github/workflows/ci.yml \
+                  | sed -n 's/^  \([a-z][a-z0-9-]*\):$/\1/p')"
+          needed="$(printf '%s' "$NEEDS" | jq -r 'keys[]')"
+          missing=""
+          for j in $jobs; do
+            case " $EXEMPT " in *" $j "*) continue ;; esac
+            printf '%s\n' $needed | grep -qx "$j" || missing="$missing $j"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::job(s) not in ci-green's needs, so they gate nothing:$missing. Add them to needs:, or to EXEMPT in this step with a reason."
+            exit 1
+          fi
+          echo "All jobs are gated or exempt."
       - name: Verify no upstream job failed
         run: |
           results="${{ join(needs.*.result, ' ') }}"

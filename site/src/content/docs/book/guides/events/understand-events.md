@@ -9,9 +9,9 @@ code — wires the delivery.
 
 This page is the mental model for the emit/subscribe core (slice 0),
 subscription pattern filtering (slice 1), the runtime envelope (slice 2),
-event field defaults (slice 3a), and manual `@schema(N)` event versioning
-(slice 3b). For the full track's remaining scope (automatic schema-version
-detection, the cross-build registry, replay), see
+event field defaults (slice 3a), `@schema(N)` event versioning (slice 3b),
+and the cross-build schema registry that verifies it (slice 3c). For the
+track's remaining scope (replay, `via schema(...)` dispatch), see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/).
 
 ## The three pieces
@@ -160,8 +160,9 @@ handler's key is scoped to its own qualified name automatically). A
 subscriber that only reads or transforms state, taking no effect, is
 trivially idempotent already and needs no `env` parameter at all.
 
-`schemaVersion` reflects the event's own declared `@schema(N)` annotation
-(below), or `1` if it declares none.
+`schemaVersion` reflects the version the cross-build schema registry computes
+for the event (below) — verified against a declared `@schema(N)` annotation
+when one is present, or `1` for a brand-new event with neither.
 
 ## Evolving an event's shape with field defaults
 
@@ -200,9 +201,58 @@ empty, which is a different fact from "this field didn't exist yet." A field
 with no default still fails with a structural-mismatch error if its key is
 missing, exactly as before.
 
+## The schema registry: automatic versions, verified
+
+Every build reconciles each event's field shape (names, types, which fields
+carry a default) against `bynk.schema.lock` — a file committed alongside
+`bynk.toml`, written automatically by `bynkc compile` and by `bynk dev`/`bynk
+deploy`'s build step. You don't create or edit it by hand; its diff across a
+pull request *is* the human-readable record of how an event's schema evolved.
+
+For a brand-new event, the first compile baselines it at version `1` (or
+at its declared `@schema(N)`, if one is present — see below). From then on,
+every later compile compares the event's current shape against what the
+registry last recorded:
+
+- **Unchanged shape** — the version stays exactly what it was.
+- **A purely additive change** — every added field carries a default, and
+  nothing was removed or retyped — auto-bumps the version by one. No
+  annotation is required for this; it happens for every event, annotated or
+  not.
+- **Anything else** — a field removed, retyped, added *without* a default,
+  or one that lost a default it used to have — fails the build with
+  `bynk.event.non_additive_schema_change`. The registry is not guessing at
+  intent here: none of these are safe for a subscriber still holding an
+  older wire event to decode. Give the new shape a new event type name
+  instead (see [Only the declaring context may
+  emit](#only-the-declaring-context-may-emit) below for why that's cheap) —
+  this track's prescribed path for an actual breaking change.
+
+```bynk,ignore
+event PaymentConfirmed = {
+  orderId: String,
+  region: Region = Region.Domestic,
+}
+```
+
+Compiling this for the first time writes:
+
+```toml
+[events."commerce.order.PaymentConfirmed"]
+schema = 1
+fields = [
+  { name = "orderId", type = "String", default = false },
+  { name = "region", type = "Region", default = true },
+]
+```
+
+Add a further defaulted field later and the next compile bumps `schema` to
+`2` on its own — commit the updated lock file alongside the source change,
+the same way you would `Cargo.lock`.
+
 ## Asserting a schema version with `@schema(N)`
 
-An event may declare its current wire schema version explicitly:
+An event may also declare its current version explicitly:
 
 ```bynk,ignore
 event PaymentConfirmed @schema(2) = {
@@ -211,20 +261,14 @@ event PaymentConfirmed @schema(2) = {
 }
 ```
 
-`N` must be a positive `Int` literal. It's embedded verbatim into
-`env.schemaVersion` at emission — a subscriber declaring the optional `env:
-EventEnvelope` parameter sees exactly `2`. An event with no `@schema`
-annotation is version `1`, identical to every event before this annotation
-existed.
-
-**This is an assertion, not a detection.** The compiler doesn't compare
-today's event shape against a prior build to decide whether you *should*
-have bumped `@schema` — it takes your declared number at face value. If you
-change `PaymentConfirmed`'s fields and forget to bump `@schema`, nothing
-catches that for you; this is a real, accepted gap, not an oversight
-(automatic detection is a future, unbuilt slice of this track). What
-`@schema(N)` does give you is a real, meaningful value to match against with
-a `via schema(...)` subscription clause, once that lands.
+`N` must be a positive `Int` literal. Unlike a plain field-shape change, this
+is not silently trusted: the compiler **verifies** `N` against the version
+the registry computes from the event's build history, and a mismatch fails
+the build with `bynk.event.schema_version_mismatch`, naming the version the
+registry actually computed. Declare `@schema(N)` when you want the version
+number itself reviewable in a diff of the *source*, not only in
+`bynk.schema.lock`; omit it and the registry still tracks the version for
+you, silently, embedding whatever it computes into `env.schemaVersion`.
 
 `@schema` is the only annotation an event accepts today — any other name is
 rejected, and `@schema` itself may appear at most once per event.
