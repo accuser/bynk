@@ -73,6 +73,31 @@ export const Response = {
 };
 
 /**
+ * Runtime metadata carried alongside an event payload (Events track, slice
+ * 2; design/tracks/events.md, spine #936), available as an `on event`
+ * handler's optional second parameter. `eventId` is minted once per
+ * emission — every subscriber of that emission sees the same value, making
+ * it the dedup key for the `Idempotency` capability's `dedup`/`remember`
+ * idiom. `publisherId` is the emitting context's qualified name, not the
+ * emitting agent's instance identity: `Events.emit` is legal from a plain,
+ * keyless service handler with no agent to report, so a context-scoped
+ * identifier is the only one available uniformly at every legal emission
+ * site (an amendment to design/bynk-design-notes.md §7's "the publisher is
+ * the emitting agent" framing). `schemaVersion` is reserved and currently
+ * always `1`; a real per-type computed value is a future slice (§3.5's
+ * cross-build schema registry).
+ */
+export interface EventEnvelope {
+  readonly eventId: string;
+  readonly publisherId: string;
+  readonly emittedAt: number;
+  readonly schemaVersion: number;
+}
+
+export const EventEnvelope = {
+};
+
+/**
  * Reads the current wall-clock time, as Unix milliseconds.
  */
 export interface Clock {

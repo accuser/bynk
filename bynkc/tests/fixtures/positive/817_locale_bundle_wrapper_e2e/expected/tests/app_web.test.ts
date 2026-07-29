@@ -56,7 +56,8 @@ async function test_renders_the_bundle_s_greeting_through_the_wrapper() {
     type Message = bynk_locale_types.Message;
     type MessageArg = bynk_locale_types.MessageArg;
     const { greet, render } = app_bundle;
-    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
+    type EventEnvelope = bynk.EventEnvelope;
     type FetchError = bynk.FetchError;
     type Method = bynk.Method;
     type Request = bynk.Request;

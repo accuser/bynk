@@ -327,15 +327,23 @@ export async function callService<T, E>(
 // 0284) is the caller's responsibility — the fan-out DO catches per-subscriber
 // so one subscriber's rejection does not stop delivery to its siblings; this
 // helper itself just throws on a non-`ok` response.
+//
+// Slice 2 (spine #936): the POST body is `{ payload, envelope }`, not the
+// bare payload — the envelope is always sent; whether the receiving
+// subscriber's handler actually declared the optional `env: EventEnvelope`
+// parameter is decided entirely on the receiving side (the `/_bynk/event/`
+// route in the emitted `index.ts`), which forwards it to the handler only
+// when that handler's own generated wrapper expects it.
 export async function deliverEvent(
   binding: ServiceBinding,
   servicePath: string,
   payload: unknown,
+  envelope: unknown,
 ): Promise<void> {
   const request = new Request(`http://internal/_bynk/event/${servicePath}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ payload, envelope }),
   });
   const response = await binding.fetch(request);
   if (!response.ok) {
@@ -1102,7 +1110,11 @@ export function makeAgent<C>(
 // failure of the handler that emitted.
 export async function dispatchToEventsFanout(
   binding: DurableObjectNamespace,
-  events: Array<{ type: string; payload: unknown }>,
+  events: Array<{
+    type: string;
+    payload: unknown;
+    envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number };
+  }>,
 ): Promise<void> {
   // The whole round trip is wrapped, not just the status check: a rejected
   // `stub.fetch` (a network error, the DO throwing) is exactly as much a

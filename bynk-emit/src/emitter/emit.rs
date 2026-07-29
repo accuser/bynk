@@ -1207,6 +1207,7 @@ pub(crate) fn emit_provider(
                         "{}.provides.{}.{}",
                         ctx.commons_name, p.capability.name, op.name.name
                     )),
+                    owning_context: ctx.commons_name.clone(),
                     ..HandlerShared::default()
                 },
             },
@@ -1387,6 +1388,7 @@ pub(crate) fn emit_service(
                         "{}.{}.{}",
                         ctx.commons_name, s.name.name, kind_name
                     )),
+                    owning_context: ctx.commons_name.clone(),
                     ..HandlerShared::default()
                 },
                 deps_identity_binder,
@@ -1534,7 +1536,10 @@ pub(crate) fn emit_service(
                     .agent_given_caps_used()
                     .is_some_and(|m| m.contains_key("Events")));
         if needs_events_dispatch {
-            let field = "__eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>";
+            let field = format!(
+                "__eventsDispatch: (events: Array<{}>) => Promise<void>",
+                crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+            );
             deps_ty = if deps_ty == "{}" {
                 format!("{{ {field} }}")
             } else {
@@ -1573,7 +1578,8 @@ pub(crate) fn emit_service(
         if body_emits_directly {
             writeln!(
                 out,
-                "    const __events: Array<{{ type: string; payload: unknown }}> = [];"
+                "    const __events: Array<{}> = [];",
+                crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
             )
             .unwrap();
             writeln!(out, "    const __result = await (async () => {{").unwrap();
@@ -1958,10 +1964,10 @@ fn emit_context_deps_interface(
             .map(String::as_str)
             == Some("bynk");
     if is_first_party_events && commons_uses_emit(commons) {
-        fields.push(
-            "  readonly __eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>;"
-                .to_string(),
-        );
+        fields.push(format!(
+            "  readonly __eventsDispatch: (events: Array<{}>) => Promise<void>;",
+            crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+        ));
     }
     writeln!(out, "export interface {deps_name} {{").unwrap();
     for f in &fields {
@@ -3104,6 +3110,7 @@ pub(crate) fn emit_agent(
                         "{}.{}.{}",
                         ctx.commons_name, a.name.name, scope_method
                     )),
+                    owning_context: ctx.commons_name.clone(),
                     ..HandlerShared::default()
                 },
                 in_agent_handler: true,
@@ -3153,7 +3160,10 @@ pub(crate) fn emit_agent(
                     .agent_given_caps_used()
                     .is_some_and(|m| m.contains_key("Events")));
         if needs_events_dispatch {
-            let field = "__eventsDispatch: (events: Array<{ type: string; payload: unknown }>) => Promise<void>";
+            let field = format!(
+                "__eventsDispatch: (events: Array<{}>) => Promise<void>",
+                crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+            );
             deps_ty = if deps_ty == "{}" {
                 format!("{{ {field} }}")
             } else {
@@ -3219,7 +3229,10 @@ pub(crate) fn emit_agent(
         // local agent it calls has nothing of its own to buffer or flush;
         // `deps` (typed with the field) simply passes through unchanged.
         let body_emits_directly = crate::emitter::block_uses_emit(&h.body);
-        let events_decl = "    const __events: Array<{ type: string; payload: unknown }> = [];";
+        let events_decl = format!(
+            "    const __events: Array<{}> = [];",
+            crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+        );
         let flush = "    if (__events.length > 0) { await deps.__eventsDispatch(__events); }";
         if is_store_agent {
             if writes_state {
@@ -3363,7 +3376,8 @@ pub(crate) fn emit_agent(
                 );
                 writeln!(
                     out,
-                    "      const __eventsDeps = {{ __eventsDispatch: (events: Array<{{ type: string; payload: unknown }}>) => dispatchToEventsFanout(env.{bind}, events) }};"
+                    "      const __eventsDeps = {{ __eventsDispatch: (events: Array<{ev_ty}>) => dispatchToEventsFanout(env.{bind}, events) }};",
+                    ev_ty = crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
                 )
                 .unwrap();
                 rebuilt.push("...__eventsDeps".to_string());
@@ -3689,6 +3703,7 @@ fn emit_ws_do_method(
                     "{}.{}.{}",
                     ctx.commons_name, agent.name.name, method
                 )),
+                owning_context: ctx.commons_name.clone(),
                 ..HandlerShared::default()
             },
             deps_identity_binder: host.seam.as_ref().and_then(|s| s.binder.clone()),

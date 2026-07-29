@@ -129,7 +129,17 @@ type Response = {
   status: Int,
   body: String,
 }
+
+type EventEnvelope = {
+  eventId:       String,
+  publisherId:   String,
+  emittedAt:     Instant,
+  schemaVersion: Int,
+}
 ```
+
+`EventEnvelope` is an `on event` handler's optional second parameter — see
+[Understand events](/book/guides/events/understand-events/#the-envelope-and-idempotent-handling).
 
 ## The Cloudflare surface — `bynk.cloudflare`
 

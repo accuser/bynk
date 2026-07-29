@@ -1628,24 +1628,73 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                 // whether or not a pattern is present.
                 if let ServiceProtocol::Events { event_type, .. } = &service.protocol
                     && handler.kind == HandlerKind::Event
-                    && let Some(param) = handler.params.first()
                 {
-                    let header_name = type_ref_named(event_type);
-                    let param_name = type_ref_named(&param.type_ref);
-                    if header_name.is_none() || header_name != param_name {
-                        errors.push(
-                            CompileError::new(
-                                "bynk.event.handler_param_type_mismatch",
-                                param.type_ref.span(),
-                                format!(
-                                    "this handler's parameter type does not match the header's event type `{}`",
-                                    type_ref_to_display(event_type)
+                    if let Some(param) = handler.params.first() {
+                        let header_name = type_ref_named(event_type);
+                        let param_name = type_ref_named(&param.type_ref);
+                        if header_name.is_none() || header_name != param_name {
+                            errors.push(
+                                CompileError::new(
+                                    "bynk.event.handler_param_type_mismatch",
+                                    param.type_ref.span(),
+                                    format!(
+                                        "this handler's parameter type does not match the header's event type `{}`",
+                                        type_ref_to_display(event_type)
+                                    ),
+                                )
+                                .with_note(
+                                    "an `on event(e: E)` handler's parameter must be the same event type its `from Events(E)` header names",
                                 ),
+                            );
+                        }
+                    }
+                    // Events track, slice 2 (spine #936): the arity/type
+                    // check for the optional `env: EventEnvelope` second
+                    // parameter — a latent gap independent of whether this
+                    // slice's envelope machinery is ever used. Before this,
+                    // `on event(e: E, extra: Whatever)` parsed and passed
+                    // every existing check (the type-mismatch check above
+                    // only ever inspected `params.first()`), then failed as
+                    // a raw `tsc` argument-count error at the generated
+                    // call site rather than a bynk diagnostic. A malformed
+                    // *first* parameter is caught above already
+                    // (`handler_param_type_mismatch` fires when position 0
+                    // isn't the header's event type, including when it's
+                    // `EventEnvelope` written in the wrong slot) — this
+                    // check only adds the arity bound and the second
+                    // parameter's required type.
+                    match handler.params.len() {
+                        0 => errors.push(
+                            CompileError::new(
+                                "bynk.event.bad_params",
+                                handler.span,
+                                "`on event` handlers take at least one parameter (the event payload)",
                             )
-                            .with_note(
-                                "an `on event(e: E)` handler's parameter must be the same event type its `from Events(E)` header names",
+                            .with_note("add the payload parameter — e.g. `on event(e: E)`"),
+                        ),
+                        1 => {}
+                        2 => {
+                            let env_param = &handler.params[1];
+                            if type_ref_named(&env_param.type_ref) != Some("EventEnvelope") {
+                                errors.push(
+                                    CompileError::new(
+                                        "bynk.event.bad_params",
+                                        env_param.type_ref.span(),
+                                        "an `on event` handler's second parameter must be `EventEnvelope`",
+                                    )
+                                    .with_note(
+                                        "the payload comes first; `EventEnvelope` carries runtime metadata about the emission (eventId, publisherId, emittedAt, schemaVersion)",
+                                    ),
+                                );
+                            }
+                        }
+                        n => errors.push(CompileError::new(
+                            "bynk.event.bad_params",
+                            handler.params[2].span,
+                            format!(
+                                "`on event` handlers take at most two parameters (the event payload and, optionally, `EventEnvelope`), got {n}"
                             ),
-                        );
+                        )),
                     }
                 }
                 continue;

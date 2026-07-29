@@ -7,9 +7,9 @@ Events(E)` trio is in-system pub-sub: one context declares a typed fact and
 emits it, any number of others subscribe to it, and the compiler — not your
 code — wires the delivery.
 
-This page is the mental model for the emit/subscribe core (slice 0) and
-subscription pattern filtering (slice 1). For the full track's remaining
-scope (an envelope, schema versioning, replay), see
+This page is the mental model for the emit/subscribe core (slice 0),
+subscription pattern filtering (slice 1), and the runtime envelope (slice
+2). For the full track's remaining scope (schema versioning, replay), see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/).
 
 ## The three pieces
@@ -108,6 +108,59 @@ add static narrowing once the design's own open refinement-propagation
 question is settled; today, a handler that needs to act on the fact that its
 pattern matched still reads `e.region` at its full declared type.
 
+## The envelope, and idempotent handling
+
+An `on event` handler may declare a second, optional parameter —
+`env: EventEnvelope` — carrying runtime metadata about the emission:
+
+```bynk,ignore
+context commerce.notifications
+
+consumes commerce.order
+consumes bynk { Idempotency }
+
+service OnPayment from Events(PaymentConfirmed) {
+  on event(e: PaymentConfirmed, env: EventEnvelope) -> Effect[()] given Idempotency {
+    let seen <- Idempotency.dedup[()](env.eventId)
+    match seen {
+      Some(_) => (),
+      None => {
+        -- react to e here, exactly once per eventId
+        let _ <- Idempotency.remember[()](env.eventId, (), 7.days)
+      }
+    }
+  }
+}
+```
+
+`EventEnvelope` is `{ eventId: String, publisherId: String, emittedAt:
+Instant, schemaVersion: Int }`. Two things worth knowing before you reach
+for it:
+
+- **`eventId` is minted once per emission, not once per delivery.** If two
+  sibling subscribers both declare `env`, they observe the *same*
+  `eventId` for the same emission — it identifies the emission, not the
+  delivery.
+- **`publisherId` names the emitting *context*, not the emitting agent.**
+  `Events.emit` is legal from a plain `service` handler with no agent
+  instance at all, so there is no per-agent identity to report uniformly;
+  `publisherId` is the emitting context's qualified name (e.g.
+  `"commerce.order"`) every time.
+
+**The idempotency idiom.** Delivery is at-least-once (see below) — an
+effectful subscriber that must not double-apply an emission dedups on
+`env.eventId` using the already-documented
+[`Idempotency`](/book/reference/bynk-capabilities/) capability, exactly as
+shown above. This is the ordinary `dedup`/`remember` pair, not new syntax —
+`env.eventId` is just a `String` key like any other, and two different
+subscriber services deduping the same `eventId` never collide (each
+handler's key is scoped to its own qualified name automatically). A
+subscriber that only reads or transforms state, taking no effect, is
+trivially idempotent already and needs no `env` parameter at all.
+
+`schemaVersion` is reserved for a future slice — it is always `1` today,
+not yet computed from the event type's shape.
+
 ## Only the declaring context may emit
 
 `Events.emit[E]` compiles only when `E` is an event declared **in the emitting
@@ -179,13 +232,15 @@ handler on every target too — deliver-and-filter, not a routing difference:
 | **Cloudflare Workers** | Each publishing context gets its own compiler-synthesised fan-out Durable Object. One subscriber's delivery failure is caught and logged without blocking delivery to its siblings. Ordering is preserved *within* one emission (everything a single handler invocation emits) and *across* successive, non-overlapping calls to one agent — but **not** across concurrent invocations of the same agent, since the Durable Object delivers by making an outbound call per subscriber and does not serialise two overlapping deliveries against each other. |
 | **Bundle** (node, browser) | Dispatch is in-process — no Durable Object, no wire. The composed program calls directly into each subscriber's handler. |
 
-What slice 0 does **not** yet give you: a delivery retry, a durable log to
+What the track does **not** yet give you: a delivery retry, a durable log to
 replay from, or ordering across *concurrent* invocations of the same
 publishing agent — measured, not assumed, and found not to hold. A subscriber
 that needs a total order across concurrent publishes must carry its own
-sequence number in the event payload. A subscriber that must not miss an
-event needs its own idempotent handling of "ran zero times" today — the same
-discipline any other best-effort delivery already asks for.
+sequence number in the event payload. A subscriber that must not double-apply
+a redelivered emission dedups on `env.eventId` via `Idempotency` (see "The
+envelope, and idempotent handling", above) — though only up to that
+capability's current, in-memory limit, since a duplicate delivered across an
+isolate restart is not deduped until a durable provider exists.
 
 **See also:**
 [First-party `bynk` capabilities](/book/reference/bynk-capabilities/),

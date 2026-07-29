@@ -45,10 +45,19 @@ pub(crate) fn emit_events_fanout_do(
         "import {{ deliverEvent }} from \"{EVENTS_FANOUT_RUNTIME_SPECIFIER}\";"
     );
     writeln!(out).unwrap();
+    let _ = writeln!(out, "interface FanoutEvent {{");
+    let _ = writeln!(out, "  type: string;");
+    let _ = writeln!(out, "  payload: unknown;");
+    // Events track, slice 2 (spine #936): minted once at emission
+    // (`lower.rs`'s `__events.push`), forwarded here unchanged and always —
+    // whether a subscriber's own handler actually declared the optional
+    // second `env: EventEnvelope` parameter is decided downstream, at the
+    // receiving context's entry route, not here.
     let _ = writeln!(
         out,
-        "interface FanoutEvent {{ type: string; payload: unknown; }}"
+        "  envelope: {{ eventId: string; publisherId: string; emittedAt: number; schemaVersion: number }};"
     );
+    let _ = writeln!(out, "}}");
     writeln!(out).unwrap();
     let _ = writeln!(
         out,
@@ -104,7 +113,7 @@ pub(crate) fn emit_events_fanout_do(
     let _ = writeln!(out, "        try {{");
     let _ = writeln!(
         out,
-        "          await deliverEvent(binding, sub.service, ev.payload);"
+        "          await deliverEvent(binding, sub.service, ev.payload, ev.envelope);"
     );
     let _ = writeln!(out, "        }} catch (e) {{");
     let _ = writeln!(

@@ -129,7 +129,11 @@ export function makeAgent<C>(
 // failure of the handler that emitted.
 export async function dispatchToEventsFanout(
   binding: DurableObjectNamespace,
-  events: Array<{ type: string; payload: unknown }>,
+  events: Array<{
+    type: string;
+    payload: unknown;
+    envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number };
+  }>,
 ): Promise<void> {
   // The whole round trip is wrapped, not just the status check: a rejected
   // `stub.fetch` (a network error, the DO throwing) is exactly as much a

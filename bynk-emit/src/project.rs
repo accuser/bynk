@@ -4895,15 +4895,35 @@ fn emit_composition_root(
                     .iter()
                     .map(|(sub_ctx, sub_svc)| {
                         let sub_ns = sub_ctx.replace('.', "_");
+                        // Events track, slice 2 (spine #936): the envelope
+                        // is only forwarded to a subscriber that declared
+                        // the optional second `env: EventEnvelope`
+                        // parameter — a subscriber that kept `on event(e:
+                        // E)` sees no change to its call at all.
+                        let wants_envelope = unit_tables
+                            .get(sub_ctx)
+                            .and_then(|t| t.services.get(sub_svc))
+                            .and_then(|s| {
+                                s.handlers
+                                    .iter()
+                                    .find(|h| matches!(h.kind, HandlerKind::Event))
+                            })
+                            .is_some_and(|h| h.params.len() == 2);
+                        let call_args = if wants_envelope {
+                            "ev.payload as any, ev.envelope"
+                        } else {
+                            "ev.payload as any"
+                        };
                         format!(
-                            "try {{ await {sub_ns}.{sub_svc}.event(ev.payload as any, {sub_ns}Deps); }} catch (e) {{ console.error(\"EventsFanout delivery failed\", {{ event: ev.type, service: {sub_svc:?}, error: String(e) }}); }}"
+                            "try {{ await {sub_ns}.{sub_svc}.event({call_args}, {sub_ns}Deps); }} catch (e) {{ console.error(\"EventsFanout delivery failed\", {{ event: ev.type, service: {sub_svc:?}, error: String(e) }}); }}"
                         )
                     })
                     .collect();
                 cases.push_str(&format!("case {name:?}: {{ {} break; }} ", calls.join(" ")));
             }
             deps_entries.push(format!(
-                "__eventsDispatch: async (events: Array<{{ type: string; payload: unknown }}>) => {{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}"
+                "__eventsDispatch: async (events: Array<{}>) => {{ for (const ev of events) {{ switch (ev.type) {{ {cases}}} }} }}",
+                crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
             ));
         }
         deps_entries.sort();
