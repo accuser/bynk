@@ -351,6 +351,68 @@ export async function deliverEvent(
   }
 }
 
+// #973: `EventEnvelope` (`{ eventId, publisherId, emittedAt, schemaVersion }`)
+// is declared in `adapter bynk`, not by a consumed context, so it never goes
+// through the ordinary `emit_record_codec` machinery a context's own boundary
+// types get (that machinery is rooted at a *consumed context's* exports;
+// widening it to cover every adapter-declared type would touch every context
+// that imports any `bynk` type, for one envelope). This hand-written validator
+// is its sole codec, checked at the receiving `/_bynk/event/` route
+// (`workers_entry.rs`) exactly once per delivery, unconditionally — the
+// envelope is always on the wire regardless of whether a given subscriber's
+// handler declared the optional `env: EventEnvelope` parameter. Field rules
+// mirror the generated `Int`/`Instant` codec rule (`serialisation.rs`'s
+// `TypeRef::Base` arm): both wire as `number`, integer-checked.
+export function deserialiseEventEnvelope(
+  json: JsonValue,
+  path: string = "$",
+): Result<
+  { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number },
+  BoundaryError
+> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  const eventId = obj["eventId"];
+  if (typeof eventId !== "string") {
+    return Err({
+      kind: "StructuralMismatch",
+      path: `${path}.eventId`,
+      expected: "string",
+      actual: typeof eventId,
+    });
+  }
+  const publisherId = obj["publisherId"];
+  if (typeof publisherId !== "string") {
+    return Err({
+      kind: "StructuralMismatch",
+      path: `${path}.publisherId`,
+      expected: "string",
+      actual: typeof publisherId,
+    });
+  }
+  const emittedAt = obj["emittedAt"];
+  if (typeof emittedAt !== "number" || !Number.isInteger(emittedAt)) {
+    return Err({
+      kind: "StructuralMismatch",
+      path: `${path}.emittedAt`,
+      expected: "integer",
+      actual: typeof emittedAt,
+    });
+  }
+  const schemaVersion = obj["schemaVersion"];
+  if (typeof schemaVersion !== "number" || !Number.isInteger(schemaVersion)) {
+    return Err({
+      kind: "StructuralMismatch",
+      path: `${path}.schemaVersion`,
+      expected: "integer",
+      actual: typeof schemaVersion,
+    });
+  }
+  return Ok({ eventId, publisherId, emittedAt, schemaVersion });
+}
+
 // v0.9: HttpResult — the built-in HTTP-result sum.
 
 export type HttpResult<T> =

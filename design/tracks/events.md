@@ -499,10 +499,21 @@ receives *exactly* the emissions its pattern admits.
   the payload; this is a design constraint the docs must call out, not
   something the runtime absorbs on the subscriber's behalf.
 - **Payload validation at the boundary.** An event is a value crossing a trust
-  boundary; refined fields in the payload are validated on receipt, malformed
-  events routed to the platform dead-letter policy (§7 line 286, the shipped
-  boundary-validation model). Subscribers never defensively re-check a refinement
-  the type already established.
+  boundary. **Found false and fixed post-slice-2, before slice 3 (#973):** on
+  Cloudflare Workers, the payload and envelope crossed the entire delivery
+  chain (mint → fan-out DO → `deliverEvent` → the receiving route) typed
+  `unknown`, terminating in a bare `payload as any` cast — no
+  `deserialise_*` was ever called, so nothing was actually validated on
+  receipt. Fixed: both are now validated at the receiving `/_bynk/event/`
+  route, the same validate-then-`400` shape `/_bynk/call/` has always used.
+  **There is no dead-letter policy for Events, and none is introduced by this
+  fix** — a malformed payload's `400` makes `deliverEvent` throw, caught by
+  the fan-out DO's existing per-subscriber `try`/`catch`, which logs the
+  failure and moves on to the next subscriber; that one subscriber's delivery
+  is lost, siblings unaffected. Subscribers never defensively re-check a
+  refinement the type already established. Recorded as the
+  `events-boundary-validation` ADR, `design/pending/events-boundary-
+  validation.md` (pre-stamp).
 
 ## 7. Slice status
 
@@ -512,6 +523,11 @@ receives *exactly* the emissions its pattern admits.
 - [x] Slice 2 — `EventEnvelope` + the `env.eventId` idempotency idiom (#968).
   `publisherId` is the emitting context (amends §7's per-agent framing);
   the idiom is documented convention, not new syntax (corrects §12).
+- [x] **Defect, found and fixed post-slice-2, pre-slice-3 (#973):** on
+  Workers, an event's payload/envelope had no runtime validation at all —
+  fixed by generating a subscriber-side codec for a consumed-but-never-called
+  publisher's event type, a hand-written envelope validator, and
+  validate-then-`400` at the receiving route. See §6.
 - [ ] Slice 3 — additive versioning + the cross-build schema registry
 - [ ] Slice 4 — `via schema(...)` version-aware dispatch
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)

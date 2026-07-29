@@ -97,6 +97,12 @@ const RUNTIME_TS: &str = include_str!("emitter/runtime.ts");
 /// identical to this shape by hand; `cargo test -p bynkc --test
 /// events_workers_wiring` and `events_envelope_behaviour` both exercise every
 /// hop and would fail on a real mismatch.
+///
+/// #973: `runtime/src/boundary.ts`'s `deserialiseEventEnvelope` is a related
+/// but distinct hand-written piece — it validates the *inner* `envelope`
+/// object's shape at the receiving `/_bynk/event/` route, not this outer
+/// wire wrapper. Keep its field list in sync with the `envelope: { ... }`
+/// portion of this shape by hand; nothing generates either from the other.
 pub(crate) const EVENTS_WIRE_EVENT_TS_TYPE: &str = "{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }";
 
 /// Emit the contents of `out/tsconfig.json`. The CLI uses `tsc -p` against
@@ -1310,16 +1316,51 @@ fn emit_consumed_context_helpers(
     // contract manifest applies to `expects` (ADR 0200 Decision E, one layer up).
     let called = called_consumed_services(commons, info);
 
-    let mut consumed_keys: Vec<&String> = info.consumed_services.keys().collect();
-    consumed_keys.sort();
-    for c in consumed_keys {
-        let svcs = &info.consumed_services[c];
-        if svcs.is_empty() {
-            continue;
-        }
-        let Some(called_here) = called.get(c) else {
+    // #973: this context's own `from Events(E)` subscriptions, keyed by the
+    // consumed context that declares each `E` — a subscriber calls no method
+    // on the publisher, so `called_consumed_services` alone would never see
+    // it, and the `continue` below on an empty `called_here` would skip the
+    // event's payload type entirely (the root cause of #973: a subscriber's
+    // generated module had no `deserialise_<Payload>` at all).
+    let mut consumed_event_roots: HashMap<String, Vec<bynk_syntax::ast::TypeRef>> = HashMap::new();
+    for item in &commons.commons.items {
+        let CommonsItem::Service(svc) = item else {
             continue;
         };
+        let bynk_syntax::ast::ServiceProtocol::Events { event_type, .. } = &svc.protocol else {
+            continue;
+        };
+        let bynk_syntax::ast::TypeRef::Named(id) = event_type else {
+            continue;
+        };
+        for (c, names) in &info.consumed_event_names {
+            if names.contains(&id.name) {
+                consumed_event_roots
+                    .entry(c.clone())
+                    .or_default()
+                    .push(event_type.clone());
+            }
+        }
+    }
+
+    let empty_svcs: HashMap<String, bynk_check::resolver::CrossContextService> = HashMap::new();
+    let empty_called: HashSet<String> = HashSet::new();
+    let empty_event_roots: Vec<bynk_syntax::ast::TypeRef> = Vec::new();
+
+    let mut consumed_keys: HashSet<&String> = info.consumed_services.keys().collect();
+    consumed_keys.extend(consumed_event_roots.keys());
+    let mut consumed_keys: Vec<&String> = consumed_keys.into_iter().collect();
+    consumed_keys.sort();
+    for c in consumed_keys {
+        let svcs = info.consumed_services.get(c).unwrap_or(&empty_svcs);
+        let event_roots = consumed_event_roots.get(c).unwrap_or(&empty_event_roots);
+        if svcs.is_empty() && event_roots.is_empty() {
+            continue;
+        }
+        let called_here = called.get(c).unwrap_or(&empty_called);
+        if called_here.is_empty() && event_roots.is_empty() {
+            continue;
+        }
         let Some(types_table) = info.consumed_types.get(c) else {
             continue;
         };
@@ -1330,12 +1371,16 @@ fn emit_consumed_context_helpers(
         let exports = ctx.exports_for_consumed.get(c);
         let owned = |n: &str| exports.is_some_and(|e| e.contains_key(n));
 
-        // Roots: every called service's parameter and return types, in a stable
-        // order.
+        // Roots: every called service's parameter and return types, plus (#973)
+        // any event type this context subscribes to from `c` — a subscriber
+        // participates in the event's contract as its receiving half, so its
+        // payload is not an uncalled surface the way an unreached method is
+        // (the narrowing this loop otherwise applies, mirroring ADR 0200
+        // Decision E one layer up, at `called_consumed_services` above).
         let mut svc_names: Vec<&String> =
             svcs.keys().filter(|s| called_here.contains(*s)).collect();
         svc_names.sort();
-        let mut roots: Vec<bynk_syntax::ast::TypeRef> = Vec::new();
+        let mut roots: Vec<bynk_syntax::ast::TypeRef> = event_roots.clone();
         for sn in svc_names {
             let svc = &svcs[sn];
             for (_, t) in &svc.params {

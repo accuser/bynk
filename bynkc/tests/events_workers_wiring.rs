@@ -197,6 +197,29 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
         notif_index.contains("/_bynk/event/") && notif_index.contains("case \"OnPayment\":"),
         "commerce-notifications's entry must route to its `on event` handler:\n{notif_index}"
     );
+
+    // #973: the payload and envelope are validated at this route before
+    // dispatch — a malformed one must never reach the handler unchecked.
+    assert!(
+        notif_index.contains("deserialiseEventEnvelope(envelope, \"$.envelope\")")
+            && notif_index
+                .contains("handlers.deserialise_PaymentConfirmed(payload, \"$.payload\")")
+            && notif_index.contains("status: 400"),
+        "the event route must validate both the envelope and the payload, \
+         rejecting a malformed one with 400 before ever dispatching:\n{notif_index}"
+    );
+
+    // #973's root cause: a pure subscriber calls no method on the publisher,
+    // so `called_consumed_services`'s narrowing (ADR 0200 Decision E) never
+    // saw its event payload type — the subscriber's own module had no codec
+    // for it at all. This is the assertion that would have caught that gap.
+    let notif_handlers = find("workers/commerce-notifications/handlers.ts");
+    assert!(
+        notif_handlers.contains("export function deserialise_PaymentConfirmed"),
+        "a subscriber must get its own codec for the event payload type it \
+         receives, even though it calls no method on the publisher:\n{notif_handlers}"
+    );
+
     let notif_wrangler = find("workers/commerce-notifications/wrangler.toml");
     assert!(
         !notif_wrangler.contains("EventsFanout"),
@@ -373,13 +396,17 @@ fn workers_events_pattern_leaves_fanout_routing_unchanged() {
 // Events track, slice 2 (spine #936): the same fixture again, but the
 // subscriber declares the optional `env: EventEnvelope` parameter.
 // `EventEnvelope` is a plain first-party record (`bynk-check/src/firstparty/
-// bynk.bynk`, `exports transparent`) — this is the first time an
-// adapter-owned transparent record reaches a handler *signature* on the
-// Workers target (`Request`/`Response` are only ever constructed inside
-// bodies elsewhere), so `collect_boundary_types` generates a real
-// serialise/deserialise codec pair for it that nothing calls at runtime
-// (the wire hop rides the same `unknown`/`as any` shape the payload
-// already used) but that must still compile under `tsc --strict`.
+// bynk.bynk`, `exports transparent`), imported directly from the `bynk`
+// adapter's own module like any other first-party type — declaring it as a
+// handler parameter needs no generated codec of its own (confirmed: it is
+// not owned by a *consumed context*, so `collect_codec_closure`'s
+// closure-of-a-consumed-context's-exports machinery never runs for it).
+//
+// #973: the envelope actually reaching this handler is now validated at the
+// route, via the hand-written `deserialiseEventEnvelope` runtime helper
+// (`runtime/src/boundary.ts`) — not a generated codec, since `EventEnvelope`
+// is adapter-owned. Before this fix, the wire hop rode a bare `unknown`/`as
+// any` cast the whole way with no runtime check at all.
 const SOURCE_NOTIFICATIONS_ENVELOPE: &str = r#"context commerce.notifications
 
 consumes commerce.order
@@ -455,14 +482,17 @@ fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
     );
 
     // The entry route (`index.ts`) destructures `{ payload, envelope }`
-    // uniformly and forwards both positionally, regardless of which
-    // subscriber it dispatches to.
+    // uniformly, validates both (#973), and forwards the *validated* values
+    // positionally, regardless of which subscriber it dispatches to.
     let notif_index = find("workers/commerce-notifications/index.ts");
     assert!(
         notif_index.contains("const { payload, envelope }")
-            && notif_index.contains("surface.OnPayment(payload, envelope)"),
-        "the entry route must destructure and forward both payload and \
-         envelope uniformly:\n{notif_index}"
+            && notif_index.contains("deserialiseEventEnvelope(envelope, \"$.envelope\")")
+            && notif_index
+                .contains("handlers.deserialise_PaymentConfirmed(payload, \"$.payload\")")
+            && notif_index.contains("surface.OnPayment(__r_payload.value, __r_envelope.value)"),
+        "the entry route must validate both payload and envelope and forward \
+         the validated values uniformly:\n{notif_index}"
     );
 
     // The compose-surface wrapper (`emit_event_wrapper`, in `compose.ts`) is
@@ -514,6 +544,118 @@ fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
     assert!(
         ok,
         "tsc --strict failed on the envelope-declaring workers-target output:\n{msg}"
+    );
+
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+// #973: a nested-record payload field, to exercise `collect_codec_closure`'s
+// transitive walk through the *new* event-roots path (the fix's Change A) —
+// every other fixture in this file has a flat, single-field payload, which
+// would pass even if the closure only ever collected the root type and never
+// followed a field into another record.
+const SOURCE_ORDER_NESTED: &str = r#"context commerce.order
+
+exports transparent { PaymentConfirmed, Meta }
+consumes bynk { Events }
+
+type Meta = {
+  region: String,
+}
+
+event PaymentConfirmed = {
+  orderId: String,
+  meta: Meta,
+}
+
+service markPaid {
+  on call(orderId: String, region: String) -> Effect[()] given Events {
+    Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId, meta: Meta { region: region } })
+  }
+}
+"#;
+
+#[test]
+fn workers_events_nested_payload_field_gets_a_transitive_codec() {
+    let tmp = std::env::temp_dir().join(format!(
+        "bynk-events-workers-wiring-nested-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    let proj = tmp.join("proj/commerce");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("order.bynk"), SOURCE_ORDER_NESTED).unwrap();
+    fs::write(proj.join("notifications.bynk"), SOURCE_NOTIFICATIONS).unwrap();
+
+    let out = match bynkc::compile_project(
+        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+    ) {
+        Ok(o) => o,
+        Err(failure) => panic!(
+            "compile the nested-payload events project to workers:\n{}",
+            bynkc::render_project_errors(&failure.flatten())
+        ),
+    };
+
+    let find = |suffix: &str| -> String {
+        out.files
+            .iter()
+            .find(|f| f.output_path.to_string_lossy().ends_with(suffix))
+            .unwrap_or_else(|| panic!("no compiled file ends with {suffix:?}"))
+            .typescript
+            .clone()
+    };
+
+    // The subscriber's own module must gain codecs for BOTH the root event
+    // payload type and the nested record it transitively reaches — a closure
+    // that only collected the root would leave `deserialise_Meta` missing,
+    // and the compile-time `handlers.deserialise_PaymentConfirmed` call the
+    // route emits would then reference a function whose own body calls an
+    // undefined `deserialise_Meta`, caught by the `tsc --strict` gate below.
+    let notif_handlers = find("workers/commerce-notifications/handlers.ts");
+    assert!(
+        notif_handlers.contains("export function deserialise_PaymentConfirmed")
+            && notif_handlers.contains("export function deserialise_Meta"),
+        "a subscriber must get codecs for the event payload's full transitive \
+         closure, not just its root type:\n{notif_handlers}"
+    );
+
+    let runner = match discover_tsc() {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "\n!!! EVENTS WORKERS WIRING (NESTED PAYLOAD) TSC CHECK SKIPPED !!!\nno tsc runner.\n"
+            );
+            if std::env::var(REQUIRE_ENV).is_ok() {
+                panic!("{REQUIRE_ENV} is set but no tsc runner was found");
+            }
+            let _ = fs::remove_dir_all(&tmp);
+            return;
+        }
+    };
+
+    let run_dir = tmp.join("run");
+    for file in &out.files {
+        let target = run_dir.join(&file.output_path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, &file.typescript).unwrap();
+    }
+    fs::write(
+        run_dir.join("runtime.ts"),
+        bynkc::emitter::emit_runtime_module(),
+    )
+    .unwrap();
+
+    let (program, prefix) = &runner;
+    let (ok, msg) = run(
+        program,
+        prefix,
+        &["--strict", "--noEmit", "-p", "tsconfig.json"],
+        &run_dir,
+    );
+    assert!(
+        ok,
+        "tsc --strict failed on the nested-payload workers-target output:\n{msg}"
     );
 
     let _ = fs::remove_dir_all(&tmp);
