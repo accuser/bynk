@@ -277,31 +277,33 @@ the decision **not** to change the emitter to close this gap (a substrate
 redesign, not a documentation increment — see §6 for the consequence a
 subscriber needs to know).
 
-### 3.5 — The cross-build schema registry — OPEN (narrowed to slice 3b)
+### 3.5 — The cross-build schema registry — OPEN (narrowed to slice 3c)
 
 **The question.** §7 specifies "the compiler maintains a schema registry across
 builds, computing the version from the type's structural shape" (line 258),
-emitting a schema-evolution report when a version changes, with optional
-`@schema(N)` pins, and a real (non-hardcoded) `env.schemaVersion`. This is
-**new persistent build-time state** — the family of the increment-allocation
-stamp ([ADR 0206](../decisions/0206-allocation-on-main.md)) and the
-cross-context contract hash
-([ADR 0200](../decisions/0200-cross-context-contract-hash.md)), which already
-computes a canonical structural normal form this could reuse.
+emitting a schema-evolution report when a version changes, with an *automatic*,
+non-hardcoded `env.schemaVersion`. This is **new persistent build-time
+state** — the family of the increment-allocation stamp
+([ADR 0206](../decisions/0206-allocation-on-main.md)) and the cross-context
+contract hash ([ADR 0200](../decisions/0200-cross-context-contract-hash.md)),
+which already computes a canonical structural normal form this could reuse.
 
 **Why it is open.** *Where* the registry lives (a committed file stamped on
 merge, like allocation? a derived build artifact?), *how* a version is computed
 (reuse the 0200 normal form, or a distinct event-schema hash?), and *what* counts
-as a version-bumping change all need settling. **Narrowed by slice 3a
-(#972):** default expressions on event fields — the other half of §3.0's
-additive-versioning story — did not need any of this open state; a default is
-checked and lowered to its wire form at the declaring context's own compile
-time, with no cross-build registry, no schema-evolution report, and no version
-computation at all (an old wire event missing a defaulted key falls back to
-the default; nothing about *when* the field was added is tracked or reported).
-So this section now names only the **slice-3b** work: `env.schemaVersion`
-computed for real, the registry, the evolution report, and `@schema(N)` pins —
-still unfiled, still a slice-4 (`via schema(...)`) blocker.
+as a version-bumping change all need settling. **Narrowed twice now:**
+slice 3a (#972) shipped default expressions on event fields — the other half
+of §3.0's additive-versioning story — needing none of this open state (a
+default is checked and lowered to its wire form at compile time, with no
+registry, no evolution report, and no version computation). Slice 3b (#978)
+then shipped the *manual* half of `env.schemaVersion` itself: an optional
+`@schema(N)` annotation the author asserts directly, embedded verbatim at
+emission — real and author-controlled, but not detected or verified against
+any prior build. This section now names only the still-open **slice-3c**
+work: *automatic* detection of a version bump from a structural shape change
+across builds, the registry that remembers the prior shape, and the
+evolution report — unfiled. Slice 4 (`via schema(...)`) does **not** depend
+on 3c; it already has a real integer to match against from 3b.
 
 ### 3.6 — Replay / backfill — SPLIT OUT to a future track (the precedent move; recorded)
 
@@ -387,16 +389,26 @@ MVP-first. Each slice is an ordinary increment proposal, a sub-issue of the spin
   use, via `BodyMode::StaticInit`) would not resolve in a subscriber's own
   regenerated codec module, which only ever imports the publisher's *types*.
   No `env.schemaVersion`/registry dependency — see §3.5's narrowing.
-- **Slice 3b — additive versioning's cross-build half — OPEN, unfiled.**
-  `env.schemaVersion` computed for real (not hardcoded), the cross-build
-  schema registry (§3.5) with its evolution report, and optional `@schema(N)`
-  pins.
+- **Slice 3b — manual `@schema(N)` event versioning — SHIPPED.** An optional
+  `@schema(N)` annotation on an `event` declaration (`N` a positive `Int`
+  literal), embedded verbatim into `env.schemaVersion` at emission; absence
+  still means version `1`, byte-identical to every event before this slice.
+  Author-asserted, not derived — no persisted cross-build state, no drift
+  detection, no evolution report (§3.5's narrowing explains why: that half
+  would make `bynkc` the first-ever compiler command with committed state,
+  out of proportion to this increment). A malformed `@schema` (non-positive,
+  non-literal, wrong arity, labelled, or duplicated) is a compile error; any
+  annotation name on an event other than `schema` is too.
+- **Slice 3c — additive versioning's automatic-detection half — OPEN,
+  unfiled.** A version bump detected from a structural shape change across
+  builds, the cross-build schema registry (§3.5) that remembers the prior
+  shape, and the evolution report.
 - **Slice 4 — `via` version-aware dispatch.** The `via schema(...)` envelope
   pattern clause (§7 lines 260–274): literal versions, ranges, `_`; a
   no-`via` subscriber receives any version. Generalisable `via <field>(pattern)`
-  grammar, but only `via schema(...)` committed here. **Depends on slice 3b**
-  (`via schema(...)` matches against a real, computed `schemaVersion` —
-  meaningless while it's hardcoded).
+  grammar, but only `via schema(...)` committed here. Buildable now that
+  slice 3b ships a real, author-controlled `schemaVersion` to match
+  against — does **not** depend on slice 3c's automatic detection.
 
 **Not slices of this track** (moved to the future replay track, §3.6): replay /
 backfill-from-log, the durable event log substrate, and the inherited actors Q8
@@ -544,6 +556,13 @@ receives *exactly* the emissions its pattern admits.
   subscriber's own codec substitutes the default before validation runs, and
   the request succeeds. Only a field with **no** declared default still fails
   structural-mismatch on a missing key, exactly as before this slice.
+- **`schemaVersion` is now a real, author-controlled value, not a hardcoded
+  constant.** **Amended by slice 3b (#978):** an event's `@schema(N)`
+  annotation is embedded verbatim into `env.schemaVersion` at emission (`1`
+  if absent). This is assertion, not verification — the compiler cannot
+  detect a shape change against a prior build (§3.5's narrowing to slice
+  3c), so a wrong or unbumped version is not itself a validation failure the
+  way a malformed payload is.
 
 ## 7. Slice status
 
@@ -561,9 +580,13 @@ receives *exactly* the emissions its pattern admits.
 - [x] Slice 3a — event field defaults (#972). Wire-form, type-directed
   lowering — not `BodyMode::StaticInit` reuse (amends #972's own proposal;
   see §3.5, §4).
-- [ ] Slice 3b — `env.schemaVersion` computed for real + the cross-build
-  schema registry — unfiled
-- [ ] Slice 4 — `via schema(...)` version-aware dispatch (depends on 3b)
+- [x] Slice 3b — manual `@schema(N)` event versioning (#978). Author-
+  asserted, embedded verbatim into `env.schemaVersion`; no persisted state,
+  no drift detection (see §3.5, §4).
+- [ ] Slice 3c — automatic version-bump detection + the cross-build schema
+  registry — unfiled
+- [ ] Slice 4 — `via schema(...)` version-aware dispatch (buildable now
+  that slice 3b ships a real `schemaVersion`; does not depend on 3c)
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)
 
 ## 8. Done when
@@ -593,9 +616,9 @@ receives *exactly* the emissions its pattern admits.
   `on event(e: E, env: EventEnvelope)`'s optional second parameter, minted
   once per emission (`bynkc/tests/events_envelope_behaviour.rs` proves
   identical ids within one emission, distinct ids across two);
-  `schemaVersion` is structurally present but hardcoded (real computation
-  is slice 3). `publisherId` amends §7 to the emitting context, not the
-  emitting agent (a plain service handler can emit with no agent
+  `schemaVersion` is structurally present but hardcoded (real, author-
+  controlled values are slice 3b). `publisherId` amends §7 to the emitting
+  context, not the emitting agent (a plain service handler can emit with no agent
   identity); §12's idempotency example is corrected against the
   capability's real API.
 - [x] Event field defaults — **slice 3a done** (#972): `field: T = expr` on an
@@ -606,9 +629,24 @@ receives *exactly* the emissions its pattern admits.
   structural-mismatch (`bynk.event.bad_field_default` covers an invalid/
   unconstructible default). Proven cross-context on a real `workerd`
   (`bynkc/tests/events_boundary_workerd.rs`), not just golden-diffed.
-- [ ] `env.schemaVersion` computed for real + the registry + `via schema(...)`
-  dispatch ship (slices 3b/4); the schema-evolution report is emitted on a
-  version change.
+- [x] An event may assert its own wire schema version. **Slice 3b done**
+  (#978): an optional `@schema(N)` annotation (`N` a positive `Int`
+  literal) embeds verbatim into `env.schemaVersion` at emission; absence
+  still means version `1`, byte-identical to every event before this slice.
+  Author-asserted only — no cross-build state, no drift detection, no
+  evolution report (those are slice 3c, still unfiled). A malformed
+  `@schema`, or any other annotation name on an event, is a new compile
+  error (`bynk.event.bad_schema_version` / `bynk.event.unknown_annotation`).
+  Proven behaviourally in-process, across both a service-handler and an
+  agent-handler emission (`bynkc/tests/events_schema_version_behaviour.rs`)
+  — a live-`workerd` boundary test cannot observe the mint site this slice
+  changes, since it posts a hand-authored envelope directly to the
+  receiving route, bypassing emission.
+- [ ] `env.schemaVersion` computed for real (structural-shape drift
+  detection, not author assertion) + the cross-build registry + the
+  evolution report ship (slice 3c, unfiled); `via schema(...)` dispatch
+  ships (slice 4 — already buildable against slice 3b's real value, not
+  blocked on 3c).
 - [ ] The doc is explicit that **replay/backfill and the actors Q8**
   ([#260](https://github.com/accuser/bynk/issues/260)) are **not** delivered by
   this track — named as a future track with its durable-`Idempotency` dependency,

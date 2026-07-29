@@ -2798,8 +2798,11 @@ impl<'a> Parser<'a> {
     /// Parse one storage annotation (v0.85; ADR 0111): `@<name>` or
     /// `@<name>(<arg>, …)`. Each argument is an optional `label:` then a value
     /// expression (`by: orderId`, `5.minutes`). The empty `@name()` form is
-    /// accepted and yields no arguments.
-    fn parse_annotation(&mut self) -> Result<Annotation, CompileError> {
+    /// accepted and yields no arguments. `pub(crate)` (not just this module's
+    /// own carriers) since `parse_event_decl` (`parser/types.rs`, slice 3b,
+    /// #978) reuses it from a sibling module the same way `messages`,
+    /// `store` fields, and handlers already do from this one.
+    pub(crate) fn parse_annotation(&mut self) -> Result<Annotation, CompileError> {
         let at = self.expect(TokenKind::At, "to start a storage annotation")?;
         let name = self.expect_ident("as the annotation name after `@`")?;
         let mut end = name.span;

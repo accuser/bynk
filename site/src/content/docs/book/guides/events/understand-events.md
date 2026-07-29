@@ -9,8 +9,9 @@ code — wires the delivery.
 
 This page is the mental model for the emit/subscribe core (slice 0),
 subscription pattern filtering (slice 1), the runtime envelope (slice 2),
-and event field defaults (slice 3a). For the full track's remaining scope
-(`schemaVersion` computed for real, the schema registry, replay), see
+event field defaults (slice 3a), and manual `@schema(N)` event versioning
+(slice 3b). For the full track's remaining scope (automatic schema-version
+detection, the cross-build registry, replay), see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/).
 
 ## The three pieces
@@ -159,8 +160,8 @@ handler's key is scoped to its own qualified name automatically). A
 subscriber that only reads or transforms state, taking no effect, is
 trivially idempotent already and needs no `env` parameter at all.
 
-`schemaVersion` is reserved for a future slice — it is always `1` today,
-not yet computed from the event type's shape.
+`schemaVersion` reflects the event's own declared `@schema(N)` annotation
+(below), or `1` if it declares none.
 
 ## Evolving an event's shape with field defaults
 
@@ -198,6 +199,35 @@ This matters for `Option[T]` fields in particular: a wire event with no
 empty, which is a different fact from "this field didn't exist yet." A field
 with no default still fails with a structural-mismatch error if its key is
 missing, exactly as before.
+
+## Asserting a schema version with `@schema(N)`
+
+An event may declare its current wire schema version explicitly:
+
+```bynk,ignore
+event PaymentConfirmed @schema(2) = {
+  orderId: String,
+  region: Region = Region.Domestic,
+}
+```
+
+`N` must be a positive `Int` literal. It's embedded verbatim into
+`env.schemaVersion` at emission — a subscriber declaring the optional `env:
+EventEnvelope` parameter sees exactly `2`. An event with no `@schema`
+annotation is version `1`, identical to every event before this annotation
+existed.
+
+**This is an assertion, not a detection.** The compiler doesn't compare
+today's event shape against a prior build to decide whether you *should*
+have bumped `@schema` — it takes your declared number at face value. If you
+change `PaymentConfirmed`'s fields and forget to bump `@schema`, nothing
+catches that for you; this is a real, accepted gap, not an oversight
+(automatic detection is a future, unbuilt slice of this track). What
+`@schema(N)` does give you is a real, meaningful value to match against with
+a `via schema(...)` subscription clause, once that lands.
+
+`@schema` is the only annotation an event accepts today — any other name is
+rejected, and `@schema` itself may appear at most once per event.
 
 ## Only the declaring context may emit
 

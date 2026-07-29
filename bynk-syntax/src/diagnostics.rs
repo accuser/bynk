@@ -563,6 +563,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An `on event` handler declared the wrong number of parameters, or a second parameter whose type is not `EventEnvelope` — it takes the event payload and, optionally, the runtime envelope.",
     ),
     d(
+        "bynk.event.bad_schema_version",
+        "An event's `@schema(N)` annotation is malformed — `N` must be a single, positive, positional `Int` literal, and `@schema` may appear at most once on an event.",
+    ),
+    d(
         "bynk.event.default_outside_event",
         "A field default (`field: T = expr`) was written on a record field outside an `event` declaration — a default is only meaningful on an event's own field, since it exists to let an older wire event missing this key still deserialise.",
     ),
@@ -601,6 +605,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.event.pattern_variant_payload",
         "A `from Events(E { ... })` subscription pattern's variant value names a variant that carries a payload — only nullary variants are admitted, since testing the tag alone would silently ignore the payload.",
+    ),
+    d(
+        "bynk.event.unknown_annotation",
+        "An `event` declaration carried an `@`-annotation other than `@schema` — event annotations are a closed set.",
     ),
     d(
         "bynk.event.unknown_subscription",

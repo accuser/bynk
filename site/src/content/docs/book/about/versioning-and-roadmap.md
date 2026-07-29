@@ -39,18 +39,20 @@ the planning backlogs (`bynk-tooling-proposal-queue.md`,
   standard-library surface — one single-purpose increment at a time.
   Language/stdlib work and platform-adapter work never share an increment
   (decision record 0023 in `design/decisions/`).
-- **Events.** Slices 0–2 and 3a have shipped — `event` declarations, `given
-  Events` emission with owner-only enforcement, `from Events(E)` subscription
-  across contexts on every platform, structural pattern filtering on the
-  subscription header (`from Events(E { field: value, .. })`, delivery
-  filtering only — no static narrowing of the handler's parameter), a
-  runtime envelope (`on event(e: E, env: EventEnvelope)`) enabling the
-  `Idempotency`-based dedup idiom for effectful subscribers, and field
-  defaults on an event's own fields so an older wire event missing a newer
-  key still deserialises. See
+- **Events.** Slices 0–2, 3a, and 3b have shipped — `event` declarations,
+  `given Events` emission with owner-only enforcement, `from Events(E)`
+  subscription across contexts on every platform, structural pattern
+  filtering on the subscription header (`from Events(E { field: value, .. })`,
+  delivery filtering only — no static narrowing of the handler's parameter),
+  a runtime envelope (`on event(e: E, env: EventEnvelope)`) enabling the
+  `Idempotency`-based dedup idiom for effectful subscribers, field defaults
+  on an event's own fields so an older wire event missing a newer key still
+  deserialises, and an optional `@schema(N)` annotation embedding an
+  author-asserted schema version into `env.schemaVersion`. See
   [Understand events](/book/guides/events/understand-events/).
-  `env.schemaVersion` computed for real, the cross-build schema registry,
-  `via schema(...)` dispatch, and replay/backfill are later slices of the
+  Automatic schema-version detection from a structural shape change, the
+  cross-build schema registry, `via schema(...)` dispatch, and
+  replay/backfill are later slices of the
   same track, not yet shipped.
 - **Editor tooling.** Deepening the `bynkc-lsp` experience — completion,
   navigation, and diagnostics — and the VS Code extension that surfaces it.

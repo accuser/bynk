@@ -122,18 +122,28 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `event Name = { fields }` (Events track, slice 0, spine #936). Record
+    /// `event Name @schema(N) = { fields }` (Events track, slice 0, spine
+    /// #936; the optional `@schema(N)` annotation is slice 3b, #978). Record
     /// body only — no type parameters, no refined/opaque/sum forms; §7 never
     /// shows any of those for an event, and admitting them is a strictly
     /// later, additive grammar change if ever needed, not a slice-0 gap.
     pub(crate) fn parse_event_decl(&mut self) -> Result<EventDecl, CompileError> {
         let kw = self.expect(TokenKind::Event, "to start an event declaration")?;
         let name = self.expect_ident("after `event`")?;
+        // Slice 3b: zero or more `@name(args)` annotations, same permissive
+        // shape and placement as `parse_messages_decl`'s own loop (after the
+        // declaration's identity, before its body) — the closed registry
+        // (today: `@schema` alone) is a checker concern, not a parse error.
+        let mut annotations = Vec::new();
+        while self.peek_kind() == Some(TokenKind::At) {
+            annotations.push(self.parse_annotation()?);
+        }
         self.expect(TokenKind::Eq, "after the event name")?;
         let body = self.parse_record_body()?;
         let span = kw.span.merge(body.span);
         Ok(EventDecl {
             name,
+            annotations,
             body,
             documentation: None,
             span,

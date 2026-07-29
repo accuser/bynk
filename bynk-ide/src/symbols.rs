@@ -836,7 +836,7 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
         // top-level convention as the arms above. Reuses `describe_type` via
         // the synthetic `TypeDecl` `as_type_decl` already builds for every
         // other event-as-type consumer (exports/consumes/construction).
-        CommonsItem::Event(e) if e.name.name == name => Some(describe_type(&e.as_type_decl())),
+        CommonsItem::Event(e) if e.name.name == name => Some(describe_event(e)),
         // #611 (gap B): a record field, keyed `"Type.field"` by the index — the
         // checker records construction labels and field accesses as `Field` refs,
         // so hover resolves the key but had no arm to render it and fell through
@@ -1148,6 +1148,28 @@ pub(crate) fn describe_type(t: &TypeDecl) -> String {
         out.push('\n');
     }
     out
+}
+
+/// Events slice 3b (#978): additively render an event's `@schema(N)` (or any
+/// future event annotation) into its hover, the same rendering
+/// `store_field_hover` already uses. `describe_type`'s signature is shared
+/// with every ordinary type's hover, so this post-processes its output for
+/// the one synthetic-`TypeDecl` caller that has annotations to show, rather
+/// than widening that signature. A no-op when the event declares none —
+/// absent-annotation hover stays byte-identical to before this slice.
+fn describe_event(e: &EventDecl) -> String {
+    let base = describe_type(&e.as_type_decl());
+    if e.annotations.is_empty() {
+        return base;
+    }
+    let annotations: String = e
+        .annotations
+        .iter()
+        .map(|a| format!(" {}", bynk_fmt::annotation_to_string(a)))
+        .collect();
+    let from = format!("type {} = ", e.name.name);
+    let to = format!("type {}{annotations} = ", e.name.name);
+    base.replacen(&from, &to, 1)
 }
 
 pub(crate) fn describe_fn(f: &FnDecl) -> String {
@@ -2249,6 +2271,23 @@ mod tests {
 
         assert!(describe_symbol(src, "PaymentConfirmed.nope").is_none());
         assert!(describe_symbol(src, "Nope.region").is_none());
+    }
+
+    // Events slice 3b (#978): a declared `@schema(N)` renders in the
+    // event's own hover, additively — an event with none (the test above)
+    // stays byte-identical.
+    #[test]
+    fn describe_symbol_renders_an_events_schema_annotation() {
+        let src = "context demo.orders\n\n\
+            event PaymentConfirmed @schema(2) = {\n\
+            \x20 orderId: String,\n\
+            }\n";
+        let whole = describe_symbol(src, "PaymentConfirmed").expect("hover on the event itself");
+        assert!(
+            whole.contains("type PaymentConfirmed @schema(2) = {"),
+            "{whole}"
+        );
+        assert!(whole.contains("orderId: String"), "{whole}");
     }
 
     /// v0.166 (#616): the actor arm — both declaration forms. The reference-offset

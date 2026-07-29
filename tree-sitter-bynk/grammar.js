@@ -347,11 +347,16 @@ module.exports = grammar({
     // Events track, slice 0 (spine #936): `event Name = { fields }` — a
     // typed fact a context may emit and other contexts' subscriber services
     // may receive. Record body only (mirrors `record_type`, not the full
-    // `_type_body` choice — no sum/opaque/refined event shapes).
+    // `_type_body` choice — no sum/opaque/refined event shapes). Slice 3b
+    // (#978) adds an optional `@schema(N)` annotation, reusing
+    // `store_annotation` (the same generic `@name(args)` shape `messages_decl`
+    // already reuses) rather than a new rule — the closed registry (today:
+    // `@schema` alone) is a checker concern, not a grammar one.
     event_decl: ($) =>
       seq(
         "event",
         field("name", $.identifier),
+        repeat(field("annotation", $.store_annotation)),
         "=",
         field("body", $.record_type),
       ),

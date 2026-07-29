@@ -2900,6 +2900,14 @@ fn emit_unit(
         // verification seam resolves even when the actor and handler are in
         // different files of the same context.
         actors: info.table.actors.clone(),
+        // Events slice 3b (#978): resolved once per unit, merged across
+        // files the same way `actors` is above.
+        event_schema_versions: info
+            .table
+            .events
+            .iter()
+            .map(|(name, decl)| (name.clone(), decl.schema_version()))
+            .collect(),
         consumed_adapters: info
             .consumes
             .iter()
@@ -5115,6 +5123,14 @@ pub(crate) struct EmitProjectCtx {
     /// name. Used to resolve a handler's Bearer verification seam in `emit.rs`
     /// regardless of which file declares the actor.
     pub actors: HashMap<String, bynk_syntax::ast::ActorDecl>,
+    /// Events slice 3b (#978): each locally-declared event's resolved
+    /// `@schema(N)` version (or `1` if absent), merged across files the same
+    /// way `actors` is above — `Events.emit[E]`'s lowering site only has
+    /// `E`'s bare name (the turbofish type argument), never its declaration,
+    /// so this is threaded down to `ModuleCtx`/`LowerCtx` rather than
+    /// re-derived from the per-file synthetic `Commons` `lower.rs` otherwise
+    /// sees (which would silently miss an event declared in a sibling file).
+    pub event_schema_versions: HashMap<String, i64>,
     /// v0.17: consumed unit names that are adapters. An adapter is not a Worker,
     /// so in workers mode its capability types are imported from its root module
     /// (`<adapter>.ts`), not from a per-Worker `handlers.ts`.

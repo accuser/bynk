@@ -1078,7 +1078,14 @@ impl<'a> Formatter<'a> {
         if let Some(doc) = &e.documentation {
             self.emit_doc(doc);
         }
-        self.push(&format!("event {} = ", e.name.name));
+        self.push(&format!("event {}", e.name.name));
+        // Events slice 3b (#978): an optional `@schema(N)` (and any other
+        // future event annotation) — same loop as `format_messages`'s.
+        for ann in &e.annotations {
+            self.push(" ");
+            self.push(&annotation_to_string(ann));
+        }
+        self.push(" = ");
         self.format_record_body(&e.body);
         self.emit_trailing_comment(e.trivia.trailing.as_deref());
         if e.trivia.trailing.is_none() {
@@ -3688,5 +3695,28 @@ mod tests {
             });
             assert_eq!(out, again, "width {width}: not idempotent:\n{out}");
         }
+    }
+
+    // Events slice 3b (#978): `@schema(N)` on an event round-trips the same
+    // way `messages "en" @reference { ... }`'s annotation already does.
+    #[test]
+    fn event_schema_annotation_formats_and_is_idempotent() {
+        let src = "context commerce.order {\nevent PaymentConfirmed @schema(2) = {\norderId: String,\n}\n}";
+        let out = fmt(src);
+        assert!(
+            out.contains("event PaymentConfirmed @schema(2) = {"),
+            "{out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    // An event with no annotation formats exactly as it did before this
+    // slice — no stray space before `=`.
+    #[test]
+    fn event_with_no_annotation_formats_unchanged() {
+        let src = "context commerce.order {\nevent PaymentConfirmed = {\norderId: String,\n}\n}";
+        let out = fmt(src);
+        assert!(out.contains("event PaymentConfirmed = {"), "{out}");
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
     }
 }
