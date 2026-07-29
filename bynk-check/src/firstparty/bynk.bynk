@@ -50,9 +50,9 @@ adapter bynk {
 	cross-build schema registry).
 	---
 	type EventEnvelope = {
-		eventId:       String,
-		publisherId:   String,
-		emittedAt:     Instant,
+		eventId: String,
+		publisherId: String,
+		emittedAt: Instant,
 		schemaVersion: Int,
 	}
 
