@@ -1,11 +1,6 @@
----
-level: minor
-changelog: An event's own fields may carry a default expression (`field: T = expr`), so an older wire event missing a newer field's key deserialises using the default instead of failing structural-mismatch; a default on a non-event record field is now a compile error
----
+# 0297 — Event field defaults lower to their wire form, not a value-level reference — amending #972's Decision E
 
-## ADR: events-field-defaults
-title: Event field defaults lower to their wire form, not a value-level reference — amending #972's Decision E
-summary: Why a defaulted event field's fallback is JSON, not a reused `BodyMode::StaticInit` expression, and what that implies for where the lowering runs
+- **Status:** Accepted (v0.241)
 
 **Context.** Proposal #972 (Events slice 3a) scoped field-default expressions
 on `event`-declared record fields — `RecordField.init`, already parsed for
