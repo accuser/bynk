@@ -189,15 +189,17 @@ pub(crate) fn check_fn(
     }
 }
 
-/// v0.11: type-check an agent state-field initialiser (`field: T = init`). The
-/// initialiser must be a *static* value of the field type — it is checked in an
-/// empty, pure scope (so `self`, parameters, capabilities, and effects are all
-/// out of reach) with the field type as the expected type, so refined literals
-/// admit (v0.9.4) and sum variants resolve. The init's expression types are
-/// recorded into `expr_types` for emission; a single
-/// `bynk.agents.bad_state_initialiser` is pushed on any failure.
+/// The shared discipline behind both `check_state_initialiser` (agent `store`
+/// fields) and `check_event_field_default` (Events slice 3a, #972, event
+/// record fields): the initialiser must be a *static* value of the field
+/// type — checked in an empty, pure scope (so `self`, parameters,
+/// capabilities, and effects are all out of reach) with the field type as
+/// the expected type, so refined literals admit (v0.9.4) and sum variants
+/// resolve. The init's expression types are recorded into `expr_types` for
+/// emission; `code`/`subject` name the caller's own diagnostic and the noun
+/// used in its message ("state field initialiser" / "event field default").
 #[allow(clippy::too_many_arguments)]
-pub fn check_state_initialiser(
+fn check_static_initialiser(
     init: &Expr,
     field_type: &TypeRef,
     input: &ResolvedCommons,
@@ -206,13 +208,15 @@ pub fn check_state_initialiser(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    code: &'static str,
+    subject: &str,
 ) {
     let Some(field_ty) = resolve_type_ref(field_type, &input.types) else {
         return; // an unresolved field type is reported elsewhere
     };
     let mut local_errors: Vec<CompileError> = Vec::new();
-    // A state initialiser is a static, pure value — no capability calls reach
-    // here — so requirements are discarded into a throwaway sink.
+    // A static initialiser is a pure value — no capability calls reach here —
+    // so requirements are discarded into a throwaway sink.
     let mut init_requirements = RequirementSink::new();
     let result = {
         let mut ctx = Ctx {
@@ -247,10 +251,10 @@ pub fn check_state_initialiser(
             .unwrap_or_else(|| "an invalid expression".to_string());
         errors.push(
             CompileError::new(
-                "bynk.agents.bad_state_initialiser",
+                code,
                 init.span,
                 format!(
-                    "state field initialiser must be a static value of type `{}` (got `{got}`)",
+                    "{subject} must be a static value of type `{}` (got `{got}`)",
                     field_ty.display(),
                 ),
             )
@@ -259,6 +263,113 @@ pub fn check_state_initialiser(
                  refined type), a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or — for an \
                  opaque type — `T.unsafe(lit)` — with no reference to `self`, parameters, or \
                  capabilities",
+            ),
+        );
+    }
+}
+
+/// v0.11: type-check an agent state-field initialiser (`field: T = init`).
+/// See `check_static_initialiser`. Pushes `bynk.agents.bad_state_initialiser`.
+#[allow(clippy::too_many_arguments)]
+pub fn check_state_initialiser(
+    init: &Expr,
+    field_type: &TypeRef,
+    input: &ResolvedCommons,
+    expr_types: &mut HashMap<Span, Ty>,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    locals: &mut LocalsSink,
+) {
+    check_static_initialiser(
+        init,
+        field_type,
+        input,
+        expr_types,
+        errors,
+        refs,
+        hints,
+        locals,
+        "bynk.agents.bad_state_initialiser",
+        "state field initialiser",
+    );
+}
+
+/// Events slice 3a (#972): type-check an event field's default expression
+/// (`field: T = init`), reusing `check_static_initialiser`'s empty-pure-scope
+/// discipline. Pushes `bynk.event.bad_field_default`.
+///
+/// One admission `check_static_initialiser` doesn't cover on its own: an
+/// opaque type's `T.unsafe(lit)` is, by design (ADR 0182), a bypass of its
+/// own refinement — `type_of`'s ordinary `ConstructorCall` handling only
+/// checks `lit`'s *base* type, not the refinement, since that's the whole
+/// point of `unsafe`. An event field default is different: it becomes part
+/// of the wire codec (slice 3a lowers it to its *wire* JSON form and splices
+/// it into `deserialise_<Event>`, which validates a defaulted value exactly
+/// like a real one), so a default that bypasses its own refinement would
+/// compile cleanly and then fail at runtime the first time an old event
+/// actually triggers it — a deferred, surprising failure this check closes
+/// statically instead. Only `T.unsafe(lit)` on a *literal* argument is
+/// checked here (anything else already fails the static-value requirement
+/// above); a violated refinement pushes the same `bynk.event.bad_field_default`.
+#[allow(clippy::too_many_arguments)]
+pub fn check_event_field_default(
+    init: &Expr,
+    field_type: &TypeRef,
+    input: &ResolvedCommons,
+    expr_types: &mut HashMap<Span, Ty>,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    locals: &mut LocalsSink,
+) {
+    check_static_initialiser(
+        init,
+        field_type,
+        input,
+        expr_types,
+        errors,
+        refs,
+        hints,
+        locals,
+        "bynk.event.bad_field_default",
+        "event field default",
+    );
+    // `T.unsafe(lit)` parses as `ExprKind::MethodCall { receiver: Ident(T),
+    // method: "unsafe", .. }` — confirmed by direct AST inspection; the
+    // parser never distinguishes a type-qualified call from an ordinary
+    // instance method call (that's a resolver-time decision), so
+    // `ExprKind::ConstructorCall` is not what this actually produces.
+    if let ExprKind::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = &init.kind
+        && let ExprKind::Ident(type_name) = &receiver.kind
+        && method.name == "unsafe"
+        && let [lit_expr] = args.as_slice()
+        && let Some(decl) = input.types.get(&type_name.name)
+        && matches!(decl.body, TypeBody::Opaque { .. })
+        && let Some(refinement) = refinements::type_decl_refinement(decl)
+        && let Some(lit) = refinements::const_literal(lit_expr)
+        && let Some(failed) = refinements::first_failed_predicate(refinement, &lit)
+    {
+        errors.push(
+            CompileError::new(
+                "bynk.event.bad_field_default",
+                lit_expr.span,
+                format!(
+                    "`{}.unsafe(...)` bypasses its own refinement, but an event field default \
+                     must be a value the wire could actually carry — this literal fails `{}`",
+                    type_name.name,
+                    failed.name(),
+                ),
+            )
+            .with_note(
+                "a default is spliced into the same codec that validates a real wire value on \
+                 receipt, so a refinement-violating `.unsafe(lit)` default would compile cleanly \
+                 and then fail at runtime the first time an old event actually triggers it",
             ),
         );
     }

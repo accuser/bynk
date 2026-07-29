@@ -555,8 +555,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["call"],
     ),
     d(
+        "bynk.event.bad_field_default",
+        "An event field's default expression (`field: T = expr`) is not a static, wire-representable value of the field's declared type — a literal (including one admitted to a refined type), a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or `T.unsafe(lit)` for an opaque type whose literal also satisfies the refinement.",
+    ),
+    d(
         "bynk.event.bad_params",
         "An `on event` handler declared the wrong number of parameters, or a second parameter whose type is not `EventEnvelope` — it takes the event payload and, optionally, the runtime envelope.",
+    ),
+    d(
+        "bynk.event.default_outside_event",
+        "A field default (`field: T = expr`) was written on a record field outside an `event` declaration — a default is only meaningful on an event's own field, since it exists to let an older wire event missing this key still deserialise.",
     ),
     d(
         "bynk.event.emit_not_an_event",

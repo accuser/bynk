@@ -27,6 +27,19 @@
 //! Same toolchain-skip, `BYNK_REQUIRE_WORKERD` gate, and SIGTERM-then-reap
 //! teardown idiom as `events_ordering_workerd.rs` — see that file's module
 //! doc for why each of those exists; not restated here.
+//!
+//! Events slice 3a (#972) adds a second test,
+//! `events_boundary_field_default_cross_context_on_workerd`, that does need a
+//! genuine two-context project. A field default lowers to its *wire* form
+//! specifically so a subscriber's own regenerated codec never needs a
+//! qualified value-level reference into the publisher's module — the one
+//! failure mode a self-subscription fixture structurally cannot show, since
+//! even a wrongly-qualified reference resolves fine when publisher and
+//! subscriber are the same module. That test still starts only **one**
+//! `wrangler dev` (the subscriber's), POSTing straight to its
+//! `/_bynk/event/<service>` route exactly as above — the publisher context
+//! is compiled (so its worker directory exists) but never run, since nothing
+//! here exercises emission or fan-out.
 
 use bynkc::{BuildTarget, CompileOptions};
 use std::fs;
@@ -63,6 +76,58 @@ agent Trace {
 service OnTick from Events(Tick) {
   on event(e: Tick) -> Effect[()] {
     let _ <- Trace("main").note(e.tag)
+    Effect.pure(())
+  }
+}
+
+service traceApi from http {
+  on GET("/trace") () -> Effect[HttpResult[String]] by v: Visitor {
+    let s <- Trace("main").read()
+    Ok(s)
+  }
+}
+"#;
+
+/// #972: `commerce.order` declares an event with one defaulted field
+/// (`region`) and one non-defaulted field (`orderId`) — the non-defaulted
+/// field stays the negative control proving a missing key with *no* declared
+/// default still fails structural-mismatch, exactly as it did before this
+/// slice.
+const ORDER_SOURCE: &str = r#"context commerce.order
+
+exports transparent { PaymentConfirmed }
+
+event PaymentConfirmed = {
+  orderId: String,
+  region: String = "domestic",
+}
+"#;
+
+/// #972: `commerce.notifications` only *consumes* `commerce.order` and
+/// subscribes to its event — it never calls a method on it, so this also
+/// exercises the `emit_consumed_context_helpers` "event roots" widening
+/// (#973) that makes the payload's codec reachable here at all.
+const NOTIFICATIONS_SOURCE: &str = r#"context commerce.notifications
+
+consumes commerce.order
+
+agent Trace {
+  key id: String
+  store seen: Cell[String] = ""
+
+  on call note(v: String) -> Effect[()] {
+    let _ <- seen.update((s) => s.concat(v))
+    Effect.pure(())
+  }
+
+  on call read() -> Effect[String] {
+    Effect.pure(seen)
+  }
+}
+
+service OnPayment from Events(PaymentConfirmed) {
+  on event(e: PaymentConfirmed) -> Effect[()] {
+    let _ <- Trace("main").note(e.region)
     Effect.pure(())
   }
 }
@@ -358,6 +423,172 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
         read_trace(),
         "ok",
         "a well-formed event must actually reach and run the handler"
+    );
+
+    drop(wrangler);
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+/// #972 (Events slice 3a): a subscriber's *own* regenerated codec for a
+/// consumed event's defaulted field actually falls back to the default on a
+/// real `workerd`, and a missing non-defaulted field still fails
+/// structural-mismatch. See the module doc for why this needs a genuine
+/// two-context project rather than self-subscription.
+#[test]
+fn events_boundary_field_default_cross_context_on_workerd() {
+    if !tool_exists("npx") && skip("`npx` is not on PATH") {
+        return;
+    }
+    if !tool_exists("node") && skip("`node` is not on PATH") {
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!(
+        "bynk-events-boundary-default-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    let proj = tmp.join("proj");
+    fs::create_dir_all(proj.join("commerce")).unwrap();
+    fs::write(proj.join("commerce/order.bynk"), ORDER_SOURCE).unwrap();
+    fs::write(
+        proj.join("commerce/notifications.bynk"),
+        NOTIFICATIONS_SOURCE,
+    )
+    .unwrap();
+
+    let out = match bynkc::compile_project(
+        &CompileOptions::single(proj.clone()).target(BuildTarget::Workers),
+    ) {
+        Ok(o) => o,
+        Err(failure) => panic!(
+            "compile the cross-context field-default project to workers:\n{}",
+            bynkc::render_project_errors(&failure.flatten())
+        ),
+    };
+    let out = bynkc::strip_project_to_js(out).expect("field-default project strips to JS");
+    bynkc::write_output(&out, &tmp).unwrap();
+
+    let dir = tmp.join("workers/commerce-notifications");
+    assert!(
+        dir.join("index.js").is_file() && dir.join("wrangler.toml").is_file(),
+        "expected workers/commerce-notifications — context dasherisation changed?"
+    );
+    // The publisher's own worker directory must exist (the project compiled
+    // it), even though this test never starts it.
+    assert!(
+        tmp.join("workers/commerce-order/index.js").is_file(),
+        "expected workers/commerce-order to also be emitted"
+    );
+
+    // A distinct band from both `events_ordering_workerd.rs`'s
+    // (30_000 + 4*pid%4000) and this file's own self-subscription test's
+    // (40_000 + 2*pid%4000), so all three can run concurrently without a
+    // port collision.
+    let base = 55_000 + 2 * (std::process::id() % 4_000) as u16;
+    let port = base;
+    let inspector_port = base + 1;
+
+    let log_path = tmp.join("wrangler.log");
+    let out_log = fs::File::create(&log_path).unwrap();
+    let err_log = out_log.try_clone().unwrap();
+    let child = base_command("npx")
+        .args([
+            "-y",
+            WRANGLER,
+            "dev",
+            "--port",
+            &port.to_string(),
+            "--inspector-port",
+            &inspector_port.to_string(),
+        ])
+        .current_dir(&dir)
+        .stdout(Stdio::from(out_log))
+        .stderr(Stdio::from(err_log))
+        .spawn();
+    let child = match child {
+        Ok(c) => c,
+        Err(_) => {
+            if skip("could not launch npx") {
+                return;
+            }
+            unreachable!()
+        }
+    };
+    let wrangler = Wrangler(Some(child));
+
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        if Instant::now() > deadline {
+            let log = read_log(&log_path);
+            drop(wrangler);
+            let _ = fs::remove_dir_all(&tmp);
+            if skip(&format!(
+                "wrangler dev did not serve within the boot window (likely no \
+                 network to provision {WRANGLER})\n--- wrangler log ---\n{log}"
+            )) {
+                return;
+            }
+            unreachable!()
+        }
+        if http_status("GET", port, "/trace", None).is_ok() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    let read_trace = || -> String {
+        let (status, body) = http_status("GET", port, "/trace", None).expect("read /trace");
+        assert_eq!(status, 200, "reading /trace itself must succeed");
+        unquote_json_string(&body)
+    };
+
+    assert_eq!(read_trace(), "", "trace must start empty");
+
+    // (1) The wire event's `region` key is entirely absent — the subscriber's
+    // own regenerated `deserialise_PaymentConfirmed` must fall back to the
+    // declared default (`"domestic"`) rather than fail structural-mismatch.
+    let missing_default_body = format!(r#"{{"payload":{{"orderId":"o1"}},{}}}"#, valid_envelope());
+    let (status, resp_body) = http_status(
+        "POST",
+        port,
+        "/_bynk/event/OnPayment",
+        Some(&missing_default_body),
+    )
+    .expect("POST payload missing the defaulted field");
+    assert_eq!(
+        status, 204,
+        "a payload missing only a defaulted field must be accepted, got body: {resp_body}"
+    );
+    assert_eq!(
+        read_trace(),
+        "domestic",
+        "the handler must observe the declared default for the missing field"
+    );
+
+    // (2) The wire event's `orderId` key (no default) is missing — this must
+    // still fail structural-mismatch exactly as before this slice, and must
+    // never reach the handler (trace stays at its step-(1) value, not
+    // appended to).
+    let missing_required_body = format!(
+        r#"{{"payload":{{"region":"international"}},{}}}"#,
+        valid_envelope()
+    );
+    let (status, resp_body) = http_status(
+        "POST",
+        port,
+        "/_bynk/event/OnPayment",
+        Some(&missing_required_body),
+    )
+    .expect("POST payload missing the non-defaulted field");
+    assert_eq!(
+        status, 400,
+        "a payload missing a non-defaulted field must still be rejected with 400, got body: {resp_body}"
+    );
+    assert_eq!(
+        read_trace(),
+        "domestic",
+        "a rejected payload must never reach the handler"
     );
 
     drop(wrangler);

@@ -40,7 +40,7 @@ use expressions::*;
 use kernels::*;
 use refinements::*;
 
-pub use calls::check_state_initialiser;
+pub use calls::{check_event_field_default, check_state_initialiser};
 pub use refinements::{locale_tag_accepts, locale_tag_pattern, zero_value_ts};
 
 // ==== Type representation ====

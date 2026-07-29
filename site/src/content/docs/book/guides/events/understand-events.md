@@ -8,8 +8,9 @@ emits it, any number of others subscribe to it, and the compiler — not your
 code — wires the delivery.
 
 This page is the mental model for the emit/subscribe core (slice 0),
-subscription pattern filtering (slice 1), and the runtime envelope (slice
-2). For the full track's remaining scope (schema versioning, replay), see
+subscription pattern filtering (slice 1), the runtime envelope (slice 2),
+and event field defaults (slice 3a). For the full track's remaining scope
+(`schemaVersion` computed for real, the schema registry, replay), see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/).
 
 ## The three pieces
@@ -160,6 +161,43 @@ trivially idempotent already and needs no `env` parameter at all.
 
 `schemaVersion` is reserved for a future slice — it is always `1` today,
 not yet computed from the event type's shape.
+
+## Evolving an event's shape with field defaults
+
+An event's fields can carry a default (`field: T = expr`), so a field added
+later doesn't break subscribers still holding an older wire event that never
+had it:
+
+```bynk,ignore
+context commerce.order
+
+exports transparent { PaymentConfirmed, Region }
+
+type Region = enum { Domestic, International }
+
+event PaymentConfirmed = {
+  orderId: String,
+  region: Region = Region.Domestic,
+}
+```
+
+If a subscriber receives a wire event whose payload has no `region` key at
+all — minted before this field existed — it deserialises with the default
+(`Region.Domestic`) instead of failing. This is checked at compile time: the
+default must be a static, wire-representable value of the field's declared
+type (a literal, a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or
+`T.unsafe(lit)` for an opaque type), with no reference to `self`, a
+parameter, or a capability. A default on a plain (non-event) record field is
+rejected — it exists specifically for an event's wire-evolution story, which
+an ordinary record doesn't have.
+
+**A default only rescues an absent key, not a present-but-different one.**
+This matters for `Option[T]` fields in particular: a wire event with no
+`region` key at all uses the default, but one that explicitly carries `{
+"kind": "None" }` deserialises to a real `None` — the field was sent, just
+empty, which is a different fact from "this field didn't exist yet." A field
+with no default still fails with a structural-mismatch error if its key is
+missing, exactly as before.
 
 ## Only the declaring context may emit
 

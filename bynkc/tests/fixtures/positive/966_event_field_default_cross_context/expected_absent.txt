@@ -1,0 +1,6 @@
+# #972: an event field default lowers to its WIRE (JSON) form, never a qualified
+# value reference into the owning context's generated namespace — a subscriber's
+# regenerated codec has no value-level import of the publisher's module, only
+# `import type`. This pins the exact shape a regression to `BodyMode::StaticInit`-style
+# lowering (Decision E's original, wrong idea) would produce.
+commerce_order.Region.Domestic

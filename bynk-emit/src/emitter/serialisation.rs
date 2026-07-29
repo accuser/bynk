@@ -364,18 +364,25 @@ pub(crate) fn emit_helpers_for_owner_qualified(
             continue;
         }
         emitted_any = true;
-        emit_one(out, name, decl, qual, ru);
+        emit_one(out, name, decl, types, qual, ru);
     }
     if emitted_any {
         writeln!(out).unwrap();
     }
 }
 
-fn emit_one(out: &mut String, name: &str, decl: &TypeDecl, qual: &Qual, ru: &RuntimeUse) {
+fn emit_one(
+    out: &mut String,
+    name: &str,
+    decl: &TypeDecl,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
+    qual: &Qual,
+    ru: &RuntimeUse,
+) {
     match &decl.body {
         TypeBody::Refined { base, .. } => emit_refined(out, name, *base, decl, qual, ru),
         TypeBody::Opaque { base, .. } => emit_refined(out, name, *base, decl, qual, ru),
-        TypeBody::Record(r) => emit_record(out, name, r, qual, ru),
+        TypeBody::Record(r) => emit_record(out, name, r, types, qual, ru),
         TypeBody::Sum(s) => emit_sum(out, name, s, qual, ru),
     }
 }
@@ -586,11 +593,30 @@ fn emit_inline_pred_check(out: &mut String, pred: &PredKind, violation: &dyn Fn(
     writeln!(out, "  }}").unwrap();
 }
 
-fn emit_record(out: &mut String, name: &str, body: &RecordBody, qual: &Qual, ru: &RuntimeUse) {
-    let fields: Vec<(String, TypeRef)> = body
+fn emit_record(
+    out: &mut String,
+    name: &str,
+    body: &RecordBody,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
+    qual: &Qual,
+    ru: &RuntimeUse,
+) {
+    // Events slice 3a (#972): a field's default, pre-lowered to its wire-JSON
+    // form. `.ok()` degrades a default the lowering can't build to "no
+    // default branch" (today's behaviour) rather than panicking — unreachable
+    // in practice, since `bynk-emit/src/project/validate.rs`'s
+    // `check_event_field_defaults` already rejects anything this same
+    // function can't lower, before emission ever runs.
+    let fields: Vec<(String, TypeRef, Option<String>)> = body
         .fields
         .iter()
-        .map(|f| (f.name.name.clone(), f.type_ref.clone()))
+        .map(|f| {
+            let default = f
+                .init
+                .as_ref()
+                .and_then(|e| lower_field_default_wire(e, &f.type_ref, types).ok());
+            (f.name.name.clone(), f.type_ref.clone(), default)
+        })
         .collect();
     // #661: a consumed record's TS value type reaches through the type-only
     // namespace (`commerce_payment.Receipt`); the codec function name stays
@@ -605,11 +631,18 @@ fn emit_record(out: &mut String, name: &str, body: &RecordBody, qual: &Qual, ru:
 /// TypeScript value type the codec accepts / returns (`Order`, or the erased
 /// generic `Paginated<User>`). The two coincide for a non-generic record and
 /// diverge for a generic-record instantiation.
+///
+/// Events slice 3a (#972): each field's third element is its default's
+/// pre-lowered wire-JSON form, if it has one — always `None` for a generic
+/// instantiation (`record_inst_fields`'s caller), since events are never
+/// generic. Only `deserialise_<fn_suffix>` consults it; `serialise_<fn_suffix>`
+/// is untouched, since a fresh emission always writes every field regardless
+/// of any default (Decision B, #972).
 fn emit_record_codec(
     out: &mut String,
     fn_suffix: &str,
     ts_type: &str,
-    fields: &[(String, TypeRef)],
+    fields: &[(String, TypeRef, Option<String>)],
     ru: &RuntimeUse,
 ) {
     // serialise
@@ -619,7 +652,7 @@ fn emit_record_codec(
     )
     .unwrap();
     writeln!(out, "  return {{").unwrap();
-    for (fname, type_ref) in fields {
+    for (fname, type_ref, _) in fields {
         let expr = serialise_field_expr(type_ref, &format!("value.{fname}"), ru);
         writeln!(out, "    {fname}: {expr},").unwrap();
     }
@@ -645,20 +678,307 @@ fn emit_record_codec(
     .unwrap();
     writeln!(out, "  }}").unwrap();
     writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
-    for (fname, type_ref) in fields {
-        let access = format!("obj[\"{fname}\"]");
+    for (fname, type_ref, default) in fields {
+        // Events slice 3a (#972): a defaulted field is read through a
+        // pre-validated `__d_<field>` binding instead of the raw
+        // `obj["<field>"]` access — `"fname" in obj`, not `!== undefined`,
+        // is the only test that distinguishes a genuinely absent wire key
+        // from one present with an explicit value (Decision D; this is also
+        // what makes `Option[T]`'s two absences fall out with no
+        // special-casing — a wire `{"kind":"None"}` already passed the `in`
+        // test, so it flows through to a real `None`, untouched by the
+        // default). Everything downstream (`emit_field_deserialise`) is
+        // unchanged either way.
+        let access = if let Some(d) = default {
+            writeln!(
+                out,
+                "  const __d_{fname}: JsonValue = \"{fname}\" in obj ? obj[\"{fname}\"] : {d};"
+            )
+            .unwrap();
+            format!("__d_{fname}")
+        } else {
+            format!("obj[\"{fname}\"]")
+        };
         let sub_path = format!("`${{path}}.{fname}`");
         emit_field_deserialise(out, fname, type_ref, &access, &sub_path, ru);
     }
     write!(out, "  return Ok({{ ").unwrap();
     let parts: Vec<String> = fields
         .iter()
-        .map(|(fname, _)| format!("{fname}: __{fname}"))
+        .map(|(fname, _, _)| format!("{fname}: __{fname}"))
         .collect();
     write!(out, "{}", parts.join(", ")).unwrap();
     writeln!(out, " }} as {ts_type});").unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
+}
+
+/// Events slice 3a (#972): the **wire-form** JSON literal an event field's
+/// default deserialises from when its key is absent from the incoming JSON.
+/// Type-directed — given the field's expected `TypeRef` and the visible
+/// `types` table, every syntactic ambiguity (a bare `Ident` that is really a
+/// sum variant, a `FieldAccess` that is a qualified nullary variant) resolves
+/// the same way the checker resolves it, just narrower (a bare name must
+/// match a variant of *this* expected sum specifically) — so this needs no
+/// per-expression `Ty` map (`expr_types`), which a subscriber regenerating a
+/// publisher's own event codec (`emit_consumed_context_helpers`) has no way
+/// to obtain anyway (no cross-unit `expr_types` store exists).
+///
+/// Produces the value in its **wire** shape (`kind` discriminant for a sum,
+/// matching `emit_sum_codec`'s generated `Option`/`Result` instantiations
+/// exactly — never the in-memory `tag` discriminant, and never a qualified
+/// reference like `Region.Domestic` into a value namespace the emitting
+/// module may not import), so it can be spliced in as the field's raw JSON
+/// access and re-enter [`emit_field_deserialise`] completely unchanged.
+///
+/// `Err(reason)` for anything not closed-form. The caller
+/// (`bynk-emit/src/project/validate.rs`'s event-field-default check) turns
+/// that into `bynk.event.bad_field_default` at check time, so a value this
+/// function cannot build should never reach `emit_record` in practice — the
+/// `.ok()` fallback there is a non-panicking safety net, not the intended
+/// rejection path.
+pub(crate) fn lower_field_default_wire(
+    init: &Expr,
+    expected: &TypeRef,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
+) -> Result<String, String> {
+    if let ExprKind::Paren(inner) = &init.kind {
+        return lower_field_default_wire(inner, expected, types);
+    }
+    match expected {
+        TypeRef::Base(b, _) => lower_base_literal(*b, init),
+        TypeRef::Named(id) => {
+            let Some(decl) = types.get(&id.name) else {
+                return Err(format!("cannot resolve type `{}`", id.name));
+            };
+            match &decl.body {
+                TypeBody::Refined { base, .. } => lower_base_literal(*base, init),
+                // ADR 0182: `.unsafe`'s value is an identity cast (`return
+                // value as T;`, `emit.rs`'s opaque emission) — the literal
+                // itself, verbatim, is the wire form. (Its refinement is
+                // additionally checked *statically* for an event field
+                // default specifically — `check_event_field_default` — since
+                // this literal re-enters the same codec a real wire value
+                // would, unlike an ordinary `.unsafe` bypass.)
+                TypeBody::Opaque { base, .. } => match qualified_call(init) {
+                    Some((type_name, "unsafe", [lit])) if type_name == id.name => {
+                        lower_base_literal(*base, lit)
+                    }
+                    Some((_, "unsafe", _)) => {
+                        Err("`.unsafe` takes exactly one argument".to_string())
+                    }
+                    _ => Err(format!(
+                        "an opaque type's default must be `{}.unsafe(<literal>)`",
+                        id.name
+                    )),
+                },
+                TypeBody::Sum(s) => lower_sum_default(&id.name, s, init, types),
+                TypeBody::Record(r) => lower_record_default(r, init, types),
+            }
+        }
+        TypeRef::Option(inner, _) => match &init.kind {
+            ExprKind::None => Ok("{ kind: \"None\" }".to_string()),
+            ExprKind::Some(e) => {
+                let v = lower_field_default_wire(e, inner, types)?;
+                Ok(format!("{{ kind: \"Some\", value: {v} }}"))
+            }
+            _ => Err("an `Option` field default must be `Some(...)` or `None`".to_string()),
+        },
+        TypeRef::Result(ok, err, _) => match &init.kind {
+            ExprKind::Ok(e) => {
+                let v = lower_field_default_wire(e, ok, types)?;
+                Ok(format!("{{ kind: \"Ok\", value: {v} }}"))
+            }
+            ExprKind::Err(e) => {
+                let v = lower_field_default_wire(e, err, types)?;
+                Ok(format!("{{ kind: \"Err\", error: {v} }}"))
+            }
+            _ => Err("a `Result` field default must be `Ok(...)` or `Err(...)`".to_string()),
+        },
+        TypeRef::List(elem, _) => match &init.kind {
+            ExprKind::ListLit(items) => {
+                let parts = items
+                    .iter()
+                    .map(|e| lower_field_default_wire(e, elem, types))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("[{}]", parts.join(", ")))
+            }
+            _ => Err("a `List` field default must be a list literal".to_string()),
+        },
+        TypeRef::Map(..) => Err("a `Map` field has no closed-form default literal".to_string()),
+        TypeRef::App { .. } => Err(
+            "a generic type's field cannot carry a default (events are never generic)".to_string(),
+        ),
+        TypeRef::Effect(..)
+        | TypeRef::HttpResult(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_)
+        | TypeRef::Fn(..) => Err("this field type is not wire-representable".to_string()),
+    }
+}
+
+/// The wire form of a base-type literal — the raw literal a real wire value
+/// of this base type would also be, so it re-enters
+/// [`emit_field_deserialise`]'s ordinary `typeof`/`Number.isInteger` checks
+/// unchanged. `Bytes` has no literal syntax, so it is not admitted.
+/// A qualified `TypeName.method(args)` call, in whichever `ExprKind` shape it
+/// actually parses as. Confirmed empirically (`OrderId.unsafe("x")` parses to
+/// `ExprKind::MethodCall { receiver: Ident("OrderId"), method: "unsafe", .. }`
+/// — the parser never distinguishes a type-qualified call from an ordinary
+/// instance method call; that's a resolver-time decision) — `ConstructorCall`
+/// is handled too, defensively, in case some other path still produces it.
+fn qualified_call(e: &Expr) -> Option<(&str, &str, &[Expr])> {
+    match &e.kind {
+        ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
+            let ExprKind::Ident(recv) = &receiver.kind else {
+                return None;
+            };
+            Some((recv.name.as_str(), method.name.as_str(), args.as_slice()))
+        }
+        ExprKind::ConstructorCall {
+            type_name,
+            method,
+            args,
+        } => Some((
+            type_name.name.as_str(),
+            method.name.as_str(),
+            args.as_slice(),
+        )),
+        _ => None,
+    }
+}
+
+fn lower_base_literal(base: BaseType, e: &Expr) -> Result<String, String> {
+    // Strip one level of negation so `-5`/`-5.0` reach the literal arms below,
+    // mirroring `const_literal`'s admission — `i64::checked_neg` guards
+    // `i64::MIN`, which has no positive counterpart to negate away from.
+    let (negate, inner) = match &e.kind {
+        ExprKind::UnaryOp(UnaryOp::Neg, inner) => (true, &inner.kind),
+        other => (false, other),
+    };
+    match (base, inner) {
+        (BaseType::Int | BaseType::Instant, ExprKind::IntLit { value, .. }) => {
+            let v = if negate {
+                value
+                    .checked_neg()
+                    .ok_or_else(|| "integer literal has no negation".to_string())?
+            } else {
+                *value
+            };
+            Ok(v.to_string())
+        }
+        (BaseType::Float, ExprKind::IntLit { value, .. }) => {
+            let v = if negate { -*value } else { *value };
+            Ok(v.to_string())
+        }
+        (BaseType::Float, ExprKind::FloatLit { lexeme, .. }) => Ok(if negate {
+            format!("-{lexeme}")
+        } else {
+            lexeme.clone()
+        }),
+        (BaseType::String, ExprKind::StrLit(s)) if !negate => {
+            Ok(format!("\"{}\"", crate::emitter::escape_ts_string(s)))
+        }
+        (BaseType::Bool, ExprKind::BoolLit(b)) if !negate => Ok(b.to_string()),
+        (BaseType::Duration, ExprKind::DurationLit { millis, .. }) if !negate => {
+            Ok(millis.to_string())
+        }
+        (BaseType::Bytes, _) => Err("a `Bytes` field has no literal default form".to_string()),
+        _ => Err(format!("expected a `{}` literal", base.name())),
+    }
+}
+
+/// The wire form of a sum-variant default: `{ kind: "Variant" }` (nullary) or
+/// `{ kind: "Variant", f1: ..., f2: ... }` (payload, positionally recursed
+/// against each field's *declared* type) — never a qualified reference into
+/// the sum's generated value namespace (`Sum.Variant`), which is what the
+/// ordinary handler-body lowering (`lower_expr_into`) would produce and which
+/// a foreign module regenerating this codec cannot import.
+fn lower_sum_default(
+    sum_name: &str,
+    body: &SumBody,
+    init: &Expr,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
+) -> Result<String, String> {
+    let (variant_name, args): (&str, &[Expr]) = match &init.kind {
+        ExprKind::Ident(id) => (id.name.as_str(), &[]),
+        ExprKind::FieldAccess { receiver, field } => {
+            let ExprKind::Ident(recv) = &receiver.kind else {
+                return Err(format!("expected a variant of `{sum_name}`"));
+            };
+            if recv.name != sum_name {
+                return Err(format!(
+                    "expected a variant of `{sum_name}`, not `{}`",
+                    recv.name
+                ));
+            }
+            (field.name.as_str(), &[])
+        }
+        ExprKind::Call { name, args, .. } => (name.name.as_str(), args.as_slice()),
+        _ => match qualified_call(init) {
+            Some((recv, method, args)) if recv == sum_name => (method, args),
+            Some((recv, ..)) => {
+                return Err(format!("expected a variant of `{sum_name}`, not `{recv}`"));
+            }
+            None => return Err(format!("expected a variant of `{sum_name}`")),
+        },
+    };
+    let Some(variant) = body.variants.iter().find(|v| v.name.name == variant_name) else {
+        return Err(format!("`{variant_name}` is not a variant of `{sum_name}`"));
+    };
+    if args.len() != variant.payload.len() {
+        return Err(format!(
+            "`{variant_name}` takes {} payload field(s), got {}",
+            variant.payload.len(),
+            args.len()
+        ));
+    }
+    let mut parts = vec![format!("kind: \"{variant_name}\"")];
+    for (field, arg) in variant.payload.iter().zip(args.iter()) {
+        let v = lower_field_default_wire(arg, &field.type_ref, types)?;
+        parts.push(format!("{}: {v}", field.name.name));
+    }
+    Ok(format!("{{ {} }}", parts.join(", ")))
+}
+
+/// The wire form of a record-literal default: a plain object literal, each
+/// field recursed against its *declared* type. Records are structurally
+/// wire-shaped (never tagged, never a named constructor), so this never
+/// needs qualification either.
+fn lower_record_default(
+    body: &RecordBody,
+    init: &Expr,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
+) -> Result<String, String> {
+    let ExprKind::RecordConstruction { fields, .. } = &init.kind else {
+        return Err("expected a record literal".to_string());
+    };
+    let mut parts = Vec::new();
+    for f in &body.fields {
+        let Some(given) = fields.iter().find(|fi| fi.name.name == f.name.name) else {
+            return Err(format!("record default is missing field `{}`", f.name.name));
+        };
+        let Some(value) = &given.value else {
+            return Err(format!(
+                "record default's field `{}` cannot use shorthand (no bindings are in scope)",
+                f.name.name
+            ));
+        };
+        let v = lower_field_default_wire(value, &f.type_ref, types)?;
+        parts.push(format!("{}: {v}", f.name.name));
+    }
+    Ok(format!("{{ {} }}", parts.join(", ")))
 }
 
 fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual, ru: &RuntimeUse) {
@@ -1639,6 +1959,12 @@ pub(crate) fn emit_generic_helpers_qualified(
                 let fields = record_inst_fields(name, args, types).unwrap_or_else(|| {
                     unreachable!("RecordInst `{name}` is not a resolved generic record")
                 });
+                // Events slice 3a (#972): a generic record instantiation
+                // never carries a field default — events are never generic
+                // (`parse_event_decl` always builds zero type params), so
+                // this path can never reach one.
+                let fields: Vec<(String, TypeRef, Option<String>)> =
+                    fields.into_iter().map(|(n, t)| (n, t, None)).collect();
                 emit_record_codec(out, &fn_suffix, &ts_type, &fields, ru);
             }
             // #593: a generic-sum instantiation `ApiResult[User]` emits
@@ -1930,5 +2256,276 @@ fn ts_inner_type(t: &TypeRef, qual: &Qual) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod default_lowering_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Parses `src` as a single-file commons and returns its `types` table
+    /// plus the field list of the `event`/`type` decl named `subject`, so
+    /// each test can feed a real, parsed `(init, type_ref)` pair into
+    /// [`lower_field_default_wire`] rather than hand-building AST nodes.
+    fn parse_fields(
+        src: &str,
+        subject: &str,
+    ) -> (HashMap<String, Arc<TypeDecl>>, Vec<RecordField>) {
+        let tokens = bynk_syntax::lexer::tokenize(src).expect("tokenize");
+        let unit = bynk_syntax::parser::parse_unit(&tokens, src).expect("parse");
+        let items: Vec<CommonsItem> = match unit {
+            bynk_syntax::ast::SourceUnit::Context(ctx) => ctx.items,
+            bynk_syntax::ast::SourceUnit::Commons(commons) => commons.items,
+            _ => panic!("expected a context or commons unit"),
+        };
+        let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
+        let mut fields = None;
+        for item in &items {
+            match item {
+                CommonsItem::Type(t) => {
+                    types.insert(t.name.name.clone(), Arc::new(t.clone()));
+                    if t.name.name == subject
+                        && let TypeBody::Record(r) = &t.body
+                    {
+                        fields = Some(r.fields.clone());
+                    }
+                }
+                CommonsItem::Event(e) => {
+                    if e.name.name == subject {
+                        fields = Some(e.body.fields.clone());
+                    }
+                    types.insert(e.name.name.clone(), Arc::new(e.as_type_decl()));
+                }
+                _ => {}
+            }
+        }
+        (
+            types,
+            fields.unwrap_or_else(|| panic!("no decl named `{subject}`")),
+        )
+    }
+
+    fn default_of<'a>(fields: &'a [RecordField], name: &str) -> (&'a Expr, &'a TypeRef) {
+        let f = fields
+            .iter()
+            .find(|f| f.name.name == name)
+            .unwrap_or_else(|| panic!("no field `{name}`"));
+        (
+            f.init
+                .as_ref()
+                .unwrap_or_else(|| panic!("field `{name}` has no default")),
+            &f.type_ref,
+        )
+    }
+
+    #[test]
+    fn base_literals_lower_to_their_raw_wire_form() {
+        let src = r#"
+context test
+
+event E = {
+  a: Int = 5,
+  b: Int = -5,
+  c: String = "hi",
+  d: Bool = true,
+  e: Float = 1.5,
+  f: Duration = 5.minutes,
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        let cases = [
+            ("a", "5"),
+            ("b", "-5"),
+            ("c", "\"hi\""),
+            ("d", "true"),
+            ("e", "1.5"),
+            ("f", "300000"),
+        ];
+        for (name, expected) in cases {
+            let (init, ty) = default_of(&fields, name);
+            assert_eq!(
+                lower_field_default_wire(init, ty, &types),
+                Ok(expected.to_string()),
+                "field `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn sum_variant_defaults_lower_to_a_bare_kind_object_not_a_qualified_reference() {
+        let src = r#"
+context test
+
+type Region = enum { Domestic, International }
+
+event E = {
+  bare: Region = Domestic,
+  qualified: Region = Region.Domestic,
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        for name in ["bare", "qualified"] {
+            let (init, ty) = default_of(&fields, name);
+            let got = lower_field_default_wire(init, ty, &types).unwrap();
+            assert_eq!(got, "{ kind: \"Domestic\" }", "field `{name}`");
+            assert!(
+                !got.contains('.'),
+                "field `{name}` must not contain a qualified reference: {got}"
+            );
+        }
+    }
+
+    #[test]
+    fn payload_variant_default_recurses_into_declared_field_types() {
+        let src = r#"
+context test
+
+type Outcome = | Won(prize: Int) | Lost
+
+event E = {
+  o: Outcome = Won(100),
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        let (init, ty) = default_of(&fields, "o");
+        assert_eq!(
+            lower_field_default_wire(init, ty, &types),
+            Ok("{ kind: \"Won\", prize: 100 }".to_string())
+        );
+    }
+
+    #[test]
+    fn qualified_payload_variant_call_lowers_the_same_as_the_bare_call() {
+        // Regression: `Outcome.Won(100)` parses to `ExprKind::MethodCall`
+        // (confirmed by direct AST inspection), not `ConstructorCall` — a
+        // match against `ConstructorCall` alone silently fell through to
+        // "expected a variant" for this qualified spelling.
+        let src = r#"
+context test
+
+type Outcome = | Won(prize: Int) | Lost
+
+event E = {
+  o: Outcome = Outcome.Won(100),
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        let (init, ty) = default_of(&fields, "o");
+        assert_eq!(
+            lower_field_default_wire(init, ty, &types),
+            Ok("{ kind: \"Won\", prize: 100 }".to_string())
+        );
+    }
+
+    #[test]
+    fn opaque_unsafe_default_lowers_to_the_raw_literal() {
+        // Regression: `OrderId.unsafe("x")` also parses to `MethodCall`, the
+        // same shape as the qualified-variant case above.
+        let src = r#"
+context test
+
+type OrderId = opaque String where MinLength(1)
+
+event E = {
+  id: OrderId = OrderId.unsafe("abc"),
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        let (init, ty) = default_of(&fields, "id");
+        assert_eq!(
+            lower_field_default_wire(init, ty, &types),
+            Ok("\"abc\"".to_string())
+        );
+    }
+
+    #[test]
+    fn option_and_result_defaults_use_the_wire_kind_discriminant() {
+        let src = r#"
+context test
+
+event E = {
+  a: Option[Int] = Some(1),
+  b: Option[Int] = None,
+  c: Result[Int, String] = Ok(1),
+  d: Result[Int, String] = Err("nope"),
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        let cases = [
+            ("a", "{ kind: \"Some\", value: 1 }"),
+            ("b", "{ kind: \"None\" }"),
+            ("c", "{ kind: \"Ok\", value: 1 }"),
+            ("d", "{ kind: \"Err\", error: \"nope\" }"),
+        ];
+        for (name, expected) in cases {
+            let (init, ty) = default_of(&fields, name);
+            assert_eq!(
+                lower_field_default_wire(init, ty, &types),
+                Ok(expected.to_string()),
+                "field `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn record_literal_default_lowers_to_a_plain_object() {
+        let src = r#"
+context test
+
+type Region = enum { Domestic, International }
+type Meta = { region: Region, note: String }
+
+event E = {
+  m: Meta = Meta { region: Region.Domestic, note: "x" },
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        let (init, ty) = default_of(&fields, "m");
+        assert_eq!(
+            lower_field_default_wire(init, ty, &types),
+            Ok("{ region: { kind: \"Domestic\" }, note: \"x\" }".to_string())
+        );
+    }
+
+    #[test]
+    fn list_literal_default_recurses_per_element() {
+        let src = r#"
+context test
+
+event E = {
+  xs: List[Int] = [1, 2, 3],
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        let (init, ty) = default_of(&fields, "xs");
+        assert_eq!(
+            lower_field_default_wire(init, ty, &types),
+            Ok("[1, 2, 3]".to_string())
+        );
+    }
+
+    #[test]
+    fn mismatched_shapes_return_err_not_panic() {
+        let src = r#"
+context test
+
+type Region = enum { Domestic, International }
+
+event E = {
+  a: Int = "wrong",
+  b: Region = International,
+}
+"#;
+        let (types, fields) = parse_fields(src, "E");
+        let (init, ty) = default_of(&fields, "a");
+        assert!(lower_field_default_wire(init, ty, &types).is_err());
+        // Sanity: a *valid* shape for the same sum still succeeds, proving
+        // the harness itself is sound.
+        let (init, ty) = default_of(&fields, "b");
+        assert_eq!(
+            lower_field_default_wire(init, ty, &types),
+            Ok("{ kind: \"International\" }".to_string())
+        );
     }
 }
