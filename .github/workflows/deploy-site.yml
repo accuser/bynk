@@ -3,19 +3,21 @@ name: Deploy the docs site (Cloudflare Pages)
 # Slice 1 of the documentation track (ADR 0141). Builds the Astro/Starlight site
 # and uploads the static dist/ to the bynk-lang.org apex Pages project. The build
 # runs here, where the toolchain lives; Cloudflare only serves the static output.
+#
+# Gated on a GREEN CI run, not on the push itself. This used to trigger straight
+# off `push: branches: [main]`, independent of ci.yml, so the site published from
+# `main` whether or not its suite passed — and `main` failed CI in ~17% of recent
+# runs. `astro build` re-runs here, so a site that does not BUILD cannot ship;
+# what leaked through was a commit that builds with a red test suite.
+#
+# `workflow_run` accepts no path filters, so the "did anything I care about
+# change?" decision moved into the `decide` job, where it is stated ONCE rather
+# than duplicated between trigger and job.
 on:
-  # Publish when the site (or the grammar its highlighting consumes) changes on main.
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-    paths:
-      - "site/**"
-      - "vscode-bynk/syntaxes/bynk.tmLanguage.json"
-      - ".github/workflows/deploy-site.yml"
-      # The generated crate API docs (/docs/api/) are built from the Rust source
-      # during this deploy, so refresh them when the public surface changes.
-      - "**/src/**/*.rs"
-      - "Cargo.toml"
-      - "Cargo.lock"
   # Manual run — the first deploy (after the Pages project + DNS exist) and any
   # redeploy without a code change.
   workflow_dispatch:
@@ -29,9 +31,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # See deploy-playground.yml for why this is a separate job: it gates the whole
+  # expensive build once, instead of every step carrying its own `if:`.
+  decide:
+    name: Should we deploy?
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.changed.outputs.value }}
+      sha: ${{ steps.changed.outputs.sha }}
+    steps:
+      # Check out the commit CI ACTUALLY VALIDATED. On `workflow_run`,
+      # `github.sha` is the default-branch tip at fire time, not the tested
+      # commit — see the long note in deploy-playground.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      # The paths worth a redeploy — the single copy of the list that used to
+      # live in `on.push.paths`.
+      #
+      # `**/src/**/*.rs` + the manifests are here because the crate API docs
+      # (/docs/api/) are generated from the Rust source during this deploy. That
+      # does mean most Rust merges rebuild the whole site; splitting the rustdoc
+      # refresh into its own job would fix that, and is deliberately left alone
+      # here so this change stays about the CI gate.
+      - name: Does this commit affect the site?
+        id: changed
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "::notice::manual dispatch — deploying regardless of changed paths"
+            echo "value=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only HEAD^ HEAD | grep -qE \
+             '^(site/|vscode-bynk/syntaxes/bynk\.tmLanguage\.json$|\.github/workflows/deploy-site\.yml$|Cargo\.(toml|lock)$)|(^|/)src/.*\.rs$'; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::nothing affecting the site or the generated API docs changed — skipping the deploy"
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
     name: Build + deploy to Cloudflare Pages
+    needs: decide
+    if: needs.decide.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: site
@@ -55,7 +106,11 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
+      # The exact SHA `decide` resolved and validated — never `github.sha`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.decide.outputs.sha }}
+          persist-credentials: false
       # Node 22: Astro 7 floors Node at 22.12.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:

@@ -5,15 +5,25 @@ name: Deploy the playground (Cloudflare Pages)
 # build runs *here* — where the Rust/wasm toolchain already lives — and uploads the
 # prebuilt `dist/` to Cloudflare Pages; we never ask Cloudflare to compile the
 # compiler. The deep-link/sandbox decisions this realises are ADR 0140.
+#
+# Gated on a GREEN CI run, not on the push itself.
+#
+# This used to trigger straight off `push: branches: [main]`, wholly independent
+# of ci.yml — so the playground published from `main` whether or not its suite
+# passed. That is not hypothetical: `main` failed CI in ~17% of recent runs, and
+# the deploy would ship a compiler build to the public REPL from a tree with a
+# known-red suite. The deploy re-builds, so a commit that does not COMPILE can't
+# ship; what leaked through was the failure mode `main` actually has — it builds
+# and its tests fail.
+#
+# `workflow_run` replaces the path filters (it accepts none), so the "did
+# anything I care about change?" decision moved into the job below, where it is
+# now stated ONCE rather than duplicated between trigger and job.
 on:
-  # Publish when the playground (or the things it bundles) change on main.
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-    paths:
-      - "playground/**"
-      - "bynk-wasm/**"
-      - "tree-sitter-bynk/**"
-      - ".github/workflows/deploy-playground.yml"
   # Manual run — the first deploy (after the Pages projects + secrets exist) and
   # any redeploy without a code change.
   workflow_dispatch:
@@ -27,9 +37,66 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Decide whether this commit is worth a redeploy, and expose the exact SHA the
+  # build must use. Kept as its own tiny job so the whole expensive build below
+  # is gated ONCE by `needs`/`if`, rather than every step carrying its own `if:`
+  # (which is where a step gets forgotten and runs against the wrong tree).
+  decide:
+    name: Should we deploy?
+    # Only a *successful* CI run may deploy. A manual dispatch is the maintainer
+    # explicitly overriding that, so it is allowed through.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.changed.outputs.value }}
+      sha: ${{ steps.changed.outputs.sha }}
+    steps:
+      # Check out the commit CI ACTUALLY VALIDATED, not `github.sha`.
+      #
+      # On a `workflow_run` event `github.sha` is the default-branch tip at fire
+      # time, NOT the commit the triggering run tested. With the stamp pushing
+      # ~60s after every merge those are routinely different commits, so a bare
+      # checkout would pair a green-CI signal with an unvalidated tree — the gate
+      # would look like it worked while deploying something else entirely.
+      #
+      # fetch-depth: 2 so the changed-paths check can diff against the parent. On
+      # workflow_dispatch there is no triggering run, so `ref` is empty and
+      # checkout falls back to the default branch — what a manual redeploy means.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      # The paths that make a redeploy worth doing. This list replaces the
+      # `on.push.paths` filter that `workflow_run` cannot express; it lives here
+      # ONLY, so there is no second copy to drift out of step with the trigger.
+      # A manual dispatch skips the check and always deploys.
+      - name: Does this commit affect the playground?
+        id: changed
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "::notice::manual dispatch — deploying regardless of changed paths"
+            echo "value=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only HEAD^ HEAD \
+             | grep -qE '^(playground/|bynk-wasm/|tree-sitter-bynk/|\.github/workflows/deploy-playground\.yml$)'; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::nothing under playground/, bynk-wasm/ or tree-sitter-bynk/ changed — skipping the deploy"
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
     name: Build + deploy to Cloudflare Pages
+    needs: decide
+    if: needs.decide.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       # Gate on the secrets' presence in one tiny step whose env holds the token,
       # exposing only a boolean output. The credentials themselves are attached
@@ -49,7 +116,11 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
+      # The exact SHA `decide` resolved and validated — never `github.sha`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.decide.outputs.sha }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           targets: wasm32-unknown-unknown
