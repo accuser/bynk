@@ -151,18 +151,14 @@ jobs:
       # Range-pinned to major 5, as in the verify job above — see #828.
       - name: Install TypeScript
         run: npm install -g typescript@5
-      # BYNK_REQUIRE_WORKERD is exported from the shell so that on non-Linux it
-      # is genuinely unset rather than empty — see the matching note in ci.yml
-      # and bynkc/tests/require/mod.rs.
       - name: Run tests
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            export BYNK_REQUIRE_WORKERD=1
-          fi
-          cargo test --workspace --locked
+        run: cargo test --workspace --locked
         env:
           BYNK_REQUIRE_TSC: "1"
+          # Empty off Linux, and empty means "not required" — the contract lives
+          # in bynkc/tests/require/mod.rs. See the longer note in ci.yml,
+          # including why this is not a `shell: bash` conditional export.
+          BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
 
   # Build native binaries on each host (no cross-compilation). fail-fast off so
   # one platform's failure doesn't abandon the others' artifacts.

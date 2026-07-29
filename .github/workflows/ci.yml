@@ -296,28 +296,30 @@ jobs:
       # unit tests.
       # --locked: fail if Cargo.lock would change (no silent lockfile drift).
       # BYNK_REQUIRE_TSC makes a missing `tsc` a hard failure rather than a skip.
-      # The workerd smokes (#518) must actually run somewhere: required on Linux,
-      # permitted to skip on the other OSes if wrangler cannot boot.
-      #
-      # BYNK_REQUIRE_WORKERD is exported from the shell rather than an `env:`
-      # mapping so that on non-Linux it is genuinely UNSET. The
-      # `${{ matrix.os == 'ubuntu-latest' && '1' || '' }}` form this replaces
-      # exported it *empty*, which is not the same thing: every workerd test then
-      # had to read "required" as non-empty rather than merely present, and two
-      # of them got it wrong — #965 fixed one guard, #971 fixed the identical
-      # guard in another test four days later, both only after the breakage had
-      # landed on `main`. The empty-vs-unset contract still holds on the Rust
-      # side (bynkc/tests/require/mod.rs is now its single implementation), but
-      # CI no longer leans on it.
       - name: Run tests
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            export BYNK_REQUIRE_WORKERD=1
-          fi
-          cargo nextest run --workspace --locked --profile ci
+        run: cargo nextest run --workspace --locked --profile ci
         env:
           BYNK_REQUIRE_TSC: "1"
+          # The workerd smokes (#518) must actually run somewhere: required on
+          # Linux, permitted to skip on the other OSes if wrangler cannot boot.
+          #
+          # The `''` branch does not unset the variable — Actions exports it
+          # empty — so a workerd test must read "required" as *non-empty*, not
+          # merely present. That contract was got wrong twice (#965 fixed one
+          # guard; #971 fixed the identical guard in another test four days
+          # later, both only after the breakage had landed on `main`), because
+          # each test carried its own copy. It now has exactly one
+          # implementation: bynkc/tests/require/mod.rs, which is unit-tested on
+          # the empty case specifically. A new workerd test calls that, and the
+          # two halves of the contract cannot drift apart again.
+          #
+          # Deliberately NOT rewritten as a `shell: bash` conditional export.
+          # That would make the variable genuinely unset off Linux, but it would
+          # also run `cargo nextest` under Git Bash on windows-latest — a path
+          # this repo has never exercised, which reorders PATH and makes `which`
+          # resolvable, and several `bynkc test` runner paths branch on exactly
+          # that. Not worth the risk on the OS we just put on the PR gate.
+          BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
 
   msrv:
     # Verify the declared rust-version (Cargo.toml) actually builds, rather than
