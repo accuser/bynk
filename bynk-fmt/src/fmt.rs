@@ -66,7 +66,10 @@ pub enum IndentStyle {
 }
 
 /// Formatter options. All fields have spec-defined defaults.
-#[derive(Debug, Clone)]
+///
+/// `Copy` (#972): three scalar fields, and the config layering passes them by
+/// value through per-file resolution — a `clone()` at each hop would be noise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FormatOptions {
     pub indent: IndentStyle,
     pub max_line_width: u32,

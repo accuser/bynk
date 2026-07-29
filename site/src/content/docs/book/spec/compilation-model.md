@@ -17,7 +17,7 @@ its layout. Its keys:
 | `[paths]` | `include` | the trees to compile (array; defaults below) |
 | | `exclude` | subtrees to skip during discovery (array) |
 | | `out` | the default output directory |
-| `[fmt]` | `indent`, `max_line_width` | formatter settings (consumed by `bynkc fmt`) |
+| `[fmt]` | `indent`, `indent_width`, `max_line_width`, `trailing_comma` | formatter settings (read by `bynkc fmt` / `bynk fmt` and by format-on-save; CLI flags override them) |
 | `[lsp]` | `diagnostics_mode` | language-server settings |
 
 ## §8.2 Project and legacy modes

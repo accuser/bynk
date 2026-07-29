@@ -258,33 +258,35 @@ Format `.bynk` source files in place — the same behaviour as
 [`bynkc fmt`](/docs/cli/#bynkc-fmt), through the driver, run **in-process**.
 
 ```text
-bynk fmt <INPUTS>... [--check] [--indent tab|spaces] [--indent-width N] [--max-line-width COLUMNS] [--trailing-comma|--no-trailing-comma]
+bynk fmt <INPUTS>... [--check] [--indent tab|spaces] [--indent-width N] [--max-line-width COLUMNS] [--trailing-comma|--no-trailing-comma] [--no-config]
 ```
 
 | Argument | Default | Meaning |
 |---|---|---|
 | `INPUTS` | *(required)* | Files to format. Pass `-` to read from stdin and write the formatted result to stdout. |
 | `--check` | off | Report files that are not already canonically formatted **without writing changes**. Exits non-zero if any file would change. For CI. |
-| `--indent` | `tab` | Indent with tabs or spaces. Tabs are the default so each reader sets their own width in their editor. |
-| `--indent-width N` | `2` | Spaces per nesting level, with `--indent spaces`. Rejected alongside `--indent tab`, where it would have no effect. |
-| `--max-line-width COLUMNS` | `100` | Soft target line width. A construct wider than this wraps across lines where the grammar allows; one with no break point in it (a long string literal) is left long. |
-| `--no-trailing-comma` | off | Omit the trailing comma in multi-line records, sums, list literals and `exports` clauses. `--trailing-comma` states the default explicitly; the later of the two wins. |
+| `--indent` | `[fmt] indent`, else `tab` | Indent with tabs or spaces. Tabs are the default so each reader sets their own width in their editor. |
+| `--indent-width N` | `[fmt] indent_width`, else `2` | Spaces per nesting level. Rejected when the run resolves to tabs, where it would have no effect. |
+| `--max-line-width COLUMNS` | `[fmt] max_line_width`, else `100` | Soft target line width. A construct wider than this wraps across lines where the grammar allows; one with no break point in it (a long string literal) is left long. |
+| `--no-trailing-comma` | off | Omit the trailing comma in multi-line records, sums, list literals and `exports` clauses. `--trailing-comma` is its opposite (and overrides a project's `trailing_comma = false`); the later of the two wins. |
+| `--no-config` | off | Ignore the project's `bynk.toml` `[fmt]` section and format to the canonical style plus whatever flags this run passes. |
 
 **Behaviour** — each file is formatted and rewritten only when it changes; a file
 already canonical is left untouched. A file that does not parse is reported and
 skipped; the other inputs are still processed.
 
-**Style overrides** — the four style flags override the canonical style *for
-that run only*; nothing is written to `bynk.toml`. `--check` judges each file
-against the style the run asks for, so a project on a non-default style can gate
-CI on `bynk fmt --check --indent spaces --indent-width 4 src/*.bynk`. Bynk has
-one canonical style by design, so reach for these when a house style or a
-narrower terminal genuinely calls for it, not by habit.
+**Where the style comes from** — three layers, each overriding the one before:
+the canonical defaults, then the project's `[fmt]` section in
+[`bynk.toml`](/docs/manifest/), then the flags this run passes. The manifest is
+found by walking up from each file, so one command may format files from two
+projects and give each its own style. `--check` judges files against those
+resolved options, so a project on a non-default style has a CI gate that can
+pass. `--no-config` skips the manifest layer for a run that wants the canonical
+style whatever project it is pointed at; nothing here ever writes to
+`bynk.toml`.
 
-The editor's format-on-save reads `[fmt]` from
-[`bynk.toml`](/docs/manifest/) instead; the CLI does not, so a project on a
-non-default style states it on the command line (or in whatever script or CI job
-wraps it).
+Format-on-save in the editor reads the same `[fmt]` section through the same
+reader, so the two agree by construction.
 
 **Exit code** — `0` when every input was formatted (or, under `--check`, already
 canonical). Non-zero if a file could not be read/written, failed to parse, or

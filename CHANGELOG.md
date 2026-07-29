@@ -75,10 +75,7 @@ The project, its toolchain, and its in-language surface were renamed from
   project on a non-default style gets a working CI gate. Both binaries flatten
   one shared `FmtArgs`, and `bynk fmt` forwards the flags to a `BYNK_BYNKC`-
   pinned compiler rather than silently formatting to the canonical style.
-  `--indent-width` alongside `--indent tab` is an error, not a no-op. The flags
-  are per-run only: nothing is written to `bynk.toml`, and the CLI still does
-  not read that file's `[fmt]` section (which remains the language server's
-  input for format-on-save).
+  `--indent-width` alongside tab indentation is an error, not a no-op.
 
 ### In-language reserved surface (breaking)
 

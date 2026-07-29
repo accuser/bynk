@@ -27,23 +27,44 @@ pub fn run(compiler: &Compiler, args: FmtArgs) -> ExitCode {
 /// override quietly format to the canonical style while the developer asked
 /// for another one. `bynk` and `bynkc` flatten the same [`FmtArgs`], so the
 /// flag names below are the ones the child parses.
+///
+/// Only flags the run actually passed are respelled (#972). The child does its
+/// own `bynk.toml` `[fmt]` lookup — it inherits this process's working
+/// directory and gets the same input paths, so it reaches the same manifest —
+/// and forwarding a *resolved* value would defeat that: `--max-line-width 100`
+/// synthesised from the default would override a project's `120`, and one argv
+/// cannot express the several manifests a multi-project run may resolve.
 fn delegated_argv(args: &FmtArgs) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec!["fmt".into()];
     if args.check {
         argv.push("--check".into());
     }
-    if args.indent == IndentKind::Spaces {
+    if let Some(kind) = args.indent {
         argv.push("--indent".into());
-        argv.push("spaces".into());
+        argv.push(
+            match kind {
+                IndentKind::Tab => "tab",
+                IndentKind::Spaces => "spaces",
+            }
+            .into(),
+        );
     }
     if let Some(width) = args.indent_width {
         argv.push("--indent-width".into());
         argv.push(width.to_string().into());
     }
-    argv.push("--max-line-width".into());
-    argv.push(args.max_line_width.to_string().into());
+    if let Some(width) = args.max_line_width {
+        argv.push("--max-line-width".into());
+        argv.push(width.to_string().into());
+    }
+    if args.trailing_comma {
+        argv.push("--trailing-comma".into());
+    }
     if args.no_trailing_comma {
         argv.push("--no-trailing-comma".into());
+    }
+    if args.no_config {
+        argv.push("--no-config".into());
     }
     // Flags first, then `--`, then the paths: `bynk` already parsed these as
     // positionals (the user may have used their own `--`), so a path that
@@ -74,20 +95,21 @@ mod tests {
         FmtArgs {
             inputs: vec!["a.bynk".into()],
             check: false,
-            indent: IndentKind::Tab,
+            indent: None,
             indent_width: None,
-            max_line_width: 100,
+            max_line_width: None,
             trailing_comma: false,
             no_trailing_comma: false,
+            no_config: false,
         }
     }
 
     #[test]
-    fn defaults_forward_as_the_canonical_style() {
-        assert_eq!(
-            argv_of(base()),
-            vec!["fmt", "--max-line-width", "100", "--", "a.bynk"]
-        );
+    fn an_unflagged_run_forwards_no_style_at_all() {
+        // #972: not even a synthesised `--max-line-width 100`. The child does
+        // its own `bynk.toml` lookup, and a resolved default forwarded as a
+        // flag would override the project's own `[fmt]`.
+        assert_eq!(argv_of(base()), vec!["fmt", "--", "a.bynk"]);
     }
 
     #[test]
@@ -96,9 +118,9 @@ mod tests {
         // to the canonical style while the developer asked for another one.
         let args = FmtArgs {
             check: true,
-            indent: IndentKind::Spaces,
+            indent: Some(IndentKind::Spaces),
             indent_width: Some(4),
-            max_line_width: 120,
+            max_line_width: Some(120),
             no_trailing_comma: true,
             ..base()
         };
@@ -118,6 +140,34 @@ mod tests {
                 "a.bynk",
             ]
         );
+    }
+
+    #[test]
+    fn an_explicit_tab_is_forwarded_so_it_can_beat_a_manifest() {
+        // `--indent tab` is not a no-op once `[fmt] indent = "spaces"` exists:
+        // it is how a run overrides the project back to tabs, so the child must
+        // be told, even though tabs are also the spec default.
+        let args = FmtArgs {
+            indent: Some(IndentKind::Tab),
+            ..base()
+        };
+        let argv = argv_of(args);
+        assert!(
+            argv.windows(2).any(|w| w == ["--indent", "tab"]),
+            "an explicit `--indent tab` must be forwarded: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn trailing_comma_and_no_config_are_forwarded() {
+        let args = FmtArgs {
+            trailing_comma: true,
+            no_config: true,
+            ..base()
+        };
+        let argv = argv_of(args);
+        assert!(argv.contains(&"--trailing-comma".to_string()), "{argv:?}");
+        assert!(argv.contains(&"--no-config".to_string()), "{argv:?}");
     }
 
     #[test]

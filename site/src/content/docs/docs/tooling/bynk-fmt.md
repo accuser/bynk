@@ -24,15 +24,23 @@ if the source does not parse.
 | `max_line_width` | `u32` | `100` |
 | `trailing_comma` | `bool` | `true` |
 
-Both are reachable from the command line: `bynkc fmt` / `bynk fmt` take
-`--indent tab|spaces`, `--indent-width N`, `--max-line-width COLUMNS`, and
-`--trailing-comma` / `--no-trailing-comma`, each overriding the corresponding
-field for that run. With none of them the output is the canonical style.
+Three sources feed them, each overriding the one before:
 
-The language server takes the same three fields from `[fmt]` in
-[`bynk.toml`](/docs/manifest/) (`indent`, `indent_width`, `max_line_width`,
-`trailing_comma`) for format-on-save. The CLI does not read that file, so a
-project on a non-default style passes the matching flags to whatever runs `fmt`.
+1. the defaults above;
+2. the project's `[fmt]` section in [`bynk.toml`](/docs/manifest/) (`indent`,
+   `indent_width`, `max_line_width`, `trailing_comma`), resolved from the
+   nearest manifest at or above the file being formatted;
+3. the flags a CLI run passes — `--indent tab|spaces`, `--indent-width N`,
+   `--max-line-width COLUMNS`, `--trailing-comma` / `--no-trailing-comma`.
+
+Step 2 goes through `bynk_fmt::FmtConfig`, which both the CLI and the language
+server call, so a manifest they can both read is interpreted identically.
+`--no-config` drops step 2 for a run.
+
+A manifest that does *not* read is where they differ: the CLI reports the error
+and formats nothing; the language server falls back to the canonical style,
+since it cannot refuse to serve. A typo therefore shows up as an editor that
+quietly stops honouring the section and a `bynkc fmt` that fails loudly.
 
 ## Canonical style
 
@@ -60,5 +68,6 @@ let formatted = format_source(source, &FormatOptions::default())?;
 ```
 
 This is exactly what `bynkc fmt` and the language server's formatting requests
-call, so editor format-on-save and CLI formatting agree whenever they are given
-the same `FormatOptions`.
+call, and both resolve their `FormatOptions` through the same `[fmt]` reader, so
+editor format-on-save and CLI formatting agree on any project whose manifest
+parses.

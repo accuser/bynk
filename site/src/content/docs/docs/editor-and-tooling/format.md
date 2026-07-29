@@ -63,22 +63,40 @@ bynkc fmt --no-trailing-comma src/*.bynk
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--indent tab\|spaces` | `tab` | Tabs are the default so each reader picks their own width in their editor. |
-| `--indent-width N` | `2` | Spaces per nesting level, with `--indent spaces`. Passing it with `--indent tab` is an error rather than a silent no-op. |
-| `--max-line-width COLUMNS` | `100` | The soft target a construct wraps to fit. A line with no break point in it (a long string literal) is left long. |
-| `--no-trailing-comma` | off | Drops the trailing comma from multi-line records, sums, list literals and `exports` clauses. |
+| `--indent tab\|spaces` | the project's, else `tab` | Tabs are the default so each reader picks their own width in their editor. |
+| `--indent-width N` | the project's, else `2` | Spaces per nesting level. Passing it when the run resolves to tabs is an error rather than a silent no-op. |
+| `--max-line-width COLUMNS` | the project's, else `100` | The soft target a construct wraps to fit. A line with no break point in it (a long string literal) is left long. |
+| `--no-trailing-comma` | off | Drops the trailing comma from multi-line records, sums, list literals and `exports` clauses. `--trailing-comma` is its opposite. |
+| `--no-config` | off | Ignore the project's `[fmt]` section for this run. |
 
-Nothing is written to `bynk.toml` — the override applies to that run only.
-`--check` judges each file against the style the run asks for, so a project on a
-non-default style still has a working CI gate:
+Nothing is written to `bynk.toml` — a flag applies to that run only.
 
-```sh
-bynkc fmt --check --indent spaces --indent-width 4 src/*.bynk
+## Set a style for the whole project
+
+Put it in the project's [`bynk.toml`](/docs/manifest/) and every `fmt` run picks
+it up, along with format-on-save in the editor:
+
+```toml
+[fmt]
+indent = "spaces"
+indent_width = 4
+max_line_width = 120
 ```
 
-Format-on-save in the editor reads `[fmt]` from [`bynk.toml`](/docs/manifest/)
-rather than these flags, so a project that sets a style there should pass the
-matching flags to whatever script or CI job runs `fmt`.
+The manifest is found by walking up from each file being formatted, so a command
+that spans two projects gives each its own style. A flag on the command line
+overrides the field it names and leaves the rest of the section in force; the
+resolution order is defaults → `[fmt]` → flags.
+
+`--check` judges files against those resolved options, so a project on a
+non-default style has a CI gate that can actually pass:
+
+```sh
+bynkc fmt --check src/*.bynk
+```
+
+To format to the canonical style whatever project you are standing in — a
+release script, say — add `--no-config` to skip the `[fmt]` layer.
 
 ## Related
 

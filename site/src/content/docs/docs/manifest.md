@@ -7,8 +7,9 @@ file needs none (see [Legacy mode](#legacy-mode)).
 
 Every section and every key is optional. An omitted section falls back to its
 defaults, and a manifest that lists only `[project]` behaves identically to one
-that omits it. The authoritative parser lives in the language server; the
-compiler shares its path-resolution rules.
+that omits it. `[paths]` is parsed by the compiler; `[fmt]` by the formatter
+(`bynk-fmt`), which both the CLI and the language server read it through;
+`[lsp]` by the language server.
 
 ## Example
 
@@ -82,12 +83,30 @@ This code is described in the [diagnostic index](/book/reference/diagnostics/).
 
 ## `[fmt]`
 
-Formatter settings, consumed by the language server `bynkc-lsp` — this is what
-format-on-save in the editor applies. The `bynkc fmt` / `bynk fmt` **CLI does
-not read this section**; it formats to the canonical style unless given the
-matching flags (`--indent`, `--indent-width`, `--max-line-width`,
-`--no-trailing-comma`). A project that sets a style here should pass those flags
-to whatever script or CI job runs `fmt`, so the two agree. See the
+Formatter settings. Read by **both** format-on-save in the editor and the
+`bynkc fmt` / `bynk fmt` CLI, through one shared reader, so a section they can
+both read is interpreted identically.
+
+They part company on a section that does **not** read: the CLI reports the
+error and formats nothing, while the language server falls back to the
+canonical style and keeps serving (it cannot refuse to run). So a manifest with
+a typo formats one way in the editor and fails on the command line — run
+`bynkc fmt` to see what is wrong with it.
+
+The CLI resolves options in three layers, each overriding the one before: the
+canonical defaults below, then this section, then the flags a run passes
+(`--indent`, `--indent-width`, `--max-line-width`,
+`--trailing-comma`/`--no-trailing-comma`). A flag overrides only the field it
+names. `--no-config` skips this section altogether, for a script that wants the
+canonical style whatever project it is pointed at.
+
+The manifest is resolved **per file**: the nearest `bynk.toml` at or above the
+file being formatted. So `bynk fmt ../other-project/src/x.bynk` obeys the other
+project's style, and one command may format files from two projects correctly.
+
+A key this section does not recognise is an error, not a silent no-op — a
+`max_line_length = 120` sitting in a manifest while the formatter quietly used
+100 is exactly the failure a config layer must not have. See the
 [`bynk-fmt` reference](/docs/tooling/bynk-fmt/) and the
 [Format your code](/docs/editor-and-tooling/format/) how-to.
 

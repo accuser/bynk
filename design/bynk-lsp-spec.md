@@ -60,9 +60,9 @@ version = "0.1.0"               # optional, free-form
 include = ["src", "tests"]      # source trees the compiler discovers (default: src/ and tests/ when present, else the project root — ADR 0147)
 exclude = []                    # extra trees to skip; out/ and node_modules are always excluded
 
-[fmt]
+[fmt]                           # read by the language server *and* the fmt CLI
 indent             = "tab"      # "tab" (default) or "spaces"
-indent_width       = 1          # number of tabs / spaces per level (default: 1 for tab, 2 for spaces)
+indent_width       = 2          # spaces per level; only consulted with "spaces" (default: 2)
 max_line_width     = 100        # soft target for line wrapping (default: 100)
 trailing_comma     = true       # trailing comma in multi-line lists (default: true)
 
@@ -368,7 +368,7 @@ Doc blocks (`---`) are separate from line comments and are already preserved via
 
 - **Format-on-save:** the LSP responds to `textDocument/formatting` requests. VS Code with `editor.formatOnSave: true` calls this on every save. The LSP returns the formatted document as a single text edit.
 - **Range formatting:** `textDocument/rangeFormatting` formats a selected range. Useful for "format this function." Implemented best-effort — the formatter operates on whole declarations, so the returned range may be slightly wider than requested.
-- **CLI:** `bynkc fmt [file...]` (and `bynk fmt`, the same body through the driver) formats files in place. `bynkc fmt -` reads from stdin, writes to stdout. The style rules above are the defaults; `--indent tab|spaces`, `--indent-width`, `--max-line-width`, and `--trailing-comma`/`--no-trailing-comma` override them for one run, and `--check` judges files against the style the run asks for. The CLI does **not** read `bynk.toml`'s `[fmt]` section — that is the language server's input, so a project on a non-default style states it on the command line as well.
+- **CLI:** `bynkc fmt [file...]` (and `bynk fmt`, the same body through the driver) formats files in place. `bynkc fmt -` reads from stdin, writes to stdout. Options resolve in three layers, each overriding the one before: the style rules above, then the project's `bynk.toml` `[fmt]` section, then the flags this run passes (`--indent tab|spaces`, `--indent-width`, `--max-line-width`, `--trailing-comma`/`--no-trailing-comma`). `--check` judges files against those resolved options, so a project on a non-default style has a working CI gate; `--no-config` skips the manifest layer for a run that wants the canonical style whatever project it is pointed at. The manifest is resolved **per input file** — the nearest `bynk.toml` at or above it — so formatting a path outside the current project obeys that project's style, and the CLI and the language server read the section through one shared reader.
 
 ### 3.6 Status-bar integration
 

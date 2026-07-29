@@ -8,6 +8,7 @@
 //! formatter itself. `bynkc` now depends on this crate and re-exports it as
 //! `bynkc::fmt` for its own `bynkc fmt` command.
 
+mod config;
 mod fmt;
 
 pub use fmt::{FormatError, FormatOptions, IndentStyle, format_source};
@@ -25,3 +26,10 @@ pub use fmt::annotation_to_string;
 // render valid Bynk, exactly as `format_actor` does. Without it the two renderers
 // agree until the value contains a `"` or a `\`.
 pub use fmt::escape_string;
+
+// #972: the `[fmt]` section of a project's `bynk.toml`, layered under the CLI's
+// own flags by `bynkc fmt`/`bynk fmt` and read directly by `bynk-lsp` for
+// format-on-save. One reader for one section — the two front-ends previously
+// had only the language server reading it at all, so a project that set a style
+// there saw the editor and the command line disagree.
+pub use config::{ConfigError, FmtConfig, MANIFEST, find_manifest};
