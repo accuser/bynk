@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0291](0291-events-subscription-pattern-local-node.md) | **A subscription filter is an Events-local pattern node, amending ADR 0286's "no bespoke matching engine" claim** (v0.239) — Events track slice 1 (spine #936) — verified against the code that the shared `Pattern` enum cannot represent a record-field filter, so this introduces a small, purpose-built node instead | Accepted (v0.239) |
 | [0290](0290-events-per-publisher-fifo-scope.md) | **Per-publisher event FIFO holds within a batch and across non-overlapping calls, not across concurrent invocations of one agent** (v0.238.1) — The §3.4 empirical check (spine #936), run against a real Cloudflare Durable Object under workerd — the guarantee ships narrower than design/bynk-design-notes.md §7 asserted | Accepted (v0.238.1) |
 | [0289](0289-events-owner-only-emission-check.md) | **Owner-only event emission is enforced by a new checker pass, not a reuse** (v0.238) — Resolves issue #939's DECISION E — the shipped mechanism, keyed on `is_local_type` at the `Events.emit[E]` call site | Accepted (v0.238) |
 | [0288](0288-events-slice0-fanout-implementation.md) | **Events slice 0's fan-out mechanism, concretely — a per-context DO on Cloudflare, an in-process closure everywhere else** (v0.238) — Resolves issue #939's DECISION D — grounds the fanout-substrate ADR's per-publisher Durable Object in real codegen, and confirms the non-Cloudflare path this issue left open | Accepted (v0.238) |

@@ -1,11 +1,6 @@
----
-level: minor
-changelog: A `from Events(E)` subscription may filter delivery with a structural pattern, `from Events(E { field: value, .. })` — deliver-and-filter, no static narrowing of the handler's parameter
----
+# 0291 — A subscription filter is an Events-local pattern node, amending ADR 0286's "no bespoke matching engine" claim
 
-## ADR: events-subscription-pattern-local-node
-title: A subscription filter is an Events-local pattern node, amending ADR 0286's "no bespoke matching engine" claim
-summary: Events track slice 1 (spine #936) — verified against the code that the shared `Pattern` enum cannot represent a record-field filter, so this introduces a small, purpose-built node instead
+- **Status:** Accepted (v0.239)
 
 **Context.** `design/tracks/events.md` §3.3 and
 [ADR 0286](../decisions/0286-events-pattern-dispatch-deliver-and-filter.md)

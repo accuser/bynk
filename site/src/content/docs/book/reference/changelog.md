@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.238**.
+written against **v0.239**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.239.0** | A `from Events(E)` subscription may filter delivery with a structural pattern, `from Events(E { field: value, .. })` — deliver-and-filter, no static narrowing of the handler's parameter |
 | **v0.238.1** | Per-publisher event ordering is scoped to non-concurrent emission from one agent — verified empirically on real workerd, and narrowed from the broader claim design/tracks/events.md §7 originally asserted |
 | **v0.238.0** | The `Events` capability, slice 0 — `event` declarations, `given Events` emission with owner-only enforcement, and `from Events(E)` subscription, across contexts and across all three platforms |
 | **v0.237.1** | The Events track's foundational ADRs — fan-out substrate, closed-protocol-set extension, pattern-dispatch semantics, and the replay split — land before slice 0 |
