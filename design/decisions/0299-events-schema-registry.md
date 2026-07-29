@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "Events track: the cross-build schema registry (bynk.schema.lock) computes each event's schema version from its build history, auto-bumping on additive shape changes and verifying a declared @schema(N) against the computed value."
----
+# 0299 — The cross-build schema registry ships as an opt-in, reconcile-before-emission auto-write, verifying (not replacing) @schema(N)
 
-## ADR: events-schema-registry
-title: The cross-build schema registry ships as an opt-in, reconcile-before-emission auto-write, verifying (not replacing) @schema(N)
-summary: Events slice 3c's design — opt-in auto-write, reconcile before emission, bynk.schema.lock's shape, and why @schema(N) is now verified rather than trusted
+- **Status:** Accepted (v0.243)
 
 **Context.** Proposal #980 (Events slice 3c) closed the gap slice 3b (#978)
 deliberately left open: `@schema(N)` shipped as an unconditionally-trusted
