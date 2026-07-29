@@ -247,6 +247,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         extra_import_lines: Vec::new(),
         agent_method_givens: HashMap::new(),
         actors: HashMap::new(),
+        event_schema_versions: HashMap::new(),
         consumed_adapters: HashSet::new(),
         history_target_agents: HashSet::new(),
         imported_methods: HashMap::new(),
@@ -2659,6 +2660,14 @@ pub(crate) struct ModuleCtx<'a> {
     /// [`crate::project::EmitProjectCtx::agent_method_givens`]). Consulted by
     /// the agent-call lowering to record capability requirements.
     agent_method_givens: HashMap<String, HashMap<String, Vec<bynk_syntax::ast::CapRef>>>,
+    /// Events slice 3b (#978): each locally-declared event's resolved
+    /// `@schema(N)` version (mirrors
+    /// [`crate::project::EmitProjectCtx::event_schema_versions`]). Default-
+    /// empty like `agent_method_givens`, not a required constructor
+    /// parameter like `runtime_use` — a miss here degrades to `schemaVersion:
+    /// 1`, exactly every event's behaviour before this map existed, not a
+    /// hard failure the way a missing `runtime_use` would be.
+    event_schema_versions: HashMap<String, i64>,
     /// #527: type names this context *rebrands* (`uses`-imported commons
     /// types re-exported as `T & { __ctxBrand }`). Drives brand-assertion
     /// casts where unbranded commons values meet branded local positions.
@@ -2689,6 +2698,7 @@ impl<'a> ModuleCtx<'a> {
             runtime_use,
             target: BuildTarget::Bundle,
             agent_method_givens: HashMap::new(),
+            event_schema_versions: HashMap::new(),
             rebranded_types: HashSet::new(),
             commons_imported_fns: HashSet::new(),
             in_bynk_unit: false,
@@ -3461,6 +3471,20 @@ impl<'a> LowerCtx<'a> {
                 .get("Events")
                 .map(String::as_str)
                 == Some("bynk")
+    }
+
+    /// Events slice 3b (#978): the declared `@schema(N)` version of the
+    /// locally-declared event `name`, or `1` if it has none (including if
+    /// `name` isn't a locally-declared event at all — `Events.emit[E]` only
+    /// ever names an owned event, checker-enforced, so a miss here can only
+    /// mean a broken build already reported elsewhere, and this degrades to
+    /// today's pre-existing output rather than panicking).
+    pub(crate) fn event_schema_version(&self, name: &str) -> i64 {
+        self.module
+            .event_schema_versions
+            .get(name)
+            .copied()
+            .unwrap_or(1)
     }
 
     /// Attach the file's source-map builder (slice 1, ADR 0103). Builder-style so

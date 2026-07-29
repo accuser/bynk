@@ -3093,6 +3093,16 @@
     "type": "event_decl",
     "named": true,
     "fields": {
+      "annotation": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "store_annotation",
+            "named": true
+          }
+        ]
+      },
       "body": {
         "multiple": false,
         "required": true,

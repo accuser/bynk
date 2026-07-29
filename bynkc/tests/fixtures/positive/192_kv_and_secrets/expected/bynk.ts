@@ -83,9 +83,11 @@ export const Response = {
  * keyless service handler with no agent to report, so a context-scoped
  * identifier is the only one available uniformly at every legal emission
  * site (an amendment to design/bynk-design-notes.md §7's "the publisher is
- * the emitting agent" framing). `schemaVersion` is reserved and currently
- * always `1`; a real per-type computed value is a future slice (§3.5's
- * cross-build schema registry).
+ * the emitting agent" framing). `schemaVersion` is the emitting event's own
+ * declared `@schema(N)` annotation (Events slice 3b), or `1` if it
+ * declares none — author-asserted, not computed; a cross-build registry
+ * that detects a version bump automatically from a structural shape
+ * change is a future slice (3c).
  */
 export interface EventEnvelope {
   readonly eventId: string;

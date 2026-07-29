@@ -1543,16 +1543,25 @@ pub struct TypeDecl {
 /// contexts' subscriber services may receive (Events track, slice 0, spine
 /// #936). Record body only in slice 0 — pattern refinement (subscription
 /// side, slice 1) and default-valued fields for additive versioning (slice
-/// 3) both extend a record body, so nothing here forecloses them. Legal only
-/// inside a `context` — checker-enforced (`bynk.event.outside_context`), not
-/// grammar, mirroring how `capability`/`provides` are commons-rejected at
-/// the parser while `event` instead follows `messages`' precedent
-/// (ADR 0272) of parsing uniformly and letting the checker place it, since
-/// unlike `capability`/`provides` an `event` has no meaning to reject early
-/// inside an `adapter` either.
+/// 3a) both extend a record body, so nothing here forecloses them. An
+/// optional `@schema(N)` annotation (slice 3b) asserts the event's current
+/// wire schema version, embedded into `env.schemaVersion` at emission — see
+/// [`EventDecl::schema_version`]. Legal only inside a `context` —
+/// checker-enforced (`bynk.event.outside_context`), not grammar, mirroring
+/// how `capability`/`provides` are commons-rejected at the parser while
+/// `event` instead follows `messages`' precedent (ADR 0272) of parsing
+/// uniformly and letting the checker place it, since unlike
+/// `capability`/`provides` an `event` has no meaning to reject early inside
+/// an `adapter` either.
 #[derive(Debug, Clone)]
 pub struct EventDecl {
     pub name: Ident,
+    /// Every `@`-annotation attached to this declaration. The parser stays
+    /// permissive (zero or more, same as `store` field / `messages`
+    /// annotations); the closed registry (today: `@schema` alone) and its
+    /// argument shape are a checker concern (`bynk.event.unknown_annotation`
+    /// / `bynk.event.bad_schema_version`), not a parse error.
+    pub annotations: Vec<Annotation>,
     pub body: RecordBody,
     /// Documentation block attached to this declaration.
     pub documentation: Option<String>,
@@ -1568,6 +1577,12 @@ impl EventDecl {
     /// that need to know a name is specifically an *event* (owner-only
     /// emission, `from Events(E)`/`Events.emit[E]`'s "must be an event, not
     /// just any type" gate) track that separately, alongside this.
+    ///
+    /// Deliberately lossy: a `TypeDecl` has no `annotations`, so `@schema(N)`
+    /// does not survive this conversion. Nothing downstream of this
+    /// synthesis needs the event's schema version — only the emitter's own
+    /// `Events.emit` lowering does, and it reads [`EventDecl::schema_version`]
+    /// directly off the real declaration instead.
     pub fn as_type_decl(&self) -> TypeDecl {
         TypeDecl {
             name: self.name.clone(),
@@ -1577,6 +1592,26 @@ impl EventDecl {
             span: self.span,
             trivia: self.trivia.clone(),
         }
+    }
+
+    /// This event's declared wire schema version (Events slice 3b, #978):
+    /// the positive `Int` literal argument of its sole `@schema(N)`
+    /// annotation, or `1` if the annotation is absent — identical to every
+    /// event's behaviour before this annotation existed. A malformed
+    /// `@schema` (non-positive, non-literal, wrong arity, labelled, or
+    /// duplicated) has already been reported by the checker
+    /// (`bynk.event.bad_schema_version`); this falls back to `1` rather than
+    /// re-deriving that diagnostic.
+    pub fn schema_version(&self) -> i64 {
+        self.annotations
+            .iter()
+            .find(|a| a.name.name == "schema")
+            .and_then(|a| a.args.first())
+            .and_then(|arg| match &arg.value.kind {
+                ExprKind::IntLit { value, .. } if *value > 0 => Some(*value),
+                _ => None,
+            })
+            .unwrap_or(1)
     }
 }
 

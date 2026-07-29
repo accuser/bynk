@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **449** codes in total.
+There are **451** codes in total.
 
 ## Agents
 
@@ -233,6 +233,7 @@ There are **449** codes in total.
 | `bynk.duration.literal_overflow` | A `Duration` literal (`<int>.<unit>`) exceeds the representable millisecond range. |  | — |
 | `bynk.event.bad_field_default` | An event field's default expression (`field: T = expr`) is not a static, wire-representable value of the field's declared type — a literal (including one admitted to a refined type), a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or `T.unsafe(lit)` for an opaque type whose literal also satisfies the refinement. |  | — |
 | `bynk.event.bad_params` | An `on event` handler declared the wrong number of parameters, or a second parameter whose type is not `EventEnvelope` — it takes the event payload and, optionally, the runtime envelope. |  | — |
+| `bynk.event.bad_schema_version` | An event's `@schema(N)` annotation is malformed — `N` must be a single, positive, positional `Int` literal, and `@schema` may appear at most once on an event. |  | — |
 | `bynk.event.default_outside_event` | A field default (`field: T = expr`) was written on a record field outside an `event` declaration — a default is only meaningful on an event's own field, since it exists to let an older wire event missing this key still deserialise. |  | — |
 | `bynk.event.emit_not_an_event` | `Events.emit[E]` named a type `E` that is declared in this context, but is not itself an `event` — only an `event` type may be emitted. |  | — |
 | `bynk.event.emit_outside_owner` | `Events.emit[E]` named an event `E` not declared in the emitting context — only an event's declaring context may emit it. |  | — |
@@ -243,6 +244,7 @@ There are **449** codes in total.
 | `bynk.event.pattern_unknown_field` | A `from Events(E { ... })` subscription pattern named a field that `E` does not declare. |  | — |
 | `bynk.event.pattern_unknown_variant` | A `from Events(E { ... })` subscription pattern's variant value names a variant that does not exist on the field's declared sum type. |  | — |
 | `bynk.event.pattern_variant_payload` | A `from Events(E { ... })` subscription pattern's variant value names a variant that carries a payload — only nullary variants are admitted, since testing the tag alone would silently ignore the payload. |  | — |
+| `bynk.event.unknown_annotation` | An `event` declaration carried an `@`-annotation other than `@schema` — event annotations are a closed set. |  | — |
 | `bynk.event.unknown_subscription` | A `from Events(E)` subscription named `E`, which is not a declared event in this context or any consumed context. |  | — |
 | `bynk.generics.duplicate_type_param` | A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183). |  | — |
 | `bynk.generics.generic_non_record` | A `type` declaration carries type parameters on a refined or opaque body; only a record (`type Name[T] = { … }`) or sum (`type Name[T] = | … | …`) body may be generic (v0.157/#593, ADRs 0183/0197). | [`type_decl`](/book/reference/grammar/#rule-type_decl) | — |
