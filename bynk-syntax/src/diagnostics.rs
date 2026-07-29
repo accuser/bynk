@@ -555,6 +555,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["call"],
     ),
     d(
+        "bynk.event.bad_params",
+        "An `on event` handler declared the wrong number of parameters, or a second parameter whose type is not `EventEnvelope` — it takes the event payload and, optionally, the runtime envelope.",
+    ),
+    d(
         "bynk.event.emit_not_an_event",
         "`Events.emit[E]` named a type `E` that is declared in this context, but is not itself an `event` — only an `event` type may be emitted.",
     ),

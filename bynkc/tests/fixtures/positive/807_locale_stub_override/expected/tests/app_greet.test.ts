@@ -56,7 +56,8 @@ async function test_a_stubbed_locale_is_what_the_capability_reports() {
     type LocaleTag = bynk_locale_types.LocaleTag;
     type Message = bynk_locale_types.Message;
     type MessageArg = bynk_locale_types.MessageArg;
-    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
+    type EventEnvelope = bynk.EventEnvelope;
     type FetchError = bynk.FetchError;
     type Method = bynk.Method;
     type Request = bynk.Request;
@@ -83,7 +84,8 @@ async function test_render_is_unaffected_by_the_stub_in_slice_1__tag_is_unused_(
     type LocaleTag = bynk_locale_types.LocaleTag;
     type Message = bynk_locale_types.Message;
     type MessageArg = bynk_locale_types.MessageArg;
-    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
+    type EventEnvelope = bynk.EventEnvelope;
     type FetchError = bynk.FetchError;
     type Method = bynk.Method;
     type Request = bynk.Request;

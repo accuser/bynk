@@ -39,14 +39,16 @@ the planning backlogs (`bynk-tooling-proposal-queue.md`,
   standard-library surface — one single-purpose increment at a time.
   Language/stdlib work and platform-adapter work never share an increment
   (decision record 0023 in `design/decisions/`).
-- **Events.** Slices 0 and 1 have shipped — `event` declarations, `given
+- **Events.** Slices 0–2 have shipped — `event` declarations, `given
   Events` emission with owner-only enforcement, `from Events(E)` subscription
-  across contexts on every platform, and structural pattern filtering on the
+  across contexts on every platform, structural pattern filtering on the
   subscription header (`from Events(E { field: value, .. })`, delivery
-  filtering only — no static narrowing of the handler's parameter). See
-  [Understand events](/book/guides/events/understand-events/). The envelope,
-  schema versioning, and replay/backfill are later slices of the same track,
-  not yet shipped.
+  filtering only — no static narrowing of the handler's parameter), and a
+  runtime envelope (`on event(e: E, env: EventEnvelope)`) enabling the
+  `Idempotency`-based dedup idiom for effectful subscribers. See
+  [Understand events](/book/guides/events/understand-events/). Schema
+  versioning and replay/backfill are later slices of the same track, not
+  yet shipped.
 - **Editor tooling.** Deepening the `bynkc-lsp` experience — completion,
   navigation, and diagnostics — and the VS Code extension that surfaces it.
 - **Distribution.** Publishing the compiler, grammar, and extension through

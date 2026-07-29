@@ -354,7 +354,8 @@ pub(crate) fn emit_worker_compose(
     if ctx_uses_emit {
         let bind = agent_binding_name(EVENTS_FANOUT_CLASS_NAME);
         deps_entries.push(format!(
-            "__eventsDispatch: (events: Array<{{ type: string; payload: unknown }}>) => dispatchToEventsFanout(env.{bind}, events)"
+            "__eventsDispatch: (events: Array<{}>) => dispatchToEventsFanout(env.{bind}, events)",
+            crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
         ));
     }
     let _ = writeln!(out, "  const deps = {{ {} }};", deps_entries.join(", "));
@@ -588,16 +589,33 @@ fn emit_call_wrapper(
 /// context's fan-out DO calls over this subscriber's Service Binding) — never
 /// by an HTTP route, so no path/CORS/actor plumbing to mirror from
 /// `emit_call_wrapper`.
+///
+/// Slice 2: the route above always passes both `payload` and `envelope`
+/// uniformly; this wrapper is the one place that knows whether *this*
+/// subscriber's handler actually declared the optional second
+/// `env: EventEnvelope` parameter (`h.params.len() == 2`, already enforced
+/// by `bynk.event.bad_params`), and forwards it into the generated method
+/// only then — a handler that kept `on event(e: E)` sees no change to its
+/// call at all.
 fn emit_event_wrapper(out: &mut String, sname: &str, h: &Handler) {
-    let _ = h;
-    let _ = writeln!(out, "    async {sname}(payload: unknown) {{");
+    let _ = writeln!(
+        out,
+        "    async {sname}(payload: unknown, envelope: unknown) {{"
+    );
     // Mirrors Bundle mode's `ev.payload as any` (project.rs's `__eventsDispatch`
     // closure): the event's real payload type only exists at the *publisher's*
     // end, not on this wire (`payload` arrives here as parsed JSON).
-    let _ = writeln!(
-        out,
-        "      return handlers.{sname}.event(payload as any, deps);"
-    );
+    if h.params.len() == 2 {
+        let _ = writeln!(
+            out,
+            "      return handlers.{sname}.event(payload as any, envelope as any, deps);"
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "      return handlers.{sname}.event(payload as any, deps);"
+        );
+    }
     let _ = writeln!(out, "    }},");
 }
 
