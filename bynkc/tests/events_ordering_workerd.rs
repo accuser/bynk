@@ -50,8 +50,9 @@
 //! permutation of what it is asked to note.
 //!
 //! Like the other workerd-gated tests, this skips loudly when the toolchain
-//! is unavailable; `BYNK_REQUIRE_WORKERD=1` turns the skip into a failure
-//! (set on Linux CI, `.github/workflows/ci.yml`).
+//! is unavailable; a *non-empty* `BYNK_REQUIRE_WORKERD` (Linux CI sets `1`,
+//! `.github/workflows/ci.yml`) turns the skip into a failure. Empty counts as
+//! unset — see `required`.
 //!
 //! Teardown follows `bynk/src/dev.rs`'s SIGTERM-then-reap idiom, not a bare
 //! `Child::kill()`: `dev.rs` documents (as verified) that SIGKILL strands an
@@ -177,9 +178,29 @@ fn base_command(program: &str) -> Command {
     }
 }
 
+/// Is this run required to actually reach workerd?
+///
+/// Presence alone is not enough: CI selects the OSes that must run this with
+/// `BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}`,
+/// and a GitHub Actions `env:` entry whose expression yields `''` is still
+/// *exported* — as an empty string. An `is_ok()` check therefore read as
+/// "required" on windows-latest and macos-latest too, so the skip this test
+/// deliberately grants them turned into a hard failure the first time
+/// `wrangler dev` failed to boot there (a broken npx cache on the Windows
+/// runner). Treat empty as unset, which is what the workflow means by it.
+///
+/// This is the same guard [`workers_runtime_smoke`] carries (#965). That fix
+/// landed on the one file that had gone red; this test gates on the same
+/// variable and kept the naive check, so it went red on the next Windows run
+/// where wrangler could not boot (#970's merge). Both files now agree — a
+/// third workerd-gated test must copy this, not `is_ok()`.
+fn required() -> bool {
+    std::env::var(REQUIRE_ENV).is_ok_and(|v| !v.is_empty())
+}
+
 fn skip(reason: &str) -> bool {
     eprintln!("\n!!! EVENTS ORDERING (WORKERD) SKIPPED !!!\n{reason}\n");
-    if std::env::var(REQUIRE_ENV).is_ok() {
+    if required() {
         panic!("{REQUIRE_ENV} is set but {reason}");
     }
     true
