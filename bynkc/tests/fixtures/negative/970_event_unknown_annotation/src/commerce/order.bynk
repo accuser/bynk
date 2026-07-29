@@ -1,0 +1,13 @@
+context commerce.order
+
+exports transparent { PaymentConfirmed }
+
+event PaymentConfirmed @indexed = {
+  orderId: String,
+}
+
+service markPaid {
+  on call(orderId: String) -> Effect[()] {
+    Effect.pure(())
+  }
+}

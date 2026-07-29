@@ -1289,6 +1289,8 @@ pub(crate) fn check_context_declarations(
         &mut errors,
     );
 
+    check_event_annotations(table, &mut errors);
+
     errors
 }
 
@@ -1362,6 +1364,82 @@ fn check_event_field_defaults(
                          literals qualify",
                     ),
                 );
+            }
+        }
+    }
+}
+
+/// Events slice 3b (#978): validate every event's `@`-annotations against
+/// the closed one-name registry. `@schema` is the only legal name; its sole
+/// argument must be a positive `Int` literal, positional (not labelled), and
+/// it may appear at most once per event. `EventDecl::schema_version` reads
+/// the same annotations permissively (falling back to `1` on anything that
+/// doesn't fit) — this is what keeps that fallback unreachable for anything
+/// but an already-reported error.
+fn check_event_annotations(table: &UnitTable, errors: &mut Vec<CompileError>) {
+    for event in table.events.values() {
+        let mut schema_count = 0usize;
+        for ann in &event.annotations {
+            if ann.name.name != "schema" {
+                errors.push(
+                    CompileError::new(
+                        "bynk.event.unknown_annotation",
+                        ann.name.span,
+                        format!(
+                            "unknown event annotation `@{}` — expected `@schema`",
+                            ann.name.name
+                        ),
+                    )
+                    .with_note("event annotations are a closed set"),
+                );
+                continue;
+            }
+            schema_count += 1;
+            if schema_count > 1 {
+                errors.push(
+                    CompileError::new(
+                        "bynk.event.bad_schema_version",
+                        ann.span,
+                        "`@schema` may appear at most once on an event",
+                    )
+                    .with_note("the event's schema version is a single value, not a set"),
+                );
+                continue;
+            }
+            match ann.args.as_slice() {
+                [arg] if arg.label.is_none() => {
+                    if !matches!(&arg.value.kind, ExprKind::IntLit { value, .. } if *value > 0) {
+                        errors.push(CompileError::new(
+                            "bynk.event.bad_schema_version",
+                            arg.span,
+                            "`@schema`'s argument must be a positive `Int` literal",
+                        ));
+                    }
+                }
+                [arg] => {
+                    errors.push(CompileError::new(
+                        "bynk.event.bad_schema_version",
+                        arg.span,
+                        "`@schema` takes one positional argument, not a labelled one",
+                    ));
+                }
+                [] => {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.event.bad_schema_version",
+                            ann.span,
+                            "`@schema` requires one argument — the schema version",
+                        )
+                        .with_note("write `@schema(2)`, for example"),
+                    );
+                }
+                _ => {
+                    errors.push(CompileError::new(
+                        "bynk.event.bad_schema_version",
+                        ann.span,
+                        "`@schema` takes exactly one argument",
+                    ));
+                }
             }
         }
     }

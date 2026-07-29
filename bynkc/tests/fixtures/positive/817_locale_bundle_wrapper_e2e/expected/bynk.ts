@@ -83,9 +83,13 @@ export const Response = {
  * keyless service handler with no agent to report, so a context-scoped
  * identifier is the only one available uniformly at every legal emission
  * site (an amendment to design/bynk-design-notes.md §7's "the publisher is
- * the emitting agent" framing). `schemaVersion` is reserved and currently
- * always `1`; a real per-type computed value is a future slice (§3.5's
- * cross-build schema registry).
+ * the emitting agent" framing). `schemaVersion` is the version the
+ * cross-build schema registry (`bynk.schema.lock`, Events slice 3c) computes
+ * for the emitting event: unchanged shape keeps its stored version, a purely
+ * additive shape change (only new defaulted fields) auto-bumps it, and a
+ * non-additive change fails the build. An explicit `@schema(N)` annotation
+ * (slice 3b) is checked against that computed value rather than trusted
+ * outright — a mismatch is a build error, not a silent override.
  */
 export interface EventEnvelope {
   readonly eventId: string;

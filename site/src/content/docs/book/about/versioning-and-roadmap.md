@@ -10,7 +10,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.241) rather than in large releases.
+steps (the book is written against v0.243) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -39,19 +39,22 @@ the planning backlogs (`bynk-tooling-proposal-queue.md`,
   standard-library surface — one single-purpose increment at a time.
   Language/stdlib work and platform-adapter work never share an increment
   (decision record 0023 in `design/decisions/`).
-- **Events.** Slices 0–2 and 3a have shipped — `event` declarations, `given
-  Events` emission with owner-only enforcement, `from Events(E)` subscription
-  across contexts on every platform, structural pattern filtering on the
-  subscription header (`from Events(E { field: value, .. })`, delivery
-  filtering only — no static narrowing of the handler's parameter), a
-  runtime envelope (`on event(e: E, env: EventEnvelope)`) enabling the
-  `Idempotency`-based dedup idiom for effectful subscribers, and field
-  defaults on an event's own fields so an older wire event missing a newer
-  key still deserialises. See
+- **Events.** Slices 0–2 and 3a–3c have shipped — `event` declarations,
+  `given Events` emission with owner-only enforcement, `from Events(E)`
+  subscription across contexts on every platform, structural pattern
+  filtering on the subscription header (`from Events(E { field: value, .. })`,
+  delivery filtering only — no static narrowing of the handler's parameter),
+  a runtime envelope (`on event(e: E, env: EventEnvelope)`) enabling the
+  `Idempotency`-based dedup idiom for effectful subscribers, field defaults
+  on an event's own fields so an older wire event missing a newer key still
+  deserialises, an optional `@schema(N)` annotation, and the cross-build
+  schema registry (`bynk.schema.lock`) that computes each event's version
+  from its build history — auto-bumping on a purely additive shape change,
+  failing the build on anything else, and verifying a declared `@schema(N)`
+  against the computed value rather than trusting it outright. See
   [Understand events](/book/guides/events/understand-events/).
-  `env.schemaVersion` computed for real, the cross-build schema registry,
-  `via schema(...)` dispatch, and replay/backfill are later slices of the
-  same track, not yet shipped.
+  `via schema(...)` version-aware dispatch and replay/backfill are later
+  slices of the same track, not yet shipped.
 - **Editor tooling.** Deepening the `bynkc-lsp` experience — completion,
   navigation, and diagnostics — and the VS Code extension that surfaces it.
 - **Distribution.** Publishing the compiler, grammar, and extension through

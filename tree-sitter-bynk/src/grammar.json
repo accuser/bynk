@@ -1222,6 +1222,17 @@
           }
         },
         {
+          "type": "REPEAT",
+          "content": {
+            "type": "FIELD",
+            "name": "annotation",
+            "content": {
+              "type": "SYMBOL",
+              "name": "store_annotation"
+            }
+          }
+        },
+        {
           "type": "STRING",
           "value": "="
         },

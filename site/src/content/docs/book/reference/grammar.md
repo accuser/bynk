@@ -718,7 +718,9 @@ may emit and other contexts' subscriber services may receive, via the
 Record body only. Context-only placement is a checker concern
 (`bynk.event.outside_context`), not a grammar one — this rule is
 syntactically permitted in a `commons`/`adapter` body too, the same way
-`service_decl`/`agent_decl` are.
+`service_decl`/`agent_decl` are. An optional `@schema(N)` annotation (slice
+3b) reuses `store_annotation`; `N`'s legality (a positive `Int` literal,
+`@schema` alone, at most once) is a checker concern, not a grammar one.
 
 **See also.** [Understand events](/book/guides/events/understand-events/).
 

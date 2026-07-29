@@ -47,6 +47,7 @@ mod diagnostics;
 mod discovery;
 mod graph;
 mod paths;
+mod schema_registry;
 pub(crate) mod symbols;
 mod tests_emit;
 mod validate;
@@ -237,6 +238,18 @@ impl Roots {
         }
     }
 
+    /// Events track, slice 3c (#980): where `bynk.schema.lock` lives. Distinct
+    /// from [`Self::resolve`]'s `(src_root, tests_root)` — a `Split` layout's
+    /// roots are subdirectories of the project root, but the registry belongs
+    /// beside `bynk.toml`, one level up, the same place `bynk.deploy.lock`
+    /// lives.
+    fn project_root(&self) -> PathBuf {
+        match self {
+            Roots::Single(root) => root.clone(),
+            Roots::Split { project_root, .. } => project_root.clone(),
+        }
+    }
+
     /// Slice 0: the project-root-relative prefix of the **primary** `include`
     /// root — the counterpart to [`Self::tests_prefix`]. Joined onto that
     /// tree's (root-relative) `source_path` to build each file's
@@ -363,6 +376,14 @@ pub struct CompileOptions {
     /// (cross-context `uses`, multi-file layouts, workers-mode emission, …)
     /// without an on-disk fixture tree.
     pub sources: Option<HashMap<PathBuf, String>>,
+    /// Events track, slice 3c (#980): read, reconcile, and (on a clean build)
+    /// write `bynk.schema.lock` at the project root. **Off by default** —
+    /// `bynkc compile`'s directory branch and `bynk`'s deploy/dev build turn
+    /// it on; every library/test caller (in-memory builds, `bynkc/tests/e2e.rs`'s
+    /// in-place fixture compiles, `bynk-emit`'s own `sources`-driven tests, the
+    /// LSP) leaves it off, so a compile never mutates a project tree it wasn't
+    /// asked to.
+    pub schema_registry: bool,
 }
 
 impl CompileOptions {
@@ -375,6 +396,7 @@ impl CompileOptions {
             import_ext: ImportExt::default(),
             contracts: false,
             sources: None,
+            schema_registry: false,
         }
     }
 
@@ -392,6 +414,7 @@ impl CompileOptions {
             import_ext: ImportExt::default(),
             contracts: false,
             sources: None,
+            schema_registry: false,
         }
     }
 
@@ -431,6 +454,14 @@ impl CompileOptions {
         self.sources = Some(sources);
         self
     }
+
+    /// Events track, slice 3c (#980): turn on `bynk.schema.lock` read/write
+    /// for this build. See the field's own doc for who calls this and why
+    /// everyone else leaves it off.
+    pub fn schema_registry(mut self, on: bool) -> Self {
+        self.schema_registry = on;
+        self
+    }
 }
 
 /// Compile a Bynk project, keeping error attribution + snapshots on failure
@@ -457,6 +488,9 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         }
         None => (HashMap::new(), None),
     };
+    let schema_root_path = options
+        .schema_registry
+        .then(|| options.roots.project_root());
     let run = run_checks(
         &src_root,
         &tests_root,
@@ -470,7 +504,24 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         &excludes,
         discovered,
         options.contracts,
+        schema_root_path.as_deref(),
     );
+    // Events track, slice 3c (#980): only a fully clean build writes the
+    // registry — a build that fails for any reason (including a schema
+    // mismatch reconciliation itself just reported) must never perturb it.
+    if let RunChecks::Checked {
+        ref errors,
+        schema_registry: Some((ref path, ref reg)),
+        ..
+    } = run
+        && errors.is_empty()
+        && let Err(msg) = schema_registry::write(path, reg)
+    {
+        eprintln!(
+            "bynk: could not write {}: {msg}",
+            schema_registry::lock_path(path).display()
+        );
+    }
     finish_build(run, options.import_ext)
 }
 
@@ -536,6 +587,7 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         &excludes,
         discovered,
         options.contracts,
+        None,
     );
     match run {
         RunChecks::Bailed {
@@ -590,6 +642,7 @@ pub fn compile_in_memory(
         &[],
         Some((vec![path], Vec::new())),
         false,
+        None,
     );
     finish_build(run, ImportExt::Js)
 }
@@ -655,6 +708,7 @@ pub fn analyse_in_memory_with_types(
         &[],
         Some((vec![path.clone()], Vec::new())),
         false,
+        None,
     );
     match run {
         RunChecks::Bailed {
@@ -836,6 +890,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
         &excludes,
         None,
         false,
+        None,
     ) {
         RunChecks::Bailed {
             errors,
@@ -2814,6 +2869,7 @@ fn emit_unit(
     contracts: bool,
     agent_deps_plan: Option<&AgentDepsPlan>,
     compiled: &mut Vec<CompiledFile>,
+    schema_effective_versions: &HashMap<String, i64>,
 ) {
     // Build the emitter context.
     let info = &unit_info[name];
@@ -2900,6 +2956,25 @@ fn emit_unit(
         // verification seam resolves even when the actor and handler are in
         // different files of the same context.
         actors: info.table.actors.clone(),
+        // Events slice 3b (#978), verified by slice 3c (#980): resolved once
+        // per unit, merged across files the same way `actors` is above. The
+        // registry's reconciled version wins when present (it is the
+        // auto-bumped or `@schema(N)`-verified truth); `decl.schema_version()`
+        // is the fallback for when the registry is off, matching every
+        // event's pre-3c behaviour exactly.
+        event_schema_versions: info
+            .table
+            .events
+            .iter()
+            .map(|(event_name, decl)| {
+                let key = format!("{name}.{event_name}");
+                let version = schema_effective_versions
+                    .get(&key)
+                    .copied()
+                    .unwrap_or_else(|| decl.schema_version());
+                (event_name.clone(), version)
+            })
+            .collect(),
         consumed_adapters: info
             .consumes
             .iter()
@@ -2967,6 +3042,11 @@ fn check_unit_files(
     exprs: &mut ExprTypeSink,
     requirements: &mut RequirementSink,
     compiled: &mut Vec<CompiledFile>,
+    // Events track, slice 3c (#980): each locally-declared event's *effective*
+    // schema version, keyed `<unit>.<EventName>` — the schema registry's
+    // reconciled value when the registry is on, empty (so every lookup falls
+    // through to `EventDecl::schema_version()`) when it is off.
+    schema_effective_versions: &HashMap<String, i64>,
 ) {
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
@@ -3298,6 +3378,7 @@ fn check_unit_files(
             contracts,
             agent_deps_plan,
             compiled,
+            schema_effective_versions,
         );
     }
 }
@@ -3342,6 +3423,11 @@ enum RunChecks {
         adapter_bindings: HashMap<String, AdapterBinding>,
         npm_deps: std::collections::BTreeMap<String, String>,
         target: BuildTarget,
+        // Events track, slice 3c (#980): the reconciled registry document
+        // ready to write, and the path to write it to. `None` when
+        // `schema_root` was `None` (registry off) — `compile_project` skips
+        // the write in that case.
+        schema_registry: Option<(PathBuf, schema_registry::SchemaRegistry)>,
     },
 }
 
@@ -3369,6 +3455,10 @@ fn run_checks(
     discovered: Option<(Vec<PathBuf>, Vec<PathBuf>)>,
     // v0.115: emit the function-contract call-site guard (dev/test profile).
     contracts: bool,
+    // Events track, slice 3c (#980): `Some(project_root)` turns on
+    // `bynk.schema.lock` reconciliation; `None` (every in-memory/test/LSP
+    // caller) skips it entirely. See `CompileOptions::schema_registry`.
+    schema_root: Option<&Path>,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
     // v0.25 (ADR 0053): binding edges, recorded at the resolution sites and
@@ -3598,6 +3688,38 @@ fn run_checks(
     // -- 6c. Validate that providers match their capabilities exactly. --
     phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors);
 
+    // -- 6d. Events track, slice 3c (#980): reconcile every event's shape
+    //        against the committed schema registry. `schema_root` is `None`
+    //        for every in-memory/test/LSP/fixture caller (opt-in — see
+    //        `CompileOptions::schema_registry`'s doc), in which case this is
+    //        a no-op and every event falls back to today's `@schema(N)`-or-`1`
+    //        behaviour. Must run before the per-unit loop below: `emit_unit`
+    //        needs `schema_effective_versions` to mint the right
+    //        `schemaVersion`, and by the time `RunChecks` reaches
+    //        `compile_project` the TypeScript is already emitted. Only the
+    //        *write* is deferred (to `compile_project`, gated on a fully
+    //        clean build) — reconciliation itself happens here.
+    let mut schema_effective_versions: HashMap<String, i64> = HashMap::new();
+    let mut schema_registry_doc: Option<(PathBuf, schema_registry::SchemaRegistry)> = None;
+    if let Some(root) = schema_root {
+        match schema_registry::read(root) {
+            Ok(existing) => {
+                let mut schema_errors: Vec<CompileError> = Vec::new();
+                let (updated, effective) =
+                    schema_registry::reconcile(&existing, &unit_tables, &mut schema_errors);
+                errors.extend_for(None, schema_errors);
+                schema_effective_versions = effective;
+                schema_registry_doc = Some((root.to_path_buf(), updated));
+            }
+            Err(msg) => {
+                errors.push_for(
+                    None,
+                    CompileError::new("bynk.project.schema_registry_corrupt", Span::default(), msg),
+                );
+            }
+        }
+    }
+
     if !errors.is_empty() && mode == Mode::Build {
         return RunChecks::Bailed {
             errors,
@@ -3722,6 +3844,7 @@ fn run_checks(
             &mut exprs,
             &mut requirements,
             &mut compiled,
+            &schema_effective_versions,
         );
     }
 
@@ -3837,6 +3960,7 @@ fn run_checks(
         adapter_bindings,
         npm_deps,
         target,
+        schema_registry: schema_registry_doc,
     }
 }
 
@@ -5115,6 +5239,14 @@ pub(crate) struct EmitProjectCtx {
     /// name. Used to resolve a handler's Bearer verification seam in `emit.rs`
     /// regardless of which file declares the actor.
     pub actors: HashMap<String, bynk_syntax::ast::ActorDecl>,
+    /// Events slice 3b (#978): each locally-declared event's resolved
+    /// `@schema(N)` version (or `1` if absent), merged across files the same
+    /// way `actors` is above — `Events.emit[E]`'s lowering site only has
+    /// `E`'s bare name (the turbofish type argument), never its declaration,
+    /// so this is threaded down to `ModuleCtx`/`LowerCtx` rather than
+    /// re-derived from the per-file synthetic `Commons` `lower.rs` otherwise
+    /// sees (which would silently miss an event declared in a sibling file).
+    pub event_schema_versions: HashMap<String, i64>,
     /// v0.17: consumed unit names that are adapters. An adapter is not a Worker,
     /// so in workers mode its capability types are imported from its root module
     /// (`<adapter>.ts`), not from a per-Worker `handlers.ts`.
@@ -5427,6 +5559,7 @@ mod tests {
             &roots.excludes(),
             None,
             false,
+            None,
         );
         let snapshots = match run {
             RunChecks::Bailed { snapshots, .. } => snapshots,
@@ -5567,6 +5700,7 @@ mod tests {
             &roots.excludes(),
             None,
             false,
+            None,
         );
         match run {
             RunChecks::Bailed { errors, .. } => errors.into_all(),

@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.241**.
+written against **v0.243**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,8 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.243.0** | "Events track: the cross-build schema registry (bynk.schema.lock) computes each event's schema version from its build history, auto-bumping on additive shape changes and verifying a declared @schema(N) against the computed value." |
+| **v0.242.0** | An event may declare an optional @schema(N) annotation, embedded into env.schemaVersion at emission (default 1); an unknown event annotation or a malformed @schema is now a compile error |
 | **v0.241.0** | An event's own fields may carry a default expression (`field: T = expr`), so an older wire event missing a newer field's key deserialises using the default instead of failing structural-mismatch; a default on a non-event record field is now a compile error |
 | **v0.240.2** | "`bynkc fmt` / `bynk fmt` read the project's `bynk.toml` `[fmt]` section as the layer under their flags" |
 | **v0.240.1** | Event payloads and envelopes are validated at the Workers subscriber boundary |

@@ -48,6 +48,34 @@ context commerce.order {
               (unit_literal))))))))
 
 ==========================
+event declaration with a @schema(N) annotation (slice 3b, #978)
+==========================
+
+context commerce.order {
+  event PaymentConfirmed @schema(2) = {
+    orderId: String,
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (event_decl
+      name: (identifier)
+      annotation: (store_annotation
+        name: (identifier)
+        (annotation_arg
+          value: (number_literal)))
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (base_type))))))
+
+==========================
 subscription pattern — qualified nullary variant (slice 1, spine #936)
 ==========================
 

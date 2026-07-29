@@ -1590,11 +1590,13 @@ fn lower_method_call(
         // own internal timestamps — requiring `Clock` alongside `Events`
         // would be new ambient coupling and would break every existing
         // fixture that emits with `given Events` alone. `schemaVersion` is
-        // reserved and always `1` until the cross-build schema registry
-        // (§3.5) computes a real value.
+        // the event's own declared `@schema(N)` (Events slice 3b, #978),
+        // or `1` if it declares none — a real, per-type computed value is
+        // still a future slice (3c, the cross-build schema registry).
+        let schema_version = cx.event_schema_version(&event_name);
         let publisher_id = escape_ts_string(cx.owning_context().unwrap_or_default());
         return format!(
-            "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload}, envelope: {{ eventId: crypto.randomUUID(), publisherId: \"{publisher_id}\", emittedAt: Date.now(), schemaVersion: 1 }} }}); }})()"
+            "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload}, envelope: {{ eventId: crypto.randomUUID(), publisherId: \"{publisher_id}\", emittedAt: Date.now(), schemaVersion: {schema_version} }} }}); }})()"
         );
     }
     // Capability call: receiver is a bare ident naming a declared
