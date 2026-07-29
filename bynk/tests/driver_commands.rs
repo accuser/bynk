@@ -65,12 +65,18 @@ fn run_in(bin: &Path, cwd: &Path, args: &[&str], stdin: Option<&str>) -> (i32, S
     let mut child = cmd.spawn().expect("spawn");
     if let Some(text) = stdin {
         use std::io::Write;
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(text.as_bytes())
-            .unwrap();
+        // A `BrokenPipe` here is the child having exited before reading its
+        // input — legitimate for any invocation rejected on its arguments
+        // (`fmt --indent tab --indent-width 4 -`), which never reaches the
+        // read. Whether we lose that race depends on machine load, so
+        // unwrapping made such a case a flake rather than a failure. Swallow
+        // only that error; the exit code and stderr are what the test asserts.
+        let res = child.stdin.take().unwrap().write_all(text.as_bytes());
+        match res {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(e) => panic!("feeding stdin to {}: {e}", bin.display()),
+        }
     }
     let out = child.wait_with_output().expect("wait");
     (
@@ -309,6 +315,265 @@ fn fmt_write_preserves_file_permissions() {
     assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
     let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o640, "atomic rewrite must preserve the file mode");
+}
+
+// ---------------------------------------------------------------------------
+// bynk fmt — style overrides (#968)
+// ---------------------------------------------------------------------------
+
+/// A record wide enough that the canonical 100-column budget keeps it on one
+/// line, so a narrowed `--max-line-width` visibly changes the output, and
+/// nested one level so the indent flags have something to indent.
+const WIDE_RECORD: &str =
+    "commons calc {\ntype R = { id: String, guestName: String, roomNumber: Int, nights: Int }\n}\n";
+
+#[test]
+fn fmt_indent_spaces_replaces_tabs() {
+    let dir = scratch("fmt-indent-spaces");
+    let (code, out, err) = run_in(
+        &bynk(),
+        &dir,
+        &["fmt", "--indent", "spaces", "--indent-width", "4", "-"],
+        Some(WIDE_RECORD),
+    );
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    assert!(
+        !out.contains('\t'),
+        "no tab may survive `--indent spaces`:\n{out}"
+    );
+    assert!(
+        out.contains("\n    type R"),
+        "expected a 4-space indent, got:\n{out}"
+    );
+}
+
+#[test]
+fn fmt_indent_spaces_defaults_to_two() {
+    // The fallback matches `bynk.toml`'s `[fmt] indent_width`, so the CLI and
+    // the editor's format-on-save agree when only `indent = "spaces"` is set.
+    let dir = scratch("fmt-indent-spaces-default");
+    let (code, out, err) = run_in(
+        &bynk(),
+        &dir,
+        &["fmt", "--indent", "spaces", "-"],
+        Some(WIDE_RECORD),
+    );
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    assert!(
+        out.contains("\n  type R"),
+        "expected a 2-space indent, got:\n{out}"
+    );
+}
+
+#[test]
+fn fmt_indent_width_without_spaces_is_refused() {
+    // Silently ignoring an explicit flag is the failure mode this replaces.
+    let dir = scratch("fmt-indent-width-tab");
+    let (code, out, err) = run_in(
+        &bynk(),
+        &dir,
+        &["fmt", "--indent", "tab", "--indent-width", "4", "-"],
+        Some(WIDE_RECORD),
+    );
+    assert_eq!(
+        code, 1,
+        "a meaningless `--indent-width` must not pass silently"
+    );
+    assert!(out.is_empty(), "nothing should be formatted, got:\n{out}");
+    assert!(
+        err.contains("--indent-width") && err.contains("--indent spaces"),
+        "expected an actionable message, got:\n{err}"
+    );
+}
+
+#[test]
+fn fmt_max_line_width_narrows_the_budget() {
+    let dir = scratch("fmt-max-line-width");
+    let wide = run_in(&bynk(), &dir, &["fmt", "-"], Some(WIDE_RECORD));
+    let narrow = run_in(
+        &bynk(),
+        &dir,
+        &["fmt", "--max-line-width", "50", "-"],
+        Some(WIDE_RECORD),
+    );
+    assert_eq!(wide.0, 0, "default fmt should succeed; stderr:\n{}", wide.2);
+    assert_eq!(
+        narrow.0, 0,
+        "narrow fmt should succeed; stderr:\n{}",
+        narrow.2
+    );
+    assert!(
+        wide.1.contains("type R = { id: String,"),
+        "the record fits the 100-column default on one line, got:\n{}",
+        wide.1
+    );
+    assert!(
+        narrow.1.contains("\t\tid: String,\n"),
+        "a 50-column budget must break the record open, got:\n{}",
+        narrow.1
+    );
+}
+
+#[test]
+fn fmt_no_trailing_comma_drops_the_last_comma() {
+    let dir = scratch("fmt-no-trailing-comma");
+    let args = ["fmt", "--max-line-width", "50", "-"];
+    let with = run_in(&bynk(), &dir, &args, Some(WIDE_RECORD));
+    let without = run_in(
+        &bynk(),
+        &dir,
+        &["fmt", "--max-line-width", "50", "--no-trailing-comma", "-"],
+        Some(WIDE_RECORD),
+    );
+    assert_eq!(with.0, 0, "stderr:\n{}", with.2);
+    assert_eq!(without.0, 0, "stderr:\n{}", without.2);
+    assert!(
+        with.1.contains("nights: Int,\n"),
+        "the default emits a trailing comma, got:\n{}",
+        with.1
+    );
+    assert!(
+        without.1.contains("nights: Int\n"),
+        "`--no-trailing-comma` must drop it, got:\n{}",
+        without.1
+    );
+}
+
+#[test]
+fn fmt_trailing_comma_overrides_an_earlier_no_trailing_comma() {
+    // The pair is `overrides_with`, so a script may append a flag to a shared
+    // argument list and have it win rather than conflict-error.
+    let dir = scratch("fmt-trailing-comma-last-wins");
+    let (code, out, err) = run_in(
+        &bynk(),
+        &dir,
+        &[
+            "fmt",
+            "--max-line-width",
+            "50",
+            "--no-trailing-comma",
+            "--trailing-comma",
+            "-",
+        ],
+        Some(WIDE_RECORD),
+    );
+    assert_eq!(code, 0, "stderr:\n{err}");
+    assert!(
+        out.contains("nights: Int,\n"),
+        "the later `--trailing-comma` must win, got:\n{out}"
+    );
+}
+
+#[test]
+fn fmt_check_is_judged_against_the_overridden_style() {
+    // `--check` must gate on the style the run asks for, not the canonical one
+    // — otherwise a project on a non-default style has no usable CI gate.
+    let dir = scratch("fmt-check-overridden");
+    let file = dir.join("calc.bynk");
+    let spaced = run_in(
+        &bynk(),
+        &dir,
+        &["fmt", "--indent", "spaces", "--indent-width", "4", "-"],
+        Some(WIDE_RECORD),
+    )
+    .1;
+    write(&file, &spaced);
+
+    let under_override = run_bynk_in(
+        &dir,
+        &[
+            "fmt",
+            "--check",
+            "--indent",
+            "spaces",
+            "--indent-width",
+            "4",
+            "calc.bynk",
+        ],
+    );
+    assert_eq!(
+        under_override.0, 0,
+        "canonical under the override must pass --check; stderr:\n{}",
+        under_override.2
+    );
+
+    let under_default = run_bynk_in(&dir, &["fmt", "--check", "calc.bynk"]);
+    assert_eq!(
+        under_default.0, 1,
+        "the same file is not canonical under the defaults; stderr:\n{}",
+        under_default.2
+    );
+}
+
+#[test]
+fn fmt_style_overrides_match_bynkc_when_present() {
+    let Some(bynkc) = bynkc_sibling() else {
+        eprintln!("skipping: sibling bynkc not built (run the workspace test suite for parity)");
+        return;
+    };
+    let dir = scratch("fmt-override-parity");
+    for args in [
+        vec!["fmt", "--indent", "spaces", "--indent-width", "4", "-"],
+        vec!["fmt", "--max-line-width", "50", "-"],
+        vec!["fmt", "--max-line-width", "50", "--no-trailing-comma", "-"],
+        vec!["fmt", "--indent", "tab", "--indent-width", "4", "-"],
+    ] {
+        let driven = run_in(&bynk(), &dir, &args, Some(WIDE_RECORD));
+        let direct = run_in(&bynkc, &dir, &args, Some(WIDE_RECORD));
+        assert_eq!(
+            driven.0,
+            direct.0,
+            "`bynk {0}` exit must match `bynkc {0}`",
+            args.join(" ")
+        );
+        assert_eq!(
+            driven.1,
+            direct.1,
+            "`bynk {0}` output must match `bynkc {0}`",
+            args.join(" ")
+        );
+    }
+}
+
+#[test]
+fn fmt_style_overrides_reach_a_pinned_bynkc() {
+    // Under `BYNK_BYNKC` the driver shells the pinned compiler; the style flags
+    // must be respelled onto that argv, or an override silently formats to the
+    // canonical style instead of the one asked for.
+    let Some(bynkc) = bynkc_sibling() else {
+        eprintln!("skipping: sibling bynkc not built (the delegate path needs it)");
+        return;
+    };
+    let dir = scratch("fmt-override-delegated");
+    let mut cmd = Command::new(bynk());
+    cmd.args(["fmt", "--indent", "spaces", "--indent-width", "3", "-"])
+        .env("BYNK_BYNKC", &bynkc)
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(WIDE_RECORD.as_bytes())
+            .unwrap();
+    }
+    let out = child.wait_with_output().expect("wait");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "delegated fmt should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("\n   type R"),
+        "the 3-space override must reach the pinned bynkc, got:\n{stdout}"
+    );
 }
 
 // ---------------------------------------------------------------------------

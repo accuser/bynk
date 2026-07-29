@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use bynk_emit::project::{
     self, CompileOptions, ProjectPathsError, read_project_paths, try_read_project_paths,
 };
-use bynk_fmt::{FormatOptions, format_source};
+use bynk_fmt::{FormatOptions, IndentStyle, format_source};
 
 pub mod coverage;
 pub mod probe;
@@ -248,12 +248,103 @@ pub fn print_project_check_short(check: &project::ProjectCheck) {
     }
 }
 
+/// How `--indent` spells the two [`IndentStyle`] variants. The words match the
+/// `[fmt] indent` key in `bynk.toml`, which the language server already reads,
+/// so a project states the same choice the same way in either place.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndentKind {
+    /// One tab per nesting level. The default — a reader sets their own tab
+    /// width in the editor, which space indentation takes away from them.
+    Tab,
+    /// `--indent-width` spaces per nesting level.
+    Spaces,
+}
+
+/// The `fmt` subcommand's arguments, flattened by both `bynkc::cli` and
+/// `bynk::cli` so the two spell one contract rather than two copies of it (the
+/// [`test_runner::TestArgs`] pattern, findings #40/#72). Field docs here are
+/// the CLI help text for both commands' flags.
+///
+/// The formatting flags override [`FormatOptions`]'s spec defaults for this
+/// run. Their defaults are those same spec defaults, so an invocation that
+/// passes none formats exactly as before.
+#[derive(clap::Args, Debug)]
+pub struct FmtArgs {
+    /// Files to format. Use `-` for stdin → stdout.
+    pub inputs: Vec<PathBuf>,
+    /// Check formatting without writing changes. Exits non-zero if any
+    /// file is not already canonical.
+    #[arg(long)]
+    pub check: bool,
+    /// Indent with tabs (the default) or spaces.
+    #[arg(long, value_enum, default_value_t = IndentKind::Tab)]
+    pub indent: IndentKind,
+    /// Spaces per nesting level, with `--indent spaces`. Defaults to 2.
+    /// Rejected with `--indent tab`, where it would have no effect.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(0..=64))]
+    pub indent_width: Option<u8>,
+    /// Soft target line width in columns. A construct wider than this wraps
+    /// across lines where the grammar allows; one with no break point in it
+    /// (a long string literal) is left long. Defaults to 100.
+    #[arg(long, value_name = "COLUMNS", default_value_t = 100,
+          value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_line_width: u32,
+    /// Emit a trailing comma in multi-line records, sums, list literals and
+    /// `exports` clauses. The default; the flag exists so a script can state
+    /// it, and to override an earlier `--no-trailing-comma`.
+    #[arg(long, overrides_with = "no_trailing_comma")]
+    pub trailing_comma: bool,
+    /// Omit the trailing comma in multi-line records, sums, list literals and
+    /// `exports` clauses. (Parameter and argument lists never carry one — the
+    /// grammar rejects it — regardless of this flag.)
+    #[arg(long, overrides_with = "trailing_comma")]
+    pub no_trailing_comma: bool,
+}
+
+impl FmtArgs {
+    /// The [`FormatOptions`] these arguments describe, or the reason they
+    /// describe none. Every field falls back to the spec default the
+    /// formatter's own `Default` uses.
+    pub fn format_options(&self) -> Result<FormatOptions, String> {
+        let indent = match (self.indent, self.indent_width) {
+            (IndentKind::Tab, None) => IndentStyle::Tab,
+            // A width alongside `--indent tab` is silently meaningless, which
+            // is exactly the kind of ignored flag that costs an hour to
+            // notice. Say so instead.
+            (IndentKind::Tab, Some(_)) => {
+                return Err(
+                    "`--indent-width` applies only to `--indent spaces` (tabs have no width \
+                     here — the reader's editor sets it)"
+                        .to_string(),
+                );
+            }
+            // 2 matches the `bynk.toml` `[fmt] indent_width` fallback the
+            // language server uses, so CLI and editor agree.
+            (IndentKind::Spaces, width) => IndentStyle::Spaces(width.unwrap_or(2)),
+        };
+        Ok(FormatOptions {
+            indent,
+            max_line_width: self.max_line_width,
+            // Neither flag set leaves the spec default (a trailing comma);
+            // clap's `overrides_with` pair makes the last one given win.
+            trailing_comma: !self.no_trailing_comma,
+        })
+    }
+}
+
 /// The `fmt` command body shared by `bynkc fmt` and `bynk fmt`: each input is
 /// formatted and rewritten only when it changes; `--check` reports
 /// non-canonical files without writing; `-` reads stdin and writes the
 /// formatted result to stdout. `prog` prefixes messages (`bynk fmt: …`).
-pub fn run_fmt(prog: &str, inputs: &[PathBuf], check: bool) -> ExitCode {
-    let opts = FormatOptions::default();
+pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
+    let opts = match args.format_options() {
+        Ok(opts) => opts,
+        Err(e) => {
+            eprintln!("{prog} fmt: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (inputs, check) = (&args.inputs, args.check);
     if inputs.is_empty() {
         eprintln!("{prog} fmt: no input files (pass file paths or `-` for stdin)");
         return ExitCode::FAILURE;
@@ -465,5 +556,96 @@ pub fn run_check(prog: &str, input: &Path, short: bool) -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// A minimal parser around [`FmtArgs`], so these assert what the real CLIs
+    /// parse rather than what a hand-built struct claims.
+    #[derive(clap::Parser, Debug)]
+    struct Harness {
+        #[command(flatten)]
+        args: FmtArgs,
+    }
+
+    fn parse(argv: &[&str]) -> FmtArgs {
+        let mut full = vec!["fmt"];
+        full.extend_from_slice(argv);
+        Harness::parse_from(full).args
+    }
+
+    #[test]
+    fn no_flags_is_the_canonical_style() {
+        let opts = parse(&["a.bynk"]).format_options().expect("valid");
+        let default = FormatOptions::default();
+        assert_eq!(opts.indent, default.indent);
+        assert_eq!(opts.max_line_width, default.max_line_width);
+        assert_eq!(opts.trailing_comma, default.trailing_comma);
+    }
+
+    #[test]
+    fn spaces_without_a_width_falls_back_to_two() {
+        // The same fallback `bynk.toml`'s `[fmt] indent_width` uses, so the CLI
+        // and the language server land on the same style from the same words.
+        let opts = parse(&["--indent", "spaces", "a.bynk"])
+            .format_options()
+            .expect("valid");
+        assert_eq!(opts.indent, IndentStyle::Spaces(2));
+    }
+
+    #[test]
+    fn spaces_takes_the_given_width() {
+        let opts = parse(&["--indent", "spaces", "--indent-width", "4", "a.bynk"])
+            .format_options()
+            .expect("valid");
+        assert_eq!(opts.indent, IndentStyle::Spaces(4));
+    }
+
+    #[test]
+    fn a_width_with_tabs_is_an_error_not_a_silent_no_op() {
+        let err = parse(&["--indent", "tab", "--indent-width", "4", "a.bynk"])
+            .format_options()
+            .expect_err("a meaningless width must be reported");
+        assert!(err.contains("--indent-width"), "{err}");
+        assert!(err.contains("--indent spaces"), "{err}");
+    }
+
+    #[test]
+    fn the_trailing_comma_pair_is_last_one_wins() {
+        // `overrides_with` in both directions: a script may append either flag
+        // to a shared argument list and have it win rather than conflict-error.
+        assert!(
+            parse(&["--no-trailing-comma", "--trailing-comma", "a.bynk"])
+                .format_options()
+                .expect("valid")
+                .trailing_comma
+        );
+        assert!(
+            !parse(&["--trailing-comma", "--no-trailing-comma", "a.bynk"])
+                .format_options()
+                .expect("valid")
+                .trailing_comma
+        );
+    }
+
+    #[test]
+    fn max_line_width_is_taken_verbatim_and_zero_is_refused() {
+        assert_eq!(
+            parse(&["--max-line-width", "60", "a.bynk"])
+                .format_options()
+                .expect("valid")
+                .max_line_width,
+            60
+        );
+        // A zero-column budget is a nonsense input; clap rejects it at parse
+        // time rather than the formatter wrapping every construct maximally.
+        assert!(
+            Harness::try_parse_from(["fmt", "--max-line-width", "0", "a.bynk"]).is_err(),
+            "`--max-line-width 0` must not parse"
+        );
     }
 }

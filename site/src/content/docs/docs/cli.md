@@ -47,13 +47,18 @@ bynkc compile <INPUT> --output <OUTPUT> [--target <TARGET>] [--platform <PLATFOR
 Format `.bynk` source files in place. Passing `-` reads from stdin and writes to stdout
 
 ```text
-bynkc fmt [INPUTS] [--check]
+bynkc fmt [INPUTS] [--check] [--indent <INDENT>] [--indent-width <N>] [--max-line-width <COLUMNS>] [--trailing-comma] [--no-trailing-comma]
 ```
 
 | Argument | Required | Default | Description |
 |---|---|---|---|
 | `INPUTS` | no | — | Files to format. Use `-` for stdin → stdout |
 | `--check` | no | — | Check formatting without writing changes. Exits non-zero if any file is not already canonical |
+| `--indent` | no | `tab` | Indent with tabs (the default) or spaces (one of: tab, spaces) |
+| `--indent-width` | no | — | Spaces per nesting level, with `--indent spaces`. Defaults to 2. Rejected with `--indent tab`, where it would have no effect |
+| `--max-line-width` | no | `100` | Soft target line width in columns. A construct wider than this wraps across lines where the grammar allows; one with no break point in it (a long string literal) is left long. Defaults to 100 |
+| `--trailing-comma` | no | — | Emit a trailing comma in multi-line records, sums, list literals and `exports` clauses. The default; the flag exists so a script can state it, and to override an earlier `--no-trailing-comma` |
+| `--no-trailing-comma` | no | — | Omit the trailing comma in multi-line records, sums, list literals and `exports` clauses. (Parameter and argument lists never carry one — the grammar rejects it — regardless of this flag.) |
 
 ## `bynkc test`
 

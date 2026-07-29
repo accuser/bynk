@@ -59,6 +59,8 @@ Requires a stable Rust toolchain, 2024 edition (MSRV 1.95).
 bynkc check   <input>                         # type-check without emitting
 bynkc compile <input> -o <output> [--target bundle|workers]
 bynkc fmt     [inputs...] [--check]           # format in place (or `-` for stdin)
+              [--indent tab|spaces] [--indent-width N] [--max-line-width COLUMNS]
+              [--no-trailing-comma]            # override the canonical style for this run
 bynkc test    [project] [--no-run]            # compile and run `test` blocks
 ```
 
