@@ -45,11 +45,13 @@ adapter bynk {
 	keyless service handler with no agent to report, so a context-scoped
 	identifier is the only one available uniformly at every legal emission
 	site (an amendment to design/bynk-design-notes.md §7's "the publisher is
-	the emitting agent" framing). `schemaVersion` is the emitting event's own
-	declared `@schema(N)` annotation (Events slice 3b), or `1` if it
-	declares none — author-asserted, not computed; a cross-build registry
-	that detects a version bump automatically from a structural shape
-	change is a future slice (3c).
+	the emitting agent" framing). `schemaVersion` is the version the
+	cross-build schema registry (`bynk.schema.lock`, Events slice 3c) computes
+	for the emitting event: unchanged shape keeps its stored version, a purely
+	additive shape change (only new defaulted fields) auto-bumps it, and a
+	non-additive change fails the build. An explicit `@schema(N)` annotation
+	(slice 3b) is checked against that computed value rather than trusted
+	outright — a mismatch is a build error, not a silent override.
 	---
 	type EventEnvelope = {
 		eventId: String,

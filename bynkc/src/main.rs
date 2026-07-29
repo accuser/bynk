@@ -58,7 +58,11 @@ fn run_compile(
 ) -> ExitCode {
     if input.is_dir() {
         let options = match try_project_options(&input) {
-            Ok(o) => o.target(target).platform(platform),
+            // Events track, slice 3c (#980): a real directory build reconciles
+            // and writes `bynk.schema.lock` — the Cargo.lock model. Every
+            // other `compile_project` caller (in-memory builds, `bynkc/
+            // tests/e2e.rs`'s in-place fixtures, the LSP) leaves this off.
+            Ok(o) => o.target(target).platform(platform).schema_registry(true),
             Err(e) => {
                 eprintln!("bynkc: {e}");
                 return ExitCode::FAILURE;
