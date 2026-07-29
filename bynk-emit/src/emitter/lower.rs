@@ -1573,8 +1573,28 @@ fn lower_method_call(
             })
             .unwrap_or_else(|| "unknown".to_string());
         let payload = lower_expr_into(&args[0], stmts, cx);
+        // Events track, slice 2 (spine #936): the envelope is minted here,
+        // once, before fan-out duplicates this single `__events` entry to
+        // every subscriber — so one emission always carries one `eventId`/
+        // `emittedAt` to all of them (the invariant the identical-eventId
+        // fixture proves). `publisherId` is the emitting *context's*
+        // qualified name, not the emitting agent's instance identity:
+        // `Events.emit` is also legal from a plain, keyless service handler
+        // with no agent to report (`negative/503_events_emit_outside_owner`),
+        // so a context-scoped identifier is the only one available
+        // uniformly at every legal emission site — an amendment to
+        // design/bynk-design-notes.md §7's "the publisher is the emitting
+        // agent" framing (events-envelope ADR). `emittedAt` uses bare
+        // `Date.now()`, not `given Clock`, matching the runtime's existing
+        // JWT exp/nbf precedent of bypassing the `Clock` capability for its
+        // own internal timestamps — requiring `Clock` alongside `Events`
+        // would be new ambient coupling and would break every existing
+        // fixture that emits with `given Events` alone. `schemaVersion` is
+        // reserved and always `1` until the cross-build schema registry
+        // (§3.5) computes a real value.
+        let publisher_id = escape_ts_string(cx.owning_context().unwrap_or_default());
         return format!(
-            "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload} }}); }})()"
+            "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload}, envelope: {{ eventId: crypto.randomUUID(), publisherId: \"{publisher_id}\", emittedAt: Date.now(), schemaVersion: 1 }} }}); }})()"
         );
     }
     // Capability call: receiver is a bare ident naming a declared

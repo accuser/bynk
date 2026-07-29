@@ -84,6 +84,21 @@ pub fn emit_runtime_module() -> String {
 /// Node-free and the emitter stays lockstep with the runtime it embeds.
 const RUNTIME_TS: &str = include_str!("emitter/runtime.ts");
 
+/// Events track, slice 2 (spine #936): the TS type of one buffered/fanned-out
+/// event — a handler's `__events` local, the `__eventsDispatch` deps field
+/// (service, agent, provider, and the Bundle/Workers dispatch closures that
+/// implement it), and the fan-out DO's `FanoutEvent` (`events_fanout.rs`) all
+/// declare this same shape independently, with no shared type today. Routing
+/// every Rust-side site through one constant means the envelope field can
+/// never drift by being added at 8 of 9 of them. The two TypeScript runtime
+/// sources that also declare it (`runtime/src/agent.ts`'s
+/// `dispatchToEventsFanout`, `runtime/src/boundary.ts`'s `deliverEvent`) are
+/// hand-edited files this constant cannot reach — keep them textually
+/// identical to this shape by hand; `cargo test -p bynkc --test
+/// events_workers_wiring` and `events_envelope_behaviour` both exercise every
+/// hop and would fail on a real mismatch.
+pub(crate) const EVENTS_WIRE_EVENT_TS_TYPE: &str = "{ type: string; payload: unknown; envelope: { eventId: string; publisherId: string; emittedAt: number; schemaVersion: number } }";
+
 /// Emit the contents of `out/tsconfig.json`. The CLI uses `tsc -p` against
 /// this when running `bynkc test`; users can also drive `tsc` against it
 /// directly to produce JS for deployment.
@@ -2677,6 +2692,18 @@ pub(crate) struct HandlerShared {
     /// free fn, an invariant/transition predicate, a static field initialiser) —
     /// those kinds carry no `HandlerShared`, and the accessor reports `None`.
     handler_scope: Option<String>,
+    /// Events track, slice 2 (spine #936): the qualified name of the unit
+    /// this body is emitted into (`ctx.commons_name`), read by the
+    /// `Events.emit[E](event)` lowering to mint the envelope's
+    /// `publisherId`. Context-scoped rather than agent-scoped: `Events.emit`
+    /// is legal from a plain, keyless service handler with no agent
+    /// instance to report, so this is the only identity available
+    /// uniformly at every legal emission site (an amendment to
+    /// design/bynk-design-notes.md §7's "the publisher is the emitting
+    /// agent" framing — see the events-envelope ADR). Always populated
+    /// alongside `handler_scope` at every construction site; never `None`
+    /// in practice for a body that could contain an `Events.emit` call.
+    owning_context: String,
     /// v0.12: the receiver expression a capability call resolves against —
     /// `deps` in a handler body, `this.deps` in a composed provider body.
     cap_deps_expr: String,
@@ -2698,6 +2725,7 @@ impl Default for HandlerShared {
         Self {
             capabilities: HashSet::new(),
             handler_scope: None,
+            owning_context: String::new(),
             cap_deps_expr: "deps".to_string(),
             cross_context_used: false,
             agents_instantiated: false,
@@ -3081,6 +3109,14 @@ impl<'a> LowerCtx<'a> {
     /// panics, exactly as it did when this was a flat `Option` field.
     pub(crate) fn handler_scope(&self) -> Option<&str> {
         self.handler().and_then(|h| h.handler_scope.as_deref())
+    }
+
+    /// Events track, slice 2: the qualified name of the unit this body is
+    /// emitted into, for the `Events.emit[E](event)` lowering's
+    /// `publisherId`. `None` for a body kind that carries no `HandlerShared`
+    /// at all (an `Events.emit` call cannot occur there).
+    pub(crate) fn owning_context(&self) -> Option<&str> {
+        self.handler().map(|h| h.owning_context.as_str())
     }
 
     /// v0.12: the receiver expression a capability call resolves against.

@@ -28,8 +28,19 @@
   to ADR 0286's "no bespoke matching engine" wording, recorded in
   `design/pending/events-subscription-pattern-filtering.md` (pre-stamp).
   Delivery filtering only: the handler's parameter is **not** statically
-  narrowed to the matched values. The envelope and additive versioning
-  remain later slices.
+  narrowed to the matched values. **Slice 2 has shipped** (#968): an
+  `on event(e: E, env: EventEnvelope)` handler's optional second parameter
+  carries `eventId`/`publisherId`/`emittedAt`/a reserved `schemaVersion`,
+  minted once per emission so every subscriber it fans out to observes the
+  same values, enabling the `Idempotency.dedup`/`remember` idiom keyed on
+  `env.eventId`. `publisherId` amends §7's "the publisher is the emitting
+  agent" claim to the emitting *context* instead (`Events.emit` is also
+  legal from a plain, keyless service handler with no agent identity to
+  report); §12's idempotency example is corrected against the capability's
+  real, already-shipped API. Recorded in
+  `design/pending/events-envelope-and-idempotency-idiom.md` (pre-stamp).
+  Additive versioning (a real, computed `schemaVersion`) remains a later
+  slice.
 - **The one scope decision made up front.** This track delivers the **live
   pub-sub core** — declaration, emission, subscription with pattern refinement,
   the envelope, and additive versioning. It **splits event replay / backfill
@@ -344,13 +355,18 @@ MVP-first. Each slice is an ordinary increment proposal, a sub-issue of the spin
   the matched values (that half of §3.3's original claim is deferred, pending
   §2.5.4 refinement propagation). Multi-field patterns compose with AND; a
   pattern-less subscriber still matches all.
-- **Slice 2 — the envelope + the idempotency idiom.** `EventEnvelope`
+- **Slice 2 — the envelope + the idempotency idiom — SHIPPED.** `EventEnvelope`
   (`eventId`, `publisherId`, `emittedAt`, and `schemaVersion` reserved for slice
-  3) passed alongside the payload; the documented `env.eventId` →
-  `Idempotency.dedup`/`remember` pattern for effectful subscribers (§12). This is
-  where the idempotency track's parked "event-subscriber sugar" (its own §7
-  possible slice 1) actually lands — settle here whether it is bespoke syntax or
-  documented convention.
+  3) passed as an `on event` handler's optional, user-declared second
+  parameter; the documented `env.eventId` → `Idempotency.dedup`/`remember`
+  convention for effectful subscribers (§12, corrected against the
+  capability's real API — no new call-shape sugar was built). `publisherId`
+  is the emitting context, not the emitting agent, amending §7 (a plain
+  keyless service handler can emit with no agent identity to report).
+  `eventId`/`emittedAt` are minted once per emission, before fan-out
+  duplicates it to every subscriber. This is where the idempotency track's
+  parked "event-subscriber sugar" (its own §7 possible slice 1) actually
+  lands — settled as documented convention, not bespoke syntax.
 - **Slice 3 — additive versioning.** Default expressions on event-type fields
   (pure, compiler-verified), `env.schemaVersion`, and the cross-build schema
   registry (§3.5) with its evolution report and optional `@schema(N)` pin.
@@ -409,6 +425,26 @@ number is assigned at merge).
   records the correction: a small, purpose-built `EventPattern` node, not a
   reuse, and the accompanying scope decision that slice 1 ships filtering
   only, no static narrowing of the handler's parameter.
+- **[Written] The envelope's `publisherId` is the emitting context, amending
+  §7** (slice 2, `events-envelope-publisher-id-amendment`,
+  `design/pending/events-envelope-and-idempotency-idiom.md`, pre-stamp) —
+  `Events.emit` is legal from a plain, keyless service handler with no agent
+  identity to report, so a context-scoped identifier is what's actually
+  available uniformly at every legal emission site.
+- **[Written] The envelope is minted once, at emission, via bare
+  `crypto.randomUUID()`/`Date.now()`** (slice 2,
+  `events-envelope-mint-once-and-minting-mechanism`, same pending file) —
+  one emission must produce one `eventId` shared by every subscriber it
+  fans out to; not routed through `given Clock` (would break every
+  existing fixture that emits with `given Events` alone).
+- **[Written] The idempotency idiom is documented convention, correcting
+  §12's API mismatch** (slice 2, `events-idempotency-idiom-is-documented-
+  convention`, same pending file) — §12's `dedup(on:, expiresAfter:)?`
+  never shipped; the real two-call `dedup`/`remember` API, keyed on
+  `env.eventId`, is the idiom. Also names a pre-existing, general
+  field-access checker limitation found while proving the
+  no-capability-envelope case (reproduces on an ordinary cross-context
+  record field too — out of scope for this track).
 - **[Deferred to slice 3] Event schema versioning + the cross-build registry**
   (§3.5) — slice-3 ADR; records where the registry lives and whether it reuses
   the ADR 0200 normal form. Not a slice-0 blocker, so not written now.
@@ -443,12 +479,14 @@ receives *exactly* the emissions its pattern admits.
   emission is statically enforced (§3.0, §7 line 180) — this is a compile error,
   not a runtime check, and is the primary boundary guarantee.
 - **Duplicate delivery double-applying effects.** At-least-once means a subscriber
-  can receive the same event twice. *Mitigation:* the shipped `Idempotency`
-  capability keyed on `env.eventId` (slice 2, §12) — but note the **in-memory**
-  provider does not survive a crash, so a duplicate across an isolate restart is
-  *not* deduped until the durable provider (the future track, §3.6) exists. This
-  is the same accepted-gap posture idempotency itself shipped with, named here not
-  hidden.
+  can receive the same event twice. *Mitigation, shipped and demonstrated
+  end to end (slice 2, #968):* the `Idempotency` capability keyed on
+  `env.eventId`, proven combined with Events for the first time by
+  `bynkc/tests/fixtures/positive/961_events_envelope_idempotency_dedup` —
+  but note the **in-memory** provider does not survive a crash, so a
+  duplicate across an isolate restart is *not* deduped until the durable
+  provider (the future track, §3.6) exists. This is the same accepted-gap
+  posture idempotency itself shipped with, named here not hidden.
 - **Mis-ordered delivery corrupting state.** A subscriber that assumes emission
   order (e.g. a `Created` before an `Updated`) breaks if the substrate reorders.
   *Mitigation, and its real scope (§3.4, empirically measured):* order is
@@ -471,7 +509,9 @@ receives *exactly* the emissions its pattern admits.
 - [x] Slice 0 — emit/subscribe loop + closed-protocol-set extension (#939)
 - [x] Slice 1 — subscription pattern filtering, deliver-and-filter (#966).
   No static narrowing (scoped narrower than §3.3 originally claimed).
-- [ ] Slice 2 — `EventEnvelope` + the `env.eventId` idempotency idiom
+- [x] Slice 2 — `EventEnvelope` + the `env.eventId` idempotency idiom (#968).
+  `publisherId` is the emitting context (amends §7's per-agent framing);
+  the idiom is documented convention, not new syntax (corrects §12).
 - [ ] Slice 3 — additive versioning + the cross-build schema registry
 - [ ] Slice 4 — `via schema(...)` version-aware dispatch
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)
@@ -497,9 +537,17 @@ receives *exactly* the emissions its pattern admits.
   The guarantee entering the spec is **narrower** than §7 originally asserted:
   ordered within a batch and across non-overlapping calls to one agent, not
   across concurrent invocations of one agent.
-- [ ] The envelope carries `eventId`, `publisherId`, `emittedAt`, `schemaVersion`;
+- [x] The envelope carries `eventId`, `publisherId`, `emittedAt`, `schemaVersion`;
   effectful subscribers dedup on `env.eventId` via the shipped `Idempotency`
-  capability (no new dedup mechanism built here).
+  capability (no new dedup mechanism built here). **Slice 2 done** (#968):
+  `on event(e: E, env: EventEnvelope)`'s optional second parameter, minted
+  once per emission (`bynkc/tests/events_envelope_behaviour.rs` proves
+  identical ids within one emission, distinct ids across two);
+  `schemaVersion` is structurally present but hardcoded (real computation
+  is slice 3). `publisherId` amends §7 to the emitting context, not the
+  emitting agent (a plain service handler can emit with no agent
+  identity); §12's idempotency example is corrected against the
+  capability's real API.
 - [ ] Additive versioning (defaults + `env.schemaVersion` + the registry) and
   `via schema(...)` dispatch ship; the schema-evolution report is emitted on a
   version change.

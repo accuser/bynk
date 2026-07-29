@@ -1,7 +1,7 @@
 adapter bynk {
 	uses bynk.locale.types
 	exports capability { Clock, Random, Logger, Fetch, Secrets, Locale, Idempotency, Events }
-	exports transparent { Uuid, Method, FetchError, Request, Response }
+	exports transparent { Uuid, Method, FetchError, Request, Response, EventEnvelope }
 
 	---
 	A UUID in canonical 8-4-4-4-12 lowercase-hex form.
@@ -33,6 +33,28 @@ adapter bynk {
 	An HTTP response: a status code and a body.
 	---
 	type Response = { status: Int, body: String }
+
+	---
+	Runtime metadata carried alongside an event payload (Events track, slice
+	2; design/tracks/events.md, spine #936), available as an `on event`
+	handler's optional second parameter. `eventId` is minted once per
+	emission — every subscriber of that emission sees the same value, making
+	it the dedup key for the `Idempotency` capability's `dedup`/`remember`
+	idiom. `publisherId` is the emitting context's qualified name, not the
+	emitting agent's instance identity: `Events.emit` is legal from a plain,
+	keyless service handler with no agent to report, so a context-scoped
+	identifier is the only one available uniformly at every legal emission
+	site (an amendment to design/bynk-design-notes.md §7's "the publisher is
+	the emitting agent" framing). `schemaVersion` is reserved and currently
+	always `1`; a real per-type computed value is a future slice (§3.5's
+	cross-build schema registry).
+	---
+	type EventEnvelope = {
+		eventId:       String,
+		publisherId:   String,
+		emittedAt:     Instant,
+		schemaVersion: Int,
+	}
 
 	---
 	Reads the current wall-clock time, as Unix milliseconds.

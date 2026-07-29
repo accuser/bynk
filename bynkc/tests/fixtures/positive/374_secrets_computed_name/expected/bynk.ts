@@ -73,6 +73,31 @@ export const Response = {
 };
 
 /**
+ * Runtime metadata carried alongside an event payload (Events track, slice
+ * 2; design/tracks/events.md, spine #936), available as an `on event`
+ * handler's optional second parameter. `eventId` is minted once per
+ * emission — every subscriber of that emission sees the same value, making
+ * it the dedup key for the `Idempotency` capability's `dedup`/`remember`
+ * idiom. `publisherId` is the emitting context's qualified name, not the
+ * emitting agent's instance identity: `Events.emit` is legal from a plain,
+ * keyless service handler with no agent to report, so a context-scoped
+ * identifier is the only one available uniformly at every legal emission
+ * site (an amendment to design/bynk-design-notes.md §7's "the publisher is
+ * the emitting agent" framing). `schemaVersion` is reserved and currently
+ * always `1`; a real per-type computed value is a future slice (§3.5's
+ * cross-build schema registry).
+ */
+export interface EventEnvelope {
+  readonly eventId: string;
+  readonly publisherId: string;
+  readonly emittedAt: number;
+  readonly schemaVersion: number;
+}
+
+export const EventEnvelope = {
+};
+
+/**
  * Reads the current wall-clock time, as Unix milliseconds.
  */
 export interface Clock {
@@ -163,6 +188,45 @@ export interface Events {
 }
 
 export const EventsToken: unique symbol = Symbol("Events");
+
+export function serialise_EventEnvelope(value: EventEnvelope): JsonValue {
+  return {
+    eventId: value.eventId as JsonValue,
+    publisherId: value.publisherId as JsonValue,
+    emittedAt: value.emittedAt as JsonValue,
+    schemaVersion: value.schemaVersion as JsonValue,
+  };
+}
+
+export function deserialise_EventEnvelope(json: JsonValue, path: string = "$"): Result<EventEnvelope, BoundaryError> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  if (typeof obj["eventId"] !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.eventId`, expected: "string", actual: typeof obj["eventId"] });
+  }
+  const __eventId = obj["eventId"];
+  if (typeof obj["publisherId"] !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.publisherId`, expected: "string", actual: typeof obj["publisherId"] });
+  }
+  const __publisherId = obj["publisherId"];
+  if (typeof obj["emittedAt"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.emittedAt`, expected: "number", actual: typeof obj["emittedAt"] });
+  }
+  if (!Number.isInteger(obj["emittedAt"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.emittedAt`, expected: "integer", actual: String(obj["emittedAt"]) });
+  }
+  const __emittedAt = obj["emittedAt"];
+  if (typeof obj["schemaVersion"] !== "number") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.schemaVersion`, expected: "number", actual: typeof obj["schemaVersion"] });
+  }
+  if (!Number.isInteger(obj["schemaVersion"])) {
+    return Err({ kind: "StructuralMismatch", path: `${path}.schemaVersion`, expected: "integer", actual: String(obj["schemaVersion"]) });
+  }
+  const __schemaVersion = obj["schemaVersion"];
+  return Ok({ eventId: __eventId, publisherId: __publisherId, emittedAt: __emittedAt, schemaVersion: __schemaVersion } as EventEnvelope);
+}
 
 export function serialise_FetchError(value: FetchError): JsonValue {
   switch (value.tag) {

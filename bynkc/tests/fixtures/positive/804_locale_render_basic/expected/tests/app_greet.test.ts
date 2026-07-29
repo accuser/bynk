@@ -56,7 +56,8 @@ async function test_no_params_renders_just_the_code() {
     type LocaleTag = bynk_locale_types.LocaleTag;
     type Message = bynk_locale_types.Message;
     type MessageArg = bynk_locale_types.MessageArg;
-    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
+    type EventEnvelope = bynk.EventEnvelope;
     type FetchError = bynk.FetchError;
     type Method = bynk.Method;
     type Request = bynk.Request;
@@ -83,7 +84,8 @@ async function test_one_param_renders_code_plus_the_substitution() {
     type LocaleTag = bynk_locale_types.LocaleTag;
     type Message = bynk_locale_types.Message;
     type MessageArg = bynk_locale_types.MessageArg;
-    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
+    type EventEnvelope = bynk.EventEnvelope;
     type FetchError = bynk.FetchError;
     type Method = bynk.Method;
     type Request = bynk.Request;
@@ -110,7 +112,8 @@ async function test_multiple_params_render_sorted_by_key__not_call_order() {
     type LocaleTag = bynk_locale_types.LocaleTag;
     type Message = bynk_locale_types.Message;
     type MessageArg = bynk_locale_types.MessageArg;
-    const { FetchError, Method, Request, Response, Uuid } = bynk;
+    const { EventEnvelope, FetchError, Method, Request, Response, Uuid } = bynk;
+    type EventEnvelope = bynk.EventEnvelope;
     type FetchError = bynk.FetchError;
     type Method = bynk.Method;
     type Request = bynk.Request;

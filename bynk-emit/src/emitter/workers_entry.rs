@@ -435,11 +435,21 @@ pub(crate) fn emit_worker_entry(
             out,
             "        const servicePath = path.slice(\"/_bynk/event/\".length);"
         );
-        let _ = writeln!(out, "        const payload = await request.json();");
+        // Slice 2 (spine #936): the fan-out DO's `deliverEvent` always sends
+        // `{ payload, envelope }` — the envelope is minted at emission
+        // (`lower.rs`'s `__events.push`) and forwarded unconditionally over
+        // this hop. Whether a *specific* subscriber's handler actually
+        // wants it is decided by that subscriber's own generated wrapper
+        // (`emit_event_wrapper`), not here — this route passes both through
+        // uniformly regardless of which `case` it dispatches to.
+        let _ = writeln!(
+            out,
+            "        const {{ payload, envelope }} = (await request.json()) as {{ payload: unknown; envelope: unknown }};"
+        );
         let _ = writeln!(out, "        switch (servicePath) {{");
         for sname in &event_services {
             let _ = writeln!(out, "          case \"{sname}\": {{");
-            let _ = writeln!(out, "            await surface.{sname}(payload);");
+            let _ = writeln!(out, "            await surface.{sname}(payload, envelope);");
             let _ = writeln!(
                 out,
                 "            return new Response(null, {{ status: 204 }});"

@@ -369,3 +369,152 @@ fn workers_events_pattern_leaves_fanout_routing_unchanged() {
 
     let _ = fs::remove_dir_all(&tmp);
 }
+
+// Events track, slice 2 (spine #936): the same fixture again, but the
+// subscriber declares the optional `env: EventEnvelope` parameter.
+// `EventEnvelope` is a plain first-party record (`bynk-check/src/firstparty/
+// bynk.bynk`, `exports transparent`) — this is the first time an
+// adapter-owned transparent record reaches a handler *signature* on the
+// Workers target (`Request`/`Response` are only ever constructed inside
+// bodies elsewhere), so `collect_boundary_types` generates a real
+// serialise/deserialise codec pair for it that nothing calls at runtime
+// (the wire hop rides the same `unknown`/`as any` shape the payload
+// already used) but that must still compile under `tsc --strict`.
+const SOURCE_NOTIFICATIONS_ENVELOPE: &str = r#"context commerce.notifications
+
+consumes commerce.order
+consumes bynk { Logger }
+
+service OnPayment from Events(PaymentConfirmed) {
+  on event(e: PaymentConfirmed, env: EventEnvelope) -> Effect[()] given Logger {
+    Logger.info("\(e.orderId):\(env.eventId):\(env.publisherId)")
+  }
+}
+"#;
+
+#[test]
+fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
+    let tmp = std::env::temp_dir().join(format!(
+        "bynk-events-workers-wiring-envelope-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    let proj = tmp.join("proj/commerce");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join("order.bynk"), SOURCE_ORDER).unwrap();
+    fs::write(
+        proj.join("notifications.bynk"),
+        SOURCE_NOTIFICATIONS_ENVELOPE,
+    )
+    .unwrap();
+
+    let out = match bynkc::compile_project(
+        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+    ) {
+        Ok(o) => o,
+        Err(failure) => panic!(
+            "compile the envelope-declaring events project to workers:\n{}",
+            bynkc::render_project_errors(&failure.flatten())
+        ),
+    };
+
+    let find = |suffix: &str| -> String {
+        out.files
+            .iter()
+            .find(|f| f.output_path.to_string_lossy().ends_with(suffix))
+            .unwrap_or_else(|| panic!("no compiled file ends with {suffix:?}"))
+            .typescript
+            .clone()
+    };
+
+    // Byte-identical to the pattern-less/patterned fixtures' own assertions:
+    // declaring `env` changes nothing about routing or wiring.
+    let order_wrangler = find("workers/commerce-order/wrangler.toml");
+    assert!(
+        order_wrangler.contains("name = \"___EVENTS_FANOUT\"")
+            && order_wrangler.contains("class_name = \"__EventsFanout\"")
+            && order_wrangler.contains("binding = \"COMMERCE_NOTIFICATIONS\""),
+        "declaring `env: EventEnvelope` must not change the fan-out DO/Service \
+         Binding wiring:\n{order_wrangler}"
+    );
+    let fanout_ts = find("workers/commerce-order/events_fanout.ts");
+    assert!(
+        fanout_ts.contains("\"PaymentConfirmed\": [{ binding: \"COMMERCE_NOTIFICATIONS\", service: \"OnPayment\" }]"),
+        "declaring `env: EventEnvelope` must not change the fan-out DO's \
+         routing table:\n{fanout_ts}"
+    );
+
+    // The subscriber's own real handler method (`handlers.ts`) declares
+    // `env: EventEnvelope` directly — no cast needed there, since it's the
+    // typed declaration, not a wrapper.
+    let notif_handlers = find("workers/commerce-notifications/handlers.ts");
+    assert!(
+        notif_handlers.contains("async event(e: PaymentConfirmed, env: EventEnvelope,"),
+        "the subscriber's generated handler method must declare the typed \
+         `env: EventEnvelope` parameter:\n{notif_handlers}"
+    );
+
+    // The entry route (`index.ts`) destructures `{ payload, envelope }`
+    // uniformly and forwards both positionally, regardless of which
+    // subscriber it dispatches to.
+    let notif_index = find("workers/commerce-notifications/index.ts");
+    assert!(
+        notif_index.contains("const { payload, envelope }")
+            && notif_index.contains("surface.OnPayment(payload, envelope)"),
+        "the entry route must destructure and forward both payload and \
+         envelope uniformly:\n{notif_index}"
+    );
+
+    // The compose-surface wrapper (`emit_event_wrapper`, in `compose.ts`) is
+    // the one place that forwards `envelope` into the real handler with a
+    // cast, since the wire value only arrives as `unknown`.
+    let notif_compose = find("workers/commerce-notifications/compose.ts");
+    assert!(
+        notif_compose.contains("envelope as any"),
+        "a subscriber that declared `env: EventEnvelope` must have it \
+         forwarded into its generated handler method:\n{notif_compose}"
+    );
+
+    // Real `tsc --strict` — the actual proof that `EventEnvelope` reaching a
+    // handler signature (and so `collect_boundary_types`' generated codec
+    // for it) type-checks, not just that the strings above are present.
+    let runner = match discover_tsc() {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "\n!!! EVENTS WORKERS WIRING (ENVELOPE) TSC CHECK SKIPPED !!!\nno tsc runner.\n"
+            );
+            if std::env::var(REQUIRE_ENV).is_ok() {
+                panic!("{REQUIRE_ENV} is set but no tsc runner was found");
+            }
+            let _ = fs::remove_dir_all(&tmp);
+            return;
+        }
+    };
+
+    let run_dir = tmp.join("run");
+    for file in &out.files {
+        let target = run_dir.join(&file.output_path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, &file.typescript).unwrap();
+    }
+    fs::write(
+        run_dir.join("runtime.ts"),
+        bynkc::emitter::emit_runtime_module(),
+    )
+    .unwrap();
+
+    let (program, prefix) = &runner;
+    let (ok, msg) = run(
+        program,
+        prefix,
+        &["--strict", "--noEmit", "-p", "tsconfig.json"],
+        &run_dir,
+    );
+    assert!(
+        ok,
+        "tsc --strict failed on the envelope-declaring workers-target output:\n{msg}"
+    );
+
+    let _ = fs::remove_dir_all(&tmp);
+}
