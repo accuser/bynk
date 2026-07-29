@@ -2205,6 +2205,70 @@ mod tests {
         ));
     }
 
+    /// #981: an identifier statement immediately followed, on its own line, by
+    /// a standalone `()` must stay two separate constructs — not merge into a
+    /// zero-arg call. `status := Paid` / `()` is an Assign statement whose
+    /// value is the bare identifier `Paid`, then a unit tail; it must never
+    /// parse as a single `status := Paid()` (a call). The call-parens rule
+    /// mirrors the v0.20b same-line `[` rule already applied to type
+    /// arguments: a postfix opener that begins a new line does not continue
+    /// the previous token.
+    #[test]
+    fn identifier_statement_followed_by_unit_tail_does_not_merge_into_a_call() {
+        let src = "commons c\n\nfn f() -> Int {\n  status := Paid\n  ()\n}\n";
+        let c = parse_str(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("expected fn, got {:?}", c.items[0]);
+        };
+        assert_eq!(
+            f.body.statements.len(),
+            1,
+            "expected exactly one Assign statement, got {:?}",
+            f.body.statements
+        );
+        let Statement::Assign(a) = &f.body.statements[0] else {
+            panic!(
+                "expected an Assign statement, got {:?}",
+                f.body.statements[0]
+            );
+        };
+        assert!(
+            matches!(a.value.kind, ExprKind::Ident(_)),
+            "assign value must stay the bare identifier `Paid`, got {:?}",
+            a.value.kind
+        );
+        assert!(
+            matches!(f.body.tail.kind, ExprKind::UnitLit),
+            "the `()` must remain the block's own tail, got {:?}",
+            f.body.tail.kind
+        );
+    }
+
+    /// #981: the same same-line rule extends to a method call's parens — a
+    /// `.method` immediately followed, on its own line, by a standalone `()`
+    /// must not merge into `.method()`.
+    #[test]
+    fn method_reference_followed_by_unit_tail_does_not_merge_into_a_call() {
+        let src = "commons c\n\nfn f() -> Int {\n  let y = x.field\n  ()\n}\n";
+        let c = parse_str(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!("expected fn, got {:?}", c.items[0]);
+        };
+        let Statement::Let(l) = &f.body.statements[0] else {
+            panic!("expected a Let statement, got {:?}", f.body.statements[0]);
+        };
+        assert!(
+            matches!(l.value.kind, ExprKind::FieldAccess { .. }),
+            "let value must stay a field access, got {:?}",
+            l.value.kind
+        );
+        assert!(
+            matches!(f.body.tail.kind, ExprKind::UnitLit),
+            "the `()` must remain the block's own tail, got {:?}",
+            f.body.tail.kind
+        );
+    }
+
     #[test]
     fn unparenthesised_record_in_condition_head_now_errors() {
         // #636 narrowing (matches Rust): a record literal in condition *head*
