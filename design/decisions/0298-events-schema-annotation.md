@@ -1,11 +1,6 @@
----
-level: minor
-changelog: An event may declare an optional @schema(N) annotation, embedded into env.schemaVersion at emission (default 1); an unknown event annotation or a malformed @schema is now a compile error
----
+# 0298 — Event schema versioning ships as manual @schema(N) pinning, not the auto-detecting registry — narrowing #978's own scope
 
-## ADR: events-schema-annotation
-title: Event schema versioning ships as manual @schema(N) pinning, not the auto-detecting registry — narrowing #978's own scope
-summary: Why slice 3b builds only author-asserted versioning, and where the schema-version map had to be threaded to reach the mint site
+- **Status:** Accepted (v0.242)
 
 **Context.** Proposal #978 (Events slice 3b) scoped an optional `@schema(N)`
 annotation on `event` declarations, embedding `N` into `env.schemaVersion` at
