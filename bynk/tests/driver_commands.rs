@@ -577,6 +577,271 @@ fn fmt_style_overrides_reach_a_pinned_bynkc() {
 }
 
 // ---------------------------------------------------------------------------
+// bynk fmt — the bynk.toml [fmt] layer (#972)
+// ---------------------------------------------------------------------------
+
+/// A project whose manifest states a style, plus one source file under `src/`
+/// so the manifest is found by walking *up* rather than sitting beside it.
+fn project_with_fmt(name: &str, fmt_section: &str) -> PathBuf {
+    let dir = scratch(name);
+    write(
+        &dir.join("bynk.toml"),
+        &format!("[project]\nname = \"calc\"\nversion = \"0.1.0\"\n\n{fmt_section}"),
+    );
+    write(&dir.join("src/calc.bynk"), WIDE_RECORD);
+    dir
+}
+
+#[test]
+fn fmt_takes_its_style_from_the_projects_manifest() {
+    let dir = project_with_fmt(
+        "fmt-manifest",
+        "[fmt]\nindent = \"spaces\"\nindent_width = 4\nmax_line_width = 50\n",
+    );
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "src/calc.bynk"]);
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    let got = std::fs::read_to_string(dir.join("src/calc.bynk")).expect("read back");
+    assert!(!got.contains('\t'), "manifest asked for spaces:\n{got}");
+    assert!(
+        got.contains("\n        id: String,"),
+        "expected 4-space indent at depth 2 and a 50-column break:\n{got}"
+    );
+}
+
+#[test]
+fn fmt_finds_the_manifest_by_walking_up_from_the_file() {
+    // The manifest is two directories above the source file, and the run is
+    // launched from the project root — the lookup starts at the *file*.
+    let dir = scratch("fmt-manifest-nested");
+    write(
+        &dir.join("bynk.toml"),
+        "[project]\nname = \"calc\"\n\n[fmt]\nindent = \"spaces\"\n",
+    );
+    write(&dir.join("src/deep/calc.bynk"), WIDE_RECORD);
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "src/deep/calc.bynk"]);
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    let got = std::fs::read_to_string(dir.join("src/deep/calc.bynk")).expect("read back");
+    assert!(
+        !got.contains('\t'),
+        "manifest two levels up was not found:\n{got}"
+    );
+}
+
+#[test]
+fn a_flag_beats_the_manifest_and_silence_does_not() {
+    let dir = project_with_fmt(
+        "fmt-manifest-override",
+        "[fmt]\nindent = \"spaces\"\nmax_line_width = 50\n",
+    );
+    // `--indent tab` overrides the manifest's spaces; `max_line_width` is not
+    // named on the command line, so the manifest's 50 still applies.
+    let (code, out, err) = run_in(
+        &bynk(),
+        &dir,
+        &["fmt", "--indent", "tab", "src/calc.bynk", "--check"],
+        None,
+    );
+    assert_eq!(
+        code, 1,
+        "the file is not canonical under that mix; err:\n{err}"
+    );
+    assert!(out.is_empty());
+
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "--indent", "tab", "src/calc.bynk"]);
+    assert_eq!(code, 0, "stderr:\n{err}");
+    let got = std::fs::read_to_string(dir.join("src/calc.bynk")).expect("read back");
+    assert!(got.contains('\t'), "`--indent tab` must win:\n{got}");
+    assert!(
+        got.contains("\n\t\tid: String,"),
+        "the manifest's 50-column budget must still apply:\n{got}"
+    );
+}
+
+#[test]
+fn no_config_ignores_the_manifest_entirely() {
+    let dir = project_with_fmt(
+        "fmt-no-config",
+        "[fmt]\nindent = \"spaces\"\nmax_line_width = 50\n",
+    );
+    let (code, out, err) = run_in(
+        &bynk(),
+        &dir,
+        &["fmt", "--no-config", "-"],
+        Some(WIDE_RECORD),
+    );
+    assert_eq!(code, 0, "stderr:\n{err}");
+    assert!(
+        out.contains('\t'),
+        "`--no-config` must format canonically:\n{out}"
+    );
+    assert!(
+        out.contains("type R = { id: String,"),
+        "the manifest's 50-column budget must not apply:\n{out}"
+    );
+}
+
+#[test]
+fn fmt_check_gates_on_the_manifests_style() {
+    // The point of the layer: a project on a non-default style gets a CI gate
+    // that can actually pass, which `bynk fmt --check` alone could not give it
+    // before the manifest was read.
+    let dir = project_with_fmt("fmt-manifest-check", "[fmt]\nindent = \"spaces\"\n");
+    assert_eq!(
+        run_bynk_in(&dir, &["fmt", "src/calc.bynk"]).0,
+        0,
+        "format it to the project's style first"
+    );
+    let (code, _out, err) = run_bynk_in(&dir, &["fmt", "--check", "src/calc.bynk"]);
+    assert_eq!(
+        code, 0,
+        "a file in the project's own style passes; err:\n{err}"
+    );
+    // …and the canonical rendering does *not*, since the project chose spaces.
+    let (code, _out, _err) = run_bynk_in(&dir, &["fmt", "--check", "--no-config", "src/calc.bynk"]);
+    assert_eq!(code, 1, "canonical style is not this project's style");
+}
+
+#[test]
+fn one_run_resolves_each_input_against_its_own_project() {
+    // Two projects, one command. A single set of options for the whole run
+    // would have to pick one of them and be wrong about the other.
+    let a = project_with_fmt("fmt-two-projects-a", "[fmt]\nindent = \"spaces\"\n");
+    let b = project_with_fmt("fmt-two-projects-b", "[fmt]\nmax_line_width = 40\n");
+    let b_src = b.join("src/calc.bynk");
+    let (code, _out, err) = run_in(
+        &bynk(),
+        &a,
+        &["fmt", "src/calc.bynk", b_src.to_str().expect("utf-8")],
+        None,
+    );
+    assert_eq!(code, 0, "stderr:\n{err}");
+    let got_a = std::fs::read_to_string(a.join("src/calc.bynk")).expect("read a");
+    let got_b = std::fs::read_to_string(&b_src).expect("read b");
+    assert!(!got_a.contains('\t'), "a/ chose spaces:\n{got_a}");
+    assert!(got_b.contains('\t'), "b/ left indentation alone:\n{got_b}");
+    assert!(
+        got_b.contains("\n\t\tid: String,"),
+        "b/'s 40-column budget must break the record:\n{got_b}"
+    );
+}
+
+#[test]
+fn a_broken_manifest_is_reported_not_ignored() {
+    for (name, section, needle) in [
+        (
+            "fmt-bad-indent",
+            "[fmt]\nindent = \"tabs\"\n",
+            "\"tab\" or \"spaces\"",
+        ),
+        (
+            "fmt-bad-key",
+            "[fmt]\nmax_line_length = 120\n",
+            "unknown field",
+        ),
+        (
+            "fmt-bad-toml",
+            "[fmt\nindent = \"tab\"\n",
+            "TOML parse error",
+        ),
+        ("fmt-bad-width", "[fmt]\nmax_line_width = 0\n", "at least 1"),
+    ] {
+        let dir = scratch(name);
+        write(&dir.join("bynk.toml"), section);
+        write(&dir.join("src/calc.bynk"), WIDE_RECORD);
+        let (code, _out, err) = run_bynk_in(&dir, &["fmt", "src/calc.bynk"]);
+        assert_eq!(
+            code, 1,
+            "{name}: a broken manifest must fail the run; err:\n{err}"
+        );
+        assert!(
+            err.contains(needle),
+            "{name}: expected {needle:?} in the message, got:\n{err}"
+        );
+        assert!(
+            err.contains("bynk.toml"),
+            "{name}: the message must name the manifest, got:\n{err}"
+        );
+        // The file is untouched — a config error stops before any write.
+        let got = std::fs::read_to_string(dir.join("src/calc.bynk")).expect("read back");
+        assert_eq!(got, WIDE_RECORD, "{name}: nothing should have been written");
+    }
+}
+
+#[test]
+fn the_manifest_layer_matches_bynkc_when_present() {
+    let Some(bynkc) = bynkc_sibling() else {
+        eprintln!("skipping: sibling bynkc not built (run the workspace test suite for parity)");
+        return;
+    };
+    let dir = project_with_fmt(
+        "fmt-manifest-parity",
+        "[fmt]\nindent = \"spaces\"\nindent_width = 4\nmax_line_width = 50\n",
+    );
+    for args in [
+        vec!["fmt", "-"],
+        vec!["fmt", "--no-config", "-"],
+        vec!["fmt", "--indent", "tab", "-"],
+        vec!["fmt", "--max-line-width", "100", "-"],
+    ] {
+        let driven = run_in(&bynk(), &dir, &args, Some(WIDE_RECORD));
+        let direct = run_in(&bynkc, &dir, &args, Some(WIDE_RECORD));
+        assert_eq!(
+            driven.0,
+            direct.0,
+            "`bynk {0}` exit must match `bynkc {0}`",
+            args.join(" ")
+        );
+        assert_eq!(
+            driven.1,
+            direct.1,
+            "`bynk {0}` output must match `bynkc {0}`",
+            args.join(" ")
+        );
+    }
+}
+
+#[test]
+fn the_manifest_layer_survives_delegation_to_a_pinned_bynkc() {
+    // `bynk` forwards only the flags the run passed; the manifest lookup is the
+    // child's, done from the same working directory against the same paths. A
+    // resolved-and-forwarded default would override the project's own style.
+    let Some(bynkc) = bynkc_sibling() else {
+        eprintln!("skipping: sibling bynkc not built (the delegate path needs it)");
+        return;
+    };
+    let dir = project_with_fmt("fmt-manifest-delegated", "[fmt]\nmax_line_width = 50\n");
+    let mut cmd = Command::new(bynk());
+    cmd.args(["fmt", "-"])
+        .env("BYNK_BYNKC", &bynkc)
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(WIDE_RECORD.as_bytes())
+            .unwrap();
+    }
+    let out = child.wait_with_output().expect("wait");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "delegated fmt should succeed; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("\n\t\tid: String,"),
+        "the project's 50-column budget must reach the pinned bynkc:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // bynk test (delegation)
 // ---------------------------------------------------------------------------
 

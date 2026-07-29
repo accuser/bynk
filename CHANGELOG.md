@@ -75,10 +75,24 @@ The project, its toolchain, and its in-language surface were renamed from
   project on a non-default style gets a working CI gate. Both binaries flatten
   one shared `FmtArgs`, and `bynk fmt` forwards the flags to a `BYNK_BYNKC`-
   pinned compiler rather than silently formatting to the canonical style.
-  `--indent-width` alongside `--indent tab` is an error, not a no-op. The flags
-  are per-run only: nothing is written to `bynk.toml`, and the CLI still does
-  not read that file's `[fmt]` section (which remains the language server's
-  input for format-on-save).
+  `--indent-width` alongside tab indentation is an error, not a no-op.
+- `bynk fmt` / `bynkc fmt` read the project's `bynk.toml` `[fmt]` section
+  (#972). Options now resolve in three layers, each overriding the one before:
+  the canonical defaults, the manifest, then this run's flags — so a flag
+  overrides only the field it names, and a field nobody mentions keeps the
+  project's value. **Behaviour change:** a project that sets `[fmt]` now formats
+  to that style from the command line, where the CLI previously ignored the
+  section and produced the canonical style; `--check` gates on the same resolved
+  options, which is what gives such a project a CI gate that can pass. The
+  manifest is resolved *per input file* — the nearest `bynk.toml` at or above it
+  — so one command spanning two projects gives each its own style. `--no-config`
+  skips the manifest layer. Nothing is ever written to `bynk.toml`.
+- The `[fmt]` section has one reader (#972), `bynk_fmt::FmtConfig`, which the
+  CLI and the language server both call, so format-on-save and `fmt` cannot
+  drift apart on what a key means. An unrecognised key in `[fmt]` is now an
+  error rather than silently ignored — `max_line_length = 120` sitting in a
+  manifest while the formatter used 100 is the failure a config layer must not
+  have.
 
 ### In-language reserved surface (breaking)
 

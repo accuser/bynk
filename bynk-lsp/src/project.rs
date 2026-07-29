@@ -2,56 +2,29 @@
 //!
 //! Parses the project's `bynk.toml` if one exists at the project root. All
 //! fields have sensible defaults so an absent or minimal config is fine.
+//!
+//! `[fmt]` is **not** parsed here (#972). It is read by
+//! [`bynk_fmt::FmtConfig`], the same reader `bynkc fmt` / `bynk fmt` layer
+//! their flags over, so the editor's format-on-save and the command line
+//! cannot drift apart on what a key means. This file owns only the mapping
+//! from that shared config into the server's own [`ProjectConfig`], alongside
+//! the `[lsp]` section, which is the server's alone.
 
 use std::path::Path;
 
-use bynk_fmt::{FormatOptions, IndentStyle};
+use bynk_fmt::{FmtConfig, FormatOptions, IndentStyle};
 use serde::Deserialize;
 
 /// Slice A: only the sections the **server** owns. `[paths]` is deliberately
 /// absent — the project's trees are the *compiler's* to resolve
 /// (`bynk_ide::AnalysisRoots::Project` → `read_project_paths`), and this file
 /// re-deriving them is precisely the defect slice A removes. `[project]` is
-/// absent because nothing read it.
+/// absent because nothing read it. `[fmt]` is absent for the same shape of
+/// reason (#972): it belongs to `bynk-fmt`, which the CLI reads too.
 #[derive(Debug, Deserialize, Default)]
 struct RawConfig {
     #[serde(default)]
-    fmt: FmtSection,
-    #[serde(default)]
     lsp: LspSection,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct FmtSection {
-    #[serde(default = "default_indent")]
-    pub indent: String,
-    #[serde(default)]
-    pub indent_width: Option<u8>,
-    #[serde(default = "default_max_line_width")]
-    pub max_line_width: u32,
-    #[serde(default = "default_trailing_comma")]
-    pub trailing_comma: bool,
-}
-
-impl Default for FmtSection {
-    fn default() -> Self {
-        Self {
-            indent: default_indent(),
-            indent_width: None,
-            max_line_width: default_max_line_width(),
-            trailing_comma: default_trailing_comma(),
-        }
-    }
-}
-
-fn default_indent() -> String {
-    "tab".into()
-}
-fn default_max_line_width() -> u32 {
-    100
-}
-fn default_trailing_comma() -> bool {
-    true
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -124,23 +97,90 @@ pub enum DiagnosticsMode {
 
 /// Load `bynk.toml` from the given project root.
 pub fn load_config(root: &Path) -> Option<ProjectConfig> {
-    let path = root.join("bynk.toml");
+    let path = root.join(bynk_fmt::MANIFEST);
     let source = std::fs::read_to_string(&path).ok()?;
     let raw: RawConfig = toml::from_str(&source).ok()?;
-    let indent = match raw.fmt.indent.as_str() {
-        "tab" => IndentStyle::Tab,
-        "spaces" => IndentStyle::Spaces(raw.fmt.indent_width.unwrap_or(2)),
-        _ => IndentStyle::Tab,
-    };
+    // `[fmt]` through the shared reader (#972). A malformed section leaves the
+    // formatter on its defaults rather than taking the server down — the CLI
+    // reports the same error loudly, which is where a typo gets noticed. The
+    // rest of the config still applies either way.
+    let fmt = FmtConfig::from_manifest_str(&source)
+        .unwrap_or_default()
+        .apply(FormatOptions::default());
     let diagnostics_mode = match raw.lsp.diagnostics_mode.as_str() {
         "on_save" => DiagnosticsMode::OnSave,
         _ => DiagnosticsMode::Live,
     };
     Some(ProjectConfig {
-        indent,
-        max_line_width: raw.fmt.max_line_width,
-        trailing_comma: raw.fmt.trailing_comma,
+        indent: fmt.indent,
+        max_line_width: fmt.max_line_width,
+        trailing_comma: fmt.trailing_comma,
         diagnostics_mode,
         diagnostics_debounce_ms: raw.lsp.diagnostics_debounce_ms,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `bynk.toml` in a fresh directory, returning the root.
+    ///
+    /// `std::env::temp_dir`, not `CARGO_TARGET_TMPDIR` — the latter is defined
+    /// only for integration tests, and these are lib unit tests.
+    fn project(name: &str, manifest: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("bynk-lsp-project-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join(bynk_fmt::MANIFEST), manifest).expect("write");
+        dir
+    }
+
+    #[test]
+    fn the_fmt_section_still_reaches_format_on_save() {
+        // #972 moved this parse out to `bynk-fmt`; format-on-save must still
+        // apply what the project asked for.
+        let root = project(
+            "lsp-fmt-section",
+            "[project]\nname = \"x\"\n\n[fmt]\nindent = \"spaces\"\nindent_width = 4\nmax_line_width = 120\ntrailing_comma = false\n",
+        );
+        let opts = load_config(&root).expect("config loads").format_options();
+        assert_eq!(opts.indent, IndentStyle::Spaces(4));
+        assert_eq!(opts.max_line_width, 120);
+        assert!(!opts.trailing_comma);
+    }
+
+    #[test]
+    fn the_editor_and_the_cli_resolve_a_manifest_identically() {
+        // The property the shared reader exists to hold. Not circular: this
+        // compares the *server's* resolved options against what the CLI's
+        // layering produces from the same file with no flags in play.
+        let manifest = "[fmt]\nindent = \"spaces\"\nindent_width = 3\nmax_line_width = 60\n";
+        let root = project("lsp-fmt-parity", manifest);
+        let editor = load_config(&root).expect("config loads").format_options();
+        let cli = bynk_fmt::FmtConfig::from_manifest(&root.join(bynk_fmt::MANIFEST))
+            .expect("manifest parses")
+            .apply(FormatOptions::default());
+        assert_eq!(editor, cli, "format-on-save and `fmt` must agree");
+    }
+
+    #[test]
+    fn an_absent_fmt_section_leaves_the_canonical_style() {
+        let root = project("lsp-fmt-absent", "[project]\nname = \"x\"\n");
+        let opts = load_config(&root).expect("config loads").format_options();
+        assert_eq!(opts, FormatOptions::default());
+    }
+
+    #[test]
+    fn a_broken_fmt_section_does_not_take_the_rest_of_the_config_with_it() {
+        // The server keeps serving on a bad `[fmt]`; the CLI is where the same
+        // typo is reported loudly.
+        let root = project(
+            "lsp-fmt-broken",
+            "[fmt]\nindent = \"tabs\"\n\n[lsp]\ndiagnostics_debounce_ms = 900\n",
+        );
+        let config = load_config(&root).expect("config loads");
+        assert_eq!(config.format_options(), FormatOptions::default());
+        assert_eq!(config.diagnostics_debounce_ms, 900, "[lsp] still applies");
+    }
 }

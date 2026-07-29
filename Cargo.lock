@@ -213,6 +213,8 @@ dependencies = [
  "bynk-render",
  "bynk-syntax",
  "proptest",
+ "serde",
+ "toml",
 ]
 
 [[package]]
