@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callService, type BoundaryError, type ServiceBinding } from "../src/boundary.ts";
+import { callService, deserialiseEventEnvelope, type BoundaryError, type ServiceBinding } from "../src/boundary.ts";
 import { Ok, Err, type Result } from "../src/result.ts";
 
 function bindingReturning(body: unknown, init?: ResponseInit): ServiceBinding {
@@ -117,4 +117,62 @@ test("callService: a 409 with an unparseable body stays a Transport error", asyn
       return true;
     },
   );
+});
+
+// #973: the Events boundary had no runtime validation at all — a malformed
+// payload/envelope reached the subscriber's handler via a bare `as any` cast.
+// `deserialiseEventEnvelope` is the envelope half of the fix (the payload
+// half is an ordinary generated `deserialise_<Type>`, covered by
+// `events_workers_wiring.rs`, not here).
+const validEnvelope = {
+  eventId: "e1",
+  publisherId: "commerce.order",
+  emittedAt: 1700000000000,
+  schemaVersion: 1,
+};
+
+test("deserialiseEventEnvelope: accepts a well-formed envelope", () => {
+  const r = deserialiseEventEnvelope(validEnvelope);
+  assert.deepEqual(r, { tag: "Ok", value: validEnvelope });
+});
+
+test("deserialiseEventEnvelope: rejects a non-object", () => {
+  const r = deserialiseEventEnvelope("nope");
+  assert.equal(r.tag, "Err");
+  assert.equal((r as { error: BoundaryError }).error.kind, "StructuralMismatch");
+});
+
+test("deserialiseEventEnvelope: rejects a missing eventId", () => {
+  const { eventId: _drop, ...rest } = validEnvelope;
+  const r = deserialiseEventEnvelope(rest);
+  assert.equal(r.tag, "Err");
+  const err = (r as { error: BoundaryError & { path: string } }).error;
+  assert.equal(err.kind, "StructuralMismatch");
+  assert.equal(err.path, "$.eventId");
+});
+
+test("deserialiseEventEnvelope: rejects a non-string publisherId", () => {
+  const r = deserialiseEventEnvelope({ ...validEnvelope, publisherId: 7 });
+  assert.equal(r.tag, "Err");
+  assert.equal((r as { error: BoundaryError & { path: string } }).error.path, "$.publisherId");
+});
+
+test("deserialiseEventEnvelope: rejects a fractional emittedAt", () => {
+  const r = deserialiseEventEnvelope({ ...validEnvelope, emittedAt: 1.5 });
+  assert.equal(r.tag, "Err");
+  const err = (r as { error: BoundaryError & { path: string; expected: string } }).error;
+  assert.equal(err.path, "$.emittedAt");
+  assert.equal(err.expected, "integer");
+});
+
+test("deserialiseEventEnvelope: rejects a missing schemaVersion", () => {
+  const { schemaVersion: _drop, ...rest } = validEnvelope;
+  const r = deserialiseEventEnvelope(rest);
+  assert.equal(r.tag, "Err");
+  assert.equal((r as { error: BoundaryError & { path: string } }).error.path, "$.schemaVersion");
+});
+
+test("deserialiseEventEnvelope: reports the custom path prefix on failure", () => {
+  const r = deserialiseEventEnvelope("nope", "$.envelope");
+  assert.equal((r as { error: BoundaryError & { path: string } }).error.path, "$.envelope");
 });

@@ -197,6 +197,16 @@ pub(crate) fn emit_worker_entry(
     }
 
     let has_http = !http_routes.is_empty();
+    // #973: whether this Worker hosts any `from Events(E)` subscriber — decides
+    // whether the entry route needs `deserialiseEventEnvelope` to validate the
+    // envelope before dispatching (see the `/_bynk/event/` block below).
+    let has_event_services = service_names.iter().any(|sname| {
+        table.services.get(*sname).is_some_and(|s| {
+            s.handlers
+                .iter()
+                .any(|h| matches!(h.kind, HandlerKind::Event))
+        })
+    });
 
     let mut imports: Vec<&str> = vec![
         "Ok",
@@ -209,6 +219,9 @@ pub(crate) fn emit_worker_entry(
     if has_http {
         imports.push("matchPath");
         imports.push("httpResultToResponse");
+    }
+    if has_event_services {
+        imports.push("deserialiseEventEnvelope");
     }
     // v0.139: a context that answers `HEAD` (any `GET` route) strips the built
     // response body through `headResponse`.
@@ -442,14 +455,48 @@ pub(crate) fn emit_worker_entry(
         // wants it is decided by that subscriber's own generated wrapper
         // (`emit_event_wrapper`), not here — this route passes both through
         // uniformly regardless of which `case` it dispatches to.
+        //
+        // #973: until this fix, `payload`/`envelope` were cast `as unknown`
+        // and forwarded unchecked — nothing on this whole path ever called a
+        // `deserialise_*` function, so a malformed event silently reached the
+        // subscriber's handler body. Both are now validated here, the same
+        // validate-then-400 shape `/_bynk/call/` above already uses: the
+        // envelope once, unconditionally (it's always on the wire regardless
+        // of whether a given subscriber declared `env`), then the payload
+        // per-`case`, against that subscriber's own generated codec (change A
+        // in #973 — the codec didn't previously exist at all for a pure
+        // subscriber, since it calls no method on the publisher).
         let _ = writeln!(
             out,
-            "        const {{ payload, envelope }} = (await request.json()) as {{ payload: unknown; envelope: unknown }};"
+            "        const {{ payload, envelope }} = (await request.json()) as {{ payload: JsonValue; envelope: JsonValue }};"
+        );
+        let _ = writeln!(
+            out,
+            "        const __r_envelope = deserialiseEventEnvelope(envelope, \"$.envelope\");"
+        );
+        let _ = writeln!(
+            out,
+            "        if (__r_envelope.tag === \"Err\") return new Response(JSON.stringify(__r_envelope.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
         );
         let _ = writeln!(out, "        switch (servicePath) {{");
         for sname in &event_services {
+            let h = table.services[*sname]
+                .handlers
+                .iter()
+                .find(|h| matches!(h.kind, HandlerKind::Event))
+                .expect("event_services filtered to services with an Event handler");
+            let dser_payload =
+                deserialise_call(&h.params[0].type_ref, "payload", "$.payload", &runtime_use);
             let _ = writeln!(out, "          case \"{sname}\": {{");
-            let _ = writeln!(out, "            await surface.{sname}(payload, envelope);");
+            let _ = writeln!(out, "            const __r_payload = {dser_payload};");
+            let _ = writeln!(
+                out,
+                "            if (__r_payload.tag === \"Err\") return new Response(JSON.stringify(__r_payload.error), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
+            );
+            let _ = writeln!(
+                out,
+                "            await surface.{sname}(__r_payload.value, __r_envelope.value);"
+            );
             let _ = writeln!(
                 out,
                 "            return new Response(null, {{ status: 204 }});"
