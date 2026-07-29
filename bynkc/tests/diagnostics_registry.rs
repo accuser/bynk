@@ -27,6 +27,15 @@ fn grammar_json() -> String {
     fs::read_to_string(path).expect("read grammar.json")
 }
 
+/// String literals that happen to share the two-dot `"bynk.x.y"` shape this
+/// regex uses as its heuristic for a diagnostic code, but are not one — a
+/// firstparty commons name (`firstparty.rs`'s `LOCALE_TYPES_UNIT`) or a
+/// filename (`schema_registry.rs`'s `LOCK_FILE`, #980). Excluded by value
+/// rather than by skipping their whole file, since (unlike `firstparty.rs`)
+/// `schema_registry.rs` also contains genuine diagnostic emissions that must
+/// still be counted.
+const NON_DIAGNOSTIC_LOOKALIKES: &[&str] = &["bynk.locale.types", "bynk.schema.lock"];
+
 /// Collect every `"bynk.x.y"` string literal across the compiler source,
 /// excluding the registry module itself. Scans every compiler crate, since the
 /// decomposition split the emit sites across crate boundaries: `bynkc` (CLI +
@@ -50,20 +59,16 @@ fn collect(dir: &Path, re: &regex::Regex, out: &mut BTreeSet<String>) {
             collect(&path, re, out);
         } else if path.extension().is_some_and(|e| e == "rs") {
             // The registry module deliberately lists every code; skip it so the
-            // comparison reflects actual emit sites. `firstparty.rs` is also
-            // skipped: its `LOCALE_TYPES_UNIT` constant ("bynk.locale.types")
-            // is a firstparty commons name, not a diagnostic code, but
-            // happens to share the two-dot "bynk.x.y" shape this regex uses
-            // as its heuristic for one.
-            if path
-                .file_name()
-                .is_some_and(|n| n == "diagnostics.rs" || n == "firstparty.rs")
-            {
+            // comparison reflects actual emit sites.
+            if path.file_name().is_some_and(|n| n == "diagnostics.rs") {
                 continue;
             }
             let text = fs::read_to_string(&path).unwrap();
             for caps in re.captures_iter(&text) {
-                out.insert(caps[1].to_string());
+                let code = &caps[1];
+                if !NON_DIAGNOSTIC_LOOKALIKES.contains(&code) {
+                    out.insert(code.to_string());
+                }
             }
         }
     }

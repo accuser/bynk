@@ -203,6 +203,7 @@ version = "0.242.0"
 dependencies = [
  "bynk-check",
  "bynk-syntax",
+ "serde",
  "toml",
 ]
 

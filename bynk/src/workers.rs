@@ -20,7 +20,22 @@ use crate::probe::Provenance;
 /// binary instead — the only path on which a second, skewable compiler enters
 /// (doctor reports its skew only here). Returns `false` on failure with the
 /// diagnostics already rendered.
-pub fn compile_once(compiler: &Compiler, project_root: &Path, build_dir: &Path) -> bool {
+///
+/// `schema_registry` (#980): `true` for the real `bynk dev`/`bynk deploy`
+/// call sites — otherwise a deploy could ship a `schemaVersion` computed
+/// purely from `@schema(N)` annotations, diverging from what `bynkc compile`
+/// would have shipped for the same source (the write is a no-op when the
+/// tree is already up to date). `false` for
+/// `compile_once_warnings_behaviour.rs`, the only other caller: it compiles a
+/// **committed** repo fixture in place, the same hazard
+/// `bynkc/tests/e2e.rs`'s in-place fixtures have — an unconditional write
+/// would leave a real `bynk.schema.lock` in the tree on every test run.
+pub fn compile_once(
+    compiler: &Compiler,
+    project_root: &Path,
+    build_dir: &Path,
+    schema_registry: bool,
+) -> bool {
     let used_override = matches!(compiler.origin, Some(crate::compiler::Origin::Override));
     if let (true, Some(bynkc)) = (used_override, compiler.path.as_deref()) {
         let status = Command::new(bynkc)
@@ -41,7 +56,9 @@ pub fn compile_once(compiler: &Compiler, project_root: &Path, build_dir: &Path) 
         };
     }
     let options = match bynk_driver::try_project_options(project_root) {
-        Ok(o) => o.target(BuildTarget::Workers),
+        Ok(o) => o
+            .target(BuildTarget::Workers)
+            .schema_registry(schema_registry),
         Err(e) => {
             eprintln!("bynk: {e}");
             return false;
