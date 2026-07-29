@@ -726,6 +726,87 @@ fn one_run_resolves_each_input_against_its_own_project() {
 }
 
 #[test]
+fn the_manifest_is_found_from_a_subdirectory_of_the_project() {
+    // #974 review, finding 1. A relative input has no ancestors to walk
+    // *through* — `Path::new("x.bynk").parent()` is `""`, whose parent is
+    // `None` — so before the start was absolutised the search stopped at the
+    // working directory. Run from `src/`, `fmt calc.bynk` missed the very
+    // manifest `fmt src/calc.bynk` from the root found.
+    let dir = project_with_fmt("fmt-manifest-from-subdir", "[fmt]\nindent = \"spaces\"\n");
+    let src = dir.join("src");
+    let (code, _out, err) = run_bynk_in(&src, &["fmt", "calc.bynk"]);
+    assert_eq!(code, 0, "fmt should succeed; stderr:\n{err}");
+    let got = std::fs::read_to_string(src.join("calc.bynk")).expect("read back");
+    assert!(
+        !got.contains('\t'),
+        "the manifest one directory up must be found from `src/`:\n{got}"
+    );
+    // …and `--check` from there agrees, which is the CI shape that was broken:
+    // `cd src && fmt --check *.bynk` gated on the canonical style while
+    // format-on-save used the manifest.
+    let (code, _out, err) = run_bynk_in(&src, &["fmt", "--check", "calc.bynk"]);
+    assert_eq!(
+        code, 0,
+        "a file in the project's own style passes; err:\n{err}"
+    );
+}
+
+#[test]
+fn a_bare_filename_and_a_qualified_one_resolve_the_same_manifest() {
+    // The two spellings of one file must not disagree — and neither may differ
+    // from stdin, which absolutised from the start and so masked the bug.
+    let dir = project_with_fmt("fmt-manifest-spellings", "[fmt]\nmax_line_width = 40\n");
+    let src = dir.join("src");
+    let from_root = run_in(&bynk(), &dir, &["fmt", "-"], Some(WIDE_RECORD));
+    let from_src = run_in(&bynk(), &src, &["fmt", "-"], Some(WIDE_RECORD));
+    assert_eq!(from_root.0, 0, "stderr:\n{}", from_root.2);
+    assert_eq!(
+        from_root.1, from_src.1,
+        "stdin must resolve the same manifest from either directory"
+    );
+    // The file path spellings must match that too.
+    write(&src.join("bare.bynk"), WIDE_RECORD);
+    write(&src.join("qualified.bynk"), WIDE_RECORD);
+    assert_eq!(run_bynk_in(&src, &["fmt", "bare.bynk"]).0, 0);
+    assert_eq!(run_bynk_in(&dir, &["fmt", "src/qualified.bynk"]).0, 0);
+    assert_eq!(
+        std::fs::read_to_string(src.join("bare.bynk")).expect("read bare"),
+        std::fs::read_to_string(src.join("qualified.bynk")).expect("read qualified"),
+        "`fmt bare.bynk` from src/ and `fmt src/qualified.bynk` from the root \
+         must produce the same bytes"
+    );
+}
+
+#[test]
+fn a_later_inputs_config_error_leaves_earlier_files_untouched() {
+    // #974 review, finding 2. Options are per-input, but a manifest error found
+    // on the *second* input must not land after the first has been rewritten —
+    // configuration is a whole-run precondition.
+    let good = project_with_fmt("fmt-precheck-good", "[fmt]\nmax_line_width = 50\n");
+    let bad = scratch("fmt-precheck-bad");
+    write(&bad.join("bynk.toml"), "[fmt]\nmax_line_length = 120\n");
+    write(&bad.join("src/calc.bynk"), WIDE_RECORD);
+
+    let bad_src = bad.join("src/calc.bynk");
+    let (code, _out, err) = run_in(
+        &bynk(),
+        &good,
+        &["fmt", "src/calc.bynk", bad_src.to_str().expect("utf-8")],
+        None,
+    );
+    assert_eq!(
+        code, 1,
+        "the broken manifest must fail the run; err:\n{err}"
+    );
+    assert!(err.contains("unknown field"), "got:\n{err}");
+    assert_eq!(
+        std::fs::read_to_string(good.join("src/calc.bynk")).expect("read back"),
+        WIDE_RECORD,
+        "the first input must not have been rewritten before the run failed"
+    );
+}
+
+#[test]
 fn a_broken_manifest_is_reported_not_ignored() {
     for (name, section, needle) in [
         (

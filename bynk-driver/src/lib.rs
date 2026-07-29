@@ -383,9 +383,7 @@ impl std::fmt::Display for FmtOptionsError {
 ///
 /// A run typically formats many files under one project (`fmt src/*.bynk`), so
 /// the upward walk for `bynk.toml` and its parse happen once per starting
-/// directory rather than once per file. A malformed manifest is reported the
-/// first time it is reached and again on any retry — it is a hard error, so the
-/// run stops there either way.
+/// directory rather than once per file.
 struct ManifestCache {
     /// `--no-config`: skip discovery entirely and hand back the spec defaults.
     disabled: bool,
@@ -408,7 +406,7 @@ impl ManifestCache {
         // Stdin carries no path to search from; the working directory is the
         // only project context a pipe has.
         let start: PathBuf = if input.as_os_str() == "-" {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            PathBuf::from(".")
         } else {
             match input.parent() {
                 // A bare `x.bynk` has an empty parent, which is the cwd.
@@ -416,6 +414,20 @@ impl ManifestCache {
                 _ => PathBuf::from("."),
             }
         };
+        // Absolutise before walking. A relative start has no ancestors to walk
+        // *through*: `Path::new("src").parent()` is `""` and `""`'s parent is
+        // `None`, so the search stops at the working directory and never
+        // reaches the project root above it. Run from `src/`, `fmt calc.bynk`
+        // therefore missed the very manifest `fmt src/calc.bynk` from the root
+        // found — silently formatting to the canonical style, and (under
+        // `--check`) gating CI on a style the editor never produces. Joining
+        // onto the cwd also collapses `src` and `/abs/src` to one cache key.
+        //
+        // `current_dir()` rather than `std::path::absolute`: same result here,
+        // and it does not raise the crate's MSRV.
+        let start = std::env::current_dir()
+            .map(|cwd| cwd.join(&start))
+            .unwrap_or(start);
         if let Some(hit) = self.by_dir.get(&start) {
             return Ok(*hit);
         }
@@ -440,24 +452,30 @@ pub fn run_fmt(prog: &str, args: &FmtArgs) -> ExitCode {
         eprintln!("{prog} fmt: no input files (pass file paths or `-` for stdin)");
         return ExitCode::FAILURE;
     }
+    // Resolve *every* input's options before formatting any of them. Options
+    // are per-input — `[fmt]` belongs to the project the file sits in, so a
+    // path outside the current project obeys that project's style — but a
+    // manifest error found on the third input must not land after the first two
+    // have already been rewritten. Configuration is a whole-run precondition:
+    // it fails before a byte is written, or not at all.
     let mut manifests = ManifestCache::new(args.no_config);
-    let mut had_diff = false;
-    let mut had_error = false;
+    let mut resolved: Vec<FormatOptions> = Vec::with_capacity(inputs.len());
     for input in inputs {
-        // Resolved per input, not once per run: `[fmt]` belongs to the project
-        // the *file* sits in, so formatting a path outside the current project
-        // obeys that project's style. Stdin has no path, so it resolves from
-        // the working directory.
-        let opts = match manifests
+        match manifests
             .options_for(input)
             .and_then(|base| args.apply_to(base).map_err(FmtOptionsError::Args))
         {
-            Ok(opts) => opts,
+            Ok(opts) => resolved.push(opts),
             Err(e) => {
                 eprintln!("{prog} fmt: {e}");
                 return ExitCode::FAILURE;
             }
-        };
+        }
+    }
+
+    let mut had_diff = false;
+    let mut had_error = false;
+    for (input, opts) in inputs.iter().zip(resolved) {
         if input.as_os_str() == "-" {
             use std::io::Read;
             let mut source = String::new();

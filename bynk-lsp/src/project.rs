@@ -100,10 +100,14 @@ pub fn load_config(root: &Path) -> Option<ProjectConfig> {
     let path = root.join(bynk_fmt::MANIFEST);
     let source = std::fs::read_to_string(&path).ok()?;
     let raw: RawConfig = toml::from_str(&source).ok()?;
-    // `[fmt]` through the shared reader (#972). A malformed section leaves the
-    // formatter on its defaults rather than taking the server down — the CLI
-    // reports the same error loudly, which is where a typo gets noticed. The
-    // rest of the config still applies either way.
+    // `[fmt]` through the shared reader (#972), which parses the text a second
+    // time. Deliberate: the alternative is to thread a `toml::Value` across the
+    // crate boundary, coupling the two readers to one representation to save a
+    // parse of a file read once per project root. A malformed section leaves
+    // the formatter on its defaults rather than taking the server down — it
+    // cannot refuse to serve — while the CLI reports the same error loudly,
+    // which is where a typo gets noticed. The rest of the config applies either
+    // way (`[lsp]` is read from `raw`, above).
     let fmt = FmtConfig::from_manifest_str(&source)
         .unwrap_or_default()
         .apply(FormatOptions::default());
@@ -129,7 +133,10 @@ mod tests {
     /// `std::env::temp_dir`, not `CARGO_TARGET_TMPDIR` — the latter is defined
     /// only for integration tests, and these are lib unit tests.
     fn project(name: &str, manifest: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("bynk-lsp-project-{name}"));
+        // The pid keeps concurrent checkouts (or two users on a shared runner)
+        // from racing on one fixed path under the shared temp directory.
+        let dir =
+            std::env::temp_dir().join(format!("bynk-lsp-project-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("mkdir");
         std::fs::write(dir.join(bynk_fmt::MANIFEST), manifest).expect("write");

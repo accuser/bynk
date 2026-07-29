@@ -84,8 +84,14 @@ This code is described in the [diagnostic index](/book/reference/diagnostics/).
 ## `[fmt]`
 
 Formatter settings. Read by **both** format-on-save in the editor and the
-`bynkc fmt` / `bynk fmt` CLI, through one shared reader, so the two cannot
-disagree on what a key means.
+`bynkc fmt` / `bynk fmt` CLI, through one shared reader, so a section they can
+both read is interpreted identically.
+
+They part company on a section that does **not** read: the CLI reports the
+error and formats nothing, while the language server falls back to the
+canonical style and keeps serving (it cannot refuse to run). So a manifest with
+a typo formats one way in the editor and fails on the command line — run
+`bynkc fmt` to see what is wrong with it.
 
 The CLI resolves options in three layers, each overriding the one before: the
 canonical defaults below, then this section, then the flags a run passes

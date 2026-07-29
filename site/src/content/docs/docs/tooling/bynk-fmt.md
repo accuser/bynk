@@ -34,8 +34,13 @@ Three sources feed them, each overriding the one before:
    `--max-line-width COLUMNS`, `--trailing-comma` / `--no-trailing-comma`.
 
 Step 2 goes through `bynk_fmt::FmtConfig`, which both the CLI and the language
-server call, so format-on-save in the editor and `bynkc fmt` on the command line
-cannot drift apart on what a key means. `--no-config` drops step 2 for a run.
+server call, so a manifest they can both read is interpreted identically.
+`--no-config` drops step 2 for a run.
+
+A manifest that does *not* read is where they differ: the CLI reports the error
+and formats nothing; the language server falls back to the canonical style,
+since it cannot refuse to serve. A typo therefore shows up as an editor that
+quietly stops honouring the section and a `bynkc fmt` that fails loudly.
 
 ## Canonical style
 
@@ -64,5 +69,5 @@ let formatted = format_source(source, &FormatOptions::default())?;
 
 This is exactly what `bynkc fmt` and the language server's formatting requests
 call, and both resolve their `FormatOptions` through the same `[fmt]` reader, so
-editor format-on-save and CLI formatting agree by construction on a project that
-configures a style.
+editor format-on-save and CLI formatting agree on any project whose manifest
+parses.
