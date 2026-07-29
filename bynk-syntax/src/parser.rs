@@ -2227,7 +2227,10 @@ mod tests {
             f.body.statements
         );
         let Statement::Assign(a) = &f.body.statements[0] else {
-            panic!("expected an Assign statement, got {:?}", f.body.statements[0]);
+            panic!(
+                "expected an Assign statement, got {:?}",
+                f.body.statements[0]
+            );
         };
         assert!(
             matches!(a.value.kind, ExprKind::Ident(_)),
