@@ -1,0 +1,15 @@
+context commerce.order
+
+consumes bynk { Events }
+exports transparent { PaymentConfirmed }
+
+event PaymentConfirmed = {
+  orderId: String,
+  retryCount: Option[Int] = Some(0),
+}
+
+service markPaid {
+  on call(orderId: String) -> Effect[()] given Events {
+    Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId, retryCount: None })
+  }
+}

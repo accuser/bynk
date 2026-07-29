@@ -1137,6 +1137,15 @@ pub(crate) fn check_context_declarations(
     cross_context: &resolver::CrossContextInfo,
     is_context: bool,
     uses_commons_type_names: &HashSet<String>,
+    // Events slice 3a (#972): this unit's own local + direct-`uses` types —
+    // deliberately narrower than `typed.types` (local + uses + *consumes*).
+    // A field default is validated against this table because it's the same
+    // one a **subscriber** regenerating this event's codec cross-context
+    // will see (`emit_consumed_context_helpers`'s `combined_types_for`,
+    // #973) — a default reachable only through this unit's own `consumes`
+    // would pass here-with-the-wider-table and then silently fail to
+    // construct in a subscriber's module, with no diagnostic at emit time.
+    subscriber_visible_types: &HashMap<String, Arc<TypeDecl>>,
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
@@ -1269,7 +1278,93 @@ pub(crate) fn check_context_declarations(
         &mut errors,
     );
 
+    check_event_field_defaults(
+        table,
+        &resolved,
+        subscriber_visible_types,
+        &mut typed.expr_types,
+        refs,
+        hints,
+        locals,
+        &mut errors,
+    );
+
     errors
+}
+
+/// Events slice 3a (#972): validate every `event`'s field default (`field: T
+/// = expr`), if it has one. Two gates, both required before emission ever
+/// sees it:
+///
+/// 1. **Static/pure/typed** — `checker::check_event_field_default`, the same
+///    empty-pure-scope discipline agent `store` field defaults already have
+///    (`bynk.agents.bad_state_initialiser`'s sibling), pushing
+///    `bynk.event.bad_field_default` on failure.
+/// 2. **Constructible** — `emitter::serialisation::lower_field_default_wire`
+///    against `subscriber_visible_types`, the *narrower* table a subscriber
+///    regenerating this event's codec cross-context will actually see. This
+///    is what keeps emission's own `.ok()` fallback (`emit_record`)
+///    unreachable in practice: anything this same function can't build is
+///    rejected here, with a diagnostic, before it ever reaches emission.
+///
+/// Only gate 2 runs when gate 1 already found a problem — a value that
+/// isn't even a valid static value of the right type has nothing useful to
+/// say about wire-constructibility, and would just be a confusing second
+/// error for the same field.
+#[allow(clippy::too_many_arguments)]
+fn check_event_field_defaults(
+    table: &UnitTable,
+    resolved: &ResolvedCommons,
+    subscriber_visible_types: &HashMap<String, Arc<TypeDecl>>,
+    expr_types: &mut HashMap<Span, Ty>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    locals: &mut LocalsSink,
+    errors: &mut Vec<CompileError>,
+) {
+    for event in table.events.values() {
+        for field in &event.body.fields {
+            let Some(init) = &field.init else {
+                continue;
+            };
+            let before = errors.len();
+            checker::check_event_field_default(
+                init,
+                &field.type_ref,
+                resolved,
+                expr_types,
+                errors,
+                refs,
+                hints,
+                locals,
+            );
+            if errors.len() > before {
+                continue;
+            }
+            if let Err(reason) = emitter::serialisation::lower_field_default_wire(
+                init,
+                &field.type_ref,
+                subscriber_visible_types,
+            ) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.event.bad_field_default",
+                        init.span,
+                        format!(
+                            "event field `{}`'s default cannot be represented on the wire: {reason}",
+                            field.name.name
+                        ),
+                    )
+                    .with_note(
+                        "a default is spliced into the same codec a real wire value passes \
+                         through, so it must be buildable with no reference to any type's \
+                         generated value namespace — only literals, sum-variant tags, and record \
+                         literals qualify",
+                    ),
+                );
+            }
+        }
+    }
 }
 
 /// v0.25: capability operation signatures reference types; record them under

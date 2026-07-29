@@ -3118,6 +3118,20 @@ fn check_unit_files(
                 resolver::CrossContextInfo::default()
             };
 
+        // Events slice 3a (#972): this unit's own local + direct-`uses`
+        // types (deliberately narrower than `combined_types`, which also
+        // merges `consumes`) — the same view `emit_consumed_context_helpers`
+        // (#973) builds for a *subscriber* regenerating this unit's own
+        // event codecs cross-context. `check_context_declarations` uses it
+        // to validate an event field default is constructible in that
+        // narrower view, not just this unit's own wider one.
+        let subscriber_visible_types: HashMap<String, Arc<TypeDecl>> =
+            if let Some((unit_tables, unit_uses, _, _)) = &cross_context_views {
+                symbols::combined_types_for(name, unit_tables, unit_uses)
+            } else {
+                HashMap::new()
+            };
+
         // `ResolvedCommons::new` derives `local_type_names`/`event_type_names`
         // from this unit's own pre-merge table (`unit_info[name].table`), not
         // `combined_types` (already local+uses+consumes merged) — same
@@ -3225,6 +3239,7 @@ fn check_unit_files(
                 &cross_context_for_file,
                 kind == UnitKind::Context,
                 &uses_commons_type_names,
+                &subscriber_visible_types,
                 refs,
                 hints,
                 locals,

@@ -832,6 +832,11 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
         // the same top-level, plain-name convention as Capability/Service/
         // Agent above.
         CommonsItem::Messages(m) if m.tag == name => Some(describe_messages(m)),
+        // #972 (Events slice 3a): an event, keyed by its plain name — the same
+        // top-level convention as the arms above. Reuses `describe_type` via
+        // the synthetic `TypeDecl` `as_type_decl` already builds for every
+        // other event-as-type consumer (exports/consumes/construction).
+        CommonsItem::Event(e) if e.name.name == name => Some(describe_type(&e.as_type_decl())),
         // #611 (gap B): a record field, keyed `"Type.field"` by the index — the
         // checker records construction labels and field accesses as `Field` refs,
         // so hover resolves the key but had no arm to render it and fell through
@@ -850,6 +855,22 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
                 .iter()
                 .find(|f| f.name.name == field)
                 .map(|f| describe_record_field(t, f))
+        }
+        // #972 (Events slice 3a): an event field, keyed `"Event.field"` —
+        // mirrors the `CommonsItem::Type` arm above via the same synthetic
+        // `TypeDecl`, so a defaulted event field's hover also renders its
+        // `= <expr>`.
+        CommonsItem::Event(e) => {
+            let (owner, field) = name.rsplit_once('.')?;
+            if e.name.name != owner {
+                return None;
+            }
+            let synthetic = e.as_type_decl();
+            e.body
+                .fields
+                .iter()
+                .find(|f| f.name.name == field)
+                .map(|f| describe_record_field(&synthetic, f))
         }
         // v0.166 (#616): a method, keyed `"Type.method"` (ADR 0069). `display()`
         // renders exactly that key, so the compound name matches the one method
@@ -1037,6 +1058,12 @@ pub(crate) fn describe_record_field(t: &TypeDecl, f: &RecordField) -> String {
     if let Some(r) = &f.refinement {
         sig.push_str(&format!(" where {}", bynk_fmt::refinement_to_string(r)));
     }
+    // #972 (Events slice 3a): render a field default the same way the
+    // formatter does — `= <expr>` — so a subscriber-visible default is not
+    // silently dropped from hover.
+    if let Some(init) = &f.init {
+        sig.push_str(&format!(" = {}", bynk_fmt::expr_to_string(init)));
+    }
     format!("```bynk\n{sig}\n```\n\nA field of `{}`.", t.name.name)
 }
 
@@ -1084,6 +1111,12 @@ pub(crate) fn describe_type(t: &TypeDecl) -> String {
                     out.push_str(&format!("\t{}: {}", f.name.name, type_ref_str(&f.type_ref)));
                     if let Some(r) = &f.refinement {
                         out.push_str(&format!(" where {}", bynk_fmt::refinement_to_string(r)));
+                    }
+                    // #972 (Events slice 3a): an event field's default,
+                    // reachable here via `EventDecl::as_type_decl`'s
+                    // synthetic `TypeDecl`.
+                    if let Some(init) = &f.init {
+                        out.push_str(&format!(" = {}", bynk_fmt::expr_to_string(init)));
                     }
                     out.push_str(",\n");
                 }
@@ -2178,6 +2211,44 @@ mod tests {
         assert!(describe_symbol(src, "Stored.nope").is_none());
         assert!(describe_symbol(src, "Nope.title").is_none());
         assert!(describe_symbol(src, "Title.title").is_none());
+    }
+
+    // #972 (Events slice 3a): an event's own hover and its per-field hover
+    // both render a declared default, mirroring an ordinary record's hover
+    // (above) — this is the arm that was entirely missing before this slice
+    // (no `CommonsItem::Event` case at all), not just a formatting gap.
+    #[test]
+    fn describe_symbol_renders_an_event_and_its_defaulted_field() {
+        let src = "context demo.orders\n\n\
+            type Region = enum { Domestic, International }\n\n\
+            event PaymentConfirmed = {\n\
+            \x20 orderId: String,\n\
+            \x20 region: Region = Region.Domestic,\n\
+            }\n";
+        let whole = describe_symbol(src, "PaymentConfirmed").expect("hover on the event itself");
+        assert!(whole.contains("type PaymentConfirmed = {"), "{whole}");
+        assert!(whole.contains("orderId: String"), "{whole}");
+        assert!(
+            whole.contains("region: Region = Region.Domestic"),
+            "{whole}"
+        );
+
+        let field = describe_symbol(src, "PaymentConfirmed.region")
+            .expect("hover on `PaymentConfirmed.region`");
+        assert!(
+            field.contains("region: Region = Region.Domestic"),
+            "{field}"
+        );
+        assert!(field.contains("A field of `PaymentConfirmed`"), "{field}");
+
+        // The non-defaulted field renders with no trailing `= ...`.
+        let order_id = describe_symbol(src, "PaymentConfirmed.orderId")
+            .expect("hover on `PaymentConfirmed.orderId`");
+        assert!(order_id.contains("orderId: String"), "{order_id}");
+        assert!(!order_id.contains('='), "{order_id}");
+
+        assert!(describe_symbol(src, "PaymentConfirmed.nope").is_none());
+        assert!(describe_symbol(src, "Nope.region").is_none());
     }
 
     /// v0.166 (#616): the actor arm — both declaration forms. The reference-offset

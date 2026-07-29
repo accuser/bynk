@@ -277,24 +277,31 @@ the decision **not** to change the emitter to close this gap (a substrate
 redesign, not a documentation increment — see §6 for the consequence a
 subscriber needs to know).
 
-### 3.5 — The cross-build schema registry — OPEN
+### 3.5 — The cross-build schema registry — OPEN (narrowed to slice 3b)
 
-**The question.** Additive versioning (§3.0) needs `env.schemaVersion`, and §7
-specifies "the compiler maintains a schema registry across builds, computing the
-version from the type's structural shape" (line 258), emitting a
-schema-evolution report when a version changes, with optional `@schema(N)` pins.
-This is **new persistent build-time state** — the family of the
-increment-allocation stamp ([ADR 0206](../decisions/0206-allocation-on-main.md))
-and the cross-context contract hash
+**The question.** §7 specifies "the compiler maintains a schema registry across
+builds, computing the version from the type's structural shape" (line 258),
+emitting a schema-evolution report when a version changes, with optional
+`@schema(N)` pins, and a real (non-hardcoded) `env.schemaVersion`. This is
+**new persistent build-time state** — the family of the increment-allocation
+stamp ([ADR 0206](../decisions/0206-allocation-on-main.md)) and the
+cross-context contract hash
 ([ADR 0200](../decisions/0200-cross-context-contract-hash.md)), which already
 computes a canonical structural normal form this could reuse.
 
 **Why it is open.** *Where* the registry lives (a committed file stamped on
 merge, like allocation? a derived build artifact?), *how* a version is computed
 (reuse the 0200 normal form, or a distinct event-schema hash?), and *what* counts
-as a version-bumping change all need settling. This is a slice-3 concern, not a
-slice-0 blocker; naming it now keeps versioning from being retrofitted onto an
-envelope that did not plan for it.
+as a version-bumping change all need settling. **Narrowed by slice 3a
+(#972):** default expressions on event fields — the other half of §3.0's
+additive-versioning story — did not need any of this open state; a default is
+checked and lowered to its wire form at the declaring context's own compile
+time, with no cross-build registry, no schema-evolution report, and no version
+computation at all (an old wire event missing a defaulted key falls back to
+the default; nothing about *when* the field was added is tracked or reported).
+So this section now names only the **slice-3b** work: `env.schemaVersion`
+computed for real, the registry, the evolution report, and `@schema(N)` pins —
+still unfiled, still a slice-4 (`via schema(...)`) blocker.
 
 ### 3.6 — Replay / backfill — SPLIT OUT to a future track (the precedent move; recorded)
 
@@ -367,13 +374,29 @@ MVP-first. Each slice is an ordinary increment proposal, a sub-issue of the spin
   duplicates it to every subscriber. This is where the idempotency track's
   parked "event-subscriber sugar" (its own §7 possible slice 1) actually
   lands — settled as documented convention, not bespoke syntax.
-- **Slice 3 — additive versioning.** Default expressions on event-type fields
-  (pure, compiler-verified), `env.schemaVersion`, and the cross-build schema
-  registry (§3.5) with its evolution report and optional `@schema(N)` pin.
+- **Slice 3a — event field defaults — SHIPPED.** Default expressions
+  (`field: T = expr`) on `event`-declared record fields (§3.0's
+  `RecordField.init`, already parsed, previously unused outside agent `store`
+  fields): static, pure, checked against the field's declared type; used only
+  on deserialisation, so an old wire event missing a defaulted field's key
+  falls back to the default instead of failing structural-mismatch. A default
+  on a **non**-event record field is now a compile error (previously silently
+  parsed and dropped). Lowers to the field's **wire** (JSON) form, not its
+  in-memory form — the one correction this slice made to its own accepted
+  proposal (#972): a qualified value-level reference (as agent-state defaults
+  use, via `BodyMode::StaticInit`) would not resolve in a subscriber's own
+  regenerated codec module, which only ever imports the publisher's *types*.
+  No `env.schemaVersion`/registry dependency — see §3.5's narrowing.
+- **Slice 3b — additive versioning's cross-build half — OPEN, unfiled.**
+  `env.schemaVersion` computed for real (not hardcoded), the cross-build
+  schema registry (§3.5) with its evolution report, and optional `@schema(N)`
+  pins.
 - **Slice 4 — `via` version-aware dispatch.** The `via schema(...)` envelope
   pattern clause (§7 lines 260–274): literal versions, ranges, `_`; a
   no-`via` subscriber receives any version. Generalisable `via <field>(pattern)`
-  grammar, but only `via schema(...)` committed here.
+  grammar, but only `via schema(...)` committed here. **Depends on slice 3b**
+  (`via schema(...)` matches against a real, computed `schemaVersion` —
+  meaningless while it's hardcoded).
 
 **Not slices of this track** (moved to the future replay track, §3.6): replay /
 backfill-from-log, the durable event log substrate, and the inherited actors Q8
@@ -514,6 +537,13 @@ receives *exactly* the emissions its pattern admits.
   refinement the type already established. Recorded as the
   `events-boundary-validation` ADR, `design/pending/events-boundary-
   validation.md` (pre-stamp).
+- **A missing key is not automatically "malformed."** **Amended by slice 3a
+  (#972):** the bullet above still holds for a wrong-*shaped* or wrong-*typed*
+  field — that is still a `400`. But a wire event missing the key for a field
+  that declares a default is no longer treated as malformed at all: the
+  subscriber's own codec substitutes the default before validation runs, and
+  the request succeeds. Only a field with **no** declared default still fails
+  structural-mismatch on a missing key, exactly as before this slice.
 
 ## 7. Slice status
 
@@ -528,8 +558,12 @@ receives *exactly* the emissions its pattern admits.
   fixed by generating a subscriber-side codec for a consumed-but-never-called
   publisher's event type, a hand-written envelope validator, and
   validate-then-`400` at the receiving route. See §6.
-- [ ] Slice 3 — additive versioning + the cross-build schema registry
-- [ ] Slice 4 — `via schema(...)` version-aware dispatch
+- [x] Slice 3a — event field defaults (#972). Wire-form, type-directed
+  lowering — not `BodyMode::StaticInit` reuse (amends #972's own proposal;
+  see §3.5, §4).
+- [ ] Slice 3b — `env.schemaVersion` computed for real + the cross-build
+  schema registry — unfiled
+- [ ] Slice 4 — `via schema(...)` version-aware dispatch (depends on 3b)
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)
 
 ## 8. Done when
@@ -564,8 +598,16 @@ receives *exactly* the emissions its pattern admits.
   emitting agent (a plain service handler can emit with no agent
   identity); §12's idempotency example is corrected against the
   capability's real API.
-- [ ] Additive versioning (defaults + `env.schemaVersion` + the registry) and
-  `via schema(...)` dispatch ship; the schema-evolution report is emitted on a
+- [x] Event field defaults — **slice 3a done** (#972): `field: T = expr` on an
+  event's own fields, checked static/pure against the declared type; a
+  default on a non-event record field is a new compile error
+  (`bynk.event.default_outside_event`); a wire event missing a defaulted
+  field's key deserialises with the default instead of failing
+  structural-mismatch (`bynk.event.bad_field_default` covers an invalid/
+  unconstructible default). Proven cross-context on a real `workerd`
+  (`bynkc/tests/events_boundary_workerd.rs`), not just golden-diffed.
+- [ ] `env.schemaVersion` computed for real + the registry + `via schema(...)`
+  dispatch ship (slices 3b/4); the schema-evolution report is emitted on a
   version change.
 - [ ] The doc is explicit that **replay/backfill and the actors Q8**
   ([#260](https://github.com/accuser/bynk/issues/260)) are **not** delivered by
