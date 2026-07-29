@@ -67,6 +67,18 @@ The project, its toolchain, and its in-language surface were renamed from
   Reformatting existing sources will produce diffs. The target stays soft — a
   line with no legal break point in it (a long string literal, a `Matches("…")`
   regex) is left long rather than mangled.
+- `bynk fmt` / `bynkc fmt` take style flags that override the canonical style
+  for one run (#968): `--indent tab|spaces`, `--indent-width N`,
+  `--max-line-width COLUMNS`, and `--trailing-comma` / `--no-trailing-comma`.
+  Defaults are unchanged, so an invocation that passes none formats exactly as
+  before. `--check` judges each file against the style the run asks for, so a
+  project on a non-default style gets a working CI gate. Both binaries flatten
+  one shared `FmtArgs`, and `bynk fmt` forwards the flags to a `BYNK_BYNKC`-
+  pinned compiler rather than silently formatting to the canonical style.
+  `--indent-width` alongside `--indent tab` is an error, not a no-op. The flags
+  are per-run only: nothing is written to `bynk.toml`, and the CLI still does
+  not read that file's `[fmt]` section (which remains the language server's
+  input for format-on-save).
 
 ### In-language reserved surface (breaking)
 

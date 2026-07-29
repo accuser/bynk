@@ -50,6 +50,11 @@ The public API is small:
 - `FormatError` — a parse error in the input (you cannot format what does not
   parse).
 
+`FormatOptions`'s three fields are reachable from the command line too —
+`bynkc fmt` / `bynk fmt` take `--indent tab|spaces`, `--indent-width N`,
+`--max-line-width COLUMNS`, and `--trailing-comma` / `--no-trailing-comma`,
+overriding the canonical style for one run.
+
 See the [API docs](https://docs.rs/bynk-fmt) for details.
 
 ## License

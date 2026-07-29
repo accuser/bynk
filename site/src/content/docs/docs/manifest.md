@@ -82,7 +82,12 @@ This code is described in the [diagnostic index](/book/reference/diagnostics/).
 
 ## `[fmt]`
 
-Formatter settings, consumed by `bynkc fmt`. See the
+Formatter settings, consumed by the language server `bynkc-lsp` — this is what
+format-on-save in the editor applies. The `bynkc fmt` / `bynk fmt` **CLI does
+not read this section**; it formats to the canonical style unless given the
+matching flags (`--indent`, `--indent-width`, `--max-line-width`,
+`--no-trailing-comma`). A project that sets a style here should pass those flags
+to whatever script or CI job runs `fmt`, so the two agree. See the
 [`bynk-fmt` reference](/docs/tooling/bynk-fmt/) and the
 [Format your code](/docs/editor-and-tooling/format/) how-to.
 
@@ -90,8 +95,8 @@ Formatter settings, consumed by `bynkc fmt`. See the
 |---|---|---|---|
 | `indent` | string | `"tab"` | Indentation style: `"tab"` (one tab per nesting level) or `"spaces"`. |
 | `indent_width` | integer | — (falls back to `2`) | Spaces per nesting level. Only consulted when `indent = "spaces"`; defaults to `2` in that case. |
-| `max_line_width` | integer | `100` | Soft guide for parameter wrapping. |
-| `trailing_comma` | boolean | `true` | Emit trailing commas in multi-line lists. |
+| `max_line_width` | integer | `100` | Soft target line width. A construct wider than this wraps across lines where the grammar allows. |
+| `trailing_comma` | boolean | `true` | Emit trailing commas in multi-line records, sums, list literals and `exports` clauses. |
 
 ## `[lsp]`
 

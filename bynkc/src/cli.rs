@@ -37,6 +37,11 @@ pub enum DiagFormat {
 /// `bynk test` rather than a per-command near-duplicate).
 pub use bynk_driver::test_runner::{TestArgs, TestFormat};
 
+/// The `fmt` subcommand's flags, shared with `bynk fmt` the same way (#968):
+/// one `#[derive(Args)]` struct both CLIs flatten, rather than two copies to
+/// keep in step as formatting options are added.
+pub use bynk_driver::{FmtArgs, IndentKind};
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum CliTarget {
     /// Single-bundle output (the default). Cross-context calls compile to
@@ -136,13 +141,13 @@ pub enum Command {
     },
     /// Format `.bynk` source files in place. Passing `-` reads from stdin
     /// and writes to stdout.
+    ///
+    /// `--indent`, `--indent-width`, `--max-line-width` and
+    /// `--no-trailing-comma` override the canonical style for this run; with
+    /// none of them the output is the canonical formatting.
     Fmt {
-        /// Files to format. Use `-` for stdin → stdout.
-        inputs: Vec<PathBuf>,
-        /// Check formatting without writing changes. Exits non-zero if any
-        /// file is not already canonical.
-        #[arg(long)]
-        check: bool,
+        #[command(flatten)]
+        args: bynk_driver::FmtArgs,
     },
     /// Discover and run test declarations in a project. Compiles the project
     /// (including all generated `tests/*.test.ts` modules), then invokes

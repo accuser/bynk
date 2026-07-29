@@ -80,7 +80,7 @@ fn main() -> ExitCode {
         ),
         Command::New { path, name } => new::run(&NewOptions { path, name }),
         Command::Check { input, format } => run_check(input, format),
-        Command::Fmt { inputs, check } => run_fmt(inputs, check),
+        Command::Fmt { args } => run_fmt(args),
         Command::Test { args } => run_test(args),
         Command::Explain { code } => bynk::explain::run(&code),
     }
@@ -179,10 +179,10 @@ fn run_check(input: PathBuf, format: CheckFormatArg) -> ExitCode {
 
 /// `bynk fmt` (#487): format in-process via `bynk-fmt`, or shell a pinned
 /// `bynkc` under a `BYNK_BYNKC` override.
-fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {
+fn run_fmt(args: bynk_driver::FmtArgs) -> ExitCode {
     let tb = SystemToolbox;
     let compiler = resolve_compiler(&tb);
-    fmt::run(&compiler, inputs, check)
+    fmt::run(&compiler, args)
 }
 
 /// `bynk test` (#487): delegate to the driver-resolved `bynkc`, forwarding every

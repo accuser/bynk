@@ -192,14 +192,15 @@ pub enum Command {
     /// the driver (v0.138). Passing `-` reads from stdin and writes to stdout.
     ///
     /// Runs the formatter in-process (no `bynkc` binary required); with
-    /// `BYNK_BYNKC` set, the pinned compiler is shelled instead.
+    /// `BYNK_BYNKC` set, the pinned compiler is shelled instead — the style
+    /// flags are forwarded to it either way.
+    ///
+    /// `--indent`, `--indent-width`, `--max-line-width` and
+    /// `--no-trailing-comma` override the canonical style for this run; with
+    /// none of them the output is the canonical formatting.
     Fmt {
-        /// Files to format. Use `-` for stdin → stdout.
-        inputs: Vec<PathBuf>,
-        /// Check formatting without writing changes. Exits non-zero if any
-        /// file is not already canonical.
-        #[arg(long)]
-        check: bool,
+        #[command(flatten)]
+        args: bynk_driver::FmtArgs,
     },
     /// Discover and run test declarations in a project — the `bynkc test`
     /// behaviour through the driver (v0.138).

@@ -34,7 +34,7 @@ fn main() -> ExitCode {
             emit,
         } => run_compile(input, output, target.into(), platform.into(), emit),
         Command::Check { input, format } => run_check(input, format),
-        Command::Fmt { inputs, check } => run_fmt(inputs, check),
+        Command::Fmt { args } => run_fmt(args),
         Command::Test { args } => run_test(args),
     }
 }
@@ -44,9 +44,9 @@ fn run_test(args: bynkc::cli::TestArgs) -> ExitCode {
     bynk_driver::test_runner::run_test("bynkc", args)
 }
 
-fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {
+fn run_fmt(args: bynkc::cli::FmtArgs) -> ExitCode {
     // #521: the command body is shared with the `bynk` driver.
-    bynk_driver::run_fmt("bynkc", &inputs, check)
+    bynk_driver::run_fmt("bynkc", &args)
 }
 
 fn run_compile(

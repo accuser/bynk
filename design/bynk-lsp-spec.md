@@ -368,7 +368,7 @@ Doc blocks (`---`) are separate from line comments and are already preserved via
 
 - **Format-on-save:** the LSP responds to `textDocument/formatting` requests. VS Code with `editor.formatOnSave: true` calls this on every save. The LSP returns the formatted document as a single text edit.
 - **Range formatting:** `textDocument/rangeFormatting` formats a selected range. Useful for "format this function." Implemented best-effort — the formatter operates on whole declarations, so the returned range may be slightly wider than requested.
-- **CLI:** `bynkc fmt [file...]` formats files in place. `bynkc fmt -` reads from stdin, writes to stdout.
+- **CLI:** `bynkc fmt [file...]` (and `bynk fmt`, the same body through the driver) formats files in place. `bynkc fmt -` reads from stdin, writes to stdout. The style rules above are the defaults; `--indent tab|spaces`, `--indent-width`, `--max-line-width`, and `--trailing-comma`/`--no-trailing-comma` override them for one run, and `--check` judges files against the style the run asks for. The CLI does **not** read `bynk.toml`'s `[fmt]` section — that is the language server's input, so a project on a non-default style states it on the command line as well.
 
 ### 3.6 Status-bar integration
 
