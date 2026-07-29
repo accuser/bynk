@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Event payloads and envelopes are validated at the Workers subscriber boundary
----
+# 0295 — An event's payload and envelope are validated at the receiving Workers route; there is no dead-letter path
 
-## ADR: events-boundary-validation
-title: An event's payload and envelope are validated at the receiving Workers route; there is no dead-letter path
-summary: Closes a boundary-validation gap found while scoping Events slice 3 (#973): on Cloudflare Workers, an event payload and its envelope reached a subscriber's handler via a bare `unknown`/`as any` cast, with no `deserialise_*` call anywhere in the delivery chain. Corrects `design/tracks/events.md` §6's threat-model claim that malformed events are routed to a dead-letter policy — none exists for Events.
+- **Status:** Accepted (v0.240.1)
 
 **Context.** Compiling a minimal two-context project to `--target workers` and
 tracing an event payload end to end (mint in `lower.rs` → the fan-out DO's
