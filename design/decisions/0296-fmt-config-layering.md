@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "`bynkc fmt` / `bynk fmt` read the project's `bynk.toml` `[fmt]` section as the layer under their flags"
----
+# 0296 — Formatting options resolve as defaults, then `bynk.toml` `[fmt]`, then flags
 
-## ADR: fmt-config-layering
-title: Formatting options resolve as defaults, then `bynk.toml` `[fmt]`, then flags
-summary: Where a `fmt` run's options come from, and which component reads `[fmt]`
+- **Status:** Accepted (v0.240.2)
 
 **Context.** `bynk.toml`'s `[fmt]` section was read by the language server
 alone. Format-on-save honoured it; `bynkc fmt` and `bynk fmt` did not, so a

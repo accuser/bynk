@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.240.2** | "`bynkc fmt` / `bynk fmt` read the project's `bynk.toml` `[fmt]` section as the layer under their flags" |
 | **v0.240.1** | Event payloads and envelopes are validated at the Workers subscriber boundary |
 | **v0.240.0** | An `on event(e: E, env: EventEnvelope)` handler's optional second parameter carries runtime metadata about the emission — `eventId`, `publisherId`, `emittedAt`, and a reserved `schemaVersion` — enabling the `Idempotency.dedup`/`remember` idiom keyed on `env.eventId` for effectful subscribers |
 | **v0.239.0** | A `from Events(E)` subscription may filter delivery with a structural pattern, `from Events(E { field: value, .. })` — deliver-and-filter, no static narrowing of the handler's parameter |
