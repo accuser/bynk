@@ -764,12 +764,9 @@ impl<'a> Formatter<'a> {
                 }
             }
             f.emit_leading_comments(&b.tail_leading_comments);
-            // See `format_block`: an implicit `()` tail synthesised after a
-            // trailing `expect` is not re-printed, to preserve idempotency.
-            let implicit_unit_after_assert = matches!(b.tail.kind, ExprKind::UnitLit)
-                && matches!(b.statements.last(), Some(Statement::Expect(_)))
-                && b.tail_leading_comments.is_empty();
-            if !implicit_unit_after_assert {
+            // See `format_block` / #981: any `()` tail is omitted, not just an
+            // implicit one.
+            if !omit_unit_tail(b) {
                 f.format_expr(&b.tail);
                 f.newline();
             }
@@ -1971,14 +1968,7 @@ impl<'a> Formatter<'a> {
                 }
             }
             f.emit_leading_comments(&b.tail_leading_comments);
-            // v0.7 / v0.146 (ADR 0170): a block written with no explicit tail
-            // carries an implicit `()` tail that the parser synthesises. Don't
-            // print it — Bynk has no statement terminators, so a printed `()` on
-            // the next line would re-attach to the last statement on re-parse
-            // (`x == y` `()` → `x == y()`), breaking idempotency. The parser
-            // re-derives the implicit unit tail, so omitting it is loss-free.
-            let omit_implicit_tail = b.implicit_tail && b.tail_leading_comments.is_empty();
-            if !omit_implicit_tail {
+            if !omit_unit_tail(b) {
                 f.format_expr(&b.tail);
                 f.newline();
             }
@@ -3172,6 +3162,27 @@ fn pattern_to_string(p: &Pattern) -> String {
     }
 }
 
+/// #981: whether a block's `()` tail should be omitted rather than printed.
+///
+/// A `()` tail — whether the parser synthesised it ([`Block::implicit_tail`])
+/// or the user wrote it out explicitly — is exactly the block's default
+/// value, so dropping it is loss-free: the parser re-derives the same
+/// implicit unit tail either way (v0.7 / v0.146, ADR 0170).
+///
+/// Omitting it is not just an idempotency nicety, it is required for
+/// correctness whenever anything precedes the tail (a statement, a `case`'s
+/// `stub` clause): Bynk has no statement terminator, so a printed `()`
+/// immediately after a preceding line's last token re-attaches to it as a
+/// zero-arg call on re-parse (`x` / `()` → `x()`) rather than staying two
+/// separate constructs. #735 only special-cased the *implicit*-tail shape;
+/// #981 found the identical corruption for an *explicit* `()` tail (e.g. the
+/// last statement of a `match` arm's block), which is exactly as dangerous
+/// once anything comes before it. So this covers both, structurally, rather
+/// than special-casing another syntactic position.
+fn omit_unit_tail(b: &Block) -> bool {
+    matches!(b.tail.kind, ExprKind::UnitLit) && b.tail_leading_comments.is_empty()
+}
+
 fn format_block_oneline(b: &Block) -> String {
     if b.statements.is_empty() {
         // v0.146 (ADR 0170): an empty block with a synthesised `()` tail prints
@@ -3190,9 +3201,7 @@ fn format_block_oneline(b: &Block) -> String {
             out.push_str(&stmt_to_string(stmt));
             out.push('\n');
         }
-        // Omit the implicit `()` tail (see `format_block`) — printing it breaks
-        // round-trip idempotency.
-        if !b.implicit_tail {
+        if !omit_unit_tail(b) {
             out.push('\t');
             out.push_str(&expr_with_prec(&b.tail, 0));
             out.push('\n');
@@ -3395,6 +3404,44 @@ mod tests {
         );
         let out = fmt(src);
         assert!(out.contains("-- note"));
+    }
+
+    // -- #981: a bare-identifier statement + trailing `()` must not merge
+    // into a call expression.
+
+    #[test]
+    fn match_arm_block_tail_unit_after_assign_does_not_reattach_as_a_call() {
+        // The exact shape from #981: an Assign statement whose value is a
+        // bare (capitalised, enum-variant-shaped) identifier, immediately
+        // followed by the block's own explicit `()` tail. The formatter must
+        // not print these adjacently — that reparses as `status := Paid()`,
+        // a call, rather than the original two constructs.
+        let src = "commons x { fn f(status: T) -> T {\n  match status {\n    Draft => {\n      status := Paid\n      ()\n    }\n    Paid => (),\n  }\n} }";
+        let out = fmt(src);
+        assert!(
+            !out.contains("Paid()"),
+            "the `()` tail must not re-attach to `Paid` as a call:\n{out}"
+        );
+        assert!(
+            out.contains("status := Paid"),
+            "the assignment must survive unmangled:\n{out}"
+        );
+        assert_eq!(out, fmt(&out), "must be idempotent");
+    }
+
+    #[test]
+    fn explicit_unit_tail_after_a_statement_is_omitted_like_an_implicit_one() {
+        // Not just the implicit-tail shape #735 special-cased — an
+        // *explicit* `()` written by the user right after a statement is
+        // exactly as dangerous to print, so it is omitted the same way.
+        let src = "commons x { fn f() -> Effect[()] {\n  let a = 1\n  ()\n} }";
+        let out = fmt(src);
+        let expected = "commons x {\n\tfn f() -> Effect[()] {\n\t\tlet a = 1\n\t}\n}\n";
+        assert_eq!(
+            out, expected,
+            "an explicit unit tail after a statement must be omitted"
+        );
+        assert_eq!(out, fmt(&out), "must be idempotent");
     }
 
     // -- #735 round-trip guard --

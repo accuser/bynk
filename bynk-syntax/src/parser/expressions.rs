@@ -538,7 +538,14 @@ impl<'a> Parser<'a> {
                     } else {
                         Vec::new()
                     };
-                    if self.peek_kind() == Some(TokenKind::LParen) {
+                    // #981: same same-line rule as the bare-identifier call
+                    // above — a `(` opening a new line is not this method's
+                    // call-parens (`receiver.method` ⏎ `()` stays two
+                    // constructs), unless explicit type arguments already
+                    // committed to a call being required here.
+                    if self.peek_kind() == Some(TokenKind::LParen)
+                        && (!type_args.is_empty() || !self.next_token_on_new_line(member.span))
+                    {
                         // Method call: `receiver.method(args)`.
                         self.bump();
                         let mut args = Vec::new();
@@ -921,7 +928,16 @@ impl<'a> Parser<'a> {
                         span: ident.span.merge(close_paren.span),
                     });
                 }
-                if self.peek_kind() == Some(TokenKind::LParen) {
+                // #981: a `(` that opens a new line is not this identifier's
+                // call-parens — it is a standalone `()` (unit) statement/tail
+                // that happens to follow. Without this, `Paid` ⏎ `()` (two
+                // statements: a bare identifier and a unit literal) mis-parses
+                // as `Paid()` (one statement: a zero-arg call), exactly the
+                // same trap the v0.20b same-line-`[` rule dodges for type
+                // arguments below.
+                if self.peek_kind() == Some(TokenKind::LParen)
+                    && !self.next_token_on_new_line(ident.span)
+                {
                     self.bump();
                     let mut args = Vec::new();
                     if self.peek_kind() != Some(TokenKind::RParen) {
