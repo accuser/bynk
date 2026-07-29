@@ -1404,6 +1404,31 @@ pub(crate) fn emit_service(
             async_tail,
             Some(&handler.return_type),
         );
+        // Events track, slice 1 (spine #936): a `from Events(E { ... })`
+        // subscription filter is deliver-and-filter (ADR 0286, unchanged by
+        // this slice) — the fan-out mechanism still delivers every emission
+        // of `E` to every subscriber; this subscriber's own generated
+        // handler evaluates the pattern as a guard and no-ops if it doesn't
+        // match. Prologue, not a wrapper edit, so it covers all three
+        // delivery paths (Cloudflare Workers, Bundle/node, Bundle/browser)
+        // in one place, since they all call into this same generated method.
+        // `handler.params[0]`'s type is guaranteed to equal the header's
+        // event type by `check_service_protocols`'s param-type-agreement
+        // check, so testing its fields here is sound.
+        if handler.kind == HandlerKind::Event
+            && let ServiceProtocol::Events {
+                pattern: Some(pattern),
+                ..
+            } = &s.protocol
+            && let Some(param) = handler.params.first()
+            && let Some(guard) = event_pattern_guard(&ts_ident(&param.name.name), Some(pattern))
+        {
+            let prologue = format!(
+                "{}if (!({guard})) return undefined;\n",
+                " ".repeat(INDENT_STEP * 2)
+            );
+            body_out.insert_str(0, &prologue);
+        }
         // Append the deps parameter (may include surface field if the body
         // made cross-context calls). v0.47: a Bearer handler's deps also carries
         // the seam-minted `identity` — but only when a binder captures it

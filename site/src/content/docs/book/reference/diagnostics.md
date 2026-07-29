@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **439** codes in total.
+There are **446** codes in total.
 
 ## Agents
 
@@ -233,7 +233,13 @@ There are **439** codes in total.
 | `bynk.duration.literal_overflow` | A `Duration` literal (`<int>.<unit>`) exceeds the representable millisecond range. |  | — |
 | `bynk.event.emit_not_an_event` | `Events.emit[E]` named a type `E` that is declared in this context, but is not itself an `event` — only an `event` type may be emitted. |  | — |
 | `bynk.event.emit_outside_owner` | `Events.emit[E]` named an event `E` not declared in the emitting context — only an event's declaring context may emit it. |  | — |
+| `bynk.event.handler_param_type_mismatch` | An `on event(e: T)` handler's declared parameter type does not match its `from Events(E)` header's event type. |  | — |
 | `bynk.event.outside_context` | An `event` was declared outside a context. |  | — |
+| `bynk.event.pattern_duplicate_field` | A `from Events(E { ... })` subscription pattern listed the same field more than once. |  | — |
+| `bynk.event.pattern_type_mismatch` | A `from Events(E { ... })` subscription pattern field's matched value is not compatible with that field's declared type. |  | — |
+| `bynk.event.pattern_unknown_field` | A `from Events(E { ... })` subscription pattern named a field that `E` does not declare. |  | — |
+| `bynk.event.pattern_unknown_variant` | A `from Events(E { ... })` subscription pattern's variant value names a variant that does not exist on the field's declared sum type. |  | — |
+| `bynk.event.pattern_variant_payload` | A `from Events(E { ... })` subscription pattern's variant value names a variant that carries a payload — only nullary variants are admitted, since testing the tag alone would silently ignore the payload. |  | — |
 | `bynk.event.unknown_subscription` | A `from Events(E)` subscription named `E`, which is not a declared event in this context or any consumed context. |  | — |
 | `bynk.generics.duplicate_type_param` | A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183). |  | — |
 | `bynk.generics.generic_non_record` | A `type` declaration carries type parameters on a refined or opaque body; only a record (`type Name[T] = { … }`) or sum (`type Name[T] = | … | …`) body may be generic (v0.157/#593, ADRs 0183/0197). | [`type_decl`](/book/reference/grammar/#rule-type_decl) | — |
@@ -329,6 +335,7 @@ There are **439** codes in total.
 | `bynk.parse.empty_interpolation` | An interpolation hole `\(…)` contains no expression. |  | — |
 | `bynk.parse.empty_match` | A `match` has no arms. | [`match_expr`](/book/reference/grammar/#rule-match_expr) | — |
 | `bynk.parse.empty_service` | A `service` body is empty. | [`service_decl`](/book/reference/grammar/#rule-service_decl) | — |
+| `bynk.parse.event_pattern_empty` | A `from Events(E { ... })` subscription pattern listed no fields — use `from Events(E)` (no braces) for an unfiltered subscription. |  | — |
 | `bynk.parse.expected_agent_key` | Expected a `key` declaration in an agent. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) | — |
 | `bynk.parse.expected_agent_storage` | An agent declares no storage — it has no `store` fields. |  | — |
 | `bynk.parse.expected_base_type` | Expected a base type. | [`base_type`](/book/reference/grammar/#rule-base_type) | — |

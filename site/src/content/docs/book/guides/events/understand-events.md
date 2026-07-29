@@ -7,9 +7,9 @@ Events(E)` trio is in-system pub-sub: one context declares a typed fact and
 emits it, any number of others subscribe to it, and the compiler — not your
 code — wires the delivery.
 
-This page is the mental model for slice 0, the emit/subscribe core. For the
-full track's remaining scope (structural filtering on the subscription
-header, an envelope, schema versioning, replay), see
+This page is the mental model for the emit/subscribe core (slice 0) and
+subscription pattern filtering (slice 1). For the full track's remaining
+scope (an envelope, schema versioning, replay), see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/).
 
 ## The three pieces
@@ -65,9 +65,48 @@ flowchart LR
   }
   ```
 
-  Slice 0 has no pattern on the header — every emission of `PaymentConfirmed`
-  reaches every subscriber of `PaymentConfirmed`. A subscriber that wants only
-  some of them (`from Events(E { region: Domestic, .. })`) is a later slice.
+  With no pattern on the header, every emission of `PaymentConfirmed` reaches
+  every subscriber of `PaymentConfirmed`. A subscriber that wants only some
+  of them can filter — see the next section.
+
+## Filtering delivery with a pattern
+
+A subscription may narrow which emissions it receives with a structural
+pattern on the payload:
+
+```bynk,ignore
+context commerce.notifications
+
+consumes commerce.order
+consumes bynk { Logger }
+
+service OnDomesticPayment from Events(PaymentConfirmed { region: Region.Domestic, .. }) {
+  on event(e: PaymentConfirmed) -> Effect[()] given Logger {
+    -- e.region is NOT statically Region.Domestic here — e is
+    -- PaymentConfirmed as always. Only *delivery* is filtered: this
+    -- subscriber only runs for emissions where region == Domestic.
+    Logger.info(e.orderId)
+  }
+}
+```
+
+A pattern lists a subset of the event's declared fields; listing any field
+requires a trailing `..` (`from Events(E { })` is rejected — use the bare
+`from Events(E)` form for an unfiltered subscription). A field's value is a
+literal (`Int`/`String`/`Bool`) or a nullary sum-type variant, written bare
+(`Domestic`) or qualified (`Region.Domestic`); a variant that carries a
+payload is rejected — matching only the tag while ignoring a payload would
+silently admit emissions the pattern looks like it should exclude. Multiple
+listed fields compose with AND. There is no nested-field sub-pattern yet.
+
+**Deliver-and-filter, not narrower routing.** Every emission of `E` still
+reaches the fan-out mechanism; each subscriber's own generated handler
+evaluates the pattern as a guard and no-ops if it doesn't match. This is why
+`e`'s type is unaffected — the filter is a runtime check at the top of the
+handler body, not a language-level type refinement. A future increment may
+add static narrowing once the design's own open refinement-propagation
+question is settled; today, a handler that needs to act on the fact that its
+pattern matched still reads `e.region` at its full declared type.
 
 ## Only the declaring context may emit
 
@@ -130,8 +169,10 @@ calls into the agent.
 
 ## Delivery, concretely, per platform
 
-Slice 0's substrate differs by target, but the emit/subscribe surface above
-does not — the same source compiles and runs the same way on every platform:
+The fan-out substrate differs by target, but the emit/subscribe surface above
+does not — the same source compiles and runs the same way on every platform.
+A subscription pattern's guard runs as the first line of the generated
+handler on every target too — deliver-and-filter, not a routing difference:
 
 | Target | Mechanism |
 |---|---|

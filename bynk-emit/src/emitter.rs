@@ -2117,6 +2117,7 @@ fn emit_project_imports(
             CommonsItem::Service(s) => match &s.protocol {
                 ServiceProtocol::Events {
                     event_type: TypeRef::Named(id),
+                    ..
                 } => Some(id.name.clone()),
                 _ => None,
             },

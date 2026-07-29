@@ -415,7 +415,12 @@ mod tests {
         // grouping around a pattern, e.g. after `is`). Net +2.
         // message-bundles slice 1 (#859) added: messages_decl, message_entry
         // (the `messages <tag> { "code" => "template" }` construct). Net +2.
-        assert_eq!(rules.len(), 145);
+        // Events track slice 0/1 (spine #936) added: event_decl (`event Name =
+        // { fields }`), event_handler (`on event(...)`), event_pattern,
+        // event_pattern_field, event_pattern_value (the slice-1 subscription
+        // filter `from Events(E { field: value, .. })`; `service_protocol`
+        // itself was extended in place, no new rule for it). Net +5.
+        assert_eq!(rules.len(), 150);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

@@ -885,14 +885,19 @@ pub enum ServiceProtocol {
     /// carries. The service holds exactly one `on open` handler (edge auth via
     /// `by`, then transfer of the connection to an agent).
     WebSocket { in_type: TypeRef, out_type: TypeRef },
-    /// `from Events(E)` — a pattern-less subscriber to event type `E`
-    /// (Events track, slice 0, spine #936). `Events`, capitalised, is matched
-    /// as plain `Ident` text the same way `websocket` is — it names the
-    /// `Events` capability directly (every first-party capability is already
-    /// an unreserved PascalCase identifier), not a built-in type name, so no
-    /// lexer reservation. The header takes one bare type reference; no
-    /// pattern (slice 1) and no `via schema(...)` clause (slice 4) yet.
-    Events { event_type: TypeRef },
+    /// `from Events(E)` or `from Events(E { field: value, .. })` — a
+    /// subscriber to event type `E`, optionally filtered by a structural
+    /// pattern (Events track, slice 0 spine #936; the pattern is slice 1).
+    /// `Events`, capitalised, is matched as plain `Ident` text the same way
+    /// `websocket` is — it names the `Events` capability directly (every
+    /// first-party capability is already an unreserved PascalCase
+    /// identifier), not a built-in type name, so no lexer reservation.
+    /// `pattern` is `None` for the pattern-less form; no `via schema(...)`
+    /// clause (slice 4) yet.
+    Events {
+        event_type: TypeRef,
+        pattern: Option<EventPattern>,
+    },
 }
 
 /// An agent declaration (v0.5 §3.6). Agents are state-bearing entities
@@ -1571,6 +1576,80 @@ impl EventDecl {
             documentation: self.documentation.clone(),
             span: self.span,
             trivia: self.trivia.clone(),
+        }
+    }
+}
+
+/// The structural filter on a `from Events(E { field: value, .. })`
+/// subscription header (Events track, slice 1, spine #936) — deliver-and-filter:
+/// every emission still reaches the fan-out mechanism, and the subscriber's
+/// own generated handler evaluates this as a boolean guard before running the
+/// body. Deliberately **not** a [`Pattern`] — an event is a plain record, not
+/// a sum, so it has no tag for [`Pattern::Variant`] to test; extending the
+/// shared `Pattern` enum to fit would touch parser/checker/emitter/fmt/
+/// tree-sitter/LSP sites and drag in match-exhaustiveness semantics a
+/// delivery filter does not need. This amends
+/// [ADR 0286](../decisions/0286-events-pattern-dispatch-deliver-and-filter.md)'s
+/// "no bespoke matching engine is introduced for Events" claim; its
+/// deliver-and-filter decision is unchanged. No static narrowing: a matching
+/// handler body still sees its parameter at its own declared type, never
+/// narrowed to a listed field's specific value (deferred — narrowing needs a
+/// singleton-variant type the checker does not have, and waits on the
+/// refinement-propagation design question `design/bynk-type-system.md`
+/// §2.5.4 names as still open).
+#[derive(Debug, Clone)]
+pub struct EventPattern {
+    /// The listed fields, in source order. Never empty — a pattern with no
+    /// fields has no shape (`from Events(E)`, no braces, is the pattern-less
+    /// form; `from Events(E { })` is a parse error pointing at it).
+    pub fields: Vec<EventPatternField>,
+    /// The span of the required trailing `..` — every listed field leaves
+    /// the rest of the record's fields unconstrained, and that must be
+    /// written explicitly rather than implied.
+    pub rest_span: Span,
+    pub span: Span,
+}
+
+/// One `name: value` entry in an [`EventPattern`].
+#[derive(Debug, Clone)]
+pub struct EventPatternField {
+    pub name: Ident,
+    pub value: EventPatternValue,
+    pub span: Span,
+}
+
+/// The value a pattern field is matched against. A closed set, mirroring
+/// [`Pattern::Literal`]'s closed literal kinds plus a nullary sum-variant
+/// reference — no nested record sub-patterns in v1 (slice 1 filters on
+/// top-level fields only).
+#[derive(Debug, Clone)]
+pub enum EventPatternValue {
+    /// An `Int`/`String`/`Bool` literal — matches the field by value equality.
+    Literal { value: LiteralValue, span: Span },
+    /// A nullary sum-type variant, optionally qualified: `Region.Domestic` or
+    /// bare `Domestic` — both resolve against the field's declared sum type.
+    /// A variant that carries a payload is rejected (`bynk.event.
+    /// pattern_variant_payload`): testing only the tag while ignoring a
+    /// payload would silently over-broaden the filter.
+    Variant {
+        /// `Some(Region)` for the qualified form, `None` for bare.
+        type_name: Option<Ident>,
+        variant: Ident,
+        span: Span,
+    },
+}
+
+impl EventPattern {
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl EventPatternValue {
+    pub fn span(&self) -> Span {
+        match self {
+            EventPatternValue::Literal { span, .. } => *span,
+            EventPatternValue::Variant { span, .. } => *span,
         }
     }
 }

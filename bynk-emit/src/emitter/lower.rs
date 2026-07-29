@@ -4888,6 +4888,41 @@ fn pattern_match_tests(
     }
 }
 
+/// Events track, slice 1 (spine #936): the JS boolean guard for a
+/// `from Events(E { field: value, .. })` subscription filter, AND-joining one
+/// test per listed field. Parallel in shape to [`pattern_match_tests`] but
+/// **not** a call into it — that function's `Refined` arm panics on a
+/// non-literal-kind scrutinee and its `Variant` arm tests `.tag` on the
+/// scrutinee itself, neither of which fits a flat record-field test against
+/// an [`EventPattern`], which is a distinct AST node precisely because an
+/// event is a plain record, not a sum (see `EventPattern`'s doc comment,
+/// which also records the ADR 0286 amendment this represents). No `Ty`/
+/// `LowerCtx` needed: `check_event_pattern`
+/// (`bynk-emit/src/project/validate.rs`) has already proven every field
+/// exists and every value type-checks, so this is total and cannot panic.
+/// Returns `None` for a pattern-less subscription (nothing to guard).
+pub(crate) fn event_pattern_guard(path: &str, pattern: Option<&EventPattern>) -> Option<String> {
+    let pattern = pattern?;
+    let tests: Vec<String> = pattern
+        .fields
+        .iter()
+        .map(|f| match &f.value {
+            // `payload as any` on the wire (Workers `workers_entry.rs`) or a
+            // real object (Bundle) either way survives a JSON round-trip
+            // unchanged, and a nullary variant constructs as `{ tag: "..." }`
+            // (`emit.rs`'s sum-constructor emission) — so `.tag` is the
+            // correct test on both targets.
+            EventPatternValue::Literal { value, .. } => {
+                format!("{path}.{} === {}", f.name.name, literal_case_label(value))
+            }
+            EventPatternValue::Variant { variant, .. } => {
+                format!("{path}.{}.tag === \"{}\"", f.name.name, variant.name)
+            }
+        })
+        .collect();
+    Some(tests.join(" && "))
+}
+
 /// Emit `const` declarations binding the names in `pattern` from runtime `path`,
 /// recursing through nested payloads (ADR 0169).
 fn emit_pattern_bindings(

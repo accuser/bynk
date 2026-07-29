@@ -223,6 +223,16 @@ pub enum TokenKind {
     /// `...` — used in record-spread expressions (v0.5).
     #[token("...")]
     DotDotDot,
+    /// `..` — the "rest of the fields" marker on an events subscription
+    /// pattern (Events track slice 1, spine #936): `from Events(E { region:
+    /// Region.Domestic, .. })`. A genuine token, not two adjacent `Dot`s —
+    /// logos maximal-munches `...`/`..`/`.` correctly once all three are
+    /// registered, and a real token keeps this in agreement with
+    /// tree-sitter's grammar (which declares `".."` as one literal), so the
+    /// two parsers cannot diverge on a whitespace-split `. .` the way ADR
+    /// 0253 D4 found a leaking `where`-check divergence once before.
+    #[token("..")]
+    DotDot,
     /// `<-` — Effect bind operator (v0.5).
     #[token("<-")]
     LArrow,
@@ -428,6 +438,7 @@ impl TokenKind {
             Messages => "`messages`",
             ColonEq => "`:=`",
             DotDotDot => "`...`",
+            DotDot => "`..`",
             LArrow => "`<-`",
             TildeArrow => "`~>`",
             DocBlock => "documentation block",
@@ -1147,6 +1158,21 @@ mod tests {
                 Eq, Lt, Gt, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Dot,
                 At,
             ],
+        );
+    }
+
+    #[test]
+    fn dot_family_maximal_munch() {
+        // Events track slice 1 (spine #936): `..` must lex as one `DotDot`
+        // token, not two `Dot`s — a real token keeps agreement with
+        // tree-sitter (which declares `".."` as one literal), so a
+        // whitespace-split `. .` cannot silently parse where a real `..`
+        // is required. Also confirms `...`/`..`/`.` don't shadow each other
+        // regardless of declaration order (logos maximal-munch).
+        use TokenKind::*;
+        assert_eq!(
+            kinds("a .. b ... c . d . ."),
+            vec![Ident, DotDot, Ident, DotDotDot, Ident, Dot, Ident, Dot, Dot,],
         );
     }
 
