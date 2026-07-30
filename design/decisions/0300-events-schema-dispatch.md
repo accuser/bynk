@@ -1,11 +1,6 @@
----
-level: minor
-changelog: "Events track: a via schema(N) clause on a from Events(...) subscription header dispatches delivery by the envelope's schemaVersion, independent of the existing payload pattern."
----
+# 0300 — via schema(N) version-aware dispatch ships literal-only, nested in the Events protocol grammar, with no cross-subscriber ambiguity check
 
-## ADR: events-schema-dispatch
-title: via schema(N) version-aware dispatch ships literal-only, nested in the Events protocol grammar, with no cross-subscriber ambiguity check
-summary: Events slice 4's design — why ranges split to an unfiled slice 4b, the synthetic-envelope-parameter plumbing fix, the grammar-nesting choice, and the explicit no-overlap-check policy
+- **Status:** Accepted (v0.244)
 
 **Context.** The last remaining slice of the Events track (spine #936).
 Per `design/bynk-design-notes.md`'s "Version-aware dispatch via envelope
