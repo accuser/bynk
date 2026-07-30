@@ -1,0 +1,8 @@
+# #977: not Events-specific. The same generic-wrapped consumed inner type breaks
+# on a plain `consumes` + cross-context **call** whose return type carries an
+# `Option[ForeignSum]` field — `commerce.checkout` regenerates its own
+# `Option_Region` codec for `Receipt.region` and must qualify `Region` through
+# the `import type * as commerce_payment` alias, since `Region` is declared only
+# in `commerce.payment`.
+export function serialise_Option_Region(value: Option<commerce_payment.Region>): JsonValue {
+export function deserialise_Option_Region(json: JsonValue, path: string = "$"): Result<Option<commerce_payment.Region>, BoundaryError> {

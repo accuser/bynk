@@ -616,6 +616,16 @@ receives *exactly* the emissions its pattern admits.
 - [x] Slice 3c — the cross-build schema registry (#980). `bynk.schema.lock`,
   auto-written on a clean build; auto-bump on a purely additive shape
   change; a declared `@schema(N)` now verified, not trusted (see §3.5, §4).
+- [x] **Defect, found during slice 3a, fixed post-slice-3c (#977):** a
+  consumed boundary type whose field is a built-in generic wrapping *another*
+  consumed named type (`region: Option[Region]`) had that inner type emitted
+  **unqualified** in a subscriber's own regenerated codec, so `tsc --strict`
+  failed with `TS2304: Cannot find name 'Region'`. Not Events-specific — the
+  same break reproduced on a plain `consumes` + cross-context **call** — and
+  fixed generically: the context's own generic-instantiation pass walks the
+  boundary types it *declares*, leaving a foreign type's instantiations to the
+  qualified consumed pass that owns the `import type * as <ns>` alias. Slice
+  3a's `Option[Int]` fixture sidestepped it; `Option[Region]` now pins it.
 - [ ] Slice 4 — `via schema(...)` version-aware dispatch (buildable now
   that slice 3b ships a real `schemaVersion`; does not depend on 3c)
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)
