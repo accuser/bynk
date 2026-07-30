@@ -1199,8 +1199,22 @@ fn emit_boundary_helpers(
 
         // Specialised Result_/Option_ helpers for the instantiations used —
         // in handler signatures or in boundary-type fields (v0.18).
+        //
+        // #977: the field walk follows `local_boundary`, not `boundary_types_all`
+        // — the same narrowing `emit_helpers_for_owner` applies just above, and
+        // for the same reason. A boundary type this context does not *declare* is
+        // either commons-owned (its codec, and its own instantiations, come from
+        // the commons module) or consumed (its codec is regenerated below by
+        // `emit_consumed_context_helpers`, whose `Qual` map reaches the owner's
+        // `import type * as <ns>` alias). Walking a foreign type's fields here
+        // emitted its instantiations *unqualified* — `Option<Region>` for a
+        // consumed `Region` — and then seeded `emitted_insts` so the qualified
+        // pass below skipped it, leaving `tsc --strict` with `TS2304: Cannot find
+        // name 'Region'`. Handler signatures still walk in full: a *local*
+        // handler naming `Option[ConsumedRegion]` directly is this module's own
+        // boundary either way.
         let insts =
-            collect_generic_instantiations(&services, &agents, &boundary_types_all, &commons.types);
+            collect_generic_instantiations(&services, &agents, &local_boundary, &commons.types);
         emit_generic_helpers(out, &insts, &commons.types, &ctx.runtime_use);
 
         // #661 (ADR 0199 Decision G discharged): the caller's own view of each

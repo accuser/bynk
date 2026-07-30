@@ -1,0 +1,10 @@
+context commerce.notifications
+
+consumes commerce.order
+consumes bynk { Logger }
+
+service OnPayment from Events(PaymentConfirmed) {
+  on event(e: PaymentConfirmed) -> Effect[()] given Logger {
+    Logger.info(e.orderId)
+  }
+}

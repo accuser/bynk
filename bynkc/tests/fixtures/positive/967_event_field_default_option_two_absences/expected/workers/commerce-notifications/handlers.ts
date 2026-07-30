@@ -14,6 +14,30 @@ export const OnPayment = {
   },
 };
 
+export function serialise_PaymentConfirmed(value: commerce_order.PaymentConfirmed): JsonValue {
+  return {
+    orderId: value.orderId as JsonValue,
+    retryCount: serialise_Option_Int(value.retryCount),
+  };
+}
+
+export function deserialise_PaymentConfirmed(json: JsonValue, path: string = "$"): Result<commerce_order.PaymentConfirmed, BoundaryError> {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
+  }
+  const obj = json as { [k: string]: JsonValue };
+  if (typeof obj["orderId"] !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.orderId`, expected: "string", actual: typeof obj["orderId"] });
+  }
+  const __orderId = obj["orderId"];
+  const __d_retryCount: JsonValue = "retryCount" in obj ? obj["retryCount"] : { kind: "Some", value: 0 };
+  const __r_retryCount = deserialise_Option_Int(__d_retryCount, `${path}.retryCount`);
+  if (__r_retryCount.tag === "Err") return __r_retryCount;
+  const __retryCount = __r_retryCount.value;
+  return Ok({ orderId: __orderId, retryCount: __retryCount } as commerce_order.PaymentConfirmed);
+}
+
+
 export function serialise_Option_Int(value: Option<number>): JsonValue {
   if (value.tag === "Some") return { kind: "Some", value: value.value as JsonValue };
   return { kind: "None" };
@@ -38,28 +62,4 @@ export function deserialise_Option_Int(json: JsonValue, path: string = "$"): Res
   }
   return Err({ kind: "StructuralMismatch", path, expected: "Some | None", actual: String(obj["kind"]) });
 }
-
-export function serialise_PaymentConfirmed(value: commerce_order.PaymentConfirmed): JsonValue {
-  return {
-    orderId: value.orderId as JsonValue,
-    retryCount: serialise_Option_Int(value.retryCount),
-  };
-}
-
-export function deserialise_PaymentConfirmed(json: JsonValue, path: string = "$"): Result<commerce_order.PaymentConfirmed, BoundaryError> {
-  if (typeof json !== "object" || json === null || Array.isArray(json)) {
-    return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
-  }
-  const obj = json as { [k: string]: JsonValue };
-  if (typeof obj["orderId"] !== "string") {
-    return Err({ kind: "StructuralMismatch", path: `${path}.orderId`, expected: "string", actual: typeof obj["orderId"] });
-  }
-  const __orderId = obj["orderId"];
-  const __d_retryCount: JsonValue = "retryCount" in obj ? obj["retryCount"] : { kind: "Some", value: 0 };
-  const __r_retryCount = deserialise_Option_Int(__d_retryCount, `${path}.retryCount`);
-  if (__r_retryCount.tag === "Err") return __r_retryCount;
-  const __retryCount = __r_retryCount.value;
-  return Ok({ orderId: __orderId, retryCount: __retryCount } as commerce_order.PaymentConfirmed);
-}
-
 
