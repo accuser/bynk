@@ -55,6 +55,15 @@ reference.
   reads the source's own doc comments, distinct from this documentation site.
   (Served by the language server's
   [`bynk/documentationModel`](/docs/tooling/bynk-lsp/#capabilities) request.)
+- **Show Architecture Map** — the **Bynk: Show Architecture Map** command opens
+  a webview mapping the active file's whole project: one box per context/
+  adapter, an arrow per `consumes` (labelled with its selected capabilities
+  where braced), and each box's capabilities/providers/services/agents —
+  collapsed by default, click the `+`/`−` toggle next to a box to expand it to
+  its declarations. Every box and declaration is clickable back to its source
+  — a whole-project map, complementing the language server's per-handler
+  sequence-diagram request. (Served by the language server's
+  [`bynk/architectureModel`](/docs/tooling/bynk-lsp/#capabilities) request.)
 - A **Get Started with Bynk** walkthrough (Welcome page → Help → walkthroughs)
   that sets up a project and a first context.
 - A **`bynkc: check` build task** (Terminal → Run Task) that type-checks the
@@ -99,6 +108,7 @@ The extension needs `bynkc-lsp` available — build it with
 | `src/webviewHost.ts` | The shared webview substrate: CSP + per-render nonce, the payload-embedding HTML shell, and `postMessage`→reveal click-to-code — built once, consumed by both webviews below. |
 | `src/sequenceDiagram.ts` | The **Show Sequence Diagram** command + panel (`bynk/sequenceModel`). |
 | `src/documentationView.ts` | The **Show Documentation** command + panel (`bynk/documentationModel`). |
+| `src/architectureMap.ts` | The **Show Architecture Map** command + panel (`bynk/architectureModel`). |
 | `src/webview/` | The browser-context webview bundles: `main.ts`/`mermaid-gen.ts` (sequence, vendored Mermaid) and `docview.ts`/`doc-render.ts` (documentation, vendored markdown-it). |
 | `src/tasks.ts` | The `bynkc: check` build-task provider. |
 | `snippets/bynk.json` | Construct scaffolds, wired via `contributes.snippets`. |

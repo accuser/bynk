@@ -181,6 +181,11 @@
         "command": "bynk.showDocumentation",
         "title": "Show Documentation",
         "category": "Bynk"
+      },
+      {
+        "command": "bynk.showArchitectureMap",
+        "title": "Show Architecture Map",
+        "category": "Bynk"
       }
     ],
     "menus": {
@@ -219,6 +224,10 @@
         },
         {
           "command": "bynk.showDocumentation",
+          "when": "editorLangId == bynk"
+        },
+        {
+          "command": "bynk.showArchitectureMap",
           "when": "editorLangId == bynk"
         }
       ],
@@ -493,7 +502,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify && esbuild src/webview/main.ts --bundle --outfile=out/webview.js --format=iife --platform=browser --target=es2022 --minify && esbuild src/webview/docview.ts --bundle --outfile=out/docview.js --format=iife --platform=browser --target=es2022 --minify",
+    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify && esbuild src/webview/main.ts --bundle --outfile=out/webview.js --format=iife --platform=browser --target=es2022 --minify && esbuild src/webview/docview.ts --bundle --outfile=out/docview.js --format=iife --platform=browser --target=es2022 --minify && esbuild src/webview/architecture.ts --bundle --outfile=out/architecture.js --format=iife --platform=browser --target=es2022 --minify",
     "check": "tsc -p . --noEmit",
     "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap --watch",
     "package": "npm run build && npx @vscode/vsce package",

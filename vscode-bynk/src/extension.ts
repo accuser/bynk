@@ -32,6 +32,7 @@ import { registerDebug } from "./debug";
 import { provideCodeLenses } from "./codelens";
 import { registerSequenceDiagram } from "./sequenceDiagram";
 import { registerDocumentationView } from "./documentationView";
+import { registerArchitectureMap } from "./architectureMap";
 import { registerInlineDocRendering } from "./inlineDocRendering";
 
 let client: LanguageClient | undefined;
@@ -96,6 +97,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // reference page. Same client closure and shared webview substrate as the
   // sequence view above.
   registerDocumentationView(context, () => client);
+
+  // #851: "Show Architecture Map" — the whole-project contexts/consumes/
+  // capabilities map, the macro counterpart to the sequence view above.
+  // Same client closure and shared webview substrate.
+  registerArchitectureMap(context, () => client);
 
   // #849: in-editor doc-comment rendering — heading colour, bold, italic applied
   // in place to `--- … ---` blocks. Client-side decorations only; independent of
