@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.244**.
+written against **v0.245**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.245.0** | A VS Code webview maps a whole project's contexts, their `consumes` edges, and the capabilities/providers/services/agents each one binds |
 | **v0.244.0** | "Events track: a via schema(N) clause on a from Events(...) subscription header dispatches delivery by the envelope's schemaVersion, independent of the existing payload pattern." |
 | **v0.243.0** | "Events track: the cross-build schema registry (bynk.schema.lock) computes each event's schema version from its build history, auto-bumping on additive shape changes and verifying a declared @schema(N) against the computed value." |
 | **v0.242.0** | An event may declare an optional @schema(N) annotation, embedded into env.schemaVersion at emission (default 1); an unknown event annotation or a malformed @schema is now a compile error |
