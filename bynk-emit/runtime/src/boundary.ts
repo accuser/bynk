@@ -88,11 +88,17 @@ export interface ServiceBinding {
   fetch(request: Request): Promise<Response>;
 }
 
-export async function callService<T, E>(
+export async function callService<R>(
   binding: ServiceBinding,
   servicePath: string,
   argsJson: JsonValue,
-  deserialiseResult: (json: JsonValue) => Result<Result<T, E>, BoundaryError>,
+  // #988: generic over the whole return type `R`, not a `Result`'s two
+  // halves — `R = Result<T, E>` recovers the old behaviour exactly, but a
+  // plain (non-`Result`) `R` now has something to bind `deserialiseResult`'s
+  // inference to, instead of degrading to `unknown`. The `path` parameter is
+  // optional here because every generated `deserialise_*` declares it with a
+  // default, which callers of this function are not required to match.
+  deserialiseResult: (json: JsonValue, path?: string) => Result<R, BoundaryError>,
   // v0.54: the calling context's qualified name, stamped beside the args so the
   // callee's `by c: Caller` handler can present a live `CallerId` (Q7). A
   // compile-time constant; the args body itself is unchanged. The `Internal`
@@ -104,7 +110,7 @@ export async function callService<T, E>(
   // fails closed on mismatch (409), which is what makes a `deploy --context`
   // skew a loud, nameable failure instead of a silent misinterpretation.
   contractHash: string = "",
-): Promise<Result<T, E>> {
+): Promise<R> {
   const request = new Request(`http://internal/_bynk/call/${servicePath}`, {
     method: "POST",
     headers: {

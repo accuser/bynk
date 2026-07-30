@@ -1,0 +1,11 @@
+context commerce.payment
+
+exports transparent { Receipt }
+
+type Receipt = { id: String }
+
+service authorise {
+  on call(id: String) -> Effect[Receipt] {
+    Receipt { id: id }
+  }
+}
