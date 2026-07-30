@@ -563,10 +563,18 @@ pub(crate) fn check_event_subscriptions(
                 let ServiceProtocol::Events {
                     event_type,
                     pattern,
+                    schema_dispatch,
                 } = &s.protocol
                 else {
                     continue;
                 };
+                // Events track, slice 4 (spine #936): `via schema(N)`'s
+                // legality needs nothing about the subscribed event itself
+                // (unlike the payload pattern below), so it's checked
+                // independently of whether the subscription even resolves.
+                if let Some(dispatch) = schema_dispatch {
+                    check_schema_dispatch(dispatch, &parsed[i].identity_path, errors);
+                }
                 let TypeRef::Named(id) = event_type else {
                     continue;
                 };
@@ -698,6 +706,29 @@ fn check_event_pattern(
             unit_uses,
             identity_path,
             errors,
+        );
+    }
+}
+
+/// Events track, slice 4 (spine #936): `via schema(N)`'s `N` must be a
+/// positive `Int` literal — the identical rule `@schema(N)` already
+/// enforces (`bynk.event.bad_schema_version`), reused under its own code
+/// since the two are unrelated syntax positions (an annotation on the
+/// event's own declaration vs. a clause on a subscriber's header).
+fn check_schema_dispatch(
+    dispatch: &SchemaDispatch,
+    identity_path: &std::path::Path,
+    errors: &mut ErrorSink,
+) {
+    let SchemaVersionPattern::Literal(n) = &dispatch.pattern;
+    if *n <= 0 {
+        errors.push_for(
+            Some(identity_path),
+            CompileError::new(
+                "bynk.event.bad_schema_dispatch",
+                dispatch.span,
+                "`via schema(...)`'s argument must be a positive `Int` literal",
+            ),
         );
     }
 }

@@ -1550,14 +1550,21 @@ impl<'a> Formatter<'a> {
             ServiceProtocol::Events {
                 event_type,
                 pattern,
-            } => match pattern {
-                Some(p) => format!(
-                    " from Events({} {})",
-                    type_ref_to_string(event_type),
-                    event_pattern_src(p)
-                ),
-                None => format!(" from Events({})", type_ref_to_string(event_type)),
-            },
+                schema_dispatch,
+            } => {
+                let header = match pattern {
+                    Some(p) => format!(
+                        " from Events({} {})",
+                        type_ref_to_string(event_type),
+                        event_pattern_src(p)
+                    ),
+                    None => format!(" from Events({})", type_ref_to_string(event_type)),
+                };
+                match schema_dispatch {
+                    Some(d) => format!("{header} {}", schema_dispatch_src(d)),
+                    None => header,
+                }
+            }
         };
         // v0.155: the optional service-level `by`/`given` defaults follow the
         // protocol on the header, `by` first — the ambient contract every handler
@@ -2623,6 +2630,14 @@ fn event_pattern_value_src(v: &EventPatternValue) -> String {
             Some(t) => format!("{}.{}", t.name, variant.name),
             None => variant.name.clone(),
         },
+    }
+}
+
+/// Render a `via schema(N)` dispatch clause (Events track slice 4, spine
+/// #936), written after the `from Events(...)` header's closing `)`.
+fn schema_dispatch_src(d: &SchemaDispatch) -> String {
+    match &d.pattern {
+        SchemaVersionPattern::Literal(n) => format!("via schema({n})"),
     }
 }
 
@@ -3764,6 +3779,33 @@ mod tests {
         let src = "context commerce.order {\nevent PaymentConfirmed = {\norderId: String,\n}\n}";
         let out = fmt(src);
         assert!(out.contains("event PaymentConfirmed = {"), "{out}");
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    // Events slice 4 (#985): `via schema(N)` on a subscription header
+    // round-trips after the `from Events(...)` header's closing `)`.
+    #[test]
+    fn via_schema_dispatch_formats_and_is_idempotent() {
+        let src = "context commerce.order {\nservice OnPayment from Events(PaymentConfirmed) via schema(2) {\non event(e: PaymentConfirmed) -> Effect[()] {\nEffect.pure(())\n}\n}\n}";
+        let out = fmt(src);
+        assert!(
+            out.contains("from Events(PaymentConfirmed) via schema(2)"),
+            "{out}"
+        );
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
+    }
+
+    // A payload pattern and a `via schema(...)` clause are independent and
+    // combine on one header — neither one's presence should perturb the
+    // other's rendering.
+    #[test]
+    fn via_schema_dispatch_combines_with_a_payload_pattern() {
+        let src = "context commerce.order {\nservice OnPayment from Events(PaymentConfirmed { region: Domestic, .. }) via schema(2) {\non event(e: PaymentConfirmed) -> Effect[()] {\nEffect.pure(())\n}\n}\n}";
+        let out = fmt(src);
+        assert!(
+            out.contains("from Events(PaymentConfirmed { region: Domestic, .. }) via schema(2)"),
+            "{out}"
+        );
         assert_eq!(out, fmt(&out), "not idempotent: {out}");
     }
 }

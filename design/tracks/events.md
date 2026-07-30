@@ -430,12 +430,24 @@ MVP-first. Each slice is an ordinary increment proposal, a sub-issue of the spin
   removed, retyped, added without a default, or one that lost its default)
   fails the build rather than silently versioning. The registry's own git
   diff across a PR is the evolution report — no separate artefact.
-- **Slice 4 — `via` version-aware dispatch.** The `via schema(...)` envelope
-  pattern clause (§7 lines 260–274): literal versions, ranges, `_`; a
-  no-`via` subscriber receives any version. Generalisable `via <field>(pattern)`
-  grammar, but only `via schema(...)` committed here. Buildable now that
-  slice 3b ships a real, author-controlled `schemaVersion` to match
-  against — does **not** depend on slice 3c's automatic detection.
+- **Slice 4 — `via schema(N)` version-aware dispatch, literal only —
+  SHIPPED (#985).** A `via schema(N)` clause after a `from Events(...)`
+  header's closing `)`, matched against `env.schemaVersion` by exact
+  equality; independent of the payload pattern (a service may carry
+  either, both, or neither). Nested inside the `Events` protocol's own
+  grammar arm, not a free-standing clause — `via` on `http`/`cron`/
+  `queue`/`websocket` is a syntax error, not a checker diagnostic.
+  **Narrowed at proposal time:** range patterns (`via schema(2..)`,
+  `..v`, `v1..v2`) and the generalised `via <field>(pattern)` grammar are
+  split to an unfiled slice 4b — no range-pattern or range-literal syntax
+  exists anywhere in bynk (the `..` token exists only as a record-pattern
+  rest marker), so ranges are a full new grammar/AST/parser/checker/
+  emitter surface, disproportionate to bundle with the literal case. No
+  cross-subscriber ambiguity check: two sibling subscribers with the same
+  or overlapping `via schema(...)` coverage both independently fire,
+  exactly like slice 1's payload pattern already does — the design notes'
+  clean V1/V2-or-later worked example *reads* mutually exclusive but was
+  never statically enforced as such, before or after this slice.
 
 **Not slices of this track** (moved to the future replay track, §3.6): replay /
 backfill-from-log, the durable event log substrate, and the inherited actors Q8
@@ -616,8 +628,10 @@ receives *exactly* the emissions its pattern admits.
 - [x] Slice 3c — the cross-build schema registry (#980). `bynk.schema.lock`,
   auto-written on a clean build; auto-bump on a purely additive shape
   change; a declared `@schema(N)` now verified, not trusted (see §3.5, §4).
-- [ ] Slice 4 — `via schema(...)` version-aware dispatch (buildable now
-  that slice 3b ships a real `schemaVersion`; does not depend on 3c)
+- [x] Slice 4 — `via schema(N)` version-aware dispatch, literal only
+  (#985). Nested inside the `Events` protocol's grammar arm; no cross-
+  subscriber ambiguity check (same policy as slice 1's payload pattern);
+  range patterns split to unfiled slice 4b (see §4).
 - [ ] (Not a slice of this track) Replay / backfill + actors Q8 — future track (§3.6)
 
 ## 8. Done when
@@ -688,8 +702,24 @@ receives *exactly* the emissions its pattern admits.
   behaviour.rs` proves the registry actually reaches the `Events.emit` mint
   site across three real compiles of one on-disk project (baseline, additive
   bump, blocked non-additive change).
-- [ ] `via schema(...)` dispatch ships (slice 4 — already buildable against
-  slice 3b's real value, not blocked on 3c).
+- [x] `via schema(N)` dispatch ships. **Slice 4 done** (#985): a positive-
+  `Int`-literal `via schema(N)` clause after `from Events(...)`'s closing
+  `)`, matched against `env.schemaVersion` by exact equality; independent
+  of the payload pattern. A bare `on event(e: E)` handler needs no
+  declared `env` to use it — `emit_service` threads a synthetic envelope
+  parameter into the generated method whenever the protocol carries a
+  `via schema(...)` clause and the handler didn't declare its own,
+  positionally matched by widening the same envelope-forwarding condition
+  at both delivery paths (`workers.rs`'s compose wrapper, `project.rs`'s
+  Bundle dispatch closure). No cross-subscriber ambiguity check — the same
+  deliver-and-filter policy slice 1's payload pattern already established.
+  Proven behaviourally (`bynkc/tests/events_schema_dispatch_behaviour.rs`):
+  the same two subscribers, compiled once at each of two schema versions,
+  each version's single emission reaching only its matching `via`
+  clause — with the matching subscriber for version 1 declaring no `env`
+  at all, the only way to prove the synthetic-parameter plumbing actually
+  threads the value through. Range patterns (`via schema(2..)`) are an
+  unfiled future slice 4b.
 - [ ] The doc is explicit that **replay/backfill and the actors Q8**
   ([#260](https://github.com/accuser/bynk/issues/260)) are **not** delivered by
   this track — named as a future track with its durable-`Idempotency` dependency,

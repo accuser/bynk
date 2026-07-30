@@ -2408,9 +2408,11 @@ impl<'a> Parser<'a> {
                     None
                 };
                 self.expect(TokenKind::RParen, "to close the `from Events(...)` header")?;
+                let schema_dispatch = self.parse_schema_dispatch_clause()?;
                 Ok(ServiceProtocol::Events {
                     event_type,
                     pattern,
+                    schema_dispatch,
                 })
             }
             _ => {
@@ -2527,6 +2529,61 @@ impl<'a> Parser<'a> {
             variant,
             span,
         })
+    }
+
+    /// Parse an optional `via schema(N)` clause (Events track, slice 4,
+    /// spine #936), following the `from Events(...)` header's closing `)`.
+    /// `via`/`schema` are matched as plain `Ident` text, the same way
+    /// `websocket`/`Events` are — no lexer reservation. `N` admits an
+    /// optional leading `-` (mirroring `parse_literal_value`'s own
+    /// int-literal handling) so a non-positive value is a *checker* error
+    /// (`bynk.event.bad_schema_dispatch`), not a parse error — the same
+    /// permissive-parse-then-checker-validate split `@schema(N)` uses.
+    fn parse_schema_dispatch_clause(&mut self) -> Result<Option<SchemaDispatch>, CompileError> {
+        let Some(via_tok) = self.peek() else {
+            return Ok(None);
+        };
+        if via_tok.kind != TokenKind::Ident || self.slice(via_tok.span) != "via" {
+            return Ok(None);
+        }
+        self.bump();
+        let schema_kw = self.expect_ident("(`schema`) after `via`")?;
+        if schema_kw.name != "schema" {
+            return Err(CompileError::new(
+                "bynk.service.unknown_via_clause",
+                schema_kw.span,
+                format!(
+                    "unknown `via` clause `{}` — expected `schema`",
+                    schema_kw.name
+                ),
+            )
+            .with_note("`via` clauses are a closed set; only `via schema(...)` exists today"));
+        }
+        self.expect(TokenKind::LParen, "expected `(N)` after `via schema`")?;
+        let neg = self.eat(TokenKind::Minus);
+        let num_tok = self.expect(
+            TokenKind::IntLit,
+            "expected an `Int` literal as the `via schema(...)` version",
+        )?;
+        let slice = self.slice(num_tok.span);
+        let mut version: i64 = crate::lexer::strip_digit_separators(slice)
+            .parse()
+            .map_err(|_| {
+                CompileError::new(
+                    "bynk.lex.integer_overflow",
+                    num_tok.span,
+                    format!("integer literal `{slice}` out of 64-bit range"),
+                )
+            })?;
+        if neg.is_some() {
+            version = -version;
+        }
+        let close = self.expect(TokenKind::RParen, "to close `via schema(...)`")?;
+        let span = via_tok.span.merge(close.span);
+        Ok(Some(SchemaDispatch {
+            pattern: SchemaVersionPattern::Literal(version),
+            span,
+        }))
     }
 
     fn parse_agent_decl(&mut self) -> Result<AgentDecl, CompileError> {

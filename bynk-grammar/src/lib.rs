@@ -420,7 +420,10 @@ mod tests {
         // event_pattern_field, event_pattern_value (the slice-1 subscription
         // filter `from Events(E { field: value, .. })`; `service_protocol`
         // itself was extended in place, no new rule for it). Net +5.
-        assert_eq!(rules.len(), 150);
+        // Events track slice 4 (spine #936) added: schema_dispatch_clause
+        // (the `via schema(N)` envelope-version dispatch clause; nested
+        // inside `service_protocol`'s Events arm, extended in place). Net +1.
+        assert_eq!(rules.len(), 151);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

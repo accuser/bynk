@@ -8063,6 +8063,26 @@
     }
   },
   {
+    "type": "schema_dispatch_clause",
+    "named": true,
+    "fields": {
+      "version": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "-",
+            "named": false
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "scheme",
     "named": true,
     "fields": {}
@@ -8491,6 +8511,16 @@
         "types": [
           {
             "type": "event_pattern",
+            "named": true
+          }
+        ]
+      },
+      "schema_dispatch": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "schema_dispatch_clause",
             "named": true
           }
         ]
@@ -11352,6 +11382,10 @@
     "named": false
   },
   {
+    "type": "schema",
+    "named": false
+  },
+  {
     "type": "security",
     "named": false
   },
@@ -11414,6 +11448,10 @@
   {
     "type": "validation_error_type",
     "named": true
+  },
+  {
+    "type": "via",
+    "named": false
   },
   {
     "type": "websocket",

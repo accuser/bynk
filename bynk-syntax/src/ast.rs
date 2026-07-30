@@ -885,18 +885,20 @@ pub enum ServiceProtocol {
     /// carries. The service holds exactly one `on open` handler (edge auth via
     /// `by`, then transfer of the connection to an agent).
     WebSocket { in_type: TypeRef, out_type: TypeRef },
-    /// `from Events(E)` or `from Events(E { field: value, .. })` — a
-    /// subscriber to event type `E`, optionally filtered by a structural
-    /// pattern (Events track, slice 0 spine #936; the pattern is slice 1).
-    /// `Events`, capitalised, is matched as plain `Ident` text the same way
-    /// `websocket` is — it names the `Events` capability directly (every
-    /// first-party capability is already an unreserved PascalCase
-    /// identifier), not a built-in type name, so no lexer reservation.
-    /// `pattern` is `None` for the pattern-less form; no `via schema(...)`
-    /// clause (slice 4) yet.
+    /// `from Events(E)` or `from Events(E { field: value, .. })`, optionally
+    /// followed by `via schema(N)` — a subscriber to event type `E`,
+    /// optionally filtered by a structural payload pattern (Events track,
+    /// slice 0 spine #936; the pattern is slice 1) and/or the envelope's
+    /// `schemaVersion` (slice 4). `Events`, capitalised, is matched as plain
+    /// `Ident` text the same way `websocket` is — it names the `Events`
+    /// capability directly (every first-party capability is already an
+    /// unreserved PascalCase identifier), not a built-in type name, so no
+    /// lexer reservation. `pattern` and `schema_dispatch` are independent:
+    /// a service may carry either, both, or neither.
     Events {
         event_type: TypeRef,
         pattern: Option<EventPattern>,
+        schema_dispatch: Option<SchemaDispatch>,
     },
 }
 
@@ -1687,6 +1689,35 @@ impl EventPatternValue {
             EventPatternValue::Variant { span, .. } => *span,
         }
     }
+}
+
+/// A `via schema(...)` dispatch clause on a `from Events(...)` header
+/// (Events track, slice 4, spine #936): filters delivery by the envelope's
+/// `schemaVersion`, parallel to [`EventPattern`] but matched against the
+/// envelope rather than the payload, and written after the `Events(...)`
+/// header's closing `)` rather than inside it. Delivery is still
+/// deliver-and-filter (unchanged from slice 1's ADR 0286): the fan-out
+/// mechanism delivers every emission to every subscriber regardless, and
+/// this becomes one more independently-evaluated runtime guard in the
+/// subscriber's own generated handler — no cross-subscriber ambiguity
+/// check (two sibling subscribers with the same or overlapping version
+/// coverage are both legal, undiagnosed).
+#[derive(Debug, Clone)]
+pub struct SchemaDispatch {
+    pub pattern: SchemaVersionPattern,
+    pub span: Span,
+}
+
+/// The pattern a `via schema(...)` clause matches `env.schemaVersion`
+/// against. A closed set of one variant today — literal only, mirroring
+/// `@schema(N)`'s own permissive-parse-then-checker-validate split (a
+/// non-positive value is a checker error, not a parse error, for the same
+/// diagnostic style). A future slice's range patterns (`via schema(2..)`)
+/// are additive to this enum, not a breaking rename of every match site
+/// this slice creates.
+#[derive(Debug, Clone)]
+pub enum SchemaVersionPattern {
+    Literal(i64),
 }
 
 /// The right-hand side of a `type` declaration. In v0/v0.1 only the

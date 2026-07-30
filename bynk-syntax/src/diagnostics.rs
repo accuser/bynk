@@ -563,6 +563,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An `on event` handler declared the wrong number of parameters, or a second parameter whose type is not `EventEnvelope` — it takes the event payload and, optionally, the runtime envelope.",
     ),
     d(
+        "bynk.event.bad_schema_dispatch",
+        "A `via schema(...)` dispatch clause's argument is malformed — it must be a single, positive, positional `Int` literal.",
+    ),
+    d(
         "bynk.event.bad_schema_version",
         "An event's `@schema(N)` annotation is malformed — `N` must be a single, positive, positional `Int` literal, and `@schema` may appear at most once on an event.",
     ),
@@ -1603,6 +1607,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.service.unknown_protocol",
         "A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka).",
         &["service_decl"],
+    ),
+    d(
+        "bynk.service.unknown_via_clause",
+        "A `via <name>(...)` clause on a `from Events(...)` header named something other than `schema` — `via` clauses are a closed set, and only `via schema(...)` exists today.",
     ),
     d(
         "bynk.service.websocket_header",

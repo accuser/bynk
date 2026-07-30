@@ -10,8 +10,9 @@ code — wires the delivery.
 This page is the mental model for the emit/subscribe core (slice 0),
 subscription pattern filtering (slice 1), the runtime envelope (slice 2),
 event field defaults (slice 3a), `@schema(N)` event versioning (slice 3b),
-and the cross-build schema registry that verifies it (slice 3c). For the
-track's remaining scope (replay, `via schema(...)` dispatch), see
+the cross-build schema registry that verifies it (slice 3c), and
+version-aware dispatch with `via schema(N)` (slice 4). For the track's
+remaining scope (replay, range-valued `via schema(...)` patterns), see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/).
 
 ## The three pieces
@@ -272,6 +273,53 @@ you, silently, embedding whatever it computes into `env.schemaVersion`.
 
 `@schema` is the only annotation an event accepts today — any other name is
 rejected, and `@schema` itself may appear at most once per event.
+
+## Dispatching by version with `via schema(N)`
+
+A subscriber can filter delivery by the envelope's `schemaVersion`, using a
+`via` clause after the `from Events(...)` header's closing `)`:
+
+```bynk,ignore
+service OnPaymentV1 from Events(PaymentConfirmed) via schema(1) {
+  on event(e: PaymentConfirmed) -> Effect[()] {
+    -- handles the original shape
+  }
+}
+
+service OnPaymentV2 from Events(PaymentConfirmed) via schema(2) {
+  on event(e: PaymentConfirmed) -> Effect[()] {
+    -- handles the shape after the schema bumped to 2
+  }
+}
+```
+
+`N` must be a positive `Int` literal, matched against `env.schemaVersion` by
+exact equality. A subscriber with no `via` clause receives every version,
+same as before this slice. `via schema(...)` is independent of the payload
+pattern from [Filtering delivery with a
+pattern](#filtering-delivery-with-a-pattern) — a service may carry either,
+both, or neither, in any combination.
+
+You never need to declare `env: EventEnvelope` yourself just to use `via
+schema(...)` — the compiler threads the envelope's version into the guard
+whether or not your handler's own parameter list mentions it. Declare `env`
+anyway if your handler body also needs another envelope field (`eventId`,
+`publisherId`, `emittedAt`).
+
+**Delivery is still deliver-and-filter, unchanged.** The fan-out mechanism
+delivers every emission to every subscriber of the event type regardless of
+its `via` clause; each subscriber's own generated handler evaluates the
+version guard independently, exactly like the payload pattern does. This
+means **sibling subscribers with the same or overlapping version coverage
+are not flagged as ambiguous** — `via schema(1)` on two different services
+both fire for a version-1 emission, and there is no compiler check pushing
+you toward mutually-exclusive ranges. Keep sibling `via schema(...)` clauses
+disjoint by convention if you want exactly-one-handler-per-version
+semantics; the compiler does not enforce it for you.
+
+Only a positive integer literal is accepted today — range patterns like
+`via schema(2..)` (`schemaVersion` 2 or later) are a future addition, not
+yet built.
 
 ## Only the declaring context may emit
 
