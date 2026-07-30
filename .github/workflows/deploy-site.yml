@@ -76,9 +76,14 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           # `set -e` (so a failed `gh api` fails the job) but deliberately NOT
-          # `pipefail`: `grep -q` exits on the first match, which SIGPIPEs the
-          # producer, and under `pipefail` that non-zero status would invert the
-          # test and skip every deploy.
+          # `pipefail`. `grep -q` exits on its first match; if the producer still
+          # has output buffered at that point it takes SIGPIPE, and under
+          # `pipefail` that non-zero status becomes the pipeline's — inverting the
+          # test, so a commit that SHOULD deploy is read as "no match" and skipped.
+          # It needs the file list to exceed the ~64KB pipe buffer, so the 300-entry
+          # cap makes it unlikely rather than impossible: reproduced at 299 files
+          # with long paths (180KB), where the pipefail form returned false on a
+          # list whose FIRST entry matched.
           set -eu
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -88,12 +93,16 @@ jobs:
           fi
           # `.files` is the commit's diff against its first parent — the same
           # comparison `git diff HEAD^ HEAD` makes. It is capped at 300 entries,
-          # so a larger commit is treated as "affects everything" rather than
-          # silently losing the entry that would have triggered the deploy.
+          # and the API omits the key entirely on some very large commits. Both
+          # cases mean "the list is not trustworthy", so both deploy rather than
+          # silently lose the entry that would have triggered it. `jq length` of a
+          # missing key is 0, so the two collapse into one test — and 0 must not
+          # fall through: iterating a null `.files` fails, and without `pipefail`
+          # that reads as "no match" and skips the deploy.
           resp=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}")
           count=$(printf '%s' "$resp" | jq '.files | length')
-          if [ "$count" -ge 300 ]; then
-            echo "::notice::commit touches >= 300 files — the API list is truncated, so deploying rather than risk a false skip"
+          if [ "$count" -eq 0 ] || [ "$count" -ge 300 ]; then
+            echo "::notice::commit reports $count changed files — the API list is absent or truncated, so deploying rather than risk a false skip"
             echo "value=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
