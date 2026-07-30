@@ -4,7 +4,14 @@
     "target": "ES2022",
     "outDir": "out",
     "rootDir": ".",
-    "lib": ["ES2022"],
+    // "DOM" added for #855: `wire-render.unit.test.ts` imports
+    // `src/webview/wire-render.ts`, which (like the browser-context modules
+    // below) mixes DOM-touching code with the pure functions the test
+    // actually exercises — the whole file still has to type-check. There is
+    // no DOM *at runtime* here (no jsdom in this project); a test that
+    // called `document.*` directly would compile but crash on `node
+    // out/test/runTest.js`. See wire-render.ts's own module doc.
+    "lib": ["ES2022", "DOM"],
     "sourceMap": true,
     "strict": true,
     "skipLibCheck": true,

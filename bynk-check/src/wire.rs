@@ -1410,6 +1410,110 @@ service Api {
         assert!(wire_type("Page", &types["Page"], &types, Provenance::Owned).is_none());
     }
 
+    /// Part 1.4's cross-check: for an `on call` handler, `wire.rs`'s codec
+    /// walk (`collect_boundary_types`, restricted to that one handler) and
+    /// `contract.rs`'s canonical hash form (`service_normal_form`, over the
+    /// same handler projected as a `CrossContextService`) must reach the
+    /// exact same *set* of named boundary types — even though the module
+    /// doc's comparison table says the two disagree on purpose about
+    /// *ordering* (declaration order vs sorted) and about whether an opaque
+    /// predicate is shown. This test asserts REACHABILITY only: the set of
+    /// type names each derivation's walk visits from the same root, not any
+    /// string equality or order between the two renderings.
+    ///
+    /// The type names in the fixture are chosen so none is a substring of
+    /// another (`ClientId`, `Address`, `Profile`, `Unrelated`) —
+    /// `contract.rs`'s `canon_type`/`canon_named_in` are private to that
+    /// module, so rather than duplicating their traversal here, this test
+    /// recovers the set of types `service_normal_form`'s rendered string
+    /// reaches by substring containment against every declared type name.
+    /// With non-overlapping names that containment test is unambiguous.
+    ///
+    /// `Unrelated` is declared but reachable from no handler, so the
+    /// equality assertion below is not vacuously true merely because this
+    /// fixture happens to make every *other* declared type reachable — a
+    /// regression that made `collect_boundary_types` return every declared
+    /// name instead of the reachable closure would leak `Unrelated` into
+    /// `boundary_names`, and this test would catch it.
+    #[test]
+    fn boundary_reachability_agrees_with_contract_normal_form() {
+        let src = r#"
+context test
+
+type ClientId = String where NonEmpty
+type Address = { street: String, city: String }
+type Profile = { id: ClientId, home: Address }
+
+-- Declared, but reachable from no handler below (see the doc comment on
+-- this test for why).
+type Unrelated = { n: Int }
+
+service Api {
+  on call(client: ClientId) -> Effect[Profile] {
+    Profile { id: client, home: Address { street: "x", city: "y" } }
+  }
+}
+"#;
+        let (types, services) = context_of(src);
+        let service = &services["Api"];
+        let handler = &service.handlers[0];
+
+        // Restrict `collect_boundary_types`'s walk to exactly this handler —
+        // the same synthetic-single-handler-service narrowing
+        // `bynk-ide`'s `wire_contract_for_service` performs, so a service
+        // with more than one handler could not leak an unrelated handler's
+        // types into either side of this comparison.
+        let mut narrowed = service.clone();
+        narrowed.handlers = vec![handler.clone()];
+        let narrowed_services: HashMap<String, ServiceDecl> =
+            HashMap::from([("Api".to_string(), narrowed)]);
+        let agents: HashMap<String, AgentDecl> = HashMap::new();
+        let boundary_names: std::collections::HashSet<String> =
+            collect_boundary_types(&types, &narrowed_services, &agents)
+                .into_iter()
+                .collect();
+
+        // The same handler, projected as a `CrossContextService` exactly as
+        // `bynk-emit`'s `own_contract_hashes` / `bynk-ide`'s
+        // `wire_contract::contract_form` project it, canonicalised through
+        // the same type table.
+        let svc = crate::resolver::CrossContextService {
+            name: "Api".to_string(),
+            params: handler
+                .params
+                .iter()
+                .map(|p| (p.name.name.clone(), p.type_ref.clone()))
+                .collect(),
+            return_type: handler.return_type.clone(),
+            span: handler.span,
+        };
+        let normal_form = crate::contract::service_normal_form(&svc, &types);
+
+        let contract_reachable: std::collections::HashSet<String> = types
+            .keys()
+            .filter(|name| normal_form.contains(name.as_str()))
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            boundary_names, contract_reachable,
+            "wire::collect_boundary_types and contract::service_normal_form must \
+             agree on *which* named types a handler's contract reaches, even though \
+             they render/order that set completely differently (see this module's \
+             doc comparison table):\n\
+             wire.rs reached:     {boundary_names:?}\n\
+             contract.rs reached: {contract_reachable:?}\n\
+             normal form:         {normal_form:?}"
+        );
+        assert!(
+            !boundary_names.contains("Unrelated") && !contract_reachable.contains("Unrelated"),
+            "`Unrelated` is declared but reachable from no handler — both derivations \
+             must exclude it, not merely agree on every declared type by coincidence:\n\
+             wire.rs reached: {boundary_names:?}\n\
+             contract.rs reached: {contract_reachable:?}"
+        );
+    }
+
     /// `wire_ref` is the plan's flagged highest-risk function ("its two
     /// functions must stay in exact agreement about which `WireRef` arm a
     /// `TypeRef` resolves to"). Pin the arm each shape lands on before Phase 2

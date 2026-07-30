@@ -137,6 +137,13 @@ pub struct ProjectAnalysis {
     /// `methods`, which the classifier never needs). Only contexts/adapters
     /// have an entry; empty when the pipeline bails before the checker.
     pub sequence_info: HashMap<String, ContextSequenceInfo>,
+    /// #855: qualified context/adapter unit name → the combined type table
+    /// and per-context service/agent tables the wire-contract peek needs to
+    /// resolve a handler's boundary shape and cross-context hash, retained
+    /// the same way `sequence_info` is — see [`ContextBoundaryInfo`]. Only
+    /// contexts/adapters have an entry; empty when the pipeline bails before
+    /// the checker.
+    pub boundary_info: HashMap<String, ContextBoundaryInfo>,
     /// #848: qualified unit name → its doc-comment intra-doc-link search
     /// order — itself first, then its `uses` targets, then its `consumes`
     /// targets, in that order (mirrors `IndexBuilder::qualify_with`'s
@@ -154,6 +161,23 @@ pub struct ProjectAnalysis {
 #[derive(Debug, Clone, Default)]
 pub struct ContextSequenceInfo {
     pub cross_context: resolver::CrossContextInfo,
+    pub agents: HashMap<String, AgentDecl>,
+}
+
+/// #855: the per-unit slice of resolution the wire-contract peek needs —
+/// see [`ProjectAnalysis::boundary_info`]. A sibling of
+/// [`ContextSequenceInfo`], not a field on it: that struct is named and
+/// documented for #846, and this is a separate retained table serving a
+/// separate query (hover/panel over a single handler's boundary, not the
+/// sequence-diagram classifier).
+#[derive(Debug, Clone, Default)]
+pub struct ContextBoundaryInfo {
+    /// `combined_types_for`: the unit's own declared types plus the types of
+    /// every commons it `uses` — the same table `own_contract_hashes` hashes
+    /// through, so the peek's hash and the emitted `X-Bynk-Contract` constant
+    /// cannot disagree.
+    pub types: HashMap<String, Arc<TypeDecl>>,
+    pub services: HashMap<String, ServiceDecl>,
     pub agents: HashMap<String, AgentDecl>,
 }
 
