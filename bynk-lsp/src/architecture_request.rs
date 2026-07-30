@@ -145,8 +145,8 @@ fn wire_loc(
 }
 
 /// Lower the whole model. A node (or member, or edge) whose own location
-/// can't be resolved (see [`wire_loc`]) is dropped rather than sent with a
-/// bogus location — click-to-code must never open the wrong file.
+/// can't be resolved (see `wire_loc` above) is dropped rather than sent with
+/// a bogus location — click-to-code must never open the wrong file.
 pub fn to_wire(
     model: &ArchModel,
     project_root: &Path,
@@ -167,9 +167,7 @@ pub fn to_wire(
                         .filter_map(|c| {
                             let (local, from) = match &c.origin {
                                 CapabilityOrigin::Local => (true, None),
-                                CapabilityOrigin::Consumed { from } => {
-                                    (false, Some(from.clone()))
-                                }
+                                CapabilityOrigin::Consumed { from } => (false, Some(from.clone())),
                             };
                             Some(WireArchCapability {
                                 name: c.name.clone(),

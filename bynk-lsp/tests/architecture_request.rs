@@ -37,19 +37,28 @@ fn rate_limiter_is_one_node_with_a_bound_capability_and_no_dangling_edge() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/rate-limiter/src");
     let diag = diagnose(&root);
     let snaps = snapshots(&diag);
-    let model =
-        architecture_request::architecture_model_for(&diag.unit_sources, &snaps, &diag.sequence_info);
+    let model = architecture_request::architecture_model_for(
+        &diag.unit_sources,
+        &snaps,
+        &diag.sequence_info,
+    );
 
     assert_eq!(model.nodes.len(), 1);
     let node = &model.nodes[0];
     assert_eq!(node.name, "ratelimit");
     assert_eq!(node.kind, NodeKind::Context);
     assert_eq!(
-        node.services.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+        node.services
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
         vec!["api"]
     );
     assert_eq!(
-        node.agents.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+        node.agents
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>(),
         vec!["Limiter"]
     );
     assert_eq!(node.capabilities.len(), 1);
@@ -132,8 +141,11 @@ fn two_context_project_has_a_consumes_edge_with_a_selected_capability_label() {
     );
     let diag = diagnose(&root);
     let snaps = snapshots(&diag);
-    let model =
-        architecture_request::architecture_model_for(&diag.unit_sources, &snaps, &diag.sequence_info);
+    let model = architecture_request::architecture_model_for(
+        &diag.unit_sources,
+        &snaps,
+        &diag.sequence_info,
+    );
     let wire = architecture_request::to_wire(&model, &root, &snaps);
 
     assert_eq!(wire.nodes.len(), 2);

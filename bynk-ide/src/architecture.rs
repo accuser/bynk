@@ -289,8 +289,11 @@ pub fn architecture_model(
         // alone), keeping the first (file-sorted, so deterministic) copy.
         capabilities.sort_by(|a, b| a.name.cmp(&b.name));
         capabilities.dedup_by(|a, b| a.name == b.name && a.origin == b.origin);
-        providers.sort_by(|a, b| (&a.capability, &a.provider_name).cmp(&(&b.capability, &b.provider_name)));
-        providers.dedup_by(|a, b| a.capability == b.capability && a.provider_name == b.provider_name);
+        providers.sort_by(|a, b| {
+            (&a.capability, &a.provider_name).cmp(&(&b.capability, &b.provider_name))
+        });
+        providers
+            .dedup_by(|a, b| a.capability == b.capability && a.provider_name == b.provider_name);
         services.sort_by(|a, b| a.name.cmp(&b.name));
         services.dedup_by(|a, b| a.name == b.name);
         agents.sort_by(|a, b| a.name.cmp(&b.name));
@@ -418,7 +421,11 @@ service api from http {
         let diag = crate::diagnose_project(&root, &HashMap::new());
         let model = build_model(&diag);
 
-        assert_eq!(model.nodes.len(), 1, "the built-in bynk surface is not a node");
+        assert_eq!(
+            model.nodes.len(),
+            1,
+            "the built-in bynk surface is not a node"
+        );
         let node = &model.nodes[0];
         assert_eq!(node.name, "ratelimit");
         assert_eq!(node.kind, NodeKind::Context);
@@ -496,7 +503,10 @@ service run {
         let provider_node = &model.nodes[1];
         assert_eq!(provider_node.capabilities.len(), 1);
         assert_eq!(provider_node.capabilities[0].name, "Clock");
-        assert_eq!(provider_node.capabilities[0].origin, CapabilityOrigin::Local);
+        assert_eq!(
+            provider_node.capabilities[0].origin,
+            CapabilityOrigin::Local
+        );
         assert_eq!(provider_node.providers.len(), 1);
         assert_eq!(provider_node.providers[0].provider_name, "SystemClock");
         assert!(!provider_node.providers[0].external);
@@ -591,11 +601,22 @@ consumes platformtime { Ping }
         let edge = &model.edges[0];
         assert_eq!(edge.from, "ops.jobs");
         assert_eq!(edge.to, "platformtime");
-        assert_eq!(edge.capabilities, vec!["Clock".to_string(), "Ping".to_string()]);
+        assert_eq!(
+            edge.capabilities,
+            vec!["Clock".to_string(), "Ping".to_string()]
+        );
 
         let consumer = model.nodes.iter().find(|n| n.name == "ops.jobs").unwrap();
-        let cap_names: Vec<&str> = consumer.capabilities.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(cap_names, vec!["Clock", "Ping"], "no duplicate capability rows");
+        let cap_names: Vec<&str> = consumer
+            .capabilities
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(
+            cap_names,
+            vec!["Clock", "Ping"],
+            "no duplicate capability rows"
+        );
     }
 
     #[test]
