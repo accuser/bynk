@@ -18,11 +18,13 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 mod require;
+mod wrangler;
 
 const REQUIRE_ENV: &str = "BYNK_REQUIRE_WORKERD";
 
-/// Pinned provisioning, per the repo's npx convention.
-const WRANGLER: &str = "wrangler@4";
+/// Pinned provisioning, per the repo's npx convention — the spec itself lives in
+/// [`wrangler`], shared with the other smokes and with CI's pre-warm step.
+const WRANGLER: &str = wrangler::SPEC;
 
 fn tool_exists(name: &str) -> bool {
     which::which(name).is_ok()

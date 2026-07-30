@@ -49,9 +49,13 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 mod require;
+mod wrangler;
 
 const REQUIRE_ENV: &str = "BYNK_REQUIRE_WORKERD";
-const WRANGLER: &str = "wrangler@4";
+/// The spec lives in [`wrangler`], shared with the other smokes and guarded
+/// against CI's pre-warm step drifting from it — see that module for why a
+/// concurrent cold `npx` install cannot be left to chance.
+const WRANGLER: &str = wrangler::SPEC;
 
 const SOURCE: &str = r#"context boundary.probe
 
