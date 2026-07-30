@@ -1,0 +1,16 @@
+context commerce.payment
+
+exports transparent { Receipt, Region }
+
+type Region = enum { Domestic, International }
+
+type Receipt = {
+  id: String,
+  region: Option[Region],
+}
+
+service authorise {
+  on call(id: String) -> Effect[Result[Receipt, Int]] {
+    Ok(Receipt { id: id, region: None })
+  }
+}
