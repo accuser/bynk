@@ -52,14 +52,6 @@ jobs:
       changed: ${{ steps.changed.outputs.value }}
       sha: ${{ steps.changed.outputs.sha }}
     steps:
-      # Check out the commit CI ACTUALLY VALIDATED. On `workflow_run`,
-      # `github.sha` is the default-branch tip at fire time, not the tested
-      # commit — see the long note in deploy-playground.yml.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 2
-          persist-credentials: false
       # The paths worth a redeploy — the single copy of the list that used to
       # live in `on.push.paths`.
       #
@@ -68,16 +60,44 @@ jobs:
       # does mean most Rust merges rebuild the whole site; splitting the rustdoc
       # refresh into its own job would fix that, and is deliberately left alone
       # here so this change stays about the CI gate.
+      #
+      # The file list comes from the commits API rather than `git diff HEAD^ HEAD`
+      # over a checkout — see the long note in deploy-playground.yml for why this
+      # job deliberately holds no working tree.
       - name: Does this commit affect the site?
         id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # `github.sha` is the right SHA only on a manual dispatch. On
+          # `workflow_run` it is the default-branch tip at fire time, NOT the
+          # commit the triggering run tested — with the stamp pushing ~60s after
+          # every merge those are routinely different commits.
+          SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # `set -e` (so a failed `gh api` fails the job) but deliberately NOT
+          # `pipefail`: `grep -q` exits on the first match, which SIGPIPEs the
+          # producer, and under `pipefail` that non-zero status would invert the
+          # test and skip every deploy.
+          set -eu
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "::notice::manual dispatch — deploying regardless of changed paths"
             echo "value=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only HEAD^ HEAD | grep -qE \
+          # `.files` is the commit's diff against its first parent — the same
+          # comparison `git diff HEAD^ HEAD` makes. It is capped at 300 entries,
+          # so a larger commit is treated as "affects everything" rather than
+          # silently losing the entry that would have triggered the deploy.
+          resp=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}")
+          count=$(printf '%s' "$resp" | jq '.files | length')
+          if [ "$count" -ge 300 ]; then
+            echo "::notice::commit touches >= 300 files — the API list is truncated, so deploying rather than risk a false skip"
+            echo "value=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s' "$resp" | jq -r '.files[].filename' | grep -qE \
              '^(site/|vscode-bynk/syntaxes/bynk\.tmLanguage\.json$|\.github/workflows/deploy-site\.yml$|Cargo\.(toml|lock)$)|(^|/)src/.*\.rs$'; then
             echo "value=true" >> "$GITHUB_OUTPUT"
           else
