@@ -36,287 +36,42 @@ fn qual_prefix(qual: &Qual, name: &str) -> String {
     qual.get(name).cloned().unwrap_or_default()
 }
 
-/// Compute the set of type names (transitively reachable) that need
-/// serialise/deserialise helpers for this context: any type used in the
-/// argument or return position of a service handler exposed by this
-/// context, walked through record fields, sum payloads, and the generic
-/// type parameters of Result/Option/Effect.
-pub(crate) fn collect_boundary_types(
-    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-    services: &std::collections::HashMap<String, ServiceDecl>,
-    // v0.96 (ADR 0124): rehydration is a trust boundary — an agent's persisted
-    // `store`-field types are validated on load, so they need their deserialisers
-    // emitted. Register every store field's kind-argument types (the element /
-    // key / value types of `Cell`/`Map`/`Set`/`Cache`/`Log`).
-    agents: &std::collections::HashMap<String, AgentDecl>,
-) -> Vec<String> {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut out: Vec<String> = Vec::new();
-    let mut stack: Vec<String> = Vec::new();
-    let recursive_set = recursive_generic_names(types);
-    let recursive = &recursive_set;
+// #855 (Phase 1): `collect_boundary_types`, `collect_type_names`,
+// `recursive_generic_names`, `subst_type_ref`, `record_inst_fields`,
+// `sum_inst_variants`, and `app_ts_name` moved to `bynk-check`'s wire IR
+// (`bynk_check::wire`) as pure, AST-only walks with no TS emission — see that
+// module's doc comment for the seam. Re-exported here under their original
+// names (and, for `app_ts_name`, its original signature under an alias to
+// its new `inst_codec_suffix` name) so every call site in this file and
+// elsewhere in `bynk-emit` keeps compiling unchanged; `recursive_generic_names`,
+// `collect_type_names`, and `subst_type_ref` had no callers outside the
+// functions that moved with them, so they are not re-exported.
+pub(crate) use bynk_check::wire::collect_boundary_types;
+pub(crate) use bynk_check::wire::inst_codec_suffix as app_ts_name;
+pub(crate) use bynk_check::wire::record_inst_fields;
+pub(crate) use bynk_check::wire::sum_inst_variants;
 
-    let mut svc_names: Vec<&String> = services.keys().collect();
-    svc_names.sort();
-    for name in svc_names {
-        let service = &services[name];
-        for h in &service.handlers {
-            for p in &h.params {
-                collect_type_names(&p.type_ref, &mut stack, types, recursive);
-            }
-            collect_type_names(&h.return_type, &mut stack, types, recursive);
-        }
-    }
+// #855 (Phase 2 step 5): the scalar-codec decision vocabulary — which TS
+// branch `emit_refined` takes is now read off a `WireScalar`'s
+// `Revalidation` (built via `wire_type`) rather than re-derived inline from
+// `qual`/`decl.body`. `json_kind_of` replaces `ts_base_for_serialisation`'s
+// *classification*; this file keeps the TS-token spelling (`json_kind_ts`,
+// below) per the seam in `wire.rs`'s module doc.
+use bynk_check::wire::{
+    BaseGuard, JsonKind, Provenance, Revalidation, WireBody, WireField, WireRef, WireSum, WireType,
+    WireVariant, wire_ref, wire_type,
+};
 
-    let mut agent_names: Vec<&String> = agents.keys().collect();
-    agent_names.sort();
-    for name in agent_names {
-        for f in &agents[name].store_fields {
-            for arg in &f.kind.args {
-                collect_type_names(arg, &mut stack, types, recursive);
-            }
-        }
-    }
-
-    while let Some(name) = stack.pop() {
-        if !seen.insert(name.clone()) {
-            continue;
-        }
-        out.push(name.clone());
-        let Some(decl) = types.get(&name) else {
-            continue;
-        };
-        match &decl.body {
-            TypeBody::Record(r) => {
-                for f in &r.fields {
-                    collect_type_names(&f.type_ref, &mut stack, types, recursive);
-                }
-            }
-            TypeBody::Sum(s) => {
-                for v in &s.variants {
-                    for p in &v.payload {
-                        collect_type_names(&p.type_ref, &mut stack, types, recursive);
-                    }
-                }
-            }
-            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
-        }
-    }
-
-    out.sort();
-    out
-}
-
-/// v0.174 (#592): the set of generic-record names that are *recursive* — they
-/// transitively contain themselves, so they have no finite monomorphised codec
-/// (rejected at the boundary by the checker before emit). Precomputed once per
-/// collector so the per-`App` guard in the codec walks is an O(1) membership test
-/// rather than a fresh graph reachability walk at every occurrence.
-fn recursive_generic_names(
-    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-) -> std::collections::HashSet<String> {
-    types
-        .iter()
-        .filter(|(_, d)| !d.type_params.is_empty())
-        .map(|(n, _)| n.clone())
-        .filter(|n| generic_record_is_recursive(n, types))
-        .collect()
-}
-
-fn collect_type_names(
-    t: &TypeRef,
-    stack: &mut Vec<String>,
-    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-    recursive: &std::collections::HashSet<String>,
-) {
-    match t {
-        TypeRef::Named(id) => stack.push(id.name.clone()),
-        // Query/Stream/Connection types carry no boundary-collectable user
-        // types (non-boundary).
-        TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {}
-        // v0.174 (#592): a generic-record instantiation is boundary-serialisable
-        // through its monomorphised codec (`serialise_Paginated_User`). The
-        // *named* helpers that codec calls come from its concrete field types —
-        // the type arguments (`User`) and any non-parameter named field types
-        // (`Envelope[T] = { meta: Metadata, … }`) — so walk the substituted
-        // fields. A *recursive* generic record has no finite codec set and is
-        // rejected at the boundary before emit; the guard here is defence in
-        // depth so this walk can never fail to terminate.
-        TypeRef::App { name, args, .. } => {
-            if recursive.contains(&name.name) {
-                return;
-            }
-            // #593: a generic-sum instantiation's codec (`serialise_ApiResult_User`)
-            // likewise calls the named helpers of its *substituted variant
-            // payloads* (`serialise_User` for `Loaded(value: T)` at `T = User`),
-            // so walk those the same way records walk their fields.
-            if let Some(fields) = record_inst_fields(&name.name, args, types) {
-                for (_, ft) in &fields {
-                    collect_type_names(ft, stack, types, recursive);
-                }
-            } else if let Some(variants) = sum_inst_variants(&name.name, args, types) {
-                for (_, payload) in &variants {
-                    for (_, ft) in payload {
-                        collect_type_names(ft, stack, types, recursive);
-                    }
-                }
-            }
-        }
-        // v0.20a: function types carry no user-named types to collect and are
-        // rejected at boundaries anyway.
-        TypeRef::Fn(..) => {}
-        TypeRef::Result(a, b, _) => {
-            collect_type_names(a, stack, types, recursive);
-            collect_type_names(b, stack, types, recursive);
-        }
-        TypeRef::Option(a, _) => collect_type_names(a, stack, types, recursive),
-        TypeRef::Effect(a, _) => collect_type_names(a, stack, types, recursive),
-        TypeRef::HttpResult(a, _) => collect_type_names(a, stack, types, recursive),
-        // v0.20b: collections serialise element-/entry-wise; their inner
-        // named types need helpers.
-        TypeRef::List(a, _) => collect_type_names(a, stack, types, recursive),
-        TypeRef::Map(k, v, _) => {
-            collect_type_names(k, stack, types, recursive);
-            collect_type_names(v, stack, types, recursive);
-        }
-        TypeRef::Base(_, _)
-        | TypeRef::QueueResult(_)
-        | TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_)
-        | TypeRef::Unit(_) => {}
-    }
-}
-
-/// v0.174 (#592): substitute a generic record's declared field type — replacing
-/// each type-parameter name with the concrete argument type-ref — so a
-/// per-instantiation codec sees fully concrete field types.
-/// `Paginated[User]`'s `items: List[T]` becomes `items: List[User]`.
-fn subst_type_ref(t: &TypeRef, subst: &std::collections::HashMap<String, TypeRef>) -> TypeRef {
-    match t {
-        TypeRef::Named(id) => match subst.get(&id.name) {
-            Some(replacement) => replacement.clone(),
-            None => t.clone(),
-        },
-        TypeRef::App { name, args, span } => TypeRef::App {
-            name: name.clone(),
-            args: args.iter().map(|a| subst_type_ref(a, subst)).collect(),
-            span: *span,
-        },
-        TypeRef::Result(a, b, s) => TypeRef::Result(
-            Box::new(subst_type_ref(a, subst)),
-            Box::new(subst_type_ref(b, subst)),
-            *s,
-        ),
-        TypeRef::Option(a, s) => TypeRef::Option(Box::new(subst_type_ref(a, subst)), *s),
-        TypeRef::Effect(a, s) => TypeRef::Effect(Box::new(subst_type_ref(a, subst)), *s),
-        TypeRef::HttpResult(a, s) => TypeRef::HttpResult(Box::new(subst_type_ref(a, subst)), *s),
-        TypeRef::List(a, s) => TypeRef::List(Box::new(subst_type_ref(a, subst)), *s),
-        TypeRef::Map(k, v, s) => TypeRef::Map(
-            Box::new(subst_type_ref(k, subst)),
-            Box::new(subst_type_ref(v, subst)),
-            *s,
-        ),
-        TypeRef::Query(a, s) => TypeRef::Query(Box::new(subst_type_ref(a, subst)), *s),
-        TypeRef::Stream(a, s) => TypeRef::Stream(Box::new(subst_type_ref(a, subst)), *s),
-        TypeRef::Connection(a, s) => TypeRef::Connection(Box::new(subst_type_ref(a, subst)), *s),
-        TypeRef::History(a, s) => TypeRef::History(Box::new(subst_type_ref(a, subst)), *s),
-        TypeRef::Fn(ps, r, s) => TypeRef::Fn(
-            ps.iter().map(|p| subst_type_ref(p, subst)).collect(),
-            Box::new(subst_type_ref(r, subst)),
-            *s,
-        ),
-        TypeRef::Base(..)
-        | TypeRef::QueueResult(_)
-        | TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_)
-        | TypeRef::Unit(_) => t.clone(),
-    }
-}
-
-/// v0.174 (#592): the concrete `(field-name, field-type)` list for a generic
-/// record instantiation `Name[args…]` — the declared fields with every type
-/// parameter substituted by the matching argument. Returns `None` if `name` is
-/// not a declared generic record or the arity does not match (both guaranteed
-/// impossible by the checker, so this is purely defensive).
-fn record_inst_fields(
-    name: &str,
-    args: &[TypeRef],
-    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-) -> Option<Vec<(String, TypeRef)>> {
-    let decl = types.get(name)?;
-    let TypeBody::Record(r) = &decl.body else {
-        return None;
-    };
-    if decl.type_params.len() != args.len() {
-        return None;
-    }
-    let subst: std::collections::HashMap<String, TypeRef> = decl
-        .type_params
-        .iter()
-        .map(|p| p.name.name.clone())
-        .zip(args.iter().cloned())
-        .collect();
-    Some(
-        r.fields
-            .iter()
-            .map(|f| (f.name.name.clone(), subst_type_ref(&f.type_ref, &subst)))
-            .collect(),
-    )
-}
-
-/// #593: the concrete `(variant-name, [(field-name, field-type)])` list for a
-/// generic sum instantiation `Name[args…]` — the declared variants with every
-/// type parameter substituted by the matching argument. The sum analogue of
-/// [`record_inst_fields`]; `None` (defensively) if `name` is not a declared
-/// generic sum or the arity does not match.
-#[allow(clippy::type_complexity)]
-fn sum_inst_variants(
-    name: &str,
-    args: &[TypeRef],
-    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-) -> Option<Vec<(String, Vec<(String, TypeRef)>)>> {
-    let decl = types.get(name)?;
-    let TypeBody::Sum(s) = &decl.body else {
-        return None;
-    };
-    if decl.type_params.len() != args.len() {
-        return None;
-    }
-    let subst: std::collections::HashMap<String, TypeRef> = decl
-        .type_params
-        .iter()
-        .map(|p| p.name.name.clone())
-        .zip(args.iter().cloned())
-        .collect();
-    Some(
-        s.variants
-            .iter()
-            .map(|v| {
-                (
-                    v.name.name.clone(),
-                    v.payload
-                        .iter()
-                        .map(|f| (f.name.name.clone(), subst_type_ref(&f.type_ref, &subst)))
-                        .collect(),
-                )
-            })
-            .collect(),
-    )
-}
-
-/// v0.174 (#592): the monomorphised codec suffix for a generic-record
-/// instantiation — `Paginated[User]` → `Paginated_User`,
-/// `Pair[User, String]` → `Pair_User_String`. #593: shared with generic sums.
-fn app_ts_name(name: &str, args: &[TypeRef]) -> String {
-    let mut s = name.to_string();
-    for a in args {
-        s.push('_');
-        s.push_str(&inner_ts_name(a));
-    }
-    s
+/// #855 (Phase 2 step 6): resolve one `TypeRef` occurrence to its [`WireRef`]
+/// shape for `emit_field_deserialise` / `serialise_field_expr_via`. `wire_ref`
+/// documents its `types` parameter as unconsulted (single-level resolution,
+/// kept only for signature symmetry with the transitive walks) — an empty
+/// table costs nothing (`HashMap::new()` does not allocate) and avoids
+/// threading a real one through `emit_record_codec` / `emit_sum_codec` /
+/// `emit_generic_helpers_qualified`, which is out of scope for this step
+/// (records/sums/generic-helpers are steps 7/8/9).
+fn wire_ref_of(t: &TypeRef) -> WireRef {
+    wire_ref(t, &std::collections::HashMap::new())
 }
 
 /// Emit `serialise_<T>` and `deserialise_<T>` for every named type the
@@ -380,22 +135,30 @@ fn emit_one(
     ru: &RuntimeUse,
 ) {
     match &decl.body {
-        TypeBody::Refined { base, .. } => emit_refined(out, name, *base, decl, qual, ru),
-        TypeBody::Opaque { base, .. } => emit_refined(out, name, *base, decl, qual, ru),
-        TypeBody::Record(r) => emit_record(out, name, r, types, qual, ru),
-        TypeBody::Sum(s) => emit_sum(out, name, s, qual, ru),
+        TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {
+            emit_refined(out, name, decl, types, qual, ru)
+        }
+        TypeBody::Record(_) => emit_record(out, name, decl, types, qual, ru),
+        TypeBody::Sum(_) => emit_sum(out, name, decl, types, qual, ru),
     }
 }
 
-fn ts_base_for_serialisation(b: BaseType) -> &'static str {
-    match b {
-        BaseType::Int => "number",
-        BaseType::String => "string",
-        BaseType::Bool => "boolean",
-        BaseType::Float => "number",
-        BaseType::Duration | BaseType::Instant => "number",
-        // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 JSON string.
-        BaseType::Bytes => "string",
+/// The TS token a [`JsonKind`] spells as. `json_kind_of` (`bynk_check::wire`)
+/// replaces `ts_base_for_serialisation`'s *classification* of a `BaseType`;
+/// this is the TS-spelling half the wire.rs seam keeps in `bynk-emit`. Also
+/// doubles as the boundary `typeof` check string — for every `BaseType` the
+/// two coincide (a bare `Int`/`Float`/`Duration`/`Instant`/`String`/`Bytes`/
+/// `Bool` field is validated against exactly the JSON `typeof` its kind
+/// implies), so a single call replaces what used to be two identical `match
+/// base` blocks.
+fn json_kind_ts(k: JsonKind) -> &'static str {
+    match k {
+        JsonKind::Number => "number",
+        JsonKind::String => "string",
+        JsonKind::Boolean => "boolean",
+        JsonKind::Object => "object",
+        JsonKind::Array => "array",
+        JsonKind::Null => "null",
     }
 }
 
@@ -446,19 +209,52 @@ fn emit_bytes_named_codec(out: &mut String, name: &str, qual: &Qual, ru: &Runtim
     writeln!(out).unwrap();
 }
 
+/// #855 (Phase 2 step 5): which of the four TS shapes a named scalar's codec
+/// takes — owner `.of`, consumed-opaque structural cast, consumed-transparent
+/// inline re-check, or the dedicated `Bytes` base64 codec — is now read off a
+/// [`WireScalar`]'s [`Revalidation`], built once via
+/// `bynk_check::wire::wire_type` from `decl` + this call's [`Provenance`],
+/// instead of re-deriving `consumed`/`consumed_opaque`/`base == Bytes`
+/// inline from `qual` + `decl.body` as this function used to. `wire_type`
+/// only needs *Owned-vs-Consumed* + opaque-vs-transparent to pick a
+/// `Revalidation` — the `owner_unit` string it carries otherwise is not
+/// consumed by anything on this path (it exists for the Phase 4 peek), so
+/// the qualifier prefix stands in for it here.
 fn emit_refined(
     out: &mut String,
     name: &str,
-    base: BaseType,
     decl: &TypeDecl,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     qual: &Qual,
     ru: &RuntimeUse,
 ) {
-    // v0.110: a `Bytes`-based opaque/refined type has a bespoke base64 codec.
-    if base == BaseType::Bytes {
+    let qprefix = qual_prefix(qual, name);
+    let ty = format!("{qprefix}{name}");
+    let prov = if qprefix.is_empty() {
+        Provenance::Owned
+    } else {
+        Provenance::Consumed {
+            owner_unit: qprefix.trim_end_matches('.').to_string(),
+        }
+    };
+    let scalar = match wire_type(name, decl, types, prov) {
+        Some(WireType {
+            body: WireBody::Scalar(s),
+            ..
+        }) => s,
+        _ => unreachable!(
+            "emit_refined is only ever called for a non-generic Refined/Opaque declaration"
+        ),
+    };
+
+    // v0.110: a `Bytes`-based opaque/refined type has a bespoke base64 codec —
+    // `emit_refined`'s early return to it, mirrored from `Revalidation` rather
+    // than a bare `base == BaseType::Bytes` check.
+    if scalar.revalidation == Revalidation::Base64Decode {
         emit_bytes_named_codec(out, name, qual, ru);
         return;
     }
+
     // #661: a *consumed* type (one the caller qualifies through the callee's
     // type-only namespace) has no importable `.of`, so its deserialiser cannot
     // route validation through the owner's constructor. An **opaque** consumed
@@ -468,20 +264,8 @@ fn emit_refined(
     // v0.177 contract hash). A **transparent refined** consumed type inlines
     // its predicate checks (Decision D — the consumer knows the shape by
     // declaration, so it validates, just not through `.of`).
-    let qprefix = qual_prefix(qual, name);
-    let ty = format!("{qprefix}{name}");
-    let consumed = !qprefix.is_empty();
-    let consumed_opaque = consumed && matches!(decl.body, TypeBody::Opaque { .. });
-    let prim = ts_base_for_serialisation(base);
-    let typeof_str = match base {
-        BaseType::Int => "number",
-        BaseType::String => "string",
-        BaseType::Bool => "boolean",
-        BaseType::Float => "number",
-        BaseType::Duration | BaseType::Instant => "number",
-        // Unreachable: the `Bytes` branch returns above.
-        BaseType::Bytes => "string",
-    };
+    let prim = json_kind_ts(scalar.json);
+    let typeof_str = prim;
     writeln!(
         out,
         "export function serialise_{name}(value: {ty}): JsonValue {{"
@@ -503,43 +287,44 @@ fn emit_refined(
     )
     .unwrap();
     writeln!(out, "  }}").unwrap();
-    if consumed_opaque {
-        // Decision C: structural cast only — never reach for the owner's `.of`,
-        // which would resurrect the value import this increment removes and leak
-        // the opaque predicate into the consumer.
-        writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
-    } else if consumed {
-        // Decision D: a transparent refined consumed type validates inline. The
-        // base-integrality / finiteness guards and the declared predicates, in
-        // the same order the owner's `.of` applies them, but wrapped as this
-        // codec's `BoundaryError` rather than a `ValidationError`.
-        let refinement = match &decl.body {
-            TypeBody::Refined { refinement, .. } => refinement.as_ref(),
-            // A consumed transparent type over a base with no `where` still
-            // reaches here (e.g. a bare alias); no predicates to inline.
-            _ => None,
-        };
-        emit_inline_refinement_checks(out, name, base, refinement);
-        writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
-    } else {
-        // Owner's own module: re-validate via the type's own constructor
-        // (`.of`), which applies the refinement. If the type has no refinement,
-        // `.of` doesn't exist for refined-base types; fall back to a direct cast.
-        writeln!(
-            out,
-            "  const validated = (typeof ({name} as any).of === \"function\")"
-        )
-        .unwrap();
-        writeln!(out, "    ? ({name} as any).of(json)").unwrap();
-        writeln!(out, "    : Ok(json as unknown as {name});").unwrap();
-        writeln!(out, "  if (validated.tag === \"Err\") {{").unwrap();
-        writeln!(
-            out,
-            "    return Err({{ kind: \"RefinementViolation\", path, violation: validated.error }});"
-        )
-        .unwrap();
-        writeln!(out, "  }}").unwrap();
-        writeln!(out, "  return Ok(validated.value as {name});").unwrap();
+    match scalar.revalidation {
+        Revalidation::StructuralOnly => {
+            // Decision C: structural cast only — never reach for the owner's
+            // `.of`, which would resurrect the value import this increment
+            // removes and leak the opaque predicate into the consumer.
+            writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
+        }
+        Revalidation::Inline => {
+            // Decision D: a transparent refined consumed type validates inline.
+            // The base-integrality / finiteness guards and the declared
+            // predicates, in the same order the owner's `.of` applies them, but
+            // wrapped as this codec's `BoundaryError` rather than a
+            // `ValidationError`.
+            emit_inline_refinement_checks(out, name, &scalar.base_guards, &scalar.predicates);
+            writeln!(out, "  return Ok(json as unknown as {ty});").unwrap();
+        }
+        Revalidation::ViaConstructor => {
+            // Owner's own module: re-validate via the type's own constructor
+            // (`.of`), which applies the refinement. If the type has no
+            // refinement, `.of` doesn't exist for refined-base types; fall back
+            // to a direct cast.
+            writeln!(
+                out,
+                "  const validated = (typeof ({name} as any).of === \"function\")"
+            )
+            .unwrap();
+            writeln!(out, "    ? ({name} as any).of(json)").unwrap();
+            writeln!(out, "    : Ok(json as unknown as {name});").unwrap();
+            writeln!(out, "  if (validated.tag === \"Err\") {{").unwrap();
+            writeln!(
+                out,
+                "    return Err({{ kind: \"RefinementViolation\", path, violation: validated.error }});"
+            )
+            .unwrap();
+            writeln!(out, "  }}").unwrap();
+            writeln!(out, "  return Ok(validated.value as {name});").unwrap();
+        }
+        Revalidation::Base64Decode => unreachable!("handled by the early return above"),
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
@@ -551,11 +336,14 @@ fn emit_refined(
 /// `{ field, message, value }` the owner's `.of` would have produced). The
 /// `typeof` guard is emitted by the caller; these are the checks that run once
 /// the primitive type already matched. `json` is the value being validated.
+/// #855 (Phase 2 step 5): driven off a [`WireScalar`]'s `base_guards` +
+/// `predicates` (both **declaration order** — see `wire.rs`'s module doc)
+/// rather than a `BaseType` + raw `Option<&Refinement>` pair.
 fn emit_inline_refinement_checks(
     out: &mut String,
     name: &str,
-    base: BaseType,
-    refinement: Option<&Refinement>,
+    base_guards: &[BaseGuard],
+    predicates: &[PredKind],
 ) {
     let violation = |msg: &str| {
         format!(
@@ -564,20 +352,22 @@ fn emit_inline_refinement_checks(
     };
     // Base guards mirror `emit_refined_checks`: an `Int` is whole, a `Float`
     // finite. (`Duration`/`Instant` are not exposed as named refined bases.)
-    if base == BaseType::Int {
-        writeln!(out, "  if (!Number.isInteger(json)) {{").unwrap();
-        writeln!(out, "    {}", violation("must be an integer")).unwrap();
-        writeln!(out, "  }}").unwrap();
-    }
-    if base == BaseType::Float {
-        writeln!(out, "  if (!Number.isFinite(json)) {{").unwrap();
-        writeln!(out, "    {}", violation("must be a finite number")).unwrap();
-        writeln!(out, "  }}").unwrap();
-    }
-    if let Some(r) = refinement {
-        for pred in &r.predicates {
-            emit_inline_pred_check(out, &pred.kind, &violation);
+    for guard in base_guards {
+        match guard {
+            BaseGuard::Integral => {
+                writeln!(out, "  if (!Number.isInteger(json)) {{").unwrap();
+                writeln!(out, "    {}", violation("must be an integer")).unwrap();
+                writeln!(out, "  }}").unwrap();
+            }
+            BaseGuard::Finite => {
+                writeln!(out, "  if (!Number.isFinite(json)) {{").unwrap();
+                writeln!(out, "    {}", violation("must be a finite number")).unwrap();
+                writeln!(out, "  }}").unwrap();
+            }
         }
+    }
+    for pred in predicates {
+        emit_inline_pred_check(out, pred, &violation);
     }
 }
 
@@ -593,37 +383,45 @@ fn emit_inline_pred_check(out: &mut String, pred: &PredKind, violation: &dyn Fn(
     writeln!(out, "  }}").unwrap();
 }
 
+/// #855 (Phase 2 step 7): builds the [`WireField`] list via
+/// `bynk_check::wire::wire_type` — the same declaration-order shape (field
+/// name, [`WireRef`] shape, and raw `(Expr, TypeRef)` default) both the
+/// codec and a future peek would derive — rather than re-walking
+/// `body.fields` inline. `lower_field_default_wire` (this file) stays the
+/// one place a default's *rendered* wire-JSON literal is produced, called
+/// from `emit_record_codec` at the same point it always was (Part 1's
+/// seam: the IR carries the raw default, the emitter renders it).
 fn emit_record(
     out: &mut String,
     name: &str,
-    body: &RecordBody,
+    decl: &TypeDecl,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     qual: &Qual,
     ru: &RuntimeUse,
 ) {
-    // Events slice 3a (#972): a field's default, pre-lowered to its wire-JSON
-    // form. `.ok()` degrades a default the lowering can't build to "no
-    // default branch" (today's behaviour) rather than panicking — unreachable
-    // in practice, since `bynk-emit/src/project/validate.rs`'s
-    // `check_event_field_defaults` already rejects anything this same
-    // function can't lower, before emission ever runs.
-    let fields: Vec<(String, TypeRef, Option<String>)> = body
-        .fields
-        .iter()
-        .map(|f| {
-            let default = f
-                .init
-                .as_ref()
-                .and_then(|e| lower_field_default_wire(e, &f.type_ref, types).ok());
-            (f.name.name.clone(), f.type_ref.clone(), default)
-        })
-        .collect();
+    let qprefix = qual_prefix(qual, name);
+    let prov = if qprefix.is_empty() {
+        Provenance::Owned
+    } else {
+        Provenance::Consumed {
+            owner_unit: qprefix.trim_end_matches('.').to_string(),
+        }
+    };
+    let fields = match wire_type(name, decl, types, prov) {
+        Some(WireType {
+            body: WireBody::Record { fields },
+            ..
+        }) => fields,
+        _ => {
+            unreachable!("emit_record is only ever called for a non-generic Record declaration")
+        }
+    };
     // #661: a consumed record's TS value type reaches through the type-only
     // namespace (`commerce_payment.Receipt`); the codec function name stays
     // bare and local. Its field codec calls are unqualified too — they resolve
     // to the caller's own locally-generated helpers.
-    let ts_type = format!("{}{name}", qual_prefix(qual, name));
-    emit_record_codec(out, name, &ts_type, &fields, ru);
+    let ts_type = format!("{qprefix}{name}");
+    emit_record_codec(out, name, &ts_type, &fields, types, ru);
 }
 
 /// v0.174 (#592): the shared record codec body. `fn_suffix` is the codec name
@@ -632,17 +430,22 @@ fn emit_record(
 /// generic `Paginated<User>`). The two coincide for a non-generic record and
 /// diverge for a generic-record instantiation.
 ///
-/// Events slice 3a (#972): each field's third element is its default's
-/// pre-lowered wire-JSON form, if it has one — always `None` for a generic
-/// instantiation (`record_inst_fields`'s caller), since events are never
-/// generic. Only `deserialise_<fn_suffix>` consults it; `serialise_<fn_suffix>`
-/// is untouched, since a fresh emission always writes every field regardless
-/// of any default (Decision B, #972).
+/// #855 (Phase 2 step 7): takes `&[WireField]` — the field's shape as a
+/// [`WireRef`] (rendered via [`serialise_field_expr_wire`] /
+/// [`emit_field_deserialise_wire`], no re-derivation from a raw `TypeRef`)
+/// and its default as a raw `(Expr, TypeRef)`, lowered to its wire-JSON
+/// literal right here via `lower_field_default_wire` — the same point it was
+/// always called from, per Part 1's seam (`bynk-check` carries the boundary
+/// fact, `bynk-emit` renders it). Events slice 3a (#972): a generic-record
+/// instantiation's fields never carry a default (events are never generic),
+/// so `default` is always `None` on that path; only `deserialise_<fn_suffix>`
+/// consults it, `serialise_<fn_suffix>` is untouched (Decision B, #972).
 fn emit_record_codec(
     out: &mut String,
     fn_suffix: &str,
     ts_type: &str,
-    fields: &[(String, TypeRef, Option<String>)],
+    fields: &[WireField],
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     ru: &RuntimeUse,
 ) {
     // serialise
@@ -652,9 +455,10 @@ fn emit_record_codec(
     )
     .unwrap();
     writeln!(out, "  return {{").unwrap();
-    for (fname, type_ref, _) in fields {
-        let expr = serialise_field_expr(type_ref, &format!("value.{fname}"), ru);
-        writeln!(out, "    {fname}: {expr},").unwrap();
+    for field in fields {
+        let expr =
+            serialise_field_expr_wire(&field.shape, &format!("value.{}", field.name), "", ru);
+        writeln!(out, "    {}: {expr},", field.name).unwrap();
     }
     writeln!(out, "  }};").unwrap();
     writeln!(out, "}}").unwrap();
@@ -678,7 +482,7 @@ fn emit_record_codec(
     .unwrap();
     writeln!(out, "  }}").unwrap();
     writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
-    for (fname, type_ref, default) in fields {
+    for field in fields {
         // Events slice 3a (#972): a defaulted field is read through a
         // pre-validated `__d_<field>` binding instead of the raw
         // `obj["<field>"]` access — `"fname" in obj`, not `!== undefined`,
@@ -687,9 +491,14 @@ fn emit_record_codec(
         // what makes `Option[T]`'s two absences fall out with no
         // special-casing — a wire `{"kind":"None"}` already passed the `in`
         // test, so it flows through to a real `None`, untouched by the
-        // default). Everything downstream (`emit_field_deserialise`) is
+        // default). Everything downstream (`emit_field_deserialise_wire`) is
         // unchanged either way.
-        let access = if let Some(d) = default {
+        let default = field
+            .default
+            .as_ref()
+            .and_then(|(e, t)| lower_field_default_wire(e, t, types).ok());
+        let fname = &field.name;
+        let access = if let Some(d) = &default {
             writeln!(
                 out,
                 "  const __d_{fname}: JsonValue = \"{fname}\" in obj ? obj[\"{fname}\"] : {d};"
@@ -699,13 +508,13 @@ fn emit_record_codec(
         } else {
             format!("obj[\"{fname}\"]")
         };
-        let sub_path = format!("`${{path}}.{fname}`");
-        emit_field_deserialise(out, fname, type_ref, &access, &sub_path, ru);
+        let sub_path = format!("`${{path}}.{}`", field.path_segment);
+        emit_field_deserialise_wire(out, fname, &field.shape, &access, &sub_path, ru);
     }
     write!(out, "  return Ok({{ ").unwrap();
     let parts: Vec<String> = fields
         .iter()
-        .map(|(fname, _, _)| format!("{fname}: __{fname}"))
+        .map(|field| format!("{0}: __{0}", field.name))
         .collect();
     write!(out, "{}", parts.join(", ")).unwrap();
     writeln!(out, " }} as {ts_type});").unwrap();
@@ -981,58 +790,85 @@ fn lower_record_default(
     Ok(format!("{{ {} }}", parts.join(", ")))
 }
 
-fn emit_sum(out: &mut String, name: &str, body: &SumBody, qual: &Qual, ru: &RuntimeUse) {
+/// #855 (Phase 2 step 8): builds the [`WireSum`] via
+/// `bynk_check::wire::wire_type` — the same declaration-order variant/payload
+/// shape a peek would derive — instead of re-walking `body.variants` inline.
+fn emit_sum(
+    out: &mut String,
+    name: &str,
+    decl: &TypeDecl,
+    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
+    qual: &Qual,
+    ru: &RuntimeUse,
+) {
     // #661: a consumed sum's TS value type is namespace-qualified; the codec
     // function name and its per-variant codec calls stay bare and local. #593:
     // the codec body is the shared `emit_sum_codec` (also reused, unqualified,
     // for a generic-sum instantiation), so the qualified value type is threaded
     // in as its `ts_type`.
-    let ty = format!("{}{name}", qual_prefix(qual, name));
-    let variants: Vec<(String, Vec<(String, TypeRef)>)> = body
-        .variants
-        .iter()
-        .map(|v| {
-            (
-                v.name.name.clone(),
-                v.payload
-                    .iter()
-                    .map(|f| (f.name.name.clone(), f.type_ref.clone()))
-                    .collect(),
-            )
-        })
-        .collect();
-    emit_sum_codec(out, name, &ty, &variants, ru);
+    let qprefix = qual_prefix(qual, name);
+    let prov = if qprefix.is_empty() {
+        Provenance::Owned
+    } else {
+        Provenance::Consumed {
+            owner_unit: qprefix.trim_end_matches('.').to_string(),
+        }
+    };
+    let sum = match wire_type(name, decl, types, prov) {
+        Some(WireType {
+            body: WireBody::Sum(s),
+            ..
+        }) => s,
+        _ => unreachable!("emit_sum is only ever called for a non-generic Sum declaration"),
+    };
+    let ty = format!("{qprefix}{name}");
+    emit_sum_codec(out, name, &ty, &sum, ru);
 }
 
-/// The serialise/deserialise pair for a sum type, over already-resolved variant
-/// payloads. `fn_suffix` names the emitted functions (`Opt` / `Opt_Int`),
+/// The serialise/deserialise pair for a sum type, over an already-resolved
+/// [`WireSum`]. `fn_suffix` names the emitted functions (`Opt` / `Opt_Int`),
 /// `ts_type` is their value type (`Opt` / `Opt<number>` / a namespace-qualified
-/// `shop.Opt`). The wire discriminant is `kind`; the in-memory discriminant is
-/// `tag`. #593: a generic-sum instantiation reuses this with substituted payload
-/// types, exactly as a generic record reuses [`emit_record_codec`].
+/// `shop.Opt`). #593: a generic-sum instantiation reuses this with substituted
+/// payload types, exactly as a generic record reuses [`emit_record_codec`].
+///
+/// #855 (Phase 2 step 8): the wire discriminant (`kind`) and in-memory
+/// discriminant (`tag`) are read off `sum.wire_discriminant` /
+/// `sum.memory_discriminant` rather than hard-coded string literals — the
+/// same two values as before (`wire.rs`'s module doc: `memory_discriminant`
+/// is the softest part of the seam, carried beside `wire_discriminant`
+/// because this codec's whole job is translating between them), so this is
+/// purely reading the fact from the IR, not a behaviour change.
 fn emit_sum_codec(
     out: &mut String,
     fn_suffix: &str,
     ts_type: &str,
-    variants: &[(String, Vec<(String, TypeRef)>)],
+    sum: &WireSum,
     ru: &RuntimeUse,
 ) {
+    let kind = sum.wire_discriminant;
+    let tag = sum.memory_discriminant;
     writeln!(
         out,
         "export function serialise_{fn_suffix}(value: {ts_type}): JsonValue {{"
     )
     .unwrap();
-    writeln!(out, "  switch (value.tag) {{").unwrap();
-    for (vname, payload) in variants {
-        if payload.is_empty() {
+    writeln!(out, "  switch (value.{tag}) {{").unwrap();
+    for variant in &sum.variants {
+        let vname = &variant.name;
+        if variant.payload.is_empty() {
             writeln!(out, "    case \"{vname}\":").unwrap();
-            writeln!(out, "      return {{ kind: \"{vname}\" }};").unwrap();
+            writeln!(out, "      return {{ {kind}: \"{vname}\" }};").unwrap();
         } else {
             writeln!(out, "    case \"{vname}\": {{").unwrap();
-            write!(out, "      return {{ kind: \"{vname}\"").unwrap();
-            for (fname, type_ref) in payload {
-                let expr = serialise_field_expr(type_ref, &format!("(value as any).{fname}"), ru);
-                write!(out, ", {fname}: {expr}").unwrap();
+            write!(out, "      return {{ {kind}: \"{vname}\"").unwrap();
+            for field in &variant.payload {
+                let expr = serialise_field_expr_wire(
+                    &field.shape,
+                    &format!("(value as any).{}", field.name),
+                    "",
+                    ru,
+                );
+                write!(out, ", {}: {expr}", field.name).unwrap();
             }
             writeln!(out, " }};").unwrap();
             writeln!(out, "    }}").unwrap();
@@ -1059,22 +895,27 @@ fn emit_sum_codec(
     .unwrap();
     writeln!(out, "  }}").unwrap();
     writeln!(out, "  const obj = json as {{ [k: string]: JsonValue }};").unwrap();
-    writeln!(out, "  const kind = obj[\"kind\"];").unwrap();
-    writeln!(out, "  switch (kind) {{").unwrap();
-    for (vname, payload) in variants {
-        if payload.is_empty() {
+    writeln!(out, "  const {kind} = obj[\"{kind}\"];").unwrap();
+    writeln!(out, "  switch ({kind}) {{").unwrap();
+    for variant in &sum.variants {
+        let vname = &variant.name;
+        if variant.payload.is_empty() {
             writeln!(out, "    case \"{vname}\":").unwrap();
-            writeln!(out, "      return Ok({{ tag: \"{vname}\" }} as {ts_type});").unwrap();
+            writeln!(
+                out,
+                "      return Ok({{ {tag}: \"{vname}\" }} as {ts_type});"
+            )
+            .unwrap();
         } else {
             writeln!(out, "    case \"{vname}\": {{").unwrap();
-            for (fname, type_ref) in payload {
-                let access = format!("obj[\"{fname}\"]");
-                let sub_path = format!("`${{path}}.{fname}`");
-                emit_field_deserialise(out, fname, type_ref, &access, &sub_path, ru);
+            for field in &variant.payload {
+                let access = format!("obj[\"{}\"]", field.name);
+                let sub_path = format!("`${{path}}.{}`", field.path_segment);
+                emit_field_deserialise_wire(out, &field.name, &field.shape, &access, &sub_path, ru);
             }
-            write!(out, "      return Ok({{ tag: \"{vname}\"").unwrap();
-            for (fname, _) in payload {
-                write!(out, ", {fname}: __{fname}").unwrap();
+            write!(out, "      return Ok({{ {tag}: \"{vname}\"").unwrap();
+            for field in &variant.payload {
+                write!(out, ", {0}: __{0}", field.name).unwrap();
             }
             writeln!(out, " }} as {ts_type});").unwrap();
             writeln!(out, "    }}").unwrap();
@@ -1083,7 +924,7 @@ fn emit_sum_codec(
     writeln!(out, "    default:").unwrap();
     writeln!(
         out,
-        "      return Err({{ kind: \"StructuralMismatch\", path, expected: \"sum variant kind\", actual: String(kind) }});"
+        "      return Err({{ kind: \"StructuralMismatch\", path, expected: \"sum variant kind\", actual: String({kind}) }});"
     )
     .unwrap();
     writeln!(out, "  }}").unwrap();
@@ -1093,6 +934,20 @@ fn emit_sum_codec(
 
 /// Emit a let binding `__<field>` after destructuring & validating a
 /// nested field.
+///
+/// #855 (Phase 2 step 6): dispatches on [`WireRef`] (via [`wire_ref_of`])
+/// rather than matching `TypeRef` directly — the same resolution
+/// `wire_ref` documents itself as mirroring one-for-one, **including** its
+/// `Effect`/`HttpResult`/etc. field-position arm folding into the same
+/// unchecked cast as `ValidationError`/`JsonError`/`QueueResult`. This is
+/// the deserialise-side function `wire_ref`'s own doc names as the one it
+/// agrees with exactly; contrast [`serialise_field_expr_via`], which does
+/// not.
+///
+/// #855 (Phase 2 step 7): a thin `TypeRef` → [`WireRef`] wrapper over
+/// [`emit_field_deserialise_wire`] — a record/sum field built from the IR
+/// already carries its [`WireRef`] shape (`WireField::shape`) and calls that
+/// directly, with no `TypeRef` to convert back from.
 fn emit_field_deserialise(
     out: &mut String,
     name: &str,
@@ -1101,39 +956,26 @@ fn emit_field_deserialise(
     path_expr: &str,
     ru: &RuntimeUse,
 ) {
-    match t {
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        // v0.174 (#592): a generic-record instantiation delegates to its
-        // monomorphised codec (`deserialise_Paginated_User`), exactly like a
-        // named type delegates to its own `deserialise_<Name>`.
-        TypeRef::App {
-            name: app_name,
-            args,
-            ..
-        } => {
-            let inst = app_ts_name(&app_name.name, args);
-            writeln!(
-                out,
-                "  const __r_{name} = deserialise_{inst}({json}, {path_expr});"
-            )
-            .unwrap();
-            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
-            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
-        }
+    emit_field_deserialise_wire(out, name, &wire_ref_of(t), json, path_expr, ru);
+}
+
+/// The [`WireRef`]-driven body [`emit_field_deserialise`] delegates to,
+/// exposed directly for a caller that already holds a [`WireRef`] (a
+/// [`WireField`]'s `shape`) rather than the `TypeRef` it was resolved from.
+fn emit_field_deserialise_wire(
+    out: &mut String,
+    name: &str,
+    wire: &WireRef,
+    json: &str,
+    path_expr: &str,
+    ru: &RuntimeUse,
+) {
+    match wire {
         // v0.110 (ADR 0142 D5): a bare `Bytes` field is a base64 JSON string —
         // require a string, then decode (rejecting invalid base64), binding the
         // decoded `Uint8Array`. This is the one base type whose wire value is
         // not a direct cast of its erased representation.
-        TypeRef::Base(BaseType::Bytes, _) => {
+        WireRef::Bytes => {
             ru.note_bytes();
             writeln!(out, "  if (typeof {json} !== \"string\") {{").unwrap();
             writeln!(
@@ -1152,16 +994,10 @@ fn emit_field_deserialise(
             writeln!(out, "  }}").unwrap();
             writeln!(out, "  const __{name} = __b_{name}.value;").unwrap();
         }
-        TypeRef::Base(b, _) => {
-            let typeof_str = match b {
-                BaseType::Int => "number",
-                BaseType::String => "string",
-                BaseType::Bool => "boolean",
-                BaseType::Float => "number",
-                BaseType::Duration | BaseType::Instant => "number",
-                // Unreachable: handled by the dedicated `Bytes` arm above.
-                BaseType::Bytes => "string",
-            };
+        WireRef::Base {
+            json: kind, guards, ..
+        } => {
+            let typeof_str = json_kind_ts(*kind);
             writeln!(out, "  if (typeof {json} !== \"{typeof_str}\") {{").unwrap();
             writeln!(
                 out,
@@ -1173,94 +1009,64 @@ fn emit_field_deserialise(
             // with `Float` in the language there is no excuse for a
             // fractional `Int` from the wire. v0.90 (ADR 0114 D7): an `Instant`
             // is whole epoch milliseconds, so it validates integrality too.
-            if *b == BaseType::Int || *b == BaseType::Instant {
-                writeln!(out, "  if (!Number.isInteger({json})) {{").unwrap();
-                writeln!(
-                    out,
-                    "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"integer\", actual: String({json}) }});"
-                )
-                .unwrap();
-                writeln!(out, "  }}").unwrap();
-            }
             // v0.21: boundary `Float` values are finite (ADR 0040) —
             // `JSON.parse("1e999")` yields `Infinity`, which must not be
             // admitted from the wire.
-            if *b == BaseType::Float {
-                writeln!(out, "  if (!Number.isFinite({json})) {{").unwrap();
-                writeln!(
-                    out,
-                    "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"finite number\", actual: String({json}) }});"
-                )
-                .unwrap();
-                writeln!(out, "  }}").unwrap();
+            for guard in guards {
+                match guard {
+                    BaseGuard::Integral => {
+                        writeln!(out, "  if (!Number.isInteger({json})) {{").unwrap();
+                        writeln!(
+                            out,
+                            "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"integer\", actual: String({json}) }});"
+                        )
+                        .unwrap();
+                        writeln!(out, "  }}").unwrap();
+                    }
+                    BaseGuard::Finite => {
+                        writeln!(out, "  if (!Number.isFinite({json})) {{").unwrap();
+                        writeln!(
+                            out,
+                            "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"finite number\", actual: String({json}) }});"
+                        )
+                        .unwrap();
+                        writeln!(out, "  }}").unwrap();
+                    }
+                }
             }
             writeln!(out, "  const __{name} = {json};").unwrap();
         }
-        TypeRef::Named(id) => {
-            // Defer to the type's own deserialiser. Assumes it exists in
-            // scope (imported or declared locally).
+        // Named type (own module or generic instantiation, both keyed the
+        // same way — `Named` for a declared type, `Inst` for `Result` /
+        // `Option` / `List` / `Map` / a generic `App`): defer to its own
+        // `deserialise_<key>`. Assumes it exists in scope (imported or
+        // declared locally).
+        WireRef::Named { name: type_name } => {
             writeln!(
                 out,
-                "  const __r_{name} = deserialise_{}({json}, {path_expr});",
-                id.name
+                "  const __r_{name} = deserialise_{type_name}({json}, {path_expr});"
             )
             .unwrap();
             writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
             writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
         }
-        TypeRef::Result(a, b, _) => {
-            let ts_a = inner_ts_name(a);
-            let ts_b = inner_ts_name(b);
+        WireRef::Inst { key } => {
             writeln!(
                 out,
-                "  const __r_{name} = deserialise_Result_{ts_a}_{ts_b}({json}, {path_expr});",
+                "  const __r_{name} = deserialise_{key}({json}, {path_expr});"
             )
             .unwrap();
             writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
             writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
         }
-        TypeRef::Option(a, _) => {
-            let ts_a = inner_ts_name(a);
-            writeln!(
-                out,
-                "  const __r_{name} = deserialise_Option_{ts_a}({json}, {path_expr});",
-            )
-            .unwrap();
-            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
-            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
-        }
-        // v0.20b: collections delegate to their specialised helpers, exactly
-        // like Result/Option instantiations.
-        TypeRef::List(a, _) => {
-            let ts_a = inner_ts_name(a);
-            writeln!(
-                out,
-                "  const __r_{name} = deserialise_List_{ts_a}({json}, {path_expr});",
-            )
-            .unwrap();
-            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
-            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
-        }
-        TypeRef::Map(k, v, _) => {
-            let ts_k = inner_ts_name(k);
-            let ts_v = inner_ts_name(v);
-            writeln!(
-                out,
-                "  const __r_{name} = deserialise_Map_{ts_k}_{ts_v}({json}, {path_expr});",
-            )
-            .unwrap();
-            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
-            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
-        }
-        TypeRef::Effect(_, _)
-        | TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_)
-        | TypeRef::HttpResult(_, _)
-        | TypeRef::QueueResult(_) => {
-            writeln!(out, "  const __{name} = {json} as any;").unwrap();
-        }
-        TypeRef::Unit(_) => {
+        WireRef::Unit => {
             writeln!(out, "  const __{name} = undefined;").unwrap();
+        }
+        // The runtime-owned error family, plus a stray field-position
+        // `Effect` (see this function's doc): no generated codec to name, so
+        // the value is cast through unchecked.
+        WireRef::Unchecked { .. } => {
+            writeln!(out, "  const __{name} = {json} as any;").unwrap();
         }
     }
 }
@@ -1274,52 +1080,56 @@ fn serialise_field_expr(t: &TypeRef, value: &str, ru: &RuntimeUse) -> String {
 /// context's handlers as a namespace. Threading the prefix (rather than each
 /// caller owning a parallel dispatch) is what keeps the boundary to **one**
 /// codec path.
+///
+/// #855 (Phase 2 step 6): dispatches on [`WireRef`] (via [`wire_ref_of`]),
+/// **except** `Effect`, which this function peels itself before consulting
+/// the IR. `wire_ref`'s own doc names this exact asymmetry: a field-position
+/// `Effect` is `Unchecked` under `wire_ref` (matching
+/// [`emit_field_deserialise`], the resolver's one faithful consumer), but
+/// this function has always *recursed* into the wrapped type instead — an
+/// `Effect`-typed field serialises as its payload's codec, not as an opaque
+/// cast. Routing `Effect` through `wire_ref` here would silently change that
+/// to an unchecked cast, so it stays a manual peel rather than becoming a
+/// second `WireRef` arm with no second consumer.
 fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
-    match t {
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        // v0.174 (#592): a generic-record instantiation serialises through its
-        // monomorphised codec (`serialise_Paginated_User`).
-        TypeRef::App { name, args, .. } => {
-            format!("{ns}serialise_{}({value})", app_ts_name(&name.name, args))
-        }
+    if let TypeRef::Effect(inner, _) = t {
+        return serialise_field_expr_via(inner, value, ns, ru);
+    }
+    serialise_field_expr_wire(&wire_ref_of(t), value, ns, ru)
+}
+
+/// The [`WireRef`]-driven body [`serialise_field_expr_via`] delegates to
+/// (after its manual `Effect` peel — see that function's doc), exposed
+/// directly for a caller that already holds a [`WireRef`] (a [`WireField`]'s
+/// `shape`) rather than the `TypeRef` it was resolved from. #855 (Phase 2
+/// step 7): a record/sum field's shape can never legally be a field-position
+/// `Effect` (non-storable, non-boundary — rejected before it could reach a
+/// declared field), so calling this directly for such a field, skipping the
+/// `Effect` peel above, is not a second disagreement with `wire_ref` — it is
+/// the same dispatch on a shape the peel could never have matched anyway.
+fn serialise_field_expr_wire(wire: &WireRef, value: &str, ns: &str, ru: &RuntimeUse) -> String {
+    match wire {
+        // Named type or generic instantiation (`Result`/`Option`/`List`/`Map`/
+        // a generic `App` all key the same way — see `wire_ref`'s doc):
+        // serialise through its own `serialise_<key>`.
+        WireRef::Named { name } => format!("{ns}serialise_{name}({value})"),
+        WireRef::Inst { key } => format!("{ns}serialise_{key}({value})"),
         // v0.21: serialising a non-finite `Float` is a contract violation
         // (`JSON.stringify(NaN)` would silently produce `null`); the guard is
         // a self-contained IIFE so the module needs no extra runtime import.
-        TypeRef::Base(BaseType::Float, _) => format!(
+        WireRef::Base {
+            base: BaseType::Float,
+            ..
+        } => format!(
             "((v: number) => {{ if (!Number.isFinite(v)) throw new Error(\"non-finite Float at boundary\"); return v as JsonValue; }})({value})"
         ),
         // v0.110 (ADR 0142 D5): a `Bytes` is base64-encoded on the wire — the
         // one base type whose serialise is an encode, not a bare cast.
-        TypeRef::Base(BaseType::Bytes, _) => {
+        WireRef::Bytes => {
             ru.note_bytes();
             format!("__bynkBytesToBase64({value}) as JsonValue")
         }
-        TypeRef::Base(_, _) => format!("{value} as JsonValue"),
-        TypeRef::Named(id) => format!("{ns}serialise_{}({value})", id.name),
-        TypeRef::Result(a, b, _) => format!(
-            "{ns}serialise_Result_{}_{}({value})",
-            inner_ts_name(a),
-            inner_ts_name(b)
-        ),
-        TypeRef::Option(a, _) => format!("{ns}serialise_Option_{}({value})", inner_ts_name(a)),
-        TypeRef::List(a, _) => format!("{ns}serialise_List_{}({value})", inner_ts_name(a)),
-        TypeRef::Map(k, v, _) => format!(
-            "{ns}serialise_Map_{}_{}({value})",
-            inner_ts_name(k),
-            inner_ts_name(v)
-        ),
-        // An `Effect` is stripped by the caller before it reaches a wire
-        // position; reaching one here means the payload, not the wrapper.
-        TypeRef::Effect(inner, _) => serialise_field_expr_via(inner, value, ns, ru),
+        WireRef::Base { .. } => format!("{value} as JsonValue"),
         // The runtime-owned error types have no *generated* codec — they are
         // declared by the runtime, not by a `TypeDecl` this emitter can walk, so
         // there is no `serialise_ValidationError` to name. They keep the
@@ -1327,122 +1137,23 @@ fn serialise_field_expr_via(t: &TypeRef, value: &str, ns: &str, ru: &RuntimeUse)
         // the user-type paths does not reach them. Their JSON shape is fixed by
         // the runtime (`errors.ts`), so the cast is not *wrong* — it is simply
         // unchecked, and it is the one remaining unchecked arm at the boundary.
-        TypeRef::ValidationError(_)
-        | TypeRef::JsonError(_)
-        | TypeRef::HttpResult(_, _)
-        | TypeRef::QueueResult(_) => {
+        // (`Effect` never lands here via `serialise_field_expr_via` — it is
+        // peeled above; a record/sum field can never legally be `Effect` in
+        // the first place — see this function's doc.)
+        WireRef::Unchecked { .. } => {
             format!("{value} as JsonValue")
         }
-        TypeRef::Unit(_) => "null".to_string(),
+        WireRef::Unit => "null".to_string(),
     }
 }
 
-fn inner_ts_name(t: &TypeRef) -> String {
-    match t {
-        TypeRef::Base(b, _) => b.name().to_string(),
-        // v0.20a: function types are confined to non-boundary positions
-        // (`bynk.types.function_at_boundary`), so the serialisation machinery
-        // can never legally see one.
-        TypeRef::Fn(..)
-        | TypeRef::Query(..)
-        | TypeRef::Stream(..)
-        | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
-            unreachable!("function/query/stream types are rejected at boundaries")
-        }
-        // v0.174 (#592): the codec suffix for a generic-record instantiation —
-        // `Paginated[User]` → `Paginated_User`.
-        TypeRef::App { name, args, .. } => app_ts_name(&name.name, args),
-        TypeRef::Named(id) => id.name.clone(),
-        TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),
-        TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),
-        TypeRef::Effect(a, _) => format!("Effect_{}", inner_ts_name(a)),
-        TypeRef::HttpResult(a, _) => format!("HttpResult_{}", inner_ts_name(a)),
-        TypeRef::List(a, _) => format!("List_{}", inner_ts_name(a)),
-        TypeRef::Map(k, v, _) => format!("Map_{}_{}", inner_ts_name(k), inner_ts_name(v)),
-        TypeRef::QueueResult(_) => "QueueResult".to_string(),
-        TypeRef::ValidationError(_) => "ValidationError".to_string(),
-        TypeRef::JsonError(_) => "JsonError".to_string(),
-        TypeRef::Unit(_) => "Unit".to_string(),
-    }
-}
-
-/// v0.22b: the codec closure for a set of `Json.encode`/`Json.decode[T]`
-/// target type-refs — the named types needing per-type helpers (transitively
-/// through record fields and sum payloads) plus the generic instantiations
-/// needing specialised helpers. The same closure logic as the boundary
-/// collectors, rooted at expressions instead of service signatures.
-pub(crate) fn collect_codec_closure(
-    roots: &[TypeRef],
-    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-) -> (Vec<String>, Vec<GenericInst>) {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut names: Vec<String> = Vec::new();
-    let mut stack: Vec<String> = Vec::new();
-    let recursive_set = recursive_generic_names(types);
-    let recursive = &recursive_set;
-    for r in roots {
-        collect_type_names(r, &mut stack, types, recursive);
-    }
-    while let Some(name) = stack.pop() {
-        if !seen.insert(name.clone()) {
-            continue;
-        }
-        names.push(name.clone());
-        let Some(decl) = types.get(&name) else {
-            continue;
-        };
-        match &decl.body {
-            TypeBody::Record(r) => {
-                for f in &r.fields {
-                    collect_type_names(&f.type_ref, &mut stack, types, recursive);
-                }
-            }
-            TypeBody::Sum(s) => {
-                for v in &s.variants {
-                    for p in &v.payload {
-                        collect_type_names(&p.type_ref, &mut stack, types, recursive);
-                    }
-                }
-            }
-            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
-        }
-    }
-    names.sort();
-
-    let mut insts: Vec<GenericInst> = Vec::new();
-    let mut inst_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for r in roots {
-        walk_generic_inst(r, &mut insts, &mut inst_seen, types, recursive);
-    }
-    for name in &names {
-        let Some(decl) = types.get(name) else {
-            continue;
-        };
-        match &decl.body {
-            TypeBody::Record(r) => {
-                for f in &r.fields {
-                    walk_generic_inst(&f.type_ref, &mut insts, &mut inst_seen, types, recursive);
-                }
-            }
-            TypeBody::Sum(s) => {
-                for v in &s.variants {
-                    for p in &v.payload {
-                        walk_generic_inst(
-                            &p.type_ref,
-                            &mut insts,
-                            &mut inst_seen,
-                            types,
-                            recursive,
-                        );
-                    }
-                }
-            }
-            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
-        }
-    }
-    (names, insts)
-}
+// #855 (Phase 1): `inner_ts_name` moved to `bynk_check::wire` as
+// `codec_suffix`; `collect_codec_closure` moved verbatim (pure, AST-only —
+// see that module's doc for the seam). Re-exported under their original
+// names so call sites here and elsewhere in `bynk-emit` keep compiling
+// unchanged.
+pub(crate) use bynk_check::wire::codec_suffix as inner_ts_name;
+pub(crate) use bynk_check::wire::collect_codec_closure;
 
 /// v0.22b: an expression-form serialise for a codec target — the same
 /// dispatch as a record field's serialisation.
@@ -1660,250 +1371,15 @@ pub(crate) fn deserialise_expr_via(
     }
 }
 
-/// Collect the set of `Result<A, B>` / `Option<A>` instantiations used in
-/// boundary positions so the emitter can synthesise the specialised
-/// helpers. v0.18: an instantiation may also appear in the *fields* of a
-/// boundary record or sum payload (e.g. the bynk surface's
-/// `Request.contentType: Option[String]`) — the per-type serialisers
-/// delegate to the specialised generic helpers, so walk those too.
-pub(crate) fn collect_generic_instantiations(
-    services: &std::collections::HashMap<String, ServiceDecl>,
-    // v0.96 (ADR 0124): an agent's `store`-field element types are validated on
-    // rehydration, so a `Cell[Option[Int]]` / `Log[List[T]]` needs its specialised
-    // generic helper emitted just like a boundary signature does.
-    agents: &std::collections::HashMap<String, AgentDecl>,
-    boundary_type_names: &[String],
-    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-) -> Vec<GenericInst> {
-    let mut out: Vec<GenericInst> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let recursive_set = recursive_generic_names(types);
-    let recursive = &recursive_set;
-    // Iterate services in name order: `HashMap::values()` order varies per
-    // process, and the *emission order* of the specialised helpers follows
-    // first-encounter order here. Surfaced by the first fixture with
-    // multiple same-file services carrying different instantiations (v0.23
-    // #35 CI); latent since v0.8.
-    let mut svc_names: Vec<&String> = services.keys().collect();
-    svc_names.sort();
-    for name in svc_names {
-        let s = &services[name];
-        for h in &s.handlers {
-            for p in &h.params {
-                walk_generic_inst(&p.type_ref, &mut out, &mut seen, types, recursive);
-            }
-            walk_generic_inst(&h.return_type, &mut out, &mut seen, types, recursive);
-        }
-    }
-    let mut agent_names: Vec<&String> = agents.keys().collect();
-    agent_names.sort();
-    for name in agent_names {
-        for f in &agents[name].store_fields {
-            for arg in &f.kind.args {
-                walk_generic_inst(arg, &mut out, &mut seen, types, recursive);
-            }
-        }
-    }
-    for name in boundary_type_names {
-        let Some(decl) = types.get(name) else {
-            continue;
-        };
-        // v0.174 (#592): never walk a *generic* declaration's own fields — they
-        // are the declared, unsubstituted body (`Paginated[T] = { items: List[T]
-        // }`), so walking `List[T]` would emit a bogus `serialise_List_T` over the
-        // unbound type variable `T`. The instantiations a generic record needs
-        // come from its *use* sites (`Paginated[User]`, a `TypeRef::App`), which
-        // `walk_generic_inst` expands with concrete arguments. This mirrors the
-        // `emit_helpers_for_owner` skip that keeps a bare `serialise_Paginated`
-        // from being emitted.
-        if !decl.type_params.is_empty() {
-            continue;
-        }
-        match &decl.body {
-            TypeBody::Record(r) => {
-                for f in &r.fields {
-                    walk_generic_inst(&f.type_ref, &mut out, &mut seen, types, recursive);
-                }
-            }
-            TypeBody::Sum(s) => {
-                for v in &s.variants {
-                    for p in &v.payload {
-                        walk_generic_inst(&p.type_ref, &mut out, &mut seen, types, recursive);
-                    }
-                }
-            }
-            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
-        }
-    }
-    out
-}
-
-#[derive(Debug, Clone)]
-#[allow(clippy::enum_variant_names)]
-pub(crate) enum GenericInst {
-    ResultInst {
-        ok: TypeRef,
-        err: TypeRef,
-    },
-    OptionInst {
-        inner: TypeRef,
-    },
-    /// v0.20b: a `List[T]` boundary instantiation — element-wise wire format.
-    ListInst {
-        elem: TypeRef,
-    },
-    /// v0.20b: a `Map[K, V]` boundary instantiation — entries-array wire
-    /// format (`[[k, v], …]`), insertion-ordered.
-    MapInst {
-        key: TypeRef,
-        val: TypeRef,
-    },
-    /// v0.174 (#592): a generic user-record instantiation `Name[args…]` — a
-    /// monomorphised per-instantiation record codec (`serialise_Paginated_User`)
-    /// specialised to the concrete arguments (ADR 0183 Decision C's follow-on).
-    RecordInst {
-        name: String,
-        args: Vec<TypeRef>,
-    },
-    /// #593: a generic user-sum instantiation `Name[args…]` — a monomorphised
-    /// per-instantiation discriminated-union codec (`serialise_ApiResult_User`),
-    /// the sum analogue of [`GenericInst::RecordInst`].
-    SumInst {
-        name: String,
-        args: Vec<TypeRef>,
-    },
-}
-
-impl GenericInst {
-    pub(crate) fn ts_name(&self) -> String {
-        match self {
-            GenericInst::ResultInst { ok, err } => {
-                format!("Result_{}_{}", inner_ts_name(ok), inner_ts_name(err))
-            }
-            GenericInst::OptionInst { inner } => {
-                format!("Option_{}", inner_ts_name(inner))
-            }
-            GenericInst::ListInst { elem } => format!("List_{}", inner_ts_name(elem)),
-            GenericInst::MapInst { key, val } => {
-                format!("Map_{}_{}", inner_ts_name(key), inner_ts_name(val))
-            }
-            GenericInst::RecordInst { name, args } => app_ts_name(name, args),
-            GenericInst::SumInst { name, args } => app_ts_name(name, args),
-        }
-    }
-}
-
-fn walk_generic_inst(
-    t: &TypeRef,
-    out: &mut Vec<GenericInst>,
-    seen: &mut std::collections::HashSet<String>,
-    types: &std::collections::HashMap<String, Arc<TypeDecl>>,
-    recursive: &std::collections::HashSet<String>,
-) {
-    match t {
-        // v0.174 (#592): a generic-record instantiation needs a monomorphised
-        // codec, and so do the generic instantiations reachable through its
-        // concrete field types (`Paginated[User]` → `List[User]` →
-        // `serialise_List_User`, `Envelope[Box[User]]` → `Box[User]` →
-        // `serialise_Box_User`). Substitute the fields and walk them. A recursive
-        // generic record (no finite codec set) is rejected at the boundary before
-        // emit; the guard here is defence in depth so this walk always terminates
-        // (the `seen` dedup alone cannot bound *polymorphic* recursion, whose
-        // instantiations each carry a distinct name).
-        TypeRef::App { name, args, .. } => {
-            if recursive.contains(&name.name) {
-                return;
-            }
-            // #593: an `App` names a generic record OR a generic sum; dispatch on
-            // the declaration's body so the right monomorphised codec is emitted,
-            // and walk the reachable instantiations through its concrete member
-            // types (a sum's variant payloads, a record's fields).
-            let is_sum = matches!(
-                types.get(&name.name).map(|d| &d.body),
-                Some(TypeBody::Sum(_))
-            );
-            let inst = if is_sum {
-                GenericInst::SumInst {
-                    name: name.name.clone(),
-                    args: args.clone(),
-                }
-            } else {
-                GenericInst::RecordInst {
-                    name: name.name.clone(),
-                    args: args.clone(),
-                }
-            };
-            let key = inst.ts_name();
-            if !seen.insert(key) {
-                return;
-            }
-            out.push(inst);
-            for a in args {
-                walk_generic_inst(a, out, seen, types, recursive);
-            }
-            if is_sum {
-                if let Some(variants) = sum_inst_variants(&name.name, args, types) {
-                    for (_, payload) in &variants {
-                        for (_, ft) in payload {
-                            walk_generic_inst(ft, out, seen, types, recursive);
-                        }
-                    }
-                }
-            } else if let Some(fields) = record_inst_fields(&name.name, args, types) {
-                for (_, ft) in &fields {
-                    walk_generic_inst(ft, out, seen, types, recursive);
-                }
-            }
-        }
-        TypeRef::Result(a, b, _) => {
-            let inst = GenericInst::ResultInst {
-                ok: (**a).clone(),
-                err: (**b).clone(),
-            };
-            let key = inst.ts_name();
-            if seen.insert(key) {
-                out.push(inst);
-            }
-            walk_generic_inst(a, out, seen, types, recursive);
-            walk_generic_inst(b, out, seen, types, recursive);
-        }
-        TypeRef::Option(a, _) => {
-            let inst = GenericInst::OptionInst {
-                inner: (**a).clone(),
-            };
-            let key = inst.ts_name();
-            if seen.insert(key) {
-                out.push(inst);
-            }
-            walk_generic_inst(a, out, seen, types, recursive);
-        }
-        TypeRef::Effect(a, _) => walk_generic_inst(a, out, seen, types, recursive),
-        TypeRef::HttpResult(a, _) => walk_generic_inst(a, out, seen, types, recursive),
-        TypeRef::List(a, _) => {
-            let inst = GenericInst::ListInst {
-                elem: (**a).clone(),
-            };
-            let key = inst.ts_name();
-            if seen.insert(key) {
-                out.push(inst);
-            }
-            walk_generic_inst(a, out, seen, types, recursive);
-        }
-        TypeRef::Map(k, v, _) => {
-            let inst = GenericInst::MapInst {
-                key: (**k).clone(),
-                val: (**v).clone(),
-            };
-            let key = inst.ts_name();
-            if seen.insert(key) {
-                out.push(inst);
-            }
-            walk_generic_inst(k, out, seen, types, recursive);
-            walk_generic_inst(v, out, seen, types, recursive);
-        }
-        _ => {}
-    }
-}
+// #855 (Phase 1): `collect_generic_instantiations` and `GenericInst` (now
+// `WireInst` — see that type's doc for why its variant names are kept as
+// `ResultInst`/`OptionInst`/… rather than the plan's bare spelling, deferred
+// to Phase 2) moved to `bynk_check::wire`; `walk_generic_inst` moved with
+// them (no callers outside the functions that moved). Re-exported under
+// their original names so call sites here and elsewhere in `bynk-emit` keep
+// compiling unchanged.
+pub(crate) use bynk_check::wire::WireInst as GenericInst;
+pub(crate) use bynk_check::wire::collect_generic_instantiations;
 
 /// Emit specialised helpers for each `Result<A, B>` / `Option<A>`
 /// instantiation. They delegate to the named-type serialisers for A and B.
@@ -1962,10 +1438,21 @@ pub(crate) fn emit_generic_helpers_qualified(
                 // Events slice 3a (#972): a generic record instantiation
                 // never carries a field default — events are never generic
                 // (`parse_event_decl` always builds zero type params), so
-                // this path can never reach one.
-                let fields: Vec<(String, TypeRef, Option<String>)> =
-                    fields.into_iter().map(|(n, t)| (n, t, None)).collect();
-                emit_record_codec(out, &fn_suffix, &ts_type, &fields, ru);
+                // this path can never reach one. #855 (Phase 2 step 9): a
+                // `WireField` for a substituted instantiation type is built
+                // straight from `record_inst_fields`' resolved `TypeRef`s via
+                // `wire_ref_of`, mirroring what `wire_type`/`wire_fields`
+                // would derive for a non-generic declaration's own fields.
+                let fields: Vec<WireField> = fields
+                    .into_iter()
+                    .map(|(n, t)| WireField {
+                        shape: wire_ref_of(&t),
+                        path_segment: n.clone(),
+                        name: n,
+                        default: None,
+                    })
+                    .collect();
+                emit_record_codec(out, &fn_suffix, &ts_type, &fields, types, ru);
             }
             // #593: a generic-sum instantiation `ApiResult[User]` emits
             // `serialise_ApiResult_User` / `deserialise_ApiResult_User`, its
@@ -1984,7 +1471,32 @@ pub(crate) fn emit_generic_helpers_qualified(
                 let variants = sum_inst_variants(name, args, types).unwrap_or_else(|| {
                     unreachable!("SumInst `{name}` is not a resolved generic sum")
                 });
-                emit_sum_codec(out, &fn_suffix, &ts_type, &variants, ru);
+                // #855 (Phase 2 step 9): a `WireSum` for a substituted
+                // instantiation is built straight from `sum_inst_variants`'
+                // resolved `TypeRef`s via `wire_ref_of`, mirroring what
+                // `wire_type`/`wire_sum` would derive for a non-generic
+                // declaration's own variants. The wire/memory discriminants
+                // are the same fixed `"kind"`/`"tag"` pair `wire_sum` uses.
+                let sum = WireSum {
+                    wire_discriminant: "kind",
+                    memory_discriminant: "tag",
+                    variants: variants
+                        .into_iter()
+                        .map(|(vname, payload)| WireVariant {
+                            name: vname,
+                            payload: payload
+                                .into_iter()
+                                .map(|(fname, t)| WireField {
+                                    shape: wire_ref_of(&t),
+                                    path_segment: fname.clone(),
+                                    name: fname,
+                                    default: None,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                };
+                emit_sum_codec(out, &fn_suffix, &ts_type, &sum, ru);
             }
             GenericInst::ResultInst { ok, err } => {
                 let ok_ts = inner_ts_name(ok);
