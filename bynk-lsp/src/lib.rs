@@ -28,6 +28,7 @@
 //! stable API — `bynk-lsp` is a language-server binary and makes no library
 //! compatibility promise.
 
+pub mod architecture_request;
 pub mod capability_fixes;
 pub mod code_actions;
 pub mod completion;
@@ -1739,6 +1740,35 @@ impl Backend {
         };
         let model = documentation_request::documentation_model_at(text);
         Ok(model.map(|m| documentation_request::to_wire(&m, text)))
+    }
+
+    /// #851: `bynk/architectureModel` — the whole-project architecture-map
+    /// query. This server's third custom request, registered via
+    /// `custom_method` in [`run`] (like `sequence_model`/`documentation_model`).
+    /// Served from the committed round (#733); no refresh nudge, for the same
+    /// reason neither sibling needs one. Unlike both siblings this is
+    /// **project-scoped** — `params.text_document` only resolves which
+    /// project's round to read (via `committed_analysis`); the result covers
+    /// every context/adapter unit in that round, not just the request's own
+    /// file. A non-project file / no committed round → `None` (empty map).
+    async fn architecture_model(
+        &self,
+        params: architecture_request::ArchitectureModelParams,
+    ) -> JsonRpcResult<Option<architecture_request::WireArchModel>> {
+        let uri = params.text_document.uri;
+        let Some(analysis) = self.committed_analysis(&uri).await else {
+            return Ok(None);
+        };
+        let model = architecture_request::architecture_model_for(
+            &analysis.unit_sources,
+            &analysis.snapshots,
+            &analysis.sequence_info,
+        );
+        Ok(Some(architecture_request::to_wire(
+            &model,
+            &analysis.project_root,
+            &analysis.snapshots,
+        )))
     }
 }
 
@@ -3481,10 +3511,12 @@ fn server_capabilities() -> ServerCapabilities {
         }),
         // #846/#847: no standard `ServerCapabilities` field exists for a custom
         // request — `experimental` is the only feature-detection surface a
-        // client has for `bynk/sequenceModel` and `bynk/documentationModel`.
+        // client has for `bynk/sequenceModel`, `bynk/documentationModel`, and
+        // `bynk/architectureModel`.
         experimental: Some(serde_json::json!({
             "sequenceModel": true,
             "documentationModel": true,
+            "architectureModel": true,
         })),
         ..Default::default()
     }
@@ -4134,6 +4166,7 @@ pub async fn run() {
     let (service, socket) = LspService::build(Backend::new)
         .custom_method("bynk/sequenceModel", Backend::sequence_model)
         .custom_method("bynk/documentationModel", Backend::documentation_model)
+        .custom_method("bynk/architectureModel", Backend::architecture_model)
         .finish();
     Server::new(stdin, stdout, socket).serve(service).await;
 }

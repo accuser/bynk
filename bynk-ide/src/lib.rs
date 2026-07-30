@@ -31,6 +31,7 @@ use bynk_syntax::{ast, lexer, parser};
 /// IDE-appropriate as-is, so this is a plain re-export rather than a lowering.
 pub use bynk_emit::project::ContextSequenceInfo;
 
+pub mod architecture;
 pub mod completion;
 pub mod documentation;
 pub mod locals_nav;
