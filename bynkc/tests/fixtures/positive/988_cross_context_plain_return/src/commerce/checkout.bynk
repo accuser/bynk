@@ -1,0 +1,9 @@
+context commerce.checkout
+
+consumes commerce.payment
+
+service pay {
+  on call(id: String) -> Effect[Receipt] {
+    commerce.payment.authorise(id)
+  }
+}
