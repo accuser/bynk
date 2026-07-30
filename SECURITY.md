@@ -19,14 +19,18 @@ pull requests, or discussions.**
 
 Report privately through GitHub's private vulnerability reporting:
 
-1. Go to the repository's **Security** tab.
-2. Click **Report a vulnerability** (under *Advisories*).
-3. Fill in the advisory form with as much detail as you can.
+1. Open <https://github.com/accuser/bynk/security/advisories/new> — or go to the
+   repository's **Security** tab and click **Report a vulnerability** (under
+   *Advisories*).
+2. Fill in the advisory form with as much detail as you can.
 
-This opens a private channel visible only to the maintainers. If private
-vulnerability reporting is unavailable to you, open a minimal public issue that
-says only *"security issue — requesting a private contact"* (no details) so a
-maintainer can reach out.
+This opens a private channel visible only to the maintainers. If you have not
+used private reporting before, GitHub documents the reporter's side of it at
+<https://docs.github.com/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability>.
+
+If private vulnerability reporting is unavailable to you, open a minimal public
+issue that says only *"security issue — requesting a private contact"* (no
+details) so a maintainer can reach out.
 
 Please include, where possible:
 

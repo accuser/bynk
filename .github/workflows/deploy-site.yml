@@ -35,9 +35,17 @@ jobs:
   # expensive build once, instead of every step carrying its own `if:`.
   decide:
     name: Should we deploy?
+    # Three conditions, not one. `conclusion == 'success'` is the CI gate this
+    # workflow exists for; the other two are what make the checkout below safe —
+    # without them a pull request from any fork's `main` reached the trigger and
+    # got its code built in a job holding the Cloudflare deploy token. The long
+    # note is in deploy-playground.yml, which carries the identical guard; the two
+    # must move together.
     if: >-
       github.event_name == 'workflow_dispatch'
-      || github.event.workflow_run.conclusion == 'success'
+      || (github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

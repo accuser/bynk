@@ -43,11 +43,39 @@ jobs:
   # (which is where a step gets forgotten and runs against the wrong tree).
   decide:
     name: Should we deploy?
-    # Only a *successful* CI run may deploy. A manual dispatch is the maintainer
-    # explicitly overriding that, so it is allowed through.
+    # Only a *successful* CI run may deploy, and only one whose commit is already
+    # ON this repository's `main`. A manual dispatch is the maintainer explicitly
+    # overriding the first of those, so it is allowed through.
+    #
+    # The second and third conditions are what make the checkout below safe, and
+    # they are not optional. `workflow_run` runs the DEFAULT BRANCH's copy of this
+    # file with full access to the repo's secrets, and then checks out a SHA named
+    # by the triggering run. CI fires on `pull_request`, which includes pull
+    # requests from forks, and `branches: [main]` filters on the triggering run's
+    # HEAD branch — which for a fork PR is the branch name in the fork, and a
+    # fork's default branch is `main`. So a pull request opened from any fork's
+    # `main` matched this trigger, and its head SHA — arbitrary attacker-authored
+    # code — was checked out and built by the `deploy` job, which runs `npm ci`
+    # (install scripts), a wasm build (build scripts) and `npm run build`, in a job
+    # holding the Cloudflare deploy token. That is the "pwn request" pattern:
+    #   https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+    # OpenSSF Scorecard flagged it as a critical Dangerous-Workflow finding.
+    #
+    # `event == 'push'` is the load-bearing guard: a push to this repository's
+    # `main` requires write access, whereas anyone can open a pull request. It also
+    # correctly excludes the weekly `schedule` run and `merge_group`, neither of
+    # which is a new commit on `main` worth redeploying. The `head_repository`
+    # check closes the same door from the other side and keeps the guarantee
+    # legible without reasoning about branch-name collisions.
+    #
+    # Note that `deploy-site.yml` carries the same guard for the same reason —
+    # they are separate workflows with one shared hazard, so the two must move
+    # together.
     if: >-
       github.event_name == 'workflow_dispatch'
-      || github.event.workflow_run.conclusion == 'success'
+      || (github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
