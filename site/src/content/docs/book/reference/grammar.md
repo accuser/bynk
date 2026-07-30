@@ -852,7 +852,8 @@ The `from <protocol>` header clause (v0.44): `from http`, `from cron`,
 `from queue("<name>")`, `from websocket(in: I, out: O)` (v0.103, binding the
 inbound/outbound frame types), or `from Events(E)` (Events track, spine #936),
 optionally filtered by a structural [`event_pattern`](#rule-event_pattern)
-(slice 1). Absent ⇒ a contract-mediated, `on call`-only service.
+(slice 1) and/or a [`schema_dispatch_clause`](#rule-schema_dispatch_clause)
+(slice 4). Absent ⇒ a contract-mediated, `on call`-only service.
 
 ### event_pattern {#rule-event_pattern}
 
@@ -880,6 +881,27 @@ The value a pattern field is matched against: an `Int`/`String`/`Bool`
 literal, or a nullary sum-type variant reference, bare (`Domestic`) or
 qualified (`Region.Domestic`). A variant that carries a payload is rejected
 by the checker — no nested sub-patterns in this slice.
+
+### schema_dispatch_clause {#rule-schema_dispatch_clause}
+
+{{#grammar schema_dispatch_clause}}
+
+`via schema(N)` on a `from Events(...)` subscription header (Events track
+slice 4, spine #936), after the closing `)` — dispatch by the envelope's
+`schemaVersion` rather than the payload, parallel to
+[`event_pattern`](#rule-event_pattern) but independent of it (a service may
+carry either, both, or neither). Nested inside the `Events` protocol arm, so
+`via` on `http`/`cron`/`queue`/`websocket` is a syntax error, not a checker
+diagnostic. Delivery is deliver-and-filter, unchanged: every emission still
+reaches every subscriber of the event type, and this is one more
+independently-evaluated guard inside the subscriber's own generated
+handler — sibling subscribers with the same or overlapping `N` are not
+diagnosed as ambiguous. `N`'s legality (a positive `Int` literal) is a
+checker concern (`bynk.event.bad_schema_dispatch`), not a grammar one.
+Literal only in this slice; a range pattern (`via schema(2..)`) is a future
+slice's unbuilt grammar.
+
+**See also.** [Understand events](/book/guides/events/understand-events/).
 
 ### cors_policy {#rule-cors_policy}
 

@@ -1317,6 +1317,31 @@ pub(crate) fn emit_service(
                 format!("connection: Connection<{}>", ts_type_ref(out_type)),
             );
         }
+        // Events track, slice 4 (spine #936): a `via schema(N)` guard needs
+        // `env.schemaVersion` regardless of whether the subscriber declared
+        // the optional `env: EventEnvelope` parameter (slice 2) — a bare
+        // `on event(e: E)` handler has no envelope in scope otherwise. When
+        // missing, insert a synthetic parameter in the same position a real
+        // `env` would occupy, under a name distinct from anything a user
+        // could write, so it can never collide with a declared one. The two
+        // envelope-forwarding call sites (`workers.rs`, `project.rs`) widen
+        // their own condition to match, so the value actually arrives here.
+        let schema_dispatch_env_binder = if handler.kind == HandlerKind::Event
+            && let ServiceProtocol::Events {
+                schema_dispatch: Some(_),
+                ..
+            } = &s.protocol
+        {
+            match handler.params.get(1) {
+                Some(env_param) => Some(ts_ident(&env_param.name.name)),
+                None => {
+                    params.insert(1, "__bynkSchemaEnv: EventEnvelope".to_string());
+                    Some("__bynkSchemaEnv".to_string())
+                }
+            }
+        } else {
+            None
+        };
         // Lower the body first so we can detect cross-context usage and
         // adjust the deps shape accordingly.
         let mut body_out = String::new();
@@ -1429,6 +1454,25 @@ pub(crate) fn emit_service(
         {
             let prologue = format!(
                 "{}if (!({guard})) return undefined;\n",
+                " ".repeat(INDENT_STEP * 2)
+            );
+            body_out.insert_str(0, &prologue);
+        }
+        // Events track, slice 4 (spine #936): a `via schema(N)` guard,
+        // independent of and in addition to the payload-pattern guard above
+        // — a service may carry either, both, or neither. Same
+        // prologue technique, same three-delivery-path coverage. The
+        // envelope binder is either the user's own declared `env` name or
+        // the synthetic one inserted above.
+        if let ServiceProtocol::Events {
+            schema_dispatch: Some(dispatch),
+            ..
+        } = &s.protocol
+            && let Some(env_binder) = &schema_dispatch_env_binder
+        {
+            let SchemaVersionPattern::Literal(version) = &dispatch.pattern;
+            let prologue = format!(
+                "{}if (!({env_binder}.schemaVersion === {version})) return undefined;\n",
                 " ".repeat(INDENT_STEP * 2)
             );
             body_out.insert_str(0, &prologue);

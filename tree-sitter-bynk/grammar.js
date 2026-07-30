@@ -757,6 +757,7 @@ module.exports = grammar({
             field("event_type", $._type_ref),
             optional(field("pattern", $.event_pattern)),
             ")",
+            optional(field("schema_dispatch", $.schema_dispatch_clause)),
           ),
         ),
       ),
@@ -772,6 +773,22 @@ module.exports = grammar({
         repeat(seq(field("field", $.event_pattern_field), ",")),
         "..",
         "}",
+      ),
+    // Events track, slice 4 (spine #936): dispatch by the envelope's
+    // `schemaVersion`, parallel to the payload pattern above but written
+    // after the closing `)` (matching the design notes' own form) rather
+    // than nested inside it. Nested inside the `Events` choice arm, not a
+    // free-standing clause any protocol could carry — `via` on `http`/
+    // `cron`/`queue`/`websocket` is a syntax error, not a checker
+    // diagnostic. Literal only (v1 of this clause); a range pattern
+    // (`via schema(2..)`) is unbuilt grammar, left to a future slice.
+    schema_dispatch_clause: ($) =>
+      seq(
+        "via",
+        "schema",
+        "(",
+        field("version", seq(optional("-"), $.number_literal)),
+        ")",
       ),
     event_pattern_field: ($) =>
       seq(

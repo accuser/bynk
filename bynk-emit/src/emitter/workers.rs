@@ -430,7 +430,7 @@ pub(crate) fn emit_worker_compose(
                 // no route table entry — just a plain wrapper like `on
                 // call`'s).
                 HandlerKind::Event => {
-                    emit_event_wrapper(&mut out, sname, h);
+                    emit_event_wrapper(&mut out, sname, h, &service.protocol);
                 }
             }
         }
@@ -597,15 +597,28 @@ fn emit_call_wrapper(
 /// by `bynk.event.bad_params`), and forwards it into the generated method
 /// only then — a handler that kept `on event(e: E)` sees no change to its
 /// call at all.
-fn emit_event_wrapper(out: &mut String, sname: &str, h: &Handler) {
+///
+/// Slice 4 (#985): a `via schema(N)` clause needs the envelope even when
+/// the handler didn't declare it — `emit_service` inserts a synthetic
+/// `env` parameter in that case, and needs the value forwarded to line up
+/// positionally, so the condition widens to match.
+fn emit_event_wrapper(out: &mut String, sname: &str, h: &Handler, protocol: &ServiceProtocol) {
     let _ = writeln!(
         out,
         "    async {sname}(payload: unknown, envelope: unknown) {{"
     );
+    let wants_envelope = h.params.len() == 2
+        || matches!(
+            protocol,
+            ServiceProtocol::Events {
+                schema_dispatch: Some(_),
+                ..
+            }
+        );
     // Mirrors Bundle mode's `ev.payload as any` (project.rs's `__eventsDispatch`
     // closure): the event's real payload type only exists at the *publisher's*
     // end, not on this wire (`payload` arrives here as parsed JSON).
-    if h.params.len() == 2 {
+    if wants_envelope {
         let _ = writeln!(
             out,
             "      return handlers.{sname}.event(payload as any, envelope as any, deps);"

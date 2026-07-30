@@ -1,0 +1,13 @@
+context commerce.order
+
+exports transparent { PaymentConfirmed }
+
+event PaymentConfirmed = {
+  orderId: String,
+}
+
+service OnPayment from Events(PaymentConfirmed) via schema(0) {
+  on event(e: PaymentConfirmed) -> Effect[()] {
+    Effect.pure(())
+  }
+}

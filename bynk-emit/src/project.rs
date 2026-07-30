@@ -5038,16 +5038,30 @@ fn emit_composition_root(
                         // is only forwarded to a subscriber that declared
                         // the optional second `env: EventEnvelope`
                         // parameter — a subscriber that kept `on event(e:
-                        // E)` sees no change to its call at all.
+                        // E)` sees no change to its call at all. Slice 4
+                        // (#985): also forwarded when the subscriber's
+                        // protocol carries a `via schema(N)` clause, even if
+                        // undeclared — `emit_service` inserts a synthetic
+                        // `env` parameter in that case, and needs the value
+                        // to line up positionally.
                         let wants_envelope = unit_tables
                             .get(sub_ctx)
                             .and_then(|t| t.services.get(sub_svc))
-                            .and_then(|s| {
-                                s.handlers
+                            .is_some_and(|s| {
+                                let declared = s
+                                    .handlers
                                     .iter()
                                     .find(|h| matches!(h.kind, HandlerKind::Event))
-                            })
-                            .is_some_and(|h| h.params.len() == 2);
+                                    .is_some_and(|h| h.params.len() == 2);
+                                declared
+                                    || matches!(
+                                        &s.protocol,
+                                        ServiceProtocol::Events {
+                                            schema_dispatch: Some(_),
+                                            ..
+                                        }
+                                    )
+                            });
                         let call_args = if wants_envelope {
                             "ev.payload as any, ev.envelope"
                         } else {

@@ -159,3 +159,50 @@ context commerce.notifications {
           body: (block
             tail: (effect_pure_expr
               (unit_literal))))))))
+
+==========================
+event declaration with a via schema(N) dispatch clause (slice 4, #985)
+==========================
+
+context commerce.order {
+  event PaymentConfirmed = {
+    orderId: String,
+  }
+
+  service OnPaymentV1 from Events(PaymentConfirmed) via schema(1) {
+    on event(e: PaymentConfirmed) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier)
+      (identifier))
+    (event_decl
+      name: (identifier)
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (base_type))))
+    (service_decl
+      name: (identifier)
+      protocol: (service_protocol
+        event_type: (identifier)
+        schema_dispatch: (schema_dispatch_clause
+          version: (number_literal)))
+      (handler
+        (event_handler
+          (param
+            name: (identifier)
+            type: (identifier))
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            tail: (effect_pure_expr
+              (unit_literal))))))))
