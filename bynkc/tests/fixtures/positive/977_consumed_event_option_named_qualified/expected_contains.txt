@@ -1,0 +1,11 @@
+# #977: a consumed named type reached only as the *type argument* of a built-in
+# generic wrapper (`Option[Region]`) must still be qualified through the owner's
+# `import type * as commerce_order` alias in the subscriber's own regenerated
+# codec. `Region` is never declared in `commerce.notifications`, so the bare name
+# fails `tsc --strict` with `TS2304: Cannot find name 'Region'`.
+#
+# The contrast case — a *directly* typed field (`region: Region`) — is
+# 966_event_field_default_cross_context, which was always qualified correctly.
+# This fixture pins the generic-wrapped path that was not.
+export function serialise_Option_Region(value: Option<commerce_order.Region>): JsonValue {
+export function deserialise_Option_Region(json: JsonValue, path: string = "$"): Result<Option<commerce_order.Region>, BoundaryError> {
