@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.245**.
+written against **v0.246**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.246.0** | Hover and a VS Code "Show Wire Contract" panel surface a handler's request envelope, its cross-context contract hash, and each boundary type's re-validation strategy — derived from a new shared IR the emitter's own codec generation now renders too |
 | **v0.245.0** | A VS Code webview maps a whole project's contexts, their `consumes` edges, and the capabilities/providers/services/agents each one binds |
 | **v0.244.0** | "Events track: a via schema(N) clause on a from Events(...) subscription header dispatches delivery by the envelope's schemaVersion, independent of the existing payload pattern." |
 | **v0.243.0** | "Events track: the cross-build schema registry (bynk.schema.lock) computes each event's schema version from its build history, auto-bumping on additive shape changes and verifying a declared @schema(N) against the computed value." |
