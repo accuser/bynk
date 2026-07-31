@@ -310,6 +310,10 @@ field is the smallest indivisible unit of the currency.
 
 Hover content stays compact — typically under twenty lines. For declarations that are long (e.g., a capability with many operations), the full declaration is rendered; the editor's hover popup handles overflow with scrolling.
 
+**Wire contract (#855).** Hovering a resolved `Service` symbol (rung 1, above) that declares exactly one handler gets a **wire-contract appendix** appended after everything the declaration's own rendering already produced — a `---` rule, a **Wire contract** heading, then the request envelope (all three cases, §3.26), the cross-context contract form + hash (`on call` only), and (HTTP handlers only) the reachable response status set. This changes only the *tail* of what rung 1 already returned `Some` for; a service with more than one handler gets no appendix (there is no way to tell, from a bare name hover, which handler's contract the author means), which is the pre-#855 behaviour, unchanged — never a wrong answer, only sometimes an absent one.
+
+A handler's own **header** — the `on` keyword, the HTTP method/handler-kind token, and any route string literal — resolves through no rung before #855 (`GET` lexes as a bare `Ident` with no index symbol, and no top-level declaration is named after it). #855 adds a new rung, tried after the locals rung and before the lexical fallbacks (the full ladder is enumerated in `bynk-lsp/src/hover.rs`'s module doc), guarded to exactly the handler's header byte range: from the handler's span start up to (but excluding) its first param's span start, or its body's span start with no params. That range holds only tokens no other rung can ever resolve, so the new rung is provably unable to shadow rung 1 — a param's *type* name (`client: ClientId`) always sits past the guarded range and keeps resolving to its declaration exactly as before. Hovering the header renders the same wire-contract body as the appendix above, standalone (headed by the service/handler name rather than appended after a declaration render) — see §3.26.
+
 ### 3.4 Go-to-definition
 
 `textDocument/definition` returns the location of a name's declaration.
@@ -677,6 +681,27 @@ One node per context/adapter unit (excluding the toolchain's synthetic `bynk` ca
 
 The diagram is generated **client-side** as a Mermaid `flowchart` (`vscode-bynk/src/webview/architecture-gen.ts`), reusing the vendored Mermaid asset §3.23 introduced — a second diagram type from the same dependency, no new one added. Click-to-code is wired by **Mermaid node id**, not a DOM-order zip: unlike a `sequenceDiagram` render (§3.23's own click-wiring note), a `flowchart`'s rendered SVG preserves the node id this module assigns (`id="flowchart-<mermaidId>-<n>"`), so each click target is looked up directly by id — robust against Mermaid's dagre layout reordering the DOM, which a non-linear flowchart is free to do (unlike the sequence view's strictly left-to-right participants).
 
+### 3.26 Wire contract (#855)
+
+`bynk/wireContract` — the server's **fourth custom request**, wired the same way as §3.23–§3.25 (`LspService::build(...).custom_method("bynk/wireContract", Backend::wire_contract)`, advertised through `ServerCapabilities.experimental` as `{"wireContract": true}`). File-scoped **and** position-scoped, like §3.23's `bynk/sequenceModel` rather than §3.25's project-scoped `bynk/architectureModel` — the panel is per-handler. Params are the usual two-field cursor shape (`textDocument`, `position`); the response is a `WcModel | null` (`null` when no handler encloses the cursor, the file is not part of a project, or the pipeline bailed before the checker for that unit).
+
+Backs the VS Code extension's **"Bynk: Show Wire Contract"** command and the header hover rung (§3.3). Served from the **committed round** through the non-refreshing decoration gate (§3.2.1, #733), same as every custom request in this server — on-demand, with **no refresh nudge**: there is no generic "refresh a custom method" in the LSP spec or in `tower_lsp::Client`, so the client simply re-issues the request each time the command or hover fires.
+
+**What the model carries.** The query, `bynk_ide::wire_contract::wire_contract_at`, re-parses the committed snapshot (`sequence_model_at`'s convention, §3.23) to find the `Handler` enclosing the cursor, then builds:
+
+- the **request envelope** — see below;
+- (`on call` only) the **cross-context contract form + hash** — the exact `CrossContextService` projection and canonicalisation `bynk-emit`'s `own_contract_hashes` uses, over the same combined type table (`bynk-emit`'s retained `ContextBoundaryInfo`, threaded through `ProjectAnalysis` → `ProjectDiagnostics` → the LSP `Analysis`), so the hash the peek shows is provably the hash the emitted `X-Bynk-Contract` constant stamps;
+- the **boundary type shapes** the envelope and responses reference — `bynk_check::wire::WireModel`, the same IR `bynk-emit`'s codec generation renders (DECISION C, `design/pending/wire-contract-855.md` pre-stamp / its post-stamp ADR home), narrowed to this one handler's params/return via a synthetic single-handler service so `wire::collect_boundary_types` does not pull in the rest of the service's handlers;
+- (HTTP handlers only) the **reachable response set**, tagged by origin.
+
+**The three-case envelope (not two).** `workers_entry.rs`'s `params.len() == 1` branch is the *only* bare-value case; everything else, including **zero** params, takes the object branch. The wire shape mirrors this exactly: `Empty` (no params — the request body is not read at all, not an empty keyed object), `Bare { param, shape }` (exactly one param — the request body **is** the value of `param`, unwrapped), `Keyed { params }` (two or more, an object keyed by parameter name in declaration order). Rendering only two cases would misstate a zero-arg service as accepting an empty object body it never inspects.
+
+**Boundary-implicit responses.** An HTTP handler's reachable status set has three origins, tagged `DeclaredSuccess` / `Constructed { range }` / `BoundaryImplicit { why }` so the panel can render a boundary-injected outcome honestly rather than implying the author wrote it: the declared success case (`Effect[HttpResult[T]]` stripped to `Ok`/200), every `HttpResult` variant literally constructed in the handler body, and the responses the body never names — a 400 whenever the handler has any param (every param is structurally re-validated on the way in) and a 404 on an `Option?` short-circuit (ADR 0177). A 401 on caller-binding is deferred (needs actor/`by` resolution this phase does not do); shipping only the two above is a deliberate, recorded scope cut (`design/pending/wire-contract-855.md` pre-stamp / its post-stamp ADR home), not an oversight. The `Ok`-overload disambiguation (a bare `Ok(_)` vs. a same-named ordinary value) uses the file's recorded `expr_types`, empty for a file with errors (ADR 0063's clean-file ceiling) — the peek then falls back to the declared-return-type heuristic, the same fallback `bynk-emit`'s own lowering uses for the identical ambiguity.
+
+**"No cross-context contract here."** `NoCrossContextReason::NotACallHandler` (an HTTP/cron/message/websocket/event handler — never reached by another context's call) or `SingleContext` (the project has only one real context/adapter, so the question does not arise) — rendered on the **panel only**; hover's rung-1 appendix stays quiet about an absence rather than adding a line most hovers would never want.
+
+**Rendering: plain DOM, not Mermaid or markdown.** A JSON-shape tree is a nested list, not a graph and not prose — `vscode-bynk/src/webview/wire-render.ts` builds it element-by-element (`bodyCss`-styled, `var(--vscode-*)` tokens, under the same `default-src 'none'` + nonce CSP §3.24 established), so every node owns its own click-to-code location directly rather than needing a DOM-order zip against an SVG. Each boundary type's block carries a re-validation badge derived from its `Revalidation` (`ViaConstructor`/`Inline` → "re-validated `<predicate>` at the boundary"; `StructuralOnly` → the honest counter-statement, "**not** re-validated here — opaque to this context; skew is caught by the contract hash instead"; `Base64Decode` → "wire `string` (base64), decoded not cast") — DECISION B, `design/pending/wire-contract-855.md` pre-stamp / its post-stamp ADR home.
+
 ---
 
 ## 4. Implementation architecture
@@ -768,6 +793,7 @@ Custom (non-standard) requests — no `LanguageServer` trait slot, registered vi
 bynk/sequenceModel               (#846, §3.23; served from the committed round, no refresh nudge)
 bynk/documentationModel          (#847, §3.24; whole-file, served from the committed round, no refresh nudge)
 bynk/architectureModel           (#851, §3.25; project-scoped, served from the committed round, no refresh nudge)
+bynk/wireContract                (#855, §3.26; file+position-scoped, served from the committed round, no refresh nudge)
 ```
 
 Not declared (genuinely out of scope so far):

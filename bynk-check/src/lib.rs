@@ -29,5 +29,6 @@ pub mod requirements;
 pub mod resolver;
 pub mod store_ops;
 pub mod websocket;
+pub mod wire;
 
 pub use firstparty::Platform;

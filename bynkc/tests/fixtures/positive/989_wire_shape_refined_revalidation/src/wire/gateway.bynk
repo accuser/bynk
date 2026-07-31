@@ -1,0 +1,33 @@
+---
+#855 anti-drift fixture (`bynkc/tests/wire_shape_drift.rs`): the caller side.
+It consumes `wire.auth` and calls `login`, so under `--target workers` it
+generates its **own** codecs for the callee-owned boundary types
+(`ClientId`, `AuthId`, `Session`, `LoginError`) rather than importing the
+callee's module as a value — mirroring `404_consumed_type_caller_codecs`'
+shape, renamed for this fixture's own boundary types.
+---
+context wire.gateway
+
+consumes wire.auth as Auth
+
+exports transparent { GatewayError }
+
+type GatewayError = enum {
+  Rejected,
+}
+
+service enter {
+  ---
+  Admit a request. Maps every login failure onto the gateway's own error, so
+  the callee's `LoginError` never appears in this context's own signature —
+  it is reached only inside the generated
+  `deserialise_Result_Session_LoginError`.
+  ---
+  on call(seed: String) -> Effect[Result[(), GatewayError]] {
+    let s <- Auth.login(seed)
+    match s {
+      Ok(_) => Ok(())
+      Err(_) => Err(Rejected)
+    }
+  }
+}

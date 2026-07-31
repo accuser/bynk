@@ -33,6 +33,7 @@ exclude = [
     "tests/project_model.rs",
     "tests/document_link_fixture.rs",
     "tests/architecture_request.rs",
+    "tests/wire_contract_request.rs",
 ]
 
 [lib]
