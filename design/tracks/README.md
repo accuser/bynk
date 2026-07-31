@@ -26,6 +26,13 @@ For everything else, the standard single-increment
   an issue citing this doc and the foundational ADRs; *accepting that proposal*
   (label `accepted`) is the approval to build.
 
+A track whose theme is one phase of a longer programme names its **trajectory
+document** ([`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md)
+is the first) as its theme, rather than a design-notes section. The trajectory
+holds the endpoint and the phase ordering; the track holds the *method* for its
+own phases. Both are living documents, but only the track retires when its
+slices land.
+
 ## Lifecycle
 
 1. **Propose.** Open a **track issue** from the
@@ -71,6 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
+| [`compiler-architecture.md`](compiler-architecture.md) | [#996](https://github.com/accuser/bynk/issues/996) | Settling (step-2 carve-out claimed at the outset — see the doc’s §3 provenance note) | Phases 0–2 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): test seams, the paydown remainder, and the typed hoist. No language surface change |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -78,8 +86,10 @@ was opened retroactively. `lsp-foundations.md` (now retired) was the first
 track to run the ADR 0167 flow from the start — spine issue first, doc via a
 settling draft PR; `testing-the-boundary.md` (now retired) was the second;
 `locale-capability.md` (now retired) was the third; `message-bundles.md`
-(now retired) was the fourth; `idempotency-capability.md` is the fifth — and
-the first still active.
+(now retired) was the fourth; `idempotency-capability.md` is the fifth;
+`compiler-architecture.md` is the sixth, and its theme is internal
+architecture rather than language surface — as `crate-decomposition.md`
+and `increment-allocation.md`, both retired, were before it.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
