@@ -1,8 +1,8 @@
 # Compiler architecture — migrating to the greenfield reference
 
-- **Status:** **Settling.** §3's questions are answered but the answers have not been reviewed — see
-  the provenance note at the head of §3, which claims the track README's step-2 carve-out from the
-  outset. Awaiting a settling PR. Merging this doc settles **direction**; it is not a build
+- **Status:** **Settling.** §3's questions are answered, and the document has been reviewed — but the
+  *decisions* have not been argued with. See the provenance note at the head of §3, which keeps the
+  track README's step-2 carve-out in force. Merging this doc settles **direction**; it is not a build
   authorisation. Each slice is an ordinary increment proposal, and `accepted` on that sub-issue is
   the approval to build.
 - **Spine:** [#996](https://github.com/accuser/bynk/issues/996)
@@ -91,23 +91,33 @@ taught in review, every time.
 
 ---
 
-## 3. Design questions — answered 30 July 2026, review pending
+## 3. Design questions — answered 30 July 2026; document reviewed, decisions not yet argued
 
-> **Provenance, stated plainly: this settling has not been reviewed.**
+> **Provenance, stated plainly: the document has been reviewed; the decisions have not been argued
+> with.**
 >
 > ADR 0167 step 2 puts the settling phase inside a **draft PR**, where the open questions are closed
 > "under line-anchored review", and marking the PR ready "asserts the questions are closed". These
-> six were closed in a design conversation instead. The prose below is therefore *proposed* settling,
-> not *tested* settling.
+> six were closed in a design conversation instead. The prose below was therefore *proposed*
+> settling, not *tested* settling.
 >
-> The track README records this exact failure and its remedy: `idempotency-capability.md`'s settling
-> PR (#922) "was marked ready for review and merged 55 seconds later with no review (`reviews: []`)",
-> and the step-2 carve-out applied — the track's real phase stayed **Settling** past the merge until a
-> genuine re-settling pass (#924, #927) closed its questions for real.
+> PR #997 has since had a substantive review — seven findings, all addressed, and the document is
+> materially better for it. But every one of them was a **conformance** finding: rule ids cited and
+> never defined, an appendix whose scope was unstated, a tier taxonomy named three ways across three
+> documents, cross-references left over from a rescope, a probe harness written in the present tense
+> that does not exist, and two wrong counts. **That is a review of the artefact, not of the
+> decisions.** Not one finding touched D2 or §3.6 — the two this note nominates below as most needing
+> a second reader — and it was the author's own review of decisions he had settled in conversation,
+> so it could not have tested them by construction.
 >
-> **This track claims that carve-out from the outset.** Its phase is Settling until a settling PR has
-> actually tested the assertion, whatever this document's status line says. Better to claim it than
-> to have it noticed.
+> The track README records the adjacent failure and its remedy: `idempotency-capability.md`'s
+> settling PR (#922) "was marked ready for review and merged 55 seconds later with no review
+> (`reviews: []`)", and the step-2 carve-out applied — the track's real phase stayed **Settling**
+> past the merge until a genuine re-settling pass (#924, #927) closed its questions for real.
+>
+> This track is in better shape than that one was, and in the same place. **The carve-out stands.**
+> Its phase is Settling until D2 and §3.6 have actually been argued with — whatever this document's
+> status line, or the PR's ready state, asserts. Better to claim it than to have it noticed.
 >
 > The two decisions most worth a second reader are **D2** (the emit-ABI posture, because it interacts
 > with a 1.0 commitment already made) and **§3.6** (running phases 0–2 ahead of 1.0, because it is
