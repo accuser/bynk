@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.246.4** | "**Breaking (Rust API, not language surface):** `bynkc` no longer re-exports fourteen whole modules from `bynk-check`/`bynk-emit` (`bynkc::checker`, `bynkc::resolver`, `bynkc::emitter`, `bynkc::project`, and ten others) — only its ~30 item re-exports (`CompileOptions`, `compile_project`, `BuildTarget`, …) remain public" |
 | **v0.246.3** | "`closes_rule:` pending-file field + `stamp`-materialised rule ledger, closing out T0.0's deferred Closes-Rule provenance (#1001)" |
 | **v0.246.2** | "`cargo xtask greenfield-status` — the T0.0 probe harness (13 probes, 9 gated against a committed table)" |
 | **v0.246.1** | Settle the compiler-architecture track — the refactor acceptance gate, the emit-ABI posture, and the lowering substrate |

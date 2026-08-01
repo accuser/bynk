@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "**Breaking (Rust API, not language surface):** `bynkc` no longer re-exports fourteen whole modules from `bynk-check`/`bynk-emit` (`bynkc::checker`, `bynkc::resolver`, `bynkc::emitter`, `bynkc::project`, and ten others) — only its ~30 item re-exports (`CompileOptions`, `compile_project`, `BuildTarget`, …) remain public"
----
+# 0312 — bynkc's published Rust API is its item re-exports, not its module structure
 
-## ADR: narrow-bynkc-public-api
-title: bynkc's published Rust API is its item re-exports, not its module structure
-summary: The fourteen whole-module re-exports are deleted; bynkc keeps its lib, its ~30 item re-exports, and cargo install bynkc
+- **Status:** Accepted (v0.246.4)
 
 **Context.** `bynkc` carries both a `[lib]` and a `[[bin]]`. The library is a
 thin re-export facade, and nothing in the workspace depends on it — the

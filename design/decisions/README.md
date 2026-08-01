@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0312](0312-narrow-bynkc-public-api.md) | **bynkc's published Rust API is its item re-exports, not its module structure** (v0.246.4) — The fourteen whole-module re-exports are deleted; bynkc keeps its lib, its ~30 item re-exports, and cargo install bynkc | Accepted (v0.246.4) |
 | [0311](0311-the-lowering-substrate.md) | **The emitter lowers to TypeScript text on purpose; here is the cost and the trigger to stop** (v0.246.1) — The substrate decision that was never recorded, made explicit, with its amendment and its replacement triggers | Accepted (v0.246.1) |
 | [0310](0310-the-emit-abi-is-published-the-codegen-is-not.md) | **The emit ABI is a small published surface; the codegen underneath it is not** (v0.246.1) — Four enumerated shapes get their own semver, independent of the compiler; the emitted TypeScript stays free to change within 1.x | Accepted (v0.246.1) |
 | [0309](0309-refactor-acceptance-gate-per-tier.md) | **The refactor acceptance gate is per-tier, not byte-identical goldens alone** (v0.246.1) — Amends ADR 0059 property 1 — the golden gate is insufficient where the moved code is not pure helpers | Accepted (v0.246.1) |
