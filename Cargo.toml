@@ -37,6 +37,19 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/accuser/bynk"
 homepage = "https://github.com/accuser/bynk"
 
+[workspace.lints.clippy]
+# R2.12 (design/bynk-greenfield-compiler.md): refuses the wildcard-arm class of drift
+# bug this rule exists to catch (`type_refs_match`, #8) at the type-aware clippy pass
+# rather than a hand-rolled scan. `warn`, not `deny`: nothing opts in yet — no crate
+# manifest sets `[lints] workspace = true` — so this table is a recorded target level,
+# not (yet) an enforced one. Track slice T0.3 (design/tracks/compiler-architecture.md);
+# the 296-violation inventory is recorded on the spine, #996. Per-crate `deny` lands as
+# each crate is cleaned, per the track's own sequencing — see T0.3's proposal for why
+# wiring `[lints] workspace = true` into a crate that still has violations is deferred
+# (CI runs `cargo clippy --workspace --all-targets -- -D warnings`, which would turn
+# every one of those warnings into a build failure the moment a crate opts in).
+wildcard_enum_match_arm = "warn"
+
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
 # dependency requirement; path is used for in-workspace builds.

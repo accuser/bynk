@@ -8,7 +8,7 @@ Track slice T0.0 (#999). Nine probes are gated — a disagreement between this f
 
 | Probe | Gated | Reads |
 |---|---|---|
-| `workspace_lints` | yes | absent |
+| `workspace_lints` | yes | present — wildcard_enum_match_arm = "warn" |
 | `fs_below_driver` | yes | 6 files (bynk-emit=3, bynk-ide=2, bynk-fmt=1) |
 | `options_sources` | yes | present |
 | `hoist_sinks` | yes | 31 |
