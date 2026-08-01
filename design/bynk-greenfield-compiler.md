@@ -320,9 +320,9 @@ does over the same project (#64). One pipeline, one answer.
 substring of the pipeline's final emitted text.**
 *Rationale:* this is the architectural property Appendix B and D cite under this number — a refactor
 whose only net is a whole-file golden one crate up (#58; ADR 0059's gate), and phase outputs that are
-not snapshot-testable in isolation. It is a distinct claim from the acceptance-*policy* ADR-B states
+not snapshot-testable in isolation. It is a distinct claim from the acceptance-*policy* ADR 0309 states
 (which tier of change needs which gate): R3.3 is the property that makes a phase-local snapshot fixture
-possible to write at all; ADR-B is the policy that then requires one. Section 3.4's demand-driven
+possible to write at all; ADR 0309 is the policy that then requires one. Section 3.4's demand-driven
 precondition table depends on the same property for a different reason — a query cannot be memoised
 against an output that cannot be compared for equality.
 
@@ -2155,7 +2155,7 @@ capabilities silently at runtime. **"All capabilities are adapters" is, in subst
 the enumeration be maintained** — made at the release where the project issues its first
 compatibility promise to code it did not write. That is a defensible thing to want, it is cheap while
 the list is four items long, and it is not a thing to arrive at by refactor. The decision is recorded
-as ADR-C of the compiler-architecture track; the enforcement is a build-time guard that the vendored
+as ADR 0310; the enforcement is a build-time guard that the vendored
 first-party bindings reference only the enumerated surface.
 
 > **Language-surface note.** R14.2's metadata (`@nondeterministic`, platform nativity,
