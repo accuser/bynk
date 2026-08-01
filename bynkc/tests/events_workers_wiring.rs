@@ -249,7 +249,7 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
 
@@ -374,7 +374,7 @@ fn workers_events_pattern_leaves_fanout_routing_unchanged() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
 
@@ -530,7 +530,7 @@ fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
 
@@ -642,7 +642,7 @@ fn workers_events_nested_payload_field_gets_a_transitive_codec() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
 

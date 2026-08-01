@@ -19,8 +19,8 @@
 
 use std::fs;
 
-use bynkc::kernel_methods::{KernelMethod, QUERY_METHODS};
-use bynkc::store_ops::MAP_QUERY_ACCESSORS;
+use bynk_check::kernel_methods::{KernelMethod, QUERY_METHODS};
+use bynk_check::store_ops::MAP_QUERY_ACCESSORS;
 use bynkc::{CompileOptions, ProjectFailure, compile_project};
 
 /// Compile a probe agent with `store items: Map[String, Int]` whose handler

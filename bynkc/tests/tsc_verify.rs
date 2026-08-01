@@ -282,8 +282,11 @@ fn emitted_typescript_passes_tsc_strict() {
     // `emit_tsconfig`) sweeps every staged fixture subdir, so one `tsc`
     // checks them all. The per-fixture `tsconfig.json` files in each subdir
     // are inert here — `tsc -p` consults only the root config.
-    fs::write(root.join("tsconfig.json"), bynkc::emitter::emit_tsconfig())
-        .expect("write root tsconfig");
+    fs::write(
+        root.join("tsconfig.json"),
+        bynk_emit::emitter::emit_tsconfig(),
+    )
+    .expect("write root tsconfig");
 
     let (ok, output) = run_tsc_in(&runner, &root);
     if !ok {
@@ -361,10 +364,14 @@ fn embedded_runtime_passes_tsc_strict_standalone() {
     fs::create_dir_all(&tmp).unwrap();
     fs::write(
         tmp.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
-    fs::write(tmp.join("tsconfig.json"), bynkc::emitter::emit_tsconfig()).unwrap();
+    fs::write(
+        tmp.join("tsconfig.json"),
+        bynk_emit::emitter::emit_tsconfig(),
+    )
+    .unwrap();
     let (ok, output) = run_tsc_in(&runner, &tmp);
     if ok {
         let _ = fs::remove_dir_all(&tmp);
@@ -417,7 +424,7 @@ fn embedded_runtime_strips_types_under_node() {
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
     let rt = tmp.join("runtime.ts");
-    fs::write(&rt, bynkc::emitter::emit_runtime_module()).unwrap();
+    fs::write(&rt, bynk_emit::emitter::emit_runtime_module()).unwrap();
     let out = Command::new("node")
         .arg("--experimental-strip-types")
         .arg("--check")

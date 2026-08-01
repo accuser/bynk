@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use bynkc::index::{ProjectIndex, SymbolKey, SymbolKind};
+use bynk_check::index::{ProjectIndex, SymbolKey, SymbolKind};
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/positive/216_method_index/src")

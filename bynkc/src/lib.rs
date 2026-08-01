@@ -30,23 +30,6 @@ pub use bynk_driver::{coverage, test_json};
 pub use bynk_syntax::error::Severity;
 pub use bynk_syntax::{CompileError, ast, diagnostics, error, keywords, lexer, parser, span};
 
-// The semantic-analysis layer moved down into the `bynk-check` crate (slice 3):
-// resolver, checker, the registries, first-party sources, actors, and the
-// captured index/hints/expr_types/locals tables. Re-export its modules at the
-// crate root so `bynkc`'s public API and every internal `crate::checker` /
-// `crate::index` path is preserved — the emitter/project layers above see no
-// change.
-pub use bynk_check::{
-    actors, builtin_names, checker, expr_types, firstparty, hints, index, kernel_methods, locals,
-    requirements, resolver, store_ops,
-};
-
-// Build orchestration + TS emission moved down into the `bynk-emit` crate
-// (slice 4). Re-export its modules at the crate root so `bynkc`'s public API and
-// every internal `crate::emitter` / `crate::project` path is preserved — the CLI
-// and compile/diagnose glue see no change.
-pub use bynk_emit::{emitter, project};
-
 // The formatter moved down into the `bynk-fmt` leaf (slice 2). Re-export it as
 // `bynkc::fmt` so the `bynkc fmt` command and existing `bynkc::fmt::…` consumers
 // (e.g. the LSP's formatting path) keep resolving unchanged.
@@ -61,18 +44,18 @@ pub use bynk_render::{
     render_errors_short, render_project_errors,
 };
 
-pub use firstparty::Platform;
+pub use bynk_check::firstparty::Platform;
 
 // The Node floor moved to `bynk-emit` (slice 7) so the `bynk` driver can read it
 // without depending on the `bynkc` crate. Re-export it so `bynkc::NODE_MAJOR_FLOOR`
 // and the `cli.rs` doc-links resolve unchanged.
-pub use bynk_emit::{
-    Compiled, NODE_MAJOR_FLOOR, compile, compile_with_warnings, write_compiled_file, write_output,
-};
-pub use project::{
+pub use bynk_emit::project::{
     AttributedError, BuildTarget, CompileOptions, CompiledFile, DiscoveredCase, DiscoveredSuite,
     ImportExt, ProjectFailure, ProjectOutput, ProjectPaths, ProjectPathsError, Roots, TestLocation,
     compile_project, read_project_paths, try_read_project_paths,
+};
+pub use bynk_emit::{
+    Compiled, NODE_MAJOR_FLOOR, compile, compile_with_warnings, write_compiled_file, write_output,
 };
 
 // In-browser track (ADR 0137): strip-only TS→JS, re-exported so the CLI, the API,

@@ -207,7 +207,7 @@ fn refinement_actor_enforces_401_403_allow_trichotomy() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     fs::write(run_dir.join("driver.ts"), DRIVER_TS).unwrap();

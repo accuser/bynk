@@ -182,7 +182,7 @@ fn compile_and_run(runner: &(String, Vec<String>), schema_annotation: &str, tag:
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     fs::write(run_dir.join("driver.ts"), DRIVER_TS).unwrap();

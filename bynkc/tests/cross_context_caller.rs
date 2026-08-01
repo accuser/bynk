@@ -349,7 +349,7 @@ fn cross_context_caller_reads_live_id_and_fails_closed() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     // v0.177 (#643): read the callee's compiled constant out of its emitted
@@ -443,7 +443,7 @@ fn bundle_cross_context_caller_reads_the_consuming_context_name() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     fs::write(run_dir.join("driver.ts"), BUNDLE_DRIVER_TS).unwrap();
@@ -515,7 +515,7 @@ fn cross_context_caller_side_codec_round_trips_a_user_payload() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     // `forward`'s contract hash lives in app-a's own entry (the constant it

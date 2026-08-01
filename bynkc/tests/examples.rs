@@ -130,7 +130,11 @@ fn every_example_output_passes_tsc_strict() {
     }
     // One root tsconfig sweeps every staged example (`include: ["**/*.ts"]`);
     // all emitted imports are relative, so nothing resolves across subdirs.
-    std::fs::write(root.join("tsconfig.json"), bynkc::emitter::emit_tsconfig()).unwrap();
+    std::fs::write(
+        root.join("tsconfig.json"),
+        bynk_emit::emitter::emit_tsconfig(),
+    )
+    .unwrap();
 
     let (program, prefix) = &runner;
     let mut cmd = base_command(program);

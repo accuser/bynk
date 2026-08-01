@@ -20,7 +20,7 @@
 
 use std::fs;
 
-use bynkc::store_ops::{
+use bynk_check::store_ops::{
     CELL_STORE_OPS, LOG_STORE_OPS, MAP_STORE_OPS, SET_STORE_OPS, StoreOp, ops_for,
 };
 use bynkc::{CompileOptions, ProjectFailure, compile_project};

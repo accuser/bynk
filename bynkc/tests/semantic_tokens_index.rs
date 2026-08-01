@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use bynkc::index::{SymbolKind, SymbolModifiers};
+use bynk_check::index::{SymbolKind, SymbolModifiers};
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/semantic/src")

@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use bynk_check::requirements::{Requirement, RequirementSource};
 use bynk_ide::diagnose_project;
-use bynkc::requirements::{Requirement, RequirementSource};
 
 /// Analyse `bynk` as a one-file project and return its requirements (flattened
 /// across files) plus the analysed text.

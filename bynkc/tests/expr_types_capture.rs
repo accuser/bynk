@@ -3,9 +3,9 @@
 //! ceiling: in Analyse mode the checker's best-effort partial types are recorded
 //! even when the file has an error elsewhere, so completion works mid-edit.
 
+use bynk_check::checker::Ty;
+use bynk_check::expr_types::type_at_offset;
 use bynkc::ast::BaseType;
-use bynkc::checker::Ty;
-use bynkc::expr_types::type_at_offset;
 use bynkc::span::Span;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

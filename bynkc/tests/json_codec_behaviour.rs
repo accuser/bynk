@@ -188,7 +188,7 @@ fn json_codec_behaviour() {
     fs::write(tmp.join("orders.ts"), ts).unwrap();
     fs::write(
         tmp.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     fs::write(tmp.join("driver.ts"), DRIVER_TS).unwrap();
