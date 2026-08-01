@@ -3,6 +3,9 @@
 //! - `check-pending` (Slice 0) validates the files under `design/pending/`.
 //! - `stamp` (Slice 1) assigns the version(s) + ADR number(s) for the pending
 //!   files and materialises them; dry-run by default, `--apply` to write.
+//! - `greenfield-status` (compiler-architecture track, T0.0, #999) runs the
+//!   thirteen probes against the tree and prints the report; `--apply` writes the
+//!   committed table.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -11,6 +14,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("check-pending") => check_pending(),
+        Some("greenfield-status") => {
+            if let Some(bad) = args[1..].iter().find(|a| *a != "--apply") {
+                eprintln!("xtask greenfield-status: unknown argument {bad:?}");
+                usage();
+                return ExitCode::from(2);
+            }
+            greenfield_status(args.iter().any(|a| a == "--apply"))
+        }
         Some("stamp") => {
             // Reject unknown flags rather than silently dry-running — on a
             // dry-run-by-default command, a typo'd `--aply` must not read as "no
@@ -160,6 +171,48 @@ fn ensure_clean_worktree(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Run the thirteen greenfield-status probes and print the report. Without `--apply`,
+/// this also diffs the nine gated probes against the committed table and exits
+/// non-zero on disagreement — the same check `xtask/tests/greenfield_status.rs` runs
+/// under CI. With `--apply`, it (re)writes the committed table instead.
+fn greenfield_status(apply: bool) -> ExitCode {
+    let root = repo_root();
+    let report = xtask::greenfield_status::run(&root);
+
+    if apply {
+        let table = xtask::greenfield_status::render_table(&report);
+        if let Err(e) = std::fs::write(xtask::greenfield_status::table_path(&root), table) {
+            eprintln!("greenfield-status: failed to write committed table: {e}");
+            return ExitCode::FAILURE;
+        }
+        println!("greenfield-status: wrote design/greenfield-status.md");
+        return ExitCode::SUCCESS;
+    }
+
+    for probe in &report.probes {
+        println!(
+            "  {:<20} {:<10} {}",
+            probe.name,
+            if probe.gated { "gated" } else { "trend" },
+            probe.reads
+        );
+    }
+
+    let disagreements = xtask::greenfield_status::gated_disagreements_in(&report.probes, &root);
+    if disagreements.is_empty() {
+        println!("greenfield-status: table current");
+        ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "greenfield-status: table is stale — run `cargo xtask greenfield-status --apply`:"
+        );
+        for (name, committed, live) in &disagreements {
+            eprintln!("  {name}: committed {committed:?}, live {live:?}");
+        }
+        ExitCode::FAILURE
+    }
+}
+
 fn usage() {
-    eprintln!("usage: cargo xtask <check-pending | stamp [--apply]>");
+    eprintln!("usage: cargo xtask <check-pending | greenfield-status [--apply] | stamp [--apply]>");
 }

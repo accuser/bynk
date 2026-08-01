@@ -8,6 +8,10 @@ repository.workspace = true
 publish = false
 description = "Repo automation for Bynk — the increment-allocation tooling. Slice 0 validates the pending-increment files under design/pending/; the merge-time stamp (version + ADR-number assignment) lands in later slices. Not a product crate: unpublished, kept off the release workflows' crate list."
 
+[dependencies]
+bynk-syntax.workspace = true
+serde_json.workspace = true
+
 [lib]
 path = "src/lib.rs"
 
