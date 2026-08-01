@@ -1,0 +1,7 @@
+# T1.6′ (ADR 0309's per-tier gate: byte-identical goldens plus a crate-local
+# fixture per behaviour change). The `Query` `method_not_found` message is
+# generated from `QUERY_METHODS` (bynk-check/src/checker/kernels.rs), not
+# hand-listed — `joinOn`/`groupBy` (ADR 0116/0120) once fell behind a
+# hand-listed copy of this string undetected. Pinning the exact text means a
+# future entry dropped from the registry changes this line, not silently.
+bynk.types.method_not_found the built-in `Query[Int]` type has no method `definitelyNotAMethod` — the kernel is `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `collect`, `first`, `firstOrElse`, `count`, `fold`, `any`, `all`, `sum`, `min`, `max`, `average`, `forEach`, `parTraverse`, `traverseAll`, `parTraverseAll`, `traverseTry`, `parTraverseTry`
