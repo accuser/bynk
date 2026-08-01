@@ -21,8 +21,8 @@ lex  →  parse  →  resolve  →  check  →  emit
 
 `bynkc` is a thin front-end: it owns the CLI and the compile/diagnose glue, and
 the pipeline itself lives in a layered set of library crates it depends on and
-re-exports (so `bynkc::ast`, `bynkc::checker`, `bynkc::compile_project`, … resolve
-unchanged):
+re-exports from (so `bynkc::ast`, `bynkc::Platform`, `bynkc::compile_project`, …
+resolve):
 
 - [`bynk-syntax`](https://crates.io/crates/bynk-syntax) — lexer, parser, AST,
   spans, the `CompileError` type, and the `bynk.*` diagnostic-code registry.
@@ -82,14 +82,18 @@ use bynkc::compile_project;
 let output = compile_project(std::path::Path::new("path/to/project"))?;
 ```
 
-The crate re-exports the full compiler surface from the layered library crates
-(`ast`, `lexer`, `parser`, `resolver`, `checker`, `emitter`, `project`,
-`diagnostics`, …), so existing `bynkc::…` paths keep working. The single-string
+The crate re-exports `bynk-syntax`'s modules whole (`ast`, `lexer`, `parser`,
+`diagnostics`, …) plus a small set of items from the checker and emitter layers
+(`Platform`, `CompileOptions`, `compile_project`, …) — not those layers'
+modules; `bynkc::resolver`, `bynkc::checker`, `bynkc::emitter`, and
+`bynkc::project` are not part of the published API. The single-string
 `compile` entrypoint handles a self-contained commons; the `compile_project`
 family handles multi-file projects, build targets, and platforms. To depend on
 just one layer, use the individual crate (e.g.
 [`bynk-syntax`](https://crates.io/crates/bynk-syntax) to lex/parse without the
-checker). See the [API docs](https://docs.rs/bynkc).
+checker, or [`bynk-check`](https://crates.io/crates/bynk-check) for
+`bynk_check::checker::Ty` and the rest of the semantic-analysis surface). See
+the [API docs](https://docs.rs/bynkc).
 
 ## Tests
 

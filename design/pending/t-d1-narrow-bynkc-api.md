@@ -1,7 +1,6 @@
 ---
 level: patch
 changelog: "**Breaking (Rust API, not language surface):** `bynkc` no longer re-exports fourteen whole modules from `bynk-check`/`bynk-emit` (`bynkc::checker`, `bynkc::resolver`, `bynkc::emitter`, `bynkc::project`, and ten others) — only its ~30 item re-exports (`CompileOptions`, `compile_project`, `BuildTarget`, …) remain public"
-closes_rule: R10.4
 ---
 
 ## ADR: narrow-bynkc-public-api
