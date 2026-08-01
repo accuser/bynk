@@ -316,6 +316,16 @@ scratch and loses `contracts: true` and `import_ext: Ts` (#19).
 *Rationale:* `bynk check` runs the bailing, emitting path and reports fewer errors than the editor
 does over the same project (#64). One pipeline, one answer.
 
+**R3.3 — A phase's output is serialisable and structurally comparable on its own terms, not only as a
+substring of the pipeline's final emitted text.**
+*Rationale:* this is the architectural property Appendix B and D cite under this number — a refactor
+whose only net is a whole-file golden one crate up (#58; ADR 0059's gate), and phase outputs that are
+not snapshot-testable in isolation. It is a distinct claim from the acceptance-*policy* ADR-B states
+(which tier of change needs which gate): R3.3 is the property that makes a phase-local snapshot fixture
+possible to write at all; ADR-B is the policy that then requires one. Section 3.4's demand-driven
+precondition table depends on the same property for a different reason — a query cannot be memoised
+against an output that cannot be compared for equality.
+
 **R3.10 — The gate between analysis and emission is a type, not a control-flow decision.**
 `fn certify(p: TypedProgram, d: &[Diagnostic]) -> Result<CheckedProgram, Vec<Diagnostic>>` is the
 single place the question "may we emit?" is asked. `CheckedProgram` is constructible only by
@@ -838,8 +848,9 @@ cost against no benefit. The IR exists for five properties:
 Property 4 is load-bearing and deserves stating plainly. The entire hoisting defect class in the
 shipped compiler exists *only* because lowering targets TypeScript expressions directly, and JS
 grammar forbids statements in expression position. The current signature is
-`lower_expr(e, stmts: &mut Vec<String>, cx) -> String` — twenty-seven signatures in `lower.rs` carry
-that sink — which means the IR is really the pair `(String, &mut Vec<String>)` while the crate
+`lower_expr(e, stmts: &mut Vec<String>, cx) -> String` — twenty-nine signatures in `lower.rs` (32
+workspace-wide) carry that sink — which means the IR is really the pair `(String, &mut Vec<String>)`
+while the crate
 documentation states there is no IR at all.
 
 ### 6.2 The core node set
@@ -2333,7 +2344,7 @@ calls; the query form is what the editor calls.
 | R3.1 | twelve-positional-argument sub-entry; lost options | #19, #57 |
 | R3.2 | CLI and editor reporting different error sets | #64 |
 | R3.3 | a refactor whose only net is a whole-file golden one crate up | #58; ADR 0059's gate |
-| R3.4/R10.4 | published facade re-attaching the monolith | #41, #23; ADR 0099's own invariant |
+| R10.4 | published facade re-attaching the monolith | #41, #23; ADR 0099's own invariant |
 | R3.5 | semantics living in the codegen crate | #9 (110 codes in `validate.rs`), #16, #32, #14 |
 | R3.6 | partial syntactic type comparison | #8 |
 | R3.7 | two project models, one path-based | #62, #30 |
@@ -2475,7 +2486,11 @@ calls; the query form is what the editor calls.
 
 ## Appendix D — Migration index
 
-Where the current tree diverges from each rule, so the reference is usable without a rewrite.
+Where the current tree diverges from each rule, so the reference is usable without a rewrite. **Rows
+exist only for rules this measurement assessed and found open or recently closed — not all 130.** A
+missing row is not a claim of conformance; it is either a rule this sweep did not walk (most of
+phases 6–8, which have no live probe yet) or a rule with nothing yet worth recording. Appendix C
+records what the shipped compiler already gets right independent of this table.
 
 **Measured 30 July 2026 against v0.245.0**, not inferred from the 27 July review. That distinction
 turned out to matter: the review is v0.237.1, and a probe sweep found **nine of the fourteen items
@@ -2490,11 +2505,11 @@ revision is the proof.
 | Rule | Measured state | Cost to close |
 |---|---|---|
 | R2.2 | `Span { start: usize, end: usize }` — no `FileId` | large — touches every span construction |
-| R2.3 | `CompileOptions.sources` ✅ and `testkit.rs` ✅ **landed**; but `std::fs` still in `bynk-emit` (4 files), `bynk-ide` (5), `bynk-fmt` (1) | medium — `bynk-ide`'s `cached_project_unit` path is the larger half |
+| R2.3 | `CompileOptions.sources` ✅ and `testkit.rs` ✅ **landed**; but `std::fs` still in `bynk-emit` (4 files), `bynk-ide` (5), `bynk-fmt` (1) | medium — `bynk-ide` has two unrelated reasons, not one: `completion.rs`'s `cached_project_unit` path, and `symbols.rs`'s cross-file lookups, which bypass that cache entirely |
 | R2.4 | `HashMap<Span` = **27** | large; the review kills the full `NodeId` retrofit — use parallel-data migration |
 | R2.6 | correct already (`documentation` beside `trivia`) | none |
-| R2.8 | `is_fully_drained` present (6 sites) ✅ **landed**; the 34-field drain itself remains | medium |
-| R2.11 | `expr_children` at 23 uses across 5 files; `type_refs_match` deleted ✅ | small residue |
+| R2.8 | `is_fully_drained` present (5 sites) ✅ **landed**; the 34-field drain itself remains | medium |
+| R2.11 | `expr_children` at 34 uses across 8 files (31 July: new consumers in `bynk-check`, `bynk-lsp`); `type_refs_match` deleted ✅ (3 comment mentions only) | small residue |
 | R2.12 | `[workspace.lints]` **absent** | small — one manifest edit, then fix what fails |
 | R2.13 | `tree-sitter-bynk/tests/conformance.rs` exists, both-parsers-agree, both directions ✅ | none — the mechanism is built |
 | R3.1 | `CompileOptions: Clone` ✅ **landed**; `run_checks`'s positional args remain | small residue |

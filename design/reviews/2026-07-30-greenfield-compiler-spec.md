@@ -12,7 +12,7 @@ A review is a snapshot of a moment; a reference is a standing document, and fili
 
 **What it is.** A specification of the compiler Bynk could have had, given what is known at v0.245.0:
 the Foundations layer specified to build-from depth, with named extension points, four worked
-extension cases proving them, and a migration index (Appendix D) mapping every rule to where the
-current tree diverges and roughly what closing it would cost.
+extension cases proving them, and a migration index (Appendix D) recording, for each rule this
+measurement assessed, where the current tree diverges and roughly what closing it would cost.
 
 **Not a proposal, not a plan, not scheduled.**

@@ -192,16 +192,22 @@ did.**" And its verdict on exactly this question: "'the gate is green' is the we
 evidence here." ADR 0201, converting keyed sinks by grep: "converting it looked right and was not…
 the failure is a **hang**, not an assertion."
 
-**Decision.** The gate becomes, per tier:
+**Decision.** The gate becomes, per tier. ADR-B states this in its own generic vocabulary — Enablers /
+Paydown / Structural / Layering, properties of the *kind* of change rather than of this track — since
+the ADR is durable and outlives the track; the mapping to this track's slices lives here, not there:
 
-| Tier | Gate |
-|---|---|
-| 0 | its own artefacts exist and are exercised (§6, T0 criteria) |
-| 1 | byte-identical goldens **plus** a crate-local fixture per behaviour change; a slice that changes a diagnostic must add an `expected_diagnostics.txt` assertion |
-| 2 | crate-local fixtures via T0.1 **plus** a named regression fixture per closed defect **plus** byte-identical goldens |
-| later phases | as Tier B, plus the phase completion probe (§8) reading zero |
+| ADR-B tier | This track | Gate |
+|---|---|---|
+| Enablers | T0.0 | its own artefacts exist and are exercised (§6, T0 criteria) |
+| Paydown | the rest of Tier A (T0.2′, T0.3, T0.4′, T0.7, T1.6′, T1.7′, T1.8) | byte-identical goldens **plus** a crate-local fixture per behaviour change; a slice that changes a diagnostic must add an `expected_diagnostics.txt` assertion |
+| Structural | Tier B (T2.1–T2.3) | crate-local fixtures over the in-memory `sources` seam **plus** a named regression fixture per closed defect **plus** byte-identical goldens |
+| Layering | phase 5 (a later track) | as Structural, plus the phase completion probe (§8) reading zero |
 
-**Lands as:** **ADR-B**, in the settling increment. Must land before Tier A opens.
+So Tier A is not one gate: T0.0 is Enablers-gated and must land first (§6 already says so); every
+other Tier A slice is Paydown-gated. That is consistent with, not a change to, "only T0.0 gates
+anything" below.
+
+**Lands as:** **ADR-B**, in the settling increment. Must land before T0.0 opens.
 
 ### 3.4 Q4 — Does phase 3 open at all, and on what trigger? **Settled.**
 
@@ -584,7 +590,8 @@ needs Appendix B or D as the index, not the body. If that proves painful, the sp
 is cheap.
 
 **Scope creep from the reference into the track.** §7 exists for this. A proposal citing a rule
-outside Tiers 0–4 is out of scope by this doc, not by taste.
+outside phases 0–2 — §7's forward references, not this track's tiers — is out of scope by this doc,
+not by taste.
 
 ---
 
@@ -604,15 +611,15 @@ signature change, including a miscompile of ordinary code with no diagnostic. St
 transformational — a correctness change with a small ergonomic dividend — but it is now most of what
 this track is *for*.
 
-**Tiers 3–4 are where "transformational" lives**, and they are also where the cost is. Node identity
+**Phases 3–4 are where "transformational" lives**, and they are also where the cost is. Node identity
 and totality are what make the editor path and the batch path one program; layering is what makes the
 crate names true and therefore what makes the codebase reviewable by someone who did not write it.
 Both are gated in §3.4 and §6 precisely because their value is real and their cost is the kind that
 gets underestimated at the moment of most enthusiasm.
 
-The honest summary: **Tiers 0–2 are worth doing on their own merits, now, regardless of what follows.
-Tiers 3–4 are worth doing if the triggers fire, and the triggers exist so that "later" is a decision
-rather than a drift.**
+The honest summary: **Tier A and Tier B are worth doing on their own merits, now, regardless of what
+follows. Phases 3–4 are worth doing if the triggers fire, and the triggers exist so that "later" is a
+decision rather than a drift.**
 
 ---
 

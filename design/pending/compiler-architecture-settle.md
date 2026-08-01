@@ -115,8 +115,9 @@ representation. This is the single most consequential implementation decision in
 **no decision record argues for it.** The claim lives in crate rustdoc, and it is not accurate: there
 *is* an intermediate representation, and it is the pair `(String, &mut Vec<String>)` —
 `lower_expr(e, stmts, cx) -> String` returns an expression's text and appends any statements that
-must run before it to a vector the caller supplies. Twenty-seven signatures in
-`bynk-emit/src/emitter/lower.rs` carry that sink.
+must run before it to a vector the caller supplies. Twenty-nine signatures in
+`bynk-emit/src/emitter/lower.rs` carry that sink (32 workspace-wide: 29 in `lower.rs`, 2 in
+`emitter.rs`, 1 in `emit.rs`).
 
 [[0059]] §4 is the mechanism by which this went unrecorded: "**No new per-increment ADRs.** Refactors
 are not language-defining, so they do not each earn a decision record." That is correct for a file

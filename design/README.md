@@ -37,6 +37,11 @@ the canonical, reader-facing spec and reference.
   forward plan (LSP + VS Code), including the remaining tooling backlog.
 - [`bynk-engineering-roadmap.md`](bynk-engineering-roadmap.md) — the CI/CD
   pipeline plan and the `bynkc` internal-quality refactor backlog.
+- [`bynk-compiler-trajectory.md`](bynk-compiler-trajectory.md) — the **compiler
+  architecture theme**: eight phases from the shipped compiler to
+  `bynk-greenfield-compiler.md`, each a safe stopping point, realised one track
+  per phase (`tracks/compiler-architecture.md` is the first, covering phases
+  0–2).
 
 **Canonical design** — the long-form rationale and the type theory:
 
@@ -44,6 +49,10 @@ the canonical, reader-facing spec and reference.
   (the aspirational v1 language).
 - [`bynk-type-system.md`](bynk-type-system.md) — the type system in depth
   (aspirational; carries an implementation-status banner).
+- [`bynk-greenfield-compiler.md`](bynk-greenfield-compiler.md) — the compiler
+  rebuilt on today's architectural understanding, feature for feature
+  (aspirational; 130 numbered rules); the endpoint
+  `bynk-compiler-trajectory.md` migrates the shipped compiler toward.
 
 **Tooling specs** — capability contracts, referenced from code:
 
@@ -67,6 +76,9 @@ the canonical, reader-facing spec and reference.
 - [`decisions/`](decisions/README.md) — the **decision records**: one ADR per
   language-defining call, harvested from the retired increment instalments and
   added per increment going forward.
+- [`reviews/`](reviews/README.md) — dated, point-in-time architecture and
+  code-quality reviews. Snapshots, not standing documents; a citing track or
+  trajectory re-measures rather than trusting a review to still be current.
 - [`archive/`](archive/README.md) — superseded and shelved docs, kept for the
   record. Nothing there is current. Includes the retired PhD exploratory memo,
   dropped by the [positioning decision](bynk-positioning.md).

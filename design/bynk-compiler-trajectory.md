@@ -6,7 +6,7 @@
   track and not a build authorisation. Each phase is realised by its own track
   (`design/tracks/`), each track by its own slices.
 - **Companion to:** [`bynk-greenfield-compiler.md`](bynk-greenfield-compiler.md) — the destination
-  specification, 129 numbered rules. This document holds the *path*; that one holds the *place*.
+  specification, 130 numbered rules. This document holds the *path*; that one holds the *place*.
 - **Evidence:** [`reviews/2026-07-27-compiler-pipeline-review.md`](reviews/2026-07-27-compiler-pipeline-review.md).
 - **Precedent for the layer:** the LSP theme already spanned three tracks — `lsp.md`,
   `lsp-foundations.md`, `editor-currency.md` — with the spec living on at `bynk-lsp-spec.md` after
@@ -164,9 +164,10 @@ project model does.
 
 *Everything that makes Bynk Bynk is checked in one crate.*
 
-The 110 diagnostic codes in `validate.rs` and the 80 elsewhere in `bynk-emit` move to `bynk-check`;
-`icu.rs` and `websocket::analyse_open_shape` go with them; `Ctx` becomes `pub(crate)`; the accidental
-`pub` surface is demoted.
+The diagnostic codes in `validate.rs` and elsewhere in `bynk-emit` — 110 and 80 at the July review,
+200 total and rising as of §3.0's measurement — move to `bynk-check`; `icu.rs` and
+`websocket::analyse_open_shape` go with them; `Ctx` becomes `pub(crate)`; the accidental `pub` surface
+is demoted.
 
 This is the phase that makes the crate names true, and therefore the phase that most directly serves
 the reviewability goal: a contributor asked to add a check goes to `bynk-check` and finds it.
@@ -268,8 +269,9 @@ contain the miscompile, whatever happens to the rest of the trajectory.
 **4 before 5.** The project model's location is the *cause* of the semantics' location. Moving
 `validate.rs` before extracting `bynk-project` means moving it twice.
 
-**5 before 6.** An IR built while 110 diagnostic codes still live in the emitter would have to model
-the emitter's checking needs. Move the checks first and the IR only has to carry what emission needs.
+**5 before 6.** An IR built while hundreds of diagnostic codes still live in the emitter would have to
+model the emitter's checking needs. Move the checks first and the IR only has to carry what emission
+needs.
 
 **3 and 4 before 8.** The firewall needs stable identity and a project model that is not ambient.
 
@@ -326,7 +328,7 @@ and tightly coupled — 0 enables both, 1 is independent, 2 needs only 0 — so 
 
 | Phase | Track | Status |
 |---|---|---|
-| 0, 1, 2 | [`tracks/compiler-architecture.md`](tracks/compiler-architecture.md) | **Settling** — questions answered, review pending; spine to open. Phases 0–1 measured ~85% complete (§3.0) |
+| 0, 1, 2 | [`tracks/compiler-architecture.md`](tracks/compiler-architecture.md) | **Settling** — questions answered, under review (spine [#996](https://github.com/accuser/bynk/issues/996)). Phases 0–1 measured ~85% complete (§3.0) |
 | 3 | *(to be opened)* | — |
 | 4 | *(to be opened)* | — |
 | 5 | *(to be opened)* | — |
@@ -337,10 +339,10 @@ and tightly coupled — 0 enables both, 1 is independent, 2 needs only 0 — so 
 A phase's track opens when the previous phase's probe reads zero. Not before — an open track for a
 phase whose prerequisite is unmet is how a trajectory becomes a wish list.
 
-**The existing track needs rescoping.** Its §7 records the IR, the printer and the crate re-graph as
-*refusals with triggers*. Under this document they are phases 6 and 7, and recording an intention as
-a refusal is the inverse of the failure R15.1 names. §7 becomes a forward reference; the triggers
-become the entry conditions in §4.
+**The track already reflects this.** Its own §7 records the IR, the printer and the crate re-graph as
+forward references with entry conditions, not as *refusals with triggers* — recording an intention as
+a refusal is the inverse of the failure R15.1 names. The entry conditions live in that same §7,
+alongside the forward references they gate, rather than in a separate section.
 
 ---
 
@@ -370,9 +372,10 @@ designed so that is always available.
 **Probes, not prose.** Each phase's invariant is a number that CI can compute. A phase is complete
 when its number is zero, not when it feels done.
 
-**`cargo xtask greenfield-status`** regenerates the reference's Appendix D from `Closes-Rule:` PR
-trailers plus the mechanical probes, and fails CI when the committed table is stale. Extended here to
-report the current phase and the distance to its invariant.
+**`cargo xtask greenfield-status`** — specified, not yet built (track slice T0.0) — will regenerate
+the reference's Appendix D from `Closes-Rule:` PR trailers plus the mechanical probes, and fail CI
+when the committed table is stale. It is specified here to also report the current phase and the
+distance to its invariant, once it exists.
 
 **The evidence ages.** The review is v0.237.1; the workspace is v0.245.0; `bynk-ide` has already been
 demoted to a dev-dependency of `bynkc` citing finding #41. Every slice re-checks its finding. A
