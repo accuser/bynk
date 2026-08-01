@@ -25,6 +25,7 @@
 
 use std::fs;
 
+use bynk_check::builtin_names::methods as builtin_methods;
 use bynk_check::kernel_methods::{KernelMethod, QUERY_METHODS};
 use bynk_check::store_ops::MAP_QUERY_ACCESSORS;
 use bynkc::{CompileOptions, ProjectFailure, compile_project};
@@ -156,12 +157,13 @@ fn query_kernel_dispatch_arm_names() -> std::collections::BTreeSet<String> {
         re.captures_iter(body).map(|c| c[1].to_string()).collect();
     // These arms dispatch via `builtin_names::methods` constants (bare
     // identifiers, not string literals), so the textual scan above can't see
-    // them — added by their known constant values instead.
+    // them — added by their actual constant values (not restated string
+    // literals) so a rename of the constant can't drift this list silently.
     for known in [
-        "traverseAll",
-        "parTraverseAll",
-        "traverseTry",
-        "parTraverseTry",
+        builtin_methods::TRAVERSE_ALL,
+        builtin_methods::PAR_TRAVERSE_ALL,
+        builtin_methods::TRAVERSE_TRY,
+        builtin_methods::PAR_TRAVERSE_TRY,
     ] {
         names.insert(known.to_string());
     }

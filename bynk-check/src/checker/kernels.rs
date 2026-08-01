@@ -4,7 +4,19 @@
 //! re-exports these via `use kernels::*`.
 
 use super::*;
-use crate::kernel_methods::{LIST_METHODS, QUERY_METHODS};
+use crate::kernel_methods::{KernelMethod, LIST_METHODS, QUERY_METHODS};
+
+/// Render a kernel's method names for a `method_not_found` message —
+/// `` `map`, `filter`, … `` — generated from a `KernelMethod` table rather
+/// than hand-listed at each call site, so the message can't drift from the
+/// table the way `Query`'s once did (T1.6′).
+fn kernel_vocabulary(methods: &[KernelMethod]) -> String {
+    methods
+        .iter()
+        .map(|k| format!("`{}`", k.name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// v0.20b: `List.empty()` / `Map.empty()` — the built-in collection statics.
 /// Their element/key/value types are exactly as uninferable as an empty
@@ -743,11 +755,7 @@ pub(crate) fn check_list_kernel_method(
             // Generated from `LIST_METHODS` (v0.30.2, ADR 0063) rather than
             // hand-listed here, so the two can't drift the way this message
             // and the table's `join`/`joinOn`/`leftJoin`/`groupBy` once did.
-            let kernel = LIST_METHODS
-                .iter()
-                .map(|k| format!("`{}`", k.name))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let kernel = kernel_vocabulary(LIST_METHODS);
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
                 method.span,
@@ -1109,11 +1117,7 @@ pub(crate) fn check_query_kernel_method(
             // here, so the two can't drift the way this message once did —
             // it fell behind when `join`/`joinOn`/`leftJoin`/`groupBy`
             // (ADR 0116/0120) landed in the table but not in this string.
-            let kernel = QUERY_METHODS
-                .iter()
-                .map(|k| format!("`{}`", k.name))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let kernel = kernel_vocabulary(QUERY_METHODS);
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
                 method.span,
