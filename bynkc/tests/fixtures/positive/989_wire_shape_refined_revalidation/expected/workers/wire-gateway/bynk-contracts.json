@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "enter": "02fc35032324c537"
+  },
+  "expects": {
+    "wire.auth": {
+      "login": "713abd72b294d588"
+    }
+  }
+}

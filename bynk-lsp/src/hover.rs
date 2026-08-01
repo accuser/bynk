@@ -13,10 +13,25 @@
 //! snapshot** (the tables' spans index into it), while the lexical rungs read the
 //! **live buffer**, which is what makes hover work mid-edit. They diverge while
 //! the user types, so the ladder keeps them distinct rather than assuming one.
+//!
+//! The rungs, in trial order (see [`hover_content`]'s inline numbering):
+//! 1. the binding index — a resolved symbol reference, described from its
+//!    defining file (a resolved `Service` gets a #855 wire-contract appendix);
+//! 2. a `store` field operation;
+//! 3. a local/param/`self`;
+//! 4. #855: a handler's HEADER (`on`, the method/kind token, the route
+//!    literal) — guarded to that byte range so it cannot shadow rung 1;
+//! 5. a top-level declaration by name (lexical, first live-buffer rung);
+//! 6. the `key`/`store` contextual keywords and agent-state references;
+//! 7. a handler-position `@cache` annotation;
+//! 8. a `Recv.member` name-receiver access;
+//! 9. a project-wide name scan;
+//! 10. the embedded first-party sources.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use bynk_check::index::SymbolKind;
 use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::Url;
 
@@ -36,6 +51,17 @@ pub struct HoverAnalysis<'a> {
     /// #848: qualified unit name → its doc-comment intra-doc-link search
     /// order, for rung 1's doc-link rewrite.
     pub doc_scope: &'a HashMap<String, Vec<String>>,
+    /// #855: qualified context/adapter unit name → the combined type table
+    /// and service/agent tables the wire-contract peek needs.
+    pub boundary_info: &'a HashMap<String, bynk_ide::ContextBoundaryInfo>,
+    /// #855: how many **real** contexts/adapters this project has — computed
+    /// once per round by the transport with
+    /// `bynk_ide::wire_contract::real_context_count`, never re-derived here
+    /// as a bare `boundary_info.len()` (see that function's doc: the
+    /// synthetic toolchain `bynk` capability unit would otherwise count as a
+    /// second "context" and `NoCrossContextReason::SingleContext` would
+    /// almost never fire).
+    pub context_count: usize,
 }
 
 /// Everything the ladder reads.
@@ -76,13 +102,28 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
             // #848: rewrite any resolvable intra-doc link in the rendered
             // doc comment into a Markdown link, scoped to `key.unit` (the
             // declaring unit doc-link resolution searches from).
-            return Some(crate::symbols::linkify_doc_links(
+            let content = crate::symbols::linkify_doc_links(
                 &content,
                 a.index,
                 a.doc_scope,
                 a.project_root,
                 &key.unit,
-            ));
+            );
+            // #855: a resolved `Service` symbol (the declaration's own name,
+            // or a cross-context/test-service call site — both record this
+            // kind, see `bynk-emit/src/project/symbols.rs`) gets its wire
+            // contract appended after everything `describe_symbol` already
+            // rendered. This changes only the *tail* of what rung 1 already
+            // returns `Some` for — never whether it answers.
+            let content = if key.kind == SymbolKind::Service {
+                match wire_contract_for_service_key(a, key, &def.path, def_text) {
+                    Some(model) => format!("{content}{}", wire_contract_appendix(&model)),
+                    None => content,
+                }
+            } else {
+                content
+            };
+            return Some(content);
         }
         // 2. #611 (gap C): a `store` field's operation (`items.put(…)`) — a
         //    structural match on the enclosing agent's declared field, so it
@@ -115,6 +156,35 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
                 return Some(content);
             }
         }
+        // 4. #855: the handler HEADER — the `on` keyword, the HTTP method /
+        //    handler-kind token, and any route string literal. No earlier rung
+        //    (nor any later lexical one) ever answers here today: `GET` lexes
+        //    as a bare `Ident` with no index symbol, and no top-level
+        //    declaration is named after it. Guarded to the header's own byte
+        //    range — from the handler's span start up to (but excluding) its
+        //    first param's span start, or its body's span start with no
+        //    params — which contains only tokens that are never an index
+        //    symbol, so this rung is provably unable to shadow rung 1's
+        //    resolution of, say, a param's *type* name (`client: ClientId`),
+        //    which always sits past that boundary. See `header_handler_at`.
+        if let Some(text) = a.snapshots.get(a.rel)
+            && let Some((service_name, handler)) = header_handler_at(text, a.offset)
+            && let Some((unit, _)) = bynk_ide::symbols::own_declaration_name(text)
+            && let Some(info) = a.boundary_info.get(&unit)
+        {
+            let expr_types = a.expr_types.get(a.rel).map(|v| v.as_slice()).unwrap_or(&[]);
+            if let Some(model) = bynk_ide::wire_contract::wire_contract_for_service(
+                &unit,
+                text,
+                &service_name,
+                &handler,
+                info,
+                expr_types,
+                a.context_count,
+            ) {
+                return Some(wire_contract_standalone(&model));
+            }
+        }
     }
 
     // The remaining rungs are lexical, over the **live** buffer.
@@ -128,32 +198,32 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
         // job, not this fallback's.
         return crate::symbols::describe_keyword_at(text, offset).map(str::to_string);
     };
-    // 4. A top-level declaration in this file (fast path).
+    // 5. A top-level declaration in this file (fast path).
     if let Some(content) = crate::symbols::describe_symbol(text, &name) {
         return Some(content);
     }
-    // 5. v0.137.0 (ADR 0161) + #611 (gap A): the `key`/`store` contextual
+    // 6. v0.137.0 (ADR 0161) + #611 (gap A): the `key`/`store` contextual
     //    keywords, the agent state fields they declare, and — since #611 — a
     //    *reference* to one from the agent's body. Single-file-local, so it
     //    resolves before any project-wide scan.
     if let Some(content) = crate::symbols::describe_agent_state_at(text, span.start) {
         return Some(content);
     }
-    // 6. v0.140 (ADR 0163): a handler-position `@cache` annotation — not a symbol
+    // 7. v0.140 (ADR 0163): a handler-position `@cache` annotation — not a symbol
     //    and no local, so it resolves here beside the agent state.
     if let Some(content) = crate::symbols::describe_handler_annotation_at(text, span.start) {
         return Some(content);
     }
-    // 7. v0.123 (slice 2, DECISION B): a `Recv.member` name-receiver access — a
+    // 8. v0.123 (slice 2, DECISION B): a `Recv.member` name-receiver access — a
     //    capability op (`Clock.now`), a refined/opaque `of`/`unsafe`, or a type
     //    static — via the same path signature help uses, over the project and the
     //    embedded surface. Before the cross-file / first-party name scans.
     crate::symbols::qualified_callee_at(text, span)
         .and_then(|callee| crate::signature_help::resolve_label(&callee, text, input.files))
         .map(|sig| format!("```bynk\n{sig}\n```"))
-        // 8. A project-wide scan (v1.1), then 9. the embedded first-party sources
-        //    (slice 9) — so `uses`/`consumes` names resolve across file
-        //    boundaries (§3.4) and stdlib/surface symbols surface too.
+        // 9. A project-wide scan (v1.1), then 10. the embedded first-party
+        //    sources (slice 9) — so `uses`/`consumes` names resolve across
+        //    file boundaries (§3.4) and stdlib/surface symbols surface too.
         .or_else(|| {
             input
                 .files
@@ -190,4 +260,156 @@ fn identifier_at(text: &str, offset: usize) -> Option<(String, Span)> {
                 )
         })
         .map(|t| (text[t.span.start..t.span.end].to_string(), t.span))
+}
+
+// ---------------------------------------------------------------------
+// #855: wire-contract rendering — rung 1's appendix and rung 4's standalone
+// content share the same body renderer ([`wire_contract_body`]); they differ
+// only in what comes before it (an existing `describe_symbol` block, versus
+// nothing).
+// ---------------------------------------------------------------------
+
+/// Resolve a resolved-`Service`-symbol's wire contract, for rung 1's
+/// appendix. A service may declare more than one handler (several HTTP
+/// routes on one service, say); this module has no way to tell *which* one
+/// the author meant by hovering the service's bare name (a declaration site,
+/// or a cross-context/test-service call site — neither carries a handler
+/// selector). Rather than guess, this answers only the unambiguous case: a
+/// service with **exactly one** handler. That covers every worked example in
+/// the issue (a single-route HTTP service, a single-handler `on call`
+/// service) and every #855 fixture; a multi-handler service simply gets no
+/// appendix, which is rung 1's pre-#855 behaviour unchanged — never a wrong
+/// answer, only sometimes an absent one.
+fn wire_contract_for_service_key(
+    a: &HoverAnalysis<'_>,
+    key: &bynk_check::index::SymbolKey,
+    def_path: &Path,
+    def_text: &str,
+) -> Option<bynk_ide::wire_contract::WireContractModel> {
+    let info = a.boundary_info.get(&key.unit)?;
+    let svc = info.services.get(&key.name)?;
+    let [handler] = svc.handlers.as_slice() else {
+        return None;
+    };
+    let expr_types = a
+        .expr_types
+        .get(def_path)
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    bynk_ide::wire_contract::wire_contract_for_service(
+        &key.unit,
+        def_text,
+        &key.name,
+        handler,
+        info,
+        expr_types,
+        a.context_count,
+    )
+}
+
+/// Locate the `Handler` (and its owning service's name) whose **header**
+/// contains `offset` — the `on` keyword, the handler-kind/HTTP-method token,
+/// and any route string literal, but *none* of its params or body. Mirrors
+/// `bynk_ide::wire_contract::wire_contract_at`'s re-parse-and-find-the-
+/// enclosing-handler convention; duplicated (rather than reused) because the
+/// guard below needs the raw `Handler`'s param/body spans, which
+/// `wire_contract_at`'s return value (a `WireContractModel`, not an AST node)
+/// does not carry.
+fn header_handler_at(text: &str, offset: usize) -> Option<(String, bynk_syntax::ast::Handler)> {
+    use bynk_syntax::ast::{CommonsItem, SourceUnit};
+    let tokens = bynk_syntax::lexer::tokenize(text).ok()?;
+    let (parsed, _errs) = bynk_syntax::parser::parse_unit_with_recovery(&tokens, text);
+    let items: &[CommonsItem] = match parsed.as_ref()? {
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(a) => &a.items,
+        SourceUnit::Commons(_) | SourceUnit::Suite(_) => return None,
+    };
+    for item in items {
+        let CommonsItem::Service(s) = item else {
+            continue;
+        };
+        for h in &s.handlers {
+            // The safety property: this range holds only `on`, the
+            // kind/method token, and the route literal — never a param name,
+            // a type name, or anything else an earlier rung (or a later
+            // lexical one) could already resolve. See the module doc and
+            // rung 4's own comment.
+            let prefix_end = h
+                .params
+                .first()
+                .map(|p| p.span.start)
+                .unwrap_or(h.body.span.start);
+            if h.span.start <= offset && offset < prefix_end {
+                return Some((s.name.name.clone(), h.clone()));
+            }
+        }
+    }
+    None
+}
+
+/// The Markdown facts shared by rung 1's appendix and rung 4's standalone
+/// render: the request envelope (all three cases), the cross-context
+/// contract form + hash (`on call` only), and — HTTP handlers only — the
+/// reachable response status set.
+fn wire_contract_body(model: &bynk_ide::wire_contract::WireContractModel) -> String {
+    use bynk_ide::wire_contract::{BoundaryKind, Envelope};
+
+    let mut out = String::new();
+    if let BoundaryKind::Http { method, path } = &model.kind {
+        out.push_str(&format!("`{} {}`\n\n", method.as_str(), path));
+    }
+
+    out.push_str("**Request:** ");
+    match &model.envelope {
+        Envelope::Empty => out.push_str("no body — the handler never reads it.\n\n"),
+        Envelope::Bare { param, .. } => out.push_str(&format!(
+            "the request body **is** the value of `{param}` — not wrapped in an object.\n\n"
+        )),
+        Envelope::Keyed { params } => {
+            let names: Vec<&str> = params.iter().map(|(n, _)| n.as_str()).collect();
+            out.push_str(&format!(
+                "an object keyed by `{}`, in declaration order.\n\n",
+                names.join("`, `")
+            ));
+        }
+    }
+
+    if let Some(contract) = &model.contract {
+        out.push_str(&format!(
+            "**Cross-context contract** (hash `{}`) — change any of this and \
+             already-deployed callers get a 409:\n\n```\n{}\n```\n\n",
+            contract.hash, contract.normal_form
+        ));
+    }
+
+    if !model.responses.is_empty() {
+        out.push_str("**Responses:**\n\n");
+        for r in &model.responses {
+            out.push_str(&format!("- `{} {}`\n", r.status, r.variant));
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+/// Rung 1's wire-contract appendix — separated from whatever
+/// `describe_symbol` already rendered by a rule, so it reads as a distinct
+/// section rather than a continuation of the declaration's own doc comment.
+fn wire_contract_appendix(model: &bynk_ide::wire_contract::WireContractModel) -> String {
+    format!(
+        "\n\n---\n\n**Wire contract**\n\n{}",
+        wire_contract_body(model)
+    )
+}
+
+/// Rung 4's standalone render — hovering the header *is* the question, so
+/// this is the whole answer, headed by the service/handler name rather than
+/// appended after one.
+fn wire_contract_standalone(model: &bynk_ide::wire_contract::WireContractModel) -> String {
+    format!(
+        "**Wire contract** — `{}`\n\n{}",
+        model.service,
+        wire_contract_body(model)
+    )
 }

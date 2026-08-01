@@ -33,6 +33,7 @@ import { provideCodeLenses } from "./codelens";
 import { registerSequenceDiagram } from "./sequenceDiagram";
 import { registerDocumentationView } from "./documentationView";
 import { registerArchitectureMap } from "./architectureMap";
+import { registerWireContract } from "./wireContract";
 import { registerInlineDocRendering } from "./inlineDocRendering";
 
 let client: LanguageClient | undefined;
@@ -102,6 +103,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // capabilities map, the macro counterpart to the sequence view above.
   // Same client closure and shared webview substrate.
   registerArchitectureMap(context, () => client);
+
+  // #855: "Show Wire Contract" — the per-handler wire-shape peek (request
+  // envelope, boundary types with their re-validation, HTTP response set,
+  // and — for `on call` — the cross-context contract form + hash). Same
+  // client closure and shared webview substrate as the views above.
+  registerWireContract(context, () => client);
 
   // #849: in-editor doc-comment rendering — heading colour, bold, italic applied
   // in place to `--- … ---` blocks. Client-side decorations only; independent of

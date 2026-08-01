@@ -63,7 +63,9 @@ use validate::*;
 
 // External facade: items referenced as `crate::project::X` from outside this
 // module (emitter, main, lib) must stay reachable at that path.
-pub use diagnostics::{AttributedError, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
+pub use diagnostics::{
+    AttributedError, ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure,
+};
 pub use paths::{
     ProjectPaths, ProjectPathsError, read_project_paths, try_read_project_paths, worker_dir_name,
     worker_handlers_output_path, worker_handlers_source_path,
@@ -913,6 +915,8 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
             unit_sources: HashMap::new(),
             // #846: same bail rule as `unit_sources` — nothing was resolved.
             sequence_info: HashMap::new(),
+            // #855: same bail rule — nothing was resolved.
+            boundary_info: HashMap::new(),
             // #848: no parsed tree on the bail path either.
             doc_scope: HashMap::new(),
         },
@@ -961,6 +965,14 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
             // around, so this re-derives it once per unit instead of once per
             // file, from data `run_checks` already retains.
             let mut sequence_info: HashMap<String, ContextSequenceInfo> = HashMap::new();
+            // #855: qualified context/adapter unit name → the combined type
+            // table plus service/agent tables the wire-contract peek needs —
+            // built alongside `sequence_info` in the same loop iteration so
+            // `table`/`unit_tables`/`unit_uses` are already in scope. Uses
+            // `combined_types_for`, the same table `own_contract_hashes`
+            // hashes through, so the peek's hash and the emitted
+            // `X-Bynk-Contract` constant cannot disagree.
+            let mut boundary_info: HashMap<String, ContextBoundaryInfo> = HashMap::new();
             for (name, kind) in &kinds {
                 if !matches!(kind, UnitKind::Context | UnitKind::Adapter) {
                     continue;
@@ -981,6 +993,14 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
                     name.clone(),
                     ContextSequenceInfo {
                         cross_context,
+                        agents: table.agents.clone(),
+                    },
+                );
+                boundary_info.insert(
+                    name.clone(),
+                    ContextBoundaryInfo {
+                        types: symbols::combined_types_for(name, &unit_tables, &unit_uses),
+                        services: table.services.clone(),
                         agents: table.agents.clone(),
                     },
                 );
@@ -1008,6 +1028,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
                 requirements: requirements.take_files(),
                 unit_sources,
                 sequence_info,
+                boundary_info,
                 doc_scope,
             }
         }

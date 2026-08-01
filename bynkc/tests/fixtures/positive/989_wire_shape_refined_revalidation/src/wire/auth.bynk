@@ -1,0 +1,40 @@
+---
+#855 anti-drift fixture (`bynkc/tests/wire_shape_drift.rs`): the callee whose
+boundary types a consuming context must generate its own codecs for. A
+transparent refined type with **two** predicates in a specific declaration
+order (`ClientId` — exercises `Revalidation::ViaConstructor` here, and
+`Revalidation::Inline` at the consumer, one `if (!(` per predicate in
+declaration order), and an opaque type (`AuthId` — exercises
+`Revalidation::StructuralOnly` at the consumer, no predicate check at all).
+`LoginError` is a plain sum crossing the same boundary, for the sum-codec
+cross-check (`obj["kind"]` deserialising, `value.tag` serialising).
+---
+context wire.auth
+
+exports opaque      { AuthId }
+exports transparent { ClientId, Session, LoginError }
+
+type ClientId = String where NonEmpty && MaxLength(20)
+
+type AuthId = opaque String where NonEmpty
+
+type Session = {
+  client: ClientId,
+  auth:   AuthId,
+}
+
+type LoginError = enum {
+  Invalid,
+}
+
+service login {
+  ---
+  Mint a session for a seed. The single cross-context entry point.
+  ---
+  on call(seed: String) -> Effect[Result[Session, LoginError]] {
+    match ClientId.of(seed) {
+      Ok(c) => Ok(Session { client: c, auth: AuthId.unsafe(seed) })
+      Err(_) => Err(Invalid)
+    }
+  }
+}
