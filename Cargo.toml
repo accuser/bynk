@@ -48,6 +48,10 @@ homepage = "https://github.com/accuser/bynk"
 # wiring `[lints] workspace = true` into a crate that still has violations is deferred
 # (CI runs `cargo clippy --workspace --all-targets -- -D warnings`, which would turn
 # every one of those warnings into a build failure the moment a crate opts in).
+# Note for future edits to this comment block: the `workspace_lints` probe (xtask)
+# reads the first line in this file that names the lint, so don't spell that name
+# out up here — say "the lint" instead — or the probe reads this comment instead
+# of the real setting below.
 wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
