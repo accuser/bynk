@@ -46,14 +46,13 @@ agent Order {
               (identifier))
             (variant_pattern
               (identifier)))))
-      (handler
-        (call_handler
-          (identifier)
-          (generic_type_ref
-            (builtin_type)
-            (unit_type))
-          (block
-            (unit_literal)))))))
+      (call_handler
+        (identifier)
+        (generic_type_ref
+          (builtin_type)
+          (unit_type))
+        (block
+          (unit_literal))))))
 
 ================================================================================
 Snapshot invariant and transition side by side
@@ -104,11 +103,10 @@ agent Counter {
           (field_access
             (identifier)
             (identifier))))
-      (handler
-        (call_handler
-          (identifier)
-          (generic_type_ref
-            (builtin_type)
-            (unit_type))
-          (block
-            (unit_literal)))))))
+      (call_handler
+        (identifier)
+        (generic_type_ref
+          (builtin_type)
+          (unit_type))
+        (block
+          (unit_literal))))))

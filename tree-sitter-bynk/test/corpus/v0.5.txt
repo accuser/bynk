@@ -172,23 +172,22 @@ context shop {
         kind: (store_kind
           head: (identifier)
           (base_type)))
-      (handler
-        (call_handler
-          method: (identifier)
-          (param
+      (call_handler
+        method: (identifier)
+        (param
+          name: (identifier)
+          type: (base_type))
+        return_type: (generic_type_ref
+          name: (builtin_type)
+          arg: (unit_type))
+        body: (block
+          (let_stmt
             name: (identifier)
-            type: (base_type))
-          return_type: (generic_type_ref
-            name: (builtin_type)
-            arg: (unit_type))
-          body: (block
-            (let_stmt
-              name: (identifier)
-              value: (identifier))
-            (assign_stmt
-              target: (identifier)
-              value: (binary_expr
-                (identifier)
-                (identifier)))
-            tail: (effect_pure_expr
-              (unit_literal))))))))
+            value: (identifier))
+          (assign_stmt
+            target: (identifier)
+            value: (binary_expr
+              (identifier)
+              (identifier)))
+          tail: (effect_pure_expr
+            (unit_literal)))))))

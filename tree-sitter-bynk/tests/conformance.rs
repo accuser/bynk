@@ -18,7 +18,18 @@
 //! Scope is the type surface where the drifts lived (base types, sum/enum
 //! variants, built-in generics). Add a case here whenever a change could move
 //! the two parsers apart.
+//!
+//! T0.4′ widens this from cases to **totality**: every file the compiler's
+//! parser accepts — `examples/`, the vendored first-party `.bynk` sources
+//! (`bynk-check/src/firstparty`), every `bynkc` positive fixture — must have
+//! zero `ERROR` and zero `MISSING` nodes under tree-sitter too, and every
+//! negative fixture whose `expected_error.txt` names a parse/lex-time
+//! category must be rejected by both. This corpus is compiled and checked
+//! elsewhere for *semantics*; here only *parsing* is at stake, so each file
+//! is parsed standalone rather than through the full project pipeline.
 
+use std::fs;
+use std::path::{Path, PathBuf};
 use tree_sitter::Parser;
 
 /// Does the `tree-sitter-bynk` grammar accept `src` cleanly — no `ERROR` and no
@@ -45,10 +56,16 @@ fn has_missing(node: tree_sitter::Node) -> bool {
     node.children(&mut cursor).any(has_missing)
 }
 
-/// Does the compiler's own parser (`bynk-syntax`) accept `src`?
+/// Does the compiler's own parser (`bynk-syntax`) accept `src`? Uses
+/// `parse_units`, not `parse`, so a `context` file (every real project source
+/// outside a bare `commons` fragment) and an atomic `commons` + `suite` file
+/// (DECISION S, v0.113) are accepted rather than rejected with
+/// `bynk.parse.unexpected_context` or `bynk.parse.extra_tokens` — `parse`
+/// exists for the single-file CLI path, which only ever sees one bare
+/// `commons` unit.
 fn bynk_syntax_accepts(src: &str) -> bool {
     match bynk_syntax::lexer::tokenize(src) {
-        Ok(tokens) => bynk_syntax::parser::parse(&tokens, src).is_ok(),
+        Ok(tokens) => bynk_syntax::parser::parse_units(&tokens, src).is_ok(),
         Err(_) => false,
     }
 }
@@ -239,6 +256,232 @@ fn tree_sitter_and_compiler_parser_agree() {
     assert!(
         mismatches.is_empty(),
         "tree-sitter and the compiler parser diverged (#635 guard):\n{}",
+        mismatches.join("\n")
+    );
+}
+
+/// The workspace root — this crate lives one directory below it.
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("tree-sitter-bynk has a parent directory")
+        .to_path_buf()
+}
+
+fn read(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()))
+}
+
+/// Recursively collect every `.bynk` file under `dir`. Silent on a missing
+/// `dir` — callers that need "the corpus root still exists" as a totality
+/// signal (rather than a quietly shrinking corpus) assert on the per-root
+/// count themselves, not just the aggregate.
+fn collect_bynk_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_bynk_files(&p, out);
+        } else if p.extension().and_then(|e| e.to_str()) == Some("bynk") {
+            out.push(p);
+        }
+    }
+}
+
+/// Collect every `.bynk` file under `root`, asserting the root itself
+/// contributed at least one — a renamed or moved directory must fail loudly
+/// here rather than silently shrink the corpus this test claims to cover.
+fn collect_bynk_files_from(root: &Path, out: &mut Vec<PathBuf>) {
+    let before = out.len();
+    collect_bynk_files(root, out);
+    assert!(
+        out.len() > before,
+        "no `.bynk` files found under {} — has it moved?",
+        root.display()
+    );
+}
+
+#[test]
+fn totality_positive_corpus_accepted_by_both_parsers() {
+    let root = workspace_root();
+    let mut files = Vec::new();
+    collect_bynk_files_from(&root.join("examples"), &mut files);
+    collect_bynk_files_from(&root.join("bynk-check/src/firstparty"), &mut files);
+    collect_bynk_files_from(&root.join("bynkc/tests/fixtures/positive"), &mut files);
+    files.sort();
+
+    let mut mismatches = Vec::new();
+    for path in &files {
+        let src = read(path);
+        let ts = tree_sitter_accepts(&src);
+        let rust = bynk_syntax_accepts(&src);
+        if !ts || !rust {
+            mismatches.push(format!(
+                "  [{}] expected both parsers to accept (zero ERROR/MISSING), got tree-sitter={ts} bynk-syntax={rust}",
+                path.display()
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "totality (positive corpus) failed — a file the compiler accepts is not clean under tree-sitter, or vice versa:\n{}",
+        mismatches.join("\n")
+    );
+}
+
+/// The first non-blank, non-comment line of a negative fixture's
+/// `expected_error.txt` — its diagnostic category, e.g. `bynk.parse.expected_token`.
+fn expected_error_category(dir: &Path) -> Option<String> {
+    let f = dir.join("expected_error.txt");
+    if !f.exists() {
+        return None;
+    }
+    read(&f)
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
+}
+
+/// Is `category` raised by the lexer or parser, rather than a later
+/// (semantic) pass? Only these fixtures assert something both parsers can
+/// observe — a type or resolution error is invisible to a bare parse.
+fn is_parse_time_category(category: &str) -> bool {
+    category.starts_with("bynk.parse.") || category.starts_with("bynk.lex.")
+}
+
+/// Parse/lex-time categories this totality check does not hold tree-sitter to
+/// — each is a real `bynk-syntax` rule, named here (not silently skipped) so
+/// dropping an entry is a visible, deliberate act. Two different reasons live
+/// in this one list, and they are not the same claim:
+///
+/// - **inexpressible**: no context-free production can encode it (an
+///   arithmetic-magnitude check, a recursive-descent stack-depth guard).
+/// - **declined**: a CFG *could* express it, but the fix is disproportionate
+///   to this slice (a `binary_expr` precedence restructure reachable from
+///   nearly every expression in the corpus) or would add an unguarded
+///   duplicate of another source of truth (`keywords.rs`). These are
+///   legitimate follow-on slices, not permanent gaps.
+const EXCLUDED_PARSE_TIME_CATEGORIES: &[(&str, &str)] = &[
+    (
+        "bynk.lex.float_literal_overflow",
+        "inexpressible: an arithmetic-magnitude check on the literal's parsed \
+         value, not a grammar shape",
+    ),
+    (
+        "bynk.parse.nesting_too_deep",
+        "inexpressible: bynk-syntax's MAX_NESTING_DEPTH (#713/#714) guards the \
+         recursive-descent parser's own call stack; a CFG has no bounded-depth \
+         form to mirror it with",
+    ),
+    (
+        "bynk.parse.non_associative",
+        "declined: `a < b < c` needs `binary_expr`'s relational/equality tiers \
+         to take operands from a strictly-lower tier instead of the shared \
+         `_expression` — correct in a CFG, but a precedence-chain rewrite \
+         reachable from nearly every expression in the corpus",
+    ),
+    (
+        "bynk.parse.reserved_keyword",
+        "declined: expressible only via a keyword-exclusion list on \
+         `identifier`, which would duplicate `keywords.rs` with no drift \
+         guard tying the two together",
+    ),
+    (
+        "bynk.parse.uses_after_decls",
+        "declined: the ordering rule is fragment-form-only (`!brace` in \
+         declarations.rs) and differs per unit kind (commons/context: before \
+         `type`/`fn`; suite: before `stub`/`case`/`property`) — three \
+         separate fragment-only item-list productions to add",
+    ),
+];
+
+#[test]
+fn totality_parse_error_negative_fixtures_rejected_by_both_parsers() {
+    let root = workspace_root();
+    let negative_root = root.join("bynkc/tests/fixtures/negative");
+    let mut dirs = Vec::new();
+    if let Ok(rd) = fs::read_dir(&negative_root) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                dirs.push(p);
+            }
+        }
+    }
+    dirs.sort();
+    assert!(!dirs.is_empty(), "no negative fixtures found");
+
+    let mut checked = 0;
+    let mut excluded_counts: Vec<(&str, usize)> = EXCLUDED_PARSE_TIME_CATEGORIES
+        .iter()
+        .map(|(cat, _)| (*cat, 0))
+        .collect();
+    let mut mismatches = Vec::new();
+    for dir in &dirs {
+        let Some(category) = expected_error_category(dir) else {
+            continue;
+        };
+        if !is_parse_time_category(&category) {
+            continue;
+        }
+        if let Some(entry) = excluded_counts.iter_mut().find(|(cat, _)| *cat == category) {
+            entry.1 += 1;
+            continue;
+        }
+
+        let mut files = Vec::new();
+        collect_bynk_files(dir, &mut files);
+        files.sort();
+
+        // A fixture's `src/` may hold sibling files that are unrelated and
+        // parse cleanly; the one(s) `bynk-syntax` itself rejects are the ones
+        // both parsers must agree are rejected.
+        let rejecting: Vec<&PathBuf> = files
+            .iter()
+            .filter(|f| !bynk_syntax_accepts(&read(f)))
+            .collect();
+        if rejecting.is_empty() {
+            mismatches.push(format!(
+                "  [{}] expected_error.txt names a parse/lex category ({category}) but bynk-syntax accepted every file in the fixture",
+                dir.display()
+            ));
+            continue;
+        }
+        checked += 1;
+        for f in rejecting {
+            let src = read(f);
+            if tree_sitter_accepts(&src) {
+                mismatches.push(format!(
+                    "  [{}] parsers DISAGREE on {}: bynk-syntax rejects, tree-sitter accepts",
+                    dir.display(),
+                    f.display()
+                ));
+            }
+        }
+    }
+    assert!(
+        checked > 0,
+        "no parse/lex-time negative fixtures were found to check"
+    );
+    println!(
+        "totality (parse-error negative fixtures): {checked} checked, {} excluded by category",
+        excluded_counts.iter().map(|(_, n)| n).sum::<usize>()
+    );
+    // A dead exclusion — a category no fixture raises any more — is exactly
+    // the stale bookkeeping this track exists to remove (§5).
+    for (cat, count) in &excluded_counts {
+        assert!(
+            *count > 0,
+            "EXCLUDED_PARSE_TIME_CATEGORIES names `{cat}`, but no negative \
+             fixture raises it any more — remove the stale exclusion"
+        );
+    }
+    assert!(
+        mismatches.is_empty(),
+        "totality (parse-error negative fixtures) failed:\n{}",
         mismatches.join("\n")
     );
 }

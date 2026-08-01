@@ -1661,12 +1661,46 @@
       "type": "CHOICE",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "number_literal"
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "-"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            },
+            {
+              "type": "SYMBOL",
+              "name": "number_literal"
+            }
+          ]
         },
         {
-          "type": "SYMBOL",
-          "name": "float_literal"
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "-"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            },
+            {
+              "type": "SYMBOL",
+              "name": "float_literal"
+            }
+          ]
         },
         {
           "type": "SYMBOL",
@@ -2907,8 +2941,24 @@
         {
           "type": "REPEAT",
           "content": {
-            "type": "SYMBOL",
-            "name": "handler"
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "REPEAT",
+                "content": {
+                  "type": "FIELD",
+                  "name": "annotation",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "store_annotation"
+                  }
+                }
+              },
+              {
+                "type": "SYMBOL",
+                "name": "handler"
+              }
+            ]
           }
         },
         {
@@ -3517,8 +3567,24 @@
         {
           "type": "REPEAT",
           "content": {
-            "type": "SYMBOL",
-            "name": "handler"
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "REPEAT",
+                "content": {
+                  "type": "FIELD",
+                  "name": "annotation",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "store_annotation"
+                  }
+                }
+              },
+              {
+                "type": "SYMBOL",
+                "name": "call_handler"
+              }
+            ]
           }
         },
         {
@@ -6326,7 +6392,7 @@
           "name": "inner",
           "content": {
             "type": "SYMBOL",
-            "name": "_pattern"
+            "name": "wildcard_pattern"
           }
         },
         {
@@ -8126,6 +8192,9 @@
     [
       "observation_expr",
       "_primary"
+    ],
+    [
+      "store_field"
     ]
   ],
   "precedences": [],
