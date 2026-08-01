@@ -1528,9 +1528,9 @@ pub fn describe_symbol_cross_file(
 /// honours `exclude` plus the `out`/`node_modules` caches. This hand-rolled walk
 /// saw one directory and no exclusions, which is the same class of defect as the
 /// analysis root being wrong. Retained for the tests that enumerate a fixture
-/// tree directly.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn walk_bynk_files(root: &Path) -> Vec<PathBuf> {
+/// tree directly — its only remaining callers (`cfg(test)`, this file).
+#[cfg(test)]
+pub(crate) fn walk_bynk_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {

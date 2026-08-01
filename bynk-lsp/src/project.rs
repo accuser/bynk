@@ -165,7 +165,9 @@ mod tests {
         let manifest = "[fmt]\nindent = \"spaces\"\nindent_width = 3\nmax_line_width = 60\n";
         let root = project("lsp-fmt-parity", manifest);
         let editor = load_config(&root).expect("config loads").format_options();
-        let cli = bynk_fmt::FmtConfig::from_manifest(&root.join(bynk_fmt::MANIFEST))
+        let cli_text =
+            std::fs::read_to_string(root.join(bynk_fmt::MANIFEST)).expect("manifest reads");
+        let cli = bynk_fmt::FmtConfig::from_manifest_str(&cli_text)
             .expect("manifest parses")
             .apply(FormatOptions::default());
         assert_eq!(editor, cli, "format-on-save and `fmt` must agree");
