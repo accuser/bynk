@@ -1,7 +1,11 @@
 # Automated code review on pull requests.
 #
-# Runs on every non-draft PR (and every push to it) and posts review comments
-# without needing an `@claude` mention. Reviews are workflow-aware: Claude reads
+# Runs once, when a PR is marked ready for review — not on open, and not on
+# every subsequent push. The workflow this scopes to: open as a draft, let CI
+# and any fixups land while draft (no review triggered), then mark ready once
+# it's green. Later pushes do NOT re-trigger this automatically; a further
+# review is a deliberate, manual call (e.g. an `@claude` mention), not
+# something every commit pays for. Reviews are workflow-aware: Claude reads
 # `design/` at runtime, so it can check a change against our release discipline
 # (the `design/pending/<slug>.md` increment file, ADR conventions, the test
 # gate) rather than reviewing the diff in isolation.
@@ -19,9 +23,10 @@ name: Claude PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review]
+    types: [ready_for_review]
 
-# A new push supersedes the in-flight review for the same PR.
+# Belt-and-suspenders: nothing re-triggers this per-PR now, but a manual
+# re-run (or the trigger types above growing again) shouldn't stack.
 concurrency:
   group: claude-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -36,12 +41,12 @@ permissions:
 
 jobs:
   review:
-    # Only review ready (non-draft) PRs, and never Dependabot's. The draft
-    # guard is what scopes reviews to code, not branch churn: open PRs as
-    # drafts, let base merges / fixups land while draft (all skipped), then
-    # mark ready for the first review — later code pushes re-trigger via
-    # `synchronize`. Dependabot PRs are dependency bumps we don't want reviewed
-    # (and they run with a read-only token that couldn't post anyway).
+    # `draft == false` is redundant against the `ready_for_review`-only trigger
+    # above (that event only fires on the draft→ready transition, so draft is
+    # always already false) — kept as a defensive, self-documenting check in
+    # case the trigger types above ever grow again. Never Dependabot's: those
+    # are dependency bumps we don't want reviewed (and run with a read-only
+    # token that couldn't post anyway).
     if: >-
       github.event.pull_request.draft == false &&
       github.event.pull_request.user.login != 'dependabot[bot]'
@@ -90,11 +95,12 @@ jobs:
           # Opus for the deepest correctness/edge-case rigour on code changes.
           # The diff is already in context; the prompt keeps Claude from browsing
           # design/ (that exhausted 30 turns on a 12-file PR without posting).
-          # 40 is headroom above a focused diff review; each turn adds usage cost.
+          # No --max-turns: a fixed cap has no principled value if the review
+          # sometimes needs one turn more than it allows — better to let a
+          # focused review run to completion than truncate it arbitrarily.
           # --allowedTools is REQUIRED: without it Claude's post attempts are
           # denied (a run finished with 11 permission denials and posted nothing).
           # The action does not auto-publish the review; Claude must call these.
           claude_args: >-
-            --max-turns 40
-            --model claude-opus-4-8
+            --model claude-opus-5
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
