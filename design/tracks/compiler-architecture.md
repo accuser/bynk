@@ -46,7 +46,7 @@ README defines exactly as "the living map the per-slice proposals are cut from".
 
 If that argument does not hold for a reviewer, the honest fallback is available and cheap: run Tier A
 as ordinary proposals, and open a track for Tier B alone. The decisions would then need relocating —
-most naturally into ADR-B and ADR-D, which already carry the two that matter most.
+most naturally into [ADR 0309](../decisions/0309-refactor-acceptance-gate-per-tier.md) and [ADR 0311](../decisions/0311-the-lowering-substrate.md), which already carry the two that matter most.
 
 ---
 
@@ -148,7 +148,7 @@ cargo ships `cargo build` while `rustc` stays installable — a pinned compiler 
 driver's Node orchestration is precisely what CI determinism wants. And once the module re-exports
 are gone, deleting `[lib]` altogether is trivial if it ever becomes wanted.
 
-**Lands as:** slice **T-D1**, carrying **ADR-A**. It changes a published surface, so it needs its own
+**Lands as:** slice **T-D1**, carrying **ADR-A** (unlanded — it rides the slice). It changes a published surface, so it needs its own
 `level` and changelog row.
 
 **Named follow-on, deliberately unfiled: `bynk build`.** The driver gaining a build verb, with
@@ -191,7 +191,7 @@ The trade is stated rather than hidden: ADR 0086's "version skew impossible by c
 up, and replaced by three layers of detection. What is bought is that a capability adapter authored
 outside this repository has something to import.
 
-**Lands as:** **ADR-C**, in the settling increment. **No code in this track** — the packaging, the
+**Landed as:** **[ADR 0310](../decisions/0310-the-emit-abi-is-published-the-codegen-is-not.md)**. **No code in this track** — the packaging, the
 guards and the `@bynk/*` mechanics are packaging-track work, carried in §7.
 
 ### 3.3 Q3 — What is the acceptance gate? **Settled.** *(amends ADR 0059)*
@@ -211,11 +211,11 @@ did.**" And its verdict on exactly this question: "'the gate is green' is the we
 evidence here." ADR 0201, converting keyed sinks by grep: "converting it looked right and was not…
 the failure is a **hang**, not an assertion."
 
-**Decision.** The gate becomes, per tier. ADR-B states this in its own generic vocabulary — Enablers /
+**Decision.** The gate becomes, per tier. [ADR 0309](../decisions/0309-refactor-acceptance-gate-per-tier.md) states this in its own generic vocabulary — Enablers /
 Paydown / Structural / Layering, properties of the *kind* of change rather than of this track — since
 the ADR is durable and outlives the track; the mapping to this track's slices lives here, not there:
 
-| ADR-B tier | This track | Gate |
+| ADR 0309 tier | This track | Gate |
 |---|---|---|
 | Enablers | T0.0 | its own artefacts exist and are exercised (§6, T0 criteria) |
 | Paydown | the rest of Tier A (T0.2′, T0.3, T0.4′, T0.7, T1.6′, T1.7′, T1.8) | byte-identical goldens **plus** a crate-local fixture per behaviour change; a slice that changes a diagnostic must add an `expected_diagnostics.txt` assertion |
@@ -226,7 +226,7 @@ So Tier A is not one gate: T0.0 is Enablers-gated and must land first (§6 alrea
 other Tier A slice is Paydown-gated. That is consistent with, not a change to, "only T0.0 gates
 anything" below.
 
-**Lands as:** **ADR-B**, in the settling increment. Must land before T0.0 opens.
+**Landed as:** **[ADR 0309](../decisions/0309-refactor-acceptance-gate-per-tier.md)**. It was a precondition for T0.0, and is met.
 
 ### 3.4 Q4 — Does phase 3 open at all, and on what trigger? **Settled.**
 
@@ -434,7 +434,7 @@ shrinkage, and probably growth. Phase 5 gets further away on its own.
 
 | Slice | What lands | Rules |
 |---|---|---|
-| **T-D1** | The fourteen whole-module re-exports deleted from `bynkc/src/lib.rs`; `bynkc`'s integration tests repointed at the leaf crates. Carries **ADR-A**. | R10.4 |
+| **T-D1** | The fourteen whole-module re-exports deleted from `bynkc/src/lib.rs`; `bynkc`'s integration tests repointed at the leaf crates. Carries **ADR-A** (unlanded). | R10.4 |
 
 ### Tier A — Phases 0 and 1, the remainder
 
@@ -512,7 +512,7 @@ than out of the programme's.
 | The full IR (reference Part 6) | 6 | phase 5 complete |
 | The TypeScript tree and printer (reference Part 7) | 7 | phase 6 complete |
 | Incrementality (query granularity, the firewall) | 8 | phases 3 and 4 complete |
-| Publishing the emit ABI: the `@bynk/*` package, the three ADR 0200 layers, the build-time enumeration guard | *packaging track* | ADR-C merged; not gated on this track's phases |
+| Publishing the emit ABI: the `@bynk/*` package, the three ADR 0200 layers, the build-time enumeration guard | *packaging track* | ADR 0310 merged; not gated on this track's phases |
 
 *Note on an earlier revision.* Before the trajectory document existed, this section recorded the IR,
 the printer and the crate re-graph as **refusals with triggers**. That was wrong bookkeeping:
@@ -651,36 +651,36 @@ decision rather than a drift.**
 
 ---
 
-## 11. ADRs to land up front
+## 11. The ADRs this track landed
 
-Per ADR 0167 step 2 — the load-bearing, hard-to-reverse decisions, landed before slicing. Numbers are
-assigned at merge by the stamp (ADR 0206), so these are drafted as `## ADR:` blocks in
-`design/pending/`.
+Per ADR 0167 step 2, the load-bearing, hard-to-reverse decisions land before slicing. These three did,
+with the settling increment (`level: patch`, no code); their numbers were assigned at merge by the
+stamp (ADR 0206), which is why the doc referred to them by letter until they existed.
 
-**In the settling increment** (`design/pending/compiler-architecture-settle.md`, `level: patch`, no
-code):
+- **[ADR 0309](../decisions/0309-refactor-acceptance-gate-per-tier.md) — the refactor acceptance gate**, amending ADR 0059 property 1.
+  §3.3. It was a precondition for T0.0.
+- **[ADR 0310](../decisions/0310-the-emit-abi-is-published-the-codegen-is-not.md) — the emit ABI is published; the codegen is not.** §3.2.
+  **Reversed under settling review**: the earlier refusal to publish treated the ABI and the codegen
+  as one surface when ADR 0086 enumerates the ABI as four shapes. Its *implementation* is
+  packaging-track work (§7); what landed here is the posture and the enumeration, the part that
+  freezes by default if left unclaimed.
+- **[ADR 0311](../decisions/0311-the-lowering-substrate.md) — the lowering substrate.** The record R0.1 says should have
+  existed from the start: we lower to text on purpose, here is what it costs, here is Tier B's
+  amendment, and here are the triggers (§3.4) that would open phase 3. This is the missing artefact
+  the whole retrospective points at, and landing it was worth doing **even if no other slice ships**.
 
-- **ADR-B — The refactor acceptance gate, amending ADR 0059 property 1.** §3.3. Must land before
-  Tier A opens.
-- **ADR-C — The emit ABI is published; the codegen is not.** §3.2. Reversed under settling review.
-  Its *implementation* is packaging-track work (§7); what lands here is the posture and the
-  enumeration, because that is the part which freezes by default if left unclaimed.
-- **ADR-D — The lowering substrate.** The record R0.1 says should have existed from the start: we
-  lower to text on purpose, here is what it costs, here is Tier B's amendment, and here are the
-  triggers (§3.4) that would open phase 3. This is the missing artefact the whole retrospective points
-  at, and landing it is worth doing **even if no other slice ships**.
-
-**In its own slice:**
+**Still to land, in its own slice:**
 
 - **ADR-A — `bynkc`-the-library's purpose.** §3.1, riding **T-D1**, because narrowing a published
-  surface needs its own `level` and changelog row.
+  surface needs its own `level` and changelog row. Lettered because unlanded; the stamp assigns its
+  number when T-D1 merges.
 
 ---
 
 ## 12. Retirement
 
-The track retires when Tier B is complete and §3.4's trigger has been settled — whether or not Tiers
-3 and 4 have opened. A track that stays open waiting for a gated tier is a track that never retires.
+The track retires when Tier B is complete and §3.4's trigger has been settled — whether or not phases
+3 and 4 have opened. A track that stays open waiting for a gated phase is a track that never retires.
 If a trigger fires later, that is a new track citing this one and the reference.
 
 The retirement PR removes this doc, appends its closing summary to `../archive/retired-tracks.md`,
