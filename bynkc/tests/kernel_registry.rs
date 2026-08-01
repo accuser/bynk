@@ -11,7 +11,7 @@
 //! accept — its dispatch pin lives in `query_kernel_registry.rs` instead,
 //! compiled as a one-file project (the `store_op_registry.rs` shape).
 
-use bynkc::kernel_methods::{
+use bynk_check::kernel_methods::{
     EFFECT_RESULT_METHODS, FLOAT_METHODS, INT_METHODS, KernelMethod, LIST_METHODS, MAP_METHODS,
     OPTION_METHODS, QUERY_METHODS, RESULT_METHODS, STRING_METHODS,
 };

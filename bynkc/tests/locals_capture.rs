@@ -3,7 +3,7 @@
 //! `let <-`, fn/handler/lambda params) and, critically, scope correctness
 //! under nesting and shadowing.
 
-use bynkc::locals::{LocalBinding, locals_at};
+use bynk_check::locals::{LocalBinding, locals_at};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

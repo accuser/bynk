@@ -22,7 +22,7 @@ use bynkc::parser::parse_unit;
 /// `FIRSTPARTY_SOURCES` list, so this guard covers every first-party commons
 /// automatically (`bynk.locale.types` was previously omitted here — #901).
 fn sources() -> &'static [(&'static str, &'static str)] {
-    bynkc::firstparty::FIRSTPARTY_SOURCES
+    bynk_check::firstparty::FIRSTPARTY_SOURCES
 }
 
 #[test]

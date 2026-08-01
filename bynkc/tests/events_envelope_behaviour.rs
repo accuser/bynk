@@ -220,7 +220,7 @@ fn bundle_events_envelope_is_minted_once_per_emission() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     fs::write(run_dir.join("driver.ts"), DRIVER_TS).unwrap();

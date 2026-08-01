@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use bynkc::index::{ProjectIndex, SymbolKey, SymbolKind};
+use bynk_check::index::{ProjectIndex, SymbolKey, SymbolKind};
 
 fn smoke_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -92,7 +92,7 @@ fn refs_in<'a>(
     index: &'a ProjectIndex,
     k: &SymbolKey,
     file: &str,
-) -> Vec<&'a bynkc::index::SiteRef> {
+) -> Vec<&'a bynk_check::index::SiteRef> {
     index.symbols[k]
         .refs
         .iter()

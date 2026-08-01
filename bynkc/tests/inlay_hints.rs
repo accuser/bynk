@@ -30,7 +30,7 @@ fn hints_for(result: &bynk_ide::ProjectDiagnostics, file: &str) -> (Vec<(usize, 
             hs.iter()
                 // This harness exercises inferred-type hints; parameter-name
                 // hints (v0.39) are checked separately.
-                .filter(|h| h.kind == bynkc::hints::HintKind::Type)
+                .filter(|h| h.kind == bynk_check::hints::HintKind::Type)
                 .map(|h| (h.span.start, h.label.clone()))
                 .collect()
         })
@@ -77,7 +77,7 @@ fn param_hints_for(
         .find(|(p, _)| p.to_string_lossy().replace('\\', "/") == file)
         .map(|(_, hs)| {
             hs.iter()
-                .filter(|h| h.kind == bynkc::hints::HintKind::Parameter)
+                .filter(|h| h.kind == bynk_check::hints::HintKind::Parameter)
                 .map(|h| (h.span.start, h.label.clone()))
                 .collect()
         })

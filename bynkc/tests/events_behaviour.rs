@@ -267,7 +267,7 @@ fn bundle_events_publish_subscribe_and_abort_suppresses_delivery() {
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     fs::write(run_dir.join("driver.ts"), DRIVER_TS).unwrap();

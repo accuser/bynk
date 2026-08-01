@@ -223,7 +223,7 @@ fn oidc_verifier_rejects_every_bypass_class() {
     fs::create_dir_all(&tmp).unwrap();
     fs::write(
         tmp.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     fs::write(tmp.join("driver.ts"), DRIVER_TS).unwrap();

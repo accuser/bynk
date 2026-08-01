@@ -231,7 +231,7 @@ fn bundle_events_schema_version_reflects_the_declared_annotation_or_defaults_to_
     }
     fs::write(
         run_dir.join("runtime.ts"),
-        bynkc::emitter::emit_runtime_module(),
+        bynk_emit::emitter::emit_runtime_module(),
     )
     .unwrap();
     fs::write(run_dir.join("driver.ts"), DRIVER_TS).unwrap();
