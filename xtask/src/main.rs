@@ -198,7 +198,7 @@ fn greenfield_status(apply: bool) -> ExitCode {
         );
     }
 
-    let disagreements = xtask::greenfield_status::gated_disagreements(&root);
+    let disagreements = xtask::greenfield_status::gated_disagreements_in(&report.probes, &root);
     if disagreements.is_empty() {
         println!("greenfield-status: table current");
         ExitCode::SUCCESS

@@ -231,9 +231,9 @@ fn fs_below_driver(root: &Path) -> Probe {
 
 fn has_production_std_fs(src: &str) -> bool {
     let lines: Vec<&str> = src.lines().collect();
-    let test_start = trailing_test_mod_start(&lines);
+    let ranges = test_mod_ranges(&lines);
     for (i, line) in lines.iter().enumerate() {
-        if test_start.is_some_and(|start| i >= start) {
+        if in_test_range(i, &ranges) {
             continue;
         }
         if line.contains("std::fs") {
@@ -243,22 +243,188 @@ fn has_production_std_fs(src: &str) -> bool {
     false
 }
 
-/// The line index where a trailing `#[cfg(test)] mod <ident> { ... }` block begins (the
-/// `mod` line itself), or `None` if the file has no such block. Only matches a
-/// brace-opening `mod` line — `#[cfg(test)] mod foo;` (an external-file declaration,
-/// not an inline scope) does not count.
-fn trailing_test_mod_start(lines: &[&str]) -> Option<usize> {
-    for (i, line) in lines.iter().enumerate() {
-        if line.trim() != "#[cfg(test)]" {
-            continue;
+/// Every `#[cfg(test)] mod <ident> { ... }` block in `lines`, as inclusive
+/// `(start_line, end_line)` line-index ranges — every occurrence, not just a single
+/// trailing block. A file in this codebase can carry several test modules scattered
+/// through it with production code between them — `bynk-emit/src/emitter/lower.rs` has
+/// two, 1031 lines apart, and treating "everything after the first (or last)
+/// `#[cfg(test)]`" as one cutoff silently misclassifies that intervening production
+/// code as test-scope (caught in review: it made `fs_below_driver`, a *gated* probe,
+/// blind over that span, and inflated `test_density`'s ratio by up to 39%).
+///
+/// A block's end is found by real brace-depth counting via [`brace_delta`], not a
+/// "first column-0 `}`" shortcut: an earlier version of this fix tried exactly that
+/// shortcut (reasoning that rustfmt always dedents a closing brace back to column 0)
+/// and it broke on files like `bynk-ide/src/sequence.rs`, whose test module embeds
+/// multi-line `.bynk`/TypeScript fixture source as string literals — source that
+/// itself contains a column-0 `}` closing a top-level construct *inside the string*,
+/// which the shortcut mistook for the end of the Rust `mod` block, truncating it by
+/// hundreds of lines. `brace_delta` skips characters inside Rust string/char literals
+/// and comments, so embedded fixture text can't be mistaken for real Rust braces.
+///
+/// Only matches a brace-opening `mod` line — `#[cfg(test)] mod foo;` (an external-file
+/// declaration, not an inline scope) does not open a range.
+fn test_mod_ranges(lines: &[&str]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() == "#[cfg(test)]"
+            && let Some(off) = lines[i + 1..].iter().position(|l| !l.trim().is_empty())
+        {
+            let mod_line = i + 1 + off;
+            let t = lines[mod_line].trim();
+            if t.starts_with("mod ") && t.ends_with('{') {
+                let mut depth = 0i32;
+                let mut state = BraceScanState::Normal;
+                let mut started = false;
+                let mut end = lines.len() - 1;
+                for (j, line) in lines[mod_line..].iter().enumerate() {
+                    let (delta, new_state) = brace_delta(line, state);
+                    state = new_state;
+                    depth += delta;
+                    if depth != 0 {
+                        started = true;
+                    }
+                    if started && depth == 0 {
+                        end = mod_line + j;
+                        break;
+                    }
+                }
+                ranges.push((mod_line, end));
+                i = end + 1;
+                continue;
+            }
         }
-        let next = lines[i + 1..].iter().find(|l| !l.trim().is_empty())?;
-        let next_trimmed = next.trim();
-        if next_trimmed.starts_with("mod ") && next_trimmed.ends_with('{') {
-            return lines.iter().position(|l| std::ptr::eq(*l, *next));
+        i += 1;
+    }
+    ranges
+}
+
+fn in_test_range(line_idx: usize, ranges: &[(usize, usize)]) -> bool {
+    ranges
+        .iter()
+        .any(|(start, end)| line_idx >= *start && line_idx <= *end)
+}
+
+/// Scanner state carried across lines for [`brace_delta`]: whether the cursor is
+/// inside a string literal, a raw string (with its `#`-count), or a block comment
+/// (with nesting depth — Rust block comments nest).
+#[derive(Clone, Copy, PartialEq)]
+enum BraceScanState {
+    Normal,
+    InString,
+    InRawString(u8),
+    InBlockComment(u32),
+}
+
+/// The net `{`/`}` depth change in `line`, skipping characters inside Rust string/char
+/// literals, raw strings, and line/block comments — a naive per-character brace count
+/// breaks the moment a line contains a fixture string like `"fn f() { \"{\" }"` or a
+/// doc comment mentioning a brace. Returns the depth delta and the state to carry into
+/// the next line (a string or block comment can span line boundaries).
+fn brace_delta(line: &str, mut state: BraceScanState) -> (i32, BraceScanState) {
+    let mut delta = 0i32;
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match state {
+            BraceScanState::Normal => {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+                    break; // rest of the line is a line comment
+                }
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    state = BraceScanState::InBlockComment(1);
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == '"' {
+                    state = BraceScanState::InString;
+                    i += 1;
+                    continue;
+                }
+                if chars[i] == 'r' && matches!(chars.get(i + 1), Some('"') | Some('#')) {
+                    let mut j = i + 1;
+                    let mut hashes = 0u8;
+                    while chars.get(j) == Some(&'#') {
+                        hashes += 1;
+                        j += 1;
+                    }
+                    if chars.get(j) == Some(&'"') {
+                        state = BraceScanState::InRawString(hashes);
+                        i = j + 1;
+                        continue;
+                    }
+                }
+                if chars[i] == '\'' {
+                    // A `'\x'`/`'\\'`-style escaped char literal, or a plain `'x'` —
+                    // skip past it so its contents can't be mistaken for braces.
+                    // Anything else (no closing `'` within a couple of chars) is a
+                    // lifetime, which owns no closing quote to skip.
+                    if chars.get(i + 1) == Some(&'\\') {
+                        let mut j = i + 2;
+                        while j < chars.len() && chars[j] != '\'' {
+                            j += 1;
+                        }
+                        i = (j + 1).min(chars.len());
+                        continue;
+                    } else if chars.get(i + 2) == Some(&'\'') {
+                        i += 3;
+                        continue;
+                    }
+                }
+                match chars[i] {
+                    '{' => delta += 1,
+                    '}' => delta -= 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            BraceScanState::InString => {
+                if chars[i] == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == '"' {
+                    state = BraceScanState::Normal;
+                }
+                i += 1;
+            }
+            BraceScanState::InRawString(hashes) => {
+                if chars[i] == '"' {
+                    let mut j = i + 1;
+                    let mut h = 0u8;
+                    while chars.get(j) == Some(&'#') && h < hashes {
+                        h += 1;
+                        j += 1;
+                    }
+                    if h == hashes {
+                        state = BraceScanState::Normal;
+                        i = j;
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+            BraceScanState::InBlockComment(depth) => {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    state = BraceScanState::InBlockComment(depth + 1);
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    state = if depth <= 1 {
+                        BraceScanState::Normal
+                    } else {
+                        BraceScanState::InBlockComment(depth - 1)
+                    };
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+            }
         }
     }
-    None
+    (delta, state)
 }
 
 // --- Gated probe 3: options_sources --------------------------------------
@@ -448,45 +614,55 @@ fn ast_importers(root: &Path) -> Probe {
 
 // --- Gated probe 9: emit_abi_shapes ---------------------------------------
 
+/// ADR 0310 D1's four emit-ABI shapes, as they surface as import names in the vendored
+/// bindings — the `Result`/`Option` tag layout plus `JsonError`, `Uuid`, `FetchError`.
+const EMIT_ABI: &[&str] = &[
+    "Result",
+    "Option",
+    "Ok",
+    "Err",
+    "Some",
+    "None",
+    "JsonError",
+    "Uuid",
+    "FetchError",
+];
+
+/// The capability interfaces a vendored binding legitimately imports to implement what
+/// it declares — governed by language-stability rules, not ADR 0310's codegen-freeze
+/// concern. See [`emit_abi_shapes`] and #999 Decision E for the two-list rationale.
+const CAPABILITY_SURFACE: &[&str] = &[
+    "Clock",
+    "Fetch",
+    "Idempotency",
+    "Locale",
+    "Logger",
+    "Random",
+    "Secrets",
+    "Request",
+    "Response",
+    "LocaleTag",
+    "Kv",
+    "KVNamespace",
+];
+
+/// Is `ident` one of ADR 0310's enumerated emit-ABI shapes, or part of the capability
+/// surface a binding is required to import? If neither, it's a leak `emit_abi_shapes`
+/// flags — this is the single predicate both the probe and its tests use, so a test
+/// asserting "no leak" can't silently pass against a list the test itself redefined.
+fn is_enumerated_emit_abi_or_capability_surface(ident: &str) -> bool {
+    EMIT_ABI.contains(&ident) || CAPABILITY_SURFACE.contains(&ident)
+}
+
 /// ADR 0310's probe (#999 Decision E). The vendored first-party bindings under
-/// `bynk-check/src/firstparty/bindings/` must reference only ADR 0310 D1's four
-/// emit-ABI shapes — as they surface as import names, nine identifiers: the
-/// `Result`/`Option` tag layout (`Result`, `Option`, `Ok`, `Err`, `Some`, `None`) plus
-/// `JsonError`, `Uuid`, `FetchError`.
+/// `bynk-check/src/firstparty/bindings/` must reference only [`EMIT_ABI`]'s nine names.
 ///
 /// This does NOT count every non-enumerated import: a binding legitimately imports the
-/// capability interfaces it implements (`Clock`, `Fetch`, `Idempotency`, `Locale`,
-/// `Logger`, `Random`, `Secrets`, their message types `Request`/`Response`, and the
-/// domain types `LocaleTag`, `Kv`/`KVNamespace`) — that surface is governed by
+/// [`CAPABILITY_SURFACE`] interfaces it implements — that surface is governed by
 /// language-stability rules, not ADR 0310's codegen-freeze concern, and a probe that
 /// flagged it would read non-zero on every binding by construction. See #999 Decision
 /// E for the two-list rationale and its falsifier.
 fn emit_abi_shapes(root: &Path) -> Probe {
-    const EMIT_ABI: &[&str] = &[
-        "Result",
-        "Option",
-        "Ok",
-        "Err",
-        "Some",
-        "None",
-        "JsonError",
-        "Uuid",
-        "FetchError",
-    ];
-    const CAPABILITY_SURFACE: &[&str] = &[
-        "Clock",
-        "Fetch",
-        "Idempotency",
-        "Locale",
-        "Logger",
-        "Random",
-        "Secrets",
-        "Request",
-        "Response",
-        "LocaleTag",
-        "Kv",
-        "KVNamespace",
-    ];
     let dir = root.join("bynk-check/src/firstparty/bindings");
     let mut leaks: Vec<String> = Vec::new();
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -507,8 +683,7 @@ fn emit_abi_shapes(root: &Path) -> Probe {
         };
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         for ident in ts_named_imports_from_runtime_modules(&contents) {
-            if !EMIT_ABI.contains(&ident.as_str()) && !CAPABILITY_SURFACE.contains(&ident.as_str())
-            {
+            if !is_enumerated_emit_abi_or_capability_surface(&ident) {
                 leaks.push(format!("{name}:{ident}"));
             }
         }
@@ -583,6 +758,14 @@ fn wildcard_arms(root: &Path) -> Probe {
 /// text), so `stdout.matches("wildcard_enum_match_arm").count()` overcounts by roughly
 /// 3x — caught by cross-checking this probe's own first run against a real JSON parse
 /// (296 real diagnostics, not the naive scan's 888).
+///
+/// Checks the process exit status: a forced `-W` (not `-D`) never fails the build on
+/// account of the lint itself, so a non-zero exit means clippy genuinely could not run
+/// (a compile error elsewhere, a missing toolchain component, offline with no cached
+/// index) — in which case stdout carries no `compiler-message` lines and a silent
+/// success would report a false, and indistinguishable, `0`. This probe is reported,
+/// not gated, precisely so an honest "couldn't measure" surfaces loudly here rather
+/// than being read as "closed."
 fn run_clippy_wildcard_scan(root: &Path) -> std::io::Result<usize> {
     let output = Command::new("cargo")
         .args([
@@ -595,6 +778,13 @@ fn run_clippy_wildcard_scan(root: &Path) -> std::io::Result<usize> {
         ])
         .current_dir(root)
         .output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "cargo clippy exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut count = 0usize;
     for line in stdout.lines() {
@@ -655,13 +845,13 @@ fn test_density(root: &Path) -> Probe {
         let mut code_lines = 0usize;
         for (_, contents) in rust_files(&src_dir) {
             let lines: Vec<&str> = contents.lines().collect();
-            let test_start = trailing_test_mod_start(&lines);
+            let ranges = test_mod_ranges(&lines);
             for (i, line) in lines.iter().enumerate() {
                 let is_blank_or_comment = line.trim().is_empty() || is_line_comment(line);
                 if !is_blank_or_comment {
                     code_lines += 1;
                 }
-                if test_start.is_some_and(|start| i >= start) && !is_blank_or_comment {
+                if in_test_range(i, &ranges) && !is_blank_or_comment {
                     test_lines += 1;
                 }
             }
@@ -751,12 +941,19 @@ pub fn render_table(report: &Report) -> String {
 /// Every gated probe whose live reading disagrees with the committed table's, as
 /// `(probe name, committed, live)`. Trend probes are never compared, and never
 /// computed here — this only runs the nine gated probes, so checking currency never
-/// pays for `wildcard_arms`'s workspace-wide clippy pass.
+/// pays for `wildcard_arms`'s workspace-wide clippy pass. For a caller that has already
+/// run the full report (e.g. to print it), use [`gated_disagreements_in`] instead so the
+/// nine gated probes aren't computed a second time.
 pub fn gated_disagreements(root: &Path) -> Vec<(String, String, String)> {
+    gated_disagreements_in(&run_gated(root), root)
+}
+
+/// Like [`gated_disagreements`], but diffs `probes` (typically a [`Report`]'s
+/// `.probes`, already computed) instead of re-running the gated probes.
+pub fn gated_disagreements_in(probes: &[Probe], root: &Path) -> Vec<(String, String, String)> {
     let committed = std::fs::read_to_string(table_path(root)).unwrap_or_default();
-    let live = run_gated(root);
     let mut out = Vec::new();
-    for probe in live.iter().filter(|p| p.gated) {
+    for probe in probes.iter().filter(|p| p.gated) {
         let row_prefix = format!("| `{}` | yes | ", probe.name);
         let committed_reads = committed
             .lines()
@@ -851,36 +1048,139 @@ mod tests {
         assert!(has_production_std_fs(src));
     }
 
+    /// Regression test for the bug caught in review: a file with **two** scattered
+    /// `#[cfg(test)] mod ... { ... }` blocks, with real production code between them —
+    /// exactly `bynk-emit/src/emitter/lower.rs`'s shape (two test modules, 1031
+    /// production lines apart). A single "everything from the first/last `#[cfg(test)]`
+    /// onward" cutoff would misclassify `lower_lambda` here as test-scope; the fix must
+    /// close each block at its own boundary and resume production scanning after it.
+    #[test]
+    fn production_code_between_two_scattered_test_mods_is_detected() {
+        let src = "\
+#[cfg(test)]
+mod decode_map_key_tests {
+    #[test]
+    fn t() {
+        assert_eq!(1, 1);
+    }
+}
+
+fn lower_lambda(p: &Path) -> String {
+    std::fs::read_to_string(p).unwrap()
+}
+
+#[cfg(test)]
+mod idempotency_scoping_tests {
+    #[test]
+    fn t2() {
+        assert_eq!(2, 2);
+    }
+}
+";
+        assert!(has_production_std_fs(src));
+    }
+
+    /// The same fixture's `test_mod_ranges` shape, checked directly: two disjoint
+    /// ranges, not one span from the first block to the last.
+    #[test]
+    fn test_mod_ranges_finds_each_block_separately() {
+        let src = "\
+#[cfg(test)]
+mod a {
+    fn x() {}
+}
+
+fn production() {}
+
+#[cfg(test)]
+mod b {
+    fn y() {}
+}
+";
+        let lines: Vec<&str> = src.lines().collect();
+        let ranges = test_mod_ranges(&lines);
+        assert_eq!(
+            ranges.len(),
+            2,
+            "expected two disjoint test-mod ranges: {ranges:?}"
+        );
+        // Line 5 (0-indexed) is `fn production() {}`, between the two blocks.
+        assert!(
+            !in_test_range(5, &ranges),
+            "production() must not read as test-scope"
+        );
+    }
+
+    /// Regression test for the bug in the *fix* for the above: a column-0-`}`
+    /// shortcut (tried and reverted during review) truncates a test module the moment
+    /// its body embeds a multi-line fixture string containing a `}` flush against the
+    /// left margin — exactly `bynk-ide/src/sequence.rs`'s shape, whose test mod embeds
+    /// `.bynk` source fixtures. The real brace-depth scanner must see through the
+    /// string and find the module's *actual* closing brace, hundreds of lines later.
+    /// Uses a raw string for the outer fixture so the embedded `"..."` doesn't need
+    /// escaping, and locates the real end by content rather than a hand-counted index
+    /// — a hand-counted line number is exactly the kind of easy-to-miscount detail
+    /// this codebase's own convention (verify, don't assume) warns against.
+    #[test]
+    fn test_mod_ranges_is_not_fooled_by_a_column_zero_brace_inside_a_string() {
+        let src = r#"#[cfg(test)]
+mod tests {
+    const FIXTURE: &str = "
+commons app.demo {
+}
+";
+
+    fn real_end_of_module() {}
+}
+"#;
+        let lines: Vec<&str> = src.lines().collect();
+        let ranges = test_mod_ranges(&lines);
+        assert_eq!(ranges.len(), 1, "expected exactly one range: {ranges:?}");
+        let (_, end) = ranges[0];
+        // `str::lines()` drops the trailing newline, so the module's real closing
+        // brace — the fixture's last line — is at `lines.len() - 1`. The string's
+        // embedded `}` (an earlier line) must not be mistaken for it.
+        assert_eq!(
+            end,
+            lines.len() - 1,
+            "closed too early — mistook the string's `}}` for the module's: {ranges:?}"
+        );
+    }
+
     // --- emit_abi_shapes (#999 Decision E) ----------------------------------
 
     /// A binding's ordinary capability-interface imports, and the emit-ABI tag-layout
     /// names, must not be flagged — the exact failure mode Decision E rebuilt the probe
     /// to avoid (the original single-allowlist definition read 29-33 here, not 1).
+    ///
+    /// Exercises the real production allowlists via [`is_enumerated_emit_abi_or_capability_surface`]
+    /// — not a local re-declaration. A test with its own copy of `EMIT_ABI` would still
+    /// pass if the real one lost an entry (e.g. deleting `Uuid` from the production
+    /// list), proving nothing about the probe it claims to cover.
     #[test]
     fn emit_abi_shapes_does_not_flag_capability_or_tag_layout_imports() {
         let src = "import type { Clock, Fetch, Locale } from \"./bynk.js\";\n\
                     import { FetchError, Uuid } from \"./bynk.js\";\n\
                     import { Err, None, Ok, Some, type Option, type Result } from \"./runtime.js\";\n";
         let imports = ts_named_imports_from_runtime_modules(src);
-        const EMIT_ABI: &[&str] = &[
-            "Result",
-            "Option",
-            "Ok",
-            "Err",
-            "Some",
-            "None",
-            "JsonError",
-            "Uuid",
-            "FetchError",
-        ];
-        const CAPABILITY_SURFACE: &[&str] = &["Clock", "Fetch", "Locale"];
         let leaks: Vec<&String> = imports
             .iter()
-            .filter(|i| {
-                !EMIT_ABI.contains(&i.as_str()) && !CAPABILITY_SURFACE.contains(&i.as_str())
-            })
+            .filter(|i| !is_enumerated_emit_abi_or_capability_surface(i))
             .collect();
         assert!(leaks.is_empty(), "unexpected leaks: {leaks:?}");
+    }
+
+    /// The falsifier from #999 Decision E, checked directly: deleting an entry from the
+    /// real production allowlist must be detectable by *some* test — this one flags
+    /// `Uuid` as a leak the moment it's removed from [`EMIT_ABI`], which the test above
+    /// (using the real const) would also start failing on.
+    #[test]
+    fn is_enumerated_checks_the_real_production_allowlist() {
+        assert!(is_enumerated_emit_abi_or_capability_surface("Uuid"));
+        assert!(is_enumerated_emit_abi_or_capability_surface("LocaleTag"));
+        assert!(!is_enumerated_emit_abi_or_capability_surface(
+            "negotiateLocale"
+        ));
     }
 
     /// The real, current-tree finding this probe exists to surface: `negotiateLocale`,
