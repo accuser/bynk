@@ -39,15 +39,14 @@ context shop {
         predicate: (binary_expr
           (identifier)
           (identifier)))
-      (handler
-        (call_handler
-          method: (identifier)
-          return_type: (generic_type_ref
-            name: (builtin_type)
-            arg: (unit_type))
-          body: (block
-            (assign_stmt
-              target: (identifier)
-              value: (boolean_literal))
-            tail: (effect_pure_expr
-              (unit_literal))))))))
+      (call_handler
+        method: (identifier)
+        return_type: (generic_type_ref
+          name: (builtin_type)
+          arg: (unit_type))
+        body: (block
+          (assign_stmt
+            target: (identifier)
+            value: (boolean_literal))
+          tail: (effect_pure_expr
+            (unit_literal)))))))

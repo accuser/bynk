@@ -31,15 +31,14 @@ agent Signal {
           (identifier)
           (identifier))
         (identifier))
-      (handler
-        (call_handler
-          (identifier)
+      (call_handler
+        (identifier)
+        (generic_type_ref
+          (builtin_type)
           (generic_type_ref
             (builtin_type)
-            (generic_type_ref
-              (builtin_type)
-              (unit_type)
-              (base_type)))
-          (block
-            (ok_expr
-              (unit_literal))))))))
+            (unit_type)
+            (base_type)))
+        (block
+          (ok_expr
+            (unit_literal)))))))

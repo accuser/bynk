@@ -30,16 +30,15 @@ context shop {
           head: (identifier)
           (base_type))
         init: (number_literal))
-      (handler
-        (call_handler
-          method: (identifier)
-          return_type: (generic_type_ref
-            name: (builtin_type)
-            arg: (unit_type))
-          body: (block
-            (assign_stmt
-              target: (identifier)
-              value: (binary_expr
-                (identifier)
-                (number_literal)))
-            tail: (unit_literal)))))))
+      (call_handler
+        method: (identifier)
+        return_type: (generic_type_ref
+          name: (builtin_type)
+          arg: (unit_type))
+        body: (block
+          (assign_stmt
+            target: (identifier)
+            value: (binary_expr
+              (identifier)
+              (number_literal)))
+          tail: (unit_literal))))))
