@@ -17,6 +17,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod greenfield_status;
 pub mod stamp;
 
 /// The bump level an increment declares. The stamp turns this into the next
