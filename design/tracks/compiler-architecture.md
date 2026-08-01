@@ -364,12 +364,12 @@ track had **already landed** in the eight versions since.
 | `ReportKind::Warning` | present in `bynk-syntax/src/error.rs`, with a comment describing the old defect | ✅ landed |
 | `ResolvedCommons {` in `bynk-emit` | **0** (`::new` = 9) | ✅ landed — the security slice |
 | `groups` / `test_groups` / `kinds` / `integration_groups` | all `BTreeMap` | ✅ landed |
-| `http_value_serialiser` | **0** (`serialise_ref_via` = 7) | ✅ landed |
+| `http_value_serialiser` | **0** live (1 comment mention); `serialise_ref_via` = 7 | ✅ landed |
 | `CompileOptions` | `#[derive(Clone)]` | ✅ landed |
 | `joinOn` / `groupBy` in `kernel_methods.rs` | present | ✅ landed |
-| `type_refs_match` | **0** | ✅ landed |
-| `expr_children` | 23 uses across 5 files | ✅ largely landed |
-| `is_fully_drained` | 6 occurrences | ✅ landed |
+| `type_refs_match` | **0** live (3 comment mentions) | ✅ landed |
+| `expr_children` | **34 uses across 8 files** (23/5 on 30 July; new consumers in `bynk-check` and `bynk-lsp`) | ✅ largely landed |
+| `is_fully_drained` | 5 occurrences | ✅ landed |
 | — | | |
 | `[workspace.lints]` | **absent** | ⬜ open |
 | `expected_contains` / `_absent` / `_diagnostics` | **3 / 2 / 1**, against **419** `expected_error` | ⬜ format exists, adoption ~1% |
@@ -383,7 +383,7 @@ track had **already landed** in the eight versions since.
 | `certify` | **0** | ⬜ phase 3 |
 | `bynk-project` crate | absent | ⬜ phase 4 |
 | `bynk-ide` → `bynk-emit` | present | ⬜ phase 4 |
-| unique `bynk.*` codes in `bynk-emit` | **206** (`bynk-check`: 212) | ⬜ phase 5 |
+| unique `bynk.*` codes in `bynk-emit` | **200** registered (`bynk-check`: 206). A `bynk.*` literal grep returns 206/212; six in each crate are commons or namespace paths, not codes — see §8 | ⬜ phase 5 |
 | `bynk_syntax::ast` imports in `bynk-emit` | **13 files** | ⬜ phase 6 |
 
 **Two conclusions change this track's shape.**
@@ -393,8 +393,9 @@ ordinary work over eight versions. That is good news and it is also the argument
 small defects get fixed by normal churn; structural ones do not.
 
 **The layering is not shrinking.** The review counted 190 codes originating in `bynk-emit`; the same
-crate now carries 206 unique code literals. Different counting methods, so treat it as directional —
-but there is no shrinkage and probably growth. Phase 5 gets further away on its own.
+crate now carries **200** codes that are actually in the registry. The counting methods still differ —
+the review's 190 was not derived the way this 200 was — so treat it as directional. But there is no
+shrinkage, and probably growth. Phase 5 gets further away on its own.
 
 ### Decision slices (unordered, independent of the tiers)
 
@@ -421,10 +422,10 @@ remain distinct *states*; this is one tier of work that closes the remainder of 
 | **T0.2′** | *Adoption*, not construction. The three assertion granularities exist and have six users against 419 category-string fixtures. Convert the fixtures where attribution or a targeted property is the thing under test — starting with the thirteen `Roots::Split` fixtures ADR 0198 named as unobservable | R11.2 | medium |
 | **T0.3** | `[workspace.lints]` with `clippy::wildcard_enum_match_arm` at `warn`; the inventory recorded on the spine; `deny` per crate as each is cleaned | R2.12 | one manifest edit + an inventory |
 | **T0.4′** | Widen `tree-sitter-bynk/tests/conformance.rs` from cases to **totality**: every file the compiler's parser accepts (all of `examples/`, the vendored first-party `.bynk`, every positive fixture) has zero ERROR *and* zero MISSING nodes; every parse-error negative fixture is rejected by both. The both-parsers-agree mechanism is already built and correct — this widens its corpus | R11.7 | ~40 lines |
-| **T0.7** | The residual filesystem reads below the driver: 4 files in `bynk-emit`, 5 in `bynk-ide`, 1 in `bynk-fmt`. `bynk-ide`'s are the `cached_project_unit` path (#62) and are the larger half | R2.3 | medium |
+| **T0.7** | The residual filesystem reads below the driver: 4 files in `bynk-emit`, 5 in `bynk-ide`, 1 in `bynk-fmt`. `bynk-ide` has **two unrelated reasons** to touch disk, not one: `completion.rs`'s `cached_project_unit` path (#62, 3 sites) and `symbols.rs`'s `find_declaration_cross_file` / `describe_symbol_cross_file`, which read directly and bypass that cache entirely. Two fixes, not one | R2.3 | medium |
 | **T1.6′** | Generate the `method_not_found` text *from* the registry, and make the drift test **bidirectional**. The vocabulary drift itself is fixed (`joinOn`/`groupBy` now present); the one-directional test and the second copy are not | R6.11, R11.6 | small |
 | **T1.7′** | Verify the residue: the store-field shadowing guard, `linearity.rs`'s `let` save/restore, and the `unit_info` map kind. `block_writes_state` now descends via `expr_children`; `type_refs_match` is gone | R2.11, R6.5 | small — may close as verification |
-| **T1.8** | `NonEmpty` → `MinLength(1)`, `Positive` → `InRange(1, ∞)`, `NonNegative` → `InRange(0, ∞)` normalised inside `canon_refinement`. `bynk-check/src/contract.rs` exists and canonicalises; whether it *normalises* is unverified | R12.2 | small |
+| **T1.8** | `NonEmpty` → `MinLength(1)`, `Positive` → `InRange(1, ∞)`, `NonNegative` → `InRange(0, ∞)` normalised inside `canon_refinement`. **Verified 31 July:** `bynk-check/src/contract.rs`'s `canon_predicate` emits `"NonEmpty"`, `"Positive"` and `"NonNegative"` as distinct literals and never folds them, so this is work, not verification | R12.2 | small |
 
 *Struck — landed since v0.237.1:* T0.1 (the in-memory seam), T0.5 (the erasability gate), T1.1
 (`ReportKind::Warning`), **T1.2 (the security slice — `ResolvedCommons` now has its constructor and
@@ -509,18 +510,33 @@ a set of mechanical probes, and fails CI if the committed table is stale.
 | `options_sources` | `CompileOptions` has a `sources` field | R2.3 |
 | `hoist_sinks` | `stmts: &mut Vec<String>` occurrences in `bynk-emit` | R6.2 |
 | `span_keyed_maps` | `HashMap<Span` occurrences | R2.4 |
-| `emit_diagnostics` | `bynk.*` codes originating in `bynk-emit` | R3.5 |
+| `emit_diagnostics` | `bynk.*` literals in `bynk-emit` **cross-referenced against the registry** | R3.5 |
 | `ide_emit_edge` | `bynk-ide` → `bynk-emit` in the manifest | R10.2 |
 | `keep_in_sync` | "in sync" / "mirrors" / "parity" / "must match" comment count | P2, trend only |
 | `test_density` | in-file test-line ratio per crate | R11.1, and §3.4's trigger |
 | `ast_importers` | `bynk_syntax::ast` importers in `bynk-emit` | R6.13 (phase 6) |
 | `fixture_kinds` | users of each assertion granularity | R11.2 |
 
-**Two probes need care beyond a grep.** `emit_diagnostics` must count codes *originating* in
-`bynk-emit`, not code literals appearing there — the registry lives in `bynk-syntax`, so a naive
-count over that crate returns 456 and means nothing. And `wildcard_arms` must scope to
-compiler-owned enums; `_ =>` over a foreign type is legitimate. A probe that over-reports is worse
-than no probe, because it reports a rule closed that is not.
+**Three probes need care beyond a grep, and the third was found the hard way.**
+
+`emit_diagnostics` must count codes *originating* in `bynk-emit`, not code literals appearing there —
+the registry lives in `bynk-syntax`, so a naive count over that crate returns 456 and means nothing.
+**Crate-scoping is necessary and not sufficient**: within `bynk-emit`, six `bynk.*` literals are
+commons or namespace paths (`bynk.locale`, `bynk.cloudflare`, `bynk.toml`, `bynk.synthetic`,
+`bynk.bynk`, `bynk.schema.lock`) and six more in `bynk-check` (`bynk.list`, `bynk.map`,
+`bynk.string`, `bynk.locale.types`, and two others). The probe must therefore **cross-reference each
+literal against `bynk-syntax/src/diagnostics.rs`'s `REGISTRY`**, not pattern-match. Pattern-matching
+inflates both crates by exactly six.
+
+`wildcard_arms` must scope to compiler-owned enums; `_ =>` over a foreign type is legitimate.
+
+**Every "reads zero" probe must exclude comments.** `type_refs_match` and `http_value_serialiser` are
+both genuinely gone from the code and both leave comment residue — three mentions and one — so a
+plain `rg` reports a closed rule as open. This is the inverse of the over-reporting failure and it is
+the more likely one, because deleting a mechanism and explaining why in a comment is good practice.
+A probe that under-reports trains its readers to ignore it.
+
+A probe that over-reports is worse than no probe, because it reports a rule closed that is not.
 
 The last two are trends, not gates — but `test_density` is one of §3.4's phase-3 triggers, so it needs
 to be measured continuously rather than reconstructed later. **The probe set is the part that will
@@ -549,9 +565,18 @@ single most useful thing the sweep produced, and it took three minutes. Every sl
 re-checks its finding against the tree, and **T0.0 exists so that check is mechanical rather than
 remembered.**
 
-The corollary is the more uncomfortable half: over the same eight versions, unique `bynk.*` codes in
-`bynk-emit` went from a counted 190 to a measured 206. The paydown fixes itself; the layering does
+The corollary is the more uncomfortable half: over the same eight versions, registered `bynk.*` codes
+in `bynk-emit` went from a counted 190 to a measured 200. The paydown fixes itself; the layering does
 not.
+
+**And the probes disagree with each other, which is worse than drift.** An independent re-measurement
+on 31 July — **same commit, v0.245.0, nothing landed in between** — reproduced most of §6.0 exactly
+and differed on four rows: `expr_children` (23/5 vs 34/8), `is_fully_drained` (6 vs 5),
+`type_refs_match` and `http_value_serialiser` (both `0` vs comment residue), and `emit_diagnostics`
+(206 vs 200 once the registry is consulted). None of it moves a tier or a claim. All of it says the
+same thing: **a probe described in prose is ambiguous enough that two careful readings disagree.**
+That is the argument for T0.0 in its strongest form, and it is why T0.0 ships an executable
+definition and a committed table rather than a convention.
 
 **The reference is a single 23,000-word file.** It matches the corpus convention
 (`bynk-type-system.md` is 125KB, `bynk-design-notes.md` 239KB), but a reader looking for one rule

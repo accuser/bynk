@@ -74,7 +74,7 @@ does not, the number is the distance.
 | 3 Identity | `HashMap<Span` | **27** | 0 |
 | 3 Identity | `Ty::Error`, `certify`, `FileId` on `Span` | absent, 0, absent | present |
 | 4 Project model | `bynk-project` crate; `bynk-ide`→`bynk-emit` | absent; present | present; absent |
-| 5 Semantics | unique `bynk.*` codes in `bynk-emit` | **206** (`bynk-check` 212) | 0 |
+| 5 Semantics | registered `bynk.*` codes in `bynk-emit` | **200** (`bynk-check` 206) | 0 |
 | 6 The IR | `bynk_syntax::ast` importers in `bynk-emit` | **13 files** | 0 |
 | 7 TS tree | TypeScript-producing `write!` outside a printer | not measured | 0 |
 | 8 Incrementality | keystroke-to-diagnostic latency by query level | not measured | — |
@@ -83,7 +83,8 @@ does not, the number is the distance.
 them* — the paydown happened as ordinary work between v0.237.1 and v0.245.0, including the
 `ResolvedCommons` constructor that re-enabled three security gates. And phase 5's distance has
 **grown**: the July review counted 190 codes originating in `bynk-emit`, and the same crate now
-carries 206 unique code literals.
+carries 200 codes that are in the registry (a bare `bynk.*` literal grep says 206; six are commons
+and namespace paths, not codes).
 
 That pair is the trajectory's whole argument, measured rather than asserted: **small defects are
 fixed by ordinary churn; structural ones drift the wrong way without a track.**
@@ -285,7 +286,7 @@ Relative, not absolute — an absolute estimate here would be false precision.
 | 2 Typed lowering | 3 | high — "mechanical across roughly ninety functions" |
 | 3 Identity & totality | 8 | medium — the review killed a naive retrofit; §6's parallel-data technique is the mitigation |
 | 4 Project model | 3 | medium |
-| 5 Semantics | 12 | low — 190 diagnostic codes and a reverse edge dragging `icu.rs` |
+| 5 Semantics | 12 | low — 200 diagnostic codes and a reverse edge dragging `icu.rs` |
 | 6 The IR | 20 | low — Part 13 predicts the extension cost; phases 0–5 do not de-risk the declaration half |
 | 7 TS tree & printer | 15 | low |
 | 8 Incrementality | 5 | medium — the preconditions are all paid by then |

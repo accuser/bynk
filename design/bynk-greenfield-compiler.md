@@ -2500,7 +2500,7 @@ revision is the proof.
 | R3.1 | `CompileOptions: Clone` ✅ **landed**; `run_checks`'s positional args remain | small residue |
 | R3.2 | `bynk check` still runs the bailing path | medium |
 | R3.3 | phase outputs not snapshot-testable in isolation | medium |
-| R3.5 | unique `bynk.*` codes in `bynk-emit` = **206** (was a counted 190 at review — **growing**) | very large; staged order starts with `icu.rs` + `websocket::analyse_open_shape` |
+| R3.5 | registered `bynk.*` codes in `bynk-emit` = **200** (was a counted 190 at review — **growing**) | very large; staged order starts with `icu.rs` + `websocket::analyse_open_shape` |
 | R3.6 | `type_refs_match` = 0 ✅ **landed** | none |
 | R3.7 | no `bynk-project` crate | medium |
 | R3.8 | `read_project_paths` still total | small |
@@ -2550,6 +2550,6 @@ table (R2.12), conformance totality (R11.7), fixture adoption (R11.2), the typed
 async flag (R6.4), and `ReportKind`'s residue. Everything else is phase 3 or later.
 
 **And one row is going the wrong way.** R3.5's distance grew between v0.237.1 and v0.245.0 — 190
-counted codes originating in `bynk-emit` then, 206 unique code literals now. Ordinary work fixes the
+counted codes originating in `bynk-emit` then, 200 registered codes now. Ordinary work fixes the
 small things and deepens the layering problem, which is the clearest evidence in this document that
 phases 3–7 need a track rather than good intentions.
