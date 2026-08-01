@@ -850,8 +850,7 @@ shipped compiler exists *only* because lowering targets TypeScript expressions d
 grammar forbids statements in expression position. The current signature is
 `lower_expr(e, stmts: &mut Vec<String>, cx) -> String` — twenty-nine signatures in `lower.rs` (32
 workspace-wide) carry that sink — which means the IR is really the pair `(String, &mut Vec<String>)`
-while the crate
-documentation states there is no IR at all.
+while the crate documentation states there is no IR at all.
 
 ### 6.2 The core node set
 
@@ -2514,7 +2513,7 @@ revision is the proof.
 | R2.13 | `tree-sitter-bynk/tests/conformance.rs` exists, both-parsers-agree, both directions ✅ | none — the mechanism is built |
 | R3.1 | `CompileOptions: Clone` ✅ **landed**; `run_checks`'s positional args remain | small residue |
 | R3.2 | `bynk check` still runs the bailing path | medium |
-| R3.3 | phase outputs not snapshot-testable in isolation | medium |
+| R3.3 | no probe yet — today's pipeline has no discrete phase-output types to check for `PartialEq`/serialisation against; T0.0 or a later phase must define what "measured" means here | not costed |
 | R3.5 | registered `bynk.*` codes in `bynk-emit` = **200** (was a counted 190 at review — **growing**) | very large; staged order starts with `icu.rs` + `websocket::analyse_open_shape` |
 | R3.6 | `type_refs_match` = 0 ✅ **landed** | none |
 | R3.7 | no `bynk-project` crate | medium |
