@@ -1,0 +1,6 @@
+# T1.6′: the `Query` `method_not_found` message is generated from
+# `QUERY_METHODS` (bynk-check/src/checker/kernels.rs), not hand-listed —
+# pins the diagnostic's category and attributed position so a future
+# vocabulary drift (see #996's T1.6′) is caught here too, not just in
+# `query_kernel_registry.rs`'s integration-test probe.
+bynk.types.method_not_found	probe.bynk:8:26

@@ -4,7 +4,7 @@
 //! re-exports these via `use kernels::*`.
 
 use super::*;
-use crate::kernel_methods::LIST_METHODS;
+use crate::kernel_methods::{LIST_METHODS, QUERY_METHODS};
 
 /// v0.20b: `List.empty()` / `Map.empty()` — the built-in collection statics.
 /// Their element/key/value types are exactly as uninferable as an empty
@@ -1105,11 +1105,20 @@ pub(crate) fn check_query_kernel_method(
         "join" => Some(query(check_pred_join(args, elem, span, true, ctx)?)),
         "groupBy" => Some(query(check_group_by(args, elem, span, true, ctx)?)),
         _ => {
+            // Generated from `QUERY_METHODS` (T1.6′) rather than hand-listed
+            // here, so the two can't drift the way this message once did —
+            // it fell behind when `join`/`joinOn`/`leftJoin`/`groupBy`
+            // (ADR 0116/0120) landed in the table but not in this string.
+            let kernel = QUERY_METHODS
+                .iter()
+                .map(|k| format!("`{}`", k.name))
+                .collect::<Vec<_>>()
+                .join(", ");
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`/`parTraverse`/`traverseAll`/`parTraverseAll`/`traverseTry`/`parTraverseTry`",
+                    "the built-in `Query[{}]` type has no method `{}` — the kernel is {kernel}",
                     elem.display(),
                     method.name
                 ),

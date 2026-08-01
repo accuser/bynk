@@ -1,0 +1,11 @@
+context probe
+
+agent Probe {
+  key id: String
+  store items: Map[String, Int]
+
+  on call f() -> Effect[()] {
+    let _ = items.values.definitelyNotAMethod()
+    Effect.pure(())
+  }
+}
