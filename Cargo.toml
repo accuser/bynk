@@ -25,7 +25,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "0.246.4"
+version = "0.246.5"
 # Minimum supported Rust version. Edition 2024 floors it at 1.85, but `oxc`
 # (the TS→JS stripper behind `bynk-strip`, in-browser track slice 1) requires
 # rustc 1.94, so the effective floor rose to match it — set to 1.95 (the pinned
@@ -37,19 +37,36 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/accuser/bynk"
 homepage = "https://github.com/accuser/bynk"
 
+[workspace.lints.clippy]
+# R2.12 (design/bynk-greenfield-compiler.md): refuses the wildcard-arm class of drift
+# bug this rule exists to catch (`type_refs_match`, #8) at the type-aware clippy pass
+# rather than a hand-rolled scan. `warn`, not `deny`: nothing opts in yet — no crate
+# manifest sets `[lints] workspace = true` — so this table is a recorded target level,
+# not (yet) an enforced one. Track slice T0.3 (design/tracks/compiler-architecture.md);
+# the 296-violation inventory is recorded on the spine, #996. Per-crate `deny` lands as
+# each crate is cleaned, per the track's own sequencing — see T0.3's proposal for why
+# wiring `[lints] workspace = true` into a crate that still has violations is deferred
+# (CI runs `cargo clippy --workspace --all-targets -- -D warnings`, which would turn
+# every one of those warnings into a build failure the moment a crate opts in).
+# Note for future edits to this comment block: the `workspace_lints` probe (xtask)
+# reads the first line in this file that names the lint, so don't spell that name
+# out up here — say "the lint" instead — or the probe reads this comment instead
+# of the real setting below.
+wildcard_enum_match_arm = "warn"
+
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
 # dependency requirement; path is used for in-workspace builds.
-bynk-syntax = { path = "bynk-syntax", version = "0.246.4" }
-bynk-render = { path = "bynk-render", version = "0.246.4" }
-bynk-check = { path = "bynk-check", version = "0.246.4" }
-bynk-emit = { path = "bynk-emit", version = "0.246.4" }
-bynk-driver = { path = "bynk-driver", version = "0.246.4" }
-bynk-strip = { path = "bynk-strip", version = "0.246.4" }
-bynk-ide = { path = "bynk-ide", version = "0.246.4" }
-bynkc = { path = "bynkc", version = "0.246.4" }
-bynk-fmt = { path = "bynk-fmt", version = "0.246.4" }
-bynk-grammar = { path = "bynk-grammar", version = "0.246.4" }
+bynk-syntax = { path = "bynk-syntax", version = "0.246.5" }
+bynk-render = { path = "bynk-render", version = "0.246.5" }
+bynk-check = { path = "bynk-check", version = "0.246.5" }
+bynk-emit = { path = "bynk-emit", version = "0.246.5" }
+bynk-driver = { path = "bynk-driver", version = "0.246.5" }
+bynk-strip = { path = "bynk-strip", version = "0.246.5" }
+bynk-ide = { path = "bynk-ide", version = "0.246.5" }
+bynkc = { path = "bynkc", version = "0.246.5" }
+bynk-fmt = { path = "bynk-fmt", version = "0.246.5" }
+bynk-grammar = { path = "bynk-grammar", version = "0.246.5" }
 ariadne = "0.6"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"
