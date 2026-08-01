@@ -78,7 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`compiler-architecture.md`](compiler-architecture.md) | [#996](https://github.com/accuser/bynk/issues/996) | Settling (step-2 carve-out claimed at the outset — see the doc’s §3 provenance note) | Phases 0–2 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): test seams, the paydown remainder, and the typed hoist. No language surface change |
+| [`compiler-architecture.md`](compiler-architecture.md) | [#996](https://github.com/accuser/bynk/issues/996) | Settled — Slicing on merge (the step-2 carve-out it claimed at the outset was discharged by a settling review that overturned D2 and reframed §3.6) | Phases 0–2 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): test seams, the paydown remainder, and the typed hoist. No language surface change |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue

@@ -2142,13 +2142,21 @@ bindings and runtime "part of the compiler's **emit ABI**", coupled to `Result`/
 TypeScript. The compile target is an implementation detail, not part of the frozen contract; the
 codegen may improve within a 1.x release as long as documented behaviour holds."
 
-Those two cannot both hold once third parties author capability bindings. A binding is hand-written
-TypeScript that constructs `Ok(…)`, reads `.tag === "Err"` and calls `Uuid.of` — and that the Bynk
-compiler never type-checks against a changed emit shape. So a 1.x codegen improvement breaks
-third-party capabilities silently, at runtime. **"All capabilities are adapters" is, in substance, a
-request to freeze the emit ABI**, made at the release where the project issues its first compatibility
-promise to code it did not write. That is a defensible thing to want; it is not a thing to arrive at
-by refactor.
+**An earlier revision of this section read those two as irreconcilable.** They are not, and the
+settling review of the compiler-architecture track established why: they describe surfaces of
+different size. ADR 0086's enumeration is *four shapes*; the codegen is the entire back end. A
+binding is hand-written TypeScript that constructs `Ok(…)`, reads `.tag === "Err"` and calls
+`Uuid.of` — every one of those is on the list. So the four can be published under their own semver
+and held stable, while the codegen underneath stays as free as the 1.0 definition promises.
+
+What survives the correction is the *shape* of the risk. The compiler never type-checks a
+third-party binding, so a shape that drifts off the enumerated list without anyone noticing breaks
+capabilities silently at runtime. **"All capabilities are adapters" is, in substance, a request that
+the enumeration be maintained** — made at the release where the project issues its first
+compatibility promise to code it did not write. That is a defensible thing to want, it is cheap while
+the list is four items long, and it is not a thing to arrive at by refactor. The decision is recorded
+as ADR-C of the compiler-architecture track; the enforcement is a build-time guard that the vendored
+first-party bindings reference only the enumerated surface.
 
 > **Language-surface note.** R14.2's metadata (`@nondeterministic`, platform nativity,
 > `@participates(commit)`) and R14.4's renaming are `.bynk` surface, which §0.1 excludes. What is in

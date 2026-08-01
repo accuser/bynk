@@ -1,10 +1,10 @@
 # Compiler architecture — migrating to the greenfield reference
 
-- **Status:** **Settling.** §3's questions are answered, and the document has been reviewed — but the
-  *decisions* have not been argued with. See the provenance note at the head of §3, which keeps the
-  track README's step-2 carve-out in force. Merging this doc settles **direction**; it is not a build
-  authorisation. Each slice is an ordinary increment proposal, and `accepted` on that sub-issue is
-  the approval to build.
+- **Status:** **Settled.** §3's six questions were argued under review; **D2 was overturned and §3.6
+  reframed** — see the provenance note at the head of §3. The step-2 carve-out this doc claimed from
+  the outset is discharged, and the phase advances to **Slicing** on merge. Merging settles
+  **direction**; it is not a build authorisation. Each slice is an ordinary increment proposal, and
+  `accepted` on that sub-issue is the approval to build.
 - **Spine:** [#996](https://github.com/accuser/bynk/issues/996)
 - **Theme:** **phases 0, 1 and 2** of
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) — the seams, the paydown, and
@@ -91,37 +91,33 @@ taught in review, every time.
 
 ---
 
-## 3. Design questions — answered 30 July 2026; document reviewed, decisions not yet argued
+## 3. Design questions — answered 30 July 2026, argued and revised under review 1 August
 
-> **Provenance, stated plainly: the document has been reviewed; the decisions have not been argued
-> with.**
+> **Provenance: the carve-out is discharged. Two of these six changed under review.**
 >
 > ADR 0167 step 2 puts the settling phase inside a **draft PR**, where the open questions are closed
-> "under line-anchored review", and marking the PR ready "asserts the questions are closed". These
-> six were closed in a design conversation instead. The prose below was therefore *proposed*
-> settling, not *tested* settling.
+> "under line-anchored review". These six were closed in a design conversation instead, so this
+> document claimed the track README's step-2 carve-out from the outset — its real phase was Settling
+> regardless of what its status line said.
 >
-> PR #997 has since had a substantive review — seven findings, all addressed, and the document is
-> materially better for it. But every one of them was a **conformance** finding: rule ids cited and
-> never defined, an appendix whose scope was unstated, a tier taxonomy named three ways across three
-> documents, cross-references left over from a rescope, a probe harness written in the present tense
-> that does not exist, and two wrong counts. **That is a review of the artefact, not of the
-> decisions.** Not one finding touched D2 or §3.6 — the two this note nominates below as most needing
-> a second reader — and it was the author's own review of decisions he had settled in conversation,
-> so it could not have tested them by construction.
+> Two reviews discharged it. The first was a **conformance** review: seven findings — rule ids cited
+> and never defined, an appendix whose scope was unstated, a tier taxonomy named three ways, stale
+> cross-references, a probe harness written in the present tense that does not exist, and two wrong
+> counts. All addressed. That review made the document correct without testing a single decision.
 >
-> The track README records the adjacent failure and its remedy: `idempotency-capability.md`'s
-> settling PR (#922) "was marked ready for review and merged 55 seconds later with no review
-> (`reviews: []`)", and the step-2 carve-out applied — the track's real phase stayed **Settling**
-> past the merge until a genuine re-settling pass (#924, #927) closed its questions for real.
+> The second was the settling review this note asked for, aimed at **D2** and **§3.6** by name.
+> **It overturned D2 and reframed §3.6.** D2's refusal to publish rested on treating the emit ABI and
+> the codegen as one surface when ADR 0086 enumerates the ABI as four shapes; its recorded shape
+> cited ADR 0200 while adopting one of that ADR's three layers, and specified an exact-version
+> lockstep that a per-merge release cadence makes unusable. §3.6's strongest reason was found already
+> spent — T1.2 landed as ordinary work — and its second was found to be a preference rather than the
+> cost asymmetry it claimed.
 >
-> This track is in better shape than that one was, and in the same place. **The carve-out stands.**
-> Its phase is Settling until D2 and §3.6 have actually been argued with — whatever this document's
-> status line, or the PR's ready state, asserts. Better to claim it than to have it noticed.
+> **That is what a settling review is supposed to do, and it is the reason the carve-out existed.**
+> A pass that had confirmed all six would have been the weaker outcome. The phase advances to
+> **Slicing** on merge.
 >
-> The two decisions most worth a second reader are **D2** (the emit-ABI posture, because it interacts
-> with a 1.0 commitment already made) and **§3.6** (running phases 0–2 ahead of 1.0, because it is
-> the only decision here that changes what happens to the release).
+> The remaining four (D1, Q3, Q4, Q5) were examined and stand as written.
 
 ### 3.1 D1 — What is `bynkc`-the-library for? **Settled.**
 
@@ -163,27 +159,40 @@ premise is that internal architecture is a different category from surface addit
 does not depend on it — the cargo/rustc analogy stands on CI determinism alone — so `bynk build` can
 be proposed whenever it is wanted, or never, without reopening anything here.
 
-### 3.2 D2 — Is the emit ABI published? **Settled.**
+### 3.2 D2 — Is the emit ABI published? **Settled — reversed under review.**
 
-ADR 0086 calls the first-party bindings and the runtime "part of the compiler's **emit ABI**" —
-coupled to `Result`/`Option` tag layout, `JsonError`, `Uuid.of`, `FetchError` — and defers publishing
-them as `@bynk/*` packages "gated on runtime-ABI stability (≈1.0)". That collides with the 1.0
-definition's freeing of the emitted TypeScript: both cannot hold once a third party authors a
-capability binding, because a binding is hand-written TypeScript constructing `Ok(…)` and reading
-`.tag === "Err"` that the Bynk compiler never type-checks against a changed emit shape.
+ADR 0086 enumerates the emit ABI as **four things**: `Result`/`Option` tag layout, `JsonError`,
+`Uuid.of`, `FetchError`. It defers publishing the bindings "gated on runtime-ABI stability (≈1.0)".
+`bynk-1.0-definition.md` separately refuses to freeze "the emitted TypeScript", which "may improve
+within a 1.x release as long as documented behaviour holds".
 
-**Decision: do not publish before 1.0 — and record the eventual shape now.** When the bindings are
-published, the shape is **lockstep versioning with the compiler** (an exact-version dependency, not a
-range) plus a **fail-closed runtime-version check** at load. This is ADR 0200's contract-hash pattern
-applied to the ABI: a mismatch is refused rather than tolerated, so a skew is a legible error rather
-than a silent miscompile at runtime.
+**The first answer here was "do not publish before 1.0", and the settling review overturned it.** The
+argument had been that publishing on semver terms would freeze the emit ABI at 1.0 by implication.
+That only follows if the ABI and the codegen are the same surface, and they are not: ADR 0086's list
+is four shapes, while the codegen is the entire back end. The review named the conflation, and named
+the third option the framing had hidden — publish the enumerated surface under its own version, and
+leave the codegen exactly as free as the 1.0 definition promises.
 
-Recording the shape costs nothing now and is the whole point of the decision: publishing on
-semver-stable terms would freeze the emit ABI at 1.0 by implication, and that is a *language
-stability* decision that would have to be argued in the 1.0 record, not arrived at by shipping one
-third-party adapter.
+Two further objections landed, both against the *recorded eventual shape* rather than the conclusion:
 
-**Lands as:** **ADR-C**, in the settling increment. No code.
+- The shape cited **ADR 0200's pattern while adopting one of its three layers.** ADR 0200 is
+  "fail-closed at runtime, **refused at deploy**", plus a standing corpus-wide guard. A load-time
+  check fires last, at the customer.
+- **Exact-version lockstep is unworkable at this project's cadence.** ADR 0206 assigns a version per
+  merge, so a binding pinned to an exact compiler version is stale within a day. That does not defer
+  the collaboration story; it forecloses it.
+
+**Decision: the emit ABI is published, semver'd independently of the compiler; the codegen is not
+part of it; skew is caught at three layers.** The enumeration is the contract and is short on
+purpose; the build-time guard — that the vendored first-party bindings reference only the enumerated
+surface — is the layer that matters, because it is the only one that fires before anything ships.
+
+The trade is stated rather than hidden: ADR 0086's "version skew impossible by construction" is given
+up, and replaced by three layers of detection. What is bought is that a capability adapter authored
+outside this repository has something to import.
+
+**Lands as:** **ADR-C**, in the settling increment. **No code in this track** — the packaging, the
+guards and the `@bynk/*` mechanics are packaging-track work, carried in §7.
 
 ### 3.3 Q3 — What is the acceptance gate? **Settled.** *(amends ADR 0059)*
 
@@ -256,30 +265,38 @@ So: **no feature work lands in `bynk-emit/src/emitter/lower.rs` while T2.1 is op
 narrower and much cheaper commitment than ADR 0059's, and it is the only conflict the tier structure
 actually creates.
 
-### 3.6 Sequencing relative to 1.0 — **Settled.**
+### 3.6 Sequencing relative to 1.0 — **Settled, and reframed under review.**
 
-**Decision: Tiers 0, 1 and 2 run now, ahead of 1.0.**
+**Decision: Tiers A and B run now. Not because 1.0 makes them urgent — because nothing couples them
+to 1.0 in either direction.**
 
-Three reasons, in order of weight.
+The first version of this answer gave three reasons in order of weight. The settling review spent two
+of them, and it was right to.
 
-**The compiler that makes the 1.0 promise should not contain a known miscompile.** `let x = match
-risky()? { … }` currently early-returns into a synthetic arrow and silently evaluates to the `Err`
-object — "a miscompile of ordinary code with no diagnostic and no assertion." Issuing a compatibility
-promise on top of that is an odd thing to do, and Tier B is what closes it.
+**Spent: T1.2's behaviour change is free before 1.0 and expensive after.** This was the strongest
+reason and it is now moot — T1.2 landed as ordinary work before 1.0, measured in §6.0. The reason
+argued for a race that has already been won. *Keeping the record of it matters more than the
+argument did:* the gates were re-enabled by ordinary churn, which is §6.0's thesis in miniature.
 
-**T1.2's behaviour change is free before 1.0 and expensive after.** Re-enabling `.raw`, `T.unsafe(…)`
-and owner-only event emission will reject programs that compile today. Pre-1.0 that is an ordinary
-increment with a changelog row; post-1.0 it is a compatibility event on a security-relevant gate.
+**Weakened: the compiler making the 1.0 promise should not contain a known miscompile.** The `let x =
+match risky()? { … }` defect is real and Tier B closes it. But 1.x explicitly permits documented
+codegen fixes, so shipping 1.0 with it and fixing it after is *allowed*. This is now a preference
+about what it is seemly to promise on, not a cost asymmetry — and it should be argued as one.
 
-**The cost is smaller than it looks, because 1.0 is already gated on a track that has not started.**
-Gate 2 (`deploy`) is satisfied; gate 3 (state migrations) is "the second adoption blocker (**track to
-be opened**)". So "let 1.0 wait" is not a delay against an imminent release — the real question is
-ordering against the state-migrations track, and the answer follows from §3.5: Tiers 0–1 conflict
-with nothing, and Tier B's scoped `lower.rs` freeze is cheapest in exactly the window before a
-storage-shaped track opens.
+**Stands: the cost is smaller than it looks, because 1.0 is already gated on a track that has not
+started.** Gate 2 (`deploy`) is satisfied; gate 3 (state migrations) is "the second adoption blocker
+(**track to be opened**)". "Let 1.0 wait" is not a delay against an imminent release. The real
+question is ordering against the state-migrations track, and §3.5 answers it: Tier A conflicts with
+nothing, and Tier B's scoped `lower.rs` freeze is cheapest in the window before a storage-shaped
+track opens.
+
+**What the reframing changes.** The conclusion survives, and the *shape* of it is better: this track
+neither gates 1.0 nor is gated by it. Sequencing follows from the freeze window in §3.5, not from the
+release calendar. A track that had claimed urgency it could not support would have had to relitigate
+that claim at every slice.
 
 **Recommended order:** Tier A (T0.0 first) → Tier B under the scoped freeze → open the
-state-migrations track → 1.0. Tiers 3 and 4 remain gated on §3.4 regardless.
+state-migrations track → 1.0. Phases 3+ remain gated on §3.4 regardless.
 
 ---
 
@@ -495,6 +512,7 @@ than out of the programme's.
 | The full IR (reference Part 6) | 6 | phase 5 complete |
 | The TypeScript tree and printer (reference Part 7) | 7 | phase 6 complete |
 | Incrementality (query granularity, the firewall) | 8 | phases 3 and 4 complete |
+| Publishing the emit ABI: the `@bynk/*` package, the three ADR 0200 layers, the build-time enumeration guard | *packaging track* | ADR-C merged; not gated on this track's phases |
 
 *Note on an earlier revision.* Before the trajectory document existed, this section recorded the IR,
 the printer and the crate re-graph as **refusals with triggers**. That was wrong bookkeeping:
@@ -644,8 +662,9 @@ code):
 
 - **ADR-B — The refactor acceptance gate, amending ADR 0059 property 1.** §3.3. Must land before
   Tier A opens.
-- **ADR-C — The emit ABI publication posture.** §3.2. Arguably belongs to the packaging track;
-  filed here because nobody else has claimed it, and it freezes by default if unclaimed.
+- **ADR-C — The emit ABI is published; the codegen is not.** §3.2. Reversed under settling review.
+  Its *implementation* is packaging-track work (§7); what lands here is the posture and the
+  enumeration, because that is the part which freezes by default if left unclaimed.
 - **ADR-D — The lowering substrate.** The record R0.1 says should have existed from the start: we
   lower to text on purpose, here is what it costs, here is Tier B's amendment, and here are the
   triggers (§3.4) that would open phase 3. This is the missing artefact the whole retrospective points
