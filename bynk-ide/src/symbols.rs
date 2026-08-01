@@ -1520,36 +1520,6 @@ pub fn describe_symbol_cross_file(
     None
 }
 
-/// Recursively collect every `.bynk` file under `root`. Returns an empty
-/// vector if the root is missing or unreadable.
-///
-/// Slice A: **no longer used to discover a project's files** — that is
-/// `bynk_ide::discover_files`, which reads the manifest's `include` roots and
-/// honours `exclude` plus the `out`/`node_modules` caches. This hand-rolled walk
-/// saw one directory and no exclusions, which is the same class of defect as the
-/// analysis root being wrong. Retained for the tests that enumerate a fixture
-/// tree directly — its only remaining callers (`cfg(test)`, this file).
-#[cfg(test)]
-pub(crate) fn walk_bynk_files(root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in rd.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else if p.extension().and_then(|e| e.to_str()) == Some("bynk") {
-                out.push(p);
-            }
-        }
-    }
-    out.sort();
-    out
-}
-
 pub fn type_ref_str(t: &TypeRef) -> String {
     match t {
         // v0.20a: function types render in Bynk surface syntax.
@@ -1598,6 +1568,36 @@ pub fn type_ref_str(t: &TypeRef) -> String {
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Recursively collect every `.bynk` file under `root`. Returns an empty
+    /// vector if the root is missing or unreadable.
+    ///
+    /// Slice A: **no longer used to discover a project's files** — that is
+    /// `bynk_ide::discover_files`, which reads the manifest's `include` roots
+    /// and honours `exclude` plus the `out`/`node_modules` caches. This
+    /// hand-rolled walk saw one directory and no exclusions, which is the
+    /// same class of defect as the analysis root being wrong. Retained for
+    /// the tests below that enumerate a fixture tree directly — its only
+    /// remaining callers.
+    fn walk_bynk_files(root: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().and_then(|e| e.to_str()) == Some("bynk") {
+                    out.push(p);
+                }
+            }
+        }
+        out.sort();
+        out
+    }
 
     /// Build a temp directory unique to the test name, populate it with
     /// `(relative_path, contents)` files, and return the root path. The
