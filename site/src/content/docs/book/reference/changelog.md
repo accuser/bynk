@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.246.3** | "`closes_rule:` pending-file field + `stamp`-materialised rule ledger, closing out T0.0's deferred Closes-Rule provenance (#1001)" |
 | **v0.246.2** | "`cargo xtask greenfield-status` — the T0.0 probe harness (13 probes, 9 gated against a committed table)" |
 | **v0.246.1** | Settle the compiler-architecture track — the refactor acceptance gate, the emit-ABI posture, and the lowering substrate |
 | **v0.246.0** | Hover and a VS Code "Show Wire Contract" panel surface a handler's request envelope, its cross-context contract hash, and each boundary type's re-validation strategy — derived from a new shared IR the emitter's own codec generation now renders too |
