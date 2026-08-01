@@ -114,7 +114,16 @@ fn stamp(apply: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    match xtask::stamp::apply(&root, &plan, |v| run_bump_version(&root, v)) {
+    let pr_number = pr_number_from_head(&root);
+    match pr_number {
+        Some(n) => println!("stamp: rule-ledger provenance: #{n} (from HEAD's commit message)"),
+        None => println!(
+            "stamp: rule-ledger provenance: none found (HEAD's commit message has no trailing \
+             `(#NNNN)`) — any closes_rule row will have an empty PR cell"
+        ),
+    }
+
+    match xtask::stamp::apply(&root, &plan, pr_number, |v| run_bump_version(&root, v)) {
         Ok(()) => {
             println!("stamp: applied — manifests on v{}", plan.final_version());
             ExitCode::SUCCESS
@@ -124,6 +133,30 @@ fn stamp(apply: bool) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The PR number that closed the current `HEAD` commit, if it can be recovered
+/// from the commit message alone — `git log -1`, no GitHub API call: no token
+/// dependency, no rate limit, and (unlike a full-history `--grep` scan, which
+/// #999 found needs `fetch-depth: 0`) a single commit's message is always
+/// available regardless of checkout depth. GitHub's squash-merge appends
+/// `(#NNNN)` to the PR title, which becomes the commit's subject line (`%s`,
+/// the first line); this looks for exactly that suffix. Returns `None` on a
+/// rebase-merge, a hand-written commit, or any message that doesn't end that
+/// way — the ledger just records no PR rather than guessing.
+fn pr_number_from_head(root: &Path) -> Option<u32> {
+    let out = Command::new("git")
+        .args(["log", "-1", "--format=%s"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let subject = String::from_utf8_lossy(&out.stdout);
+    let subject = subject.trim();
+    let inner = subject.strip_suffix(')')?.rsplit_once("(#")?.1;
+    inner.parse().ok()
 }
 
 /// Run `scripts/bump-version.sh <version>` at the repo root (an absolute path so
@@ -180,7 +213,7 @@ fn greenfield_status(apply: bool) -> ExitCode {
     let report = xtask::greenfield_status::run(&root);
 
     if apply {
-        let table = xtask::greenfield_status::render_table(&report);
+        let table = xtask::greenfield_status::render_table(&report, &root);
         if let Err(e) = std::fs::write(xtask::greenfield_status::table_path(&root), table) {
             eprintln!("greenfield-status: failed to write committed table: {e}");
             return ExitCode::FAILURE;

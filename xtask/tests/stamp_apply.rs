@@ -1,6 +1,6 @@
 //! End-to-end `stamp` on a fixture tree — the whole apply flow (changelog rows,
-//! ADR files + index rows, pending-file deletion, the injected version bump)
-//! without running the real, side-effect-heavy `bump-version.sh`.
+//! ADR files + index rows, the rule ledger, pending-file deletion, the injected
+//! version bump) without running the real, side-effect-heavy `bump-version.sh`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -70,7 +70,7 @@ fn stamp_one_increment_with_an_adr() {
     );
     assert_eq!(plan.first_adr_number, 206);
 
-    stamp::apply(&root, &plan, bumper(&root)).expect("apply");
+    stamp::apply(&root, &plan, None, bumper(&root)).expect("apply");
 
     // Changelog: new row on top.
     let changelog =
@@ -143,7 +143,7 @@ fn stamp_two_increments_get_sequential_versions() {
         }
     );
 
-    stamp::apply(&root, &plan, bumper(&root)).expect("apply");
+    stamp::apply(&root, &plan, None, bumper(&root)).expect("apply");
 
     let changelog =
         fs::read_to_string(root.join("site/src/content/docs/book/reference/changelog.md")).unwrap();
@@ -174,7 +174,7 @@ fn two_adrs_across_two_increments_number_sequentially() {
 
     let plan = stamp::plan(&root).expect("plan");
     assert_eq!(plan.first_adr_number, 206);
-    stamp::apply(&root, &plan, bumper(&root)).expect("apply");
+    stamp::apply(&root, &plan, None, bumper(&root)).expect("apply");
 
     // First increment's ADR is 0206 at its version (0.186); second is 0207 at 0.186.1.
     let alpha = fs::read_to_string(root.join("design/decisions/0206-alpha.md")).unwrap();
@@ -206,7 +206,7 @@ fn a_failed_bump_rolls_back_and_leaves_a_clean_retry() {
     let readme_before = fs::read_to_string(&readme_path).unwrap();
 
     let plan = stamp::plan(&root).expect("plan");
-    let err = stamp::apply(&root, &plan, |_| {
+    let err = stamp::apply(&root, &plan, None, |_| {
         Err(std::io::Error::other("bump exploded"))
     })
     .expect_err("apply must surface the bump failure");
@@ -226,7 +226,7 @@ fn a_failed_bump_rolls_back_and_leaves_a_clean_retry() {
     // duplicated rows, no re-numbered ADR.
     let replan = stamp::plan(&root).expect("replan");
     assert_eq!(replan.first_adr_number, 206);
-    stamp::apply(&root, &replan, bumper(&root)).expect("retry apply");
+    stamp::apply(&root, &replan, None, bumper(&root)).expect("retry apply");
 
     let changelog = fs::read_to_string(&changelog_path).unwrap();
     assert_eq!(
@@ -261,7 +261,7 @@ fn apply_refuses_to_clobber_an_existing_adr() {
     let changelog_path = root.join("site/src/content/docs/book/reference/changelog.md");
     let changelog_before = fs::read_to_string(&changelog_path).unwrap();
 
-    let err = stamp::apply(&root, &plan, |_| panic!("bump must not run"))
+    let err = stamp::apply(&root, &plan, None, |_| panic!("bump must not run"))
         .expect_err("apply must refuse the collision");
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
 
@@ -299,7 +299,7 @@ fn empty_pending_is_a_noop() {
     let plan = stamp::plan(&root).expect("plan");
     assert!(plan.is_empty());
     // apply must not touch anything or fail.
-    stamp::apply(&root, &plan, |_| {
+    stamp::apply(&root, &plan, None, |_| {
         panic!("bump must not run for an empty plan")
     })
     .expect("apply");
@@ -307,5 +307,137 @@ fn empty_pending_is_a_noop() {
         fs::read_to_string(root.join("Cargo.toml"))
             .unwrap()
             .contains("version = \"0.185.0\"")
+    );
+}
+
+// --- The rule ledger (#1001) -----------------------------------------------
+
+#[test]
+fn stamp_with_closes_rule_writes_the_rule_ledger() {
+    let root = fixture("ledger-new");
+    fs::write(
+        root.join("design/bynk-greenfield-compiler.md"),
+        "**R2.3 — A rule.**\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("design/pending/feat-thing.md"),
+        "---\nlevel: patch\nchangelog: Close a rule\ncloses_rule: R2.3\n---\n",
+    )
+    .unwrap();
+
+    let plan = stamp::plan(&root).expect("plan");
+    stamp::apply(&root, &plan, Some(1234), bumper(&root)).expect("apply");
+
+    let ledger = fs::read_to_string(root.join("design/greenfield-status-rules.md")).unwrap();
+    assert!(
+        ledger.contains("| R2.3 | v0.185.1 | #1234 | Close a rule |"),
+        "{ledger}"
+    );
+}
+
+#[test]
+fn stamp_without_a_pr_number_leaves_the_pr_cell_empty() {
+    let root = fixture("ledger-no-pr");
+    fs::write(
+        root.join("design/bynk-greenfield-compiler.md"),
+        "**R2.3 — A rule.**\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("design/pending/feat-thing.md"),
+        "---\nlevel: patch\nchangelog: Close a rule\ncloses_rule: R2.3\n---\n",
+    )
+    .unwrap();
+
+    let plan = stamp::plan(&root).expect("plan");
+    stamp::apply(&root, &plan, None, bumper(&root)).expect("apply");
+
+    let ledger = fs::read_to_string(root.join("design/greenfield-status-rules.md")).unwrap();
+    assert!(
+        ledger.contains("| R2.3 | v0.185.1 |  | Close a rule |"),
+        "PR cell should be empty, not a placeholder: {ledger}"
+    );
+}
+
+#[test]
+fn an_increment_that_closes_no_rule_never_touches_the_ledger() {
+    let root = fixture("ledger-untouched");
+    fs::write(
+        root.join("design/pending/feat-thing.md"),
+        "---\nlevel: patch\nchangelog: An ordinary increment\n---\n",
+    )
+    .unwrap();
+    let plan = stamp::plan(&root).expect("plan");
+    stamp::apply(&root, &plan, Some(1), bumper(&root)).expect("apply");
+    assert!(
+        !root.join("design/greenfield-status-rules.md").exists(),
+        "no closes_rule anywhere means the ledger file shouldn't be created at all"
+    );
+}
+
+#[test]
+fn a_failed_bump_rolls_back_a_newly_created_rule_ledger() {
+    let root = fixture("ledger-rollback-new");
+    fs::write(
+        root.join("design/bynk-greenfield-compiler.md"),
+        "**R2.3 — A rule.**\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("design/pending/feat-thing.md"),
+        "---\nlevel: patch\nchangelog: Close a rule\ncloses_rule: R2.3\n---\n",
+    )
+    .unwrap();
+    let ledger_path = root.join("design/greenfield-status-rules.md");
+    assert!(!ledger_path.exists());
+
+    let plan = stamp::plan(&root).expect("plan");
+    let err = stamp::apply(&root, &plan, Some(1), |_| {
+        Err(std::io::Error::other("bump exploded"))
+    })
+    .expect_err("apply must surface the bump failure");
+    assert!(err.to_string().contains("bump exploded"));
+
+    // The ledger did not exist before this run; a rolled-back run must not
+    // leave a header-only file behind — that would be a different kind of
+    // corruption from the changelog/README case (a spurious new file, not a
+    // reverted edit), and it's exactly the failure mode the `ledger_existed`
+    // tracking exists to prevent.
+    assert!(
+        !ledger_path.exists(),
+        "a newly-created ledger must be removed on rollback, not left with just its header"
+    );
+}
+
+#[test]
+fn a_failed_bump_rolls_back_an_existing_rule_ledger_to_its_prior_content() {
+    let root = fixture("ledger-rollback-existing");
+    fs::write(
+        root.join("design/bynk-greenfield-compiler.md"),
+        "**R2.3 — A rule.**\n**R2.4 — Another.**\n",
+    )
+    .unwrap();
+    let ledger_path = root.join("design/greenfield-status-rules.md");
+    let prior = "# Rules closed\n\n| Rule | Version | PR | Changelog |\n|---|---|---|---|\n\
+                 | R2.4 | v0.180.0 | #1 | Earlier |\n";
+    fs::write(&ledger_path, prior).unwrap();
+    fs::write(
+        root.join("design/pending/feat-thing.md"),
+        "---\nlevel: patch\nchangelog: Close a rule\ncloses_rule: R2.3\n---\n",
+    )
+    .unwrap();
+
+    let plan = stamp::plan(&root).expect("plan");
+    let err = stamp::apply(&root, &plan, Some(2), |_| {
+        Err(std::io::Error::other("bump exploded"))
+    })
+    .expect_err("apply must surface the bump failure");
+    assert!(err.to_string().contains("bump exploded"));
+
+    assert_eq!(
+        fs::read_to_string(&ledger_path).unwrap(),
+        prior,
+        "rollback must restore exactly the prior content, not just leave it stale-but-close"
     );
 }

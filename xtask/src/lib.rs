@@ -61,12 +61,24 @@ pub struct Pending {
     pub level: Level,
     pub changelog: String,
     pub adrs: Vec<Adr>,
+    /// Greenfield reference rule ids (`R2.3`) this increment closes (#1001).
+    /// Optional and usually empty — most increments don't close a tracked rule.
+    /// Syntax-checked here (each entry matches `R<major>.<minor>`); whether the
+    /// id actually exists in `design/bynk-greenfield-compiler.md` is checked
+    /// separately by [`known_rule_ids`], which needs the repo root this pure
+    /// parse doesn't have.
+    pub closes_rule: Vec<String>,
 }
 
-/// `design/pending/`, resolved from this crate's manifest dir so the location is
-/// independent of the working directory (the same trick `decisions_index` uses).
+/// The repo root, resolved from this crate's manifest dir so it's independent
+/// of the working directory (the same trick `decisions_index` uses).
+pub fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+/// `design/pending/` under [`repo_root`].
 pub fn pending_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../design/pending")
+    repo_root().join("design/pending")
 }
 
 /// Validate every `*.md` under [`pending_dir`] except `README.md` (the format
@@ -74,14 +86,22 @@ pub fn pending_dir() -> PathBuf {
 /// number of pending files validated, or every error found across all files
 /// (each prefixed with its filename) so one run reports the whole picture.
 pub fn check_all() -> Result<usize, Vec<String>> {
-    validated_pending_in(&pending_dir()).map(|ps| ps.len())
+    validated_pending_in(&repo_root()).map(|ps| ps.len())
 }
 
-/// Read and validate the pending files in `dir` (skipping `README.md`), sorted
-/// by filename. Root-parameterised so the stamp — and its fixture tests — can
-/// target any tree; [`check_all`] is this over the real [`pending_dir`].
-pub fn validated_pending_in(dir: &Path) -> Result<Vec<(String, Pending)>, Vec<String>> {
-    let entries = match fs::read_dir(dir) {
+/// Read and validate the pending files under `root/design/pending` (skipping
+/// `README.md`), sorted by filename. Root-parameterised so the stamp — and its
+/// fixture tests — can target any tree; [`check_all`] is this over the real
+/// [`repo_root`].
+///
+/// Also cross-checks each file's `closes_rule` entries against
+/// [`known_rule_ids`] — a syntactically valid id (`is_rule_id`, checked in
+/// [`validate`]) that names no rule the reference actually has is still an
+/// error, just one that needs `root` to catch, which the pure per-file parse
+/// doesn't have.
+pub fn validated_pending_in(root: &Path) -> Result<Vec<(String, Pending)>, Vec<String>> {
+    let dir = root.join("design/pending");
+    let entries = match fs::read_dir(&dir) {
         Ok(e) => e,
         Err(err) => return Err(vec![format!("cannot read {}: {err}", dir.display())]),
     };
@@ -109,6 +129,28 @@ pub fn validated_pending_in(dir: &Path) -> Result<Vec<(String, Pending)>, Vec<St
         }
     }
 
+    if !parsed.iter().any(|(_, p)| !p.closes_rule.is_empty()) {
+        // No file cites a rule — skip reading the (large) reference doc at all.
+    } else {
+        match known_rule_ids(root) {
+            Ok(known) => {
+                for (name, pending) in &parsed {
+                    for rule in &pending.closes_rule {
+                        if !known.contains(rule) {
+                            errors.push(format!(
+                                "{name}: closes_rule cites {rule:?}, which is not a rule id in \
+                                 design/bynk-greenfield-compiler.md"
+                            ));
+                        }
+                    }
+                }
+            }
+            Err(e) => errors.push(format!(
+                "cannot validate closes_rule entries against the reference: {e}"
+            )),
+        }
+    }
+
     if errors.is_empty() {
         Ok(parsed)
     } else {
@@ -132,7 +174,7 @@ pub fn validate(filename: &str, content: &str) -> Result<Pending, Vec<String>> {
         ));
     }
 
-    let (level, changelog) = match parse_frontmatter(content, &mut errors) {
+    let (level, changelog, closes_rule) = match parse_frontmatter(content, &mut errors) {
         Some(fm) => fm,
         None => return Err(errors),
     };
@@ -143,6 +185,7 @@ pub fn validate(filename: &str, content: &str) -> Result<Pending, Vec<String>> {
             level: level.expect("no errors implies a level"),
             changelog: changelog.expect("no errors implies a changelog"),
             adrs,
+            closes_rule,
         })
     } else {
         Err(errors)
@@ -150,12 +193,14 @@ pub fn validate(filename: &str, content: &str) -> Result<Pending, Vec<String>> {
 }
 
 /// Parse and validate the `---`-delimited header. Pushes errors; returns the
-/// two fields when both are present and well-formed. Returns `None` only when
-/// the frontmatter block itself is missing/unterminated (nothing to recover).
+/// fields when present and well-formed (`closes_rule` defaults to empty rather
+/// than `Option` — it's genuinely optional, unlike `level`/`changelog`). Returns
+/// `None` only when the frontmatter block itself is missing/unterminated
+/// (nothing to recover).
 fn parse_frontmatter(
     content: &str,
     errors: &mut Vec<String>,
-) -> Option<(Option<Level>, Option<String>)> {
+) -> Option<(Option<Level>, Option<String>, Vec<String>)> {
     let mut lines = content.lines();
     if lines.next().map(str::trim_end) != Some("---") {
         errors.push("must open with a `---` frontmatter fence on line 1".into());
@@ -178,10 +223,12 @@ fn parse_frontmatter(
 
     let mut level = None;
     let mut changelog = None;
+    let mut closes_rule = Vec::new();
     // Track key presence separately from a valid value: a key that is present
     // but malformed reports its own error and must not also be "missing".
     let mut saw_level = false;
     let mut saw_changelog = false;
+    let mut saw_closes_rule = false;
     for raw in header {
         let line = raw.trim();
         if line.is_empty() {
@@ -223,6 +270,31 @@ fn parse_frontmatter(
                     changelog = Some(value.to_string());
                 }
             }
+            "closes_rule" => {
+                if saw_closes_rule {
+                    errors.push("duplicate frontmatter key `closes_rule`".into());
+                }
+                saw_closes_rule = true;
+                if value.is_empty() {
+                    errors.push(
+                        "closes_rule must not be empty (omit the key entirely if there's \
+                         nothing to cite)"
+                            .into(),
+                    );
+                } else {
+                    for entry in value.split(',') {
+                        let entry = entry.trim();
+                        if is_rule_id(entry) {
+                            closes_rule.push(entry.to_string());
+                        } else {
+                            errors.push(format!(
+                                "closes_rule entry {entry:?} is not a rule id \
+                                 (expected `R<major>.<minor>`, e.g. `R2.3`)"
+                            ));
+                        }
+                    }
+                }
+            }
             other => errors.push(format!("unknown frontmatter key {other:?}")),
         }
     }
@@ -234,7 +306,55 @@ fn parse_frontmatter(
         errors.push("frontmatter is missing `changelog`".into());
     }
 
-    Some((level, changelog))
+    Some((level, changelog, closes_rule))
+}
+
+/// Is `s` shaped like a greenfield-reference rule id — `R` followed by
+/// `<digits>.<digits>` (e.g. `R2.3`, `R0.1`)? Syntax only; whether the id
+/// actually exists in the reference is [`known_rule_ids`]'s job.
+pub fn is_rule_id(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix('R') else {
+        return false;
+    };
+    let Some((major, minor)) = rest.split_once('.') else {
+        return false;
+    };
+    !major.is_empty()
+        && major.chars().all(|c| c.is_ascii_digit())
+        && !minor.is_empty()
+        && minor.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Every rule id (`R2.3`, …) enumerated in the greenfield reference
+/// (`design/bynk-greenfield-compiler.md`) — the existence check for a pending
+/// file's `closes_rule` entries, separate from [`is_rule_id`]'s pure syntax
+/// check because it needs the repo root. Root-parameterised like
+/// `stamp::next_adr_number`, so a fixture tree can supply its own reference doc.
+///
+/// Rules are written inline as `**R2.3 — <title>.**`; this scans every `**R`
+/// occurrence for the dotted id immediately following, rather than requiring a
+/// line-start anchor — the doc's own precedent (`grep -oE '\*\*R[0-9]+\.[0-9]+
+/// —'`) confirmed this finds exactly the 130 rules the reference claims.
+pub fn known_rule_ids(root: &Path) -> Result<std::collections::HashSet<String>, String> {
+    let path = root.join("design/bynk-greenfield-compiler.md");
+    let text =
+        fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mut ids = std::collections::HashSet::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while let Some(rel) = text[i..].find("**R") {
+        let start = i + rel + 2; // skip `**`, keep the leading `R`
+        let mut end = start;
+        while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'.') {
+            end += 1;
+        }
+        let candidate = &text[start..end];
+        if is_rule_id(candidate) {
+            ids.insert(candidate.to_string());
+        }
+        i = end.max(start + 1);
+    }
+    Ok(ids)
 }
 
 /// Parse `## ADR: <slug>` blocks from the body (everything after the closing
@@ -580,6 +700,143 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("unknown frontmatter key"))
         );
+    }
+
+    // --- closes_rule (#1001) --------------------------------------------------
+
+    #[test]
+    fn closes_rule_is_optional_and_defaults_empty() {
+        let p = ok("x.md", "---\nlevel: patch\nchangelog: x\n---\n");
+        assert!(p.closes_rule.is_empty());
+    }
+
+    #[test]
+    fn closes_rule_parses_a_single_id() {
+        let p = ok(
+            "x.md",
+            "---\nlevel: patch\nchangelog: x\ncloses_rule: R2.3\n---\n",
+        );
+        assert_eq!(p.closes_rule, vec!["R2.3".to_string()]);
+    }
+
+    #[test]
+    fn closes_rule_parses_a_comma_separated_list_and_trims_whitespace() {
+        let p = ok(
+            "x.md",
+            "---\nlevel: patch\nchangelog: x\ncloses_rule: R2.3,  R2.12 ,R0.1\n---\n",
+        );
+        assert_eq!(
+            p.closes_rule,
+            vec!["R2.3".to_string(), "R2.12".to_string(), "R0.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn closes_rule_rejects_a_malformed_entry() {
+        assert!(
+            err(
+                "x.md",
+                "---\nlevel: patch\nchangelog: x\ncloses_rule: not-a-rule\n---\n"
+            )
+            .iter()
+            .any(|e| e.contains("closes_rule entry") && e.contains("not a rule id"))
+        );
+    }
+
+    #[test]
+    fn closes_rule_rejects_empty_value() {
+        assert!(
+            err(
+                "x.md",
+                "---\nlevel: patch\nchangelog: x\ncloses_rule: \n---\n"
+            )
+            .iter()
+            .any(|e| e.contains("closes_rule must not be empty"))
+        );
+    }
+
+    #[test]
+    fn closes_rule_rejects_duplicate_key() {
+        assert!(
+            err(
+                "x.md",
+                "---\nlevel: patch\nchangelog: x\ncloses_rule: R2.3\ncloses_rule: R2.4\n---\n"
+            )
+            .iter()
+            .any(|e| e.contains("duplicate frontmatter key `closes_rule`"))
+        );
+    }
+
+    #[test]
+    fn is_rule_id_accepts_and_rejects() {
+        assert!(is_rule_id("R2.3"));
+        assert!(is_rule_id("R0.1"));
+        assert!(is_rule_id("R12.34"));
+        assert!(!is_rule_id("2.3"));
+        assert!(!is_rule_id("R2"));
+        assert!(!is_rule_id("R2.3.4"));
+        assert!(!is_rule_id("R.3"));
+        assert!(!is_rule_id("R2."));
+        assert!(!is_rule_id("Rx.y"));
+    }
+
+    /// A throwaway fixture tree, named per calling test so parallel runs don't
+    /// collide — the same convention `xtask/tests/stamp_apply.rs`'s `fixture`
+    /// uses. Removed and recreated on construction, not cleaned up after (the OS
+    /// temp dir is not this test's to manage beyond that).
+    fn rule_fixture(tag: &str, reference_body: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("xtask-closes-rule-{tag}"));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("design/pending")).unwrap();
+        fs::write(
+            root.join("design/bynk-greenfield-compiler.md"),
+            reference_body,
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn known_rule_ids_finds_bold_rule_headers() {
+        let dir = rule_fixture(
+            "finds-bold-headers",
+            "Some prose.\n\n**R2.3 — A rule about spans.**\n\nMore prose citing **R2.3** again \
+             in passing, and introducing **R10.11 — a second rule.**\n",
+        );
+        let ids = known_rule_ids(&dir).unwrap();
+        assert_eq!(ids.len(), 2, "expected exactly 2 distinct ids: {ids:?}");
+        assert!(ids.contains("R2.3"));
+        assert!(ids.contains("R10.11"));
+    }
+
+    #[test]
+    fn validated_pending_in_rejects_a_closes_rule_citing_an_unknown_id() {
+        let dir = rule_fixture("rejects-unknown", "**R2.3 — real.**\n");
+        fs::write(
+            dir.join("design/pending/x.md"),
+            "---\nlevel: patch\nchangelog: x\ncloses_rule: R99.99\n---\n",
+        )
+        .unwrap();
+        let errors = validated_pending_in(&dir).expect_err("R99.99 does not exist");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("R99.99") && e.contains("not a rule id in")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn validated_pending_in_accepts_a_closes_rule_citing_a_known_id() {
+        let dir = rule_fixture("accepts-known", "**R2.3 — real.**\n");
+        fs::write(
+            dir.join("design/pending/x.md"),
+            "---\nlevel: patch\nchangelog: x\ncloses_rule: R2.3\n---\n",
+        )
+        .unwrap();
+        let parsed = validated_pending_in(&dir).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].1.closes_rule, vec!["R2.3".to_string()]);
     }
 
     #[test]

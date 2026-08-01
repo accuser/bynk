@@ -87,6 +87,9 @@ pub struct Stamped {
     pub version: Version,
     pub changelog: String,
     pub adrs: Vec<Adr>,
+    /// Greenfield reference rule ids this increment closes (#1001) — already
+    /// validated (syntax and existence) by `validated_pending_in`.
+    pub closes_rule: Vec<String>,
 }
 
 /// The full stamp plan for the pending files present.
@@ -123,7 +126,7 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
     let base_version = parse_workspace_version(&cargo_src)
         .ok_or_else(|| vec![format!("no `version = \"X.Y.Z\"` in {}", cargo.display())])?;
 
-    let pending = validated_pending_in(&root.join("design/pending"))?;
+    let pending = validated_pending_in(root)?;
     let first_adr_number = next_adr_number(root).map_err(|e| {
         vec![format!(
             "cannot scan {}: {e}",
@@ -140,6 +143,7 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
             version,
             changelog: p.changelog,
             adrs: p.adrs,
+            closes_rule: p.closes_rule,
         });
     }
 
@@ -172,8 +176,16 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
 /// debris is surfaced too.)
 ///
 /// `bump` is injected so tests exercise the whole flow on a fixture tree with a
-/// stub that just rewrites the fixture's `Cargo.toml`.
-pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>) -> io::Result<()> {
+/// stub that just rewrites the fixture's `Cargo.toml`. `pr_number` is the
+/// merging PR's number if it could be recovered from the triggering commit
+/// message (#1001) — `None` records a ledger row without one (e.g. a local
+/// `stamp --apply` run outside CI) rather than guessing.
+pub fn apply(
+    root: &Path,
+    plan: &Plan,
+    pr_number: Option<u32>,
+    bump: impl Fn(Version) -> io::Result<()>,
+) -> io::Result<()> {
     if plan.is_empty() {
         return Ok(());
     }
@@ -181,6 +193,7 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
     let decisions = root.join("design/decisions");
     let changelog_path = root.join("site/src/content/docs/book/reference/changelog.md");
     let readme_path = decisions.join("README.md");
+    let rule_ledger_path = root.join("design/greenfield-status-rules.md");
 
     // --- Stage: compute every write in memory. Nothing is on disk yet, so a
     // fault here (a missing table anchor, an ADR-number collision) aborts with
@@ -189,6 +202,7 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
     let mut adr_files: Vec<(PathBuf, String)> = Vec::new();
     let mut changelog_rows = Vec::new();
     let mut index_rows = Vec::new();
+    let mut rule_ledger_rows_all = Vec::new();
     for inc in &plan.increments {
         for adr in &inc.adrs {
             let path = decisions.join(format!("{number:04}-{}.md", adr.slug));
@@ -209,12 +223,14 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
             number += 1;
         }
         changelog_rows.push(changelog_row(inc.version, &inc.changelog));
+        rule_ledger_rows_all.extend(rule_ledger_rows(inc, pr_number));
     }
 
     // Newest on top: the highest version/number is applied last, so reverse the
     // ascending lists before prepending them as a block.
     changelog_rows.reverse();
     index_rows.reverse();
+    rule_ledger_rows_all.reverse();
 
     let changelog_before = fs::read_to_string(&changelog_path)?;
     let changelog_after =
@@ -231,6 +247,28 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
         Some((before, after))
     };
 
+    // Only touch the ledger when some increment actually closes a rule.
+    // Unlike the changelog/index, this file may not exist yet — no increment
+    // has ever cited `closes_rule` before #1001 — so a missing file synthesises
+    // a fresh header rather than erroring; `ledger_before` stays `None` in that
+    // case so a rollback removes the file instead of restoring stale content.
+    let ledger_existed = rule_ledger_path.exists();
+    let ledger_edit = if rule_ledger_rows_all.is_empty() {
+        None
+    } else {
+        let ledger_before = if ledger_existed {
+            Some(fs::read_to_string(&rule_ledger_path)?)
+        } else {
+            None
+        };
+        let base = ledger_before
+            .clone()
+            .unwrap_or_else(|| RULE_LEDGER_HEADER.to_string());
+        let after = insert_after_table_separator(&base, "| Rule |", &rule_ledger_rows_all)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Some((ledger_before, after))
+    };
+
     // --- Commit: mutate the tree. Track what we write so a mid-flight failure
     // (the injected `bump` is the likely one) can be unwound. ---
     let mut written_adrs: Vec<PathBuf> = Vec::new();
@@ -242,6 +280,9 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
         fs::write(&changelog_path, &changelog_after)?;
         if let Some((_, after)) = &readme_edit {
             fs::write(&readme_path, after)?;
+        }
+        if let Some((_, after)) = &ledger_edit {
+            fs::write(&rule_ledger_path, after)?;
         }
         // The flaky step, run last so its failure unwinds cleanly here rather
         // than stranding a changelog that cites a version the manifests never
@@ -256,6 +297,16 @@ pub fn apply(root: &Path, plan: &Plan, bump: impl Fn(Version) -> io::Result<()>)
         let _ = fs::write(&changelog_path, &changelog_before);
         if let Some((before, _)) = &readme_edit {
             let _ = fs::write(&readme_path, before);
+        }
+        if let Some((before, _)) = &ledger_edit {
+            match before {
+                Some(orig) => {
+                    let _ = fs::write(&rule_ledger_path, orig);
+                }
+                None => {
+                    let _ = fs::remove_file(&rule_ledger_path);
+                }
+            }
         }
         for path in &written_adrs {
             let _ = fs::remove_file(path);
@@ -345,6 +396,33 @@ pub fn index_row(number: u32, adr: &Adr, version: Version) -> String {
         summary = adr.summary(),
         status = adr.status(),
     )
+}
+
+/// The header `design/greenfield-status-rules.md` is synthesised with the first
+/// time any increment closes a rule — this file has no other reason to exist,
+/// so `apply` doesn't require it pre-created the way it does the changelog and
+/// the decisions index.
+const RULE_LEDGER_HEADER: &str = "<!-- GENERATED, APPEND-ONLY — written by `cargo xtask stamp \
+--apply` (xtask/src/stamp.rs) at merge, one row per rule id an increment cites in its \
+`closes_rule` frontmatter (#1001).\n     Read by `cargo xtask greenfield-status` to populate \
+the reference's rule-citation surface. Do not hand-edit. -->\n\n# Rules closed\n\n\
+| Rule | Version | PR | Changelog |\n|---|---|---|---|\n";
+
+/// One `design/greenfield-status-rules.md` row per rule id `inc` closes — empty
+/// if `inc.closes_rule` is empty. `pr` renders as `#NNNN`, or the empty string
+/// when it couldn't be recovered (kept as an empty cell, not a placeholder like
+/// `"unknown"`, so the table stays a clean Markdown grid either way).
+pub fn rule_ledger_rows(inc: &Stamped, pr: Option<u32>) -> Vec<String> {
+    let pr_cell = pr.map(|n| format!("#{n}")).unwrap_or_default();
+    inc.closes_rule
+        .iter()
+        .map(|rule| {
+            format!(
+                "| {rule} | v{} | {pr_cell} | {} |",
+                inc.version, inc.changelog
+            )
+        })
+        .collect()
 }
 
 /// Insert `rows` (already newest-first) immediately after the separator line of
