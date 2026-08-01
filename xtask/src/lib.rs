@@ -357,6 +357,30 @@ pub fn known_rule_ids(root: &Path) -> Result<std::collections::HashSet<String>, 
     Ok(ids)
 }
 
+/// The PR number a commit `subject` (the first line of its message) names, if
+/// it ends in the `(#NNNN)` GitHub's squash-merge appends to the PR title —
+/// pure and root-independent, so `xtask/src/main.rs`'s `pr_number_from_head`
+/// (the only caller, which runs `git log -1 --format=%s` to get `subject`)
+/// stays a thin wrapper over this, and this half — the part with the
+/// interesting edge cases — is unit-testable without a git tree (#1001,
+/// caught by review as the one piece of new logic with no test coverage).
+///
+/// **Known limitation, stated rather than guarded against:** this matches on
+/// shape alone. Any subject ending `(#NNNN)` is read as the merging PR,
+/// including a hand-written commit that happens to end in an *issue*
+/// reference (`"fix: handle empty spans (#1001)"`, where 1001 names an issue,
+/// not the PR that closes it) — correct on the squash-merge path this exists
+/// for, a silent false positive off it (a hand-run `stamp --apply` on an
+/// unmerged local commit, say). Not guarded against because the fix — only
+/// trust the parse when the run is known to be CI/merge-triggered — would
+/// also suppress the *legitimate* case of manually re-running `stamp --apply`
+/// against an already-merged commit to recover from a failed push (`stamp.yml`
+/// names this as the documented recovery path), which is a worse trade.
+pub fn pr_number_from_subject(subject: &str) -> Option<u32> {
+    let inner = subject.strip_suffix(')')?.rsplit_once("(#")?.1;
+    inner.parse().ok()
+}
+
 /// Parse `## ADR: <slug>` blocks from the body (everything after the closing
 /// frontmatter fence). Zero blocks is valid — an increment may record no
 /// decision. Pushes errors for a non-kebab or duplicate slug, or an empty body.
@@ -778,6 +802,53 @@ mod tests {
         assert!(!is_rule_id("R.3"));
         assert!(!is_rule_id("R2."));
         assert!(!is_rule_id("Rx.y"));
+    }
+
+    // --- pr_number_from_subject (#1001) --------------------------------------
+
+    #[test]
+    fn pr_number_from_subject_finds_a_trailing_squash_merge_suffix() {
+        assert_eq!(
+            pr_number_from_subject("feat(xtask): thing (#1234)"),
+            Some(1234)
+        );
+    }
+
+    #[test]
+    fn pr_number_from_subject_requires_the_suffix_at_the_very_end() {
+        // Trailing prose after the `)` means this isn't a squash-merge title.
+        assert_eq!(pr_number_from_subject("feat: thing (#12) then more"), None);
+    }
+
+    #[test]
+    fn pr_number_from_subject_is_not_confused_by_earlier_nested_parens() {
+        assert_eq!(pr_number_from_subject("chore: bump (deps) (#12)"), Some(12));
+    }
+
+    #[test]
+    fn pr_number_from_subject_rejects_a_non_numeric_hash() {
+        assert_eq!(pr_number_from_subject("feat: thing (#abc)"), None);
+    }
+
+    #[test]
+    fn pr_number_from_subject_rejects_a_number_too_large_for_u32() {
+        assert_eq!(pr_number_from_subject("(#99999999999999)"), None);
+    }
+
+    #[test]
+    fn pr_number_from_subject_none_without_any_suffix() {
+        assert_eq!(pr_number_from_subject("Merge branch 'x'"), None);
+    }
+
+    /// The documented limitation, pinned so it can't silently change meaning:
+    /// a hand-written commit ending in an *issue* reference is indistinguishable
+    /// from a squash-merge PR title by shape alone.
+    #[test]
+    fn pr_number_from_subject_cannot_distinguish_an_issue_reference() {
+        assert_eq!(
+            pr_number_from_subject("fix: handle empty spans (#1001)"),
+            Some(1001)
+        );
     }
 
     /// A throwaway fixture tree, named per calling test so parallel runs don't

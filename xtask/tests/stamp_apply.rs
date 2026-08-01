@@ -376,6 +376,55 @@ fn an_increment_that_closes_no_rule_never_touches_the_ledger() {
     );
 }
 
+/// Regression test for the finding in #1001's review: a single `pr_number`
+/// threaded through a *multi*-increment plan would attribute every increment's
+/// ledger row to the same PR — wrong for whichever increment didn't actually
+/// come from that PR (the scenario: a prior stamp run exhausted its push
+/// retries and left its pending file for this run to pick up alongside a new
+/// one). The recovered number must be dropped entirely rather than risk a
+/// confidently wrong provenance record.
+#[test]
+fn a_multi_increment_plan_never_attributes_a_single_pr_to_every_row() {
+    let root = fixture("ledger-multi-increment");
+    fs::write(
+        root.join("design/bynk-greenfield-compiler.md"),
+        "**R2.3 — A rule.**\n**R2.4 — Another.**\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("design/pending/a-first.md"),
+        "---\nlevel: minor\nchangelog: First\ncloses_rule: R2.3\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("design/pending/b-second.md"),
+        "---\nlevel: patch\nchangelog: Second\ncloses_rule: R2.4\n---\n",
+    )
+    .unwrap();
+
+    let plan = stamp::plan(&root).expect("plan");
+    assert_eq!(
+        plan.increments.len(),
+        2,
+        "both pending files must be in one plan"
+    );
+    stamp::apply(&root, &plan, Some(999), bumper(&root)).expect("apply");
+
+    let ledger = fs::read_to_string(root.join("design/greenfield-status-rules.md")).unwrap();
+    assert!(
+        !ledger.contains("#999"),
+        "a multi-increment plan must not attribute the run's PR to any row: {ledger}"
+    );
+    assert!(
+        ledger.contains("| R2.3 | v0.186.0 |  | First |"),
+        "{ledger}"
+    );
+    assert!(
+        ledger.contains("| R2.4 | v0.186.1 |  | Second |"),
+        "{ledger}"
+    );
+}
+
 #[test]
 fn a_failed_bump_rolls_back_a_newly_created_rule_ledger() {
     let root = fixture("ledger-rollback-new");
