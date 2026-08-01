@@ -176,10 +176,15 @@ pub fn plan(root: &Path) -> Result<Plan, Vec<String>> {
 /// debris is surfaced too.)
 ///
 /// `bump` is injected so tests exercise the whole flow on a fixture tree with a
-/// stub that just rewrites the fixture's `Cargo.toml`. `pr_number` is the
-/// merging PR's number if it could be recovered from the triggering commit
-/// message (#1001) — `None` records a ledger row without one (e.g. a local
-/// `stamp --apply` run outside CI) rather than guessing.
+/// stub that just rewrites the fixture's `Cargo.toml`. `pr_number` is the PR
+/// whose merge triggered *this run*, if it could be recovered from the
+/// triggering commit message (#1001) — `None` records a ledger row without
+/// one (e.g. a local `stamp --apply` run outside CI) rather than guessing.
+/// Only trusted for a single-increment plan: a multi-increment run (a prior
+/// run's failed push left its pending file for this one to pick up) has no
+/// way to tell which increment the recovered number actually belongs to, so
+/// every row in that case gets a blank cell instead of one confidently wrong
+/// number applied to increments from different PRs.
 pub fn apply(
     root: &Path,
     plan: &Plan,
@@ -194,6 +199,21 @@ pub fn apply(
     let changelog_path = root.join("site/src/content/docs/book/reference/changelog.md");
     let readme_path = decisions.join("README.md");
     let rule_ledger_path = root.join("design/greenfield-status-rules.md");
+
+    // `pr_number` names the PR whose merge triggered *this run*, not any one
+    // increment in `plan` — those are usually the same increment, but not
+    // always: a stamp run that exhausts its push retries (`stamp.yml`) exits
+    // without consuming its pending file, so the *next* run's plan can carry
+    // two increments from two different PRs. Attributing both to the second
+    // PR would be a confidently wrong provenance record — worse than the
+    // blank cell this design already accepts for "couldn't recover a PR
+    // number" — so the recovered number is only trusted when it can only mean
+    // one increment.
+    let ledger_pr_number = if plan.increments.len() == 1 {
+        pr_number
+    } else {
+        None
+    };
 
     // --- Stage: compute every write in memory. Nothing is on disk yet, so a
     // fault here (a missing table anchor, an ADR-number collision) aborts with
@@ -223,7 +243,7 @@ pub fn apply(
             number += 1;
         }
         changelog_rows.push(changelog_row(inc.version, &inc.changelog));
-        rule_ledger_rows_all.extend(rule_ledger_rows(inc, pr_number));
+        rule_ledger_rows_all.extend(rule_ledger_rows(inc, ledger_pr_number));
     }
 
     // Newest on top: the highest version/number is applied last, so reverse the

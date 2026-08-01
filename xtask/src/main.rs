@@ -154,9 +154,7 @@ fn pr_number_from_head(root: &Path) -> Option<u32> {
         return None;
     }
     let subject = String::from_utf8_lossy(&out.stdout);
-    let subject = subject.trim();
-    let inner = subject.strip_suffix(')')?.rsplit_once("(#")?.1;
-    inner.parse().ok()
+    xtask::pr_number_from_subject(subject.trim())
 }
 
 /// Run `scripts/bump-version.sh <version>` at the repo root (an absolute path so
@@ -213,7 +211,7 @@ fn greenfield_status(apply: bool) -> ExitCode {
     let report = xtask::greenfield_status::run(&root);
 
     if apply {
-        let table = xtask::greenfield_status::render_table(&report, &root);
+        let table = xtask::greenfield_status::render_table(&report);
         if let Err(e) = std::fs::write(xtask::greenfield_status::table_path(&root), table) {
             eprintln!("greenfield-status: failed to write committed table: {e}");
             return ExitCode::FAILURE;

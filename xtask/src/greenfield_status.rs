@@ -911,8 +911,8 @@ fn count_files_named_walk(dir: &Path, filename: &str, count: &mut usize) {
 // --- Rendering + diffing ---------------------------------------------------
 
 /// The committed table: a plain Markdown table, probe name → gated?/reads, plus a
-/// summary of the rule ledger `stamp::apply` writes (#1001).
-pub fn render_table(report: &Report, root: &Path) -> String {
+/// pointer to the rule ledger `stamp::apply` writes (#1001).
+pub fn render_table(report: &Report) -> String {
     let mut out = String::new();
     out.push_str("<!-- GENERATED FILE — do not edit by hand.\n");
     out.push_str("     Source: cargo xtask greenfield-status (xtask/src/greenfield_status.rs).\n");
@@ -935,32 +935,20 @@ pub fn render_table(report: &Report, root: &Path) -> String {
     }
 
     out.push_str("\n## Rules closed\n\n");
-    // Summarised, not duplicated: the ledger is `stamp::apply`'s own file
-    // (#1001) and this regenerates wholesale on every `--apply`, so embedding
-    // its rows here would be a second copy that can only drift from the
-    // original — count and link instead.
-    match std::fs::read_to_string(root.join("design/greenfield-status-rules.md")) {
-        Ok(ledger) => {
-            // A rule-id row starts `| R<digit>` (e.g. `| R2.3 |`) — not just
-            // `| R`, which the table's own header (`| Rule | Version | ...`)
-            // also starts with and would otherwise be miscounted as a row.
-            let rows = ledger
-                .lines()
-                .filter(|l| {
-                    l.as_bytes().get(3).is_some_and(u8::is_ascii_digit) && l.starts_with("| R")
-                })
-                .count();
-            let _ = writeln!(
-                out,
-                "{rows} rule id(s) closed so far — see \
-                 [`design/greenfield-status-rules.md`](greenfield-status-rules.md)."
-            );
-        }
-        Err(_) => out.push_str(
-            "No increment has cited `closes_rule` yet — `design/greenfield-status-rules.md` \
-             does not exist.\n",
-        ),
-    }
+    // A static, unconditional link — not a count, and not even an existence
+    // check. A first draft read `design/greenfield-status-rules.md` here to
+    // report a row count, but nothing regenerates *this* file when `stamp`
+    // writes the ledger (`stamp.yml` never runs `greenfield-status --apply`,
+    // and the gating test only diffs the nine probes) — so a count or an
+    // exists/doesn't-exist message would silently go stale the moment the
+    // first `closes_rule` landed, which is exactly the drift this section
+    // exists to avoid, not invite (#1001 review). Static text can't go stale;
+    // the ledger is one click away either way.
+    out.push_str(
+        "See [`design/greenfield-status-rules.md`](greenfield-status-rules.md) for rule ids \
+         closed so far (written by `cargo xtask stamp --apply` at merge; may not exist yet if \
+         no increment has cited `closes_rule`).\n",
+    );
     out
 }
 
@@ -1257,34 +1245,19 @@ commons app.demo {
         Report { probes: Vec::new() }
     }
 
+    /// The section is static text — no count, no existence check — precisely
+    /// because nothing regenerates `design/greenfield-status.md` when `stamp`
+    /// writes the ledger, so a computed count would silently go stale the
+    /// moment the first `closes_rule` landed (the drift a first draft of this
+    /// section introduced, caught in #1001's review). This test pins "static"
+    /// as the actual behaviour, not just the intent in a comment.
     #[test]
-    fn render_table_reports_no_ledger_when_none_exists() {
-        let root = std::env::temp_dir().join("xtask-render-table-no-ledger");
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        let out = render_table(&empty_report(), &root);
-        assert!(
-            out.contains("No increment has cited `closes_rule` yet"),
-            "{out}"
-        );
-    }
-
-    #[test]
-    fn render_table_counts_ledger_rows_without_duplicating_them() {
-        let root = std::env::temp_dir().join("xtask-render-table-with-ledger");
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("design")).unwrap();
-        std::fs::write(
-            root.join("design/greenfield-status-rules.md"),
-            "# Rules closed\n\n| Rule | Version | PR | Changelog |\n|---|---|---|---|\n\
-             | R2.3 | v0.246.3 | #1001 | Add the ledger |\n\
-             | R2.4 | v0.246.4 | #1005 | Close another |\n",
-        )
-        .unwrap();
-        let out = render_table(&empty_report(), &root);
-        assert!(out.contains("2 rule id(s) closed"), "{out}");
-        // Summarised, not duplicated — the individual rows must not appear here.
-        assert!(!out.contains("Add the ledger"), "{out}");
+    fn render_table_rules_closed_section_is_static_regardless_of_the_tree() {
+        let out = render_table(&empty_report());
         assert!(out.contains("greenfield-status-rules.md"), "{out}");
+        assert!(
+            out.contains("may not exist yet"),
+            "the wording must not claim to know whether the ledger exists: {out}"
+        );
     }
 }
