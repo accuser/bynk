@@ -286,6 +286,30 @@ jobs:
       # major with no repo change, and the tsc_verify fallback already pins @5.
       - name: Install TypeScript
         run: npm install -g typescript@5
+      # Provision wrangler ONCE, serially, before the suite. The three workerd
+      # smokes each shell out to `npx -y wrangler@4 dev`, and they do it
+      # concurrently — under nextest every test is its own process in one pool,
+      # and events_ordering_workerd.rs starts two workers at once inside a
+      # single test. Concurrent `npx -y wrangler@4` installs all land in the
+      # SAME `~/.npm/_npx/<hash>` directory (the hash is of the package spec,
+      # not the argv), and npm does not lock it. On the v0.245.0 release run
+      # (release.yml, same tests, no nextest retries) they raced on a cold
+      # cache: npm tore down its own half-extracted tree (`ENOTEMPTY` on rmdir,
+      # then a fan of `TAR_ENTRY_ERROR ENOENT`), neither wrangler ever served,
+      # and both tests burned the full 180s boot window before failing under
+      # BYNK_REQUIRE_WORKERD. This leg's `retries = 1` was hiding the same race
+      # here as a FLAKY line rather than a failure. Warming the cache means
+      # every test finds a complete cache and installs nothing.
+      #
+      # The spec must stay in step with the tests' own; a drift guard
+      # (bynkc/tests/wrangler/mod.rs) fails if it doesn't.
+      #
+      # Not fatal off Linux, where the smokes are allowed to skip anyway. On
+      # Linux BYNK_REQUIRE_WORKERD makes wrangler mandatory, so a failure here
+      # is a real failure and going red now beats going red 180s later.
+      - name: Pre-warm the npx cache for wrangler
+        run: npx -y wrangler@4 --version
+        continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
       # `cargo nextest run --workspace` runs every crate's suite (no rustdoc
       # doctests exist in the tree, so nextest loses nothing). bynkc's includes:
       #   - doc_examples        — the example-compilation gate (the Book)

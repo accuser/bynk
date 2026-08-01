@@ -69,9 +69,12 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 mod require;
+mod wrangler;
 
 const REQUIRE_ENV: &str = "BYNK_REQUIRE_WORKERD";
-const WRANGLER: &str = "wrangler@4";
+/// Shared with the other smokes via [`wrangler`], which also documents why the
+/// two workers this test starts must not be the ones to install it.
+const WRANGLER: &str = wrangler::SPEC;
 
 const SOURCE_PUBLISHER: &str = r#"context fifo.publisher
 

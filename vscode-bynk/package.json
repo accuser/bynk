@@ -2,7 +2,7 @@
   "name": "bynk-vscode",
   "displayName": "Bynk",
   "description": "Language support for Bynk (.bynk) source files.",
-  "version": "0.245.0",
+  "version": "0.246.0",
   "publisher": "bynk",
   "license": "MIT OR Apache-2.0",
   "icon": "assets/bynk-icon.png",
@@ -10,7 +10,7 @@
     "url": "https://github.com/accuser/bynk"
   },
   "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "bynkServerVersion": "v0.245.0",
+  "bynkServerVersion": "v0.246.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -186,6 +186,11 @@
         "command": "bynk.showArchitectureMap",
         "title": "Show Architecture Map",
         "category": "Bynk"
+      },
+      {
+        "command": "bynk.showWireContract",
+        "title": "Show Wire Contract",
+        "category": "Bynk"
       }
     ],
     "menus": {
@@ -228,6 +233,10 @@
         },
         {
           "command": "bynk.showArchitectureMap",
+          "when": "editorLangId == bynk"
+        },
+        {
+          "command": "bynk.showWireContract",
           "when": "editorLangId == bynk"
         }
       ],
@@ -502,7 +511,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify && esbuild src/webview/main.ts --bundle --outfile=out/webview.js --format=iife --platform=browser --target=es2022 --minify && esbuild src/webview/docview.ts --bundle --outfile=out/docview.js --format=iife --platform=browser --target=es2022 --minify && esbuild src/webview/architecture.ts --bundle --outfile=out/architecture.js --format=iife --platform=browser --target=es2022 --minify",
+    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify && esbuild src/webview/main.ts --bundle --outfile=out/webview.js --format=iife --platform=browser --target=es2022 --minify && esbuild src/webview/docview.ts --bundle --outfile=out/docview.js --format=iife --platform=browser --target=es2022 --minify && esbuild src/webview/architecture.ts --bundle --outfile=out/architecture.js --format=iife --platform=browser --target=es2022 --minify && esbuild src/webview/wireContract.ts --bundle --outfile=out/wireContract.js --format=iife --platform=browser --target=es2022 --minify",
     "check": "tsc -p . --noEmit",
     "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap --watch",
     "package": "npm run build && npx @vscode/vsce package",

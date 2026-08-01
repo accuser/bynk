@@ -125,6 +125,11 @@ fn hover_at(
             offset,
             project_root: root,
             doc_scope: &r.doc_scope,
+            boundary_info: &r.boundary_info,
+            context_count: bynk_ide::wire_contract::real_context_count(
+                &r.boundary_info,
+                &r.unit_sources,
+            ),
         }),
         doc: Some((text, offset)),
         uri: &uri,
@@ -360,6 +365,66 @@ fn capability_op_reference_hovers_the_projects_own_op() {
     )
     .expect("hover on the declaration");
     assert_eq!(hover, decl);
+}
+
+/// #855 — the new rung 4 (the handler-HEADER rung) answers an offset no
+/// earlier rung ever did, and its guard provably cannot shadow rung 1's
+/// resolution of a param's *type* name — the safety property the phase's
+/// plan calls out as the highest-risk piece of this change.
+#[test]
+fn header_rung_answers_the_header_and_never_shadows_a_params_type_name() {
+    let (r, rel, text, root) = analysed("../examples/rate-limiter/src", "ratelimit.bynk");
+
+    // `GET` in `on GET("/check/:client")` — inside the header's byte range
+    // (before the first param's span) — resolves through no rung before
+    // #855. Now it answers the handler's wire contract.
+    let header = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "on GET(\"/check/:client\")", "GET"),
+    )
+    .expect("hover on the handler header must answer via rung 4");
+    assert!(
+        header.contains("Wire contract") && header.contains("GET /check/:client"),
+        "the header rung should render the handler's wire contract, got:\n{header}"
+    );
+    assert!(
+        header.contains("the request body **is** the value of `client`"),
+        "a single-param handler is the bare envelope, got:\n{header}"
+    );
+
+    // The route literal itself, inside the header range too.
+    let route = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "on GET(\"/check/:client\")", "/check/:client"),
+    )
+    .expect("hover on the route literal must answer via rung 4");
+    assert!(route.contains("Wire contract"), "{route}");
+
+    // `ClientId` in `(client: ClientId)` — past the header's guarded range
+    // (it's the first param's *type*, not the header) — must still resolve
+    // through rung 1 to the type's own declaration, exactly as it did before
+    // #855. This is the shadowing invariant: the new rung's guard is `h.span
+    // .start <= offset && offset < prefix_end`, and a param's type name
+    // always sits at or after `prefix_end`.
+    let param_type = hover_at(
+        &r,
+        &rel,
+        &text,
+        &root,
+        at(&text, "(client: ClientId) -> Effect[HttpResult", "ClientId"),
+    )
+    .expect("hover on the param's type name");
+    assert!(
+        param_type.contains("type ClientId") && !param_type.contains("**Wire contract**"),
+        "the param's type name must still resolve to its own declaration \
+         (rung 1), not the new header rung, got:\n{param_type}"
+    );
 }
 
 /// #848 — a resolvable intra-doc link in a declaration's doc comment renders

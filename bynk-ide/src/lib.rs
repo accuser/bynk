@@ -22,6 +22,10 @@ use bynk_check::{checker, expr_types, hints, index, locals, requirements, resolv
 use bynk_syntax::error::{CompileError, Severity};
 use bynk_syntax::{ast, lexer, parser};
 
+/// #855: same rationale as [`ContextSequenceInfo`] above — a plain
+/// re-export, since `ContextBoundaryInfo`'s fields are already
+/// IDE-appropriate as-is.
+pub use bynk_emit::project::ContextBoundaryInfo;
 /// #846: re-exported rather than left as a raw `bynk_emit::project` path —
 /// `bynk-lsp` links `bynk-ide`/`bynk-check`/`bynk-syntax` directly and
 /// deliberately does not depend on `bynk-emit` (the whole-compiler crate);
@@ -38,6 +42,7 @@ pub mod locals_nav;
 pub mod sequence;
 pub mod signature_help;
 pub mod symbols;
+pub mod wire_contract;
 
 /// One diagnostic produced from a recovery-mode compile of a single file.
 #[derive(Debug, Clone)]
@@ -170,6 +175,11 @@ pub struct ProjectDiagnostics {
     /// tables the sequence-diagram query classifies handler calls against.
     /// See `bynk_emit::project::ProjectAnalysis::sequence_info`.
     pub sequence_info: HashMap<String, ContextSequenceInfo>,
+    /// #855: qualified context/adapter unit name → the combined type table
+    /// and service/agent tables the wire-contract peek resolves a handler's
+    /// boundary shape and cross-context hash against.
+    /// See `bynk_emit::project::ProjectAnalysis::boundary_info`.
+    pub boundary_info: HashMap<String, ContextBoundaryInfo>,
     /// #848: qualified unit name → its doc-comment intra-doc-link search
     /// order — itself first, then its `uses` targets, then its `consumes`
     /// targets. See `bynk_emit::project::diagnostics::ProjectAnalysis::doc_scope`.
@@ -257,7 +267,7 @@ pub fn diagnose_project_with(
     // #43: destructured (not `analysis.field`-by-field) so that a field added
     // to `ProjectAnalysis` without a matching update *here* is a compile
     // error (an unmentioned field in a struct pattern), not a silently
-    // stale `ProjectDiagnostics` — the six fields below are one-for-one
+    // stale `ProjectDiagnostics` — the fields below are one-for-one
     // identical between the two types precisely because this site can't
     // forget one.
     let bynk_emit::project::ProjectAnalysis {
@@ -270,6 +280,7 @@ pub fn diagnose_project_with(
         requirements,
         unit_sources,
         sequence_info,
+        boundary_info,
         doc_scope,
     } = bynk_emit::project::analyse_project_with(&roots.lower(), overlay);
     let mut by_file: HashMap<PathBuf, Vec<Diagnostic>> = HashMap::new();
@@ -307,6 +318,7 @@ pub fn diagnose_project_with(
         locals,
         unit_sources,
         sequence_info,
+        boundary_info,
         doc_scope,
     }
 }

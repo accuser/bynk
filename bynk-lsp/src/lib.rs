@@ -46,6 +46,7 @@ pub mod sequence_request;
 mod signature_help;
 mod structure;
 pub mod symbols;
+pub mod wire_contract_request;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -115,6 +116,10 @@ struct Analysis {
     /// tables the `bynk/sequenceModel` request classifies handler calls
     /// against.
     sequence_info: std::collections::HashMap<String, bynk_ide::ContextSequenceInfo>,
+    /// #855: qualified context/adapter unit name → the combined type table
+    /// and service/agent tables the `bynk/wireContract` request resolves a
+    /// handler's boundary shape and cross-context hash against.
+    boundary_info: std::collections::HashMap<String, bynk_ide::ContextBoundaryInfo>,
     /// #848: qualified unit name → its doc-comment intra-doc-link search
     /// order — itself first, then its `uses` targets, then its `consumes`
     /// targets — backs intra-doc-link resolution in `document_link` and
@@ -667,6 +672,7 @@ impl Backend {
                 expr_types: result.expr_types,
                 unit_sources: result.unit_sources,
                 sequence_info: result.sequence_info,
+                boundary_info: result.boundary_info,
                 doc_scope: result.doc_scope,
             });
             let mut state = self.state.write().await;
@@ -1770,6 +1776,78 @@ impl Backend {
             &analysis.snapshots,
         )))
     }
+
+    /// #855: `bynk/wireContract` — the wire-contract peek for the handler
+    /// under the cursor. This server's fourth custom request, modelled on
+    /// `sequence_model` (file-scoped + position, not project-scoped like
+    /// `architecture_model` — the panel is per-handler). Served from the
+    /// committed round; no refresh nudge, for the same reason no custom
+    /// request needs one. A non-project file, no committed round, an offset
+    /// outside any handler, or a unit `boundary_info` has no entry for (the
+    /// pipeline bailed before the checker) all answer `None` (`null` on the
+    /// wire).
+    async fn wire_contract(
+        &self,
+        params: wire_contract_request::WireContractParams,
+    ) -> JsonRpcResult<Option<wire_contract_request::WcModel>> {
+        let uri = params.text_document.uri;
+        let Some(analysis) = self.committed_analysis(&uri).await else {
+            return Ok(None);
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
+            return Ok(None);
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Ok(None);
+        };
+        let Some(offset) = crate::position::position_to_offset(text, params.position) else {
+            return Ok(None);
+        };
+        // The owning unit — same `own_declaration_name` convention
+        // `sequence_model` uses to key `sequence_info`.
+        let Some((unit, _)) = bynk_ide::symbols::own_declaration_name(text) else {
+            return Ok(None);
+        };
+        let Some(info) = analysis.boundary_info.get(&unit) else {
+            return Ok(None);
+        };
+        let expr_types = analysis
+            .expr_types
+            .get(&rel)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let context_count = bynk_ide::wire_contract::real_context_count(
+            &analysis.boundary_info,
+            &analysis.unit_sources,
+        );
+        let Some(model) = bynk_ide::wire_contract::wire_contract_at(
+            &unit,
+            text,
+            offset,
+            info,
+            expr_types,
+            context_count,
+        ) else {
+            return Ok(None);
+        };
+        // #848's own search order (self, then `uses`, then `consumes`) —
+        // reused rather than re-derived, since it is exactly the priority a
+        // boundary type name resolves through in `ContextBoundaryInfo::types`.
+        let search_order = analysis
+            .doc_scope
+            .get(&unit)
+            .cloned()
+            .unwrap_or_else(|| vec![unit.clone()]);
+        Ok(Some(wire_contract_request::to_wire(
+            &model,
+            &analysis.project_root,
+            text,
+            &info.types,
+            &analysis.index,
+            &analysis.snapshots,
+            &search_order,
+        )))
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -1955,6 +2033,13 @@ impl LanguageServer for Backend {
                 offset: *offset,
                 project_root: &a.project_root,
                 doc_scope: &a.doc_scope,
+                boundary_info: &a.boundary_info,
+                // #855: computed once per round, not re-derived as a bare
+                // `boundary_info.len()` — see `real_context_count`'s doc.
+                context_count: bynk_ide::wire_contract::real_context_count(
+                    &a.boundary_info,
+                    &a.unit_sources,
+                ),
             });
         let content = crate::hover::hover_content(&crate::hover::HoverInput {
             analysis,
@@ -3517,6 +3602,7 @@ fn server_capabilities() -> ServerCapabilities {
             "sequenceModel": true,
             "documentationModel": true,
             "architectureModel": true,
+            "wireContract": true,
         })),
         ..Default::default()
     }
@@ -4167,6 +4253,7 @@ pub async fn run() {
         .custom_method("bynk/sequenceModel", Backend::sequence_model)
         .custom_method("bynk/documentationModel", Backend::documentation_model)
         .custom_method("bynk/architectureModel", Backend::architecture_model)
+        .custom_method("bynk/wireContract", Backend::wire_contract)
         .finish();
     Server::new(stdin, stdout, socket).serve(service).await;
 }
