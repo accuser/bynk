@@ -28,6 +28,9 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.246.7** | "`tree-sitter-bynk/tests/conformance.rs` widens from a fixed case list to totality: `examples/`, the vendored first-party `.bynk` sources, and every `bynkc` positive fixture must parse clean under tree-sitter, and every parse/lex-time negative fixture must be rejected by both parsers" |
+| **v0.246.6** | Track slice T0.3: `[workspace.lints.clippy] wildcard_enum_match_arm = "warn"` recorded in the root manifest, closing the `workspace_lints` probe's `absent` reading; the 296-violation inventory is recorded on the spine (#996), not yet enforced per-crate |
+| **v0.246.5** | "T0.2′ (first slice): the three `Roots::Split` negative fixtures whose reported diagnostic path re-bases (ADR 0198) — 104_state_sum_field, 105_state_opaque_field, 106_state_refined_no_zero — gain a mutation-checked `expected_diagnostics.txt`, closing the coverage hole ADR 0198 recorded as unobserved for this population" |
 | **v0.246.4** | "**Breaking (Rust API, not language surface):** `bynkc` no longer re-exports fourteen whole modules from `bynk-check`/`bynk-emit` (`bynkc::checker`, `bynkc::resolver`, `bynkc::emitter`, `bynkc::project`, and ten others) — only its ~30 item re-exports (`CompileOptions`, `compile_project`, `BuildTarget`, …) remain public" |
 | **v0.246.3** | "`closes_rule:` pending-file field + `stamp`-materialised rule ledger, closing out T0.0's deferred Closes-Rule provenance (#1001)" |
 | **v0.246.2** | "`cargo xtask greenfield-status` — the T0.0 probe harness (13 probes, 9 gated against a committed table)" |

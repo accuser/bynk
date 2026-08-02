@@ -1,0 +1,6 @@
+# ADR 0198: this project has a bynk.toml, so it compiles via Roots::Split
+# and its reported diagnostic path re-bases against the include root (`src`)
+# rather than staying tree-relative. Pinning `src/demo/vault.bynk` here — not
+# `demo/vault.bynk` — proves that re-basing is observed; do not "fix" the
+# path back to the tree-relative form if this test goes red.
+bynk.agents.non_zeroable_state_field	src/demo/vault.bynk:10:2

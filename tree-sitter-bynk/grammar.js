@@ -74,6 +74,13 @@ module.exports = grammar({
     // whether a matcher (`called`/`never`/`before`) or an ordinary continuation
     // (`(`, an operator, …) follows.
     [$.observation_expr, $._primary],
+    // v0.140: inside `agent_decl`, a `store` field's own trailing
+    // `@annotation`s are the same rule as the handler-position annotation
+    // prefix that can immediately follow the last store field — one token of
+    // `@` lookahead can't tell which one a run of annotations belongs to.
+    // Both parses are equivalent once the next `on`/`store`/handler-body
+    // token is seen, so GLR resolves it rather than the grammar needing to.
+    [$.store_field],
   ],
 
   rules: {
@@ -435,7 +442,16 @@ module.exports = grammar({
         "Positive",
         "NonEmpty",
       ),
-    _pred_arg: ($) => choice($.number_literal, $.float_literal, $.string_literal),
+    // v0.21/v0.142 (ADR 0166): a refinement-bound number may be negated —
+    // `InRange(-1_000, 1_000_000)` — mirroring `parse_signed_num_literal`'s
+    // optional leading `-` (a string argument, `Matches`'s only shape, is
+    // never signed).
+    _pred_arg: ($) =>
+      choice(
+        seq(optional("-"), $.number_literal),
+        seq(optional("-"), $.float_literal),
+        $.string_literal,
+      ),
 
     _base_type: ($) => $.base_type,
     base_type: () =>
@@ -681,7 +697,10 @@ module.exports = grammar({
         // v0.142 (ADR 0166): the optional `limits { }` policy, likewise a
         // header-position `from http` concern restricted by the checker.
         optional(field("limits", $.limits_policy)),
-        repeat($.handler),
+        // v0.140 (ADR 0163): a handler may carry one or more `@name(args)`
+        // annotations (`@cache(maxAge: 5.minutes)`, `@limit(maxBody: …)`) —
+        // the same shape `store_annotation` already gives store fields.
+        repeat(seq(repeat(field("annotation", $.store_annotation)), $.handler)),
         "}",
       ),
     // v0.131: `cors { <name>: <value>, … }`. `cors` is a contextual keyword (like
@@ -821,7 +840,13 @@ module.exports = grammar({
         // v0.81 (storage track): the agent's `store` fields (ADR 0108).
         repeat($.store_field),
         repeat(choice($.invariant_decl, $.transition_decl)),
-        repeat($.handler),
+        // v0.140 (ADR 0163): handler-position annotations parse uniformly on
+        // agent handlers too; the checker (not the grammar) restricts which
+        // annotations apply to a non-HTTP handler. Only `on call` is a valid
+        // agent handler (`bynk.parse.handler_in_agent` rejects the rest) —
+        // protocol handlers (HTTP routes, cron, queue, WebSocket, events)
+        // belong on a `service`.
+        repeat(seq(repeat(field("annotation", $.store_annotation)), $.call_handler)),
         "}",
       ),
     // v0.80: an agent invariant — `invariant <name>: <predicate>`. Sits between
@@ -1350,8 +1375,12 @@ module.exports = grammar({
           optional(","),
         ),
       ),
+    // v1 (#472) admits only a wildcard `_` as the refined inner form —
+    // `parse_pattern_where_suffix` rejects anything else with
+    // `bynk.parse.refined_pattern_inner` ("a refined pattern's inner form
+    // must be `_` in this version"); binding a refined value is unbuilt.
     refined_pattern: ($) =>
-      seq(field("inner", $._pattern), "where", field("predicate", $.refinement)),
+      seq(field("inner", $.wildcard_pattern), "where", field("predicate", $.refinement)),
 
     _pattern: ($) =>
       choice(

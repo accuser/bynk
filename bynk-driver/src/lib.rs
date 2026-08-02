@@ -433,9 +433,17 @@ impl ManifestCache {
         }
         let opts = match bynk_fmt::find_manifest(&start) {
             None => FormatOptions::default(),
-            Some(manifest) => bynk_fmt::FmtConfig::from_manifest(&manifest)
-                .map_err(|e| FmtOptionsError::Manifest(manifest, e))?
-                .apply(FormatOptions::default()),
+            Some(manifest) => {
+                let text = std::fs::read_to_string(&manifest).map_err(|e| {
+                    FmtOptionsError::Manifest(
+                        manifest.clone(),
+                        bynk_fmt::ConfigError::Read(e.to_string()),
+                    )
+                })?;
+                bynk_fmt::FmtConfig::from_manifest_str(&text)
+                    .map_err(|e| FmtOptionsError::Manifest(manifest, e))?
+                    .apply(FormatOptions::default())
+            }
         };
         self.by_dir.insert(start, opts);
         Ok(opts)
