@@ -736,7 +736,37 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
                         MatchBody::Block(b) => block_writes_state(b, m),
                     })
             }
-            _ => expr_children(e).into_iter().any(|c| expr(c, m)),
+            ExprKind::IntLit { .. }
+            | ExprKind::FloatLit { .. }
+            | ExprKind::DurationLit { .. }
+            | ExprKind::StrLit(_)
+            | ExprKind::InterpStr(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Call { .. }
+            | ExprKind::Lambda(_)
+            | ExprKind::BinOp(..)
+            | ExprKind::UnaryOp(..)
+            | ExprKind::Paren(_)
+            | ExprKind::Ok(_)
+            | ExprKind::Err(_)
+            | ExprKind::Question(_)
+            | ExprKind::ConstructorCall { .. }
+            | ExprKind::RecordConstruction { .. }
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::MethodCall { .. }
+            | ExprKind::Is { .. }
+            | ExprKind::Some(_)
+            | ExprKind::None
+            | ExprKind::UnitLit
+            | ExprKind::RecordSpread { .. }
+            | ExprKind::EffectPure(_)
+            | ExprKind::Expect(_)
+            | ExprKind::Val { .. }
+            | ExprKind::Wire(_)
+            | ExprKind::ListLit(_)
+            | ExprKind::Observation(_)
+            | ExprKind::Trace { .. } => expr_children(e).into_iter().any(|c| expr(c, m)),
         }
     }
     b.statements.iter().any(|s| stmt(s, m)) || expr(&b.tail, m)
