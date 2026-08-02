@@ -42,7 +42,7 @@ refinement ::= refinement_pred ("&&" refinement_pred)*
 refinement_pred ::= pred_call | predicate_name
 pred_call ::= predicate_name "(" (pred_arg ("," pred_arg)*)? ")"
 predicate_name ::= "Matches" | "InRange" | "MinLength" | "MaxLength" | "Length" | "NonNegative" | "Positive" | "NonEmpty"
-pred_arg ::= number_literal | float_literal | string_literal
+pred_arg ::= "-"? number_literal | "-"? float_literal | string_literal
 base_type ::= "Int" | "String" | "Bool" | "Float" | "Duration" | "Instant" | "Bytes"
 type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier
 applied_type_ref ::= identifier "[" type_ref ("," type_ref)* "]"
@@ -63,7 +63,7 @@ messages_decl ::= "messages" string_literal store_annotation* "{" message_entry*
 message_entry ::= string_literal "=>" string_literal ","?
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
-service_decl ::= "service" identifier service_protocol? by_clause? given_clause? "{" cors_policy? security_policy? limits_policy? handler* "}"
+service_decl ::= "service" identifier service_protocol? by_clause? given_clause? "{" cors_policy? security_policy? limits_policy? (store_annotation* handler)* "}"
 cors_policy ::= "cors" "{" (cors_field ","?)* "}"
 cors_field ::= identifier ":" expression
 security_policy ::= "security" "{" (security_field ","?)* "}"
@@ -75,7 +75,7 @@ event_pattern ::= "{" (event_pattern_field ",")* ".." "}"
 schema_dispatch_clause ::= "via" "schema" "(" "-"? number_literal ")"
 event_pattern_field ::= identifier ":" event_pattern_value
 event_pattern_value ::= "-"? number_literal | string_literal | boolean_literal | (identifier ".")? identifier
-agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* handler* "}"
+agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* (store_annotation* call_handler)* "}"
 invariant_decl ::= "invariant" identifier ":" expression
 transition_decl ::= "transition" identifier ":" expression
 key_decl ::= "key" identifier ":" type_ref
@@ -119,7 +119,7 @@ trace_expr ::= "trace" "(" identifier "." identifier ")"
 if_expr ::= "if" expression block ("else" (if_expr | block))?
 match_expr ::= "match" expression "{" match_arm* "}"
 match_arm ::= (pattern | refined_pattern) ("if" expression)? "=>" expression ","?
-refined_pattern ::= pattern "where" refinement
+refined_pattern ::= wildcard_pattern "where" refinement
 pattern ::= wildcard_pattern | literal_pattern | variant_pattern | or_pattern | paren_pattern
 or_pattern ::= pattern "|" pattern
 paren_pattern ::= "(" pattern ")"

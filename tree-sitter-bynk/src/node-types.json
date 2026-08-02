@@ -287,6 +287,16 @@
     "type": "agent_decl",
     "named": true,
     "fields": {
+      "annotation": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "store_annotation",
+            "named": true
+          }
+        ]
+      },
       "key": {
         "multiple": false,
         "required": true,
@@ -313,7 +323,7 @@
       "required": false,
       "types": [
         {
-          "type": "handler",
+          "type": "call_handler",
           "named": true
         },
         {
@@ -7838,22 +7848,6 @@
         "required": true,
         "types": [
           {
-            "type": "literal_pattern",
-            "named": true
-          },
-          {
-            "type": "or_pattern",
-            "named": true
-          },
-          {
-            "type": "paren_pattern",
-            "named": true
-          },
-          {
-            "type": "variant_pattern",
-            "named": true
-          },
-          {
             "type": "wildcard_pattern",
             "named": true
           }
@@ -8307,6 +8301,16 @@
     "type": "service_decl",
     "named": true,
     "fields": {
+      "annotation": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "store_annotation",
+            "named": true
+          }
+        ]
+      },
       "cors": {
         "multiple": false,
         "required": false,
