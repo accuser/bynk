@@ -4101,6 +4101,14 @@ mod pure_helper_pins {
         let a = refinement(vec![PredKind::NonEmpty]);
         let b = refinement(vec![PredKind::MinLength(1)]);
         assert!(refinements_match(Some(&a), Some(&b)));
+        // …and the fold is exactly `MinLength(1)`, not a subsumption rule: a
+        // strictly tighter refinement must still fail to match. Without this,
+        // widening the fold into "`MinLength(2)` implies `MinLength(1)`, so
+        // admit it" would leave every assertion in T1.8 passing while a
+        // genuinely tighter callee refinement is accepted across a boundary.
+        let c = refinement(vec![PredKind::MinLength(2)]);
+        assert!(!refinements_match(Some(&a), Some(&c)));
+        assert!(!refinements_match(Some(&c), Some(&a)));
     }
 
     // -- numeric_mix -------------------------------------------------------
