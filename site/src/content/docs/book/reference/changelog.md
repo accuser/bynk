@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.246.11** | block_uses_send and bynk-lsp's three statement-aware extract walkers enumerate every ExprKind variant explicitly instead of a wildcard arm (#1025) |
 | **v0.246.10** | block_writes_state's expr walker enumerates every ExprKind variant explicitly instead of a wildcard arm (T1.7', #1020) |
 | **v0.246.9** | "`fs_below_driver` resolves bare `fs::` call sites through glob-imported `use std::fs` bindings, so `bynk-emit/src/project/discovery.rs` counts (#1013)" |
 | **v0.246.8** | The Query method_not_found diagnostic lists its methods from QUERY_METHODS instead of a hand-written copy, and the registry's drift test now catches a dispatch arm the registry doesn't list, not only the reverse |
