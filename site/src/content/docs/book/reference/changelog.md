@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.246.9** | "`fs_below_driver` resolves bare `fs::` call sites through glob-imported `use std::fs` bindings, so `bynk-emit/src/project/discovery.rs` counts (#1013)" |
 | **v0.246.8** | The Query method_not_found diagnostic lists its methods from QUERY_METHODS instead of a hand-written copy, and the registry's drift test now catches a dispatch arm the registry doesn't list, not only the reverse |
 | **v0.246.7** | "`tree-sitter-bynk/tests/conformance.rs` widens from a fixed case list to totality: `examples/`, the vendored first-party `.bynk` sources, and every `bynkc` positive fixture must parse clean under tree-sitter, and every parse/lex-time negative fixture must be rejected by both parsers" |
 | **v0.246.6** | Track slice T0.3: `[workspace.lints.clippy] wildcard_enum_match_arm = "warn"` recorded in the root manifest, closing the `workspace_lints` probe's `absent` reading; the 296-violation inventory is recorded on the spine (#996), not yet enforced per-crate |
