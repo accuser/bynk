@@ -120,16 +120,6 @@ impl FmtConfig {
         })
     }
 
-    /// Read a `[fmt]` section out of the `bynk.toml` at `path`.
-    ///
-    /// The error names the failure, not the file — callers already have the
-    /// path and prefix their messages with it, so carrying it here too would
-    /// print it twice.
-    pub fn from_manifest(path: &Path) -> Result<Self, ConfigError> {
-        let text = std::fs::read_to_string(path).map_err(|e| ConfigError::Read(e.to_string()))?;
-        Self::from_manifest_str(&text)
-    }
-
     /// Layer this config over `base`: a field the manifest stated wins, one it
     /// omitted leaves `base` untouched.
     ///
