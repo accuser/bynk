@@ -1,0 +1,26 @@
+---
+T1.8 (#1021): the closing half of `positive/1021_refined_sugar_equivalence_cross_context`.
+That fixture pins that the fold *collapses* — `NonEmpty` and `MinLength(1)` are
+the same refinement, so the boundary opens. This one pins that it collapses
+*exactly*: the fold is a rewrite of one spelling into another, not a subsumption
+rule, so a strictly tighter callee refinement must still fail closed.
+
+The callee wants `String where MinLength(2)`; the caller offers
+`String where NonEmpty`, which canonicalises to `MinLength(1)`. A one-character
+token satisfies the caller and violates the callee, so `refinements_match` must
+reject it — as `structurally_compare_named`'s exact-match check does today. If
+someone later widens the fold into "`MinLength(2)` implies `MinLength(1)`, so
+admit it", this fixture is what stops it.
+---
+context boundary.consumer
+
+consumes boundary.provider as Provider
+
+type LocalToken = String where NonEmpty
+
+service submit {
+  on call(value: LocalToken) -> Effect[Result[Int, Int]] {
+    let _ <- Provider.verify(value)
+    Effect.pure(Ok(0))
+  }
+}
