@@ -4092,6 +4092,17 @@ mod pure_helper_pins {
         );
     }
 
+    /// R12.2/T1.8: `NonEmpty` folds to `MinLength(1)` in `contract::canon_predicate`,
+    /// so `refinements_match` — which routes through that same canonical form —
+    /// must now treat the two spellings as the same refinement. Before the fold
+    /// this was `false`.
+    #[test]
+    fn refinements_match_treats_non_empty_and_min_length_one_as_equal() {
+        let a = refinement(vec![PredKind::NonEmpty]);
+        let b = refinement(vec![PredKind::MinLength(1)]);
+        assert!(refinements_match(Some(&a), Some(&b)));
+    }
+
     // -- numeric_mix -------------------------------------------------------
 
     #[test]

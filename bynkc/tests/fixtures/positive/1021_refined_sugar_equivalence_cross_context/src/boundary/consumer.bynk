@@ -1,0 +1,21 @@
+---
+T1.8 (#1021): `NonEmpty` and `MinLength(1)` are the same refinement spelled
+differently. Before the fold this fixture would raise
+`bynk.boundary.structural_mismatch` — same shape as
+`negative/80_structural_mismatch`, but for a Refined pair rather than a
+Record field-name mismatch — because `refinements_match` compared canonical
+forms that differed only in spelling. After the fold both sides canonicalise
+to `MinLength(1)` and this compiles clean.
+---
+context boundary.consumer
+
+consumes boundary.provider as Provider
+
+type LocalToken = String where MinLength(1)
+
+service submit {
+  on call(value: LocalToken) -> Effect[Result[Int, Int]] {
+    let _ <- Provider.verify(value)
+    Effect.pure(Ok(0))
+  }
+}

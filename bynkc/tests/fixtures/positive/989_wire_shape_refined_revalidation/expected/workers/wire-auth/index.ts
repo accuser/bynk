@@ -17,7 +17,7 @@ export default {
         switch (servicePath) {
           case "login": {
             const __contract = request.headers.get("X-Bynk-Contract");
-            if (__contract !== "713abd72b294d588") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "login", expected: "713abd72b294d588", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
+            if (__contract !== "de515c764e6e0e02") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "login", expected: "de515c764e6e0e02", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __r_seed = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_seed.tag === "Err") return new Response(JSON.stringify(__r_seed.error), { status: 400, headers: { "content-type": "application/json" } });

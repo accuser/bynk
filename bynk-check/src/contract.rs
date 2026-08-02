@@ -281,7 +281,13 @@ pub fn canon_predicate(p: &PredKind) -> String {
         PredKind::Length(n) => format!("Length({n})"),
         PredKind::NonNegative => "NonNegative".to_string(),
         PredKind::Positive => "Positive".to_string(),
-        PredKind::NonEmpty => "NonEmpty".to_string(),
+        // `NonEmpty` is sugar for `MinLength(1)` (R12.2) — folding it here makes
+        // `String where NonEmpty` and `String where MinLength(1)` the same
+        // canonical form, so `service_contract_hash` and `refinements_match`
+        // agree that they are the same type. Unconditional: `NonEmpty` only
+        // ever applies to `BaseType::String` (`refinements.rs`'s
+        // `pred_applies_to`), so no base needs threading through here.
+        PredKind::NonEmpty => "MinLength(1)".to_string(),
     }
 }
 
@@ -506,6 +512,50 @@ mod tests {
             service_contract_hash(&svc(named("C")), &ra),
             service_contract_hash(&svc(named("C")), &rb),
         );
+    }
+
+    /// `NonEmpty` is sugar for `MinLength(1)` (R12.2, T1.8, Decision A) —
+    /// pinned directly against the canonicaliser so a future edit to this arm
+    /// is a deliberate, visible change rather than a silent regression.
+    #[test]
+    fn non_empty_canonicalises_to_min_length_one() {
+        assert_eq!(canon_predicate(&PredKind::NonEmpty), "MinLength(1)");
+    }
+
+    /// The consequence that matters: two boundary types spelling the same
+    /// refinement differently must hash identically, or two contexts that
+    /// agree perfectly 409 each other.
+    #[test]
+    fn non_empty_and_min_length_one_hash_identically() {
+        let a = types_of("commons x\n\ntype C = String where NonEmpty\n");
+        let b = types_of("commons x\n\ntype C = String where MinLength(1)\n");
+        assert_eq!(
+            service_contract_hash(&svc(named("C")), &a),
+            service_contract_hash(&svc(named("C")), &b),
+            "NonEmpty and MinLength(1) are the same refinement and must hash the same"
+        );
+    }
+
+    /// After the fold, `NonEmpty` and `MinLength(1)` are the same canonical
+    /// string, so a redundant `NonEmpty && MinLength(1)` conjunction must dedup
+    /// to one entry, not two — the same idempotence `canon_refinement`'s sort+
+    /// dedup already promises for any other repeated predicate.
+    #[test]
+    fn non_empty_and_min_length_one_together_dedup_to_one_entry() {
+        let r = Refinement {
+            predicates: vec![
+                RefinementPred {
+                    kind: PredKind::NonEmpty,
+                    span: sp(),
+                },
+                RefinementPred {
+                    kind: PredKind::MinLength(1),
+                    span: sp(),
+                },
+            ],
+            span: sp(),
+        };
+        assert_eq!(canon_refinement(Some(&r)), "where MinLength(1)");
     }
 
     /// A recursive record is a legal contract (its codec terminates on the data),

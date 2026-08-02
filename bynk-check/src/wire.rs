@@ -1329,10 +1329,12 @@ service Api {
     /// predicates (a precondition for hash correctness), but this IR must
     /// carry **declaration order** — `Inline` revalidation emits one `if`
     /// per predicate in source order. `NonEmpty` before `MaxLength` sorts
-    /// (alphabetically, as `contract.rs`'s `canon_refinement` would) to
-    /// `MaxLength` before `NonEmpty`, so this fixture's declaration order
-    /// visibly differs from the sorted order — a positive assertion that the
-    /// trap stays closed.
+    /// (alphabetically, as `contract.rs`'s `canon_refinement` would — folding
+    /// `NonEmpty` to `MinLength(1)` there does not change this: `MaxLength` <
+    /// `MinLength` alphabetically, same relative order as `MaxLength` <
+    /// `NonEmpty` before the fold) to `MaxLength` first, so this fixture's
+    /// declaration order visibly differs from the sorted order — a positive
+    /// assertion that the trap stays closed.
     #[test]
     fn wire_scalar_predicates_preserve_declaration_order_not_sorted() {
         let types = types_of("commons x\n\ntype Id = String where NonEmpty && MaxLength(20)\n");
