@@ -575,7 +575,10 @@ pub(crate) fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
 /// anyway: a `Statement`-only construct like this is exactly the shape that
 /// silently drifts if a later `ExprKind` variant *does* start admitting a
 /// nested block and this list isn't updated to match — see
-/// `block_writes_state`, converted alongside this for the same reason.
+/// `block_writes_state`, whose traversal was converted alongside this one for
+/// the same reason. Both now also enumerate `ExprKind` explicitly instead of
+/// ending in a `_` arm, so that drift is a build failure rather than a silent
+/// miss.
 pub(crate) fn block_uses_send(b: &Block) -> bool {
     fn stmt(s: &Statement) -> bool {
         match s {
@@ -601,7 +604,46 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
                         MatchBody::Block(b) => block_uses_send(b),
                     })
             }
-            _ => expr_children(e).into_iter().any(expr),
+            // No variant below carries a `Block` *field*, so `expr_children`'s
+            // total descent is complete for it — a block reached through a
+            // child (a braced lambda body, say) comes back as an `Expr` and
+            // re-enters this match at the `Block` arm above. A *new* variant
+            // that holds a `Block` directly must be hand-matched up there
+            // alongside `Block`/`If`/`Match`: appending it here loses the
+            // `Statement::Send` tag (`expr_children` flattens a block to its
+            // statements' values), and with it `deps.__exec` threading for a
+            // context that does send.
+            ExprKind::IntLit { .. }
+            | ExprKind::FloatLit { .. }
+            | ExprKind::DurationLit { .. }
+            | ExprKind::StrLit(_)
+            | ExprKind::InterpStr(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Call { .. }
+            | ExprKind::Lambda(_)
+            | ExprKind::BinOp(..)
+            | ExprKind::UnaryOp(..)
+            | ExprKind::Paren(_)
+            | ExprKind::Ok(_)
+            | ExprKind::Err(_)
+            | ExprKind::Question(_)
+            | ExprKind::ConstructorCall { .. }
+            | ExprKind::RecordConstruction { .. }
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::MethodCall { .. }
+            | ExprKind::Is { .. }
+            | ExprKind::Some(_)
+            | ExprKind::None
+            | ExprKind::UnitLit
+            | ExprKind::RecordSpread { .. }
+            | ExprKind::EffectPure(_)
+            | ExprKind::Expect(_)
+            | ExprKind::Val { .. }
+            | ExprKind::Wire(_)
+            | ExprKind::ListLit(_)
+            | ExprKind::Observation(_)
+            | ExprKind::Trace { .. } => expr_children(e).into_iter().any(expr),
         }
     }
     b.statements.iter().any(stmt) || expr(&b.tail)
