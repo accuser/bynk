@@ -378,9 +378,12 @@ fn find_in_block(block: &Block, target: Span) -> Option<Site<'_>> {
 /// slots, so descending into one resets `insertion_offset` to that slot's
 /// start; every other kind bubbles the offset through unchanged, walked via
 /// [`expr_children`] — `bynk_syntax`'s exhaustive-by-construction child
-/// iterator, reused here rather than a second hand-rolled `ExprKind` match
-/// (an `ExprKind` variant this doesn't handle would otherwise silently fall
-/// through the extraction path instead of failing to compile).
+/// iterator, reused here rather than a second hand-rolled `ExprKind` match.
+/// The remainder is enumerated explicitly rather than wildcarded, so an
+/// `ExprKind` variant this doesn't handle fails to compile here instead of
+/// silently falling through the extraction path — and a variant carrying a
+/// `Block` field needs hand-matching above rather than appending to that
+/// list, for the reason recorded at the arm itself.
 fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
     match &expr.kind {
         ExprKind::Block(b) => find_in_block(b, target).unwrap_or(Site {
@@ -435,7 +438,48 @@ fn locate(expr: &Expr, target: Span, insertion_offset: usize) -> Site<'_> {
                 expr,
             }
         }
-        _ => {
+        // No variant below carries a `Block` *field*, so `expr_children`'s
+        // total descent is complete for it and bubbling `insertion_offset`
+        // through unchanged is correct — a block reached through a child (a
+        // braced lambda body, say) comes back as an `Expr` and re-enters this
+        // match at the `Block` arm above, which resets the offset via
+        // `find_in_block`. A *new* variant that holds a `Block` directly must
+        // be hand-matched up there alongside `Block`/`If`/`Match`: appending
+        // it here descends past the block's own statement list *and* bubbles
+        // the outer offset, so the returned `Site` inserts the extracted `fn`
+        // outside the block the selection lives in — a wrong edit, not a
+        // failed one.
+        ExprKind::IntLit { .. }
+        | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
+        | ExprKind::StrLit(_)
+        | ExprKind::InterpStr(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Call { .. }
+        | ExprKind::Lambda(_)
+        | ExprKind::BinOp(..)
+        | ExprKind::UnaryOp(..)
+        | ExprKind::Paren(_)
+        | ExprKind::Ok(_)
+        | ExprKind::Err(_)
+        | ExprKind::Question(_)
+        | ExprKind::ConstructorCall { .. }
+        | ExprKind::RecordConstruction { .. }
+        | ExprKind::FieldAccess { .. }
+        | ExprKind::MethodCall { .. }
+        | ExprKind::Is { .. }
+        | ExprKind::Some(_)
+        | ExprKind::None
+        | ExprKind::UnitLit
+        | ExprKind::RecordSpread { .. }
+        | ExprKind::EffectPure(_)
+        | ExprKind::Expect(_)
+        | ExprKind::Val { .. }
+        | ExprKind::Wire(_)
+        | ExprKind::ListLit(_)
+        | ExprKind::Observation(_)
+        | ExprKind::Trace { .. } => {
             let children = expr_children(expr);
             match children.into_iter().find(|c| contains(c.span, target)) {
                 Some(child) => locate(child, target, insertion_offset),
