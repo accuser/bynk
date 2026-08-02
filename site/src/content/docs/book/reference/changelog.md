@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.246**.
+written against **v0.247**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.0** | "`NonEmpty` now canonicalises as `MinLength(1)` (R12.2's Length domain), so a boundary type spelled either way hashes and structurally matches identically — coordinated redeploy: rebuild both sides of any already-deployed pair sharing a `NonEmpty`-refined boundary type" |
 | **v0.246.11** | block_uses_send and bynk-lsp's three statement-aware extract walkers enumerate every ExprKind variant explicitly instead of a wildcard arm (#1025) |
 | **v0.246.10** | block_writes_state's expr walker enumerates every ExprKind variant explicitly instead of a wildcard arm (T1.7', #1020) |
 | **v0.246.9** | "`fs_below_driver` resolves bare `fs::` call sites through glob-imported `use std::fs` bindings, so `bynk-emit/src/project/discovery.rs` counts (#1013)" |
