@@ -678,7 +678,45 @@ fn find_stmt_run_in_expr(e: &Expr, target: Span) -> Option<StmtRun<'_>> {
                     MatchBody::Block(b) => find_stmt_run(b, target),
                 })
             }),
-        _ => expr_children(e)
+        // No variant below carries a `Block` *field*, so `expr_children`'s
+        // total descent is complete for it — a block reached through a child
+        // (a braced lambda body, say) comes back as an `Expr` and re-enters
+        // this match at the `Block` arm above. A *new* variant that holds a
+        // `Block` directly must be hand-matched up there alongside
+        // `Block`/`If`/`Match`: appending it here descends past the block's
+        // own statement list (`expr_children` flattens a block to its
+        // statements' values), so a run inside it stops being extractable.
+        ExprKind::IntLit { .. }
+        | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
+        | ExprKind::StrLit(_)
+        | ExprKind::InterpStr(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Call { .. }
+        | ExprKind::Lambda(_)
+        | ExprKind::BinOp(..)
+        | ExprKind::UnaryOp(..)
+        | ExprKind::Paren(_)
+        | ExprKind::Ok(_)
+        | ExprKind::Err(_)
+        | ExprKind::Question(_)
+        | ExprKind::ConstructorCall { .. }
+        | ExprKind::RecordConstruction { .. }
+        | ExprKind::FieldAccess { .. }
+        | ExprKind::MethodCall { .. }
+        | ExprKind::Is { .. }
+        | ExprKind::Some(_)
+        | ExprKind::None
+        | ExprKind::UnitLit
+        | ExprKind::RecordSpread { .. }
+        | ExprKind::EffectPure(_)
+        | ExprKind::Expect(_)
+        | ExprKind::Val { .. }
+        | ExprKind::Wire(_)
+        | ExprKind::ListLit(_)
+        | ExprKind::Observation(_)
+        | ExprKind::Trace { .. } => expr_children(e)
             .into_iter()
             .find_map(|c| find_stmt_run_in_expr(c, target)),
     }
@@ -810,7 +848,45 @@ fn expr_matches(e: &Expr, pred: &impl Fn(&Statement) -> bool) -> bool {
                     MatchBody::Block(b) => block_matches(b, pred),
                 })
         }
-        _ => expr_children(e).into_iter().any(|c| expr_matches(c, pred)),
+        // No variant below carries a `Block` *field*, so `expr_children`'s
+        // total descent is complete for it — a block reached through a child
+        // (a braced lambda body, say) comes back as an `Expr` and re-enters
+        // this match at the `Block` arm above. A *new* variant that holds a
+        // `Block` directly must be hand-matched up there alongside
+        // `Block`/`If`/`Match`: appending it here never reaches the block's
+        // statement list (`expr_children` flattens a block to its statements'
+        // values), so `pred` is never asked about the statements inside it.
+        ExprKind::IntLit { .. }
+        | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
+        | ExprKind::StrLit(_)
+        | ExprKind::InterpStr(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Call { .. }
+        | ExprKind::Lambda(_)
+        | ExprKind::BinOp(..)
+        | ExprKind::UnaryOp(..)
+        | ExprKind::Paren(_)
+        | ExprKind::Ok(_)
+        | ExprKind::Err(_)
+        | ExprKind::Question(_)
+        | ExprKind::ConstructorCall { .. }
+        | ExprKind::RecordConstruction { .. }
+        | ExprKind::FieldAccess { .. }
+        | ExprKind::MethodCall { .. }
+        | ExprKind::Is { .. }
+        | ExprKind::Some(_)
+        | ExprKind::None
+        | ExprKind::UnitLit
+        | ExprKind::RecordSpread { .. }
+        | ExprKind::EffectPure(_)
+        | ExprKind::Expect(_)
+        | ExprKind::Val { .. }
+        | ExprKind::Wire(_)
+        | ExprKind::ListLit(_)
+        | ExprKind::Observation(_)
+        | ExprKind::Trace { .. } => expr_children(e).into_iter().any(|c| expr_matches(c, pred)),
     }
 }
 

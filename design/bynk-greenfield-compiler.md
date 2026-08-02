@@ -2517,7 +2517,7 @@ revision is the proof.
 | R2.6 | correct already (`documentation` beside `trivia`) | none |
 | R2.8 | `is_fully_drained` present (5 sites) ✅ **landed**; the 34-field drain itself remains | medium |
 | R2.11 | `expr_children` at 34 uses across 8 files (31 July: new consumers in `bynk-check`, `bynk-lsp`); `type_refs_match` deleted ✅ (3 comment mentions only) | small residue |
-| R2.12 | `[workspace.lints]` **absent** | small — one manifest edit, then fix what fails |
+| R2.12 | `[workspace.lints.clippy]` table ✅ **landed** (T0.3) at `warn`, but **unenforced** — no crate sets `[lints] workspace = true`, so nothing opts in. The statement-aware walkers are hand-converted ahead of it (#1022, #1025); the 5 remaining `_ => expr_children` tails in `bynk-check/src/checker.rs` are plain `Expr` searches that never key on a `Statement` tag, so the wildcard routes a new variant correctly there — they wait for the per-crate `deny`, not a hand fix | small per crate — one manifest edit, then fix what fails |
 | R2.13 | `tree-sitter-bynk/tests/conformance.rs` exists, both-parsers-agree, both directions ✅ | none — the mechanism is built |
 | R3.1 | `CompileOptions: Clone` ✅ **landed**; `run_checks`'s positional args remain | small residue |
 | R3.2 | `bynk check` still runs the bailing path | medium |
