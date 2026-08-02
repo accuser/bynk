@@ -736,6 +736,12 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
                         MatchBody::Block(b) => block_writes_state(b, m),
                     })
             }
+            // Every variant below is block-free, so `expr_children`'s total
+            // descent is complete for it. A *new* variant that carries a
+            // `Block` must be hand-matched above alongside `Block`/`If`/
+            // `Match` — appending it here loses the `Statement::Assign` tag
+            // (`expr_children` flattens a block to its statements' values),
+            // and with it the end-of-handler commit flush.
             ExprKind::IntLit { .. }
             | ExprKind::FloatLit { .. }
             | ExprKind::DurationLit { .. }
