@@ -255,23 +255,32 @@ fn has_production_std_fs(src: &str) -> bool {
 
 /// Indices (into `files`, whose paths are relative to the crate's `src/` root) of the
 /// files that touch `std::fs` in production code — the union of the literal text scan
-/// ([`has_production_std_fs`]) and import resolution: a bare `NAME::` path root whose
-/// `NAME` a production `use` declaration binds to `std::fs` (or an item under it),
-/// either in the file itself (`use std::{fs, io};` — a form the substring scan can't
-/// see) or in an ancestor module reached through `use super::*;`, transitively (#1013).
+/// ([`has_production_std_fs`]) and import resolution: a path whose leading module
+/// segment a production `use` declaration binds to `std::fs` (or an item under it),
+/// either a bare `NAME::` root resolved in the file itself (`use std::{fs, io};` — a
+/// form the substring scan can't see) or in an ancestor module reached through
+/// `use super::*;`, transitively (#1013), or a `super::`/`self::`/`crate::`-qualified
+/// path walked through the module tree to the same bindings (#1016 review — a
+/// descendant may spell `super::fs::read_to_string(p)` with no glob import at all,
+/// one disambiguating edit away from a currently-flagged bare call).
 ///
 /// Resolution is Rust-shaped, not hand-tracked (#1013 rejects a special-case list):
 /// a private `use std::fs;` in a parent is visible to descendants because module
 /// privacy is ancestor-scoped, a chain of `use super::*;` globs re-reaches it from
-/// any depth, and a nearer binding of the same name shadows a farther one — so a
-/// child that binds `fs` to something else keeps its bare `fs::` calls unflagged.
+/// any depth, and a nearer binding of the same name shadows a farther one — whether
+/// that binding is another `use` or a locally-declared type-namespace item (`mod fs;`,
+/// `struct File`, …; value-namespace items like `fn` can't head a `NAME::` path, so
+/// they don't shadow one) — so a child that binds `fs` to something else keeps its
+/// bare `fs::` calls unflagged. Visibility is *not* modelled: a path that names a
+/// too-private binding wouldn't compile anyway, so over-approximating is safe.
 ///
-/// Known remaining gap, accepted as out of reach for a text-level scanner: an
+/// Known remaining gaps, accepted as out of reach for a text-level scanner: an
 /// ancestor's `use std::fs::read_to_string;` item import called bare (`read_to_string(p)`)
-/// presents no `::` path root to resolve. The same import used as a path root
-/// (`File::open` under an ancestor `use std::fs::File;`) **is** caught, since item
-/// bindings under `std::fs` participate in the same resolution. #1013 grepped the
-/// three scanned crates for the item-import form — zero hits.
+/// presents no `::` path segment to resolve — the same import used as a path root
+/// (`File::open`) **is** caught, since item bindings under `std::fs` participate in
+/// the same resolution — and a `use` declaration rustfmt has split across lines is
+/// not parsed. #1013 grepped the three scanned crates for the item-import form, and
+/// the #1016 review for the qualified-path and split-declaration forms — zero hits.
 fn production_std_fs_files(files: &[(PathBuf, String)]) -> Vec<usize> {
     let facts: Vec<FsImportFacts> = files.iter().map(|(_, src)| fs_import_facts(src)).collect();
     let parents: Vec<Option<usize>> = files
@@ -280,7 +289,9 @@ fn production_std_fs_files(files: &[(PathBuf, String)]) -> Vec<usize> {
         .collect();
     (0..files.len())
         .filter(|&i| {
-            has_production_std_fs(&files[i].1) || resolves_bare_std_fs(i, &facts, &parents)
+            has_production_std_fs(&files[i].1)
+                || resolves_bare_std_fs(i, &facts, &parents)
+                || resolves_qualified_std_fs(i, &facts, &parents, files)
         })
         .collect()
 }
@@ -301,9 +312,19 @@ struct FsImportFacts {
     /// Every name a production `use` declaration binds, whatever the target — the
     /// shadow set: a nearer non-`std::fs` binding of a candidate name stops resolution.
     use_bound_names: BTreeSet<String>,
+    /// Type-namespace items the file declares (`mod fs;`, `struct File`, `enum`,
+    /// `trait`, `type`, `union`) — these beat a glob-imported name in real Rust, so
+    /// they join [`Self::use_bound_names`] on the shadow side of resolution (#1016
+    /// review). Value-namespace items (`fn`, `const`, `static`) can't head a `NAME::`
+    /// module path and are deliberately not collected.
+    declared_type_names: BTreeSet<String>,
     /// Identifiers appearing as a bare path root `NAME::` (not preceded by another
     /// path segment) on a production line — the call-site side of the resolution.
     bare_path_roots: BTreeSet<String>,
+    /// Segment chains of `super::`/`self::`/`crate::`-qualified paths on production
+    /// lines — `super::fs::read_to_string` records `["super", "fs", "read_to_string"]`.
+    /// These need no glob import to reach an ancestor's binding (#1016 review).
+    qualified_paths: BTreeSet<Vec<String>>,
 }
 
 fn fs_import_facts(src: &str) -> FsImportFacts {
@@ -320,13 +341,18 @@ fn fs_import_facts(src: &str) -> FsImportFacts {
             }
             collect_use_bindings("", decl, &mut facts);
         }
+        collect_declared_type_name(line, &mut facts.declared_type_names);
         collect_bare_path_roots(line, &mut facts.bare_path_roots);
+        collect_qualified_paths(line, &mut facts.qualified_paths);
     }
     facts
 }
 
 /// The path text of a single-line `use` declaration — `use std::fs;` → `std::fs`,
-/// with an optional `pub`/`pub(crate)`/`pub(in …)` prefix stripped. A declaration
+/// with an optional `pub`/`pub(crate)`/`pub(in …)` prefix stripped and a trailing
+/// `//` comment tolerated (`use super::*; // parent's fs` must not silently sever
+/// the glob edge for a whole subtree — #1016 review; safe to split on `//` because
+/// a `use` path can contain neither a comment marker nor a string). A declaration
 /// rustfmt has split across lines has no trailing `;` here and is not recognised —
 /// none of the `std::fs` forms in the scanned crates are long enough to split.
 fn use_declaration(line: &str) -> Option<&str> {
@@ -340,7 +366,42 @@ fn use_declaration(line: &str) -> Option<&str> {
         };
     }
     let body = t.strip_prefix("use ")?;
+    let body = body.split("//").next().unwrap_or(body);
     body.trim().strip_suffix(';').map(str::trim)
+}
+
+/// If `line` declares a type-namespace item — `mod`/`struct`/`enum`/`trait`/`type`/
+/// `union`, optionally `pub`-qualified, optionally `unsafe` (traits) — record its
+/// name. Field/variable positions can't start a trimmed line with these keywords, so
+/// a leading-keyword scan is enough for rustfmt-shaped code.
+fn collect_declared_type_name(line: &str, out: &mut BTreeSet<String>) {
+    let mut t = line.trim();
+    if let Some(rest) = t.strip_prefix("pub") {
+        let rest = rest.trim_start();
+        t = if let Some(after_paren) = rest.strip_prefix('(') {
+            match after_paren.split_once(')') {
+                Some((_, after)) => after.trim_start(),
+                None => return,
+            }
+        } else {
+            rest
+        };
+    }
+    if let Some(rest) = t.strip_prefix("unsafe ") {
+        t = rest.trim_start();
+    }
+    for kw in ["mod ", "struct ", "enum ", "trait ", "type ", "union "] {
+        if let Some(rest) = t.strip_prefix(kw) {
+            let rest = rest.trim_start();
+            let end = rest
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(rest.len());
+            if end > 0 {
+                out.insert(rest[..end].to_string());
+            }
+            return;
+        }
+    }
 }
 
 /// Record the name(s) a `use` path binds into `facts` — `path::to::name`,
@@ -426,6 +487,49 @@ fn collect_bare_path_roots(line: &str, out: &mut BTreeSet<String>) {
     }
 }
 
+/// Every `super::`/`self::`/`crate::`-rooted path on `line`, as its segment chain —
+/// `super::fs::read_to_string(p)` yields `["super", "fs", "read_to_string"]`. The
+/// root must sit at a bare word boundary (not `a_super::` or `a::super::`), so only
+/// genuine path roots are collected; `Self::` (capital) never matches, and `self.x`
+/// has no `::` to match.
+fn collect_qualified_paths(line: &str, out: &mut BTreeSet<Vec<String>>) {
+    let bytes = line.as_bytes();
+    for root in ["super", "self", "crate"] {
+        let mut from = 0;
+        while let Some(rel) = line[from..].find(root) {
+            let start = from + rel;
+            let root_end = start + root.len();
+            from = root_end;
+            let boundary_ok = start == 0 || {
+                let c = bytes[start - 1];
+                !(c.is_ascii_alphanumeric() || c == b'_' || c == b':')
+            };
+            if !boundary_ok || !line[root_end..].starts_with("::") {
+                continue;
+            }
+            let mut segments = vec![root.to_string()];
+            let mut pos = root_end;
+            while line[pos..].starts_with("::") {
+                let seg_start = pos + 2;
+                let mut seg_end = seg_start;
+                while seg_end < bytes.len()
+                    && (bytes[seg_end].is_ascii_alphanumeric() || bytes[seg_end] == b'_')
+                {
+                    seg_end += 1;
+                }
+                if seg_end == seg_start {
+                    break; // `super::*` and friends — no further identifier
+                }
+                segments.push(line[seg_start..seg_end].to_string());
+                pos = seg_end;
+            }
+            if segments.len() >= 2 {
+                out.insert(segments);
+            }
+        }
+    }
+}
+
 /// The file defining `path`'s parent module, by the standard layout: `a/b.rs`'s parent
 /// is `a.rs` (or `a/mod.rs`), `a/mod.rs`'s parent is the crate root, and the roots
 /// (`lib.rs`/`main.rs`) have none. `#[path]`-remapped modules are not handled — none
@@ -456,11 +560,9 @@ fn module_parent(path: &Path, files: &[(PathBuf, String)]) -> Option<usize> {
         .find_map(|c| files.iter().position(|(p, _)| p == c))
 }
 
-/// Does a bare path root in file `i` resolve to `std::fs` through the `use` bindings
-/// it can see? Visible scopes are the file itself, then each ancestor reachable while
-/// every module below it glob-imports `super::*` — nearest binding of a name wins, so
-/// a closer non-`std::fs` binding shadows a farther `std::fs` one.
-fn resolves_bare_std_fs(i: usize, facts: &[FsImportFacts], parents: &[Option<usize>]) -> bool {
+/// The scopes whose bindings a name used in module `i` can see: the module itself,
+/// then each ancestor reachable while every module below it glob-imports `super::*`.
+fn visible_scopes(i: usize, facts: &[FsImportFacts], parents: &[Option<usize>]) -> Vec<usize> {
     let mut scopes = vec![i];
     let mut cur = i;
     loop {
@@ -471,24 +573,156 @@ fn resolves_bare_std_fs(i: usize, facts: &[FsImportFacts], parents: &[Option<usi
         scopes.push(parent);
         cur = parent;
     }
+    scopes
+}
+
+/// How `name` resolves in module `m`'s namespace, walking [`visible_scopes`] with
+/// nearest binding winning — a closer non-`std::fs` `use` binding *or* locally
+/// declared type-namespace item shadows a farther `std::fs` binding, as in Rust.
+enum NameResolution {
+    StdFs,
+    Other,
+    Unbound,
+}
+
+fn resolve_name_in_module(
+    m: usize,
+    name: &str,
+    facts: &[FsImportFacts],
+    parents: &[Option<usize>],
+) -> NameResolution {
+    for s in visible_scopes(m, facts, parents) {
+        if facts[s].std_fs_bindings.contains(name) {
+            return NameResolution::StdFs;
+        }
+        if facts[s].use_bound_names.contains(name) || facts[s].declared_type_names.contains(name) {
+            return NameResolution::Other;
+        }
+    }
+    NameResolution::Unbound
+}
+
+/// Does a bare path root in file `i` resolve to `std::fs` through the bindings it
+/// can see? Candidates are the names any visible scope binds to `std::fs`; each is
+/// then resolved from `i` with nearest-binding-wins shadowing.
+fn resolves_bare_std_fs(i: usize, facts: &[FsImportFacts], parents: &[Option<usize>]) -> bool {
+    let scopes = visible_scopes(i, facts, parents);
     let mut candidates: BTreeSet<&str> = BTreeSet::new();
     for &s in &scopes {
         candidates.extend(facts[s].std_fs_bindings.iter().map(String::as_str));
     }
-    for name in candidates {
-        if !facts[i].bare_path_roots.contains(name) {
-            continue;
+    candidates.into_iter().any(|name| {
+        facts[i].bare_path_roots.contains(name)
+            && matches!(
+                resolve_name_in_module(i, name, facts, parents),
+                NameResolution::StdFs
+            )
+    })
+}
+
+/// Does a `super::`/`self::`/`crate::`-qualified path in file `i` reach a `std::fs`
+/// binding (#1016 review)? Unlike the bare-root case these need no glob import: the
+/// root picks the starting module directly (`super`-hops up the parent chain, `self`
+/// the file itself, `crate` the crate root), then each further segment either
+/// resolves in that module's namespace — `std::fs` flags, anything else stops — or
+/// descends into a child module file and continues. Inline `mod name { … }` blocks
+/// are not modelled (their `use` bindings live in the same file, which the text scan
+/// and bare-root resolution already cover).
+fn resolves_qualified_std_fs(
+    i: usize,
+    facts: &[FsImportFacts],
+    parents: &[Option<usize>],
+    files: &[(PathBuf, String)],
+) -> bool {
+    facts[i]
+        .qualified_paths
+        .iter()
+        .any(|chain| qualified_chain_reaches_std_fs(chain, i, facts, parents, files))
+}
+
+fn qualified_chain_reaches_std_fs(
+    chain: &[String],
+    i: usize,
+    facts: &[FsImportFacts],
+    parents: &[Option<usize>],
+    files: &[(PathBuf, String)],
+) -> bool {
+    let mut idx = 1;
+    let mut m = match chain[0].as_str() {
+        "self" => i,
+        "crate" => {
+            let root = files
+                .iter()
+                .position(|(p, _)| p == Path::new("lib.rs") || p == Path::new("main.rs"));
+            match root {
+                Some(root) => root,
+                None => return false,
+            }
         }
-        for &s in &scopes {
-            if facts[s].std_fs_bindings.contains(name) {
+        "super" => {
+            let mut m = i;
+            idx = 0;
+            while idx < chain.len() && chain[idx] == "super" {
+                let Some(parent) = parents[m] else {
+                    return false;
+                };
+                m = parent;
+                idx += 1;
+            }
+            m
+        }
+        _ => return false,
+    };
+    while idx < chain.len() {
+        let seg = chain[idx].as_str();
+        // Resolve `seg` in `m`, nearest scope first. Within a scope, a child module
+        // file for `seg` is checked *before* the shadow set: a declared `mod seg;`
+        // lands `seg` in `declared_type_names`, but that declaration IS the child
+        // module — it's the path's next hop, not a shadow over it. (In valid Rust a
+        // module and another same-name type-namespace item can't coexist in one
+        // scope, so the ordering costs nothing.)
+        let mut next = None;
+        for s in visible_scopes(m, facts, parents) {
+            if facts[s].std_fs_bindings.contains(seg) {
                 return true;
             }
-            if facts[s].use_bound_names.contains(name) {
-                break; // shadowed by a nearer, non-std::fs binding
+            if let Some(child) = child_module_file(s, seg, files) {
+                next = Some(child);
+                break;
+            }
+            if facts[s].use_bound_names.contains(seg) || facts[s].declared_type_names.contains(seg)
+            {
+                return false; // bound to something that is neither std::fs nor a module
             }
         }
+        let Some(child) = next else {
+            return false;
+        };
+        m = child;
+        idx += 1;
     }
     false
+}
+
+/// The file defining module `m`'s child module `seg`, if it exists as a file:
+/// `lib.rs` + `a` → `a.rs`/`a/mod.rs`, `a.rs` + `b` → `a/b.rs`/`a/b/mod.rs`,
+/// `a/mod.rs` + `b` → `a/b.rs`/`a/b/mod.rs`.
+fn child_module_file(m: usize, seg: &str, files: &[(PathBuf, String)]) -> Option<usize> {
+    let m_path = &files[m].0;
+    let module_dir: PathBuf = match m_path.file_stem().and_then(|s| s.to_str()) {
+        Some("mod") => m_path.parent().unwrap_or(Path::new("")).to_path_buf(),
+        Some("lib") | Some("main") if m_path.parent().is_none_or(|p| p.as_os_str().is_empty()) => {
+            PathBuf::new()
+        }
+        _ => m_path.with_extension(""),
+    };
+    let candidates = [
+        module_dir.join(format!("{seg}.rs")),
+        module_dir.join(seg).join("mod.rs"),
+    ];
+    candidates
+        .iter()
+        .find_map(|c| files.iter().position(|(p, _)| p == c))
 }
 
 /// Every `#[cfg(test)] mod <ident> { ... }` block in `lines`, as inclusive
@@ -1603,6 +1837,156 @@ commons app.demo {
             module_parent(Path::new("c/d.rs"), &files),
             Some(idx("c/mod.rs"))
         );
+    }
+
+    // --- fs_below_driver: #1016 review findings ------------------------------
+
+    /// Finding 1: a `super::`-qualified path needs no glob import — module privacy is
+    /// ancestor-scoped, so `super::fs` names the parent's private `use std::fs;` from
+    /// any child. One disambiguating edit away from `discovery.rs:39`'s bare call,
+    /// and it must not drop the file out of the count.
+    #[test]
+    fn a_super_qualified_path_resolves_without_a_glob_import() {
+        let files = [
+            ("lib.rs", "mod project;\n"),
+            ("project.rs", "use std::fs;\n\nmod discovery;\n"),
+            (
+                "project/discovery.rs",
+                "fn read_source(path: &std::path::Path) -> String {\n    super::fs::read_to_string(path).unwrap()\n}\n",
+            ),
+        ];
+        assert_eq!(flagged(&files), vec!["project.rs", "project/discovery.rs"]);
+    }
+
+    /// Finding 1, the `crate::`-rooted form: the walk descends the module tree from
+    /// the crate root file by file, then resolves the leaf against that module's
+    /// bindings — from anywhere in the crate, glob import or not.
+    #[test]
+    fn a_crate_qualified_path_resolves_through_the_module_tree() {
+        let files = [
+            ("lib.rs", "mod other;\nmod project;\n"),
+            (
+                "other.rs",
+                "fn f() {\n    let _ = crate::project::fs::read_dir(\".\");\n}\n",
+            ),
+            ("project.rs", "use std::fs;\n"),
+        ];
+        assert_eq!(flagged(&files), vec!["other.rs", "project.rs"]);
+    }
+
+    /// Finding 1, stacked hops: `super::super::` climbs two parents (through a
+    /// glob-free middle module — qualified paths don't need the glob chain).
+    #[test]
+    fn stacked_super_hops_climb_the_parent_chain() {
+        let files = [
+            ("lib.rs", "use std::fs;\n\nmod a;\n"),
+            ("a/mod.rs", "mod b;\n"),
+            (
+                "a/b.rs",
+                "fn f() {\n    let _ = super::super::fs::read_dir(\".\");\n}\n",
+            ),
+        ];
+        assert_eq!(flagged(&files), vec!["lib.rs", "a/b.rs"]);
+    }
+
+    /// Finding 1, `self::` composed with the glob chain: `self::fs` resolves in the
+    /// file's own namespace, which includes what its `use super::*;` pulled in.
+    #[test]
+    fn a_self_qualified_path_resolves_through_the_files_own_glob_chain() {
+        let files = [
+            ("lib.rs", "mod p;\n"),
+            ("p.rs", "use std::fs;\n\nmod c;\n"),
+            (
+                "p/c.rs",
+                "use super::*;\n\nfn f() {\n    let _ = self::fs::read_dir(\".\");\n}\n",
+            ),
+        ];
+        assert_eq!(flagged(&files), vec!["p.rs", "p/c.rs"]);
+    }
+
+    /// Finding 1's negatives: a qualified path to a name the parent binds to
+    /// something other than `std::fs` stops at that binding, and a path through a
+    /// module that doesn't exist resolves nowhere.
+    #[test]
+    fn a_qualified_path_to_a_non_std_binding_or_missing_module_is_not_flagged() {
+        let files = [
+            ("lib.rs", "mod overlay;\nmod p;\n"),
+            ("overlay.rs", "pub fn read_dir(_p: &str) {}\n"),
+            ("p.rs", "use crate::overlay as fs;\n\nmod d;\n"),
+            (
+                "p/d.rs",
+                "fn f() {\n    let _ = super::fs::read_dir(\".\");\n    let _ = crate::missing::fs::read_dir(\".\");\n}\n",
+            ),
+        ];
+        assert_eq!(flagged(&files), Vec::<String>::new());
+    }
+
+    /// Finding 2: a locally-declared type-namespace item beats a glob-imported name
+    /// in real Rust — a child with its own `mod fs;` calling `fs::…` is calling its
+    /// own submodule, not the ancestor's `std::fs`.
+    #[test]
+    fn a_locally_declared_module_shadows_the_ancestors_std_fs() {
+        let files = [
+            ("lib.rs", "mod p;\n"),
+            ("p.rs", "use std::fs;\n\nmod c;\n"),
+            (
+                "p/c.rs",
+                "use super::*;\n\nmod fs;\n\nfn f() {\n    let _ = fs::read_dir(\".\");\n}\n",
+            ),
+            ("p/c/fs.rs", "pub fn read_dir(_p: &str) {}\n"),
+        ];
+        assert_eq!(flagged(&files), vec!["p.rs"]);
+    }
+
+    /// Finding 3: a trailing `//` comment on a `use` line must not sever the edge —
+    /// neither the glob (`use super::*; // …`) nor the binding (`use std::fs; // …`).
+    #[test]
+    fn a_trailing_comment_on_a_use_line_does_not_sever_resolution() {
+        let files = [
+            ("lib.rs", "mod p;\n"),
+            (
+                "p.rs",
+                "use std::fs; // read_source's disk fallback\n\nmod c;\n",
+            ),
+            (
+                "p/c.rs",
+                "use super::*; // parent's fs, PathBuf\n\nfn f() {\n    let _ = fs::read_dir(\".\");\n}\n",
+            ),
+        ];
+        assert_eq!(flagged(&files), vec!["p.rs", "p/c.rs"]);
+    }
+
+    /// Finding 4: the nested-group + `::self` normalisation branches, pinned
+    /// directly — `use std::{fs::{self, File}, io};` binds `fs` *and* `File` to
+    /// `std::fs`, and `io` only to the shadow set. Getting `::self` wrong would
+    /// silently under-count, which is exactly this probe's failure mode.
+    #[test]
+    fn a_nested_group_with_self_binds_the_module_and_its_items() {
+        let facts = fs_import_facts("use std::{fs::{self, File}, io};\n");
+        let bound: Vec<&str> = facts.std_fs_bindings.iter().map(String::as_str).collect();
+        assert_eq!(bound, vec!["File", "fs"]);
+        assert!(facts.use_bound_names.contains("io"));
+        assert!(!facts.std_fs_bindings.contains("io"));
+    }
+
+    /// Finding 4, the children half of [`FsImportFacts`]' contract: a parent whose
+    /// *only* `use std::fs;` lives in its `#[cfg(test)] mod` hands no binding to a
+    /// glob-importing child — `bynk-ide/src/symbols.rs`' shape, latent until it
+    /// grows a submodule.
+    #[test]
+    fn a_parents_test_mod_use_std_fs_does_not_reach_its_children() {
+        let files = [
+            ("lib.rs", "mod p;\n"),
+            (
+                "p.rs",
+                "mod c;\n\nfn production() {}\n\n#[cfg(test)]\nmod tests {\n    use std::fs;\n\n    #[test]\n    fn t() {\n        let _ = fs::read_dir(\".\");\n    }\n}\n",
+            ),
+            (
+                "p/c.rs",
+                "use super::*;\n\nfn f() {\n    let _ = fs::read_dir(\".\");\n}\n",
+            ),
+        ];
+        assert_eq!(flagged(&files), Vec::<String>::new());
     }
 
     // --- emit_abi_shapes (#999 Decision E) ----------------------------------
