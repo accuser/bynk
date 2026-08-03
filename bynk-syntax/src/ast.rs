@@ -2366,8 +2366,8 @@ pub fn generic_record_is_recursive(
 }
 
 /// T3.4 (R2.4): a node's identity, independent of position — allocated once,
-/// monotonically, per expression the parser constructs ([`Parser::alloc_expr_id`],
-/// `bynk-syntax/src/parser.rs`). Never derived from a `Span`, so two
+/// monotonically, per expression the parser constructs (`Parser::alloc_expr_id`
+/// in `bynk-syntax/src/parser.rs`). Never derived from a `Span`, so two
 /// expressions occupying the same byte range (a synthetic node, a
 /// zero-width span) never collide the way a span-keyed side table could.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
