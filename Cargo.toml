@@ -87,3 +87,27 @@ serde_json = "1"
 
 [profile.release]
 lto = "thin"
+
+# Test and dev builds carry line-tables-only debuginfo instead of the default
+# full debuginfo. `profile.test` inherits `profile.dev`, so setting it here
+# covers both the dependency graph and the test binaries themselves — stating it
+# twice would only invite the two halves to drift.
+#
+# Why, measured rather than guessed: the `Test suite (windows-latest)` leg is the
+# PR gate's whole critical path. On run 2817 (2026-08-03) it took ~7 min while
+# every other job in the workflow finished 3m33s in, and its 5m31s of work split
+# 2m37s of compile/link against 143.8s of actual test execution. The suite links
+# 141 separate test binaries; on Windows, emitting and linking a full PDB per
+# binary is the bulk of that first half.
+#
+# `line-tables-only` keeps file/line in panic backtraces — what a red CI run
+# needs to stay diagnosable, and what nextest's `failure-output = "final"` exists
+# to surface — and drops only the variable-level debuginfo an interactive
+# debugger uses. If you need to step through a test in a debugger, override it
+# for that run: `CARGO_PROFILE_DEV_DEBUG=full cargo test ...`.
+#
+# NOTE: changing a profile changes every crate's fingerprint, so the first CI run
+# after this lands rebuilds from cold on each OS and will NOT show the win — read
+# the second run on a branch, not the first.
+[profile.dev]
+debug = "line-tables-only"

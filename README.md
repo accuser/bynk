@@ -99,6 +99,26 @@ This is a Cargo workspace. The published crates are `bynkc`, `bynk`, `bynk-fmt`,
 | [`design/`](design/) | Internal design notes and decision records (ADRs). | — |
 | [`examples/`](examples/) | Example projects. | — |
 
+## Developing
+
+Run the CI gates locally before you push — CI's critical path is the Windows
+test leg at roughly seven minutes, so a formatting slip caught here saves a full
+round trip:
+
+```sh
+cargo xtask ci          # formatting, clippy, and the test suite
+cargo xtask ci --fast   # just the two gates that need no compile-and-link
+```
+
+`--fast` is what the opt-in `pre-push` hook runs. Enable it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook takes seconds and can be bypassed with `git push --no-verify`. CI
+remains the authority — `cargo xtask ci` front-runs it, it does not replace it.
+
 ## Documentation
 
 The **[Bynk Book](https://bynk-lang.org/book/)** is the canonical guide and
