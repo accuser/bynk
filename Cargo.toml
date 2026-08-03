@@ -25,7 +25,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "0.247.0"
+version = "0.247.4"
 # Minimum supported Rust version. Edition 2024 floors it at 1.85, but `oxc`
 # (the TS→JS stripper behind `bynk-strip`, in-browser track slice 1) requires
 # rustc 1.94, so the effective floor rose to match it — set to 1.95 (the pinned
@@ -57,16 +57,16 @@ wildcard_enum_match_arm = "warn"
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
 # dependency requirement; path is used for in-workspace builds.
-bynk-syntax = { path = "bynk-syntax", version = "0.247.0" }
-bynk-render = { path = "bynk-render", version = "0.247.0" }
-bynk-check = { path = "bynk-check", version = "0.247.0" }
-bynk-emit = { path = "bynk-emit", version = "0.247.0" }
-bynk-driver = { path = "bynk-driver", version = "0.247.0" }
-bynk-strip = { path = "bynk-strip", version = "0.247.0" }
-bynk-ide = { path = "bynk-ide", version = "0.247.0" }
-bynkc = { path = "bynkc", version = "0.247.0" }
-bynk-fmt = { path = "bynk-fmt", version = "0.247.0" }
-bynk-grammar = { path = "bynk-grammar", version = "0.247.0" }
+bynk-syntax = { path = "bynk-syntax", version = "0.247.4" }
+bynk-render = { path = "bynk-render", version = "0.247.4" }
+bynk-check = { path = "bynk-check", version = "0.247.4" }
+bynk-emit = { path = "bynk-emit", version = "0.247.4" }
+bynk-driver = { path = "bynk-driver", version = "0.247.4" }
+bynk-strip = { path = "bynk-strip", version = "0.247.4" }
+bynk-ide = { path = "bynk-ide", version = "0.247.4" }
+bynkc = { path = "bynkc", version = "0.247.4" }
+bynk-fmt = { path = "bynk-fmt", version = "0.247.4" }
+bynk-grammar = { path = "bynk-grammar", version = "0.247.4" }
 ariadne = "0.6"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"
@@ -87,3 +87,31 @@ serde_json = "1"
 
 [profile.release]
 lto = "thin"
+
+# NO `[profile.dev]` debuginfo override here — it was tried, measured, and was
+# WORSE. Recorded so the next person to have the idea doesn't pay for it again.
+#
+# The reasoning that motivated it is still correct: the `Test suite
+# (windows-latest)` leg is the PR gate's entire critical path (every other job
+# finishes ~3m30s in), and roughly half of it is compile/link, not test
+# execution — the suite links 141 separate test binaries. Cutting the per-binary
+# PDB work by setting `[profile.dev] debug = "line-tables-only"` (inherited by
+# `profile.test`) looked like the obvious lever.
+#
+# It is not. Windows compile/link, from the `Finished \`test\` profile` line:
+#
+#     full debuginfo (default)   2m22s (run 2822), 2m37s (run 2817)
+#     line-tables-only           2m50s (run 2824), 2m53s (run 2823)
+#
+# Consistently ~14% SLOWER, with no overlap between the two ranges. Whatever
+# dominates that half on windows-msvc, it is not the volume of debuginfo — so
+# the default stands, and the leg keeps full debuginfo for free diagnosability.
+#
+# Note the job total misleads here (465s → 415s across the same runs) because
+# test execution itself swings 124-144s run to run. Compare the `Finished` line,
+# not the job.
+#
+# Untested from here: `debug = 0`, and `-C link-arg=/DEBUG:NONE`. If you try
+# either, measure the `Finished` line across at least two warm runs per arm —
+# and note a profile change rewrites every crate fingerprint, so the first run
+# on a branch rebuilds cold and tells you nothing.

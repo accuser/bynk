@@ -99,6 +99,34 @@ This is a Cargo workspace. The published crates are `bynkc`, `bynk`, `bynk-fmt`,
 | [`design/`](design/) | Internal design notes and decision records (ADRs). | — |
 | [`examples/`](examples/) | Example projects. | — |
 
+## Developing
+
+Run the CI gates locally before you push — CI's critical path is the Windows
+test leg at roughly seven minutes, so a formatting slip caught here saves a full
+round trip:
+
+```sh
+cargo xtask ci          # formatting, clippy, and the test suite
+cargo xtask ci --fast   # just the two gates that need no compile-and-link
+```
+
+`--fast` is what the opt-in `pre-push` hook runs. Enable it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Note that `--fast` is not compile-free: clippy skips codegen and linking, not
+compilation. It is about three seconds on a warm cache, roughly a minute once
+every crate's fingerprint has changed, and several minutes on a fresh clone —
+so expect a wait the first time, and after a lockfile, toolchain or `[profile]`
+change. `git push --no-verify` skips the hook when that is not a good moment.
+
+The gates lint your working tree, not the commits being pushed, so a push of an
+older branch or one made with dirty local edits checks something other than
+what lands. CI remains the authority — `cargo xtask ci` front-runs it, it does
+not replace it.
+
 ## Documentation
 
 The **[Bynk Book](https://bynk-lang.org/book/)** is the canonical guide and

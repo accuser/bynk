@@ -5,5 +5,6 @@
 
 | Rule | Version | PR | Changelog |
 |---|---|---|---|
+| R6.2 | v0.247.1 |  | The lowering pass returns hoisted statements instead of writing them into a caller-supplied sink, deleting the predictive classifier that gated the ternary-form `if` |
 | R11.6 | v0.246.8 |  | The Query method_not_found diagnostic lists its methods from QUERY_METHODS instead of a hand-written copy, and the registry's drift test now catches a dispatch arm the registry doesn't list, not only the reverse |
 | R6.11 | v0.246.8 |  | The Query method_not_found diagnostic lists its methods from QUERY_METHODS instead of a hand-written copy, and the registry's drift test now catches a dispatch arm the registry doesn't list, not only the reverse |

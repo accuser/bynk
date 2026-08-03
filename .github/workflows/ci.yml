@@ -833,6 +833,78 @@ jobs:
           persist-credentials: false
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5
 
+  # ---------------------------------------------------------------------------
+  # Early signal, so a PR can be marked ready for review without waiting on the
+  # leg that dominates the run. This job gates NOTHING: `ci-green` below is
+  # still the only required status check, and this one must not be added to the
+  # ruleset — it would be redundant (ci-green needs it) and would turn a
+  # deliberately partial signal into a merge blocker.
+  #
+  # The boundary is "everything except the two test legs", and it sits there
+  # because that is where the time is. Measured on run 2822 — an `all == true`
+  # PR, so every job actually ran:
+  #
+  #     Test suite (windows-latest)              465s  ─┐
+  #     Test suite (ubuntu-latest)               208s   ├─ NOT in ci-fast
+  #     VS Code extension (integration tests)    197s  ─┘
+  #     Docs site (astro build)                   62s  ← ci-fast's slowest
+  #     Playground (type-check)                   55s
+  #     Supply chain (cargo-deny)                 54s
+  #     …13 more, every one under a minute
+  #
+  # So this reports at ~70s where `ci-green` reports at ~480s. The Claude PR
+  # review's median run is 4.1 min, which fits inside the Windows leg with room
+  # to spare — marking ready off THIS signal makes the review effectively free
+  # wall clock, where waiting for `ci-green` spends ~8 min before the review
+  # even starts. It still answers the question that made waiting attractive in
+  # the first place: a review never opens on code that fails fmt or clippy.
+  #
+  # This job is deliberately a SUBSET, and deliberately NOT covered by
+  # `ci-green`'s audit. A job added to the workflow does not need adding here —
+  # `ci-green`'s audit is what guarantees the real gate stays complete, and
+  # quietly growing this list with slow jobs would blunt the signal it exists
+  # to give. Adding something here is a judgement call about latency, not a
+  # correctness obligation.
+  # ---------------------------------------------------------------------------
+  ci-fast:
+    name: CI fast gates
+    if: always()
+    needs:
+      - changes
+      - fmt
+      - clippy
+      - api-docs
+      - msrv
+      - wasm
+      - playground
+      - site
+      - extension
+      - grammar
+      - runtime
+      - drift
+      - audit
+      - deny
+      - npm-audit
+      - dependency-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Same "a skipped job is a pass" semantics as `ci-green`: the path filters
+      # make skipping the normal case on a scoped PR, so only a real failure or
+      # a cancellation may go red. No checkout — unlike `ci-green` this job
+      # reads no files.
+      - name: Verify no fast gate failed
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "Upstream results: $results"
+          for r in $results; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::A fast gate reported '$r'."
+              exit 1
+            fi
+          done
+          echo "Fast gates passed. The test legs may still be running — merging still waits on CI green."
+
   ci-green:
     # Single required status check. Branch protection requires THIS job and
     # nothing else, so the path-gated jobs above can skip freely and renaming
@@ -860,6 +932,12 @@ jobs:
       - deny
       - npm-audit
       - dependency-review
+      # Needed rather than exempted: it makes `ci-green` subsume the fast tier
+      # (so a `ci-fast` that fails on its own — a broken expression, say — still
+      # goes red on the required check), and it satisfies the audit below with
+      # no EXEMPT entry. It costs no latency: `ci-green` already waits on every
+      # job `ci-fast` waits on, plus the two slower test legs.
+      - ci-fast
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

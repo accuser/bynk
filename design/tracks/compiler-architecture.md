@@ -263,7 +263,9 @@ neither `lower.rs` nor itself in any conflicting way, and runs without a freeze.
 
 So: **no feature work lands in `bynk-emit/src/emitter/lower.rs` while T2.1 is open.** That is a
 narrower and much cheaper commitment than ADR 0059's, and it is the only conflict the tier structure
-actually creates.
+actually creates. **Lifted** — T2.1 ([#1017](https://github.com/accuser/bynk/issues/1017)) has
+merged, so `lower.rs` is open to feature work again. T2.2 and T2.3 do not re-arm it: their remaining
+scope is re-assessed against T2.1's diff (see the slice table), not against a frozen file.
 
 ### 3.6 Sequencing relative to 1.0 — **Settled, and reframed under review.**
 
@@ -478,15 +480,16 @@ to the IR, and nothing about the IR is reachable without it.
 
 | Slice | What lands | Rules |
 |---|---|---|
-| **T2.1** | `lower_expr` returns `Lowered { pre: Vec<String>, expr: String }` instead of taking a sink; threaded across ~90 functions. The two ternary throwaway vectors, the `simple_expr` gate and its `debug_assert!`s are deleted | R6.2 |
-| **T2.2** | `maybe_async_iife`'s `contains("await ")` scan replaced by a flag computed during lowering; the `if`-IIFE path uses it too | R6.4 |
-| **T2.3** | `lower_and_with_is` can no longer splice statements into a string; `lower_bin_op`'s general path no longer shares one vector across operands | R6.3 |
+| **T2.1** ✅ **landed** ([#1017](https://github.com/accuser/bynk/issues/1017)) | `lower_expr` returns `Lowered { pre: Vec<String>, expr: String }` instead of taking a sink; threaded across every call site. The two ternary throwaway vectors, the `simple_expr` gate and its `debug_assert!`s are deleted. Also closed: a fifth, live instance of the classifier's defect class (its blanket `_ => true` caught `ListLit`/`InterpStr`/`RecordSpread`/`EffectPure`/`Val`/`Wire`), and the `if`-expression half of R6.6's wrapper gap | R6.2 |
+| **T2.2** ✅ **landed** ([#1018](https://github.com/accuser/bynk/issues/1018)) | `maybe_async_iife`'s `contains("await ")` scan replaced by `LowerCtx::emitted_await`, a flag set at the two statement sites that emit a literal `await` (`EffectLet`, `Do`) and read-and-reset around a `match`/`if` IIFE's own body construction. Closes a real over-match: a `Query`/broadcast iterator terminal (`forEach` and its five siblings) generates a self-contained `async () => {...}` IIFE as an ordinary `Effect`-typed value, and the scan saw its literal `"await "` and wrongly wrapped the *enclosing* switch/if arrow as async too (`await await (async (__d) => …)()`). The row's earlier phrasing — "the `if`-IIFE path uses it too" — was already stale when filed: `lower_if`'s non-ternary IIFE path started calling the async-wrap decision in `8068c0db` (Wave 4, before this row's own text was written); T2.2's actual remaining scope was only the scan-to-flag swap | R6.4 |
+| **T2.3** ✅ **landed** ([#1019](https://github.com/accuser/bynk/issues/1019)) | The row's original two defects (the splice, the shared vector) were already closed by [#955](https://github.com/accuser/bynk/pull/955) nine days before this row was measured — formalised here rather than re-fixed, against the existing `947_short_circuit_rhs_hoist` fixture. The slice's real content was the residual gap #955 left: a `?`'s propagating early return nested inside a short-circuited `&&`/`||`/`implies` right operand escaped only as far as the operator's own arrow-IIFE wrapper, not the enclosing function. `LowerCtx::emitted_early_return` (T2.2's `emitted_await` shape, reused) flags this at `?`-lowering time; `lower_bin_op`'s general path and `lower_and_with_is`'s is-binding path both now route a flagged rhs through `hoist_if_as_statement` (T2.1) — a real `if` statement in the caller's own statement position — instead of the arrow | R6.3 |
 
 **Closes in one change:** the dropped-statements bug, the spliced-statements bug, the
 `let x = match risky()? { … }` miscompile, and the short-circuit violation the type-system spec says
 "developers can rely on".
 
-**Completion probe:** `rg 'stmts: &mut Vec<String>' bynk-emit/` returns zero.
+**Completion probe:** `rg 'stmts: &mut Vec<String>' bynk-emit/` returns zero. ✅ **Reads 0** as of
+T2.1; the gated `hoist_sinks` probe in `design/greenfield-status.md` holds it there.
 
 **Regression fixtures required:** one per closed defect, named in the slice proposals.
 
