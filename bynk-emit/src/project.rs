@@ -2928,7 +2928,7 @@ fn emit_unit(
     imported_from_kind: &HashMap<String, UnitKind>,
     owning_context_for_emit: &Option<String>,
     cross_context_for_file: &resolver::CrossContextInfo,
-    typed: &checker::TypedCommons,
+    program: &checker::CheckedProgram,
     target: BuildTarget,
     import_ext: ImportExt,
     contracts: bool,
@@ -2936,6 +2936,7 @@ fn emit_unit(
     compiled: &mut Vec<CompiledFile>,
     schema_effective_versions: &HashMap<String, i64>,
 ) {
+    let typed = program.program();
     // Build the emitter context.
     let info = &unit_info[name];
     let cross_context_info = cross_context_for_file.clone();
@@ -3426,6 +3427,19 @@ fn check_unit_files(
             record_analyse_types(exprs, &pf.identity_path, pf.synthetic, &typed.expr_types);
             continue;
         }
+        // T3.7b (R3.10): every per-unit gate above already ran (check_record's
+        // Ok path, check_context_constraints, check_context_declarations's
+        // blocks_emission) — certify makes that structural, the same way
+        // T3.7a did for the single-file path, rather than relying on every
+        // future call site remembering to check all three before reaching
+        // emission. A later, unrelated diagnostic (e.g. check_platform_lock,
+        // which runs after this whole loop) can still bail the entire build
+        // via finish_build's separate errors.is_empty() gate — that's
+        // whole-build atomicity (already correct, already unconditional),
+        // orthogonal to this unit's own certification here.
+        let program = checker::certify(typed, Vec::new()).unwrap_or_else(|_| {
+            panic!("bynk internal error: unit already passed every per-unit gate above")
+        });
         emit_unit(
             name,
             kind,
@@ -3437,7 +3451,7 @@ fn check_unit_files(
             imported_from_kind,
             owning_context_for_emit,
             &cross_context_for_file,
-            &typed,
+            &program,
             target,
             import_ext,
             contracts,
