@@ -3145,6 +3145,18 @@ pub(crate) struct LowerCtx<'a> {
     /// borrow in. `None` for the single-file `emit()` path and any body emitted
     /// outside a project, where no map is produced.
     pub source_map: Option<&'a RefCell<SourceMapBuilder>>,
+    /// T2.2 (R6.4): set at the two statement sites that emit a literal `await`
+    /// (`EffectLet`, `Do`) and read-and-reset around a value-position `match`/`if`
+    /// IIFE's own body construction — the flag a synchronous arrow reads to decide
+    /// whether it must become `async` and be awaited at its call site. Replaces a
+    /// scan of the built string for the substring `"await "`, which over-matched
+    /// on a self-contained `async (...) => {...}` embedded as an arm's value (an
+    /// iterator terminal like `forEach`) without anything in *this* arrow's own
+    /// scope needing to await. Not isolated around a lambda body — a nested
+    /// effectful lambda still marks the enclosing IIFE async, exactly as the old
+    /// scan did (its own body text also contained `"await "`); closing that is a
+    /// separate, unscoped defect, not this one.
+    pub(crate) emitted_await: bool,
 }
 
 /// v0.59: the source context an `assert` lowering needs to turn its span into a
@@ -3176,6 +3188,7 @@ impl<'a> LowerCtx<'a> {
             call_site_identity: None,
             call_site_no_credential: false,
             source_map: None,
+            emitted_await: false,
         }
     }
 

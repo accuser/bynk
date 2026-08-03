@@ -584,6 +584,10 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 write_line(out, indent, s);
             }
             let bind_name = cx.bind_local_name(&l.name.name);
+            // T2.2 (R6.4): the literal `await` below is one of the two real
+            // sources of effectfulness a synchronous-looking IIFE further out
+            // needs to know about — see `emitted_await`.
+            cx.emitted_await = true;
             match &l.type_annot {
                 Some(annot) => write_line(
                     out,
@@ -660,6 +664,8 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             for st in pre.stmts() {
                 write_line(out, indent, st);
             }
+            // T2.2 (R6.4): see the matching note at `EffectLet`.
+            cx.emitted_await = true;
             write_line(out, indent, &format!("await {value};"));
         }
         Statement::Assign(a) => {
@@ -3847,6 +3853,11 @@ fn lower_if(
         let value = hoist_if_as_statement(&mut pre, cond_expr, then_tail, else_tail, slot_ty, cx);
         pre.finish(value)
     } else {
+        // T2.2 (R6.4): isolate the effectfulness flag to just this IIFE's own
+        // body — `cond_expr` was already lowered above, so any await it
+        // needed landed in `pre`, not here. See the matching note in
+        // `lower_match_as_iife`.
+        let saved_await = std::mem::take(&mut cx.emitted_await);
         let mut iife = String::new();
         iife.push_str("(() => {\n");
         iife.push_str("    if (");
@@ -3896,12 +3907,14 @@ fn lower_if(
             iife.push(' ');
         }
         iife.push_str("})()");
-        // #2 review: unlike `lower_match_as_iife`'s IIFE, this one never
-        // consulted `maybe_async_iife` at all — confirmed live: `let r = if
+        // #2 review: unlike `lower_match_as_iife`'s IIFE, this one used to never
+        // consult the async-wrap decision at all — confirmed live: `let r = if
         // c { let y <- fetch(); y + 1 } else { 0 }` emitted a bare `await`
         // inside this arrow with no `async` keyword, a hard JS syntax error
         // ("Unexpected reserved word"), not merely a missed optimisation.
-        pre.finish(maybe_async_iife(iife))
+        let needs_async = cx.emitted_await;
+        cx.emitted_await = saved_await || needs_async;
+        pre.finish(finish_async_iife(iife, needs_async))
     }
 }
 
@@ -4726,21 +4739,35 @@ fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx
     // `return` in an arm exits the arrow, not the function — clear `return_ty`
     // so an embedding `?` behaves like a plain `?` here (no function-level wrap).
     let saved = cx.return_ty.take();
+    // T2.2 (R6.4): isolate the effectfulness flag to just this IIFE's own
+    // body — `disc` was already lowered above, so any await it needed landed
+    // in `pre`, not here. Restore as `saved_await || needs_async` so an
+    // `await (async …)()` this call produces (if it does) still marks the
+    // *caller's* scope — the propagation the old text scan got for free from
+    // the substring surviving in the returned string.
+    let saved_await = std::mem::take(&mut cx.emitted_await);
     // #4 review: `build_match_iife` accumulates into its own local buffer,
     // spliced into the caller's output later — see `without_source_map`.
-    let inner_iife =
-        maybe_async_iife(cx.without_source_map(|cx| build_match_iife(&disc, &disc_ty, arms, cx)));
+    let built = cx.without_source_map(|cx| build_match_iife(&disc, &disc_ty, arms, cx));
+    let needs_async = cx.emitted_await;
+    cx.emitted_await = saved_await || needs_async;
+    let inner_iife = finish_async_iife(built, needs_async);
     cx.return_ty = saved;
     pre.finish(inner_iife)
 }
 
-/// v0.9.2: a match lowered to an IIFE in *expression* position may have arms
-/// that `await` (an effectful `let x <- …` or an effectful tail). A synchronous
-/// arrow can't host `await`, so when the lowered body contains one, make the
-/// outermost arrow `async` and `await` its call. Nested matches that already
-/// did this surface their own `await`, which propagates the transform outward.
-fn maybe_async_iife(iife: String) -> String {
-    if !iife.contains("await ") {
+/// v0.9.2: a match/if lowered to an IIFE in *expression* position may have arms
+/// that `await` (an effectful `let x <- …` or `do …`). A synchronous arrow can't
+/// host `await`, so when `needs_async` says the body just constructed emitted one
+/// (T2.2, R6.4: a flag set at the two statement sites that emit a literal
+/// `await`, read by the caller — see `LowerCtx::emitted_await` — not a scan of
+/// `iife` for the substring `"await "`), make the outermost arrow `async` and
+/// `await` its call. A nested match/if that already did this leaves its own
+/// `await (async …)()` in the body text *and* restores the flag on `cx` before
+/// returning, so the caller's own read-and-reset still sees it and the
+/// transform still propagates outward.
+fn finish_async_iife(iife: String, needs_async: bool) -> String {
+    if !needs_async {
         return iife;
     }
     let async_iife = if let Some(rest) = iife.strip_prefix("((__d) =>") {
@@ -4748,6 +4775,8 @@ fn maybe_async_iife(iife: String) -> String {
     } else if let Some(rest) = iife.strip_prefix("(() => {") {
         format!("(async () => {{{rest}")
     } else {
+        // Defensive: unreachable given the two current callers, which always
+        // build one of the two headers above.
         return iife;
     };
     format!("await {async_iife}")
@@ -5647,5 +5676,114 @@ mod idempotency_scoping_tests {
         let mut args = vec!["orderId".to_string()];
         scope_idempotency_key(false, "dedup", &mut args, &cx);
         assert_eq!(args[0], "orderId");
+    }
+}
+
+/// T2.2 (#1018, R6.4): `maybe_async_iife`'s `if !iife.contains("await ")`
+/// replaced by `LowerCtx::emitted_await`, a flag set at the two statement
+/// sites that emit a literal `await` (`EffectLet`, `Do`) and read-and-reset
+/// around a value-position `match`/`if` IIFE's own body construction — see
+/// `finish_async_iife`. Same precedent as `conditional_runtime_import_tests`
+/// (`body.contains("__bynkBytes")` → `RuntimeUse`): the scan and the flag
+/// agree on every case except where the scan's substring match wasn't really
+/// about *this* scope's own effectfulness.
+#[cfg(test)]
+mod async_iife_effectfulness_tests {
+    use crate::testkit::emit_source;
+
+    /// The over-match this slice closes: a `Query`/broadcast iterator terminal
+    /// (`forEach`) lowers to a self-contained, always-`async () => {...}` IIFE
+    /// — a plain `Effect`-typed *value*, not something this arm itself awaits.
+    /// The old scan saw the literal `"await "` inside that embedded string and
+    /// wrongly wrapped the enclosing `match` arrow as `async` too, producing a
+    /// spurious `await await (async (__d) => …)()`. Neither arm needs the
+    /// switch's own arrow to be async, so it must stay a plain `(__d) => {…}`,
+    /// invoked with a single `await` from the enclosing `let r <- …`.
+    #[test]
+    fn match_arm_iterator_terminal_does_not_force_the_switch_arrow_async() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn noop(n: Int) -> Effect[()] {\n  Effect.pure(())\n}\n\n\
+             fn run(names: List[Int], flag: Bool) -> Effect[()] {\n  \
+             let r <- match flag {\n    \
+             true => names.forEach(noop)\n    \
+             false => Effect.pure(())\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("const r = await ((__d) => {"),
+            "the switch arrow must stay synchronous, awaited once by the `let <-`: {ts}"
+        );
+        assert!(!ts.contains("await await"), "{ts}");
+    }
+
+    /// The same over-match, reached through the `if`-IIFE path (an `is`-binding
+    /// forces the IIFE form rather than a ternary) instead of `match`.
+    #[test]
+    fn if_arm_iterator_terminal_does_not_force_the_iife_arrow_async() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn noop(n: Int) -> Effect[()] {\n  Effect.pure(())\n}\n\n\
+             fn run(o: Option[Int], names: List[Int]) -> Effect[()] {\n  \
+             let r <- if o is Some(n) {\n    \
+             names.forEach(noop)\n  \
+             } else {\n    \
+             Effect.pure(())\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("const r = await (() => {"),
+            "the if-IIFE arrow must stay synchronous, awaited once by the `let <-`: {ts}"
+        );
+        assert!(!ts.contains("await await"), "{ts}");
+    }
+
+    /// Non-regression: the defect `#2 review` fixed in `8068c0db` (a genuinely
+    /// effectful `is`-binding `if` in value position) must still emit a real
+    /// `async` IIFE — this is not an over-match, so it keeps needing the wrap
+    /// that closed the original hard `SyntaxError`.
+    #[test]
+    fn if_arm_genuine_effect_still_forces_the_iife_arrow_async() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn fetch(n: Int) -> Effect[Int] {\n  Effect.pure(n)\n}\n\n\
+             fn run(o: Option[Int], c: Bool) -> Effect[Int] {\n  \
+             let r <- if o is Some(n) && c {\n    \
+             let y <- fetch(n)\n    \
+             Effect.pure(y + 1)\n  \
+             } else {\n    \
+             Effect.pure(0)\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("async () => {") && ts.contains("await fetch(n)"),
+            "a real await inside the IIFE must still force the async wrap: {ts}"
+        );
+    }
+
+    /// Non-regression: a genuinely effectful *nested* `match` (embedded
+    /// directly as an outer arm's value, not via an intermediate `let <-`)
+    /// must still propagate its own async-wrap need to the enclosing switch
+    /// arrow — the flag's `saved || needs_async` restore is what replaces the
+    /// old scan's implicit propagation (the substring surviving in the
+    /// returned string).
+    #[test]
+    fn nested_match_effectfulness_propagates_to_the_outer_switch_arrow() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn fetch(n: Int) -> Effect[Int] {\n  Effect.pure(n)\n}\n\n\
+             fn run(a: Bool, b: Bool) -> Effect[Int] {\n  \
+             let r <- match a {\n    \
+             true => match b {\n      \
+             true => {\n        let x <- fetch(1)\n        Effect.pure(x + 1)\n      }\n      \
+             false => Effect.pure(2)\n    \
+             }\n    \
+             false => Effect.pure(3)\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("const r = await await (async (__d) => {"),
+            "the outer switch arrow must also become async: {ts}"
+        );
     }
 }
