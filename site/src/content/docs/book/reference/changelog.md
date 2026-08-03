@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.2** | A value-position match/if IIFE's async-wrap decision is a flag computed during lowering instead of a scan of the generated text for the substring "await " |
 | **v0.247.1** | The lowering pass returns hoisted statements instead of writing them into a caller-supplied sink, deleting the predictive classifier that gated the ternary-form `if` |
 | **v0.247.0** | "`NonEmpty` now canonicalises as `MinLength(1)` (R12.2's Length domain), so a boundary type spelled either way hashes and structurally matches identically — coordinated redeploy: rebuild both sides of any already-deployed pair sharing a `NonEmpty`-refined boundary type" |
 | **v0.246.11** | block_uses_send and bynk-lsp's three statement-aware extract walkers enumerate every ExprKind variant explicitly instead of a wildcard arm (#1025) |
