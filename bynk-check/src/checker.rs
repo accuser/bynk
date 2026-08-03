@@ -584,6 +584,18 @@ pub fn check_handler_body(
         &borrowed_held,
         ctx.errors,
     );
+    // Finding #28 (debug-only), extended: `check_record`'s per-function walk
+    // (43abc242) never reaches a handler body — `check_handler_body` is
+    // `bynk-emit`'s own entry point for service/agent handlers, called
+    // directly from `validate.rs`, not from `check_record`'s
+    // `CommonsItem::Fn` loop. A fresh `seen` set per call, matching the
+    // per-item (not per-commons) granularity 43abc242 chose, so a
+    // multi-file commons re-checking the same handler doesn't false-positive.
+    #[cfg(debug_assertions)]
+    {
+        let mut seen: HashSet<Span> = HashSet::new();
+        assert_expr_types_disjoint_in_block(body, ctx.expr_types, &mut seen);
+    }
     if !compatible(&body_ty, &return_ty) {
         ctx.errors.push(
             CompileError::new(
@@ -708,7 +720,16 @@ pub fn check_body(
             ));
         }
     }
-    type_of_block(body, Some(return_ty), &mut ctx)
+    let result = type_of_block(body, Some(return_ty), &mut ctx);
+    // Finding #28 (debug-only), extended: see the identical note in
+    // `check_handler_body` — `check_body`'s test-case/property callers bypass
+    // `check_record`'s walk the same way handler bodies do.
+    #[cfg(debug_assertions)]
+    {
+        let mut seen: HashSet<Span> = HashSet::new();
+        assert_expr_types_disjoint_in_block(body, ctx.expr_types, &mut seen);
+    }
+    result
 }
 
 /// Check an agent's invariant declarations (v0.80 §14). Each predicate is a pure

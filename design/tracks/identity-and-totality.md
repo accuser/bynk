@@ -1,11 +1,12 @@
 # Identity and totality — migrating to the greenfield reference (phase 3)
 
-- **Status:** **Settled — Slicing on merge.** §3's seven questions were argued under a settling
-  review the same day this draft opened. Q1 was **reversed**: the draft's initial recommendation
-  (allocate `ExprId` directly) is overturned in favour of the review's cheaper scaffolding, landed
-  first and on its own merits — see the provenance note at the head of §3. Merging settles
-  **direction**; it is not a build authorisation. Each slice is still an ordinary increment
-  proposal, and `accepted` on that sub-issue is the approval to build.
+- **Status:** **Settled — Slicing.** §3's seven questions were argued under a same-day settling
+  review; Q1 was reversed once there (toward `ExprKey(Span)` scaffolding), then **reversed again**
+  while slicing T3.1 (§1.1), once implementation work found the scaffolding had already been built —
+  and already rejected — by a commit that predates this track. One slice has shipped for real: T3.0
+  (§6), extending an existing debug-only check to handler bodies. Merging settled **direction**; it is
+  not a build authorisation, and most of phase 3's actual reference shape (§6's T3.3–T3.7) remains
+  unbuilt.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -70,6 +71,41 @@ occurrences of `HashMap<Span`, excluding `xtask`'s own probe source — was buil
 (`design/greenfield-status.md`, confirmed by direct grep against `3691d6a3`). This phase does not need
 new probe infrastructure to know when it is done.
 
+### 1.1 Correction found while slicing T3.1: more of §3's premise had already shipped than §3 knew
+
+Implementation work on T3.1 surfaced a fact this doc's first two revisions missed, despite both
+claiming to measure directly against the tree: **commit `43abc242`** ("Wave 8: leisure batch for the
+compiler pipeline review", #960, 28 July 2026 — landed *before* `compiler-architecture.md` even
+retired, let alone before this spine opened) already shipped batch **8.5** of the review's own
+findings **#28/#46** — the exact finding §3.1's `ExprKey(Span)` argument was built on:
+
+- Fixed the else-less-`if` span-aliasing bug **at its root cause** (a zero-width span for the
+  synthesised else-block/`UnitLit`, `bynk-syntax/src/parser/expressions.rs:1582-1589`), not merely
+  worked around it.
+- Added the debug-only uniqueness check the review proposed — but scoped to `check_record`'s
+  `CommonsItem::Fn` loop only (`checker.rs:317-329`, using `ast::expr_children`).
+- Replaced **9 of 10** `_ => "unknown".to_string()` emitter fallbacks with a loud internal error. The
+  one remaining site (`lower.rs:3025`, `join_other_elem_ts`) is a **documented, deliberate**
+  soft-fallback for an already-diagnosed program, not residue — and the `.unwrap_or_else(|| "unknown"…)`
+  at `lower.rs:1848` this doc's first revision flagged as "a sibling to sweep in the same pass" is
+  unrelated: it defaults a missing type-argument name, not an `expr_types` miss. Both claims in this
+  doc's earlier revisions were wrong; §9 records the correction as a risk realised, not silently fixed.
+- **Explicitly rejected the `ExprKey(Span)` newtype**, "confirmed with the user mid-implementation":
+  `expr_types` is read directly by "22 files across 6 crates," and the newtype "changes no behavior —
+  it's migration scaffolding for a future `NodeId` retrofit, not a bug fix."
+
+**This reopens and re-settles Q1 a second time**, in §3.1 below — the first settling review's decision
+(land `ExprKey(Span)` as an independent slice) is itself now superseded, by [ADR
+0313](../decisions/0313-phase-3-scaffolding-before-retrofit.md)'s successor ADR, on the strength of a
+prior author having already reached, and acted on, the same conclusion this correction reaches.
+
+**A real, distinct gap was found and closed in the same pass.** `43abc242`'s uniqueness check runs
+only from `check_record`'s loop over top-level `CommonsItem::Fn` items. `check_handler_body` and
+`check_body` — `bynk-emit`'s own entry points for service/agent handler bodies and test-case bodies,
+called directly from `validate.rs`/`tests_emit.rs`, entirely outside `check_record`'s loop — carried
+**no uniqueness protection at all**, for the bulk of real Bynk programs (handler bodies, not free
+functions). This is shipped as this track's first landed slice — see §6, "T3.0".
+
 ---
 
 ## 2. What this track is not
@@ -113,7 +149,22 @@ new probe infrastructure to know when it is done.
 > The remaining six (Q2 through Q7) were examined and stand as written, with their recommendations
 > promoted to decisions.
 
-### 3.1 Q1 — Does this track commit to the full retrofit now, or open on the review's scaffolding alone? **Settled — reversed under review.**
+### 3.1 Q1 — Does this track commit to the full retrofit now, or open on the review's scaffolding alone? **Settled — reversed twice.**
+
+> **Second reversal, §1.1's correction.** Everything below this line through "Decision: land
+> `ExprKey(Span)` first…" is this doc's **first** settling review, preserved rather than deleted —
+> the same "keep the record of it" discipline `compiler-architecture.md` §3.6 used for its own spent
+> reasoning. That decision is **overturned again**, by evidence, not by re-argument: `43abc242`
+> already shipped the review's uniqueness-check and loud-error scaffolding (scoped to `check_record`
+> only) and already **explicitly rejected the `ExprKey(Span)` newtype**, for the reason this doc's
+> first reversal argued *against* — "changes no behavior… migration scaffolding … not a bug fix." A
+> prior author reached this settling review's conclusion first, under real implementation pressure,
+> and recorded why. **Final decision: no standalone `ExprKey(Span)` slice.** The one genuinely open
+> gap `43abc242` left — the uniqueness check never reaching `check_handler_body`/`check_body` — is
+> real, valuable, and closed directly (§6, "T3.0"), without the newtype. What remains of phase 3's
+> R2.4/R2.5/R4.9 invariant needs the real thing: `ExprId` allocated at parse, done as its own slice
+> when someone is prepared to take on a parser change touching all seven consumer crates at once — not
+> pre-designed here, for the same "wish list" reason §3.7 (Q7) already gives.
 
 The review's verification pass named three cheap steps as "the migration scaffolding **if the
 retrofit ever happens**": newtype the key as `ExprKey(Span)` (~11 signatures), give blocks their own
@@ -170,10 +221,12 @@ Dependency read, to test under review:
 - **R3.10 (`certify`) is the capstone.** It needs a total `expr_ty` to gate on and a real `Ty::Error`
   to reject, so it lands last by construction.
 
-**Decision.** Order confirmed, amended only to insert Q1's `ExprKey`-first step ahead of R2.4 proper:
-`ExprKey(Span)` (T3.1/T3.2) → R2.2 `FileId` and R2.4 real `ExprId` in parallel (T3.5, T3.4 — neither
-gates the other) → R4.3 `Ty::Error` (T3.3, unblocks R4.9) → R4.9 the total table (folded into T3.4
-once `ExprId` exists) → R4.1/R4.2 interning (T3.6, its own larger slice) → R3.10 `certify` last (T3.7).
+**Decision.** Order confirmed as originally read, with §3.1's second reversal removing the `ExprKey`
+step this decision briefly inserted ahead of it (no code shipped under it, so nothing to unwind): R2.2
+`FileId` and R2.4 real `ExprId` in parallel (T3.5, T3.4 — neither gates the other) → R4.3 `Ty::Error`
+(T3.3, unblocks R4.9) → R4.9 the total table (built into T3.4 directly, since there is no `ExprKey`
+predecessor to fold it into) → R4.1/R4.2 interning (T3.6, its own larger slice) → R3.10 `certify` last
+(T3.7).
 
 ### 3.3 Q3 — What does "parallel data, single pipeline" mean across this map's actual readers? **Settled.**
 
@@ -190,9 +243,9 @@ count in §6 needs re-checking against whichever number survives review.
 
 **Decision: the map goes dual for the whole migration window** — both the old keying and the new one
 populated and symmetric, deleted-last on the old side, one cutover slice per consumer crate above.
-Applied first to T3.1 (both `HashMap<Span, Ty>` and `HashMap<ExprKey, Ty>` populated during the T3.1
-window, `Span` form deleted once every one of the seven crates reads `ExprKey`), then again when T3.4
-introduces the real `IndexVec<ExprId, TyId>` alongside whatever T3.1 left in place.
+Applies once, when T3.4 introduces the real `IndexVec<ExprId, TyId>` — §3.1's second reversal removed
+the `ExprKey(Span)` predecessor this decision originally described as the first of two dual-map
+passes, so there is now only the one.
 
 ### 3.4 Q4 — Does ADR 0309's tier table need amending for this phase's gate? **Settled.**
 
@@ -218,14 +271,15 @@ This phase's footprint is wider: 12 of the 27 `HashMap<Span` sites live in `bynk
 alone, with the rest split across `expr_types.rs`, `checker/calls.rs`, `checker/linearity.rs`
 (`bynk-check`) and `validate.rs`, `project.rs`, `tests_emit.rs` (`bynk-emit`) — and `checker.rs` is
 the file every later compiler stage calls through. Recommendation to test: a scoped freeze on
-`checker.rs` specifically, for the duration of the R2.4/R4.9 slices (T3.1, T3.2, T3.4 in §6), on the
+`checker.rs` specifically, for the duration of the R2.4/R4.9 slice (T3.4 in §6), on the
 same narrow-scoping reasoning §3.5 used originally — touch one contended file, freeze that one file.
 No freeze proposed for R2.2 (`FileId`) or R4.1–R4.3 (`Ty`), which touch less-contended surface and can
 proceed unfrozen per Q2's ordering.
 
-**Decision: confirmed as recommended.** No feature work lands in `bynk-check/src/checker.rs` while
-T3.1 or T3.2 is open. Lifts automatically when T3.2 merges, the same mechanism §3.5 of the retired
-track used for `lower.rs`.
+**Decision: confirmed as recommended, not yet in effect.** No feature work should land in
+`bynk-check/src/checker.rs` for the duration of T3.4, whenever it opens — the same mechanism §3.5 of
+the retired track used for `lower.rs` during T2.1. §3.1's second reversal means nothing currently open
+needs this freeze yet: T3.0 (§6) was small enough not to warrant one, and T3.4 hasn't been sliced.
 
 ### 3.6 Q6 — Sequencing relative to 1.0 and the state-migrations track **Settled.**
 
@@ -245,16 +299,17 @@ a reason to slow this one now.
 
 Trajectory §5 rates this phase relative size 8 against Tier B's 3 and Tier A's combined 2 — the
 largest phase attempted so far, at medium confidence ("the review killed a naive retrofit; §6's
-parallel-data technique is the mitigation"). §6 below decomposes a first pair (T3.1, T3.2, matching
-the review's named scaffolding, gated on Q1) and names five more without detailing them. Needs
-settling: whether five undetailed forward-references is the right grain, or whether some of them
-(R2.2 in particular, per Q2's independence finding) should be detailed now since nothing gates them.
+parallel-data technique is the mitigation"). §6 names five forward references (T3.3–T3.7) without
+detailing them to signature level. Needs settling: whether that is the right grain, or whether some of
+them (R2.2 in particular, per Q2's independence finding) should be detailed now since nothing gates
+them.
 
-**Decision: keep T3.3–T3.7 as forward references for now.** §6's T3.1/T3.2 are the only slices this
-settling pass details to signature level — cutting five more before T3.1 has even landed is exactly
-the "an unopened phase whose slices are already written is a wish list" failure
-`compiler-architecture.md` §7 named. Revisit the grain once T3.1/T3.2 ship and §3.3's seven-crate
-migration mechanics are proven in practice, not just argued.
+**Decision: keep T3.3–T3.7 as forward references for now.** §1.1's correction is itself evidence for
+this, not just a reason stated in the abstract: this settling pass detailed a scaffolding pair
+(`ExprKey(Span)`) to signature level before checking whether it was still needed, and it was not.
+Detailing T3.3–T3.7 now, before any of them has a slice open, risks the same mistake at larger scale.
+Revisit the grain once one of T3.3–T3.7 actually opens and the seven-crate migration mechanics (§3.3)
+are proven in practice against *that* slice, not argued in advance of it.
 
 ---
 
@@ -282,32 +337,44 @@ serving stale narrowings on collision (`checker.rs:1426`) — is the standing ar
 
 ## 6. Slice decomposition
 
-§3 is settled; T3.1 and T3.2 below are accepted, buildable slices, not forward references.
+§3 is settled. §1.1's correction retires the `ExprKey(Span)` slice pair before it was ever built and
+replaces it with the one real gap found while preparing it.
 
-### Scaffolding — named by `compiler-architecture.md` §4.1 as T3.1/T3.2, detailed and settled here
+### Landed
 
-| Slice | What lands | Rules | Gated on |
+| Slice | What shipped | Rules | Status |
 |---|---|---|---|
-| **T3.1** | `ExprKey(Span)` newtype (Q1's decision) across the review's ~11 signatures in `bynk-check/src/checker.rs`, `expr_types.rs`, `checker/calls.rs`, `checker/linearity.rs` and `bynk-emit`'s readers; blocks split into their own map, out of the shared keyspace the `block.span != block.tail.span` guard (`checker.rs:2614`) currently patches around; dual-map migration per Q3 (both `HashMap<Span, Ty>` and `HashMap<ExprKey, Ty>` populated, old form deleted once all seven consumer crates in §3.3 have cut over) | R2.4 (partial — see §3.1) | — settled, ready to slice |
-| **T3.2** | A debug-only uniqueness check at the end of `check_record`, walking the unit via `ast::expr_children` and asserting no two typed nodes share a key (the guard at `checker.rs:381-393` generalised into an assertion, per the review's exact proposal — would have caught #844 on introduction); replace the remaining `_ => "unknown".to_string()` fallback (`lower.rs:3025` — down to one live site as of `3691d6a3`, from the three-plus the review counted; sweep the sibling `.unwrap_or_else(|| "unknown".to_string())` at `lower.rs:1848` in the same pass) with a loud internal error | R2.4 | T3.1 |
+| **T3.0** | Extended `43abc242`'s debug-only uniqueness check (finding #28) to `check_handler_body` and `check_body` — previously covered only `check_record`'s top-level-`fn` loop, leaving service/agent handler bodies and test-case bodies with no collision protection. Same per-call `seen` set granularity `43abc242` chose, for the same reason (a multi-file commons legitimately re-checks a handler more than once). `bynk-check/src/checker.rs` | R2.4 (verification) | **Shipped** — `cargo test --workspace` green, no existing fixture triggers the extended assertion |
 
-### Forward-referenced, not yet detailed (§3.7/Q7's decision: kept coarse until T3.1/T3.2 prove the mechanics)
+### Not built: the scaffolding pair this doc's first revision specified
+
+`ExprKey(Span)` and its uniqueness-check/loud-error companions are **not** being built as a separate
+slice — §3.1's second reversal explains why: `43abc242` already shipped the uniqueness check and 9/10
+loud-error replacements, and already rejected the newtype on the same grounds this doc's first
+reversal argued against. **`T3.1` and `T3.2` are retired, unused, not repurposed** — skipped outright
+rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in this doc (§3.2, §3.5,
+§9) keeps meaning exactly what it already said.
+
+### Forward-referenced, not yet detailed — the actual remaining reference-shape work
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.3** | `Ty::Error` as a real variant; `expr_types` records it instead of omitting the entry on `None` | R4.3 | T3.1 landed |
-| **T3.4** | Real `ExprId` allocated at parse, replacing `ExprKey(Span)`; `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing the keyed map entirely, migrated crate-by-crate per §3.3's seven-crate list | R2.4, R2.5, R4.9 | T3.1 (mechanics proven), T3.3 |
-| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.1–T3.4 |
+| **T3.3** | `Ty::Error` as a real variant; `expr_types` records it instead of omitting the entry on `None` | R4.3 | — independent, can run first |
+| **T3.4** | Real `ExprId` allocated at parse (no `ExprKey(Span)` predecessor — see above); `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>` entirely, migrated crate-by-crate per §3.3's seven-crate list (dual-map: both forms populated during migration, `Span`-keyed form deleted last) | R2.4, R2.5, R4.9 | T3.3 (unblocks totality) |
+| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.3/T3.4 |
 | **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | T3.3 |
 | **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.4, T3.6 |
 
-Deliberately not decomposed further, for the reason `compiler-architecture.md` §6's own forward
-references gave one phase up: "an unopened phase whose slices are already written is a wish list."
-T3.3 onward exist so a proposal citing one is recognised as this track's future work, not unclaimed
-scope — they are not proposals themselves.
+None of T3.3–T3.7 above is built. Deliberately not decomposed to signature level, for the reason
+`compiler-architecture.md` §6's own forward references gave one phase up: "an unopened phase whose
+slices are already written is a wish list." Each exists so a proposal citing it is recognised as this
+track's future work, not unclaimed scope — none is a proposal itself, and (per §1.1's correction) none
+should be assumed still-accurate without re-measuring against the tree first, the same discipline that
+caught the `ExprKey(Span)` premise being stale.
 
 **Completion probe:** `span_keyed_maps` = 0. Already built (T0.0, #999/#1000) and CI-gated
-(`greenfield_status_table_is_current`); reads **27** as of `3691d6a3`.
+(`greenfield_status_table_is_current`); reads **27** as of `3691d6a3`, **unchanged by T3.0** (a
+debug-only assertion, not a representation change).
 
 ---
 
@@ -358,11 +425,19 @@ this map) and finds more. §6's slicing needs re-checking against whichever coun
 same discipline `compiler-architecture.md` §6.0 applied to its own inherited numbers ("nine of the
 fourteen slices... had already landed").
 
-**The evidence base ages, and already has.** The `_ => "unknown".to_string()` fallback count dropped
-from the review's "3155, 3189, 3245 and neighbours" to one live site (`lower.rs:3025`) by the time
-this doc was measured against `3691d6a3` — paydown happening as ordinary work, the same pattern
-`compiler-architecture.md` §6.0 found for its own inherited findings. Every number in this doc was
-measured 3 August 2026; re-check before a slice proposal cites one.
+**The evidence base ages, and already has — and this doc's own first two revisions are the proof, not
+just the warning.** §1.1 records what happened: both revisions correctly noted the
+`_ => "unknown".to_string()` count had dropped to one live site, but **neither asked why** before
+building a slice plan on top of the observation. The why — `43abc242` had already shipped the
+review's own uniqueness-check-and-loud-error proposal, and had already rejected the newtype this
+doc spent two settling passes deciding to build — was one `git log -S` away. The remaining site was
+also mischaracterised as residue to sweep ("the sibling `.unwrap_or_else`... in the same pass") when
+it is a different, unrelated fallback. `compiler-architecture.md` §6.0 found its inherited numbers
+stale; this doc found its *own freshly-measured* numbers stale, one commit deep, because a number
+that moved was read as "paydown already happened here too" without checking what actually moved it.
+The corrective discipline this risk names for future slices: when a number has already moved between
+the review and today, find the commit, not just the new value — the commit tells you what's still
+open, the value alone doesn't.
 
 ---
 
@@ -377,20 +452,27 @@ trajectory §4) and for phase 4's project model sitting cleanly below both check
 
 ## 11. ADRs
 
-Per ADR 0167 step 2, the load-bearing, hard-to-reverse decisions land before slicing. Two do, with
-this settling pass (`level: patch`, no code); their numbers are assigned at merge by the stamp
-(ADR 0206), so this doc refers to them by letter until they exist — the pattern
-`compiler-architecture.md` §11 used for ADRs 0309–0312.
+Per ADR 0167 step 2, the load-bearing, hard-to-reverse decisions land before slicing.
 
-- **ADR-A — the phase-3 migration technique: `ExprKey(Span)` scaffolding first, real `ExprId` and
-  totality later, gated on the scaffolding proving out.** §3.1 (Q1). Reverses this doc's own initial
-  draft recommendation under review — the reversal is the ADR's content, not an embarrassment to
-  paper over.
-- **ADR-B — ADR 0309's Structural tier gains an LSP-surface-fixture requirement for consumer crates
-  that ship developer-facing behaviour.** §3.4 (Q4). Amends ADR 0309 the same way ADR 0309 amended
-  ADR 0059 property 1.
+**Landed** (this settling pass, `level: patch`, no code — `design/pending/identity-and-totality-settling.md`):
 
-Lands as `design/pending/identity-and-totality-settling.md`.
+- **[ADR 0313](../decisions/0313-phase-3-scaffolding-before-retrofit.md) — the phase-3 migration
+  technique: `ExprKey(Span)` scaffolding first, real `ExprId` and totality later.** §3.1 (Q1)'s first
+  reversal. **Superseded** — see below.
+- **[ADR 0314](../decisions/0314-refactor-acceptance-gate-lsp-surface-requirement.md) — ADR 0309's
+  Structural tier gains an LSP-surface-fixture requirement** for consumer crates that ship
+  developer-facing behaviour. §3.4 (Q4). Amends ADR 0309 the same way ADR 0309 amended ADR 0059
+  property 1. **Stands** — unaffected by §1.1's correction.
+
+**Lands with this correction** (`level: patch`, no code — `design/pending/identity-and-totality-t3-correction.md`):
+
+- **ADR-C — ADR 0313 is superseded: no standalone `ExprKey(Span)` slice.** §1.1, §3.1's second
+  reversal. Records that `43abc242` had already shipped ADR 0313's proposed scaffolding (minus the
+  newtype itself) and had already reached, and acted on, ADR 0313's rejected conclusion — evidence a
+  prior author had, and this settling pass didn't check for before writing ADR 0313. Per
+  `design/decisions/README.md` ("a reversal is a new record that supersedes the old one"), ADR 0313
+  stays on file, unedited, with a superseded pointer added to its file and index row once this ADR's
+  number is known.
 
 ---
 
