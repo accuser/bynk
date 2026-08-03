@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.4** | A `?`'s propagating early return nested inside a short-circuited `&&`/`||`/`implies` right operand now correctly exits the enclosing function instead of only the operator's internal wrapper |
 | **v0.247.3** | "`cargo xtask ci` runs the CI gates locally (`--fast` for the two that need no compile-and-link, also run by an opt-in `.githooks/pre-push`), and CI reports a `CI fast gates` check ahead of `CI green`" |
 | **v0.247.2** | A value-position match/if IIFE's async-wrap decision is a flag computed during lowering instead of a scan of the generated text for the substring "await " |
 | **v0.247.1** | The lowering pass returns hoisted statements instead of writing them into a caller-supplied sink, deleting the predictive classifier that gated the ternary-form `if` |
