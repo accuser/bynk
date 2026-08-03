@@ -1,12 +1,6 @@
----
-level: patch
-changelog: The checker's debug-only expr-identity uniqueness check (finding #28) now also covers handler and test-case bodies, not only top-level functions; ADR 0313 is superseded
----
+# 0315 — ADR 0313 is superseded — no standalone ExprKey(Span) slice
 
-## ADR: phase-3-scaffolding-already-shipped
-title: ADR 0313 is superseded — no standalone ExprKey(Span) slice
-summary: A prior commit had already shipped ADR 0313's proposed scaffolding and already rejected the newtype it recommended building
-status: Accepted
+- **Status:** Accepted (v0.247.6)
 
 **Context.** [ADR 0313](0313-phase-3-scaffolding-before-retrofit.md) decided that
 `design/tracks/identity-and-totality.md`'s phase 3 (spine #1046) should land the 2026-07-27 pipeline

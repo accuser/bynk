@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0315](0315-phase-3-scaffolding-already-shipped.md) | **ADR 0313 is superseded — no standalone ExprKey(Span) slice** (v0.247.6) — A prior commit had already shipped ADR 0313's proposed scaffolding and already rejected the newtype it recommended building | Accepted (v0.247.6) |
 | [0314](0314-refactor-acceptance-gate-lsp-surface-requirement.md) | **ADR 0309's Structural tier requires an LSP-surface fixture for consumer crates with developer-facing behaviour** (v0.247.5) — Amends ADR 0309 — byte-identical emission goldens don't cover a hover/completion/diagnostic regression | Accepted (v0.247.5) |
 | [0313](0313-phase-3-scaffolding-before-retrofit.md) | **Phase 3 opens on ExprKey(Span) scaffolding, not a direct ExprId retrofit** (v0.247.5) — The migration technique for identity and totality — cheap scaffolding first, proven mechanics before the arena-index change | Accepted (v0.247.5) |
 | [0312](0312-narrow-bynkc-public-api.md) | **bynkc's published Rust API is its item re-exports, not its module structure** (v0.246.4) — The fourteen whole-module re-exports are deleted; bynkc keeps its lib, its ~30 item re-exports, and cargo install bynkc | Accepted (v0.246.4) |

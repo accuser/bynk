@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.6** | The checker's debug-only expr-identity uniqueness check (finding #28) now also covers handler and test-case bodies, not only top-level functions; ADR 0313 is superseded |
 | **v0.247.5** | The phase-3 track (identity and totality) settles on ExprKey(Span) scaffolding before ExprId, and amends ADR 0309 with an LSP-surface-fixture requirement |
 | **v0.247.4** | A `?`'s propagating early return nested inside a short-circuited `&&`/`||`/`implies` right operand now correctly exits the enclosing function instead of only the operator's internal wrapper |
 | **v0.247.3** | "`cargo xtask ci` runs the CI gates locally (`--fast` for the two that need no compile-and-link, also run by an opt-in `.githooks/pre-push`), and CI reports a `CI fast gates` check ahead of `CI green`" |
