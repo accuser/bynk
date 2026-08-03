@@ -3,10 +3,11 @@
 - **Status:** **Settled — Slicing.** §3's seven questions were argued under a same-day settling
   review; Q1 was reversed once there (toward `ExprKey(Span)` scaffolding), then **reversed again**
   while slicing T3.1 (§1.1), once implementation work found the scaffolding had already been built —
-  and already rejected — by a commit that predates this track. One slice has shipped for real: T3.0
-  (§6), extending an existing debug-only check to handler bodies. Merging settled **direction**; it is
-  not a build authorisation, and most of phase 3's actual reference shape (§6's T3.3–T3.7) remains
-  unbuilt.
+  and already rejected — by a commit that predates this track. Three slices have shipped for real:
+  T3.0 (extending an existing debug-only check to handler bodies), T3.3a (`Ty::Error` as a real,
+  correctly-handled variant), and T3.3b (`expr_types` made total — **R4.3 closed in full**, at two
+  write choke-points rather than the ~81-function conversion originally estimated; §6). T3.4–T3.7
+  remain unbuilt. Merging settled **direction**; it is not a build authorisation.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -345,18 +346,24 @@ replaces it with the one real gap found while preparing it.
 | Slice | What shipped | Rules | Status |
 |---|---|---|---|
 | **T3.0** | Extended `43abc242`'s debug-only uniqueness check (finding #28) to `check_handler_body` and `check_body` — previously covered only `check_record`'s top-level-`fn` loop, leaving service/agent handler bodies and test-case bodies with no collision protection. Same per-call `seen` set granularity `43abc242` chose, for the same reason (a multi-file commons legitimately re-checks a handler more than once). `bynk-check/src/checker.rs` | R2.4 (verification) | **Shipped** — `cargo test --workspace` green, no existing fixture triggers the extended assertion |
-| **T3.3a** | `Ty::Error` added as a real variant on `enum Ty`, and given deliberate (not default/panicking-by-omission) semantics at every *exhaustive* match over `Ty` the compiler's own exhaustiveness check found: `compatible`/`structurally_compatible_inner` treat it as compatible with anything in both positions (R4.3's "assignable to and from everything"); `unify` binds it trivially; `substitute`/`contains_var`/`contains_flexible_var`/`rebrand_return_type` treat it as the leaf it is; `display` renders `<type error>`; `json_codable` treats it as codable (no cascading `json_uncodable`, matching "suppresses all downstream diagnostics that mention it"); `ty_to_type_ref` returns `None` (no codec); `ts_ty` — reached only if a checked, emission-bound program somehow contains one, which R4.3 says should never happen — raises a loud internal error (finding #28's own convention) rather than silently emitting a type for it. **Measured, not assumed:** the compiler's own exhaustiveness check found exactly 11 sites needing an arm (9 in `bynk-check`, 2 in `bynk-emit`) out of 900+ raw `Ty::` mentions across the two crates — most of those are constructors and non-exhaustive matches, not sites this change touches. `bynk-ide`/`bynk-lsp`/`bynk-wasm` needed no changes at all. | R4.3 (partial — see below) | **Shipped** — `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test --workspace` all clean (one pre-existing, environment-only failure, unrelated) |
+| **T3.3a** | `Ty::Error` added as a real variant on `enum Ty`, and given deliberate (not default/panicking-by-omission) semantics at every *exhaustive* match over `Ty` the compiler's own exhaustiveness check found: `compatible`/`structurally_compatible_inner` treat it as compatible with anything in both positions (R4.3's "assignable to and from everything"); `unify` binds it trivially; `substitute`/`contains_var`/`contains_flexible_var`/`rebrand_return_type` treat it as the leaf it is; `display` renders `<type error>`; `json_codable` treats it as codable (no cascading `json_uncodable`, matching "suppresses all downstream diagnostics that mention it"); `ty_to_type_ref` returns `None` (no codec); `ts_ty` — reached only if a checked, emission-bound program somehow contains one, which R4.3 says should never happen — raises a loud internal error (finding #28's own convention) rather than silently emitting a type for it. **Measured, not assumed:** the compiler's own exhaustiveness check found exactly 11 sites needing an arm (9 in `bynk-check`, 2 in `bynk-emit`) out of 900+ raw `Ty::` mentions across the two crates — most of those are constructors and non-exhaustive matches, not sites this change touches. `bynk-ide`/`bynk-lsp`/`bynk-wasm` needed no changes at all. | R4.3 (scaffolding) | **Shipped** — `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test --workspace` all clean (one pre-existing, environment-only failure, unrelated) |
+| **T3.3b** | `expr_types` made total for real, at both of its actual write choke points — `type_of`'s own `ctx.expr_types.insert(expr.span, …)` (`checker.rs`) and `type_of_block`'s equivalent for a block's own span — changed to record `Ty::Error` rather than skip the entry when the computed type is `None`. **This closes R4.3's externally-observable content in full**, not partially: every expression `type_of` is called on (directly or through its ~90 recursive/nested self-calls) now gets an `expr_types` entry, whichever of the checker's internal paths produced `None` and for whatever reason. Verified with a new regression test (`a_diagnosed_resolution_failure_records_ty_error_instead_of_nothing`, `bynk-emit/src/project.rs`) asserting the actual behaviour, not just absence of failure: a diagnosed `type_of` failure (`bynk.types.uninferable_element_type` on an empty `[]` with no inferable element type) now records `<type error>` at its span instead of nothing. | R4.3 | **Shipped** — full workspace build/clippy/fmt/test clean, including the `bynkc` byte-identical golden fixture corpus (unchanged output — this is purely additive on the *recording* side) |
 
-**T3.3a is not T3.3.** The variant exists and is safely, deliberately handled everywhere the type
-system requires — but nothing in the compiler constructs it yet. R4.3's actual content ("resolution
-failure produces it; it never produces 'no type'") needs the ~81 functions across `bynk-check` that
-return `Option<Ty>` today (`grep -c -- '-> Option<Ty>'`) converted to return `Ty` and use `Error` at
-their failure points, with their ~193 call sites (`type_of` alone) updated to match. That is real,
-large, semantically-loaded work — deciding for each site whether `None` there means "genuine
-resolution failure" (→ `Error`) or something else a wildcard search cannot answer — and it is not
-attempted here. T3.3a is offered as what it is: safe, tested, complete-in-itself groundwork that
-makes the remaining conversion type-checker-guided rather than a leap in the dark, not a claim that
-R4.3 is closed.
+**Why this closed in two edits, not ~81 functions and ~193 call sites — the estimate directly above
+this table (preserved, not deleted, as an example of the same "measure before trusting an estimate"
+discipline §9 keeps naming) was based on a conflation.** Converting the checker's *internal* recovery
+convention — every one of the ~81 `Option<Ty>`-returning functions changing signature to `Ty`, every
+`?`/`.or(...)` call site updated to match — genuinely is that large, and is **not** what was done here
+and **not** required by R4.3's own wording. R4.3 says `expr_types` must be total; it does not say the
+checker's internal control-flow idiom must change. `type_of` and `type_of_block` each write into
+`expr_types` at exactly one place, after all of their internal `Option`-returning logic has already
+run to completion — so making *that* write total closes the gap for every internal `None`-producing
+path at once, with zero changes to any of the ~193 call sites, because none of them read `expr_types`
+to get their value — they read `type_of`'s **return value**, which this change does not touch. Verified
+directly, not assumed: `check_field_access`'s `let recv_ty = type_of(receiver, None, ctx)?;` still
+short-circuits on `None` exactly as before, because `type_of`'s return value is unchanged — only what
+gets *recorded* changed. This is why the whole fix is two match-arm-shaped edits and a total workspace
+test run, not a multi-day internal rewrite.
 
 ### Not built: the scaffolding pair this doc's first revision specified
 
@@ -371,19 +378,19 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.3b** | Convert the ~81 `Option<Ty>`-returning functions in `bynk-check` (`type_of` foremost, plus its callees) to return `Ty` and construct `Ty::Error` at genuine resolution-failure points instead of `None`; update the ~193 call sites (`type_of` alone). This is where R4.3 actually closes — T3.3a only prepared the type to receive it | R4.3 | T3.3a (landed) |
-| **T3.4** | Real `ExprId` allocated at parse (no `ExprKey(Span)` predecessor — see above); `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>` entirely, migrated crate-by-crate per §3.3's seven-crate list (dual-map: both forms populated during migration, `Span`-keyed form deleted last) | R2.4, R2.5, R4.9 | T3.3b (unblocks totality) |
-| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.3b/T3.4. **§3.2 (Q2) called this "lowest coupling… could be its own early, small slice" — measured and found larger; see §9** |
-| **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | T3.3b |
+| **T3.4** | Real `ExprId` allocated at parse (no `ExprKey(Span)` predecessor — see above); `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>` entirely, migrated crate-by-crate per §3.3's seven-crate list (dual-map: both forms populated during migration, `Span`-keyed form deleted last) | R2.4, R2.5, R4.9 | none — T3.3b's totality no longer gates this; `HashMap<Span, Ty>` is total today, `IndexVec<ExprId, TyId>` is a representation change, not a totality one |
+| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.4. **§3.2 (Q2) called this "lowest coupling… could be its own early, small slice" — measured and found larger; see §9** |
+| **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | independent |
 | **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.4, T3.6 |
 
-None of T3.3b–T3.7 above is built (T3.3a, above, is). Deliberately not decomposed to signature level,
-for the reason `compiler-architecture.md` §6's own forward references gave one phase up: "an unopened
-phase whose slices are already written is a wish list." Each exists so a proposal citing it is
-recognised as this track's future work, not unclaimed scope — none is a proposal itself, and (per
-§1.1's correction) none should be assumed still-accurate without re-measuring against the tree first,
-the same discipline that caught the `ExprKey(Span)` premise being stale, and that this pass itself
-applied to find T3.3a's real 11-site scope instead of trusting the 900+-mention grep count in §9.
+T3.4–T3.7 above are not built (T3.0, T3.3a, T3.3b, above, are). Deliberately not decomposed to
+signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
+up: "an unopened phase whose slices are already written is a wish list." Each exists so a proposal
+citing it is recognised as this track's future work, not unclaimed scope — none is a proposal itself,
+and (per §1.1's correction) none should be assumed still-accurate without re-measuring against the
+tree first — the same discipline that caught the `ExprKey(Span)` premise being stale, found T3.3a's
+real 11-site scope instead of trusting a 900+-mention grep count, and found T3.3b closable in two
+edits instead of the ~81-function estimate directly above.
 
 **Completion probe:** `span_keyed_maps` = 0. Already built (T0.0, #999/#1000) and CI-gated
 (`greenfield_status_table_is_current`); reads **27** as of `3691d6a3`, **unchanged by T3.0** (a
@@ -427,10 +434,11 @@ B could regress only `bynkc`'s output; this phase can regress `bynk-lsp` hover, 
 diagnostics live in an editor session. §3.4 (Q4)'s proposed gate amendment exists specifically for
 this.
 
-**Totality has a bootstrapping order.** §3.2 (Q2) names it directly: `IndexVec`'s totality guarantee
-(R2.5) needs somewhere honest to record "this node's resolution failed," which doesn't exist until
-`Ty::Error` (R4.3) lands. Building the total table first reproduces the exact "`None` swallows the
-diagnostic" failure R4.3's own rationale describes, one layer further from the source.
+**Totality had a bootstrapping order — resolved, not just avoided.** §3.2 (Q2) named it: `IndexVec`'s
+totality guarantee (R2.5) needs somewhere honest to record "this node's resolution failed," which
+didn't exist until `Ty::Error` (R4.3) landed. T3.3a then T3.3b landed in that order for exactly this
+reason, and R4.9's future `IndexVec<ExprId, TyId>` (T3.4) now has `Ty::Error` to put at a missing
+index instead of needing to invent the same answer under different, more gated conditions later.
 
 **Seven consumer crates, not three.** §3.3 (Q3) counts `expr_types`'s actual readers against the
 review's "three consumer crates" framing (which measured something else — the AST-retrofit cost, not
@@ -463,25 +471,37 @@ let the compiler's own exhaustiveness check enumerate every *exhaustive* match t
 (none found mishandling `Error` in a way that would matter, since nothing constructs it yet). The
 wildcard-audit risk this section originally raised was real in principle but not in this codebase's
 actual shape — the type system did the enumeration work a manual audit would have done, faster and
-completely. **What the measurement got right, and what remains real**: R4.3's actual content — making
-resolution failure *produce* `Ty::Error` instead of `None` — is the ~81-function, ~193-call-site
-conversion T3.3b names, and *that* is genuinely large, because it is a semantic decision at each site
-(does `None` here mean "resolution failed," or something else), not a mechanical one the compiler can
-enumerate for you the way exhaustiveness checking did for T3.3a.
+completely.
+
+**T3.3b then repeated the same lesson at a different layer, and this time the estimate directly above
+was wrong for a structural reason, not a measurement one.** The ~81-function, ~193-call-site figure
+conflated two different problems: making `expr_types` *total* (what R4.3 actually requires) with
+converting the checker's *internal* `Option<Ty>` recovery convention throughout (a much larger,
+separate thing R4.3 does not require). A classification pass over ~350 internal `None`-sites — tried,
+and documented as unreliable even after real spot-checking found a missed syntax pattern and a
+confirmed off-by-one-window false negative — was solving the wrong-shaped problem. The actual fix was
+two write-site edits (`type_of`, `type_of_block`), because both funnel every internal `None`, from
+whichever of those ~350 sites produced it, through one place before anything downstream ever sees it.
+Verified, not assumed: `check_field_access`'s `type_of(receiver, …)?` still sees the exact same
+`Option<Ty>` return value as before the change — only what gets *written* to `expr_types` changed, so
+none of the ~193 call sites needed touching. The general form of the mistake, now seen twice in this
+track (T3.3a's wildcard-audit fear, T3.3b's call-site-conversion fear): estimating a fix's size from
+the shape of the *problem statement* rather than the shape of the *codebase's actual choke points*.
 
 **T3.5 ("lowest coupling... could be its own early, small slice", Q2 in §3.2) is also bigger than
-that line said, and this time the compiler-enumeration trick that worked for T3.3a doesn't apply.**
-`Span`'s two fields (`start`, `end`) are `pub`, so the type is constructed by struct-literal syntax
-directly, not funnelled through one constructor the way `Ty`'s variants are matched exhaustively.
-Direct measurement: **50 `Span { ... }` struct literals and 110 `Span::new(...)` calls — 160
-construction sites**, not the ~31 a looser first-pass grep suggested. Unlike T3.3a, most of these
-aren't a judgement call (a construction site just needs "which file is this," not a decision about
-failure semantics), but there is real design work with no shortcut: `FileId`/`Sources` (reference
-R2.1) don't exist yet in any form, so T3.5 has to build the registry *and* thread "which file" to 160
-sites, most of them inside `bynk-syntax`'s parser, where no per-file identity is threaded through
-today at all. Smaller in kind than T3.3b (mechanical once the registry exists, not semantically
-loaded per site), but not the "small slice" its own settling decision called it — another case, like
-T3.3, of this doc's own sizing being optimistic until it was actually measured.
+that line said, and neither of the shortcuts that worked for T3.3a/T3.3b applies to it.** `Span`'s two
+fields (`start`, `end`) are `pub`, so the type is constructed by struct-literal syntax directly, not
+funnelled through one constructor the way `Ty`'s variants are matched exhaustively, and (unlike
+`expr_types`) there is no single write choke-point to fix instead — every one of `Span`'s construction
+sites needs the file identity at the moment of construction, not after the fact. Direct measurement:
+**50 `Span { ... }` struct literals and 110 `Span::new(...)` calls — 160 construction sites**, not the
+~31 a looser first-pass grep suggested. Unlike T3.3a, most of these aren't a judgement call (a
+construction site just needs "which file is this," not a decision about failure semantics), but there
+is real design work with no shortcut: `FileId`/`Sources` (reference R2.1) don't exist yet in any form,
+so T3.5 has to build the registry *and* thread "which file" to 160 sites, most of them inside
+`bynk-syntax`'s parser, where no per-file identity is threaded through today at all. Mechanical once
+the registry exists, not semantically loaded per site the way the *abandoned* T3.3b classification
+attempt was — but still not the "small slice" its own settling decision called it.
 
 ## 10. What "transformational" means here
 

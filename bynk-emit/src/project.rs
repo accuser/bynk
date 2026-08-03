@@ -6066,4 +6066,36 @@ mod tests {
         assert_eq!(errs.len(), typed.errors.len());
         assert!(!errs.is_empty());
     }
+
+    // -- T3.3b: `expr_types` is total (R4.3, R2.5, R4.9) -----------------
+
+    #[test]
+    fn a_diagnosed_resolution_failure_records_ty_error_instead_of_nothing() {
+        // An empty list literal with no expected element type to infer from
+        // (`bynk.types.uninferable_element_type`, `checker.rs`'s `type_of`
+        // `ExprKind::ListLit` arm) is a genuine, diagnosed `type_of` failure
+        // reachable from a plain `fn` — no resolver/handler-body plumbing
+        // needed to reproduce it.
+        let src = "commons app.demo\n\nfn bad() -> Int {\n  []\n}\n";
+        let out = analyse_in_memory_with_types(src, BuildTarget::Bundle, Platform::default());
+        assert!(
+            out.errors
+                .iter()
+                .any(|e| e.error.category == "bynk.types.uninferable_element_type"),
+            "expected the uninferable-element-type diagnostic: {:?}",
+            out.errors
+                .iter()
+                .map(|e| &e.error.message)
+                .collect::<Vec<_>>()
+        );
+        let offset = src.find("[]").expect("source mentions []");
+        let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
+        assert_eq!(
+            ty.map(Ty::display),
+            Some("<type error>".to_string()),
+            "T3.3b: a diagnosed type_of failure must record Ty::Error, not leave the span \
+             unrecorded — {:?}",
+            ty
+        );
+    }
 }
