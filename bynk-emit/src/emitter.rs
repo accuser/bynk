@@ -1027,7 +1027,11 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
         Ty::Unit => TypeRef::Unit(sp),
         Ty::ValidationError => TypeRef::ValidationError(sp),
         Ty::JsonError => TypeRef::JsonError(sp),
-        Ty::Effect(_)
+        // R4.3: `Ty::Error` has no codec — same as the other non-boundary
+        // types below, but for the additional reason that a checked program
+        // should never contain one at a codec-generation site.
+        Ty::Error
+        | Ty::Effect(_)
         | Ty::Query(_)
         | Ty::Stream(_)
         | Ty::Connection(_)
@@ -4099,6 +4103,15 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<QualifyFn<'_>>) -> String {
 /// emitted generic function they are in scope as TS type parameters.
 fn ts_ty(t: &Ty) -> String {
     match t {
+        // bynk internal error (finding #28, R4.3): `Ty::Error` records a
+        // resolution failure, which per R4.3 is always accompanied by a
+        // pushed diagnostic — the check that produced it should have failed
+        // the whole program and never reached emission. A loud failure here
+        // beats silently emitting a type for a node the checker gave up on.
+        Ty::Error => panic!(
+            "bynk internal error (finding #28): emitter asked to render `Ty::Error` as a \
+             TypeScript type — a checked program should never contain one"
+        ),
         Ty::Base(BaseType::Int) => "number".to_string(),
         Ty::Base(BaseType::String) => "string".to_string(),
         Ty::Base(BaseType::Bool) => "boolean".to_string(),

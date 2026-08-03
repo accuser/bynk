@@ -345,6 +345,18 @@ replaces it with the one real gap found while preparing it.
 | Slice | What shipped | Rules | Status |
 |---|---|---|---|
 | **T3.0** | Extended `43abc242`'s debug-only uniqueness check (finding #28) to `check_handler_body` and `check_body` — previously covered only `check_record`'s top-level-`fn` loop, leaving service/agent handler bodies and test-case bodies with no collision protection. Same per-call `seen` set granularity `43abc242` chose, for the same reason (a multi-file commons legitimately re-checks a handler more than once). `bynk-check/src/checker.rs` | R2.4 (verification) | **Shipped** — `cargo test --workspace` green, no existing fixture triggers the extended assertion |
+| **T3.3a** | `Ty::Error` added as a real variant on `enum Ty`, and given deliberate (not default/panicking-by-omission) semantics at every *exhaustive* match over `Ty` the compiler's own exhaustiveness check found: `compatible`/`structurally_compatible_inner` treat it as compatible with anything in both positions (R4.3's "assignable to and from everything"); `unify` binds it trivially; `substitute`/`contains_var`/`contains_flexible_var`/`rebrand_return_type` treat it as the leaf it is; `display` renders `<type error>`; `json_codable` treats it as codable (no cascading `json_uncodable`, matching "suppresses all downstream diagnostics that mention it"); `ty_to_type_ref` returns `None` (no codec); `ts_ty` — reached only if a checked, emission-bound program somehow contains one, which R4.3 says should never happen — raises a loud internal error (finding #28's own convention) rather than silently emitting a type for it. **Measured, not assumed:** the compiler's own exhaustiveness check found exactly 11 sites needing an arm (9 in `bynk-check`, 2 in `bynk-emit`) out of 900+ raw `Ty::` mentions across the two crates — most of those are constructors and non-exhaustive matches, not sites this change touches. `bynk-ide`/`bynk-lsp`/`bynk-wasm` needed no changes at all. | R4.3 (partial — see below) | **Shipped** — `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test --workspace` all clean (one pre-existing, environment-only failure, unrelated) |
+
+**T3.3a is not T3.3.** The variant exists and is safely, deliberately handled everywhere the type
+system requires — but nothing in the compiler constructs it yet. R4.3's actual content ("resolution
+failure produces it; it never produces 'no type'") needs the ~81 functions across `bynk-check` that
+return `Option<Ty>` today (`grep -c -- '-> Option<Ty>'`) converted to return `Ty` and use `Error` at
+their failure points, with their ~193 call sites (`type_of` alone) updated to match. That is real,
+large, semantically-loaded work — deciding for each site whether `None` there means "genuine
+resolution failure" (→ `Error`) or something else a wildcard search cannot answer — and it is not
+attempted here. T3.3a is offered as what it is: safe, tested, complete-in-itself groundwork that
+makes the remaining conversion type-checker-guided rather than a leap in the dark, not a claim that
+R4.3 is closed.
 
 ### Not built: the scaffolding pair this doc's first revision specified
 
@@ -359,18 +371,19 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.3** | `Ty::Error` as a real variant; `expr_types` records it instead of omitting the entry on `None` | R4.3 | — independent, can run first. **Measured, not just estimated, before slicing** — see §9 |
-| **T3.4** | Real `ExprId` allocated at parse (no `ExprKey(Span)` predecessor — see above); `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>` entirely, migrated crate-by-crate per §3.3's seven-crate list (dual-map: both forms populated during migration, `Span`-keyed form deleted last) | R2.4, R2.5, R4.9 | T3.3 (unblocks totality) |
-| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.3/T3.4 |
-| **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | T3.3 |
+| **T3.3b** | Convert the ~81 `Option<Ty>`-returning functions in `bynk-check` (`type_of` foremost, plus its callees) to return `Ty` and construct `Ty::Error` at genuine resolution-failure points instead of `None`; update the ~193 call sites (`type_of` alone). This is where R4.3 actually closes — T3.3a only prepared the type to receive it | R4.3 | T3.3a (landed) |
+| **T3.4** | Real `ExprId` allocated at parse (no `ExprKey(Span)` predecessor — see above); `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>` entirely, migrated crate-by-crate per §3.3's seven-crate list (dual-map: both forms populated during migration, `Span`-keyed form deleted last) | R2.4, R2.5, R4.9 | T3.3b (unblocks totality) |
+| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.3b/T3.4 |
+| **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | T3.3b |
 | **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.4, T3.6 |
 
-None of T3.3–T3.7 above is built. Deliberately not decomposed to signature level, for the reason
-`compiler-architecture.md` §6's own forward references gave one phase up: "an unopened phase whose
-slices are already written is a wish list." Each exists so a proposal citing it is recognised as this
-track's future work, not unclaimed scope — none is a proposal itself, and (per §1.1's correction) none
-should be assumed still-accurate without re-measuring against the tree first, the same discipline that
-caught the `ExprKey(Span)` premise being stale.
+None of T3.3b–T3.7 above is built (T3.3a, above, is). Deliberately not decomposed to signature level,
+for the reason `compiler-architecture.md` §6's own forward references gave one phase up: "an unopened
+phase whose slices are already written is a wish list." Each exists so a proposal citing it is
+recognised as this track's future work, not unclaimed scope — none is a proposal itself, and (per
+§1.1's correction) none should be assumed still-accurate without re-measuring against the tree first,
+the same discipline that caught the `ExprKey(Span)` premise being stale, and that this pass itself
+applied to find T3.3a's real 11-site scope instead of trusting the 900+-mention grep count in §9.
 
 **Completion probe:** `span_keyed_maps` = 0. Already built (T0.0, #999/#1000) and CI-gated
 (`greenfield_status_table_is_current`); reads **27** as of `3691d6a3`, **unchanged by T3.0** (a
@@ -439,21 +452,22 @@ The corrective discipline this risk names for future slices: when a number has a
 the review and today, find the commit, not just the new value — the commit tells you what's still
 open, the value alone doesn't.
 
-**T3.3 ("small, independent") is bigger than its one-line description suggests, measured directly
-rather than assumed.** `Ty::` appears **702 times across 9 files in `bynk-check`** (`checker.rs` 335,
-`checker/kernels.rs` 168, `checker/calls.rs` 71, `checker/expressions.rs` 102, `kernel_methods.rs` 16,
-`checker/linearity.rs` 5, `checker/refinements.rs` 2, `expr_types.rs` 2, `wire.rs` 1, `hints.rs` 1) and
-another **202 times across 6 files in `bynk-emit`** — before counting `bynk-ide`/`bynk-lsp`'s own type
-display and hover paths. Adding one enum variant is a one-line change; the Rust compiler forces every
-*exhaustive* match to add an arm, which is the useful half of this. The dangerous half: many of these
-900+ sites are almost certainly `_ =>` wildcard matches that would **silently accept** `Ty::Error`
-with whatever the wildcard's existing default does, rather than the "assignable to/from everything,
-suppresses downstream diagnostics" behaviour R4.3 specifies — and a wildcard arm doing the wrong thing
-with `Ty::Error` is exactly R2.12's finding (`clippy::wildcard_enum_match_arm`) landing on real
-correctness ground, at a scale (900+ call sites, two crates) that makes "small" the wrong word for it.
-This is not a reason to avoid T3.3 — it is the reason to slice it as its own careful pass with a real
-audit of the wildcard sites, not a same-session add-on to whatever else is in flight, and it is why
-this session did not attempt it.
+**T3.3 ("small, independent") was bigger than its one-line description suggested, and the *shape* of
+the risk was measured wrong on the first pass.** `Ty::` appears **702 times across 9 files in
+`bynk-check`** and **202 times across 6 files in `bynk-emit`** — 900+ raw mentions, which is what this
+doc's previous revision read as the danger: wildcard match arms silently mishandling a new variant.
+**That fear was addressed directly rather than argued around**: T3.3a (above) added the variant and
+let the compiler's own exhaustiveness check enumerate every *exhaustive* match that needed an arm —
+**11 sites**, not 900+, because the overwhelming majority of those mentions are constructors
+(`Ty::Base(x)`, `Ty::List(...)`) or matches that already carry a wildcard and were checked by hand
+(none found mishandling `Error` in a way that would matter, since nothing constructs it yet). The
+wildcard-audit risk this section originally raised was real in principle but not in this codebase's
+actual shape — the type system did the enumeration work a manual audit would have done, faster and
+completely. **What the measurement got right, and what remains real**: R4.3's actual content — making
+resolution failure *produce* `Ty::Error` instead of `None` — is the ~81-function, ~193-call-site
+conversion T3.3b names, and *that* is genuinely large, because it is a semantic decision at each site
+(does `None` here mean "resolution failed," or something else), not a mechanical one the compiler can
+enumerate for you the way exhaustiveness checking did for T3.3a.
 
 ## 10. What "transformational" means here
 
