@@ -6,6 +6,8 @@
 //! - `greenfield-status` (compiler-architecture track, T0.0, #999) runs the
 //!   thirteen probes against the tree and prints the report; `--apply` writes the
 //!   committed table.
+//! - `ci` runs the gates CI runs, locally, in CI's own cheapest-first order —
+//!   `--fast` stops after the two that need no compile-and-link.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -32,6 +34,14 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
             stamp(args.iter().any(|a| a == "--apply"))
+        }
+        Some("ci") => {
+            if let Some(bad) = args[1..].iter().find(|a| *a != "--fast") {
+                eprintln!("xtask ci: unknown argument {bad:?}");
+                usage();
+                return ExitCode::from(2);
+            }
+            ci(args.iter().any(|a| a == "--fast"))
         }
         Some(other) => {
             eprintln!("xtask: unknown command {other:?}");
@@ -244,6 +254,99 @@ fn greenfield_status(apply: bool) -> ExitCode {
     }
 }
 
+/// Run the CI gates locally, cheapest first, stopping at the first failure.
+///
+/// This exists to move a whole class of round trip off CI. The PR gate's
+/// critical path is the `Test suite (windows-latest)` leg at ~7 minutes, so a
+/// `cargo fmt` slip — detectable in 17 seconds — costs a push, a seven-minute
+/// wait, and a second push. The two `--fast` gates below need no
+/// compile-and-link and are what the `pre-push` hook in `.githooks/` runs.
+///
+/// The commands mirror `.github/workflows/ci.yml`'s `fmt`, `clippy` and `test`
+/// jobs. They are deliberately NOT asserted equal to the workflow by a drift
+/// guard: this is a convenience that front-runs CI, and CI remains the
+/// authority. If the two drift, CI still fails and the gate still holds — the
+/// only cost is a round trip this command would have saved.
+///
+/// The test leg runs under nextest's `default` profile, not CI's `ci` profile:
+/// that is the documented intent in `.config/nextest.toml` (local runs keep
+/// `retries = 0` so a flake surfaces immediately instead of being absorbed).
+fn ci(fast: bool) -> ExitCode {
+    let root = repo_root();
+
+    let mut steps: Vec<(&str, Vec<&str>)> = vec![
+        ("formatting", vec!["fmt", "--all", "--check"]),
+        (
+            "clippy",
+            vec![
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ),
+    ];
+
+    if !fast {
+        // Prefer nextest (what CI runs, and far faster across 141 test
+        // binaries), but fall back rather than fail: a contributor who has not
+        // installed it should still get a working `cargo xtask ci`.
+        if have_nextest(&root) {
+            steps.push(("tests", vec!["nextest", "run", "--workspace", "--locked"]));
+        } else {
+            eprintln!(
+                "xtask ci: cargo-nextest not found — falling back to `cargo test`. \
+                 CI runs nextest; install it with `cargo install cargo-nextest --locked` \
+                 for a faster and closer-to-CI run."
+            );
+            steps.push(("tests", vec!["test", "--workspace", "--locked"]));
+        }
+    }
+
+    for (name, args) in &steps {
+        println!("xtask ci: {name} — cargo {}", args.join(" "));
+        let status = Command::new(cargo()).args(args).current_dir(&root).status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("xtask ci: {name} failed ({s})");
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("xtask ci: cannot run cargo for {name}: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if fast {
+        println!(
+            "xtask ci: fast gates passed — the test suite was NOT run (drop --fast to run it)"
+        );
+    } else {
+        println!("xtask ci: all gates passed");
+    }
+    ExitCode::SUCCESS
+}
+
+/// The cargo that invoked us, so a non-default toolchain stays consistent across
+/// the child processes. Falls back to plain `cargo` when run outside cargo.
+fn cargo() -> String {
+    std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
+}
+
+fn have_nextest(root: &Path) -> bool {
+    Command::new(cargo())
+        .args(["nextest", "--version"])
+        .current_dir(root)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
 fn usage() {
-    eprintln!("usage: cargo xtask <check-pending | greenfield-status [--apply] | stamp [--apply]>");
+    eprintln!(
+        "usage: cargo xtask <check-pending | ci [--fast] | greenfield-status [--apply] | stamp [--apply]>"
+    );
 }

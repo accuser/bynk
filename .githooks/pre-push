@@ -1,0 +1,36 @@
+#!/bin/sh
+# Pre-push: run the CI gates that need no compile-and-link, so a formatting or
+# lint slip is caught in seconds rather than costing a full CI round trip.
+#
+# Enable it (opt-in, per clone — git never picks this directory up on its own):
+#
+#     git config core.hooksPath .githooks
+#
+# Why only the fast gates: the PR gate's critical path is the
+# `Test suite (windows-latest)` leg at ~7 minutes, and `cargo fmt --check` and
+# `cargo clippy` between them account for under a minute of it. Catching those
+# two here removes the most common reason a PR needs a second run. The test
+# suite is deliberately NOT run on every push — it is minutes of local wall
+# clock, and a hook slow enough to be worth bypassing gets bypassed. Run it
+# yourself before opening a PR:
+#
+#     cargo xtask ci
+#
+# To push past this hook once (a WIP branch, a docs-only fixup):
+#
+#     git push --no-verify
+
+set -e
+
+# Nothing to check on a branch deletion (`git push origin :branch`), which sends
+# an all-zero local SHA and no worktree change to lint.
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+	case "$local_sha" in
+	*[!0]*) has_commits=1 ;;
+	esac
+done
+[ -n "${has_commits:-}" ] || exit 0
+
+echo "pre-push: running the fast CI gates (cargo xtask ci --fast)"
+echo "pre-push: skip with --no-verify; full suite is \`cargo xtask ci\`"
+exec cargo xtask ci --fast
