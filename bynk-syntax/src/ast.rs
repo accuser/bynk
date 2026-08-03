@@ -2401,7 +2401,12 @@ pub struct Expr {
 /// alignment-padded from 4), not a silent regression — the ceiling moves
 /// with it, once, here, so the next *accidental* growth still trips this
 /// assertion rather than hiding under slack headroom.
-const _: () = assert!(std::mem::size_of::<Expr>() <= 136);
+/// T3.5 (R2.2): `file: FileId` on `Span` is a deliberate increase (136 → 160
+/// — `Span` itself grows from 16 to 24 bytes with alignment padding, and
+/// `ExprKind`'s largest variant carries more than one `Span`), not a silent
+/// regression — the ceiling moves with it, once, here, exactly as T3.4 did
+/// for `id: ExprId`.
+const _: () = assert!(std::mem::size_of::<Expr>() <= 160);
 
 impl ExprKind {
     /// Construct an `IntLit` for a *synthesized* integer — one the compiler

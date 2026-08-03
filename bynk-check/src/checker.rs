@@ -2373,6 +2373,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                         crate::locals::LocalKind::Let,
                         final_ty.display(),
                         Span {
+                            file: l.span.file,
                             start: l.span.end,
                             end: block.span.end,
                         },
@@ -2474,6 +2475,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                         crate::locals::LocalKind::Let,
                         final_ty.display(),
                         Span {
+                            file: l.span.file,
                             start: l.span.end,
                             end: block.span.end,
                         },

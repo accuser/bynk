@@ -95,7 +95,7 @@ mod tests {
     use bynk_syntax::ast::BaseType;
 
     fn span(start: usize, end: usize) -> Span {
-        Span { start, end }
+        Span::new(start, end)
     }
 
     #[test]

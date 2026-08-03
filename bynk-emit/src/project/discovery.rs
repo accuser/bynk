@@ -224,8 +224,15 @@ pub(crate) fn parse_sources(
     path: &Path,
     source: String,
     next_expr_id: &mut u32,
+    next_file_id: &mut u32,
 ) -> Result<(Vec<ParsedFile>, Vec<CompileError>), Vec<CompileError>> {
-    let tokens = lexer::tokenize(&source).map_err(|e| vec![e])?;
+    // T3.5 (R2.2): one `FileId` per file this project parse touches, allocated
+    // here (the same choke point `next_expr_id` uses) rather than by the
+    // caller, so every span the lexer stamps for this file carries a real,
+    // distinct file identity instead of `FileId::UNKNOWN`.
+    let file = bynk_syntax::span::FileId(*next_file_id);
+    *next_file_id += 1;
+    let tokens = lexer::tokenize_in(&source, file).map_err(|e| vec![e])?;
     // v0.113: a file may declare more than one top-level unit — an *atomic*
     // file holding `commons`/`context` alongside a `suite` (DECISION S). Each
     // unit becomes its own `ParsedFile` sharing the file's source and path, so

@@ -436,7 +436,7 @@ pub fn remap_site(site: &SiteRef, plan: &RenamePlan) -> SiteRef {
     };
     SiteRef {
         path: site.path.clone(),
-        span: Span::new(start, end),
+        span: Span::new_in(site.span.file, start, end),
     }
 }
 

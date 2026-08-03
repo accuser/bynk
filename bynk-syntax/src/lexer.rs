@@ -9,7 +9,7 @@
 use logos::Logos;
 
 use crate::error::CompileError;
-use crate::span::Span;
+use crate::span::{FileId, Span};
 
 /// v0.142 (ADR 0166): strip `_` digit separators from a numeric literal's lexeme
 /// before it is parsed into a value. The lexer's `IntLit`/`FloatLit` regexes only
@@ -488,13 +488,20 @@ pub struct Token {
     pub span: Span,
 }
 
-/// Tokenise a source string. Returns the full token vector or the first
-/// lexical error.
+/// Tokenise a source string with no real file identity — every span's
+/// [`FileId`] defaults to [`FileId::UNKNOWN`]. See [`tokenize_in`] for the
+/// real-identity entry point production callers use.
+pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
+    tokenize_in(source, FileId::UNKNOWN)
+}
+
+/// Tokenise a source string, stamping every token's span with `file`.
+/// Returns the full token vector or the first lexical error.
 ///
 /// Doc blocks (`---` ... `---`) and line comments (`-- ...`) are recognised
 /// outside the logos-generated lexer: we scan the source one segment at a
 /// time, dispatching to logos for ordinary tokens between non-token spans.
-pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
+pub fn tokenize_in(source: &str, file: FileId) -> Result<Vec<Token>, CompileError> {
     let mut tokens = Vec::new();
     let bytes = source.as_bytes();
     let mut pos = 0;
@@ -506,7 +513,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
             // Find the matching closing `---` line.
             match doc_block_close(source, open_end) {
                 Some((close_start, close_end)) => {
-                    let span = Span::new(pos, close_end);
+                    let span = Span::new_in(file, pos, close_end);
                     tokens.push(Token {
                         kind: TokenKind::DocBlock,
                         span,
@@ -518,7 +525,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                 None => {
                     return Err(CompileError::new(
                         "bynk.lex.unclosed_doc_block",
-                        Span::new(pos, open_end),
+                        Span::new_in(file, pos, open_end),
                         "documentation block opened but never closed",
                     )
                     .with_note(
@@ -550,7 +557,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
             }
             tokens.push(Token {
                 kind: TokenKind::Comment,
-                span: Span::new(start, pos),
+                span: Span::new_in(file, start, pos),
             });
             continue;
         }
@@ -566,10 +573,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
         // invalid escape in the logos grammar, so this never re-routes a
         // currently-valid literal.
         if bytes[pos] == b'"' && has_interp_hole(bytes, pos) {
-            let end = scan_str(bytes, source, pos, 0)?;
+            let end = scan_str(bytes, source, pos, 0, file)?;
             tokens.push(Token {
                 kind: TokenKind::InterpStr,
-                span: Span::new(pos, end),
+                span: Span::new_in(file, pos, end),
             });
             pos = end;
             continue;
@@ -580,7 +587,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
             // No token at this position; treat as unexpected character so
             // the user sees something useful.
             let ch = source[pos..].chars().next().unwrap_or('\0');
-            let span = Span::new(pos, pos + ch.len_utf8());
+            let span = Span::new_in(file, pos, pos + ch.len_utf8());
             return Err(CompileError::new(
                 "bynk.lex.unexpected_character",
                 span,
@@ -588,7 +595,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
             ));
         };
         let local = lex.span();
-        let span: Span = Span::new(pos + local.start, pos + local.end);
+        let span: Span = Span::new_in(file, pos + local.start, pos + local.end);
         match result {
             Ok(kind) => {
                 if kind == TokenKind::IntLit {
@@ -670,16 +677,22 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
 /// dropped, so resolution degrades to the pre-fix behaviour instead of losing
 /// tokens.
 pub fn tokenize_expanding_holes(source: &str) -> Result<Vec<Token>, CompileError> {
+    tokenize_expanding_holes_in(source, FileId::UNKNOWN)
+}
+
+/// Like [`tokenize_expanding_holes`], but stamping every token's span
+/// (including rebased hole tokens) with `file`.
+pub fn tokenize_expanding_holes_in(source: &str, file: FileId) -> Result<Vec<Token>, CompileError> {
     let mut out = Vec::new();
-    for tok in tokenize(source)? {
-        expand_hole_token(source, tok, &mut out);
+    for tok in tokenize_in(source, file)? {
+        expand_hole_token(source, file, tok, &mut out);
     }
     Ok(out)
 }
 
 /// Push `tok` onto `out`, expanding it into its holes' tokens if it is an
 /// `InterpStr` (see [`tokenize_expanding_holes`]); otherwise push it as-is.
-fn expand_hole_token(source: &str, tok: Token, out: &mut Vec<Token>) {
+fn expand_hole_token(source: &str, file: FileId, tok: Token, out: &mut Vec<Token>) {
     if tok.kind != TokenKind::InterpStr {
         out.push(tok);
         return;
@@ -692,13 +705,13 @@ fn expand_hole_token(source: &str, tok: Token, out: &mut Vec<Token>) {
         let InterpSegment::Hole(hole) = segment else {
             continue; // chunk text carries no tokens
         };
-        let Ok(hole_tokens) = tokenize(&source[hole.range()]) else {
+        let Ok(hole_tokens) = tokenize_in(&source[hole.range()], file) else {
             continue;
         };
         for mut t in hole_tokens {
             // Rebase the hole's local spans to absolute source positions.
-            t.span = Span::new(t.span.start + hole.start, t.span.end + hole.start);
-            expand_hole_token(source, t, out); // recurse for nested interpolation
+            t.span = Span::new_in(file, t.span.start + hole.start, t.span.end + hole.start);
+            expand_hole_token(source, file, t, out); // recurse for nested interpolation
         }
     }
 }
@@ -729,18 +742,28 @@ fn has_interp_hole(bytes: &[u8], start: usize) -> bool {
 /// the byte offset just past the closing `"`. Recognises the four simple
 /// escapes plus `\(…)` interpolation holes, whose parens are balanced (and
 /// whose nested strings are skipped) by [`scan_hole`]. (v0.43.)
-fn scan_str(bytes: &[u8], source: &str, start: usize, depth: usize) -> Result<usize, CompileError> {
+fn scan_str(
+    bytes: &[u8],
+    source: &str,
+    start: usize,
+    depth: usize,
+    file: FileId,
+) -> Result<usize, CompileError> {
     debug_assert_eq!(bytes[start], b'"');
     if depth > crate::MAX_NESTING_DEPTH {
         // Anchor on the opening `"` of the string that tipped over the limit.
-        return Err(too_deeply_nested_interpolation(Span::new(start, start + 1)));
+        return Err(too_deeply_nested_interpolation(Span::new_in(
+            file,
+            start,
+            start + 1,
+        )));
     }
     let mut i = start + 1;
     loop {
         if i >= bytes.len() || bytes[i] == b'\n' {
             return Err(CompileError::new(
                 "bynk.lex.unterminated_string",
-                Span::new(start, i.min(bytes.len())),
+                Span::new_in(file, start, i.min(bytes.len())),
                 "unterminated string literal",
             )
             .with_note(
@@ -752,7 +775,7 @@ fn scan_str(bytes: &[u8], source: &str, start: usize, depth: usize) -> Result<us
             b'"' => return Ok(i + 1),
             b'\\' => match bytes.get(i + 1) {
                 Some(b'n' | b't' | b'"' | b'\\') => i += 2,
-                Some(b'(') => i = scan_hole(bytes, source, i + 2, depth + 1)?,
+                Some(b'(') => i = scan_hole(bytes, source, i + 2, depth + 1, file)?,
                 other => {
                     let shown = other.map(|b| (*b as char).to_string()).unwrap_or_default();
                     // Cover `\` plus the whole offending char, advanced to a char
@@ -764,7 +787,7 @@ fn scan_str(bytes: &[u8], source: &str, start: usize, depth: usize) -> Result<us
                     }
                     return Err(CompileError::new(
                         "bynk.lex.bad_escape",
-                        Span::new(i, end),
+                        Span::new_in(file, i, end),
                         format!("invalid escape sequence `\\{shown}` in string literal"),
                     )
                     .with_note("supported escapes: \\n \\t \\\" \\\\ \\(…)"));
@@ -786,12 +809,14 @@ fn scan_hole(
     source: &str,
     start: usize,
     nesting: usize,
+    file: FileId,
 ) -> Result<usize, CompileError> {
     if nesting > crate::MAX_NESTING_DEPTH {
         // Anchor on the `\(` opener that tipped over the limit; it sits two
         // bytes before `start` and is pure ASCII, so the span stays on char
         // boundaries (a fuzz invariant).
-        return Err(too_deeply_nested_interpolation(Span::new(
+        return Err(too_deeply_nested_interpolation(Span::new_in(
+            file,
             start.saturating_sub(2),
             start,
         )));
@@ -802,7 +827,7 @@ fn scan_hole(
         if i >= bytes.len() || bytes[i] == b'\n' {
             return Err(CompileError::new(
                 "bynk.lex.unterminated_interpolation",
-                Span::new(start.saturating_sub(2), i.min(bytes.len())),
+                Span::new_in(file, start.saturating_sub(2), i.min(bytes.len())),
                 "unterminated interpolation hole",
             )
             .with_note(
@@ -821,7 +846,7 @@ fn scan_hole(
                     return Ok(i);
                 }
             }
-            b'"' => i = scan_str(bytes, source, i, nesting + 1)?,
+            b'"' => i = scan_str(bytes, source, i, nesting + 1, file)?,
             _ => i += 1,
         }
     }
@@ -890,10 +915,14 @@ pub(crate) fn split_interp(source: &str, span: Span) -> Result<Vec<InterpSegment
                         segments.push(InterpSegment::Chunk(std::mem::take(&mut chunk)));
                     }
                     let hole_start = i + 2;
-                    let after = scan_hole(bytes, source, hole_start, 0)?;
+                    let after = scan_hole(bytes, source, hole_start, 0, span.file)?;
                     // `after` is one past the matching `)`; the hole body is
                     // everything up to that `)`.
-                    segments.push(InterpSegment::Hole(Span::new(hole_start, after - 1)));
+                    segments.push(InterpSegment::Hole(Span::new_in(
+                        span.file,
+                        hole_start,
+                        after - 1,
+                    )));
                     i = after;
                 }
                 // The lexer already validated every escape, so nothing else
