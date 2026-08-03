@@ -1,6 +1,10 @@
 # 0313 — Phase 3 opens on ExprKey(Span) scaffolding, not a direct ExprId retrofit
 
-- **Status:** Accepted (v0.247.5)
+- **Status:** Accepted (v0.247.5). **Superseded by [ADR 0315](0315-phase-3-scaffolding-already-shipped.md)**
+  (v0.247.7): the scaffolding this decision committed to building — the uniqueness check and the
+  loud-error replacements — had already shipped in `43abc242`, six days before this ADR was written,
+  and that commit had already rejected the `ExprKey(Span)` newtype on the same grounds this decision
+  argued against. No standalone `ExprKey(Span)` slice was built.
 
 **Context.** `design/tracks/identity-and-totality.md` (spine #1046) opens phase 3 of the compiler
 trajectory. The 2026-07-27 pipeline review explicitly rejected a naive full `NodeId` retrofit as too
