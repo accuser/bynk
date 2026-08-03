@@ -145,16 +145,10 @@ mod tests {
     fn b(name: &str, def: usize, scope: (usize, usize)) -> LocalBinding {
         LocalBinding {
             name: name.to_string(),
-            def_span: Span {
-                start: def,
-                end: def + name.len(),
-            },
+            def_span: Span::new(def, def + name.len()),
             kind: LocalKind::Let,
             ty: "Int".to_string(),
-            scope: Span {
-                start: scope.0,
-                end: scope.1,
-            },
+            scope: Span::new(scope.0, scope.1),
         }
     }
 

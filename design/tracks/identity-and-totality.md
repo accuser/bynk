@@ -3,14 +3,16 @@
 - **Status:** **Settled — Slicing.** §3's seven questions were argued under a same-day settling
   review; Q1 was reversed once there (toward `ExprKey(Span)` scaffolding), then **reversed again**
   while slicing T3.1 (§1.1), once implementation work found the scaffolding had already been built —
-  and already rejected — by a commit that predates this track. Four slices have shipped for real:
+  and already rejected — by a commit that predates this track. Five slices have shipped for real:
   T3.0 (extending an existing debug-only check to handler bodies), T3.3a (`Ty::Error` as a real,
   correctly-handled variant), T3.3b (`expr_types` made total — **R4.3 closed in full**, at two
-  write choke-points rather than the ~81-function conversion originally estimated), and T3.4 (real
+  write choke-points rather than the ~81-function conversion originally estimated), T3.4 (real
   `ExprId` at parse, `expr_types` re-keyed by it — **R2.4 closed for expressions**; caught and fixed a
-  genuine cross-file collision bug before it shipped, see §9). `span_keyed_maps` is 3, down from 27 —
+  genuine cross-file collision bug before it shipped, see §9), and T3.5 (real `FileId` on `Span`,
+  stamped at the lexer — **R2.2 closed**, at one choke point rather than the 160-construction-site
+  conversion originally estimated; see §9). `span_keyed_maps` is 3, down from 27 —
   the remainder is `Ctx::pattern_binding_types`, a deliberate, principled exclusion (§6), not residue.
-  T3.5–T3.7 remain unbuilt. Merging settled **direction**; it is not a build authorisation.
+  T3.6–T3.7 remain unbuilt. Merging settled **direction**; it is not a build authorisation.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -352,6 +354,7 @@ replaces it with the one real gap found while preparing it.
 | **T3.3a** | `Ty::Error` added as a real variant on `enum Ty`, and given deliberate (not default/panicking-by-omission) semantics at every *exhaustive* match over `Ty` the compiler's own exhaustiveness check found: `compatible`/`structurally_compatible_inner` treat it as compatible with anything in both positions (R4.3's "assignable to and from everything"); `unify` binds it trivially; `substitute`/`contains_var`/`contains_flexible_var`/`rebrand_return_type` treat it as the leaf it is; `display` renders `<type error>`; `json_codable` treats it as codable (no cascading `json_uncodable`, matching "suppresses all downstream diagnostics that mention it"); `ty_to_type_ref` returns `None` (no codec); `ts_ty` — reached only if a checked, emission-bound program somehow contains one, which R4.3 says should never happen — raises a loud internal error (finding #28's own convention) rather than silently emitting a type for it. **Measured, not assumed:** the compiler's own exhaustiveness check found exactly 11 sites needing an arm (9 in `bynk-check`, 2 in `bynk-emit`) out of 900+ raw `Ty::` mentions across the two crates — most of those are constructors and non-exhaustive matches, not sites this change touches. `bynk-ide`/`bynk-lsp`/`bynk-wasm` needed no changes at all. | R4.3 (scaffolding) | **Shipped** — `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test --workspace` all clean (one pre-existing, environment-only failure, unrelated) |
 | **T3.3b** | `expr_types` made total for real, at both of its actual write choke points — `type_of`'s own `ctx.expr_types.insert(expr.span, …)` (`checker.rs`) and `type_of_block`'s equivalent for a block's own span — changed to record `Ty::Error` rather than skip the entry when the computed type is `None`. **This closes R4.3's externally-observable content in full**, not partially: every expression `type_of` is called on (directly or through its ~90 recursive/nested self-calls) now gets an `expr_types` entry, whichever of the checker's internal paths produced `None` and for whatever reason. Verified with a new regression test (`a_diagnosed_resolution_failure_records_ty_error_instead_of_nothing`, `bynk-emit/src/project.rs`) asserting the actual behaviour, not just absence of failure: a diagnosed `type_of` failure (`bynk.types.uninferable_element_type` on an empty `[]` with no inferable element type) now records `<type error>` at its span instead of nothing. | R4.3 | **Shipped** — full workspace build/clippy/fmt/test clean, including the `bynkc` byte-identical golden fixture corpus (unchanged output — this is purely additive on the *recording* side) |
 | **T3.4** | Real `ExprId(u32)` allocated at parse — `id: ExprId` added to `Expr`, populated by a monotonic counter on `Parser<'a>` (`Parser::alloc_expr_id`, mirroring its existing `brace_depth` field), one allocation point so no two parser-produced nodes ever share an id. `expr_types`/`partial_expr_types` re-keyed from `HashMap<Span, Ty>` to `HashMap<ExprId, TypedExpr>` (`TypedExpr { span, ty }` — the value carries its own span so LSP consumers keep a position-shaped answer without a second map). `is_binding_cache` (genuinely `Expr`-keyed — condition-sub-expression memoisation, not pattern-related despite living beside `Ctx`'s pattern-binding field) converted the same way. Pattern-bound identifier types (`Pattern::Binding`, three sites) **deliberately kept `Span`-keyed** in a new, narrowly-scoped `Ctx::pattern_binding_types` field — `Ident` has no `ExprId` and giving it one would touch every identifier construction site in the workspace, not just the handful that bind; this is exactly the `PatId`/`ExprId` split the reference draws (Part 2), out of scope on purpose. **Measured, not assumed:** the compiler's own missing-field errors enumerated 46 real parser construction sites (of ~59 raw `Expr {` matches — the rest were struct *definitions* and function signatures, not constructions) plus 3 post-parse synthetic sites (`ExprId::SYNTHETIC`); the `expr_types` re-keying touched 61 read/write call sites, 49 of them the single uniform shape `expr_types.get(&X.span)` → `.get(&X.id).map(\|te\| &te.ty)`. | R2.4, R2.5, R4.9 | **Shipped** — see §9 for a real bug this slice found and fixed before it shipped, not after |
+| **T3.5** | Real `FileId(u32)` on `Span` (`pub file: FileId`), stamped at the one place a `Span` is ever first minted from real source bytes — the lexer. `Span::new(start, end)` kept its existing two-argument signature, now defaulting `file: FileId::UNKNOWN`; a new `Span::new_in(file, start, end)` is the real-identity constructor. `lexer::tokenize`/`tokenize_expanding_holes` became thin wrappers around new `tokenize_in`/`tokenize_expanding_holes_in` entry points that thread `file` through every one of the lexer's internal span constructions (13 sites in the main scan loop, plus the `scan_str`/`scan_hole`/`split_interp` string-and-interpolation helpers it calls). `bynk-emit`'s `phase_parse`/`parse_sources` gained a `next_file_id: u32` counter threaded exactly like T3.4's `next_expr_id` — one `FileId` allocated per source file, at the same choke point. The interpolation-hole re-lexer (`Parser::parse_hole_expr`) needed no new field: it already receives the hole's own `Span`, which now carries the right `file` once the lexer is fixed, so its `tokenize(src)` call became `tokenize_in(src, hole.file)`. **Every other `Span` construction site in the workspace — the parser, the checker, the IDE/LSP single-document call sites, all tests — needed no change at all**, because they safely default to `FileId::UNKNOWN` exactly as T3.4's non-origin `Expr` construction sites defaulted to zero threading. | R2.2 | **Shipped** — see §9 for a real bug this slice's own safety-net effect (not finding #28 this time, but the same "a total field exposes a latent assumption" pattern) caught in the LSP rename validator before it shipped |
 
 **Why this closed in two edits, not ~81 functions and ~193 call sites — the estimate directly above
 this table (preserved, not deleted, as an example of the same "measure before trusting an estimate"
@@ -382,19 +385,19 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent. **§3.2 (Q2) called this "lowest coupling… could be its own early, small slice" — measured and found larger; see §9** |
 | **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | independent |
 | **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.6 (no longer gated on T3.4 — `ExprId` already exists) |
 
-T3.5–T3.7 above are not built (T3.0, T3.3a, T3.3b, T3.4, above, are). Deliberately not decomposed to
+T3.6–T3.7 above are not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, above, are). Deliberately not decomposed to
 signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
 up: "an unopened phase whose slices are already written is a wish list." Each exists so a proposal
 citing it is recognised as this track's future work, not unclaimed scope — none is a proposal itself,
 and (per §1.1's correction) none should be assumed still-accurate without re-measuring against the
 tree first — the same discipline that caught the `ExprKey(Span)` premise being stale, found T3.3a's
 real 11-site scope instead of trusting a 900+-mention grep count, found T3.3b closable in two edits
-instead of the ~81-function estimate, and (§9) found and fixed a real cross-file collision bug in T3.4
-before it ever shipped.
+instead of the ~81-function estimate, found and fixed a real cross-file collision bug in T3.4
+before it ever shipped, and found T3.5 closable at one choke point (the lexer) instead of the
+160-construction-site conversion its own settling estimate called for — see §9 for both bugs.
 
 **Completion probe:** `span_keyed_maps` = 3 (down from 27). `HashMap<Span` now appears only in
 `Ctx::pattern_binding_types`'s own type signature (3 sites, deliberately, per T3.4's row above) — not
@@ -522,20 +525,43 @@ none of the ~193 call sites needed touching. The general form of the mistake, no
 track (T3.3a's wildcard-audit fear, T3.3b's call-site-conversion fear): estimating a fix's size from
 the shape of the *problem statement* rather than the shape of the *codebase's actual choke points*.
 
-**T3.5 ("lowest coupling... could be its own early, small slice", Q2 in §3.2) is also bigger than
-that line said, and neither of the shortcuts that worked for T3.3a/T3.3b applies to it.** `Span`'s two
-fields (`start`, `end`) are `pub`, so the type is constructed by struct-literal syntax directly, not
-funnelled through one constructor the way `Ty`'s variants are matched exhaustively, and (unlike
-`expr_types`) there is no single write choke-point to fix instead — every one of `Span`'s construction
-sites needs the file identity at the moment of construction, not after the fact. Direct measurement:
-**50 `Span { ... }` struct literals and 110 `Span::new(...)` calls — 160 construction sites**, not the
-~31 a looser first-pass grep suggested. Unlike T3.3a, most of these aren't a judgement call (a
-construction site just needs "which file is this," not a decision about failure semantics), but there
-is real design work with no shortcut: `FileId`/`Sources` (reference R2.1) don't exist yet in any form,
-so T3.5 has to build the registry *and* thread "which file" to 160 sites, most of them inside
-`bynk-syntax`'s parser, where no per-file identity is threaded through today at all. Mechanical once
-the registry exists, not semantically loaded per site the way the *abandoned* T3.3b classification
-attempt was — but still not the "small slice" its own settling decision called it.
+**T3.5 ("lowest coupling... could be its own early, small slice", Q2 in §3.2) was re-measured at
+implementation time and found smaller than the settling-review estimate directly above, for the same
+structural reason T3.3b was: the estimate counted every `Span` *construction* site (160 of them — 50
+struct literals, 110 `Span::new(...)` calls) as needing to change, but R2.2 only requires that a `Span`
+carry its *real* file identity when one exists — not that every construction site supply one. Almost
+none of those 160 sites mint a `Span` from raw source bytes; they copy, offset, or merge a `Span` that
+some earlier `Span` already carried, or (in the checker, the IDE, and every test) build a synthetic
+span with no real file to attach in the first place. The one place a `Span` is *first* minted from
+real bytes is the lexer — 13 sites in its main scan loop plus the `scan_str`/`scan_hole`/`split_interp`
+string-and-interpolation helpers it calls, all reached from exactly one production entry point
+(`bynk-emit`'s `parse_sources`, per file). Threading a `next_file_id: u32` counter through
+`phase_parse`/`parse_sources` there — the same shape T3.4's `next_expr_id` already used — and giving
+the lexer a `tokenize_in(source, file)` entry point (with `tokenize(source)` becoming a thin wrapper
+defaulting to `FileId::UNKNOWN`) closes R2.2 for every span that matters: `Span::offset`/`Span::merge`
+already propagate whatever `file` their input carried, so a span derived from a lexer-stamped span
+inherits the real id for free, exactly as T3.3b's derived reads inherited totality for free. The one
+non-lexer site needing deliberate attention was the interpolation-hole re-lexer
+(`Parser::parse_hole_expr`), and it needed no new field — it already receives the hole's own `Span`,
+so it just reads `hole.file` instead of restarting at `FileId::UNKNOWN`. The other ~150 sites needed
+zero changes, verified by a full build, not assumed.
+
+**This slice's own totality caught a second real bug, of a different shape than finding #28's T3.4
+collision.** Two LSP rename tests (`a_rename_in_one_project_ignores_a_dirty_buffer_in_another`,
+`a_multi_file_rename_stamps_a_dirty_non_cursor_file_at_its_current_version`) started failing the
+instant `Span` gained a real `file` field — not because the rename logic was wrong, but because its
+validator (`index_queries::remap_site`, `bynk-lsp`) rebuilt a shifted post-edit `Span` with
+`Span::new(start, end)`, which now defaults to `FileId::UNKNOWN` where the index it was being compared
+against carried the file's real, freshly-lexed id. The rename validator's core check
+(`ProjectIndex::equals_modulo_rename`) compares `SiteRef`s — `(path, span)` pairs — by derived
+equality, and `Span`'s equality now includes `file`; a remapped site that silently downgraded to
+`UNKNOWN` no longer matched. This was latent the moment `file` was added to `Span`'s definition, not
+introduced by the lexer threading — `remap_site` is a T3.5-adjacent site nobody had reason to touch
+until totality made the mismatch observable. Fixed by preserving `site.span.file` through the remap
+(`Span::new_in(site.span.file, start, end)`) instead of dropping it. Confirms the same lesson finding
+#28 established for `ExprId`: giving an identity field real, non-default values across a slice is
+itself a verification pass over every consumer that compares by it — this is why T3.3a, T3.3b, T3.4,
+and now T3.5 have each shipped a full `cargo test --workspace` as part of "done," not as a formality.
 
 ## 10. What "transformational" means here
 

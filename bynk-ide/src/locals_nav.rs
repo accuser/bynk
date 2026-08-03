@@ -149,17 +149,17 @@ mod tests {
         vec![
             LocalBinding {
                 name: "n".into(),
-                def_span: Span { start: 5, end: 6 },
+                def_span: Span::new(5, 6),
                 kind: LocalKind::Param,
                 ty: "Int".into(),
-                scope: Span { start: 20, end: 60 },
+                scope: Span::new(20, 60),
             },
             LocalBinding {
                 name: "x".into(),
-                def_span: Span { start: 26, end: 27 },
+                def_span: Span::new(26, 27),
                 kind: LocalKind::Let,
                 ty: "Int".into(),
-                scope: Span { start: 34, end: 60 },
+                scope: Span::new(34, 60),
             },
         ]
     }
@@ -175,7 +175,7 @@ mod tests {
         let x_use = TEXT.match_indices('x').nth(1).unwrap().0; // first use of x
         let sites = local_sites_at(&locals, TEXT, x_use).expect("on a local");
         assert!(
-            sites.contains(&Span { start: 26, end: 27 }),
+            sites.contains(&Span::new(26, 27)),
             "includes def: {sites:?}"
         );
         assert!(sites.len() >= 2, "def + at least one use: {sites:?}");
@@ -187,7 +187,7 @@ mod tests {
         let n_use = TEXT.rfind('n').unwrap(); // the `n` in `let x = n`
         assert_eq!(
             local_definition_at(&locals, TEXT, n_use),
-            Some(Span { start: 5, end: 6 })
+            Some(Span::new(5, 6))
         );
     }
 
@@ -208,21 +208,12 @@ mod tests {
         assert_ne!(field_total, total_let, "def and field access are distinct");
         let locals = vec![LocalBinding {
             name: "total".into(),
-            def_span: Span {
-                start: total_let,
-                end: total_let + "total".len(),
-            },
+            def_span: Span::new(total_let, total_let + "total".len()),
             kind: LocalKind::Let,
             ty: "Int".into(),
-            scope: Span {
-                start: total_let,
-                end: TEXT.len(),
-            },
+            scope: Span::new(total_let, TEXT.len()),
         }];
-        let field_span = Span {
-            start: field_total,
-            end: field_total + "total".len(),
-        };
+        let field_span = Span::new(field_total, field_total + "total".len());
 
         // Cursor on the field access resolves to nothing — not the local.
         assert!(
@@ -255,7 +246,7 @@ mod tests {
         assert!(sites.iter().any(|(_, decl)| !*decl), "has a use token");
         // The `x` def is a declaration token.
         assert!(
-            sites.contains(&(Span { start: 26, end: 27 }, true)),
+            sites.contains(&(Span::new(26, 27), true)),
             "x def is a declaration: {sites:?}"
         );
     }

@@ -1,15 +1,48 @@
 //! Source position spans.
 
+/// T3.5 (R2.2): which file a `Span` belongs to. Allocated once per file by
+/// the same "one counter, threaded from the per-project parse loop" shape
+/// T3.4 used for `ExprId` (`phase_parse`/`parse_sources` in `bynk-emit`).
+/// Defaults to [`FileId::UNKNOWN`] — most `Span` construction across the
+/// workspace is either purely position-arithmetic (`merge`/`offset`, which
+/// propagate whatever `file` the input spans already carried) or a
+/// synthetic/single-file context (an LSP code action, a checker-internal
+/// zero-width span) that was never at risk of the R2.2 defect (a *label*
+/// rendered against the wrong file) in the first place — the defect is
+/// specifically about a `Span` compared or rendered *across* files, and
+/// those all originate at the lexer, the one place `FileId::UNKNOWN` is
+/// never used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct FileId(pub u32);
+
+impl FileId {
+    pub const UNKNOWN: FileId = FileId(u32::MAX);
+}
+
 /// A byte range in the source. Half-open: `[start, end)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Span {
+    pub file: FileId,
     pub start: usize,
     pub end: usize,
 }
 
 impl Span {
+    /// A `Span` with no real file identity — the default for every existing
+    /// construction site the T3.5 migration didn't touch. See [`new_in`](Self::new_in)
+    /// for the real-identity constructor the lexer uses.
     pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
+        Self {
+            file: FileId::UNKNOWN,
+            start,
+            end,
+        }
+    }
+
+    /// T3.5: a `Span` with a real file identity, attached at the one place
+    /// (the lexer) where it's actually known.
+    pub fn new_in(file: FileId, start: usize, end: usize) -> Self {
+        Self { file, start, end }
     }
 
     pub fn range(&self) -> std::ops::Range<usize> {
@@ -21,14 +54,24 @@ impl Span {
     /// source. (#716.)
     pub fn offset(self, delta: usize) -> Span {
         Span {
+            file: self.file,
             start: self.start + delta,
             end: self.end + delta,
         }
     }
 
     /// Span covering both `self` and `other` (the smallest enclosing range).
+    /// T3.5: both operands are always the same file in practice (a merge
+    /// never spans two files); `self`'s id wins over `other`'s `UNKNOWN` if
+    /// only one side carries a real one, so a merge involving a genuinely
+    /// lexer-sourced span doesn't lose its identity to a synthetic partner.
     pub fn merge(self, other: Span) -> Span {
         Span {
+            file: if self.file != FileId::UNKNOWN {
+                self.file
+            } else {
+                other.file
+            },
             start: self.start.min(other.start),
             end: self.end.max(other.end),
         }
@@ -38,6 +81,7 @@ impl Span {
 impl From<std::ops::Range<usize>> for Span {
     fn from(r: std::ops::Range<usize>) -> Self {
         Span {
+            file: FileId::UNKNOWN,
             start: r.start,
             end: r.end,
         }

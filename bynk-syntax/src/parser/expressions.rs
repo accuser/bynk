@@ -1718,7 +1718,8 @@ impl<'a> Parser<'a> {
         // rebase them into the full source before propagating, mirroring the
         // success-path token rebasing below. Otherwise the diagnostic points at
         // the file's opening bytes and can split a multibyte char. (#716.)
-        let mut tokens = crate::lexer::tokenize(src).map_err(|e| e.offset_spans(hole.start))?;
+        let mut tokens =
+            crate::lexer::tokenize_in(src, hole.file).map_err(|e| e.offset_spans(hole.start))?;
         for token in &mut tokens {
             token.span = token.span.offset(hole.start);
         }

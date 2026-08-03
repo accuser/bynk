@@ -132,6 +132,7 @@ pub fn describe_agent_state_at(source: &str, offset: usize) -> Option<String> {
         // without re-scanning.
         for f in &a.store_fields {
             let store_kw = Span {
+                file: f.span.file,
                 start: f.span.start,
                 end: f.span.start + "store".len(),
             };
@@ -409,6 +410,7 @@ pub fn handler_annotation_token_spans(source: &str) -> Vec<Span> {
             for ann in &h.annotations {
                 // The `@name` — from the annotation's leading `@` through its name.
                 spans.push(Span {
+                    file: ann.span.file,
                     start: ann.span.start,
                     end: ann.name.span.end,
                 });
@@ -1987,33 +1989,17 @@ mod tests {
         let text = "  let t = Clock.now()";
         let now = text.find("now").unwrap();
         assert_eq!(
-            qualified_callee_at(
-                text,
-                Span {
-                    start: now,
-                    end: now + 3
-                }
-            )
-            .as_deref(),
+            qualified_callee_at(text, Span::new(now, now + 3)).as_deref(),
             Some("Clock.now")
         );
         // A lowercase (value) receiver is not our case — resolve_label can't
         // resolve it anyway.
         let text2 = "  xs.fold(0)";
         let fold = text2.find("fold").unwrap();
-        assert!(
-            qualified_callee_at(
-                text2,
-                Span {
-                    start: fold,
-                    end: fold + 4
-                }
-            )
-            .is_none()
-        );
+        assert!(qualified_callee_at(text2, Span::new(fold, fold + 4)).is_none());
         // A bare identifier (no receiver) → None.
         let text3 = "  total";
-        assert!(qualified_callee_at(text3, Span { start: 2, end: 7 }).is_none());
+        assert!(qualified_callee_at(text3, Span::new(2, 7)).is_none());
     }
 
     // v0.137.0 (ADR 0161): hover for the `key`/`store` contextual keywords and
@@ -2145,13 +2131,10 @@ mod tests {
         // not a store op — mirroring the checker's by-provenance dispatch.
         let shadow = [bynk_check::locals::LocalBinding {
             name: "items".into(),
-            def_span: Span { start: 0, end: 5 },
+            def_span: Span::new(0, 5),
             kind: bynk_check::locals::LocalKind::Let,
             ty: "Map[String, Int]".into(),
-            scope: Span {
-                start: 0,
-                end: src.len(),
-            },
+            scope: Span::new(0, src.len()),
         }];
         assert!(describe_store_op_at(src, at_put, &shadow).is_none());
 
@@ -2472,7 +2455,7 @@ mod tests {
     fn describe_self_renders_receiver_and_unwraps_agent() {
         use bynk_check::checker::{NamedKind, Ty};
         let text = "self";
-        let span = Span { start: 0, end: 4 };
+        let span = Span::new(0, 4);
         // A method receiver — a plain named type renders verbatim.
         let account = vec![(
             span,
@@ -2508,7 +2491,7 @@ mod tests {
                 other,
                 0,
                 &[(
-                    Span { start: 0, end: 5 },
+                    Span::new(0, 5),
                     Ty::Named {
                         name: "Int".into(),
                         kind: NamedKind::Record,
