@@ -742,8 +742,16 @@ one of `bynk-check`'s own ~20-23 pattern-matching functions (`display`, `substit
 neighbours, `checker/linearity.rs`'s `held_value`/`storage_value_is_held`) simultaneously — there is
 no way to migrate `bynk-check`'s own consumers one function at a time mid-change the way `ExprId`
 threaded through the parser file-by-file. The crate boundary is therefore the smallest real slice, not
-an artificial one chosen for convenience: **tier 1 is `bynk-check` alone** (unavoidably the largest
-single PR this track will have shipped); **tier 2 is `bynk-emit`**'s ~7 functions (`ty_to_type_ref`,
+an artificial one chosen for convenience — and it is a larger boundary than the function count alone
+suggests: `compatible`, `unify`, and `substitute` are `pub fn`s taking `&Ty` with no context parameter
+today, called from **149 sites** (86 + 25 + 38, direct grep, `bynk-check` only) nested throughout the
+checker's call graph, not just from the ~20-23 sites that pattern-match `Ty` directly. If `Ty`'s
+recursive fields become `TyId`, resolving a child during recursion needs a `&Types` handle, which these
+three signatures — and therefore all 149 call sites — must gain access to, most of them nested many
+frames below `check_fn`/`type_of` rather than beside a `Ctx` already in scope at the point of the call.
+Confirmed contained to `bynk-check`, not a cross-crate cascade: only **one** external call site exists
+for all three combined (`bynk-emit/src/emitter/lower.rs:224`, `compatible(e, f_err)`) — consistent with,
+and now measured evidence for, "tier 1 is `bynk-check` alone." **Tier 2 is `bynk-emit`**'s ~7 functions (`ty_to_type_ref`,
 `ts_ty`, `payload_field_ty`, `mock_value`, `list_ok_elem_ts`, `decode_map_key`, `literal_base_of_ty`),
 gated on tier 1 landing; **tier 3 is `bynk-ide`/`bynk-lsp`**'s ~6 functions (`variants_for_ty`,
 `named_type_target`, the `Ty::Named` destructuring in `symbols.rs`), the smallest function count but
