@@ -116,8 +116,16 @@ cargo xtask ci --fast   # just the two gates that need no compile-and-link
 git config core.hooksPath .githooks
 ```
 
-The hook takes seconds and can be bypassed with `git push --no-verify`. CI
-remains the authority — `cargo xtask ci` front-runs it, it does not replace it.
+Note that `--fast` is not compile-free: clippy skips codegen and linking, not
+compilation. It is about three seconds on a warm cache, roughly a minute once
+every crate's fingerprint has changed, and several minutes on a fresh clone —
+so expect a wait the first time, and after a lockfile, toolchain or `[profile]`
+change. `git push --no-verify` skips the hook when that is not a good moment.
+
+The gates lint your working tree, not the commits being pushed, so a push of an
+older branch or one made with dirty local edits checks something other than
+what lands. CI remains the authority — `cargo xtask ci` front-runs it, it does
+not replace it.
 
 ## Documentation
 
