@@ -78,7 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`compiler-architecture.md`](compiler-architecture.md) | [#996](https://github.com/accuser/bynk/issues/996) | Settled — Slicing on merge (the step-2 carve-out it claimed at the outset was discharged by a settling review that overturned D2 and reframed §3.6) | Phases 0–2 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): test seams, the paydown remainder, and the typed hoist. No language surface change |
+| [`identity-and-totality.md`](identity-and-totality.md) | [#1046](https://github.com/accuser/bynk/issues/1046) | Settling — draft track doc open; §3's design questions not yet closed under review | Phase 3 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): node identity independent of position, total side tables, the editor consuming a program that does not compile. No language surface change |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -87,9 +87,17 @@ track to run the ADR 0167 flow from the start — spine issue first, doc via a
 settling draft PR; `testing-the-boundary.md` (now retired) was the second;
 `locale-capability.md` (now retired) was the third; `message-bundles.md`
 (now retired) was the fourth; `idempotency-capability.md` is the fifth;
-`compiler-architecture.md` is the sixth, and its theme is internal
-architecture rather than language surface — as `crate-decomposition.md`
+`compiler-architecture.md` (now retired) was the sixth, and its theme was
+internal architecture rather than language surface — as `crate-decomposition.md`
 and `increment-allocation.md`, both retired, were before it.
+`identity-and-totality.md` is the seventh, and continues
+`compiler-architecture.md`'s internal-architecture theme as phase 3 of the
+same trajectory. **`compiler-architecture.md`'s retirement PR
+([#996](https://github.com/accuser/bynk/issues/996)'s closing commit,
+`85bc851e`) removed the doc and appended its closing summary to
+`retired-tracks.md` but did not update this table or its "Retired tracks"
+list below** — this row and bullet close that gap, a step late, alongside
+opening the phase-3 row above.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
@@ -107,6 +115,23 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`compiler-architecture.md`** — phases 0–2 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): the compiler testable at crate
+  granularity (phase 0, Seams), the named small defects closed with the registries single-sourced
+  (phase 1, Paydown), and `lower_expr` returning what it produced instead of appending it to a
+  caller-supplied sink (phase 2, Typed lowering) — no language surface change. Settled 1 August 2026
+  (settling PR [#997](https://github.com/accuser/bynk/pull/997), v0.246.1); ten Tier A slices plus the
+  decision slice and Tier B's three typed-hoist slices all shipped, v0.246.2–v0.247.4. Retired
+  3 August 2026 once Tier B's probe (`hoist_sinks`) read zero and both of ADR 0311 D3's phase-3
+  triggers had fired. Decisions in ADRs
+  [0309](../decisions/0309-refactor-acceptance-gate-per-tier.md),
+  [0310](../decisions/0310-the-emit-abi-is-published-the-codegen-is-not.md),
+  [0311](../decisions/0311-the-lowering-substrate.md), and
+  [0312](../decisions/0312-narrow-bynkc-public-api.md). Opens directly into
+  `identity-and-totality.md` above (phase 3, spine
+  [#1046](https://github.com/accuser/bynk/issues/1046)); three named residue items filed as
+  [#1047](https://github.com/accuser/bynk/issues/1047)–[#1049](https://github.com/accuser/bynk/issues/1049).
+  Full closing summary in `../archive/retired-tracks.md`.
 - **`message-bundles.md`** — the `messages` construct, the checked catalogue,
   and the bundle lookup that turned the shipped, bundle-free `render` (ADR
   0256) into a real localiser — the sibling `locale-capability.md` named but
