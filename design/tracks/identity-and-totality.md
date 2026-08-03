@@ -759,6 +759,27 @@ the highest regression risk since it's the developer-facing hover/completion sur
 0314 (already adopted by this track, §3.4) needs its own LSP-surface fixture, not just the emission
 goldens tiers 1–2 can lean on.
 
+**An open design question the tier system above does not yet answer, found while scoping whether tier
+1 could actually start: who owns the `Types` table once it exists, and how does a value built against
+it reach a consumer in a different crate?** If `Ty`'s recursive fields become `TyId`, a `Ty` value only
+tells you its own top-level variant — resolving anything nested inside it (what a `Ty::Option` actually
+contains) requires the *same* `Types` table it was interned against. `TypedExpr.ty: Ty`
+(`TypedCommons::expr_types`'s value type, T3.4) is exactly such a value, read by ~61 call sites in
+`bynk-emit` alone (T3.4's own count) plus `bynk-ide`'s completion/hover code and `bynk-lsp`'s
+`index_queries.rs`. Every one of those becomes unable to fully resolve a `Ty` it's handed unless it
+also has the `Types` table that produced it in scope — which means the real blast radius is not
+contained to `bynk-check`'s own ~20-23 functions (tier 1) at all; it is *every* existing `Ty` consumer
+across all four crates, including the ~13 functions the tier 2/3 estimate already named plus every
+plain (non-recursing) reader of `TypedExpr.ty` that tier 2/3's function count didn't count because it
+doesn't pattern-match `Ty`, just holds and forwards it. Answering this — a single project-wide
+`Types` table threaded everywhere, `TypedCommons` carrying its own alongside `expr_types`, or some
+other shape — is real design work with real tradeoffs (a global table risks cross-file/cross-compile
+identity confusion, echoing exactly the R2.2/R2.4 lesson this track already learned about `Span`/
+`ExprId`; a per-`TypedCommons` table means `TyId`s aren't comparable *across* units, which `unify`/
+`compatible` calls spanning a `uses` boundary may need). Not decided here — this is the next real
+question tier 1 needs answered before it can be sliced with confidence, not a signature-threading
+exercise like the tier 1/2/3 breakdown above might suggest on its own.
+
 The one real, small, immediately-shippable piece this review *did* find — closed in this same commit,
 not deferred as a bare finding — is test coverage for the specific failure mode unique to interning
 that nothing in the existing corpus covers: whether two `Ty` values built through different
