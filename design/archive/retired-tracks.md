@@ -7,6 +7,88 @@ closing summary here — what shipped, which ADRs carry its decisions, and the
 named follow-ons — and closes the track's spine issue. Newest first is not
 imposed; entries keep the order they were retired in.
 
+- **`compiler-architecture.md`** — phases 0–2 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): the compiler testable at crate
+  granularity (phase 0, Seams), the named small defects closed with the registries single-sourced
+  (phase 1, Paydown), and `lower_expr` returning what it produced instead of appending it to a
+  caller-supplied sink (phase 2, Typed lowering) — none of it moving the language surface. Settled
+  1 August 2026 (settling PR [#997](https://github.com/accuser/bynk/pull/997), v0.246.1), then sliced.
+  Ten Tier A slices plus the decision slice shipped (v0.246.2–v0.247.0): **T0.0** — `cargo xtask
+  greenfield-status`, the probe harness itself
+  ([#999](https://github.com/accuser/bynk/issues/999)/[#1000](https://github.com/accuser/bynk/pull/1000),
+  v0.246.2); **T-D1** — `bynkc`'s published API narrowed to its ~30 item re-exports, deleting the
+  fourteen whole-module re-exports
+  ([#1004](https://github.com/accuser/bynk/issues/1004)/[#1005](https://github.com/accuser/bynk/pull/1005),
+  v0.246.4, [ADR 0312](../decisions/0312-narrow-bynkc-public-api.md)); **T0.2′** —
+  `expected_diagnostics.txt` adopted for the `Roots::Split` fixtures ADR 0198 named as unobservable
+  ([#1007](https://github.com/accuser/bynk/issues/1007)/[#1008](https://github.com/accuser/bynk/pull/1008));
+  **T0.3** — `[workspace.lints]` added with `wildcard_enum_match_arm` at `warn`
+  ([#1010](https://github.com/accuser/bynk/issues/1010)/[#1011](https://github.com/accuser/bynk/pull/1011),
+  v0.246.6); **T0.4′** — `tree-sitter-bynk`'s conformance suite widened from a fixed case list to
+  totality (PR [#1015](https://github.com/accuser/bynk/pull/1015)); **T0.7** — filesystem reads below
+  the driver, partial
+  ([#1006](https://github.com/accuser/bynk/issues/1006)/[#1012](https://github.com/accuser/bynk/pull/1012):
+  `bynk-fmt` cleared, `bynk-emit`/`bynk-ide` not); **T1.6′** — Query's `method_not_found` generated
+  from `QUERY_METHODS`, the drift test made bidirectional
+  ([#1009](https://github.com/accuser/bynk/issues/1009)/[#1014](https://github.com/accuser/bynk/pull/1014),
+  v0.246.8); **T1.7′** — the wildcard-arm/shadowing residue verified already closed
+  ([#1020](https://github.com/accuser/bynk/issues/1020)/[#1022](https://github.com/accuser/bynk/pull/1022));
+  **T1.8** — `NonEmpty` folded into `MinLength(1)`, partial
+  ([#1021](https://github.com/accuser/bynk/issues/1021)/[#1027](https://github.com/accuser/bynk/pull/1027),
+  v0.247.0: `Positive`/`NonNegative` not folded). Tier B — the typed hoist, R6.2–R6.4 — shipped as
+  three slices (v0.247.1–v0.247.4): **T2.1** — `lower_expr` returns `Lowered { pre, expr }` instead of
+  taking a `stmts: &mut Vec<String>` sink, closing the dropped- and spliced-statement bugs across ~90
+  functions
+  ([#1017](https://github.com/accuser/bynk/issues/1017)/[#1029](https://github.com/accuser/bynk/pull/1029));
+  **T2.2** — `maybe_async_iife`'s `contains("await ")` text scan replaced by
+  `LowerCtx::emitted_await`, a flag set at lowering time
+  ([#1018](https://github.com/accuser/bynk/issues/1018)/[#1042](https://github.com/accuser/bynk/pull/1042));
+  **T2.3** — the `?`-under-short-circuit-operand escape closed by the same flag-on-`LowerCtx` shape
+  (`emitted_early_return`), routing a flagged right operand through a hoisted `if` statement instead of
+  an arrow-IIFE
+  ([#1019](https://github.com/accuser/bynk/issues/1019)/[#1044](https://github.com/accuser/bynk/pull/1044),
+  v0.247.4). `hoist_sinks` (`rg 'stmts: &mut Vec<String>' bynk-emit/`) reads **0**. Decisions in ADRs
+  [0309](../decisions/0309-refactor-acceptance-gate-per-tier.md) (the refactor acceptance gate,
+  per-tier), [0310](../decisions/0310-the-emit-abi-is-published-the-codegen-is-not.md) (the emit ABI
+  is published, the codegen is not),
+  [0311](../decisions/0311-the-lowering-substrate.md) (the lowering substrate — recorded as
+  deliberate, amended by `Lowered`, with phase 3's triggers named), and
+  [0312](../decisions/0312-narrow-bynkc-public-api.md) (`bynkc`'s published API is its item
+  re-exports, not its module structure). Surface lives in `bynk-emit/src/emitter.rs`/`lower.rs`,
+  `bynkc/src/lib.rs`, `xtask/src/greenfield_status.rs`, and `tree-sitter-bynk/tests/conformance.rs`.
+
+  **The phase-3 trigger fired, against [ADR 0311](../decisions/0311-the-lowering-substrate.md)'s own
+  wording — not the paraphrase this track's §3.4 carried.** ADR 0311 D3's third trigger starts its
+  two-release clock "after a crate-local test seam exists," not after Tier A completes; the seam
+  (`CompileOptions.sources`, Wave 3, [#954](https://github.com/accuser/bynk/pull/954)) landed at
+  v0.238.0, nine minor versions before this track's own probe harness began tracking it. `bynk-emit`'s
+  test-line density has read flat at 8.3–8.5% for the whole precisely-measured window (v0.246.1
+  onward), after an initial post-seam rise from the July review's 6.5% baseline — the plateau ADR 0311
+  named as the evidence a substrate replacement would need. More directly, D3's first trigger — a
+  defect class recurring after being patched once at a different site — is recorded in the ADR itself
+  as having already happened once, at `maybe_async_iife`, "not recognised as a signal." Tier B then
+  reproduced the identical shape a further time: T2.3's `emitted_early_return` is built as a copy of
+  T2.2's `emitted_await` mechanism, because the same defect class — a control-flow property inferred
+  by local, textual reasoning instead of tracked structurally through lowering — surfaced at a third
+  site after the ADR naming the pattern was already on file. This closes into a new phase-3 track
+  (#TBD-phase3) rather than the state-migrations track §3.6
+  anticipated running next; the two are independent and neither blocks the other.
+
+  **Deferred follow-ons, named not silently assumed away:** three Tier A slices shipped narrower than
+  their row named, and nothing tracked the remainder until now — **T0.7's remaining six filesystem
+  reads below the driver** (`bynk-emit`=4, `bynk-ide`=2; only `bynk-fmt` was cleared, in
+  [#1012](https://github.com/accuser/bynk/pull/1012)), filed as
+  #TBD-t07; **T-D1/R10.4's remaining whole-module
+  re-exports** — `bynk-syntax` (7 modules), `bynk-driver` (2), and `bynk_fmt as fmt` (the whole crate)
+  are still re-exported whole from `bynkc/src/lib.rs`, the same defect T-D1 closed for
+  `bynk-check`/`bynk-emit` — filed as #TBD-r10.4; **T1.8's
+  `Positive`/`NonNegative` predicate fold**, blocked on a real ambiguity (`Positive`/`NonNegative` on
+  `Float` has no clean exclusive-vs-inclusive-bound answer, #1021's Decision A) — filed as
+  #TBD-t1.8. A fourth item, T0.3's per-crate `deny`
+  rollout (`[workspace.lints]` currently `warn`, zero crates opted in via `[lints] workspace = true`),
+  was **deliberately** left incremental by its own row ("`deny` per crate as each is cleared") and is
+  not residue in the same sense — no issue filed; each crate's `deny` graduation rides its own future
+  PR.
 - **`testing-the-boundary.md`** — the rung the retired `testing.md` subject
   ladder never had: the **boundary**. Bynk's pitch rests on the edge — types enforced,
   identity sealed, the author writing neither check — yet *no Bynk test could observe
