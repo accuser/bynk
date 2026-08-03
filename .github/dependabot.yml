@@ -51,3 +51,19 @@ updates:
     directory: "/site"
     schedule:
       interval: weekly
+    groups:
+      # Astro and Starlight move in lockstep — Starlight's peer range tracks
+      # the astro minor, so a split bump means one PR waiting on the other.
+      # Group them so a release lands as one resolvable PR.
+      #
+      # This is defence in depth, not the whole fix: grouping only merges what
+      # dependabot updates in the *same* run, so a staggered release can still
+      # split. The exact-peer trap that deadlocked #1036/#1038 is closed at the
+      # source instead — `@astrojs/markdown-remark` is no longer a direct
+      # dependency of /site, so it resolves transitively to whatever version
+      # `astro` pins and never gets a standalone PR to conflict with.
+      astro:
+        patterns:
+          - "astro"
+          - "@astrojs/*"
+          - "starlight-*"
