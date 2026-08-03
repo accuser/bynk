@@ -329,7 +329,7 @@ and tightly coupled — 0 enables both, 1 is independent, 2 needs only 0 — so 
 | Phase | Track | Status |
 |---|---|---|
 | 0, 1, 2 | *(retired)* | **Retired 3 August 2026** (spine [#996](https://github.com/accuser/bynk/issues/996), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). Tier B's probe (`hoist_sinks`) reads 0; three Tier A slices carry named, separately-filed residue rather than blocking retirement |
-| 3 | #TBD-phase3 *(spine opening; track doc not yet written)* | **Opening** — phase 2's probe reads zero and §3.4's trigger fired: `bynk-emit`'s test density plateaued at 8.3–8.5% since the crate-local seam existed (v0.238.0, per [ADR 0311](decisions/0311-the-lowering-substrate.md) D3's own wording, not phase 0/1's completion), and the scan-vs-structural-flag defect class recurred a further time in T2.3 after ADR 0311 had already named the pattern once (at `maybe_async_iife`). See the retirement summary for the full argument |
+| 3 | [#1046](https://github.com/accuser/bynk/issues/1046) *(spine opening; track doc not yet written)* | **Opening** — phase 2's probe reads zero and §3.4's trigger fired: `bynk-emit`'s test density plateaued at 8.3–8.5% since the crate-local seam existed (v0.238.0, per [ADR 0311](decisions/0311-the-lowering-substrate.md) D3's own wording, not phase 0/1's completion), and the scan-vs-structural-flag defect class recurred a further time in T2.3 after ADR 0311 had already named the pattern once (at `maybe_async_iife`). See the retirement summary for the full argument |
 | 4 | *(to be opened)* | — |
 | 5 | *(to be opened)* | — |
 | 6 | *(to be opened)* | — |
