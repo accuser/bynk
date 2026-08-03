@@ -277,6 +277,52 @@ pub struct RecordCheck {
     pub partial_expr_types: HashMap<ExprId, TypedExpr>,
 }
 
+/// T3.7 (R3.10): the gate between analysis and emission, as a type rather
+/// than a control-flow decision — constructible only by [`certify`], so no
+/// unchecked or error-carrying `TypedCommons` can reach the emitter by
+/// construction (previously enforced only by every caller happening to check
+/// a `Result` first). `certify` rejects on any error-severity diagnostic;
+/// T3.3a's `Ty::Error` is what a diagnosed checker failure records into
+/// `expr_types`, so in practice a `Ty::Error` never reaches a `CheckedProgram`
+/// either — R4.3's "rejected by certify" already holds today via the same
+/// diagnostic-severity gate `certify` makes structural.
+///
+/// Scoped to the single-file compile path for now (`bynk-emit`'s
+/// `compile_with_warnings`). The project/batch path's per-unit `emit_project`
+/// call happens *before* that unit's build-wide gate is finally decided
+/// (cross-unit validation can still fail the whole build afterward), so
+/// wrapping it in `CheckedProgram` at today's call site would misrepresent an
+/// unfinished decision as a certified one — that path needs its own slice,
+/// not forced into this one.
+pub struct CheckedProgram(TypedCommons);
+
+impl CheckedProgram {
+    /// The certified program. No accessor exists that goes the other
+    /// direction — a `TypedCommons` is never recoverable-then-rewrapped
+    /// without going through `certify` again.
+    pub fn program(&self) -> &TypedCommons {
+        &self.0
+    }
+}
+
+/// The single place "may we emit?" is asked (R3.10). Rejects — returning
+/// every diagnostic, not just the error-severity ones, matching
+/// `check_record`'s own error-path convention — if `diagnostics` contains an
+/// error-severity entry; otherwise wraps `program` as certified.
+pub fn certify(
+    program: TypedCommons,
+    diagnostics: Vec<CompileError>,
+) -> Result<CheckedProgram, Vec<CompileError>> {
+    let (hard_errors, warnings) = bynk_syntax::partition_by_severity(diagnostics);
+    if hard_errors.is_empty() {
+        Ok(CheckedProgram(program))
+    } else {
+        let mut all = hard_errors;
+        all.extend(warnings);
+        Err(all)
+    }
+}
+
 // ==== Entry points ====
 
 pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> {

@@ -68,8 +68,15 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
     let resolved = resolver::resolve(commons)?;
     let typed = checker::check(resolved)?;
     warnings.extend(typed.warnings.clone());
+    // T3.7 (R3.10): `check` already gated on error-severity diagnostics, so
+    // `typed.warnings` — the only diagnostics left riding along with it — can
+    // never contain one; `certify` re-asserts that structurally rather than
+    // trusting the caller not to skip it.
+    let program = checker::certify(typed, warnings.clone()).unwrap_or_else(|_| {
+        panic!("bynk internal error: check() already gated on error-severity diagnostics")
+    });
     Ok(Compiled {
-        ts: emitter::emit(&typed),
+        ts: emitter::emit(&program),
         warnings,
     })
 }
