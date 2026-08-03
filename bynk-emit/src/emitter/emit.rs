@@ -2758,12 +2758,20 @@ pub(crate) fn emit_agent(
                 icx.local_agents = ctx.local_agents.clone();
                 let expr = pre.lower(init, &mut icx);
                 // A static initialiser lowers to a pure expression (no setup
-                // statements); if any appear, fall back to inlining them as a
-                // comma sequence so the record stays valid.
+                // statements). #1029 review: if any appear, wrap them in an IIFE
+                // rather than splicing them into a comma sequence. The comma
+                // form only ever worked for expression-shaped hoists — a `const`
+                // or an `if` operand does not parse — and T2.1 made a
+                // statement-shaped hoist reachable here for the first time, since
+                // a value-position `if` that hoists now yields `let …; if (…) {…}`
+                // where it used to yield a self-contained arrow. An IIFE is
+                // sound for this position specifically: a static initialiser has
+                // no enclosing function to `return` out of, so the arrow cannot
+                // swallow a control transfer the way it would in a handler body.
                 if pre.is_empty() {
                     expr
                 } else {
-                    format!("({}, {expr})", pre.stmts().join(", "))
+                    format!("(() => {{ {} return {expr}; }})()", pre.stmts().join(" "))
                 }
             } else {
                 bynk_check::checker::zero_value_ts(
