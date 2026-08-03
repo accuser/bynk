@@ -359,7 +359,7 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.3** | `Ty::Error` as a real variant; `expr_types` records it instead of omitting the entry on `None` | R4.3 | — independent, can run first |
+| **T3.3** | `Ty::Error` as a real variant; `expr_types` records it instead of omitting the entry on `None` | R4.3 | — independent, can run first. **Measured, not just estimated, before slicing** — see §9 |
 | **T3.4** | Real `ExprId` allocated at parse (no `ExprKey(Span)` predecessor — see above); `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>` entirely, migrated crate-by-crate per §3.3's seven-crate list (dual-map: both forms populated during migration, `Span`-keyed form deleted last) | R2.4, R2.5, R4.9 | T3.3 (unblocks totality) |
 | **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.3/T3.4 |
 | **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | T3.3 |
@@ -439,7 +439,21 @@ The corrective discipline this risk names for future slices: when a number has a
 the review and today, find the commit, not just the new value — the commit tells you what's still
 open, the value alone doesn't.
 
----
+**T3.3 ("small, independent") is bigger than its one-line description suggests, measured directly
+rather than assumed.** `Ty::` appears **702 times across 9 files in `bynk-check`** (`checker.rs` 335,
+`checker/kernels.rs` 168, `checker/calls.rs` 71, `checker/expressions.rs` 102, `kernel_methods.rs` 16,
+`checker/linearity.rs` 5, `checker/refinements.rs` 2, `expr_types.rs` 2, `wire.rs` 1, `hints.rs` 1) and
+another **202 times across 6 files in `bynk-emit`** — before counting `bynk-ide`/`bynk-lsp`'s own type
+display and hover paths. Adding one enum variant is a one-line change; the Rust compiler forces every
+*exhaustive* match to add an arm, which is the useful half of this. The dangerous half: many of these
+900+ sites are almost certainly `_ =>` wildcard matches that would **silently accept** `Ty::Error`
+with whatever the wildcard's existing default does, rather than the "assignable to/from everything,
+suppresses downstream diagnostics" behaviour R4.3 specifies — and a wildcard arm doing the wrong thing
+with `Ty::Error` is exactly R2.12's finding (`clippy::wildcard_enum_match_arm`) landing on real
+correctness ground, at a scale (900+ call sites, two crates) that makes "small" the wrong word for it.
+This is not a reason to avoid T3.3 — it is the reason to slice it as its own careful pass with a real
+audit of the wildcard sites, not a same-session add-on to whatever else is in flight, and it is why
+this session did not attempt it.
 
 ## 10. What "transformational" means here
 
