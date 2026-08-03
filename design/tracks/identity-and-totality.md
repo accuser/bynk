@@ -15,7 +15,11 @@
   interning for `Copy`, is **not** a choke-point fix — split out as T3.6b, its own larger effort, see
   §9). `span_keyed_maps` is 3, down from 27 —
   the remainder is `Ctx::pattern_binding_types`, a deliberate, principled exclusion (§6), not residue.
-  T3.6b–T3.7 remain unbuilt. Merging settled **direction**; it is not a build authorisation.
+  T3.7's "gated on T3.6" was itself re-measured and found stale (§9) — R3.10 needs only `Ty::Error`
+  (T3.3a) and total `expr_types` (T3.3b), both shipped; it is gated on neither T3.4 nor T3.6b, though
+  a real open design question (does `certify` wrap `TypedCommons` in a new `CheckedProgram`, or does
+  `TypedCommons` itself go private) remains unresolved. T3.6b–T3.7 remain unbuilt. Merging settled
+  **direction**; it is not a build authorisation.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -390,7 +394,7 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
 | **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it | R4.1, R4.2 (`Copy` half) | independent — needs its own settling review before slicing further, since (per §9) the realistic scope here is a checker-and-emitter-wide rewrite of construction and destructuring, not a threading problem |
-| **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.6b (no longer gated on T3.4 — `ExprId` already exists) |
+| **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | **independent of T3.6b — re-measured, see §9.** Not gated on `ExprId` (T3.4) either; both were stale artifacts of the original four-item numbered sequencing, not re-derived dependencies |
 
 T3.6b–T3.7 above are not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a, above, are). Deliberately not decomposed to
 signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
@@ -401,11 +405,12 @@ tree first — the same discipline that caught the `ExprKey(Span)` premise being
 real 11-site scope instead of trusting a 900+-mention grep count, found T3.3b closable in two edits
 instead of the ~81-function estimate, found and fixed a real cross-file collision bug in T3.4
 before it ever shipped, found T3.5 closable at one choke point (the lexer) instead of the
-160-construction-site conversion its own settling estimate called for, and — the discipline's first
-negative result — found that T3.6's `Copy`-via-interning half genuinely has *no* choke point and is
+160-construction-site conversion its own settling estimate called for, found — the discipline's first
+negative result — that T3.6's `Copy`-via-interning half genuinely has *no* choke point and is
 roughly as large as its own settling label already said, while still finding a real, small,
 independently-shippable slice (T3.6a) inside it that a same-sized-or-nothing framing would have
-missed. See §9 for all of the above.
+missed, and found T3.7's "gated on T3.6" itself was stale — a list-position artifact, not a
+re-derived dependency, once R3.10's actual rationale was read directly. See §9 for all of the above.
 
 **Completion probe:** `span_keyed_maps` = 3 (down from 27). `HashMap<Span` now appears only in
 `Ctx::pattern_binding_types`'s own type signature (3 sites, deliberately, per T3.4's row above) — not
@@ -617,6 +622,38 @@ lint pass over `bynk-emit/src/project/validate.rs` (unchanged by this slice) rep
 rebuild of `bynk-emit` on unmodified `main`: zero warnings before, the same warning every time after,
 with or without a `touch`. Fixed alongside, since it now blocks `-D warnings` in CI regardless of
 whether this slice caused it.
+
+**T3.7's "Gated on: T3.6" turned out to be a stale artifact of list position, not a re-derived
+dependency — caught the same way §1.1 caught the `ExprKey(Span)` premise going stale.** §3.2's own
+"Decision" paragraph gives the actual technical reasoning for R3.10 landing last: "It needs a total
+`expr_ty` to gate on and a real `Ty::Error` to reject" — both shipped, in T3.3b and T3.3a respectively.
+R3.10's full rationale (`bynk-greenfield-compiler.md` §3, R3.10) names a `TypedProgram`, a `Diagnostic`
+list, and a `CheckedProgram` constructible only by `certify` — nothing about `Copy`, `Hash`, `Ord`, or
+interning. The "→ R4.1/R4.2 interning (T3.6…) → R3.10 certify last (T3.7)" ordering in that same
+paragraph reused a four-item enumeration's numeric order, and nobody re-checked it once T3.6 split into
+T3.6a/T3.6b. A direct search turns up no `Ty`-keyed hash or ordered collection anywhere in the checker
+today — T3.6a's `Hash`/`Ord` derive isn't even exercised by anything yet, R3.10 included.
+
+**What R3.10 actually needs, measured against the tree as it stands:** two real "must gate, then emit"
+choke points, not a scan across the workspace — `bynk-emit/src/lib.rs`'s single-file
+`checker::check(resolved)?` and `bynk-emit/src/project.rs`'s `finish_build` (the project/batch path,
+behind a `RunChecks::Bailed`/`Checked` match and a `mode == Mode::Build` gate). Every "must degrade
+gracefully" editor caller (`bynk-ide`'s `analyse_project_with`/`analyse_in_memory*`, already
+`Mode::Analyse`) stays on the total `RecordCheck`/`TypedCommons` output directly, per R3.10's own "the
+editor never calls `certify`" rule — no change needed there. `TypedCommons` (`bynk-check/src/checker.rs`)
+is already, in spirit, the single-file `TypedProgram`: `checker::check` already returns
+`Result<TypedCommons, Vec<CompileError>>`, gated on error-freedom. The literal gap is narrower than
+"introduce a typed program" — it's that `TypedCommons`'s fields are `pub` and nothing stops a second,
+non-`check`-derived `TypedCommons` from reaching the emitter, so the invariant holds by convention
+today, not by construction. Two genuine hand-built `TypedCommons` literals already exist outside the
+checker, both test-only (`bynk-emit/src/emitter/lower.rs`'s `empty_commons()`, `bynk-emit/src/project/
+tests_emit.rs`'s two synthetic builders) — a real design question for whoever slices this next: does
+`certify` wrap `TypedCommons` in a new, privately-constructed `CheckedProgram` (leaving `TypedCommons`
+itself exactly as constructible as today, so those test fixtures need no change), or do
+`TypedCommons`'s fields go private (which would break all three and require them a checker-side
+test-only bypass)? That boundary — not `Ty` interning — is the one open question worth resolving before
+T3.7 is sliced for real; not decided here, per this track's own discipline of not writing slices further
+than the tree currently supports measuring.
 
 ## 10. What "transformational" means here
 
