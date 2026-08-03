@@ -19,7 +19,7 @@ Track slice T0.0 (#999). Nine probes are gated — a disagreement between this f
 | `emit_abi_shapes` | yes | 1 (bynk-cloudflare.ts:negotiateLocale) |
 | `wildcard_arms` | no (trend) | 293 |
 | `keep_in_sync` | no (trend) | 146 |
-| `test_density` | no (trend) | bynk=13.8%, bynk-check=8.4%, bynk-driver=14.4%, bynk-emit=8.5%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=41.3%, bynk-lsp=34.9%, bynk-render=41.8%, bynk-strip=41.5%, bynk-syntax=10.7%, bynk-wasm=45.1%, bynkc=0.0%, xtask=33.6% |
+| `test_density` | no (trend) | bynk=13.8%, bynk-check=8.7%, bynk-driver=14.4%, bynk-emit=8.5%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=41.3%, bynk-lsp=34.9%, bynk-render=41.8%, bynk-strip=41.5%, bynk-syntax=10.7%, bynk-wasm=45.1%, bynkc=0.0%, xtask=33.6% |
 | `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=421 |
 
 ## Rules closed

@@ -395,7 +395,7 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it | R4.1, R4.2 (`Copy` half) | independent — needs its own settling review before slicing further, since (per §9) the realistic scope here is a checker-and-emitter-wide rewrite of construction and destructuring, not a threading problem |
+| **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it, and §9's settling-review addendum for the real decomposition (once someone picks it up: `bynk-check` first as one atomic PR — `Ty`'s field definition can't change gradually — then `bynk-emit`, then `bynk-ide`/`bynk-lsp`) and the one small, real prerequisite (`Ty`'s `Hash`/`Eq`/`Ord` test coverage) already closed alongside this review, not left as a finding with no test to show for it | R4.1, R4.2 (`Copy` half) | independent — no scaffolding-first increment exists (investigated twice, see §9); the crate boundary is the smallest real slice |
 
 T3.6b above is not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a, T3.7a, T3.7b, above, are). Deliberately not decomposed to
 signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
@@ -708,6 +708,61 @@ the full multi-file project test corpus, not just unit tests, since this is the 
 `.bynk` project (workers targets, event fan-out, multi-file commons, the whole `e2e.rs` fixture corpus)
 actually runs through: all green, and the internal-error panic guarding `certify`'s structurally
 unreachable `Err` arm never fired once. R3.10 is closed in full; only T3.6b remains for this track.
+
+**T3.6b's own settling review — the one its §6 row says it needs before slicing further — found a
+genuine, evidence-backed negative result, investigated twice independently for the same conclusion.**
+The question asked was the one every prior slice in this track answered yes to: is there a
+"parallel data" first increment — the technique §2 names for this whole track, and the exact shape
+that worked for T3.4 (`ExprId` alongside `Span`) and T3.5 (`FileId` alongside the rest of `Span`) —
+small, safe, and *actually used*, not just defined and left dormant? A standalone `TyId`/intern-table
+struct (`Types { intern(&mut self, ty: Ty) -> TyId, resolve(&self, id: TyId) -> &Ty }`) is trivially
+buildable today on T3.6a's already-shipped `Hash`/`Eq`/`Ord` derives, without touching `Ty`'s own
+`Box<Ty>`/`Vec<Ty>` fields. But buildable is not the same as populated: a workspace-wide search found
+**zero** `HashMap<Ty,_>`/`HashSet<Ty>` anywhere in `bynk-check`/`bynk-emit`/`bynk-ide`/`bynk-lsp` —
+confirming, independently, T3.6a's own note above that its derives are "not even exercised by anything
+yet." R3.13 (query memoisation), the concrete beneficiary R4.1's own rationale names for a cheap
+interned key, is confirmed unbuilt (`bynk-greenfield-compiler.md`'s gap table: "no query
+decomposition... phase 8"). The one real `Vec<Ty>`-as-dedup-guard found in the whole tree
+(`seen_sources` in `checker/refinements.rs`, bounded by a handful of declared `embeds` clauses per
+type) is real but too small to carry genuine signal — converting it would be exactly the "hollow
+shipped infrastructure nothing uses" pattern this section exists to warn against, not a legitimate
+slice. Even a dual-population step at `type_of`/`type_of_block`'s existing write choke point (the
+exact site T3.3b/T3.4 populated) would still ship dormant, because nothing downstream reads a `TyId`
+without the same ~25-30-function rewrite that is T3.6b's actual scope — unlike `ExprId`/`FileId`,
+which populated an identity into a place *already read* by real code (`expr_types`'s own re-keying;
+`remap_site`'s existing `Span` comparison), `Ty` has no equivalent already-read comparison waiting for
+a cheap key today. **Conclusion, stated plainly rather than left as an open question to re-ask next
+session: no scaffolding-first slice exists. T3.6b starts as the real rewrite or not at all.**
+
+The real decomposition, once someone does pick this up: `Ty`'s own field definition
+(`Box<Ty>`/`Vec<Ty>` → `TyId`) is one Rust type definition that must change atomically, breaking every
+one of `bynk-check`'s own ~20-23 pattern-matching functions (`display`, `substitute`, `contains_var`,
+`contains_flexible_var`, `unify`, `compatible`, `structurally_compatible_inner`,
+`rebrand_return_type`, `variants_of`, the `peel_to_*`/`is_*`/`join_*` family, `check_pattern` and its
+neighbours, `checker/linearity.rs`'s `held_value`/`storage_value_is_held`) simultaneously — there is
+no way to migrate `bynk-check`'s own consumers one function at a time mid-change the way `ExprId`
+threaded through the parser file-by-file. The crate boundary is therefore the smallest real slice, not
+an artificial one chosen for convenience: **tier 1 is `bynk-check` alone** (unavoidably the largest
+single PR this track will have shipped); **tier 2 is `bynk-emit`**'s ~7 functions (`ty_to_type_ref`,
+`ts_ty`, `payload_field_ty`, `mock_value`, `list_ok_elem_ts`, `decode_map_key`, `literal_base_of_ty`),
+gated on tier 1 landing; **tier 3 is `bynk-ide`/`bynk-lsp`**'s ~6 functions (`variants_for_ty`,
+`named_type_target`, the `Ty::Named` destructuring in `symbols.rs`), the smallest function count but
+the highest regression risk since it's the developer-facing hover/completion surface, and per ADR
+0314 (already adopted by this track, §3.4) needs its own LSP-surface fixture, not just the emission
+goldens tiers 1–2 can lean on.
+
+The one real, small, immediately-shippable piece this review *did* find — closed in this same commit,
+not deferred as a bare finding — is test coverage for the specific failure mode unique to interning
+that nothing in the existing corpus covers: whether two `Ty` values built through different
+construction paths but structurally identical hash and compare equal (the property `intern()`'s dedup
+will depend on), and whether structurally different ones don't collide. `bynk-check/src/checker.rs`'s
+new `ty_hash_eq_ord_tests` module pins exactly this — `map_entry_ty` (a real constructor) against its
+own equivalent raw `Ty::Named` literal, a deeply nested type built twice, and `HashSet` insertion
+behaviour in both directions (dedup and non-collision). The byte-identical golden fixture corpus
+(`bynkc/tests/fixtures/positive`, 394 dirs) and the 422-dir negative corpus catch a broken
+`compatible`/`unify`/`ts_ty` if it changes what compiles or what emits, but neither was authored to
+test interning's specific dedup-vs-collision property — this was a real, zero-coverage gap, not a
+belt-and-suspenders addition.
 
 ## 10. What "transformational" means here
 

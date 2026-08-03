@@ -3803,6 +3803,92 @@ mod generics_tests {
     }
 }
 
+/// T3.6b prep (R4.1/R4.2): `Ty` shipped `Hash`/`Eq`/`Ord` in T3.6a, but
+/// nothing in the tree exercised them — a workspace-wide search found zero
+/// `Ty`-keyed `HashMap`/`HashSet` anywhere. These pin the one property a
+/// future interner's `intern()` will depend on and that no existing test
+/// covers: two `Ty` values built through *different construction paths* but
+/// structurally identical must hash and compare equal (or interning would
+/// silently mint duplicate `TyId`s for the same type), and structurally
+/// different `Ty` values must not collapse into one `HashSet`/`HashMap`
+/// entry. Investigated as part of scoping T3.6b's real first increment (see
+/// the identity-and-totality track doc §9) — this is the gap that
+/// investigation found, closed on its own rather than left as a finding with
+/// no test to show for it.
+#[cfg(test)]
+mod ty_hash_eq_ord_tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    fn hash_of(ty: &Ty) -> u64 {
+        let mut h = DefaultHasher::new();
+        ty.hash(&mut h);
+        h.finish()
+    }
+
+    /// `map_entry_ty` (a real constructor) vs. the raw `Ty::Named` literal it
+    /// builds — two different construction paths for the same type.
+    #[test]
+    fn map_entry_ty_matches_its_own_raw_literal() {
+        let via_constructor = map_entry_ty(Ty::Base(BaseType::Int), Ty::Base(BaseType::String));
+        let via_literal = Ty::Named {
+            name: MAP_ENTRY.to_string(),
+            kind: NamedKind::Record,
+            args: vec![Ty::Base(BaseType::Int), Ty::Base(BaseType::String)],
+        };
+        assert_eq!(via_constructor, via_literal);
+        assert_eq!(hash_of(&via_constructor), hash_of(&via_literal));
+        assert_eq!(via_constructor.cmp(&via_literal), std::cmp::Ordering::Equal);
+    }
+
+    /// A deeply nested type built two separate times must hash and compare
+    /// equal — the property `intern()` would dedup on.
+    #[test]
+    fn structurally_identical_nested_types_hash_and_compare_equal() {
+        let build = || {
+            Ty::Map(
+                Box::new(Ty::Base(BaseType::String)),
+                Box::new(Ty::List(Box::new(Ty::Option(Box::new(Ty::Base(
+                    BaseType::Int,
+                )))))),
+            )
+        };
+        let a = build();
+        let b = build();
+        assert_eq!(a, b);
+        assert_eq!(hash_of(&a), hash_of(&b));
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
+    }
+
+    /// Structurally different types must not collapse into one `HashSet`
+    /// entry — the flip side of the dedup property above.
+    #[test]
+    fn structurally_different_types_do_not_collide_in_a_hash_set() {
+        let mut set = HashSet::new();
+        set.insert(Ty::List(Box::new(Ty::Base(BaseType::Int))));
+        set.insert(Ty::List(Box::new(Ty::Base(BaseType::String))));
+        set.insert(Ty::Option(Box::new(Ty::Base(BaseType::Int))));
+        assert_eq!(set.len(), 3);
+    }
+
+    /// A `HashSet` built from several structurally-equal insertions
+    /// (mirroring what a real interner's dedup loop would do) collapses to
+    /// one entry.
+    #[test]
+    fn a_hash_set_deduplicates_structurally_equal_types() {
+        let mut set = HashSet::new();
+        for _ in 0..3 {
+            set.insert(map_entry_ty(
+                Ty::Base(BaseType::Int),
+                Ty::Base(BaseType::Bool),
+            ));
+        }
+        assert_eq!(set.len(), 1);
+    }
+}
+
 /// Characterization pins for `checker.rs`'s pure free functions (v0.29.10
 /// slice 0). These pin *current* behaviour ahead of the upcoming module split
 /// so the verbatim moves are verifiable. Any surprising behaviour is pinned
