@@ -3854,10 +3854,22 @@ fn lower_if(
         pre.finish(value)
     } else {
         // T2.2 (R6.4): isolate the effectfulness flag to just this IIFE's own
-        // body — `cond_expr` was already lowered above, so any await it
-        // needed landed in `pre`, not here. See the matching note in
-        // `lower_match_as_iife`.
+        // body. Unlike `lower_match_as_iife`'s `disc_expr` (spliced *outside*
+        // the returned arrow, at the call site), `cond_expr`'s *text* is
+        // spliced inside this arrow's own `if (...)` below — only its hoisted
+        // statements landed in `pre` above. A bare `await` in `cond_expr`'s
+        // text would need to feed `needs_async`, not `saved_await`; the
+        // debug_assert after the arrow closes documents that this can't
+        // happen today (a literal `await` comes only from `EffectLet`/`Do`,
+        // both hoisted to `pre`, or from a nested `finish_async_iife` wrap,
+        // which would require a value-position `match`/`if` needing the async
+        // wrap to itself type as `Bool` — ruled out by the checker's
+        // Effect-typing) rather than silently trusting it.
         let saved_await = std::mem::take(&mut cx.emitted_await);
+        debug_assert!(
+            !cond_expr.contains("await "),
+            "cond text lands inside this arrow; its awaits must feed `needs_async`, not `saved_await`: {cond_expr}"
+        );
         let mut iife = String::new();
         iife.push_str("(() => {\n");
         iife.push_str("    if (");
@@ -4776,7 +4788,11 @@ fn finish_async_iife(iife: String, needs_async: bool) -> String {
         format!("(async () => {{{rest}")
     } else {
         // Defensive: unreachable given the two current callers, which always
-        // build one of the two headers above.
+        // build one of the two headers above. `needs_async` is authoritative
+        // that `iife` holds a literal `await`, so falling through here emits a
+        // bare `await` in a synchronous arrow — a hard `SyntaxError`, not a
+        // missed optimisation. Fail here instead of at `tsc`.
+        debug_assert!(false, "finish_async_iife: unrecognised IIFE header: {iife}");
         return iife;
     };
     format!("await {async_iife}")
@@ -5784,6 +5800,29 @@ mod async_iife_effectfulness_tests {
         assert!(
             ts.contains("const r = await await (async (__d) => {"),
             "the outer switch arrow must also become async: {ts}"
+        );
+    }
+
+    /// Non-regression, mirroring the `EffectLet` case above for the *other*
+    /// write site: an arm whose only effect is a `do` (no binder) must still
+    /// force its switch arrow async. The old scan was blind to which
+    /// statement produced the `await`, so `Do` came along for free; the flag
+    /// has to name it explicitly at its own site (`emit_statement`'s
+    /// `Statement::Do` arm) and nothing else pins that it does.
+    #[test]
+    fn match_arm_do_only_effect_still_forces_the_switch_arrow_async() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn noop(n: Int) -> Effect[()] {\n  Effect.pure(())\n}\n\n\
+             fn run(flag: Bool) -> Effect[()] {\n  \
+             let r <- match flag {\n    \
+             true => {\n      do noop(1)\n      Effect.pure(())\n    }\n    \
+             false => Effect.pure(())\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("const r = await await (async (__d) => {"),
+            "a do-only effectful arm must also force the switch arrow async: {ts}"
         );
     }
 }
