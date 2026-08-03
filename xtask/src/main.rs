@@ -6,6 +6,8 @@
 //! - `greenfield-status` (compiler-architecture track, T0.0, #999) runs the
 //!   thirteen probes against the tree and prints the report; `--apply` writes the
 //!   committed table.
+//! - `ci` runs the gates CI runs, locally, in CI's own cheapest-first order —
+//!   `--fast` stops after the two that need no compile-and-link.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -32,6 +34,14 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
             stamp(args.iter().any(|a| a == "--apply"))
+        }
+        Some("ci") => {
+            if let Some(bad) = args[1..].iter().find(|a| *a != "--fast") {
+                eprintln!("xtask ci: unknown argument {bad:?}");
+                usage();
+                return ExitCode::from(2);
+            }
+            ci(args.iter().any(|a| a == "--fast"))
         }
         Some(other) => {
             eprintln!("xtask: unknown command {other:?}");
@@ -244,6 +254,196 @@ fn greenfield_status(apply: bool) -> ExitCode {
     }
 }
 
+/// Run the CI gates locally, cheapest first, stopping at the first failure.
+///
+/// This exists to move a whole class of round trip off CI. The PR gate's
+/// critical path is the `Test suite (windows-latest)` leg at ~7 minutes, so a
+/// `cargo fmt` slip — detectable in 17 seconds — costs a push, a seven-minute
+/// wait, and a second push. The two `--fast` gates below need no
+/// compile-and-link and are what the `pre-push` hook in `.githooks/` runs.
+///
+/// The commands mirror `.github/workflows/ci.yml`'s `fmt`, `clippy` and `test`
+/// jobs. They are deliberately NOT asserted equal to the workflow by a drift
+/// guard: this is a convenience that front-runs CI, and CI remains the
+/// authority. If the two drift, CI still fails and the gate still holds — the
+/// only cost is a round trip this command would have saved.
+///
+/// The test leg runs under nextest's `default` profile, not CI's `ci` profile:
+/// that is the documented intent in `.config/nextest.toml` (local runs keep
+/// `retries = 0` so a flake surfaces immediately instead of being absorbed).
+fn ci(fast: bool) -> ExitCode {
+    let root = repo_root();
+
+    let nextest = !fast && have_nextest(&root);
+    if !fast && !nextest {
+        eprintln!(
+            "xtask ci: cargo-nextest not found — falling back to `cargo test`. \
+             CI runs nextest; install it with `cargo install cargo-nextest --locked` \
+             for a faster and closer-to-CI run."
+        );
+    }
+    let steps = ci_steps(fast, nextest);
+
+    for (name, args) in &steps {
+        println!("xtask ci: {name} — cargo {}", args.join(" "));
+        let status = Command::new(cargo()).args(args).current_dir(&root).status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("xtask ci: {name} failed ({s})");
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                eprintln!("xtask ci: cannot run cargo for {name}: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if fast {
+        println!(
+            "xtask ci: fast gates passed — the test suite was NOT run (drop --fast to run it)"
+        );
+    } else {
+        println!("xtask ci: all gates passed");
+    }
+    ExitCode::SUCCESS
+}
+
+/// The gates `ci` runs, cheapest first, as `(name, cargo argv)`.
+///
+/// Split out from [`ci`] so the *selection* is assertable without spawning a
+/// single cargo. That matters most for the `--fast` list: it is what the
+/// `pre-push` hook execs, so a change that silently dropped clippy from it
+/// would be caught only by the CI run the hook exists to pre-empt.
+///
+/// `nextest` says whether `cargo nextest` is available; the caller probes for
+/// it (and reports the fallback) rather than this function, to keep it pure.
+/// It is ignored when `fast` is set, since no test step is emitted then.
+fn ci_steps(fast: bool, nextest: bool) -> Vec<(&'static str, Vec<&'static str>)> {
+    let mut steps: Vec<(&str, Vec<&str>)> = vec![
+        ("formatting", vec!["fmt", "--all", "--check"]),
+        (
+            "clippy",
+            vec![
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ),
+    ];
+
+    if !fast {
+        // Prefer nextest (what CI runs, and far faster across the suite's 141
+        // test binaries), but fall back rather than fail: a contributor who has
+        // not installed it should still get a working `cargo xtask ci`.
+        steps.push(if nextest {
+            ("tests", vec!["nextest", "run", "--workspace", "--locked"])
+        } else {
+            ("tests", vec!["test", "--workspace", "--locked"])
+        });
+    }
+
+    steps
+}
+
+/// The cargo that invoked us, so a non-default toolchain stays consistent across
+/// the child processes. Falls back to plain `cargo` when run outside cargo.
+fn cargo() -> String {
+    std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
+}
+
+fn have_nextest(root: &Path) -> bool {
+    Command::new(cargo())
+        .args(["nextest", "--version"])
+        .current_dir(root)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
 fn usage() {
-    eprintln!("usage: cargo xtask <check-pending | greenfield-status [--apply] | stamp [--apply]>");
+    eprintln!(
+        "usage: cargo xtask <check-pending | ci [--fast] | greenfield-status [--apply] | stamp [--apply]>"
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ci_steps;
+
+    fn names(steps: &[(&str, Vec<&str>)]) -> Vec<String> {
+        steps.iter().map(|(n, _)| (*n).to_string()).collect()
+    }
+
+    /// The list the `pre-push` hook execs. If clippy ever falls out of it the
+    /// hook still exits 0 and still looks like it ran, and the lint failure
+    /// resurfaces only on CI — the round trip the hook exists to prevent.
+    #[test]
+    fn fast_is_exactly_the_two_compile_free_gates() {
+        let steps = ci_steps(true, false);
+        assert_eq!(names(&steps), ["formatting", "clippy"]);
+        assert_eq!(steps[0].1[0], "fmt");
+        assert_eq!(steps[1].1[0], "clippy");
+    }
+
+    /// `--fast` must not run the suite whether or not nextest is installed —
+    /// the nextest probe is skipped entirely on that path.
+    #[test]
+    fn fast_never_emits_a_test_step() {
+        for nextest in [true, false] {
+            let steps = ci_steps(true, nextest);
+            assert!(
+                !names(&steps).contains(&"tests".to_string()),
+                "--fast emitted a test step with nextest={nextest}"
+            );
+        }
+    }
+
+    #[test]
+    fn full_run_appends_the_suite_after_the_lints() {
+        let steps = ci_steps(false, true);
+        assert_eq!(names(&steps), ["formatting", "clippy", "tests"]);
+    }
+
+    /// Both arms run the whole workspace and both pass `--locked`, so a local
+    /// run fails on lockfile drift exactly as CI's `test` job does.
+    #[test]
+    fn both_test_arms_are_workspace_wide_and_locked() {
+        for nextest in [true, false] {
+            let steps = ci_steps(false, nextest);
+            let (_, args) = steps.last().expect("a test step");
+            assert!(args.contains(&"--workspace"), "{args:?} is not --workspace");
+            assert!(args.contains(&"--locked"), "{args:?} is not --locked");
+        }
+    }
+
+    /// The fallback picks a genuinely different subcommand rather than passing
+    /// nextest's argv to `cargo test` (which would reject `run`).
+    #[test]
+    fn the_nextest_fallback_switches_to_cargo_test() {
+        assert_eq!(
+            ci_steps(false, true).last().unwrap().1,
+            ["nextest", "run", "--workspace", "--locked"]
+        );
+        assert_eq!(
+            ci_steps(false, false).last().unwrap().1,
+            ["test", "--workspace", "--locked"]
+        );
+    }
+
+    /// No `--profile ci`: `.config/nextest.toml` keeps `retries = 0` on the
+    /// default profile deliberately, so a local flake surfaces immediately
+    /// rather than being absorbed the way CI's `ci` profile absorbs it.
+    #[test]
+    fn the_local_run_does_not_borrow_cis_nextest_profile() {
+        let steps = ci_steps(false, true);
+        let (_, args) = steps.last().unwrap();
+        assert!(
+            !args.contains(&"--profile"),
+            "local run must use nextest's default profile, got {args:?}"
+        );
+    }
 }
