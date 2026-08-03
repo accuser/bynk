@@ -16,11 +16,15 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Every codeql-action sub-action is released from one commit, so they
+      # must move together — a partial bump leaves an analysis run mixing
+      # action versions. A glob rather than a list of sub-actions: naming them
+      # individually is what let `upload-sarif` (scorecard.yml) drift out of
+      # the group, so one v4 bump arrived as two PRs (#1041 and #1051) instead
+      # of one. The glob also picks up any sub-action added later.
       codeql-workflow:
         patterns:
-          - "github/codeql-action/init"
-          - "github/codeql-action/autobuild"
-          - "github/codeql-action/analyze"
+          - "github/codeql-action/*"
 
   # The npm-published tree-sitter grammar (a planned release channel).
   - package-ecosystem: npm
@@ -51,3 +55,19 @@ updates:
     directory: "/site"
     schedule:
       interval: weekly
+    groups:
+      # Astro and Starlight move in lockstep — Starlight's peer range tracks
+      # the astro minor, so a split bump means one PR waiting on the other.
+      # Group them so a release lands as one resolvable PR.
+      #
+      # This is defence in depth, not the whole fix: grouping only merges what
+      # dependabot updates in the *same* run, so a staggered release can still
+      # split. The exact-peer trap that deadlocked #1036/#1038 is closed at the
+      # source instead — `@astrojs/markdown-remark` is no longer a direct
+      # dependency of /site, so it resolves transitively to whatever version
+      # `astro` pins and never gets a standalone PR to conflict with.
+      astro:
+        patterns:
+          - "astro"
+          - "@astrojs/*"
+          - "starlight-*"
