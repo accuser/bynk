@@ -1,0 +1,8 @@
+[project]
+name = "agent-state-zero-record"
+version = "0.1.0"
+
+[paths]
+src = "src"
+tests = "tests"
+out = "out"

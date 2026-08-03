@@ -35,6 +35,15 @@ that hoist must be *skipped* when the operator doesn't reach it, and a statement
 cannot be conditionally skipped, so the arrow there is load-bearing. It stays open
 and is named in the code.
 
+Making the `if` hoist for real moved three things that only the new statement shape
+could reach, each closed here with a named fixture. The declared error embedding
+(ADR 0178) must still apply to a `?` inside a hoisted branch, because its `return`
+now exits the enclosing function — so `lower_if` no longer clears `return_ty` the
+way the arrow path must. The slot a hoisted `if` assigns to needs the *unwrapped*
+type in async-tail position, where `Effect.pure(x)` emits a bare `x`. And an agent's
+static field initialiser now wraps a hoist in an IIFE rather than splicing it into a
+comma sequence, which only ever parsed for expression-shaped hoists.
+
 No `.bynk` surface, grammar, checker, or runtime change. Every one of the 383
 positive fixtures — including the four regression fixtures for the defects R6.2
 names (`945`–`948`) — reproduces byte-identically.

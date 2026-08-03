@@ -370,12 +370,40 @@ fn lower_tail_expr(e: &Expr, cx: &mut LowerCtx, async_tail: bool) -> Lowered {
                     e = else_tail.expr
                 ));
             }
-            let slot_ty = checked_ty_ts(e, cx);
+            let slot_ty = async_tail_slot_ty(e, cx);
             let value =
                 hoist_if_as_statement(&mut pre, cond_expr, then_tail, else_tail, slot_ty, cx);
             pre.finish(value)
         }
         _ => lower_expr(e, cx),
+    }
+}
+
+/// The slot annotation for a hoisted `if` in **async-tail** position, where
+/// `checked_ty_ts` alone is wrong.
+///
+/// #1029 review: this function exists because an `async function` wraps its
+/// return value, so `Effect.pure(x)` in tail position emits a bare `x` rather
+/// than a promise. A branch therefore assigns `T` where the `if`'s recorded type
+/// is `Effect[T]` — and `ts_ty` would render that `Promise<T>`, which `tsc
+/// --strict` rejects (`Type 'boolean' is not assignable to type
+/// 'Promise<boolean>'`). The ternary form never had to care: `return (c ? x : p)`
+/// in an `async function` legally accepts either.
+///
+/// Both shapes are genuinely reachable — an `Effect.pure(x)` branch yields `T`
+/// (the `EffectPure` arm above unwraps it) while a branch that is merely
+/// `Effect`-typed falls through to `lower_expr` and yields `Promise<T>` — so the
+/// annotation admits both rather than picking one.
+fn async_tail_slot_ty(e: &Expr, cx: &LowerCtx) -> Option<String> {
+    match cx.commons().expr_types.get(&e.span) {
+        Some(Ty::Effect(inner)) => {
+            let inner_ts = match inner.as_ref() {
+                Ty::Unit => "void".to_string(),
+                other => ts_ty(other),
+            };
+            Some(format!("{inner_ts} | Promise<{inner_ts}>"))
+        }
+        _ => checked_ty_ts(e, cx),
     }
 }
 
@@ -2781,8 +2809,8 @@ fn lower_list_kernel(
             ))
         }
         // v0.150 (ADR 0174): the short-circuit collect iterators — stop at the
-        // first `Err` and return (it (`Effect[Result[List[U], E]]`). `traverseTry`
-        // awaits each in order).map(|expr| pre.finish(expr)), bailing on the first `Err`; `parTraverseTry`
+        // first `Err` and return it (`Effect[Result[List[U], E]]`). `traverseTry`
+        // awaits each in order, bailing on the first `Err`; `parTraverseTry`
         // issues all at once, then scans the resolved `Result`s in input order.
         (TRAVERSE_TRY, [f]) => {
             let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.span));
@@ -3783,13 +3811,25 @@ fn lower_if(
     if ternary_shaped(cond, then_block, else_block, cx) {
         // T2.1 (R6.2): lower each branch's tail once, then ask the branches
         // themselves whether they hoisted, rather than asking `simple_expr` to
-        // predict it. `return_ty` is cleared across both, matching what the
-        // IIFE path below does for the same statements — and irrelevant when
-        // nothing hoists, since only a `?` expansion reads it.
-        let saved = cx.return_ty.take();
+        // predict it.
+        //
+        // #1029 review: `return_ty` is deliberately **not** cleared here, unlike
+        // the IIFE path below. That path clears it because a `return` in its
+        // arms exits the arrow rather than the enclosing function, so an
+        // embedding `?` must behave like a plain one (ADR 0178). This path
+        // inverts that premise: when a branch hoists, `hoist_if_as_statement`
+        // puts the statements in the *caller's* statement position, so the `?`
+        // expansion's `return` does exit the enclosing function and the declared
+        // embedding must still apply. Clearing it emitted a bare `return __rN;`
+        // — an `Err` of the operand's error type returned from a function
+        // declared with the embedding sum's.
+        //
+        // Preserving it cannot move the no-hoist branch: `return_ty` is read
+        // only by `embed_conversion`, only from the `?` expansion, and a `?`
+        // expansion always pushes to `pre` — so where `pre` is empty, nothing
+        // read it.
         let then_tail = lower_expr(&then_block.tail, cx);
         let else_tail = lower_expr(&else_block.tail, cx);
-        cx.return_ty = saved;
         if then_tail.pre.is_empty() && else_tail.pre.is_empty() {
             return pre.finish(format!(
                 "({cond_expr} ? {t} : {e})",
@@ -4215,7 +4255,7 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     // when the operator actually reaches rhs.
     //
     // Residual gap, not introduced here: if rhs's hoist itself contains a
-    // `?`'s early return pre.finish((`if (__rN.tag === "Err") return __rN;`)), that
+    // `?`'s early return (`if (__rN.tag === "Err") return __rN;`), that
     // `return` now exits this wrapper arrow rather than the enclosing
     // function — the same class of miscompile `lower_match_as_iife` had.
     // Unlike that case, this one isn't a regression: the pre-existing
