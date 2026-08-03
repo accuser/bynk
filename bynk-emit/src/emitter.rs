@@ -3145,6 +3145,28 @@ pub(crate) struct LowerCtx<'a> {
     /// borrow in. `None` for the single-file `emit()` path and any body emitted
     /// outside a project, where no map is produced.
     pub source_map: Option<&'a RefCell<SourceMapBuilder>>,
+    /// T2.2 (R6.4): set at the two statement sites that emit a literal `await`
+    /// (`EffectLet`, `Do`) and read-and-reset around a value-position `match`/`if`
+    /// IIFE's own body construction — the flag a synchronous arrow reads to decide
+    /// whether it must become `async` and be awaited at its call site. Replaces a
+    /// scan of the built string for the substring `"await "`, which over-matched
+    /// on a self-contained `async (...) => {...}` embedded as an arm's value (an
+    /// iterator terminal like `forEach`) without anything in *this* arrow's own
+    /// scope needing to await. Not isolated around a lambda body — a nested
+    /// effectful lambda still marks the enclosing IIFE async, exactly as the old
+    /// scan did (its own body text also contained `"await "`); closing that is a
+    /// separate, unscoped defect, not this one.
+    pub(crate) emitted_await: bool,
+    /// T2.3 (R6.3): set when lowering a `?` pushes a propagating early-return
+    /// statement (`if (...) return ...;`) into the current `Pre`. Read (and
+    /// reset) around a short-circuit operand's own lowering in `lower_bin_op`/
+    /// `lower_and_with_is`, so those can tell a hoisted `?` apart from an
+    /// ordinary hoisted statement: a plain `(() => { ...; return expr; })()`
+    /// wrap is safe for the latter (nothing inside needs to escape the arrow)
+    /// but captures the former's `return` instead of letting it exit the
+    /// enclosing function — the residual gap `hoist_if_as_statement` (built for
+    /// T2.1's `if`-hoisting) also closes here, once this flag says it's needed.
+    pub(crate) emitted_early_return: bool,
 }
 
 /// v0.59: the source context an `assert` lowering needs to turn its span into a
@@ -3176,6 +3198,8 @@ impl<'a> LowerCtx<'a> {
             call_site_identity: None,
             call_site_no_credential: false,
             source_map: None,
+            emitted_await: false,
+            emitted_early_return: false,
         }
     }
 
@@ -3745,20 +3769,22 @@ impl<'a> LowerCtx<'a> {
     /// inline exactly as before (preserving rewrites such as `self.state` or
     /// capability access). A complex receiver (anything `value_text_for_is`
     /// could not render — e.g. a call) is evaluated once into a fresh temp
-    /// emitted into `stmts` and cached by span, so the bindings gathered later
-    /// reference the same evaluation rather than re-running the expression.
-    fn is_receiver_ref(&mut self, value: &Expr, stmts: &mut Vec<String>) -> String {
+    /// hoisted into the returned `Lowered` and cached by span, so the bindings
+    /// gathered later reference the same evaluation rather than re-running the
+    /// expression.
+    fn is_receiver_ref(&mut self, value: &Expr) -> Lowered {
         if let Some(t) = self.is_receiver_temps.get(&value.span) {
-            return t.clone();
+            return Lowered::bare(t.clone());
         }
-        let lowered = lower_expr_into(value, stmts, self);
+        let mut pre = Pre::new();
+        let lowered = pre.lower(value, self);
         if is_simple_is_receiver(value) {
-            return lowered;
+            return pre.finish(lowered);
         }
         let tmp = self.fresh();
-        stmts.push(format!("const {tmp} = {lowered};"));
+        pre.push(format!("const {tmp} = {lowered};"));
         self.is_receiver_temps.insert(value.span, tmp.clone());
-        tmp
+        pre.finish(tmp)
     }
 
     /// v0.13: like `is_receiver_ref` but always lifts to a temp, even for a
@@ -3766,15 +3792,16 @@ impl<'a> LowerCtx<'a> {
     /// branded refined type (`const n = <temp> as Quantity`); that shadowing
     /// const cannot reference the same name (TDZ), so the value is captured in a
     /// temp first and both the check and the binding read the temp.
-    fn is_receiver_ref_forced(&mut self, value: &Expr, stmts: &mut Vec<String>) -> String {
+    fn is_receiver_ref_forced(&mut self, value: &Expr) -> Lowered {
         if let Some(t) = self.is_receiver_temps.get(&value.span) {
-            return t.clone();
+            return Lowered::bare(t.clone());
         }
-        let lowered = lower_expr_into(value, stmts, self);
+        let mut pre = Pre::new();
+        let lowered = pre.lower(value, self);
         let tmp = self.fresh();
-        stmts.push(format!("const {tmp} = {lowered};"));
+        pre.push(format!("const {tmp} = {lowered};"));
         self.is_receiver_temps.insert(value.span, tmp.clone());
-        tmp
+        pre.finish(tmp)
     }
 
     /// v0.13: true when `value is Name` is a *refinement* check — the value is a
@@ -3795,8 +3822,8 @@ impl<'a> LowerCtx<'a> {
         );
         value_baseish && name_refined
     }
-    /// Read-only counterpart for the binding gatherer (which has no `stmts`
-    /// and cannot lift). If the receiver was already lifted to a temp during
+    /// Read-only counterpart for the binding gatherer (which returns no
+    /// `Lowered`, so it has nowhere to hoist and cannot lift). If the receiver was already lifted to a temp during
     /// condition lowering, reuse that temp; otherwise it must be a simple
     /// repeatable lvalue, rendered inline. The "lower the condition before
     /// gathering its bindings" ordering in `emit_if_tail` / `lower_and_with_is`

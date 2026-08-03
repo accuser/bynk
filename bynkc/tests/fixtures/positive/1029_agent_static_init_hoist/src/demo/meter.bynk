@@ -1,0 +1,43 @@
+---
+#1029 review, finding 3. A `store` field's static initialiser that hoists must
+stay valid TypeScript. The zero-record builder used to splice hoisted statements
+into a comma sequence, which only ever parsed for expression-shaped hoists — and
+T2.1 made a statement-shaped one reachable here for the first time, because a
+value-position `if` that hoists now yields `let …; if (…) {…}` where it used to
+yield a self-contained arrow. `5 is PositiveInt` is a refined `is` check, which
+hoists a receiver temp unconditionally, so the `if` cannot stay a ternary.
+---
+context demo.meter
+
+exports transparent { MeterError }
+
+type MeterId = String where Matches("[a-z0-9]{1,16}")
+type PositiveInt = Int where Positive
+
+type Totals = {
+	hits:  Int,
+	bytes: Int,
+}
+
+type MeterError = enum {
+	Missing,
+}
+
+agent Meter {
+	key id: MeterId
+
+	store totals: Cell[Totals]
+	store active: Cell[Bool] = if true { 5 is PositiveInt } else { false }
+
+	on call hits() -> Effect[Result[Int, MeterError]] {
+		Ok(totals.hits)
+	}
+}
+
+service hits {
+	on call(id: MeterId) -> Effect[Result[Int, MeterError]] {
+		let meter = Meter(id)
+		let total <- meter.hits()
+		total
+	}
+}

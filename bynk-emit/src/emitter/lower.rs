@@ -97,9 +97,9 @@ pub fn lower_test_case_body(
         // Evaluate the tail expression but discard its value; assertions inside
         // it still take effect via thrown AssertionErrors.
         cx.record_span(out.len(), block.tail.span);
-        let mut stmts = Vec::new();
-        let tail = lower_expr_into(&block.tail, &mut stmts, &mut cx);
-        for s in &stmts {
+        let mut pre = Pre::new();
+        let tail = pre.lower(&block.tail, &mut cx);
+        for s in pre.stmts() {
             write_line(&mut out, 0, s);
         }
         if !tail.is_empty() && tail != "undefined" {
@@ -154,9 +154,9 @@ pub fn lower_integration_case_body(
             emit_statement(&mut out, stmt, &mut cx, 0);
         }
         cx.record_span(out.len(), block.tail.span);
-        let mut stmts = Vec::new();
-        let tail = lower_expr_into(&block.tail, &mut stmts, &mut cx);
-        for s in &stmts {
+        let mut pre = Pre::new();
+        let tail = pre.lower(&block.tail, &mut cx);
+        for s in pre.stmts() {
             write_line(&mut out, 0, s);
         }
         if !tail.is_empty() && tail != "undefined" {
@@ -264,19 +264,72 @@ fn emit_block_inner(
             cond,
             then_block,
             else_block,
-        } if !both_simple(then_block, else_block, cx) || cond_has_is_bindings(cond, cx) => {
+        } if ternary_shaped(cond, then_block, else_block, cx) => {
+            // T2.1 (R6.2): the shape *could* be a ternary. Whether it actually
+            // is depends on whether either branch hoists — which is now
+            // answered by lowering it, not by predicting it. Both outcomes are
+            // built from the same `Lowered` values, so nothing is lowered twice
+            // and no temp number is burned on a discarded attempt.
+            let mut pre = Pre::new();
+            let cond_expr = pre.lower(cond, cx);
+            let then_tail = lower_tail_expr(&then_block.tail, cx, async_tail);
+            let else_tail = lower_tail_expr(&else_block.tail, cx, async_tail);
+            for s in pre.stmts() {
+                write_line(out, indent, s);
+            }
+            if then_tail.pre.is_empty() && else_tail.pre.is_empty() {
+                write_line(
+                    out,
+                    indent,
+                    &format!(
+                        "return ({cond_expr} ? {t} : {e});",
+                        t = then_tail.expr,
+                        e = else_tail.expr
+                    ),
+                );
+            } else {
+                // A branch hoisted after all — the case `simple_expr` used to
+                // mispredict (#945, and the `ListLit`/`InterpStr` fallthrough
+                // this slice closes). A statement `if` is where a hoisted `?`'s
+                // early return belongs, so emit that instead of a ternary that
+                // has nowhere to put it. Byte-identical to what `emit_if_tail`
+                // produces for this shape (both branches are statement-free and
+                // their tails lower as plain expressions), rebuilt from the
+                // values already in hand.
+                write_line(out, indent, &format!("if ({cond_expr}) {{"));
+                emit_pure_tail_branch(out, then_tail, indent + INDENT_STEP);
+                write_line(out, indent, "} else {");
+                emit_pure_tail_branch(out, else_tail, indent + INDENT_STEP);
+                write_line(out, indent, "}");
+            }
+        }
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
             emit_if_tail(out, cond, then_block, else_block, cx, indent, async_tail);
         }
         _ => {
-            let mut stmts = Vec::new();
-            let tail = lower_tail_expr(&block.tail, &mut stmts, cx, async_tail);
-            for s in &stmts {
+            let tail = lower_tail_expr(&block.tail, cx, async_tail);
+            for s in &tail.pre {
                 write_line(out, indent, s);
             }
-            write_line(out, indent, &format!("return {tail};"));
+            write_line(out, indent, &format!("return {};", tail.expr));
         }
     }
     cx.shadow_scopes.pop();
+}
+
+/// Write one branch of the statement `if` above: the tail's hoisted statements
+/// followed by its `return`. Exactly the body [`emit_block_inner`]'s own `_`
+/// arm writes for a statement-free block, which is what `emit_if_tail` would
+/// have recursed into.
+fn emit_pure_tail_branch(out: &mut String, tail: Lowered, indent: usize) {
+    for s in &tail.pre {
+        write_line(out, indent, s);
+    }
+    write_line(out, indent, &format!("return {};", tail.expr));
 }
 
 /// Lower an expression that's in the tail position of a returning context.
@@ -292,35 +345,168 @@ fn emit_block_inner(
 ///   returned expression.
 /// - Parens (transparent).
 ///
-/// In non-async-tail position, defer to `lower_expr_into` unchanged.
-fn lower_tail_expr(
-    e: &Expr,
-    stmts: &mut Vec<String>,
-    cx: &mut LowerCtx,
-    async_tail: bool,
-) -> String {
+/// In non-async-tail position, defer to [`lower_expr`] unchanged.
+fn lower_tail_expr(e: &Expr, cx: &mut LowerCtx, async_tail: bool) -> Lowered {
     if !async_tail {
-        return lower_expr_into(e, stmts, cx);
+        return lower_expr(e, cx);
     }
     match &e.kind {
-        ExprKind::EffectPure(inner) => lower_expr_into(inner, stmts, cx),
-        ExprKind::Paren(inner) => lower_tail_expr(inner, stmts, cx, true),
-        ExprKind::Block(b) if b.statements.is_empty() => lower_tail_expr(&b.tail, stmts, cx, true),
+        ExprKind::EffectPure(inner) => lower_expr(inner, cx),
+        ExprKind::Paren(inner) => lower_tail_expr(inner, cx, true),
+        ExprKind::Block(b) if b.statements.is_empty() => lower_tail_expr(&b.tail, cx, true),
         ExprKind::If {
             cond,
             then_block,
             else_block,
-        } if both_simple(then_block, else_block, cx) && !cond_has_is_bindings(cond, cx) => {
-            let cond_expr = lower_expr_into(cond, stmts, cx);
-            let mut tstmts = Vec::new();
-            let testr = lower_tail_expr(&then_block.tail, &mut tstmts, cx, true);
-            debug_assert!(tstmts.is_empty());
-            let mut estmts = Vec::new();
-            let eestr = lower_tail_expr(&else_block.tail, &mut estmts, cx, true);
-            debug_assert!(estmts.is_empty());
-            format!("({cond_expr} ? {testr} : {eestr})")
+        } if ternary_shaped(cond, then_block, else_block, cx) => {
+            let mut pre = Pre::new();
+            let cond_expr = pre.lower(cond, cx);
+            let then_tail = lower_tail_expr(&then_block.tail, cx, true);
+            let else_tail = lower_tail_expr(&else_block.tail, cx, true);
+            if then_tail.pre.is_empty() && else_tail.pre.is_empty() {
+                return pre.finish(format!(
+                    "({cond_expr} ? {t} : {e})",
+                    t = then_tail.expr,
+                    e = else_tail.expr
+                ));
+            }
+            let slot_ty = async_tail_slot_ty(e, cx);
+            let value =
+                hoist_if_as_statement(&mut pre, cond_expr, then_tail, else_tail, slot_ty, cx);
+            pre.finish(value)
         }
-        _ => lower_expr_into(e, stmts, cx),
+        _ => lower_expr(e, cx),
+    }
+}
+
+/// The slot annotation for a hoisted `if` in **async-tail** position, where
+/// `checked_ty_ts` alone is wrong.
+///
+/// #1029 review: this function exists because an `async function` wraps its
+/// return value, so `Effect.pure(x)` in tail position emits a bare `x` rather
+/// than a promise. A branch therefore assigns `T` where the `if`'s recorded type
+/// is `Effect[T]` — and `ts_ty` would render that `Promise<T>`, which `tsc
+/// --strict` rejects (`Type 'boolean' is not assignable to type
+/// 'Promise<boolean>'`). The ternary form never had to care: `return (c ? x : p)`
+/// in an `async function` legally accepts either.
+///
+/// Both shapes are genuinely reachable — an `Effect.pure(x)` branch yields `T`
+/// (the `EffectPure` arm above unwraps it) while a branch that is merely
+/// `Effect`-typed falls through to `lower_expr` and yields `Promise<T>` — so the
+/// annotation admits both rather than picking one.
+fn async_tail_slot_ty(e: &Expr, cx: &LowerCtx) -> Option<String> {
+    match cx.commons().expr_types.get(&e.span) {
+        Some(Ty::Effect(inner)) => {
+            let inner_ts = match inner.as_ref() {
+                Ty::Unit => "void".to_string(),
+                other => ts_ty(other),
+            };
+            Some(format!("{inner_ts} | Promise<{inner_ts}>"))
+        }
+        _ => checked_ty_ts(e, cx),
+    }
+}
+
+/// T2.1: a branch of a would-be ternary hoisted, so the ternary has nowhere to
+/// put its statements. Hoist the whole `if` as a real statement assigning to a
+/// fresh slot, and hand back the slot as the expression.
+///
+/// The reason this matters is the one R6.6 names: an arrow wrapper
+/// (`(() => { … })()`, the only shape available before `pre` could travel with
+/// the expression) makes a hoisted `?`'s `return` exit the *arrow* rather than
+/// the enclosing function — the `lower_match_as_iife` miscompile (#946) in a
+/// different costume, which `tsc --strict` rejects outright because the arrow's
+/// type becomes `T | { tag: "Err" }`. Hoisting keeps the `return` where the
+/// source put it.
+///
+/// Decision B of #1017 asked whether threading closes this for free. For the
+/// `if`-expression it does, and this is where. It does **not** close
+/// `lower_bin_op`'s short-circuit `rhs`, whose hoist must be *skipped* when the
+/// operator doesn't reach it — a statement cannot be conditionally skipped, so
+/// the arrow there is load-bearing rather than incidental. That one stays open.
+fn hoist_if_as_statement(
+    pre: &mut Pre,
+    cond_expr: String,
+    then_tail: Lowered,
+    else_tail: Lowered,
+    slot_ty: Option<String>,
+    cx: &mut LowerCtx,
+) -> String {
+    let slot = cx.fresh();
+    // The slot needs its type spelled out. TypeScript's "evolving `let`"
+    // inference gives up once a branch also `return`s (TS7034/TS7005 under
+    // `--strict`), which is exactly the shape a hoisted `?` produces — so take
+    // the type the checker already recorded for the `if` expression.
+    match &slot_ty {
+        Some(ty) => pre.push(format!("let {slot}: {ty};")),
+        None => pre.push(format!("let {slot};")),
+    }
+    pre.push(format!("if ({cond_expr}) {{"));
+    pre.extend(assign_branch(then_tail, &slot));
+    pre.push("} else {".to_string());
+    pre.extend(assign_branch(else_tail, &slot));
+    pre.push("}".to_string());
+    slot
+}
+
+/// One branch of the hoisted statement `if` above: the branch's own hoisted
+/// statements, then the assignment of its value to the shared slot. Each line
+/// carries its own indent — a hoisted statement is written by whichever caller
+/// owns the statement position, at one flat indent, so nesting has to travel
+/// inside the string.
+fn assign_branch(tail: Lowered, slot: &str) -> Vec<String> {
+    let pad = " ".repeat(INDENT_STEP);
+    let mut out: Vec<String> = tail.pre.iter().map(|s| format!("{pad}{s}")).collect();
+    out.push(format!("{pad}{slot} = {};", tail.expr));
+    out
+}
+
+/// The TypeScript rendering of the type the checker recorded for `e`, if any.
+/// Used to annotate the slot [`hoist_if_as_statement`] declares.
+fn checked_ty_ts(e: &Expr, cx: &LowerCtx) -> Option<String> {
+    cx.commons().expr_types.get(&e.span).map(ts_ty)
+}
+
+/// T2.1 (R6.2): the ternary form's **structural** precondition — everything
+/// about the shape that must hold before any lowering is attempted. Both
+/// branches must be pure tails (a ternary has nowhere to host a statement)
+/// whose own tails lower as plain expressions, and the condition must introduce
+/// no `is` bindings (likewise nowhere to declare them).
+///
+/// The question this deliberately does *not* ask is the one `simple_expr` used
+/// to guess: "will lowering this branch hoist a statement?" That is now
+/// answered after the fact by [`Lowered::pre`], which cannot be wrong. The
+/// predictive classifier — and the `debug_assert!(stmts.is_empty())` pair that
+/// stood in for the guarantee it could not make — is deleted; the five defects
+/// it produced (#945–#948 plus the `ListLit`/`InterpStr` fallthrough this slice
+/// found live) are unrepresentable rather than merely fixed.
+///
+/// What remains here is only *routing*: which emitter shape a branch would take
+/// if it were emitted as a block. That is a structural property of the AST, not
+/// a prediction about lowering, and it never guessed wrong — every one of the
+/// defects was hoisting, none was routing.
+fn ternary_shaped(cond: &Expr, then_block: &Block, else_block: &Block, cx: &LowerCtx) -> bool {
+    then_block.statements.is_empty()
+        && else_block.statements.is_empty()
+        && tail_lowers_as_expression(&then_block.tail, cx)
+        && tail_lowers_as_expression(&else_block.tail, cx)
+        && !cond_has_is_bindings(cond, cx)
+}
+
+/// True when [`emit_block_inner`] would lower this tail through its plain-
+/// expression arm rather than routing it to a statement shape of its own. A
+/// ternary branch — and the branch rebuild both hoisting fallbacks perform —
+/// can host an expression and its hoisted statements, but not an emitted
+/// `switch` or `if`/`else`.
+fn tail_lowers_as_expression(e: &Expr, cx: &LowerCtx) -> bool {
+    match &e.kind {
+        ExprKind::Match { .. } => false,
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => ternary_shaped(cond, then_block, else_block, cx),
+        _ => true,
     }
 }
 
@@ -346,9 +532,9 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 cx.local_agent_vars
                     .insert(l.name.name.clone(), name.name.clone());
             }
-            let mut stmts = Vec::new();
-            let value = lower_expr_into(&l.value, &mut stmts, cx);
-            for s in &stmts {
+            let mut pre = Pre::new();
+            let value = pre.lower(&l.value, cx);
+            for s in pre.stmts() {
                 write_line(out, indent, s);
             }
             // #908: also covers `_` (a fresh throwaway local; TS allows
@@ -371,7 +557,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
         }
         Statement::EffectLet(l) => {
             // `let x <- expr` → `const x = await expr;`
-            let mut stmts = Vec::new();
+            let mut pre = Pre::new();
             // v0.182 (#664): a call-site `by <Actor>(<identity>)` supplies the
             // identity the addressed handler reads as `deps.identity`. Lower it
             // (a test-only brand cast, like an agent key) and stash it for the
@@ -388,19 +574,20 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 if principal.actor.name == "Nobody" {
                     cx.call_site_no_credential = true;
                 } else {
-                    cx.call_site_identity = principal
-                        .identity
-                        .as_ref()
-                        .map(|id| lower_expr_into(id, &mut stmts, cx));
+                    cx.call_site_identity = principal.identity.as_ref().map(|id| pre.lower(id, cx));
                 }
             }
-            let value = lower_expr_into(&l.value, &mut stmts, cx);
+            let value = pre.lower(&l.value, cx);
             cx.call_site_identity = saved_identity;
             cx.call_site_no_credential = saved_no_credential;
-            for s in &stmts {
+            for s in pre.stmts() {
                 write_line(out, indent, s);
             }
             let bind_name = cx.bind_local_name(&l.name.name);
+            // T2.2 (R6.4): the literal `await` below is one of the two real
+            // sources of effectfulness a synchronous-looking IIFE further out
+            // needs to know about — see `emitted_await`.
+            cx.emitted_await = true;
             match &l.type_annot {
                 Some(annot) => write_line(
                     out,
@@ -421,23 +608,23 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             let span_end = a.value.span.end;
             let location = expect_location(cx, span_start);
             let src = expect_source_text(cx, a.value.span);
-            let mut stmts = Vec::new();
-            let cond = lower_expr_into(&a.value, &mut stmts, cx);
+            let mut pre = Pre::new();
+            let cond = pre.lower(&a.value, cx);
             // Structural expected-vs-actual for a top-level comparison. The
             // predicate is pure (ADR 0144), so re-evaluating the operands for the
             // failure message is observationally identical to the condition.
             let detail = if let ExprKind::BinOp(op, l, r) = &a.value.kind
                 && let Some(sym) = comparison_op_symbol(*op)
             {
-                let lv = lower_expr_into(l, &mut stmts, cx);
-                let rv = lower_expr_into(r, &mut stmts, cx);
+                let lv = pre.lower(l, cx);
+                let rv = pre.lower(r, cx);
                 format!(
                     "\"expect {src}\\n  expected: {src}\\n  actual:   \" + __bynkShow(({lv})) + \" {sym} \" + __bynkShow(({rv}))"
                 )
             } else {
                 format!("\"expect {src}\"")
             };
-            for s in &stmts {
+            for s in pre.stmts() {
                 write_line(out, indent, s);
             }
             write_line(
@@ -454,9 +641,9 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             // promise to the execution context's `waitUntil`, so it settles after
             // the handler returns rather than being killed with the response. The
             // execution context rides in `deps.__exec` (threaded by `compose`).
-            let mut stmts = Vec::new();
-            let value = lower_expr_into(&s.value, &mut stmts, cx);
-            for st in &stmts {
+            let mut pre = Pre::new();
+            let value = pre.lower(&s.value, cx);
+            for st in pre.stmts() {
                 write_line(out, indent, st);
             }
             write_line(
@@ -472,11 +659,13 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             // v0.146 (ADR 0170): `do expr` → `await expr;`. The binder-free
             // `let _ <- expr` for a unit effect — the effect runs and joins the
             // handler, its `()` result discarded (no `const`).
-            let mut stmts = Vec::new();
-            let value = lower_expr_into(&d.value, &mut stmts, cx);
-            for st in &stmts {
+            let mut pre = Pre::new();
+            let value = pre.lower(&d.value, cx);
+            for st in pre.stmts() {
                 write_line(out, indent, st);
             }
+            // T2.2 (R6.4): see the matching note at `EffectLet`.
+            cx.emitted_await = true;
             write_line(out, indent, &format!("await {value};"));
         }
         Statement::Assign(a) => {
@@ -485,9 +674,9 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             // memory — read-your-writes within the handler — and flushed once at
             // handler end via `commitState` (which runs the invariant gate before
             // the durable write). A fault before that flush persists nothing.
-            let mut stmts = Vec::new();
-            let value = lower_expr_into(&a.value, &mut stmts, cx);
-            for st in &stmts {
+            let mut pre = Pre::new();
+            let value = pre.lower(&a.value, cx);
+            for st in pre.stmts() {
                 write_line(out, indent, st);
             }
             let lhs = match cx.agent_store_cells() {
@@ -595,19 +784,20 @@ fn lower_const_literal_raw(e: &Expr) -> Option<String> {
 /// `String(…)` is identity for a `String` hole and the display form for
 /// `Int`/`Float`/`Bool` — and the checker guarantees only base scalars reach
 /// here, so no `[object Object]` can be emitted.
-fn lower_interp_str(parts: &[InterpPart], stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
+fn lower_interp_str(parts: &[InterpPart], cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
     let mut out = String::from("`");
     for part in parts {
         match part {
             InterpPart::Chunk(text) => out.push_str(&escape_ts_template(text)),
             InterpPart::Hole(hole) => {
-                let lowered = lower_expr_into(hole, stmts, cx);
+                let lowered = pre.lower(hole, cx);
                 out.push_str(&format!("${{String({lowered})}}"));
             }
         }
     }
     out.push('`');
-    out
+    pre.finish(out)
 }
 
 /// Escape a literal chunk for a TS template-literal context: backslash,
@@ -630,29 +820,100 @@ fn escape_ts_template(s: &str) -> String {
 }
 
 /// #1 review: an expression's lowered text, paired with the statements that
-/// must run before it — the typed replacement for `lower_expr_into`'s
-/// implicit `stmts: &mut Vec<String>` sink. A caller that receives a
+/// must run before it — the typed replacement for the `stmts: &mut
+/// Vec<String>` sink `lower_expr_into` used to take. A caller that receives a
 /// `Lowered` cannot accidentally drop `pre` (unlike the old sink, dropping it
 /// took no code at all) or splice it into a string where a statement is
 /// required (`Lowered` is not a `String`) — the two failure modes the sink
 /// pattern actually produced (`lower_if`'s/`lower_tail_expr`'s ternary paths,
 /// `lower_and_with_is`'s splice).
+///
+/// T2.1 (R6.2): this is now the *only* way a lowering function hands
+/// statements to its caller. There is no sink parameter left in `bynk-emit`
+/// to hand them to instead.
 pub(crate) struct Lowered {
     pub pre: Vec<String>,
     pub expr: String,
 }
 
-/// The canonical entry point: lower `e`, returning its text and whatever
-/// statements must run first. `lower_expr_into` — kept for the ~90 call
-/// sites that already correctly extend the hoisted statements into a
-/// caller-owned sink — is now a thin wrapper over this.
-pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
-    let mut pre = Vec::new();
-    let expr = lower_expr_into(e, &mut pre, cx);
-    Lowered { pre, expr }
+impl Lowered {
+    /// An expression that hoists nothing — the common leaf case.
+    pub(crate) fn bare(expr: impl Into<String>) -> Self {
+        Lowered {
+            pre: Vec::new(),
+            expr: expr.into(),
+        }
+    }
 }
 
-pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
+/// T2.1 (R6.2): the statements an expression under construction has hoisted so
+/// far. This is the *owned* counterpart to the deleted sink: a `Pre` belongs to
+/// the one function assembling an expression, and leaves it only by being
+/// [finished](Pre::finish) into that expression's [`Lowered`]. It is
+/// deliberately never a parameter — that is the whole point. A lowering
+/// function cannot be handed somewhere to write statements, so it cannot write
+/// them anywhere but its own return value, and the caller decides where they
+/// land (a real statement position, or a hoist-safe wrapper).
+pub(crate) struct Pre(Vec<String>);
+
+impl Pre {
+    pub(crate) fn new() -> Self {
+        Pre(Vec::new())
+    }
+
+    /// Lower `e`, absorbing whatever it hoists, and hand back its text. The
+    /// replacement for `lower_expr_into(e, stmts, cx)`: identical ordering —
+    /// the callee's statements land here, in order, at the point of the call —
+    /// but the callee never saw the buffer.
+    pub(crate) fn lower(&mut self, e: &Expr, cx: &mut LowerCtx) -> String {
+        let lowered = lower_expr(e, cx);
+        self.absorb(lowered)
+    }
+
+    /// Absorb an already-built [`Lowered`] and hand back its text.
+    pub(crate) fn absorb(&mut self, lowered: Lowered) -> String {
+        self.0.extend(lowered.pre);
+        lowered.expr
+    }
+
+    /// Absorb an optional [`Lowered`] — a kernel lowerer that may decline the
+    /// shape. Declining hoists nothing, so `None` leaves `self` untouched.
+    pub(crate) fn absorb_opt(&mut self, lowered: Option<Lowered>) -> Option<String> {
+        lowered.map(|l| self.absorb(l))
+    }
+
+    /// Hoist a statement this function generated itself (a `?` temp, an
+    /// `is`-receiver binding, a match IIFE's scaffolding).
+    pub(crate) fn push(&mut self, stmt: String) {
+        self.0.push(stmt);
+    }
+
+    pub(crate) fn extend(&mut self, stmts: impl IntoIterator<Item = String>) {
+        self.0.extend(stmts);
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The accumulated statements, for a caller that is writing them into a
+    /// real statement position rather than hoisting them further.
+    pub(crate) fn stmts(&self) -> &[String] {
+        &self.0
+    }
+
+    /// Pair the accumulated statements with the expression they precede.
+    pub(crate) fn finish(self, expr: impl Into<String>) -> Lowered {
+        Lowered {
+            pre: self.0,
+            expr: expr.into(),
+        }
+    }
+}
+
+/// The canonical entry point: lower `e`, returning its text and whatever
+/// statements must run first.
+pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
     // v0.9.4: a literal the checker admitted as a refined type (expected-type-
     // directed construction) is branded directly — the refinement was already
     // verified at compile time, so there is no runtime check and no `Result`.
@@ -673,16 +934,17 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
         // (refined → `(raw as any)`) there, exactly as the `Val[T](lit)` mock path
         // does. Production emission keeps the real `(raw as T)` brand.
         if cx.in_test_scaffold() {
-            return unchecked_construct_test(name, &raw, false);
+            return Lowered::bare(unchecked_construct_test(name, &raw, false));
         }
-        return unchecked_construct(name, &raw, false);
+        return Lowered::bare(unchecked_construct(name, &raw, false));
     }
-    match &e.kind {
+    let mut pre = Pre::new();
+    let expr = match &e.kind {
         ExprKind::IntLit { value: n, .. } => n.to_string(),
         // Slice C: `Wire(<String>)` in a generic position lowers to its raw inner
         // string. The system-http driver site intercepts `Wire` args before this
         // to route them raw (no serialisation) and switch to the outcome decoder.
-        ExprKind::Wire(inner) => lower_expr_into(inner, stmts, cx),
+        ExprKind::Wire(inner) => pre.lower(inner, cx),
         // v0.21: the stored lexeme verbatim — `1e10` must not normalise.
         ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
         // v0.86 (ADR 0112): a `Duration` literal lowers to its constant
@@ -691,34 +953,31 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
         ExprKind::StrLit(s) => format!("\"{}\"", escape_ts_string(s)),
         // v0.43 (ADR 0075): an interpolated string lowers to a TS template
         // literal — chunks as escaped literal text, holes as `${String(…)}`.
-        ExprKind::InterpStr(parts) => lower_interp_str(parts, stmts, cx),
+        ExprKind::InterpStr(parts) => pre.absorb(lower_interp_str(parts, cx)),
         ExprKind::BoolLit(b) => b.to_string(),
         // v0.20b: a list literal lowers to a TS array literal; `readonly` is
         // a type-level property and the checker owns the element typing.
         ExprKind::ListLit(elems) => {
-            let lowered: Vec<String> = elems
-                .iter()
-                .map(|el| lower_expr_into(el, stmts, cx))
-                .collect();
+            let lowered: Vec<String> = elems.iter().map(|el| pre.lower(el, cx)).collect();
             format!("[{}]", lowered.join(", "))
         }
         ExprKind::Ident(id) => lower_ident(e, id, cx),
-        ExprKind::Call { name, args, .. } => lower_call(e, name, args, stmts, cx),
+        ExprKind::Call { name, args, .. } => pre.absorb(lower_call(e, name, args, cx)),
         ExprKind::UnaryOp(op, inner) => {
-            let inner = lower_expr_into(inner, stmts, cx);
+            let inner = pre.lower(inner, cx);
             let sym = match op {
                 UnaryOp::Neg => "-",
                 UnaryOp::Not => "!",
             };
             format!("{sym}{inner}")
         }
-        ExprKind::BinOp(op, lhs, rhs) => lower_bin_op(*op, lhs, rhs, stmts, cx),
+        ExprKind::BinOp(op, lhs, rhs) => pre.absorb(lower_bin_op(*op, lhs, rhs, cx)),
         ExprKind::Paren(inner) => {
-            let s = lower_expr_into(inner, stmts, cx);
+            let s = pre.lower(inner, cx);
             format!("({s})")
         }
         ExprKind::Ok(inner) => {
-            let s = lower_expr_into(inner, stmts, cx);
+            let s = pre.lower(inner, cx);
             // v0.9: `Ok` is overloaded — use the checker's recorded type to
             // decide between `Result.Ok` and `HttpResult.Ok`.
             if matches!(
@@ -731,11 +990,11 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
             }
         }
         ExprKind::Err(inner) => {
-            let s = lower_expr_into(inner, stmts, cx);
+            let s = pre.lower(inner, cx);
             format!("Err({s})")
         }
         ExprKind::Some(inner) => {
-            let s = lower_expr_into(inner, stmts, cx);
+            let s = pre.lower(inner, cx);
             format!("Some({s})")
         }
         ExprKind::None => "None".to_string(),
@@ -763,73 +1022,77 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
             } else {
                 embed_conversion(operand_ty.as_ref(), cx)
             };
-            let inner_expr = lower_expr_into(inner, stmts, cx);
+            let inner_expr = pre.lower(inner, cx);
             let tmp = cx.fresh();
-            stmts.push(format!("const {tmp} = {inner_expr};"));
+            pre.push(format!("const {tmp} = {inner_expr};"));
             if is_option {
-                stmts.push(format!(
+                pre.push(format!(
                     "if ({tmp}.tag === \"None\") return HttpResult.NotFound;"
                 ));
             } else if let Some((ty_name, variant)) = embed {
-                stmts.push(format!(
+                pre.push(format!(
                     "if ({tmp}.tag === \"Err\") return Err({ty_name}.{variant}({tmp}.error));"
                 ));
             } else {
-                stmts.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
+                pre.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
             }
+            // T2.3 (R6.3): every branch above just pushed a `return` that must
+            // exit the enclosing function, not whatever scope this `Lowered`
+            // eventually lands in — see `LowerCtx::emitted_early_return`.
+            cx.emitted_early_return = true;
             format!("{tmp}.value")
         }
         ExprKind::ConstructorCall {
             type_name,
             method,
             args,
-        } => lower_constructor_call(type_name, method, args, stmts, cx),
+        } => pre.absorb(lower_constructor_call(type_name, method, args, cx)),
         ExprKind::RecordConstruction { type_name, fields } => {
-            lower_record_construction(type_name, fields, stmts, cx)
+            pre.absorb(lower_record_construction(type_name, fields, cx))
         }
         ExprKind::FieldAccess { receiver, field } => {
-            lower_field_access(e, receiver, field, stmts, cx)
+            pre.absorb(lower_field_access(e, receiver, field, cx))
         }
         ExprKind::MethodCall {
             receiver,
             method,
             type_args,
             args,
-        } => lower_method_call(e, receiver, method, type_args, args, stmts, cx),
+        } => pre.absorb(lower_method_call(e, receiver, method, type_args, args, cx)),
         ExprKind::If {
             cond,
             then_block,
             else_block,
-        } => lower_if(cond, then_block, else_block, stmts, cx),
+        } => pre.absorb(lower_if(e, cond, then_block, else_block, cx)),
         // v0.20a: a lambda lowers to a TS arrow; `async` iff its checked type
         // is an effectful function. A lambda is deliberately its own return
         // scope (ADR 0178) — its body is lowered with no access to the outer
-        // `stmts`, so anything it hoists (match-as-IIFE etc.) stays local to
+        // `pre`, so anything it hoists (match-as-IIFE etc.) stays local to
         // the arrow, correctly, because a `?`'s `return` there is supposed to
         // exit the lambda.
         ExprKind::Lambda(lambda) => lower_lambda(e, lambda, cx),
         ExprKind::Block(b) => lower_block_as_expr(b, cx),
         ExprKind::Match { discriminant, arms } => {
-            lower_match_as_iife(discriminant, arms, stmts, cx)
+            pre.absorb(lower_match_as_iife(discriminant, arms, cx))
         }
-        ExprKind::Is { value, pattern } => lower_is(value, pattern, stmts, cx),
+        ExprKind::Is { value, pattern } => pre.absorb(lower_is(value, pattern, cx)),
         ExprKind::UnitLit => "undefined".to_string(),
         ExprKind::EffectPure(inner) => {
-            let inner_expr = lower_expr_into(inner, stmts, cx);
+            let inner_expr = pre.lower(inner, cx);
             format!("Promise.resolve({inner_expr})")
         }
         ExprKind::RecordSpread {
             type_name: _,
             base,
             overrides,
-        } => lower_record_spread(base, overrides, stmts, cx),
+        } => pre.absorb(lower_record_spread(base, overrides, cx)),
         ExprKind::Expect(inner) => {
             // v0.9.1: expect as an expression (v0.112, renamed from `assert`).
             // Emit a runtime helper call that returns void (i.e., evaluates to
             // `undefined` at runtime and is treated as the unit value `()` in Bynk
             // terms). The expression form reports the predicate source only — the
             // statement form carries the structural expected-vs-actual report.
-            let value = lower_expr_into(inner, stmts, cx);
+            let value = pre.lower(inner, cx);
             let span_start = inner.span.start;
             let span_end = inner.span.end;
             let location = expect_location(cx, span_start);
@@ -838,7 +1101,7 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
                 "__bynkExpect(({value}), \"{location}\", {span_start}, {span_end}, \"expect {src}\")"
             )
         }
-        ExprKind::Val { type_ref, args } => lower_val(type_ref, args, stmts, cx),
+        ExprKind::Val { type_ref, args } => pre.absorb(lower_val(type_ref, args, cx)),
         ExprKind::Observation(o) => lower_observation(o, cx),
         ExprKind::Trace { cap, op } => {
             // `trace(Cap.op)` → the recorded calls mapped to per-call records
@@ -857,7 +1120,8 @@ pub(crate) fn lower_expr_into(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerC
                 .join(", ");
             format!("(({obs}.log[{key:?}] ?? []).map((__c: any) => ({{ {fields} }})))")
         }
-    }
+    };
+    pre.finish(expr)
 }
 
 /// The parameter names of a capability operation, looked up from the capability
@@ -898,8 +1162,7 @@ fn lower_observation(o: &ObservationExpr, cx: &mut LowerCtx) -> String {
             None => match count {
                 None => format!("({calls}.length >= 1)"),
                 Some(c) => {
-                    let mut pre = Vec::new();
-                    let n = lower_expr_into(c, &mut pre, cx);
+                    let n = lower_expr(c, cx).expr;
                     format!("({calls}.length === ({n}))")
                 }
             },
@@ -910,17 +1173,16 @@ fn lower_observation(o: &ObservationExpr, cx: &mut LowerCtx) -> String {
                 } else {
                     format!("const [{}] = __c.args; ", names.join(", "))
                 };
-                let mut pre = Vec::new();
-                let pred = lower_expr_into(p, &mut pre, cx);
-                let pre_src = pre.join(" ");
+                let pred_lowered = lower_expr(p, cx);
+                let pre_src = pred_lowered.pre.join(" ");
+                let pred = pred_lowered.expr;
                 let matching = format!(
                     "{calls}.filter((__c: any) => {{ {destructure}{pre_src}return ({pred}); }}).length"
                 );
                 match count {
                     None => format!("(({matching}) >= 1)"),
                     Some(c) => {
-                        let mut pre2 = Vec::new();
-                        let n = lower_expr_into(c, &mut pre2, cx);
+                        let n = lower_expr(c, cx).expr;
                         format!("(({matching}) === ({n}))")
                     }
                 }
@@ -1158,9 +1420,9 @@ fn lower_method_call(
     method: &Ident,
     type_args: &[TypeRef],
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> String {
+) -> Lowered {
+    let mut pre = Pre::new();
     // v0.104/v0.105 (real-time track slice 3b): a held-`Map` operation —
     // `<map>.<op>(…)` on a `store Map[K, Connection]` field on Workers. The live
     // socket cannot be persisted, so the durable record stores the **connection id**
@@ -1177,8 +1439,8 @@ fn lower_method_call(
     {
         let var = cx.agent_store_var().to_string();
         let m = format!("{var}.{}", id.name);
-        let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
-        return match method.name.as_str() {
+        let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
+        return pre.finish(match method.name.as_str() {
             "put" => format!("(({m}[String({})] = connIdOf({})), undefined)", a[0], a[1]),
             "remove" => format!(
                 "(async () => {{ const __k = String({0}); const __cid = {m}[__k]; if (__cid !== undefined) {{ const __c = resolveConnection<{f_ts}>(this.state, __cid); if (__c.tag === \"Some\") {{ await __c.value.close(); }} delete {m}[__k]; }} return undefined; }})()",
@@ -1204,7 +1466,7 @@ fn lower_method_call(
             .unwrap_or_else(|| {
                 format!("(/* unsupported held Map op {} */ undefined)", method.name)
             }),
-        };
+        });
     }
     // v0.82 (ADR 0110): a storage-`Map` operation — `<map>.<op>(…)` on a `store
     // Map[K, V]` field. Lowers to an entry op over `__state.<map>` (a
@@ -1229,13 +1491,19 @@ fn lower_method_call(
         if method.name == "filter"
             && let [arg] = args
             && let ExprKind::Lambda(lam) = &arg.kind
-            && let Some(routed) =
-                route_indexed_filter(&m, &var, &id.name, &idx_fields, lam, stmts, cx)
+            && let Some(routed) = pre.absorb_opt(route_indexed_filter(
+                &m,
+                &var,
+                &id.name,
+                &idx_fields,
+                lam,
+                cx,
+            ))
         {
-            return routed;
+            return pre.finish(routed);
         }
-        let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
-        return match method.name.as_str() {
+        let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
+        return pre.finish(match method.name.as_str() {
             // v0.93: an indexed map's mutators keep the sibling posting-lists exact
             // inside the same staged commit (re-index on last-write-wins).
             "put" if !idx_fields.is_empty() => idx_map_put(&m, &var, &id.name, &idx_fields, &a),
@@ -1273,7 +1541,7 @@ fn lower_method_call(
                 cx.commons().expr_types.get(&e.span),
             )
             .unwrap_or_else(|| format!("(/* unsupported Map op {} */ undefined)", method.name)),
-        };
+        });
     }
     // v0.83: a storage-`Set` operation — `<set>.<op>(…)` on a `store Set[T]` field.
     // Lowers to an entry op over `__state.<set>` (a `Record<string, boolean>`):
@@ -1284,14 +1552,14 @@ fn lower_method_call(
     {
         let var = cx.agent_store_var().to_string();
         let s = format!("{var}.{}", id.name);
-        let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
-        return match method.name.as_str() {
+        let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
+        return pre.finish(match method.name.as_str() {
             "add" => format!("(({s}[{}] = true), undefined)", a[0]),
             "remove" => format!("((delete {s}[{}]), undefined)", a[0]),
             "contains" => format!("(({}) in {s})", a[0]),
             "size" => format!("Object.keys({s}).length"),
             other => format!("(/* unsupported Set op {other} */ undefined)"),
-        };
+        });
     }
     // v0.87 (ADR 0113): a storage-`Cache` operation — `<cache>.<op>(…)` on a
     // `store Cache[K, V]` field. Lowers to an entry op over `__state.<cache>` (a
@@ -1306,8 +1574,8 @@ fn lower_method_call(
         let var = cx.agent_store_var().to_string();
         let c = format!("{var}.{}", id.name);
         let now = format!("await {}.Clock.now()", cx.cap_deps_expr());
-        let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
-        return match method.name.as_str() {
+        let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
+        return pre.finish(match method.name.as_str() {
             "remove" => format!("((delete {c}[{}]), undefined)", a[0]),
             "put" => format!(
                 "(async () => {{ const __now = {now}; {c}[{0}] = {{ v: {1}, exp: __now + {ttl} }}; return undefined; }})()",
@@ -1333,7 +1601,7 @@ fn lower_method_call(
                 a[0], a[1], a[2]
             ),
             other => format!("(/* unsupported Cache op {other} */ undefined)"),
-        };
+        });
     }
     // v0.95 (ADR 0121): a storage-`Log` operation — `<log>.<op>(…)` on a
     // `store Log[T]` field (an array of `{ t, v }`). `append` stamps the clock
@@ -1345,7 +1613,7 @@ fn lower_method_call(
     {
         let var = cx.agent_store_var().to_string();
         let g = format!("{var}.{}", id.name);
-        let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
+        let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
         if method.name == "append" {
             let now = format!("await {}.Clock.now()", cx.cap_deps_expr());
             let prune = match retain {
@@ -1354,15 +1622,15 @@ fn lower_method_call(
                 ),
                 None => String::new(),
             };
-            return format!(
+            return pre.finish(format!(
                 "(async () => {{ const __now = {now}; {g}.push({{ t: __now, v: {0} }});{prune} return undefined; }})()",
                 a[0]
-            );
+            ));
         }
         // The values array feeding the general query pipeline.
         let values = format!("{g}.map((__e) => __e.v)");
         let thunk = |body: String| format!("(() => {body})");
-        return match method.name.as_str() {
+        return pre.finish(match method.name.as_str() {
             // Time-window roots → a `Query` thunk over the windowed values.
             "since" => thunk(format!(
                 "{g}.filter((__e) => __e.t >= ({0})).map((__e) => __e.v)",
@@ -1384,7 +1652,7 @@ fn lower_method_call(
             // The general query vocabulary over the entry values.
             _ => lower_query_method(values, method, &a, cx.commons().expr_types.get(&e.span))
                 .unwrap_or_else(|| format!("(/* unsupported Log op {} */ undefined)", method.name)),
-        };
+        });
     }
     // v0.98 (ADR 0125): a storage-`Cell` operation — `<cell>.update(f)` on a
     // `store Cell[T]` field. Lowers to a staged read-modify-write over
@@ -1405,11 +1673,11 @@ fn lower_method_call(
     {
         let var = cx.agent_store_var().to_string();
         let n = format!("{var}.{}", id.name);
-        let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
-        return match method.name.as_str() {
+        let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
+        return pre.finish(match method.name.as_str() {
             "update" => format!("(() => {{ {n} = ({0})({n}); return undefined; }})()", a[0]),
             other => format!("(/* unsupported Cell op {other} */ undefined)"),
-        };
+        });
     }
     // v0.9: explicit `HttpResult.Variant(args)` construction. The
     // checker has already recorded the expression's type — emit it
@@ -1418,9 +1686,12 @@ fn lower_method_call(
         && id.name == HTTP_RESULT
         && http_variant(&method.name).is_some()
     {
-        let args_lowered: Vec<String> =
-            args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
-        return format!("HttpResult.{}({})", method.name, args_lowered.join(", "));
+        let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
+        return pre.finish(format!(
+            "HttpResult.{}({})",
+            method.name,
+            args_lowered.join(", ")
+        ));
     }
     // v0.20b: built-in collection statics — `List.empty()` /
     // `Map.empty()`. The checker recorded the instantiated type;
@@ -1433,16 +1704,16 @@ fn lower_method_call(
         && !cx.commons().types.contains_key(&id.name)
     {
         match cx.commons().expr_types.get(&e.span) {
-            Some(Ty::List(t)) => return format!("([] as readonly {}[])", ts_ty(t)),
+            Some(Ty::List(t)) => return pre.finish(format!("([] as readonly {}[])", ts_ty(t))),
             Some(Ty::Map(k, v)) => {
-                return format!("new Map<{}, {}>()", ts_ty(k), ts_ty(v));
+                return pre.finish(format!("new Map<{}, {}>()", ts_ty(k), ts_ty(v)));
             }
             _ => {}
         }
     }
     // v0.22b: the typed JSON codec (ADR 0045).
-    if let Some(s) = lower_json_codec_call(e, receiver, method, args, stmts, cx) {
-        return s;
+    if let Some(s) = pre.absorb_opt(lower_json_codec_call(e, receiver, method, args, cx)) {
+        return pre.finish(s);
     }
     // v0.22a: the numeric parse statics — `Int.parse(s)` /
     // `Float.parse(s)` (ADR 0048). Full-string parse via `Number(…)`
@@ -1456,15 +1727,15 @@ fn lower_method_call(
         && method.name == "parse"
         && args.len() == 1
     {
-        let s = lower_expr_into(&args[0], stmts, cx);
+        let s = pre.lower(&args[0], cx);
         let guard = if id.name == INT {
             "Number.isSafeInteger(__n)"
         } else {
             "Number.isFinite(__n)"
         };
-        return format!(
+        return pre.finish(format!(
             "((__s: string) => {{ const __n = __s.trim() === \"\" ? Number.NaN : Number(__s); return {guard} ? Some(__n) : None; }})({s})"
-        );
+        ));
     }
     // v0.86 (ADR 0112): `Duration.millis(n)` — the runtime `Int`→`Duration`
     // constructor. A `Duration` lowers to its milliseconds, so this is the
@@ -1474,7 +1745,8 @@ fn lower_method_call(
         && method.name == "millis"
         && args.len() == 1
     {
-        return lower_expr_into(&args[0], stmts, cx);
+        let inner = pre.lower(&args[0], cx);
+        return pre.finish(inner);
     }
     // v0.90 (ADR 0114): `Instant.fromEpochMillis(n)` — an `Instant` lowers to
     // its epoch milliseconds, so this is the identity on the argument.
@@ -1483,7 +1755,8 @@ fn lower_method_call(
         && method.name == "fromEpochMillis"
         && args.len() == 1
     {
-        return lower_expr_into(&args[0], stmts, cx);
+        let inner = pre.lower(&args[0], cx);
+        return pre.finish(inner);
     }
     // v0.110 (ADR 0142 D2): the `Bytes` static constructors. `fromUtf8` is the
     // UTF-8 encoding of a string (total); `fromBase64` is a guarded base64
@@ -1494,16 +1767,16 @@ fn lower_method_call(
     {
         match (method.name.as_str(), args.len()) {
             ("fromUtf8", 1) => {
-                let s = lower_expr_into(&args[0], stmts, cx);
-                return format!("new TextEncoder().encode({s})");
+                let s = pre.lower(&args[0], cx);
+                return pre.finish(format!("new TextEncoder().encode({s})"));
             }
             ("fromBase64", 1) => {
-                let s = lower_expr_into(&args[0], stmts, cx);
+                let s = pre.lower(&args[0], cx);
                 cx.note_bytes();
-                return format!("__bynkBytesFromBase64({s})");
+                return pre.finish(format!("__bynkBytesFromBase64({s})"));
             }
             ("empty", 0) => {
-                return "new Uint8Array()".to_string();
+                return pre.finish("new Uint8Array()".to_string());
             }
             _ => {}
         }
@@ -1516,8 +1789,10 @@ fn lower_method_call(
         && method.name == "of"
         && args.len() == 1
     {
-        let xs = lower_expr_into(&args[0], stmts, cx);
-        return format!("(async function* () {{ for (const __e of {xs}) {{ yield __e; }} }})()");
+        let xs = pre.lower(&args[0], cx);
+        return pre.finish(format!(
+            "(async function* () {{ for (const __e of {xs}) {{ yield __e; }} }})()"
+        ));
     }
     // v0.15 cross-context capability call: `B.Cap.op(args)` /
     // `Alias.Cap.op(args)`. The provider is instantiated locally in
@@ -1527,27 +1802,26 @@ fn lower_method_call(
     if let Some(chain) = flatten_emit_ident_chain(receiver)
         && let Some((consumed, cap)) = cx.cross_context().resolve_cross_capability(&chain)
     {
-        let mut args_lowered: Vec<String> =
-            args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
+        let mut args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         scope_idempotency_key(
             cap == "Idempotency" && consumed == "bynk",
             &method.name,
             &mut args_lowered,
             cx,
         );
-        return format!(
+        return pre.finish(format!(
             "{}.{}.{}{}({})",
             cx.cap_deps_expr(),
             cap,
             method.name,
             capability_call_type_args_ts(type_args),
             args_lowered.join(", ")
-        );
+        ));
     }
     // v0.6 cross-context service call: receiver is an alias or the
     // dotted name of a consumed context.
-    if let Some(s) = lower_cross_context_service_call(receiver, method, args, stmts, cx) {
-        return s;
+    if let Some(s) = pre.absorb_opt(lower_cross_context_service_call(receiver, method, args, cx)) {
+        return pre.finish(s);
     }
     // Events track, slice 0 (spine #936): `Events.emit[E](event)` never
     // calls through a provider like an ordinary capability op — release-
@@ -1572,7 +1846,7 @@ fn lower_method_call(
                 _ => None,
             })
             .unwrap_or_else(|| "unknown".to_string());
-        let payload = lower_expr_into(&args[0], stmts, cx);
+        let payload = pre.lower(&args[0], cx);
         // Events track, slice 2 (spine #936): the envelope is minted here,
         // once, before fan-out duplicates this single `__events` entry to
         // every subscriber — so one emission always carries one `eventId`/
@@ -1595,9 +1869,9 @@ fn lower_method_call(
         // still a future slice (3c, the cross-build schema registry).
         let schema_version = cx.event_schema_version(&event_name);
         let publisher_id = escape_ts_string(cx.owning_context().unwrap_or_default());
-        return format!(
+        return pre.finish(format!(
             "(async () => {{ __events.push({{ type: \"{event_name}\", payload: {payload}, envelope: {{ eventId: crypto.randomUUID(), publisherId: \"{publisher_id}\", emittedAt: Date.now(), schemaVersion: {schema_version} }} }}); }})()"
-        );
+        ));
     }
     // Capability call: receiver is a bare ident naming a declared
     // capability in `given`. Lower to `<deps>.Capability.op(args)`,
@@ -1606,8 +1880,7 @@ fn lower_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.has_capability(&id.name)
     {
-        let mut args_lowered: Vec<String> =
-            args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
+        let mut args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         // #934: a flattened `consumes bynk { Idempotency }` local name is
         // first-party only if it's actually `bynk`'s own capability — either
         // declared right here (this unit *is* `bynk`) or flattened in from it
@@ -1623,22 +1896,26 @@ fn lower_method_call(
                     .map(String::as_str)
                     == Some("bynk"));
         scope_idempotency_key(is_first_party, &method.name, &mut args_lowered, cx);
-        return format!(
+        return pre.finish(format!(
             "{}.{}.{}{}({})",
             cx.cap_deps_expr(),
             id.name,
             method.name,
             capability_call_type_args_ts(type_args),
             args_lowered.join(", ")
-        );
+        ));
     }
     // Static call: receiver is a bare ident naming a declared type.
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.commons().types.contains_key(&id.name)
     {
-        let args_lowered: Vec<String> =
-            args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
-        return format!("{}.{}({})", id.name, method.name, args_lowered.join(", "));
+        let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
+        return pre.finish(format!(
+            "{}.{}({})",
+            id.name,
+            method.name,
+            args_lowered.join(", ")
+        ));
     }
     // v0.7 / v0.182: local service call inside a test case body. `svc.call(args)`
     // lowers to `svc.call(args, deps)`. An http address `svc.<VERB>("/path", …)`
@@ -1659,12 +1936,12 @@ fn lower_method_call(
         let route_declared =
             cx.has_system_http_route(&(id.name.clone(), verb.as_str().to_string(), path.clone()));
         if !route_declared {
-            return format!(
+            return pre.finish(format!(
                 "__sysdrive_wrongmethod_{}({:?}, {:?})",
                 id.name,
                 verb.as_str(),
                 path
-            );
+            ));
         }
         let key = crate::emitter::http_handler_method_name(verb, path);
         let sub = cx
@@ -1708,7 +1985,7 @@ fn lower_method_call(
             .iter()
             .enumerate()
             .map(|(i, a)| {
-                let lowered = lower_expr_into(a, stmts, cx);
+                let lowered = pre.lower(a, cx);
                 if !is_raw || matches!(&a.kind, ExprKind::Wire(_)) {
                     return lowered;
                 }
@@ -1735,7 +2012,13 @@ fn lower_method_call(
             .collect();
         let mut all = rest;
         all.push(sub);
-        return format!("{}_{}_{}({})", driver, id.name, key, all.join(", "));
+        return pre.finish(format!(
+            "{}_{}_{}({})",
+            driver,
+            id.name,
+            key,
+            all.join(", ")
+        ));
     }
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.is_test_service(&id.name)
@@ -1753,13 +2036,10 @@ fn lower_method_call(
             && let ExprKind::StrLit(path) = &first.kind
         {
             let key = crate::emitter::http_handler_method_name(verb, path);
-            let rest: Vec<String> = args[1..]
-                .iter()
-                .map(|a| lower_expr_into(a, stmts, cx))
-                .collect();
+            let rest: Vec<String> = args[1..].iter().map(|a| pre.lower(a, cx)).collect();
             let mut all = rest;
             all.push(deps_expr);
-            return format!("{}.{}({})", id.name, key, all.join(", "));
+            return pre.finish(format!("{}.{}({})", id.name, key, all.join(", ")));
         }
         // cron/queue address: the emitted key is position-indexed among the
         // service's same-kind handlers, so recover the index from the handler
@@ -1778,31 +2058,26 @@ fn lower_method_call(
                     }
                 }
                 let key = crate::emitter::cron_handler_method_name(&id.name, idx);
-                let rest: Vec<String> = args[1..]
-                    .iter()
-                    .map(|a| lower_expr_into(a, stmts, cx))
-                    .collect();
+                let rest: Vec<String> = args[1..].iter().map(|a| pre.lower(a, cx)).collect();
                 let mut all = rest;
                 all.push(deps_expr);
-                return format!("{}.{}({})", id.name, key, all.join(", "));
+                return pre.finish(format!("{}.{}({})", id.name, key, all.join(", ")));
             }
             if method.name == "message" && handlers.iter().any(|h| matches!(h, HK::Message)) {
                 // A `from queue` service binds exactly one queue and declares one
                 // `on message` handler, so the position index is 0.
                 let key = crate::emitter::queue_handler_method_name(&id.name, 0);
-                let args_lowered: Vec<String> =
-                    args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
+                let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
                 let mut all = args_lowered;
                 all.push(deps_expr);
-                return format!("{}.{}({})", id.name, key, all.join(", "));
+                return pre.finish(format!("{}.{}({})", id.name, key, all.join(", ")));
             }
         }
         // `svc.call(args)` and other (non-http) forms: pass args through with deps.
-        let args_lowered: Vec<String> =
-            args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
+        let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         let mut all = args_lowered;
         all.push(deps_expr);
-        return format!("{}.{}({})", id.name, method.name, all.join(", "));
+        return pre.finish(format!("{}.{}({})", id.name, method.name, all.join(", ")));
     }
     // v0.9.2: inline agent invocation. Source form is
     // `Agent(<key>).method(args)`; receiver parses as
@@ -1827,31 +2102,29 @@ fn lower_method_call(
         // instance's own key — so dropping it is sound.
         if cx.ws_self_agent() == Some(name.name.as_str()) {
             cx.record_agent_call(&name.name, &method.name);
-            let args_lowered: Vec<String> =
-                args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
+            let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
             let mut all = args_lowered;
             all.push("deps".to_string());
-            return format!(
+            return pre.finish(format!(
                 "this.{method}({args})",
                 method = method.name,
                 args = all.join(", ")
-            );
+            ));
         }
         cx.record_agent_call(&name.name, &method.name);
         let key_arg = ctor_args
             .first()
-            .map(|a| lower_expr_into(a, stmts, cx))
+            .map(|a| pre.lower(a, cx))
             .unwrap_or_else(|| "\"default\"".to_string());
         let instance = cx.agent_construct(&name.name, &key_arg);
-        let args_lowered: Vec<String> =
-            args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
+        let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         let mut all = args_lowered;
         all.push("deps".to_string());
-        return format!(
+        return pre.finish(format!(
             "{instance}.{method}({args})",
             method = method.name,
             args = all.join(", ")
-        );
+        ));
     }
     // Let-bound agent invocation. `let x = Agent(key); x.method(args)`
     // — the statement emitter recorded `x` as an agent variable when
@@ -1863,8 +2136,7 @@ fn lower_method_call(
         if let Some(agent) = cx.local_agent_vars.get(&id.name).cloned() {
             cx.record_agent_call(&agent, &method.name);
         }
-        let args_lowered: Vec<String> =
-            args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
+        let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
         let mut all = args_lowered;
         all.push("deps".to_string());
         // #908: `local_agent_vars` is keyed by the bynk source name, which a
@@ -1873,7 +2145,7 @@ fn lower_method_call(
         let recv = cx
             .resolved_local_name(&id.name)
             .unwrap_or_else(|| id.name.clone());
-        return format!("{}.{}({})", recv, method.name, all.join(", "));
+        return pre.finish(format!("{}.{}({})", recv, method.name, all.join(", ")));
     }
     // v0.20b: built-in kernel methods on the collection types,
     // dispatched on the receiver's checked type. Emitted inline
@@ -1882,43 +2154,47 @@ fn lower_method_call(
     if let Some(recv_ty) = cx.commons().expr_types.get(&receiver.span).cloned() {
         match &recv_ty {
             Ty::List(elem) => {
-                if let Some(s) = lower_list_kernel(e, receiver, method, args, elem, stmts, cx) {
-                    return s;
+                if let Some(s) =
+                    pre.absorb_opt(lower_list_kernel(e, receiver, method, args, elem, cx))
+                {
+                    return pre.finish(s);
                 }
             }
             // v0.91 (ADR 0119): a chained op on a lazy `Query` — the source is
             // the receiver thunk, invoked (`(recv)()`).
             Ty::Query(_) => {
-                let recv = lower_expr_into(receiver, stmts, cx);
-                let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
+                let recv = pre.lower(receiver, cx);
+                let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
                 let result_ty = cx.commons().expr_types.get(&e.span).cloned();
                 if let Some(s) =
                     lower_query_method(format!("({recv})()"), method, &a, result_ty.as_ref())
                 {
-                    return s;
+                    return pre.finish(s);
                 }
             }
             // v0.100: a chained op on a `Stream` — the receiver already *is* an
             // async iterable, so it is the source directly. Emitted inline as
             // async-generator IIFEs (builders) / an async drain (`collect`).
             Ty::Stream(_) => {
-                let recv = lower_expr_into(receiver, stmts, cx);
-                let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
+                let recv = pre.lower(receiver, cx);
+                let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
                 if let Some(s) = lower_stream_method(recv, method, &a) {
-                    return s;
+                    return pre.finish(s);
                 }
             }
             // v0.102: the held-resource operations on a `Connection[F]` lower to
             // method calls on the runtime `Connection` object — `send(frame)` and
             // `close()`. The linearity pass has already verified ownership.
             Ty::Connection(_) => {
-                let recv = lower_expr_into(receiver, stmts, cx);
-                let a: Vec<String> = args.iter().map(|x| lower_expr_into(x, stmts, cx)).collect();
-                return format!("({recv}).{}({})", method.name, a.join(", "));
+                let recv = pre.lower(receiver, cx);
+                let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
+                return pre.finish(format!("({recv}).{}({})", method.name, a.join(", ")));
             }
             Ty::Map(key, val) => {
-                if let Some(s) = lower_map_kernel(receiver, method, args, key, val, stmts, cx) {
-                    return s;
+                if let Some(s) =
+                    pre.absorb_opt(lower_map_kernel(receiver, method, args, key, val, cx))
+                {
+                    return pre.finish(s);
                 }
             }
             // v0.21: the numeric kernel. `toFloat` is the identity
@@ -1926,50 +2202,53 @@ fn lower_method_call(
             // the four `Float -> Int` roundings map onto `Math.*`.
             // v0.22a extends it (abs/min/max/clamp, isNaN/isFinite).
             Ty::Base(BaseType::Int | BaseType::Float) => {
-                if let Some(s) = lower_numeric_kernel(receiver, method, args, stmts, cx) {
-                    return s;
+                if let Some(s) = pre.absorb_opt(lower_numeric_kernel(receiver, method, args, cx)) {
+                    return pre.finish(s);
                 }
             }
             // v0.86 (ADR 0112): the `Duration` kernel. `toMillis` is the identity
             // at runtime (a `Duration` already *is* its milliseconds); `toString`
             // renders the number.
             Ty::Base(BaseType::Duration) => {
-                if let Some(s) = lower_duration_kernel(receiver, method, args, stmts, cx) {
-                    return s;
+                if let Some(s) = pre.absorb_opt(lower_duration_kernel(receiver, method, args, cx)) {
+                    return pre.finish(s);
                 }
             }
             // v0.90 (ADR 0114): the `Instant` kernel. `toEpochMillis` is the
             // identity (an `Instant` lowers to its epoch millis); `toString`
             // renders the number.
             Ty::Base(BaseType::Instant) => {
-                if let Some(s) = lower_instant_kernel(receiver, method, args, stmts, cx) {
-                    return s;
+                if let Some(s) = pre.absorb_opt(lower_instant_kernel(receiver, method, args, cx)) {
+                    return pre.finish(s);
                 }
             }
             // v0.110 (ADR 0142): the `Bytes` kernel. `length` is the octet
             // count; `toBase64` encodes; `decodeUtf8` is a guarded UTF-8 decode
             // returning `Option`.
             Ty::Base(BaseType::Bytes) => {
-                if let Some(s) = lower_bytes_kernel(receiver, method, args, stmts, cx) {
-                    return s;
+                if let Some(s) = pre.absorb_opt(lower_bytes_kernel(receiver, method, args, cx)) {
+                    return pre.finish(s);
                 }
             }
             // v0.22a: the string kernel (ADR 0046).
             Ty::Base(BaseType::String) => {
-                if let Some(s) = lower_string_kernel(receiver, method, args, stmts, cx) {
-                    return s;
+                if let Some(s) = pre.absorb_opt(lower_string_kernel(receiver, method, args, cx)) {
+                    return pre.finish(s);
                 }
             }
             // v0.22a: Option/Result combinators (ADR 0048).
             Ty::Option(inner) => {
-                if let Some(s) = lower_option_kernel(e, receiver, method, args, inner, stmts, cx) {
-                    return s;
+                if let Some(s) =
+                    pre.absorb_opt(lower_option_kernel(e, receiver, method, args, inner, cx))
+                {
+                    return pre.finish(s);
                 }
             }
             Ty::Result(ok, err) => {
-                if let Some(s) = lower_result_kernel(e, receiver, method, args, ok, err, stmts, cx)
+                if let Some(s) =
+                    pre.absorb_opt(lower_result_kernel(e, receiver, method, args, ok, err, cx))
                 {
-                    return s;
+                    return pre.finish(s);
                 }
             }
             // §2.8.3: the `Effect[Result[T, E]]` combinators — `mapOk`/`mapErr`/
@@ -1977,10 +2256,11 @@ fn lower_method_call(
             // receiver `Promise<Result<…>>` and rebuilds the transformed Result.
             Ty::Effect(inner) => {
                 if let Ty::Result(ok, err) = inner.as_ref()
-                    && let Some(s) =
-                        lower_effect_result_kernel(e, receiver, method, args, ok, err, stmts, cx)
+                    && let Some(s) = pre.absorb_opt(lower_effect_result_kernel(
+                        e, receiver, method, args, ok, err, cx,
+                    ))
                 {
-                    return s;
+                    return pre.finish(s);
                 }
             }
             // #561: a refined receiver inherits its base type's read-only kernel
@@ -2003,16 +2283,24 @@ fn lower_method_call(
             {
                 let lowered = match base {
                     BaseType::Int | BaseType::Float => {
-                        lower_numeric_kernel(receiver, method, args, stmts, cx)
+                        pre.absorb_opt(lower_numeric_kernel(receiver, method, args, cx))
                     }
-                    BaseType::String => lower_string_kernel(receiver, method, args, stmts, cx),
-                    BaseType::Duration => lower_duration_kernel(receiver, method, args, stmts, cx),
-                    BaseType::Instant => lower_instant_kernel(receiver, method, args, stmts, cx),
-                    BaseType::Bytes => lower_bytes_kernel(receiver, method, args, stmts, cx),
+                    BaseType::String => {
+                        pre.absorb_opt(lower_string_kernel(receiver, method, args, cx))
+                    }
+                    BaseType::Duration => {
+                        pre.absorb_opt(lower_duration_kernel(receiver, method, args, cx))
+                    }
+                    BaseType::Instant => {
+                        pre.absorb_opt(lower_instant_kernel(receiver, method, args, cx))
+                    }
+                    BaseType::Bytes => {
+                        pre.absorb_opt(lower_bytes_kernel(receiver, method, args, cx))
+                    }
                     BaseType::Bool => None,
                 };
                 if let Some(s) = lowered {
-                    return s;
+                    return pre.finish(s);
                 }
             }
             _ => {}
@@ -2022,12 +2310,12 @@ fn lower_method_call(
     let ns = cx
         .receiver_namespace(receiver)
         .unwrap_or_else(|| "/* unknown */".to_string());
-    let recv = lower_expr_into(receiver, stmts, cx);
+    let recv = pre.lower(receiver, cx);
     let mut all = vec![recv];
     for a in args {
-        all.push(lower_expr_into(a, stmts, cx));
+        all.push(pre.lower(a, cx));
     }
-    format!("{ns}.{}({})", method.name, all.join(", "))
+    pre.finish(format!("{ns}.{}({})", method.name, all.join(", ")))
 }
 
 /// v0.22b: the typed JSON codec (ADR 0045). `encode` dispatches to the
@@ -2041,9 +2329,9 @@ fn lower_json_codec_call(
     receiver: &Expr,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
     if let ExprKind::Ident(id) = &receiver.kind
         && id.name == JSON
         && args.len() == 1
@@ -2060,9 +2348,9 @@ fn lower_json_codec_call(
             if cx.in_test_scaffold() {
                 cx.runtime_use().note_json_codec_root(tref.clone());
             }
-            let v = lower_expr_into(&args[0], stmts, cx);
+            let v = pre.lower(&args[0], cx);
             let ser = serialisation::serialise_expr(&tref, &v, cx.runtime_use());
-            return Some(format!("JSON.stringify({ser})"));
+            return Some(pre.finish(format!("JSON.stringify({ser})")));
         }
         if method.name == "decode"
             && let Some(Ty::Result(t, _)) = cx.commons().expr_types.get(&e.span).cloned()
@@ -2088,8 +2376,8 @@ fn lower_json_codec_call(
             // otherwise emits all three unimported.
             cx.runtime_use().note_json_codec();
             let des = serialisation::deserialise_expr(&tref, "__j", "$", cx.runtime_use());
-            let arg = lower_expr_into(&args[0], stmts, cx);
-            return Some(format!(
+            let arg = pre.lower(&args[0], cx);
+            return Some(pre.finish(format!(
                 "((__s: string): Result<{ts}, JsonError> => {{ \
                  let __j: JsonValue; \
                  try {{ __j = JSON.parse(__s) as JsonValue; }} \
@@ -2100,10 +2388,11 @@ fn lower_json_codec_call(
                  return Err({{ kind: __be.kind, \
                  path: (__be.kind === \"StructuralMismatch\" || __be.kind === \"RefinementViolation\") ? __be.path : \"$\", \
                  message: __be.kind === \"StructuralMismatch\" ? `expected ${{__be.expected}}, got ${{String(__be.actual)}}` : __be.kind === \"RefinementViolation\" ? __be.violation.message : __be.details }}); }})({arg})"
-            ));
+            )));
         }
     }
-    None
+    let text: Option<String> = None;
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.6 cross-context service call: receiver is an alias or the dotted name
@@ -2116,52 +2405,51 @@ fn lower_cross_context_service_call(
     receiver: &Expr,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
-    if let Some((consumed, key)) = cross_context_lowering_prefix(receiver, cx) {
-        cx.note_cross_context_used();
-        match cx.target() {
-            BuildTarget::Bundle => {
-                let args_lowered: Vec<String> = args
-                    .iter()
-                    .enumerate()
-                    .map(|(i, a)| {
-                        let lowered = lower_expr_into(a, stmts, cx);
-                        param_cast(&consumed, cx.cross_context(), method, i, lowered)
-                    })
-                    .collect();
-                Some(format!(
-                    "deps.surface.{key}.{}({})",
-                    method.name,
-                    args_lowered.join(", ")
-                ))
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> =
+        if let Some((consumed, key)) = cross_context_lowering_prefix(receiver, cx) {
+            cx.note_cross_context_used();
+            match cx.target() {
+                BuildTarget::Bundle => {
+                    let args_lowered: Vec<String> = args
+                        .iter()
+                        .enumerate()
+                        .map(|(i, a)| {
+                            let lowered = pre.lower(a, cx);
+                            param_cast(&consumed, cx.cross_context(), method, i, lowered)
+                        })
+                        .collect();
+                    Some(format!(
+                        "deps.surface.{key}.{}({})",
+                        method.name,
+                        args_lowered.join(", ")
+                    ))
+                }
+                BuildTarget::Workers => {
+                    let _ = key;
+                    let call = pre.absorb(lower_workers_cross_context_call(
+                        &consumed, method, args, cx,
+                    ));
+                    return Some(pre.finish(call));
+                }
             }
-            BuildTarget::Workers => {
-                let _ = key;
-                Some(lower_workers_cross_context_call(
-                    &consumed, method, args, stmts, cx,
-                ))
-            }
-        }
-    } else {
-        None
-    }
+        } else {
+            None
+        };
+    text.map(|expr| pre.finish(expr))
 }
 
-fn lower_val(
-    type_ref: &TypeRef,
-    args: &[Expr],
-    stmts: &mut Vec<String>,
-    cx: &mut LowerCtx,
-) -> String {
+fn lower_val(type_ref: &TypeRef, args: &[Expr], cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
     // Resolve the mocked type straight from the AST node rather than the
     // checker's `expr_types` side-table — the static type table is always
     // populated, whereas a test body's per-expression types may not be visible
     // to the emitter.
     let ty = match bynk_check::checker::resolve_type_ref(type_ref, &cx.commons().types) {
         Some(t) => t,
-        None => return "undefined /* mock: unresolved type */".to_string(),
+        None => return pre.finish("undefined /* mock: unresolved type */".to_string()),
     };
     // Refined literal pin. This `Val[T](lit)` path is test-only scaffolding, where
     // the branded type is an `any` value binding, not a type (ADR 0182) — so brand
@@ -2176,11 +2464,11 @@ fn lower_val(
         },
     ) = (args.first(), &ty)
     {
-        let raw = lower_const_literal_raw(arg).unwrap_or_else(|| lower_expr_into(arg, stmts, cx));
-        return unchecked_construct_test(name, &raw, false);
+        let raw = lower_const_literal_raw(arg).unwrap_or_else(|| pre.lower(arg, cx));
+        return pre.finish(unchecked_construct_test(name, &raw, false));
     }
     // Bare mock (refined / opaque / sum / record).
-    mock_value(&ty, cx, MOCK_DEPTH)
+    pre.finish(mock_value(&ty, cx, MOCK_DEPTH))
 }
 
 /// When we encounter `lhs && rhs`, see if lhs is an `is` (possibly wrapped
@@ -2190,9 +2478,8 @@ fn lower_val(
 fn lower_and_with_is(
     lhs: &Expr,
     rhs: &Expr,
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<(Vec<String>, String, String)> {
+) -> Option<(Vec<String>, Lowered, String, bool)> {
     // Probe structurally (no lowering) so a `&&` without an `is` falls through
     // to the caller's ordinary lowering untouched. This mirrors exactly the
     // shapes `gather_is_bindings_for_emit` walks (`&&` and parens), preserving
@@ -2205,7 +2492,7 @@ fn lower_and_with_is(
     // binding gatherer below then references that temp via `is_receiver_text`
     // instead of re-emitting the receiver. For simple receivers nothing is
     // cached and the output is byte-identical to before.
-    let lhs_expr = lower_expr_into(lhs, stmts, cx);
+    let lhs_lowered = lower_expr(lhs, cx);
     // #908: the gathered bindings are only in scope for `rhs` (the caller
     // wraps them together in one IIFE) — push a frame so a same-named `rhs`
     // read resolves to the binding rather than an outer `let` rename, and pop
@@ -2225,10 +2512,17 @@ fn lower_and_with_is(
     // order, before the final `return rhs_expr` the caller wraps them in, so
     // one combined list is exactly what the caller's existing wrap already
     // expects.
+    // T2.3 (R6.3): isolate the flag to just `rhs`'s own lowering, so a `?`
+    // inside `lhs`'s `is`-receiver (already hoisted unconditionally into the
+    // caller's own statement position, not this arrow — see `lower_bin_op`)
+    // doesn't falsely report a propagating return coming from `bindings`.
+    let saved_early_return = std::mem::take(&mut cx.emitted_early_return);
     let rhs_lowered = lower_expr(rhs, cx);
+    let rhs_returns = cx.emitted_early_return;
+    cx.emitted_early_return = saved_early_return || rhs_returns;
     bindings.extend(rhs_lowered.pre);
     cx.shadow_scopes.pop();
-    Some((bindings, lhs_expr, rhs_lowered.expr))
+    Some((bindings, lhs_lowered, rhs_lowered.expr, rhs_returns))
 }
 
 /// Walk an expression collecting `const name = expr.field;` strings for
@@ -2416,25 +2710,25 @@ fn lower_list_kernel(
     method: &Ident,
     args: &[Expr],
     elem: &Ty,
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
     let elem_ts = ts_ty(elem);
-    match (method.name.as_str(), args) {
+    let text: Option<String> = match (method.name.as_str(), args) {
         ("length", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("({recv}).length"))
         }
         ("get", [index]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let idx = lower_expr_into(index, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let idx = pre.lower(index, cx);
             Some(format!(
                 "((__xs: readonly {elem_ts}[], __i: number) => __i >= 0 && __i < __xs.length ? Some(__xs[__i] as {elem_ts}) : None)({recv}, {idx})"
             ))
         }
         ("prepend", [head]) => {
-            let head = lower_expr_into(head, stmts, cx);
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let head = pre.lower(head, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("[{head}, ...{recv}]"))
         }
         ("fold", [init, f]) => {
@@ -2451,9 +2745,9 @@ fn lower_list_kernel(
                         e.span
                     )
                 });
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let init = lower_expr_into(init, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let init = pre.lower(init, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "((__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => {acc_ts}) => {{ for (const __x of __xs) __acc = __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
             ))
@@ -2470,9 +2764,9 @@ fn lower_list_kernel(
                     e.span
                 ),
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let init = lower_expr_into(init, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let init = pre.lower(init, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
             ))
@@ -2481,8 +2775,8 @@ fn lower_list_kernel(
         // order, awaiting each; yields `Promise<void>`. The eager `List`
         // analogue of the `Query.forEach` terminal, emitted inline.
         (FOR_EACH, [f]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[]) => {{ for (const __x of __xs) {{ await ({f})(__x); }} }})({recv})"
             ))
@@ -2492,8 +2786,8 @@ fn lower_list_kernel(
         // not head-of-line-block the rest. The eager `List` analogue of the
         // `Query.parTraverse` terminal, emitted inline.
         (PAR_TRAVERSE, [f]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[]) => {{ await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
             ))
@@ -2518,15 +2812,15 @@ fn lower_list_kernel(
                     e.span
                 ),
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {res_ts}[] = []; for (const __x of __xs) {{ __out.push(await ({f})(__x)); }} return __out; }})({recv})"
             ))
         }
         (PAR_TRAVERSE_ALL, [f]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[]) => await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
             ))
@@ -2537,16 +2831,16 @@ fn lower_list_kernel(
         // issues all at once, then scans the resolved `Result`s in input order.
         (TRAVERSE_TRY, [f]) => {
             let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.span));
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {u_ts}[] = []; for (const __x of __xs) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
             ))
         }
         (PAR_TRAVERSE_TRY, [f]) => {
             let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.span));
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[]) => {{ const __rs = await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
             ))
@@ -2555,42 +2849,42 @@ fn lower_list_kernel(
         // to native array methods; callbacks are wrapped in a single-arg arrow
         // so the array index/array extra args never reach a Bynk one-param fn.
         ("map", [f]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!("({recv}).map((__x: {elem_ts}) => ({f})(__x))"))
         }
         ("filter", [p]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let p = lower_expr_into(p, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let p = pre.lower(p, cx);
             Some(format!("({recv}).filter((__x: {elem_ts}) => ({p})(__x))"))
         }
         ("flatMap", [f]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!("({recv}).flatMap((__x: {elem_ts}) => ({f})(__x))"))
         }
         ("take", [n]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let n = lower_expr_into(n, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let n = pre.lower(n, cx);
             Some(format!("({recv}).slice(0, Math.max(0, {n}))"))
         }
         ("skip", [n]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let n = lower_expr_into(n, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let n = pre.lower(n, cx);
             Some(format!("({recv}).slice(Math.max(0, {n}))"))
         }
         ("count", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("({recv}).length"))
         }
         ("any", [p]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let p = lower_expr_into(p, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let p = pre.lower(p, cx);
             Some(format!("({recv}).some((__x: {elem_ts}) => ({p})(__x))"))
         }
         ("all", [p]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let p = lower_expr_into(p, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let p = pre.lower(p, cx);
             Some(format!("({recv}).every((__x: {elem_ts}) => ({p})(__x))"))
         }
         // v0.119 (ADR 0155, DECISION C-a): `run.upTo(step)` — the driven history
@@ -2598,21 +2892,21 @@ fn lower_list_kernel(
         // array, so `indexOf` is reference identity. An IIFE avoids re-evaluating
         // the receiver.
         ("upTo", [step]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let step = lower_expr_into(step, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let step = pre.lower(step, cx);
             Some(format!(
                 "((__xs: readonly {elem_ts}[], __s: {elem_ts}) => __xs.slice(0, __xs.indexOf(__s)))({recv}, {step})"
             ))
         }
         ("first", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!(
                 "((__xs: readonly {elem_ts}[]) => __xs.length > 0 ? Some(__xs[0]) : None)({recv})"
             ))
         }
         ("firstOrElse", [default]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let default = lower_expr_into(default, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let default = pre.lower(default, cx);
             Some(format!(
                 "((__xs: readonly {elem_ts}[], __d: {elem_ts}) => __xs.length > 0 ? __xs[0] : __d)({recv}, {default})"
             ))
@@ -2621,34 +2915,34 @@ fn lower_list_kernel(
         // `<`/`>` works for the numeric- and string-erased orderable keys
         // alike, so no key-type branch is needed (except average's rounding).
         ("sortBy", [key]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let key = lower_expr_into(key, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let key = pre.lower(key, cx);
             Some(format!(
                 "[...{recv}].sort((__a: {elem_ts}, __b: {elem_ts}) => {{ const __ka = ({key})(__a), __kb = ({key})(__b); return __ka < __kb ? -1 : __ka > __kb ? 1 : 0; }})"
             ))
         }
         ("distinct", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("[...new Set({recv})]"))
         }
         ("distinctBy", [key]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let key = lower_expr_into(key, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let key = pre.lower(key, cx);
             Some(format!(
                 "((__xs: readonly {elem_ts}[]) => {{ const __seen = new Set(); const __out: {elem_ts}[] = []; for (const __x of __xs) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})({recv})"
             ))
         }
         ("sum", [key]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let key = lower_expr_into(key, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let key = pre.lower(key, cx);
             Some(format!(
                 "({recv}).reduce((__s: number, __x: {elem_ts}) => __s + ({key})(__x), 0)"
             ))
         }
         ("min" | "max", [key]) => {
             let cmp = if method.name == "min" { "<" } else { ">" };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let key = lower_expr_into(key, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let key = pre.lower(key, cx);
             Some(format!(
                 "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __m = ({key})(__xs[0]); for (const __x of __xs) {{ const __k = ({key})(__x); if (__k {cmp} __m) __m = __k; }} return Some(__m); }})({recv})"
             ))
@@ -2664,8 +2958,8 @@ fn lower_list_kernel(
             } else {
                 "__s / __xs.length"
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let key = lower_expr_into(key, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let key = pre.lower(key, cx);
             Some(format!(
                 "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ({key})(__x); return Some({mean}); }})({recv})"
             ))
@@ -2678,47 +2972,48 @@ fn lower_list_kernel(
         // **original** key (re-derived from a representative row), not the
         // stringified hash key.
         ("joinOn", [other, left, right, into]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             let u_ts = join_other_elem_ts(args, cx);
-            let other = lower_expr_into(other, stmts, cx);
-            let left = lower_expr_into(left, stmts, cx);
-            let right = lower_expr_into(right, stmts, cx);
-            let into = lower_expr_into(into, stmts, cx);
+            let other = pre.lower(other, cx);
+            let left = pre.lower(left, cx);
+            let right = pre.lower(right, cx);
+            let into = pre.lower(into, cx);
             Some(format!(
                 "(() => {{ const __h: Record<string, {u_ts}[]> = {{}}; for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
             ))
         }
         ("leftJoin", [other, left, right, into]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             let u_ts = join_other_elem_ts(args, cx);
-            let other = lower_expr_into(other, stmts, cx);
-            let left = lower_expr_into(left, stmts, cx);
-            let right = lower_expr_into(right, stmts, cx);
-            let into = lower_expr_into(into, stmts, cx);
+            let other = pre.lower(other, cx);
+            let left = pre.lower(left, cx);
+            let right = pre.lower(right, cx);
+            let into = pre.lower(into, cx);
             Some(format!(
                 "(() => {{ const __h: Record<string, {u_ts}[]> = {{}}; for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
             ))
         }
         ("join", [other, on, into]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             let u_ts = join_other_elem_ts(args, cx);
-            let other = lower_expr_into(other, stmts, cx);
-            let on = lower_expr_into(on, stmts, cx);
-            let into = lower_expr_into(into, stmts, cx);
+            let other = pre.lower(other, cx);
+            let on = pre.lower(on, cx);
+            let into = pre.lower(into, cx);
             Some(format!(
                 "(() => {{ const __b: readonly {u_ts}[] = {other}; return ({recv}).flatMap((__t: {elem_ts}) => __b.filter((__u: {u_ts}) => ({on})(__t, __u)).map((__u: {u_ts}) => ({into})(__t, __u))); }})()"
             ))
         }
         ("groupBy", [key, into]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let key = lower_expr_into(key, stmts, cx);
-            let into = lower_expr_into(into, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let key = pre.lower(key, cx);
+            let into = pre.lower(into, cx);
             Some(format!(
                 "(() => {{ const __h: Record<string, {elem_ts}[]> = {{}}; const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
             ))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.94 (ADR 0120): the TS element type of a join's `other` collection (its
@@ -2976,9 +3271,9 @@ fn route_indexed_filter(
     map: &str,
     fields: &[String],
     lam: &LambdaExpr,
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
     if fields.is_empty() {
         return None;
     }
@@ -2997,10 +3292,11 @@ fn route_indexed_filter(
     if !fields.iter().any(|f| f == field) || !param_independent(value, pname) {
         return None;
     }
-    let v = lower_expr_into(value, stmts, cx);
-    Some(format!(
+    let v = pre.lower(value, cx);
+    let text: Option<String> = Some(format!(
         "(() => ({var}.{map}__idx_{field}[String({v})] ?? []).map((__pk) => {m}[__pk]))"
-    ))
+    ));
+    text.map(|expr| pre.finish(expr))
 }
 
 /// `e` as `<param>.<field>` → the field name; else `None`.
@@ -3038,43 +3334,44 @@ fn lower_numeric_kernel(
     receiver: &Expr,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
-    match (method.name.as_str(), args) {
-        ("toFloat", []) => Some(lower_expr_into(receiver, stmts, cx)),
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (method.name.as_str(), args) {
+        ("toFloat", []) => Some(pre.lower(receiver, cx)),
         ("round" | "floor" | "ceil" | "abs", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("Math.{}({recv})", method.name))
         }
         ("truncate", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("Math.trunc({recv})"))
         }
         ("min" | "max", [other]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let other = lower_expr_into(other, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let other = pre.lower(other, cx);
             Some(format!("Math.{}({recv}, {other})", method.name))
         }
         ("clamp", [lo, hi]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let lo = lower_expr_into(lo, stmts, cx);
-            let hi = lower_expr_into(hi, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let lo = pre.lower(lo, cx);
+            let hi = pre.lower(hi, cx);
             Some(format!("Math.min(Math.max({recv}, {lo}), {hi})"))
         }
         ("isNaN" | "isFinite", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("Number.{}({recv})", method.name))
         }
         // v0.42 (ADR 0074): host number→string — `String(n)` is ECMAScript's
         // Number::toString (shortest round-trip; `1e21`/`Infinity`/`NaN` as the
         // host renders them). The normative contract is the platform's.
         ("toString", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("String({recv})"))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.86 (ADR 0112): lower a `Duration` kernel method. `toMillis` is the
@@ -3083,17 +3380,18 @@ fn lower_duration_kernel(
     receiver: &Expr,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
-    match (method.name.as_str(), args) {
-        ("toMillis", []) => Some(lower_expr_into(receiver, stmts, cx)),
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (method.name.as_str(), args) {
+        ("toMillis", []) => Some(pre.lower(receiver, cx)),
         ("toString", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("String({recv})"))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.90 (ADR 0114): lower an `Instant` kernel method. `toEpochMillis` is the
@@ -3103,17 +3401,18 @@ fn lower_instant_kernel(
     receiver: &Expr,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
-    match (method.name.as_str(), args) {
-        ("toEpochMillis", []) => Some(lower_expr_into(receiver, stmts, cx)),
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (method.name.as_str(), args) {
+        ("toEpochMillis", []) => Some(pre.lower(receiver, cx)),
         ("toString", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("String({recv})"))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.110 (ADR 0142 D3/D4): lower a `Bytes` kernel method. `length` is the
@@ -3124,26 +3423,27 @@ fn lower_bytes_kernel(
     receiver: &Expr,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
-    match (method.name.as_str(), args) {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (method.name.as_str(), args) {
         ("length", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("({recv}).length"))
         }
         ("toBase64", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             cx.note_bytes();
             Some(format!("__bynkBytesToBase64({recv})"))
         }
         ("decodeUtf8", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             cx.note_bytes();
             Some(format!("__bynkBytesDecodeUtf8({recv})"))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.22a: lower a built-in `String` kernel method (ADR 0046). Pinned
@@ -3154,73 +3454,74 @@ fn lower_string_kernel(
     receiver: &Expr,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
-    match (method.name.as_str(), args) {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
+    let text: Option<String> = match (method.name.as_str(), args) {
         ("length", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("({recv}).length"))
         }
         ("trim", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("{recv}.trim()"))
         }
         ("toUpper", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("{recv}.toUpperCase()"))
         }
         ("toLower", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("{recv}.toLowerCase()"))
         }
         ("chars", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("[...{recv}]"))
         }
         ("split", [sep]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let sep = lower_expr_into(sep, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let sep = pre.lower(sep, cx);
             Some(format!("{recv}.split({sep})"))
         }
         ("contains", [sub]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let sub = lower_expr_into(sub, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let sub = pre.lower(sub, cx);
             Some(format!("{recv}.includes({sub})"))
         }
         ("startsWith" | "endsWith", [sub]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let sub = lower_expr_into(sub, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let sub = pre.lower(sub, cx);
             Some(format!("{recv}.{}({sub})", method.name))
         }
         ("concat", [other]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let other = lower_expr_into(other, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let other = pre.lower(other, cx);
             Some(format!("{recv}.concat({other})"))
         }
         ("replace", [from, to]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let from = lower_expr_into(from, stmts, cx);
-            let to = lower_expr_into(to, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let from = pre.lower(from, cx);
+            let to = pre.lower(to, cx);
             Some(format!("{recv}.replaceAll({from}, {to})"))
         }
         ("slice", [lo, hi]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let lo = lower_expr_into(lo, stmts, cx);
-            let hi = lower_expr_into(hi, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let lo = pre.lower(lo, cx);
+            let hi = pre.lower(hi, cx);
             Some(format!(
                 "{recv}.slice(Math.max(0, {lo}), Math.max(0, {hi}))"
             ))
         }
         ("indexOf", [sub]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let sub = lower_expr_into(sub, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let sub = pre.lower(sub, cx);
             Some(format!(
                 "((__i: number) => __i < 0 ? None : Some(__i))({recv}.indexOf({sub}))"
             ))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.22a: lower a built-in `Option[T]` kernel method (ADR 0048). Typed
@@ -3233,11 +3534,11 @@ fn lower_option_kernel(
     method: &Ident,
     args: &[Expr],
     inner: &Ty,
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
     let t = ts_ty(inner);
-    match (method.name.as_str(), args) {
+    let text: Option<String> = match (method.name.as_str(), args) {
         ("map", [f]) => {
             // The call's checked type is `Option[B]` — peel for B.
             let b = match cx.commons().expr_types.get(&e.span) {
@@ -3249,8 +3550,8 @@ fn lower_option_kernel(
                     e.span
                 ),
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "((__o: Option<{t}>, __f: (x: {t}) => {b}) => __o.tag === \"Some\" ? Some(__f(__o.value)) : None)({recv}, {f})"
             ))
@@ -3265,21 +3566,21 @@ fn lower_option_kernel(
                     e.span
                 ),
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "((__o: Option<{t}>, __f: (x: {t}) => Option<{b}>) => __o.tag === \"Some\" ? __f(__o.value) : None)({recv}, {f})"
             ))
         }
         ("getOrElse", [fallback]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let fallback = lower_expr_into(fallback, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let fallback = pre.lower(fallback, cx);
             Some(format!(
                 "((__o: Option<{t}>, __d: {t}) => __o.tag === \"Some\" ? __o.value : __d)({recv}, {fallback})"
             ))
         }
         ("isSome", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("({recv}.tag === \"Some\")"))
         }
         ("okOr", [error]) => {
@@ -3293,14 +3594,15 @@ fn lower_option_kernel(
                     e.span
                 ),
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let error = lower_expr_into(error, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let error = pre.lower(error, cx);
             Some(format!(
                 "((__o: Option<{t}>, __e: {err}) => __o.tag === \"Some\" ? Ok(__o.value) : Err(__e))({recv}, {error})"
             ))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.22a: lower a built-in `Result[T, E]` kernel method (ADR 0048). The
@@ -3314,12 +3616,12 @@ fn lower_result_kernel(
     args: &[Expr],
     ok: &Ty,
     err: &Ty,
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
     let t = ts_ty(ok);
     let et = ts_ty(err);
-    match (method.name.as_str(), args) {
+    let text: Option<String> = match (method.name.as_str(), args) {
         ("map", [f]) => {
             // The call's checked type is `Result[B, E]` — peel for B.
             let b = match cx.commons().expr_types.get(&e.span) {
@@ -3331,8 +3633,8 @@ fn lower_result_kernel(
                     e.span
                 ),
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "((__r: Result<{t}, {et}>, __f: (x: {t}) => {b}) => __r.tag === \"Ok\" ? Ok(__f(__r.value)) : __r)({recv}, {f})"
             ))
@@ -3347,8 +3649,8 @@ fn lower_result_kernel(
                     e.span
                 ),
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "((__r: Result<{t}, {et}>, __f: (x: {t}) => Result<{b}, {et}>) => __r.tag === \"Ok\" ? __f(__r.value) : __r)({recv}, {f})"
             ))
@@ -3364,25 +3666,26 @@ fn lower_result_kernel(
                     e.span
                 ),
             };
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "((__r: Result<{t}, {et}>, __f: (e: {et}) => {fts}) => __r.tag === \"Err\" ? Err(__f(__r.error)) : __r)({recv}, {f})"
             ))
         }
         ("getOrElse", [fallback]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let fallback = lower_expr_into(fallback, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let fallback = pre.lower(fallback, cx);
             Some(format!(
                 "((__r: Result<{t}, {et}>, __d: {t}) => __r.tag === \"Ok\" ? __r.value : __d)({recv}, {fallback})"
             ))
         }
         ("isOk", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("({recv}.tag === \"Ok\")"))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// §2.8.3: lower an `Effect[Result[T, E]]` combinator. `Effect[T]` is
@@ -3400,9 +3703,9 @@ fn lower_effect_result_kernel(
     args: &[Expr],
     ok: &Ty,
     err: &Ty,
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
     let t = ts_ty(ok);
     let et = ts_ty(err);
     // The call's checked type is `Effect[Result[a, b]]`; peel `(a, b)` for the
@@ -3424,41 +3727,42 @@ fn lower_effect_result_kernel(
             e.span
         ),
     };
-    match (method.name.as_str(), args) {
+    let text: Option<String> = match (method.name.as_str(), args) {
         ("mapOk", [f]) => {
             // result `Effect[Result[U, E]]` — `a_ts` is `U`.
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => {a_ts}) => {{ const __r = await __e; return __r.tag === \"Ok\" ? Ok(__f(__r.value)) : __r; }})({recv}, {f})"
             ))
         }
         ("mapErr", [f]) => {
             // result `Effect[Result[T, F]]` — `b_ts` is `F`.
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => {b_ts}) => {{ const __r = await __e; return __r.tag === \"Err\" ? Err(__f(__r.error)) : __r; }})({recv}, {f})"
             ))
         }
         ("flatMapOk", [f]) => {
             // `f: T -> Effect[Result[U, E]]`; result `Effect[Result[U, E]]`.
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => Promise<Result<{a_ts}, {et}>>) => {{ const __r = await __e; return __r.tag === \"Ok\" ? await __f(__r.value) : __r; }})({recv}, {f})"
             ))
         }
         ("flatMapErr", [f]) => {
             // `f: E -> Effect[Result[T, F]]`; result `Effect[Result[T, F]]`.
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let f = lower_expr_into(f, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let f = pre.lower(f, cx);
             Some(format!(
                 "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => Promise<Result<{t}, {b_ts}>>) => {{ const __r = await __e; return __r.tag === \"Err\" ? await __f(__r.error) : __r; }})({recv}, {f})"
             ))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 /// v0.20b: lower a built-in `Map` kernel method. `insert` copies — the
@@ -3470,63 +3774,113 @@ fn lower_map_kernel(
     args: &[Expr],
     key: &Ty,
     val: &Ty,
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> Option<String> {
+) -> Option<Lowered> {
+    let mut pre = Pre::new();
     let key_ts = ts_ty(key);
     let val_ts = ts_ty(val);
-    match (method.name.as_str(), args) {
+    let text: Option<String> = match (method.name.as_str(), args) {
         ("length", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("({recv}).size"))
         }
         ("keys", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("[...({recv}).keys()]"))
         }
         // v0.149 (ADR 0173): the values in key order — the `keys()` sibling over
         // the in-memory `ReadonlyMap`.
         ("values", []) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
+            let recv = pre.lower(receiver, cx);
             Some(format!("[...({recv}).values()]"))
         }
         ("get", [k]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let k = lower_expr_into(k, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let k = pre.lower(k, cx);
             Some(format!(
                 "((__m: ReadonlyMap<{key_ts}, {val_ts}>, __k: {key_ts}) => __m.has(__k) ? Some(__m.get(__k) as {val_ts}) : None)({recv}, {k})"
             ))
         }
         ("insert", [k, v]) => {
-            let recv = lower_expr_into(receiver, stmts, cx);
-            let k = lower_expr_into(k, stmts, cx);
-            let v = lower_expr_into(v, stmts, cx);
+            let recv = pre.lower(receiver, cx);
+            let k = pre.lower(k, cx);
+            let v = pre.lower(v, cx);
             Some(format!("new Map({recv}).set({k}, {v})"))
         }
         _ => None,
-    }
+    };
+    text.map(|expr| pre.finish(expr))
 }
 
 fn lower_if(
+    e: &Expr,
     cond: &Expr,
     then_block: &Block,
     else_block: &Block,
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> String {
-    let cond_expr = lower_expr_into(cond, stmts, cx);
+) -> Lowered {
+    let mut pre = Pre::new();
+    let slot_ty = checked_ty_ts(e, cx);
+    let cond_expr = pre.lower(cond, cx);
     // If the cond contains `is`-bindings, the then-branch needs a place
     // for the `const name = receiver.field;` declarations — a ternary
-    // has no such place. Force the IIFE form.
-    if both_simple(then_block, else_block, cx) && !cond_has_is_bindings(cond, cx) {
-        let mut tstmts = Vec::new();
-        let testr = lower_expr_into(&then_block.tail, &mut tstmts, cx);
-        debug_assert!(tstmts.is_empty());
-        let mut estmts = Vec::new();
-        let eestr = lower_expr_into(&else_block.tail, &mut estmts, cx);
-        debug_assert!(estmts.is_empty());
-        format!("({cond_expr} ? {testr} : {eestr})")
+    // has no such place. Force the IIFE form. (`ternary_shaped`.)
+    if ternary_shaped(cond, then_block, else_block, cx) {
+        // T2.1 (R6.2): lower each branch's tail once, then ask the branches
+        // themselves whether they hoisted, rather than asking `simple_expr` to
+        // predict it.
+        //
+        // #1029 review: `return_ty` is deliberately **not** cleared here, unlike
+        // the IIFE path below. That path clears it because a `return` in its
+        // arms exits the arrow rather than the enclosing function, so an
+        // embedding `?` must behave like a plain one (ADR 0178). This path
+        // inverts that premise: when a branch hoists, `hoist_if_as_statement`
+        // puts the statements in the *caller's* statement position, so the `?`
+        // expansion's `return` does exit the enclosing function and the declared
+        // embedding must still apply. Clearing it emitted a bare `return __rN;`
+        // — an `Err` of the operand's error type returned from a function
+        // declared with the embedding sum's.
+        //
+        // Preserving it cannot move the no-hoist branch: `return_ty` is read
+        // only by `embed_conversion`, only from the `?` expansion, and a `?`
+        // expansion always pushes to `pre` — so where `pre` is empty, nothing
+        // read it.
+        let then_tail = lower_expr(&then_block.tail, cx);
+        let else_tail = lower_expr(&else_block.tail, cx);
+        if then_tail.pre.is_empty() && else_tail.pre.is_empty() {
+            return pre.finish(format!(
+                "({cond_expr} ? {t} : {e})",
+                t = then_tail.expr,
+                e = else_tail.expr
+            ));
+        }
+        // A branch hoisted. Before T2.1 there was nowhere to put its statements
+        // from here — a value position had no statement slot — and the only
+        // shape available was the arrow below, which swallows a hoisted `?`'s
+        // early return. `lower_if` now returns its own `pre`, so the `if` hoists
+        // as a real statement in the caller's statement position and the
+        // `return` keeps exiting the enclosing function. See
+        // `hoist_if_as_statement`.
+        let value = hoist_if_as_statement(&mut pre, cond_expr, then_tail, else_tail, slot_ty, cx);
+        pre.finish(value)
     } else {
+        // T2.2 (R6.4): isolate the effectfulness flag to just this IIFE's own
+        // body. Unlike `lower_match_as_iife`'s `disc_expr` (spliced *outside*
+        // the returned arrow, at the call site), `cond_expr`'s *text* is
+        // spliced inside this arrow's own `if (...)` below — only its hoisted
+        // statements landed in `pre` above. A bare `await` in `cond_expr`'s
+        // text would need to feed `needs_async`, not `saved_await`; the
+        // debug_assert after the arrow closes documents that this can't
+        // happen today (a literal `await` comes only from `EffectLet`/`Do`,
+        // both hoisted to `pre`, or from a nested `finish_async_iife` wrap,
+        // which would require a value-position `match`/`if` needing the async
+        // wrap to itself type as `Bool` — ruled out by the checker's
+        // Effect-typing) rather than silently trusting it.
+        let saved_await = std::mem::take(&mut cx.emitted_await);
+        debug_assert!(
+            !cond_expr.contains("await "),
+            "cond text lands inside this arrow; its awaits must feed `needs_async`, not `saved_await`: {cond_expr}"
+        );
         let mut iife = String::new();
         iife.push_str("(() => {\n");
         iife.push_str("    if (");
@@ -3576,12 +3930,14 @@ fn lower_if(
             iife.push(' ');
         }
         iife.push_str("})()");
-        // #2 review: unlike `lower_match_as_iife`'s IIFE, this one never
-        // consulted `maybe_async_iife` at all — confirmed live: `let r = if
+        // #2 review: unlike `lower_match_as_iife`'s IIFE, this one used to never
+        // consult the async-wrap decision at all — confirmed live: `let r = if
         // c { let y <- fetch(); y + 1 } else { 0 }` emitted a bare `await`
         // inside this arrow with no `async` keyword, a hard JS syntax error
         // ("Unexpected reserved word"), not merely a missed optimisation.
-        maybe_async_iife(iife)
+        let needs_async = cx.emitted_await;
+        cx.emitted_await = saved_await || needs_async;
+        pre.finish(finish_async_iife(iife, needs_async))
     }
 }
 
@@ -3641,9 +3997,9 @@ fn emit_if_tail(
     indent: usize,
     async_tail: bool,
 ) {
-    let mut pre = Vec::new();
-    let cond_expr = lower_expr_into(cond, &mut pre, cx);
-    for s in &pre {
+    let mut pre = Pre::new();
+    let cond_expr = pre.lower(cond, cx);
+    for s in pre.stmts() {
         write_line(out, indent, s);
     }
     write_line(out, indent, &format!("if ({cond_expr}) {{"));
@@ -3661,59 +4017,6 @@ fn emit_if_tail(
     write_line(out, indent, "} else {");
     emit_block_as_function_body(out, else_block, cx, indent + INDENT_STEP, async_tail);
     write_line(out, indent, "}");
-}
-
-fn both_simple(a: &Block, b: &Block, cx: &LowerCtx) -> bool {
-    a.statements.is_empty()
-        && b.statements.is_empty()
-        && simple_expr(&a.tail, cx)
-        && simple_expr(&b.tail, cx)
-}
-
-/// #1/#3 review: "hoists nothing" — the property `lower_if`'s and
-/// `lower_tail_expr`'s ternary paths depend on to skip the hoist-safe IIFE
-/// form. Needs `cx` for exactly one case: `ExprKind::Is` with a refined
-/// variant pattern and no bindings always hoists a receiver temp
-/// (`is_receiver_ref_forced`, mirroring `lower_is`'s own gate) regardless of
-/// how simple the tested value is — the gap this function used to miss,
-/// since `cx.is_refined_is_check` is checker-derived and unavailable to a
-/// bare `fn simple_expr(e: &Expr) -> bool`. Every other `Is` shape goes
-/// through `is_receiver_ref`, which only hoists when the value itself isn't
-/// simple — exactly what falling through to `simple_expr(value, cx)` checks.
-fn simple_expr(e: &Expr, cx: &LowerCtx) -> bool {
-    match &e.kind {
-        ExprKind::Question(_) => false,
-        ExprKind::Match { .. } => false,
-        ExprKind::Block(b) => b.statements.is_empty() && simple_expr(&b.tail, cx),
-        ExprKind::If {
-            then_block,
-            else_block,
-            cond,
-        } => simple_expr(cond, cx) && both_simple(then_block, else_block, cx),
-        ExprKind::Ok(i) | ExprKind::Err(i) | ExprKind::Some(i) => simple_expr(i, cx),
-        ExprKind::Paren(i) | ExprKind::UnaryOp(_, i) => simple_expr(i, cx),
-        ExprKind::BinOp(_, l, r) => simple_expr(l, cx) && simple_expr(r, cx),
-        ExprKind::Call { args, .. } | ExprKind::ConstructorCall { args, .. } => {
-            args.iter().all(|a| simple_expr(a, cx))
-        }
-        ExprKind::MethodCall { receiver, args, .. } => {
-            simple_expr(receiver, cx) && args.iter().all(|a| simple_expr(a, cx))
-        }
-        ExprKind::FieldAccess { receiver, .. } => simple_expr(receiver, cx),
-        ExprKind::RecordConstruction { fields, .. } => fields.iter().all(|f| match &f.value {
-            Some(v) => simple_expr(v, cx),
-            None => true,
-        }),
-        ExprKind::Is { value, pattern } => {
-            let always_hoists = matches!(
-                pattern.as_ref(),
-                Pattern::Variant { variant, bindings, .. }
-                    if bindings.is_empty() && cx.is_refined_is_check(value, &variant.name)
-            );
-            !always_hoists && simple_expr(value, cx)
-        }
-        _ => true,
-    }
 }
 
 fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
@@ -3818,28 +4121,31 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         .unwrap_or_else(|| ts_ident(&id.name))
 }
 
-fn lower_call(
-    e: &Expr,
-    name: &Ident,
-    args: &[Expr],
-    stmts: &mut Vec<String>,
-    cx: &mut LowerCtx,
-) -> String {
+fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
     // Bare variant constructor with payload → qualify.
-    let args_lowered: Vec<String> = args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
+    let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
     // v0.9: HttpResult variant call.
     if matches!(
         cx.commons().expr_types.get(&e.span),
         Some(Ty::HttpResult(_))
     ) && http_variant(&name.name).is_some()
     {
-        return format!("HttpResult.{}({})", name.name, args_lowered.join(", "));
+        return pre.finish(format!(
+            "HttpResult.{}({})",
+            name.name,
+            args_lowered.join(", ")
+        ));
     }
     // v0.44: a QueueResult variant call (`Retry(reason)`) → `QueueResult.Retry(...)`.
     if matches!(cx.commons().expr_types.get(&e.span), Some(Ty::QueueResult))
         && bynk_syntax::ast::queue_variant(&name.name).is_some()
     {
-        return format!("QueueResult.{}({})", name.name, args_lowered.join(", "));
+        return pre.finish(format!(
+            "QueueResult.{}({})",
+            name.name,
+            args_lowered.join(", ")
+        ));
     }
     // v0.9.2: agent instantiation `AgentName(key)` lowers to the
     // generated `__makeAgentName(key)` factory, which obtains the
@@ -3848,7 +4154,7 @@ fn lower_call(
     // this Call is the receiver of a MethodCall — that path folds
     // construction and the method invocation together.
     if cx.local_agents.contains(&name.name) && args_lowered.len() == 1 {
-        return cx.agent_construct(&name.name, &args_lowered[0]);
+        return pre.finish(cx.agent_construct(&name.name, &args_lowered[0]));
     }
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
@@ -3858,7 +4164,12 @@ fn lower_call(
         && type_name != &name.name
         && call_is_sum_variant(cx, type_name, &name.name)
     {
-        return format!("{}.{}({})", type_name, name.name, args_lowered.join(", "));
+        return pre.finish(format!(
+            "{}.{}({})",
+            type_name,
+            name.name,
+            args_lowered.join(", ")
+        ));
     }
     // #527: a commons-imported fn speaks the *unbranded* commons types, but
     // this context rebrands them (`Event & { __ctxBrand }`); assert the call
@@ -3871,14 +4182,18 @@ fn lower_call(
         && !matches!(f.return_type, TypeRef::Effect(..))
         && typeref_mentions_any(&f.return_type, cx.rebranded_types())
     {
-        return format!(
+        return pre.finish(format!(
             "({}({}) as {})",
             ts_ident(&name.name),
             args_lowered.join(", "),
             ts_type_ref(&f.return_type)
-        );
+        ));
     }
-    format!("{}({})", ts_ident(&name.name), args_lowered.join(", "))
+    pre.finish(format!(
+        "{}({})",
+        ts_ident(&name.name),
+        args_lowered.join(", ")
+    ))
 }
 
 /// True when `r` references any of `names` (recursing through the compound
@@ -3914,13 +4229,8 @@ fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
     }
 }
 
-fn lower_bin_op(
-    op: BinOp,
-    lhs: &Expr,
-    rhs: &Expr,
-    stmts: &mut Vec<String>,
-    cx: &mut LowerCtx,
-) -> String {
+fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
     // For `&&` we need to lower `is` bindings into the rhs scope.
     // We handle that here by collecting bindings from lhs, emitting
     // them as `const` declarations before evaluating rhs — but
@@ -3932,10 +4242,49 @@ fn lower_bin_op(
     // we lower the rhs assuming the binding `n = x.value` was
     // captured. We use a parenthesised IIFE to scope the binding.
     if op == BinOp::And
-        && let Some((bindings, lhs_expr, rhs_expr)) = lower_and_with_is(lhs, rhs, stmts, cx)
+        && let Some((bindings, lhs_lowered, rhs_expr, rhs_returns)) =
+            lower_and_with_is(lhs, rhs, cx)
     {
+        let lhs_expr = pre.absorb(lhs_lowered);
         if bindings.is_empty() {
-            return format!("{lhs_expr} && {rhs_expr}");
+            return pre.finish(format!("{lhs_expr} && {rhs_expr}"));
+        }
+        // T2.3 (R6.3): `bindings` includes rhs's own hoisted statements
+        // (`lower_and_with_is`'s doc comment above), so if one of those is a
+        // `?`'s propagating early return, the arrow-IIFE below would capture
+        // it instead of letting it exit the enclosing function — reuse
+        // `hoist_if_as_statement` (built for T2.1's `if`-hoisting) to hoist
+        // this `&&` as a real `if` statement instead.
+        //
+        // #1044 review: `hoist_if_as_statement`'s bare `slot` return is right
+        // for the general path (no narrowing at stake there — see below), but
+        // wrong here. `lhs_expr` is the very `is`-check `lower_if`'s own
+        // `gather_is_bindings_for_emit` relies on being *textually present* in
+        // the condition it hands to `tsc` — that's what lets `o` narrow to
+        // `Hit` for a hoisted `const score = o.score;` in the caller's
+        // then-block. Dropping `lhs_expr` for a disconnected `let __rN:
+        // boolean` (assigned across an `if`/`else`, not a `tsc`-4.4+ aliased
+        // `const`) severs that link and turns a silent `?`-escape miscompile
+        // into a hard `tsc --strict` failure on the same input. Re-including
+        // `lhs_expr` in the returned text — safe to re-evaluate, since it is
+        // always a pure tag/field read on an already-hoisted receiver, never
+        // the original (possibly effectful) `is` subject — keeps the
+        // conjunction's left side exactly where a caller's narrowing expects
+        // to find it; `slot` only stands in for rhs's value, gated by the
+        // same `if` that already guards evaluating it.
+        if rhs_returns {
+            let slot = hoist_if_as_statement(
+                &mut pre,
+                lhs_expr.clone(),
+                Lowered {
+                    pre: bindings,
+                    expr: rhs_expr,
+                },
+                Lowered::bare("false"),
+                Some("boolean".to_string()),
+                cx,
+            );
+            return pre.finish(format!("{lhs_expr} && {slot}"));
         }
         // Emit:  lhs && (() => { const n = ...; return rhs; })()
         let mut wrap = String::new();
@@ -3946,16 +4295,38 @@ fn lower_bin_op(
             wrap.push(' ');
         }
         wrap.push_str(&format!("return {rhs_expr}; }})())"));
-        return wrap;
+        return pre.finish(wrap);
     }
     // v0.80: `P implies Q` lowers to `(!(P) || Q)`. As with `&&`, an `is` test in
     // the antecedent binds into the consequent (the consequent is only reached
     // when the antecedent holds), so reuse the same is-binding IIFE flow.
     if op == BinOp::Implies
-        && let Some((bindings, lhs_expr, rhs_expr)) = lower_and_with_is(lhs, rhs, stmts, cx)
+        && let Some((bindings, lhs_lowered, rhs_expr, rhs_returns)) =
+            lower_and_with_is(lhs, rhs, cx)
     {
+        let lhs_expr = pre.absorb(lhs_lowered);
         if bindings.is_empty() {
-            return format!("(!({lhs_expr}) || {rhs_expr})");
+            return pre.finish(format!("(!({lhs_expr}) || {rhs_expr})"));
+        }
+        // #1044 review: same fix as the `And` arm above — `lhs_expr` (the
+        // antecedent's `is`-check) must stay in the returned text for a
+        // caller's narrowing to hold, so gate `slot`'s computation on
+        // `lhs_expr` directly (rhs is only reached when the antecedent
+        // holds, same guard as `&&`) rather than folding the negation into
+        // the hoisted `if`'s own condition.
+        if rhs_returns {
+            let slot = hoist_if_as_statement(
+                &mut pre,
+                lhs_expr.clone(),
+                Lowered {
+                    pre: bindings,
+                    expr: rhs_expr,
+                },
+                Lowered::bare("true"),
+                Some("boolean".to_string()),
+                cx,
+            );
+            return pre.finish(format!("(!({lhs_expr}) || {slot})"));
         }
         let mut wrap = String::new();
         wrap.push_str(&format!("(!({lhs_expr}) || ((() => {{ "));
@@ -3964,13 +4335,13 @@ fn lower_bin_op(
             wrap.push(' ');
         }
         wrap.push_str(&format!("return {rhs_expr}; }})()))"));
-        return wrap;
+        return pre.finish(wrap);
     }
-    let l = lower_expr_into(lhs, stmts, cx);
+    let l = pre.lower(lhs, cx);
     // #1/#3 review: `&&`/`||`/`implies` short-circuit — `design/bynk-type-
     // system.md:1671-1678` calls this "both a performance property and a
     // safety property … developers can rely on." Lowering rhs into the same
-    // `stmts` as lhs — the previous behaviour for every case that didn't go
+    // `pre` as lhs — the previous behaviour for every case that didn't go
     // through `lower_and_with_is` above (i.e. `||` always, and `&&`/`implies`
     // whenever the antecedent contains no `is`) — hoisted rhs's
     // pre-statements unconditionally, running them even when lhs's value
@@ -3978,23 +4349,54 @@ fn lower_bin_op(
     // hoists nothing; otherwise wrap it in an IIFE so the hoist runs only
     // when the operator actually reaches rhs.
     //
-    // Residual gap, not introduced here: if rhs's hoist itself contains a
-    // `?`'s early return (`if (__rN.tag === "Err") return __rN;`), that
-    // `return` now exits this wrapper arrow rather than the enclosing
-    // function — the same class of miscompile `lower_match_as_iife` had.
-    // Unlike that case, this one isn't a regression: the pre-existing
-    // behaviour already produced either a syntax error (the is-condition
-    // path spliced rhs's hoisted statements into flattened expression text)
-    // or, on this general path, correct `?` propagation at the cost of
-    // always violating short-circuiting. Trading a systemic, always-firing
-    // violation for a narrow one (a `?` specifically nested inside a
-    // short-circuited operand — unusual style; idiomatic Bynk binds it with
-    // `let x <- expr` first) is the net improvement in scope here. Fully
-    // closing it needs the caller's expression context to accept a real
-    // statement sequence, not just an expression — out of scope for this
-    // pass.
+    // T2.3 (R6.3): if rhs's hoist itself contains a `?`'s propagating early
+    // return (`if (__rN.tag === "Err") return __rN;`), a plain
+    // `(() => { ...; return expr; })()` wrap would capture that `return`
+    // instead of letting it exit the enclosing function — the same class of
+    // miscompile `lower_match_as_iife` had. `LowerCtx::emitted_early_return`
+    // says whether rhs's own lowering hit that case; when it did, hoist this
+    // operator as a real `if` statement via `hoist_if_as_statement` (built for
+    // T2.1's `if`-hoisting) instead of an expression-position IIFE — the
+    // `return` then keeps exiting the enclosing function, and still only runs
+    // when the operator actually reaches rhs. An ordinary hoist (no `?`
+    // involved) keeps the cheaper arrow form; nothing inside it needs to
+    // escape past the arrow, and this is the shape the `947_short_circuit_rhs_hoist`
+    // fixture pins.
     if matches!(op, BinOp::And | BinOp::Or | BinOp::Implies) {
+        let saved_early_return = std::mem::take(&mut cx.emitted_early_return);
         let r = lower_expr(rhs, cx);
+        let rhs_returns = cx.emitted_early_return;
+        cx.emitted_early_return = saved_early_return || rhs_returns;
+        if !r.pre.is_empty() && rhs_returns {
+            let value = match op {
+                BinOp::And => hoist_if_as_statement(
+                    &mut pre,
+                    l,
+                    r,
+                    Lowered::bare("false"),
+                    Some("boolean".to_string()),
+                    cx,
+                ),
+                BinOp::Or => hoist_if_as_statement(
+                    &mut pre,
+                    l,
+                    Lowered::bare("true"),
+                    r,
+                    Some("boolean".to_string()),
+                    cx,
+                ),
+                BinOp::Implies => hoist_if_as_statement(
+                    &mut pre,
+                    format!("!({l})"),
+                    Lowered::bare("true"),
+                    r,
+                    Some("boolean".to_string()),
+                    cx,
+                ),
+                _ => unreachable!("guarded by the outer `matches!`"),
+            };
+            return pre.finish(value);
+        }
         let rhs_text = if r.pre.is_empty() {
             r.expr
         } else {
@@ -4006,17 +4408,17 @@ fn lower_bin_op(
             s.push_str(&format!("return {}; }})()", r.expr));
             s
         };
-        return match op {
+        return pre.finish(match op {
             BinOp::And => format!("{l} && {rhs_text}"),
             BinOp::Or => format!("{l} || {rhs_text}"),
             // `P implies Q` ≡ `!P || Q` (no `is` bindings in the antecedent —
             // that case returned above via `lower_and_with_is`).
             BinOp::Implies => format!("(!({l}) || {rhs_text})"),
             _ => unreachable!("guarded by the outer `matches!`"),
-        };
+        });
     }
-    let r = lower_expr_into(rhs, stmts, cx);
-    if op == BinOp::Div {
+    let r = pre.lower(rhs, cx);
+    let text = if op == BinOp::Div {
         // v0.21: division is operand-typed (ADR 0042) — `Float`
         // true-divides; `Int` keeps truncating. The checker rejects
         // mixed operands, so the left operand decides; a missing
@@ -4054,33 +4456,35 @@ fn lower_bin_op(
         }
     } else {
         format!("{l} {} {r}", ts_binop(op))
-    }
+    };
+    pre.finish(text)
 }
 
 fn lower_constructor_call(
     type_name: &Ident,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> String {
-    let args: Vec<String> = args.iter().map(|a| lower_expr_into(a, stmts, cx)).collect();
-    // Nullary variant qualified construction: `T.V` (no parens) at the
+) -> Lowered {
+    let mut pre = Pre::new();
+    let args: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
+    let text = // Nullary variant qualified construction: `T.V` (no parens) at the
     // source level wouldn't reach here, so `T.V()` always means call.
-    format!("{}.{}({})", type_name.name, method.name, args.join(", "))
+    format!("{}.{}({})", type_name.name, method.name, args.join(", "));
+    pre.finish(text)
 }
 
 fn lower_record_construction(
     type_name: &Ident,
     fields: &[FieldInit],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
-) -> String {
+) -> Lowered {
+    let mut pre = Pre::new();
     let mut parts = Vec::new();
     for f in fields {
         match &f.value {
             Some(v) => {
-                let val = lower_expr_into(v, stmts, cx);
+                let val = pre.lower(v, cx);
                 parts.push(format!("{}: {}", f.name.name, val));
             }
             None => {
@@ -4097,16 +4501,11 @@ fn lower_record_construction(
         }
     }
     let _ = type_name;
-    format!("{{ {} }}", parts.join(", "))
+    pre.finish(format!("{{ {} }}", parts.join(", ")))
 }
 
-fn lower_field_access(
-    e: &Expr,
-    receiver: &Expr,
-    field: &Ident,
-    stmts: &mut Vec<String>,
-    cx: &mut LowerCtx,
-) -> String {
+fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
     // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
     // Map[K, V]` field — the key-exposing lazy queries. Like every store-map
     // query, they lower to a deferred thunk over the working record. `.values`
@@ -4125,7 +4524,7 @@ fn lower_field_access(
     {
         let var = cx.agent_store_var().to_string();
         let m = format!("{var}.{}", id.name);
-        return match field.name.as_str() {
+        return pre.finish(match field.name.as_str() {
             map_query::VALUES => format!("(() => Object.values({m}))"),
             map_query::KEYS => {
                 let decoded = decode_map_key(map_key_ty(e, cx), "__k");
@@ -4142,14 +4541,14 @@ fn lower_field_access(
                     "(() => Object.entries({m}).map(([__k, __v]) => ({{ key: {decoded}, value: __v }})))"
                 )
             }
-        };
+        });
     }
     // v0.9: `HttpResult.Variant` (nullary).
     if let ExprKind::Ident(id) = &receiver.kind
         && id.name == HTTP_RESULT
         && http_variant(&field.name).is_some()
     {
-        return format!("HttpResult.{}", field.name);
+        return pre.finish(format!("HttpResult.{}", field.name));
     }
     // Agent-handler `self.<key>` rewrite.
     if cx.in_agent_handler()
@@ -4158,7 +4557,7 @@ fn lower_field_access(
         && let Some(k) = cx.agent_key_field()
         && field.name == *k
     {
-        return format!("(this.state.id.toString() as {})", k);
+        return pre.finish(format!("(this.state.id.toString() as {})", k));
     }
     // v0.45: `<binder>.identity` on a verified actor binding. The binder is not
     // a runtime value; the identity is minted at the verification seam. For the
@@ -4179,11 +4578,11 @@ fn lower_field_access(
         if let (Some(binder), ExprKind::Ident(id)) = (cx.deps_identity_binder(), &receiver.kind)
             && id.name == binder
         {
-            return "deps.identity".to_string();
+            return pre.finish("deps.identity".to_string());
         }
-        return "undefined".to_string();
+        return pre.finish("undefined".to_string());
     }
-    let r = lower_expr_into(receiver, stmts, cx);
+    let r = pre.lower(receiver, cx);
     // `.raw` on an opaque value compiles to a TypeScript type
     // assertion back to the base type. The checker has already
     // verified that the receiver is opaque and the call site is
@@ -4194,9 +4593,9 @@ fn lower_field_access(
             ..
         }) = cx.commons().expr_types.get(&receiver.span)
     {
-        return format!("({r} as {})", ts_base(*base));
+        return pre.finish(format!("({r} as {})", ts_base(*base)));
     }
-    format!("{r}.{}", field.name)
+    pre.finish(format!("{r}.{}", field.name))
 }
 
 /// v0.158 (ADR 0184): the key type `K` of a map `.entries`/`.keys` query, read
@@ -4356,8 +4755,9 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
             out
         }
         _ => {
-            let mut body_stmts: Vec<String> = Vec::new();
-            let body = lower_expr_into(&lambda.body, &mut body_stmts, cx);
+            let lowered = lower_expr(&lambda.body, cx);
+            let body_stmts = lowered.pre;
+            let body = lowered.expr;
             if body_stmts.is_empty() {
                 // An object-literal body (a record construction/spread) must be
                 // parenthesised, or `(x) => { … }` reads as a block, not an object.
@@ -4383,18 +4783,14 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     result
 }
 
-fn lower_record_spread(
-    base: &Expr,
-    overrides: &[FieldInit],
-    stmts: &mut Vec<String>,
-    cx: &mut LowerCtx,
-) -> String {
-    let base_expr = lower_expr_into(base, stmts, cx);
+fn lower_record_spread(base: &Expr, overrides: &[FieldInit], cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
+    let base_expr = pre.lower(base, cx);
     let mut parts = vec![format!("...{base_expr}")];
     for f in overrides {
         match &f.value {
             Some(v) => {
-                let val = lower_expr_into(v, stmts, cx);
+                let val = pre.lower(v, cx);
                 parts.push(format!("{}: {}", f.name.name, val));
             }
             None => {
@@ -4410,7 +4806,7 @@ fn lower_record_spread(
             }
         }
     }
-    format!("{{ {} }}", parts.join(", "))
+    pre.finish(format!("{{ {} }}", parts.join(", ")))
 }
 
 fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
@@ -4435,7 +4831,7 @@ fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
     iife
 }
 
-/// #1 review: the discriminant's hoisted statements (`stmts`) are the
+/// #1 review: the discriminant's hoisted statements (`pre`) are the
 /// caller's own — pushed straight into whatever scope is lowering this
 /// `match` expression, exactly like every other `ExprKind` arm in
 /// `lower_expr_into`. This used to lower the discriminant into a *local*,
@@ -4448,33 +4844,43 @@ fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
 /// diagnostic and no assertion, unlike its two ternary-path siblings (see
 /// `lower_if`/`lower_tail_expr`, which at least `debug_assert!`ed the
 /// analogous case before this same class of fix).
-fn lower_match_as_iife(
-    discriminant: &Expr,
-    arms: &[MatchArm],
-    stmts: &mut Vec<String>,
-    cx: &mut LowerCtx,
-) -> String {
+fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
     let disc_ty = cx.commons().expr_types.get(&discriminant.span).cloned();
-    let disc = lower_expr_into(discriminant, stmts, cx);
+    let disc = pre.lower(discriminant, cx);
     // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, so a
     // `return` in an arm exits the arrow, not the function — clear `return_ty`
     // so an embedding `?` behaves like a plain `?` here (no function-level wrap).
     let saved = cx.return_ty.take();
+    // T2.2 (R6.4): isolate the effectfulness flag to just this IIFE's own
+    // body — `disc` was already lowered above, so any await it needed landed
+    // in `pre`, not here. Restore as `saved_await || needs_async` so an
+    // `await (async …)()` this call produces (if it does) still marks the
+    // *caller's* scope — the propagation the old text scan got for free from
+    // the substring surviving in the returned string.
+    let saved_await = std::mem::take(&mut cx.emitted_await);
     // #4 review: `build_match_iife` accumulates into its own local buffer,
     // spliced into the caller's output later — see `without_source_map`.
-    let inner_iife =
-        maybe_async_iife(cx.without_source_map(|cx| build_match_iife(&disc, &disc_ty, arms, cx)));
+    let built = cx.without_source_map(|cx| build_match_iife(&disc, &disc_ty, arms, cx));
+    let needs_async = cx.emitted_await;
+    cx.emitted_await = saved_await || needs_async;
+    let inner_iife = finish_async_iife(built, needs_async);
     cx.return_ty = saved;
-    inner_iife
+    pre.finish(inner_iife)
 }
 
-/// v0.9.2: a match lowered to an IIFE in *expression* position may have arms
-/// that `await` (an effectful `let x <- …` or an effectful tail). A synchronous
-/// arrow can't host `await`, so when the lowered body contains one, make the
-/// outermost arrow `async` and `await` its call. Nested matches that already
-/// did this surface their own `await`, which propagates the transform outward.
-fn maybe_async_iife(iife: String) -> String {
-    if !iife.contains("await ") {
+/// v0.9.2: a match/if lowered to an IIFE in *expression* position may have arms
+/// that `await` (an effectful `let x <- …` or `do …`). A synchronous arrow can't
+/// host `await`, so when `needs_async` says the body just constructed emitted one
+/// (T2.2, R6.4: a flag set at the two statement sites that emit a literal
+/// `await`, read by the caller — see `LowerCtx::emitted_await` — not a scan of
+/// `iife` for the substring `"await "`), make the outermost arrow `async` and
+/// `await` its call. A nested match/if that already did this leaves its own
+/// `await (async …)()` in the body text *and* restores the flag on `cx` before
+/// returning, so the caller's own read-and-reset still sees it and the
+/// transform still propagates outward.
+fn finish_async_iife(iife: String, needs_async: bool) -> String {
+    if !needs_async {
         return iife;
     }
     let async_iife = if let Some(rest) = iife.strip_prefix("((__d) =>") {
@@ -4482,6 +4888,12 @@ fn maybe_async_iife(iife: String) -> String {
     } else if let Some(rest) = iife.strip_prefix("(() => {") {
         format!("(async () => {{{rest}")
     } else {
+        // Defensive: unreachable given the two current callers, which always
+        // build one of the two headers above. `needs_async` is authoritative
+        // that `iife` holds a literal `await`, so falling through here emits a
+        // bare `await` in a synchronous arrow — a hard `SyntaxError`, not a
+        // missed optimisation. Fail here instead of at `tsc`.
+        debug_assert!(false, "finish_async_iife: unrecognised IIFE header: {iife}");
         return iife;
     };
     format!("await {async_iife}")
@@ -4595,10 +5007,10 @@ fn emit_match_tail(
     // Anchor the discriminant lowering + `switch (…) {` header to the match's
     // scrutinee span (slice 1); each arm re-anchors to its own span below.
     cx.record_span(out.len(), discriminant.span);
-    let mut pre = Vec::new();
-    let mut disc = lower_expr_into(discriminant, &mut pre, cx);
+    let mut pre = Pre::new();
+    let mut disc = pre.lower(discriminant, cx);
     let disc_ty = cx.commons().expr_types.get(&discriminant.span).cloned();
-    for s in &pre {
+    for s in pre.stmts() {
         write_line(out, indent, s);
     }
     // v0.9.2: a statement-position `switch` narrows the scrutinee only when it
@@ -4779,9 +5191,9 @@ fn emit_match_body(
 ) {
     match body {
         MatchBody::Expr(e) => {
-            let mut stmts = Vec::new();
-            let v = lower_tail_expr(e, &mut stmts, cx, async_tail);
-            for s in &stmts {
+            let mut pre = Pre::new();
+            let v = pre.absorb(lower_tail_expr(e, cx, async_tail));
+            for s in pre.stmts() {
                 write_line(out, indent, s);
             }
             write_line(out, indent, &format!("return {v};"));
@@ -5139,9 +5551,9 @@ fn emit_match_if_chain(
             cx,
         );
         if let Some(guard) = &arm.guard {
-            let mut gstmts = Vec::new();
-            let gv = lower_expr_into(guard, &mut gstmts, cx);
-            for s in &gstmts {
+            let guard_lowered = lower_expr(guard, cx);
+            let gv = guard_lowered.expr;
+            for s in &guard_lowered.pre {
                 write_line(out, body_indent, s);
             }
             write_line(out, body_indent, &format!("if ({gv}) {{"));
@@ -5160,7 +5572,8 @@ fn emit_match_if_chain(
     }
 }
 
-fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
+fn lower_is(value: &Expr, pattern: &Pattern, cx: &mut LowerCtx) -> Lowered {
+    let mut pre = Pre::new();
     // v0.13: refinement check — `value is RefinedType` lowers to the refined
     // type's predicates as a boolean expression. The receiver is forced to a
     // temp so the narrowing binding (`const n = <temp> as Quantity`) can shadow
@@ -5178,11 +5591,11 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
             .get(&variant.name)
             .map(|d| d.body.clone())
     {
-        let recv = cx.is_receiver_ref_forced(value, stmts);
-        return refined_check_as_bool(&recv, base, refinement.as_ref());
+        let recv = pre.absorb(cx.is_receiver_ref_forced(value));
+        return pre.finish(refined_check_as_bool(&recv, base, refinement.as_ref()));
     }
-    let v = cx.is_receiver_ref(value, stmts);
-    match pattern {
+    let v = pre.absorb(cx.is_receiver_ref(value));
+    let text = match pattern {
         Pattern::Wildcard(_) => "true".to_string(),
         // A bare name binding after `is` matches anything over a sum (ADR 0169).
         Pattern::Binding(_) => "true".to_string(),
@@ -5246,7 +5659,8 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
             pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
             tests.join(" && ")
         }
-    }
+    };
+    pre.finish(text)
 }
 
 /// v0.13: render a refined type's predicates as a single boolean expression over
@@ -5379,5 +5793,137 @@ mod idempotency_scoping_tests {
         let mut args = vec!["orderId".to_string()];
         scope_idempotency_key(false, "dedup", &mut args, &cx);
         assert_eq!(args[0], "orderId");
+    }
+}
+
+/// T2.2 (#1018, R6.4): `maybe_async_iife`'s `if !iife.contains("await ")`
+/// replaced by `LowerCtx::emitted_await`, a flag set at the two statement
+/// sites that emit a literal `await` (`EffectLet`, `Do`) and read-and-reset
+/// around a value-position `match`/`if` IIFE's own body construction — see
+/// `finish_async_iife`. Same precedent as `conditional_runtime_import_tests`
+/// (`body.contains("__bynkBytes")` → `RuntimeUse`): the scan and the flag
+/// agree on every case except where the scan's substring match wasn't really
+/// about *this* scope's own effectfulness.
+#[cfg(test)]
+mod async_iife_effectfulness_tests {
+    use crate::testkit::emit_source;
+
+    /// The over-match this slice closes: a `Query`/broadcast iterator terminal
+    /// (`forEach`) lowers to a self-contained, always-`async () => {...}` IIFE
+    /// — a plain `Effect`-typed *value*, not something this arm itself awaits.
+    /// The old scan saw the literal `"await "` inside that embedded string and
+    /// wrongly wrapped the enclosing `match` arrow as `async` too, producing a
+    /// spurious `await await (async (__d) => …)()`. Neither arm needs the
+    /// switch's own arrow to be async, so it must stay a plain `(__d) => {…}`,
+    /// invoked with a single `await` from the enclosing `let r <- …`.
+    #[test]
+    fn match_arm_iterator_terminal_does_not_force_the_switch_arrow_async() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn noop(n: Int) -> Effect[()] {\n  Effect.pure(())\n}\n\n\
+             fn run(names: List[Int], flag: Bool) -> Effect[()] {\n  \
+             let r <- match flag {\n    \
+             true => names.forEach(noop)\n    \
+             false => Effect.pure(())\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("const r = await ((__d) => {"),
+            "the switch arrow must stay synchronous, awaited once by the `let <-`: {ts}"
+        );
+        assert!(!ts.contains("await await"), "{ts}");
+    }
+
+    /// The same over-match, reached through the `if`-IIFE path (an `is`-binding
+    /// forces the IIFE form rather than a ternary) instead of `match`.
+    #[test]
+    fn if_arm_iterator_terminal_does_not_force_the_iife_arrow_async() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn noop(n: Int) -> Effect[()] {\n  Effect.pure(())\n}\n\n\
+             fn run(o: Option[Int], names: List[Int]) -> Effect[()] {\n  \
+             let r <- if o is Some(n) {\n    \
+             names.forEach(noop)\n  \
+             } else {\n    \
+             Effect.pure(())\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("const r = await (() => {"),
+            "the if-IIFE arrow must stay synchronous, awaited once by the `let <-`: {ts}"
+        );
+        assert!(!ts.contains("await await"), "{ts}");
+    }
+
+    /// Non-regression: the defect `#2 review` fixed in `8068c0db` (a genuinely
+    /// effectful `is`-binding `if` in value position) must still emit a real
+    /// `async` IIFE — this is not an over-match, so it keeps needing the wrap
+    /// that closed the original hard `SyntaxError`.
+    #[test]
+    fn if_arm_genuine_effect_still_forces_the_iife_arrow_async() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn fetch(n: Int) -> Effect[Int] {\n  Effect.pure(n)\n}\n\n\
+             fn run(o: Option[Int], c: Bool) -> Effect[Int] {\n  \
+             let r <- if o is Some(n) && c {\n    \
+             let y <- fetch(n)\n    \
+             Effect.pure(y + 1)\n  \
+             } else {\n    \
+             Effect.pure(0)\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("async () => {") && ts.contains("await fetch(n)"),
+            "a real await inside the IIFE must still force the async wrap: {ts}"
+        );
+    }
+
+    /// Non-regression: a genuinely effectful *nested* `match` (embedded
+    /// directly as an outer arm's value, not via an intermediate `let <-`)
+    /// must still propagate its own async-wrap need to the enclosing switch
+    /// arrow — the flag's `saved || needs_async` restore is what replaces the
+    /// old scan's implicit propagation (the substring surviving in the
+    /// returned string).
+    #[test]
+    fn nested_match_effectfulness_propagates_to_the_outer_switch_arrow() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn fetch(n: Int) -> Effect[Int] {\n  Effect.pure(n)\n}\n\n\
+             fn run(a: Bool, b: Bool) -> Effect[Int] {\n  \
+             let r <- match a {\n    \
+             true => match b {\n      \
+             true => {\n        let x <- fetch(1)\n        Effect.pure(x + 1)\n      }\n      \
+             false => Effect.pure(2)\n    \
+             }\n    \
+             false => Effect.pure(3)\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("const r = await await (async (__d) => {"),
+            "the outer switch arrow must also become async: {ts}"
+        );
+    }
+
+    /// Non-regression, mirroring the `EffectLet` case above for the *other*
+    /// write site: an arm whose only effect is a `do` (no binder) must still
+    /// force its switch arrow async. The old scan was blind to which
+    /// statement produced the `await`, so `Do` came along for free; the flag
+    /// has to name it explicitly at its own site (`emit_statement`'s
+    /// `Statement::Do` arm) and nothing else pins that it does.
+    #[test]
+    fn match_arm_do_only_effect_still_forces_the_switch_arrow_async() {
+        let ts = emit_source(
+            "commons t\n\n\
+             fn noop(n: Int) -> Effect[()] {\n  Effect.pure(())\n}\n\n\
+             fn run(flag: Bool) -> Effect[()] {\n  \
+             let r <- match flag {\n    \
+             true => {\n      do noop(1)\n      Effect.pure(())\n    }\n    \
+             false => Effect.pure(())\n  \
+             }\n  r\n}\n",
+        );
+        assert!(
+            ts.contains("const r = await await (async (__d) => {"),
+            "a do-only effectful arm must also force the switch arrow async: {ts}"
+        );
     }
 }
