@@ -14,7 +14,9 @@
 // with the page's `default-src 'none'` CSP (no inline scripts, no external
 // fetches), the render cannot execute or exfiltrate.
 
-import MarkdownIt from "markdown-it";
+// markdown-it 15 ships its own declarations (no `@types/markdown-it`): the
+// default export is a callable factory, and `MarkdownIt` is the instance type.
+import markdownIt, { type MarkdownIt } from "markdown-it";
 
 /** A `markdown-it` configured for the doc webview: HTML disabled, no
  *  auto-linkification of bare URLs (an explicit `[text](url)`/`<url>` still
@@ -22,7 +24,7 @@ import MarkdownIt from "markdown-it";
  *  replacements off (a doc comment's literal punctuation should render
  *  verbatim). */
 export function createMarkdownRenderer(): MarkdownIt {
-  return new MarkdownIt({
+  return markdownIt({
     html: false,
     linkify: false,
     typographer: false,
