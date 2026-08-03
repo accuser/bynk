@@ -184,6 +184,7 @@ impl<'a> Parser<'a> {
         if self.peek_kind() == Some(TokenKind::RBrace) {
             let close = self.expect(TokenKind::RBrace, "to close the block")?;
             let tail = Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::UnitLit,
                 span: close.span,
             };
@@ -421,6 +422,7 @@ impl<'a> Parser<'a> {
             let block = self.parse_block("as the lambda body")?;
             let span = block.span;
             Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::Block(block),
                 span,
             }
@@ -429,6 +431,7 @@ impl<'a> Parser<'a> {
         };
         let span = open.span.merge(body.span);
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::Lambda(LambdaExpr {
                 params,
                 body: Box::new(body),

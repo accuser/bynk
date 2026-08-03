@@ -50,6 +50,7 @@ impl<'a> Parser<'a> {
             let value = self.parse_expect_body()?;
             let span = kw.span.merge(value.span);
             return Ok(Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::Expect(Box::new(value)),
                 span,
             });
@@ -132,6 +133,7 @@ impl<'a> Parser<'a> {
                 {
                     let once = self.bump().unwrap();
                     Some(Box::new(Expr {
+                        id: self.alloc_expr_id(),
                         kind: ExprKind::int_lit(1),
                         span: once.span,
                     }))
@@ -180,6 +182,7 @@ impl<'a> Parser<'a> {
         };
         let end = self.prev_span();
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::Observation(Box::new(ObservationExpr { cap, op, matcher })),
             span: start.merge(end),
         })
@@ -201,6 +204,7 @@ impl<'a> Parser<'a> {
             let rhs = rhs?;
             let span = lhs.span.merge(rhs.span);
             return Ok(Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::BinOp(BinOp::Implies, Box::new(lhs), Box::new(rhs)),
                 span,
             });
@@ -225,6 +229,7 @@ impl<'a> Parser<'a> {
             };
             let span = lhs.span.merge(rhs.span);
             lhs = Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::BinOp(BinOp::Or, Box::new(lhs), Box::new(rhs)),
                 span,
             };
@@ -250,6 +255,7 @@ impl<'a> Parser<'a> {
             };
             let span = lhs.span.merge(rhs.span);
             lhs = Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::BinOp(BinOp::And, Box::new(lhs), Box::new(rhs)),
                 span,
             };
@@ -297,6 +303,7 @@ impl<'a> Parser<'a> {
             }
             let span = lhs.span.merge(pattern.span());
             return Ok(Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::Is {
                     value: Box::new(lhs),
                     pattern: Box::new(pattern),
@@ -330,6 +337,7 @@ impl<'a> Parser<'a> {
             }
             let span = lhs.span.merge(rhs.span);
             Ok(Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::BinOp(op, Box::new(lhs), Box::new(rhs)),
                 span,
             })
@@ -367,6 +375,7 @@ impl<'a> Parser<'a> {
             }
             let span = lhs.span.merge(rhs.span);
             Ok(Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::BinOp(op, Box::new(lhs), Box::new(rhs)),
                 span,
             })
@@ -399,6 +408,7 @@ impl<'a> Parser<'a> {
             };
             let span = lhs.span.merge(rhs.span);
             lhs = Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::BinOp(op, Box::new(lhs), Box::new(rhs)),
                 span,
             };
@@ -426,6 +436,7 @@ impl<'a> Parser<'a> {
             };
             let span = lhs.span.merge(rhs.span);
             lhs = Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::BinOp(op, Box::new(lhs), Box::new(rhs)),
                 span,
             };
@@ -455,6 +466,7 @@ impl<'a> Parser<'a> {
         let inner = inner?;
         let span = t.span.merge(inner.span);
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::UnaryOp(op, Box::new(inner)),
             span,
         })
@@ -486,6 +498,7 @@ impl<'a> Parser<'a> {
                     let q = self.bump().unwrap();
                     let span = e.span.merge(q.span);
                     e = Expr {
+                        id: self.alloc_expr_id(),
                         kind: ExprKind::Question(Box::new(e)),
                         span,
                     };
@@ -559,6 +572,7 @@ impl<'a> Parser<'a> {
                             .expect(TokenKind::RParen, "to close the method-call argument list")?;
                         let span = e.span.merge(close.span);
                         e = Expr {
+                            id: self.alloc_expr_id(),
                             kind: ExprKind::MethodCall {
                                 receiver: Box::new(e),
                                 method: member,
@@ -587,6 +601,7 @@ impl<'a> Parser<'a> {
                             )
                         })?;
                         e = Expr {
+                            id: self.alloc_expr_id(),
                             kind: ExprKind::DurationLit {
                                 value,
                                 unit,
@@ -598,6 +613,7 @@ impl<'a> Parser<'a> {
                         // Field access: `receiver.field`.
                         let span = e.span.merge(member.span);
                         e = Expr {
+                            id: self.alloc_expr_id(),
                             kind: ExprKind::FieldAccess {
                                 receiver: Box::new(e),
                                 field: member,
@@ -635,6 +651,7 @@ impl<'a> Parser<'a> {
                 .span;
         }
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::Val { type_ref, args },
             span: kw_span.merge(end),
         })
@@ -649,6 +666,7 @@ impl<'a> Parser<'a> {
         let inner = self.parse_expr()?;
         let close = self.expect(TokenKind::RParen, "to close `Wire(…)`")?;
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::Wire(Box::new(inner)),
             span: kw_span.merge(close.span),
         })
@@ -679,6 +697,7 @@ impl<'a> Parser<'a> {
                         )
                     })?;
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::IntLit {
                         value: n,
                         lexeme: slice.to_string(),
@@ -702,6 +721,7 @@ impl<'a> Parser<'a> {
                         )
                     })?;
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::FloatLit {
                         value,
                         lexeme: slice.to_string(),
@@ -728,6 +748,7 @@ impl<'a> Parser<'a> {
                 self.bump();
                 let s = parse_string_literal(self.slice(t.span), t.span)?;
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::StrLit(s),
                     span: t.span,
                 })
@@ -740,6 +761,7 @@ impl<'a> Parser<'a> {
                 self.bump();
                 let parts = self.parse_interp_parts(t.span)?;
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::InterpStr(parts),
                     span: t.span,
                 })
@@ -747,6 +769,7 @@ impl<'a> Parser<'a> {
             TokenKind::True => {
                 self.bump();
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::BoolLit(true),
                     span: t.span,
                 })
@@ -754,6 +777,7 @@ impl<'a> Parser<'a> {
             TokenKind::False => {
                 self.bump();
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::BoolLit(false),
                     span: t.span,
                 })
@@ -770,6 +794,7 @@ impl<'a> Parser<'a> {
                 if self.peek_kind() == Some(TokenKind::RParen) {
                     let close = self.bump().unwrap();
                     return Ok(Expr {
+                        id: self.alloc_expr_id(),
                         kind: ExprKind::UnitLit,
                         span: t.span.merge(close.span),
                     });
@@ -778,6 +803,7 @@ impl<'a> Parser<'a> {
                 let close =
                     self.expect(TokenKind::RParen, "to close the parenthesised expression")?;
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::Paren(Box::new(inner)),
                     span: t.span.merge(close.span),
                 })
@@ -801,6 +827,7 @@ impl<'a> Parser<'a> {
                 self.bump();
                 let name = self.slice(t.span).to_string();
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::Ident(Ident { name, span: t.span }),
                     span: t.span,
                 })
@@ -826,6 +853,7 @@ impl<'a> Parser<'a> {
                 let close =
                     self.expect(TokenKind::RParen, "to close the `Effect.pure` argument")?;
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::EffectPure(Box::new(value)),
                     span: kw.span.merge(close.span),
                 })
@@ -880,6 +908,7 @@ impl<'a> Parser<'a> {
                     let op = self.expect_ident("as the operation name in `trace(Cap.op)`")?;
                     let close = self.expect(TokenKind::RParen, "to close `trace(Cap.op)`")?;
                     return Ok(Expr {
+                        id: self.alloc_expr_id(),
                         kind: ExprKind::Trace { cap, op },
                         span: ident.span.merge(close.span),
                     });
@@ -920,6 +949,7 @@ impl<'a> Parser<'a> {
                     let close_paren =
                         self.expect(TokenKind::RParen, "to close the argument list")?;
                     return Ok(Expr {
+                        id: self.alloc_expr_id(),
                         kind: ExprKind::Call {
                             name: ident.clone(),
                             type_args,
@@ -948,6 +978,7 @@ impl<'a> Parser<'a> {
                     }
                     let close = self.expect(TokenKind::RParen, "to close the argument list")?;
                     Ok(Expr {
+                        id: self.alloc_expr_id(),
                         kind: ExprKind::Call {
                             name: ident.clone(),
                             type_args: Vec::new(),
@@ -965,6 +996,7 @@ impl<'a> Parser<'a> {
                     self.parse_record_construction(ident)
                 } else {
                     Ok(Expr {
+                        id: self.alloc_expr_id(),
                         kind: ExprKind::Ident(ident.clone()),
                         span: ident.span,
                     })
@@ -980,6 +1012,7 @@ impl<'a> Parser<'a> {
             TokenKind::None => {
                 let tok = self.bump().unwrap();
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::None,
                     span: tok.span,
                 })
@@ -990,6 +1023,7 @@ impl<'a> Parser<'a> {
                 // name `self`; the resolver scopes it to method bodies.
                 let tok = self.bump().unwrap();
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::Ident(Ident {
                         name: "self".to_string(),
                         span: tok.span,
@@ -1033,6 +1067,7 @@ impl<'a> Parser<'a> {
                 }
                 let close = self.expect(TokenKind::RBracket, "to close the list literal")?;
                 Ok(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::ListLit(elems),
                     span: open.span.merge(close.span),
                 })
@@ -1096,6 +1131,7 @@ impl<'a> Parser<'a> {
             let close = self.expect(TokenKind::RBrace, "to close the record spread")?;
             let span = type_name.span.merge(close.span);
             return Ok(Expr {
+                id: self.alloc_expr_id(),
                 kind: ExprKind::RecordSpread {
                     type_name: Some(type_name),
                     base: Box::new(base),
@@ -1115,6 +1151,7 @@ impl<'a> Parser<'a> {
         let span = type_name.span.merge(close.span);
         let _ = open;
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::RecordConstruction { type_name, fields },
             span,
         })
@@ -1135,6 +1172,7 @@ impl<'a> Parser<'a> {
         let close = self.expect(TokenKind::RBrace, "to close the record spread")?;
         let span = open.span.merge(close.span);
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::RecordSpread {
                 type_name: None,
                 base: Box::new(base),
@@ -1172,6 +1210,7 @@ impl<'a> Parser<'a> {
         let value = self.parse_expr()?;
         let close = self.expect(TokenKind::RParen, "to close the `Some` argument")?;
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::Some(Box::new(value)),
             span: kw.span.merge(close.span),
         })
@@ -1199,6 +1238,7 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::Match {
                 discriminant: Box::new(discriminant),
                 arms,
@@ -1590,6 +1630,7 @@ impl<'a> Parser<'a> {
             Block {
                 statements: Vec::new(),
                 tail: Box::new(Expr {
+                    id: self.alloc_expr_id(),
                     kind: ExprKind::UnitLit,
                     span: synth_span,
                 }),
@@ -1600,6 +1641,7 @@ impl<'a> Parser<'a> {
         };
         let span = kw.span.merge(else_block.span);
         Ok(Expr {
+            id: self.alloc_expr_id(),
             kind: ExprKind::If {
                 cond: Box::new(cond),
                 then_block: Box::new(then_block),
@@ -1634,7 +1676,11 @@ impl<'a> Parser<'a> {
         } else {
             ExprKind::Err(Box::new(value))
         };
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            id: self.alloc_expr_id(),
+            kind,
+            span,
+        })
     }
 
     /// Split an `InterpStr` token (covering the whole `"…"`) into its

@@ -431,6 +431,10 @@ struct Parser<'a> {
     /// entry as the depth an `}` must return to before it counts as the
     /// enclosing body's own closing brace rather than a nested construct's.
     item_loop_baseline: Vec<usize>,
+    /// T3.4 (R2.4): next [`ExprId`] to hand out — monotonic, incremented by
+    /// [`Self::alloc_expr_id`], the sole allocation point every `Expr`
+    /// construction site in this parser calls.
+    next_expr_id: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -452,7 +456,18 @@ impl<'a> Parser<'a> {
             no_record_literal: false,
             brace_depth: 0,
             item_loop_baseline: Vec::new(),
+            next_expr_id: 0,
         }
+    }
+
+    /// T3.4 (R2.4): allocate the next [`ExprId`]. The sole allocation point —
+    /// every `Expr { id: self.alloc_expr_id(), .. }` construction in this
+    /// parser calls it exactly once, so two nodes never share an id and every
+    /// id a caller holds was actually handed out here.
+    fn alloc_expr_id(&mut self) -> ExprId {
+        let id = ExprId(self.next_expr_id);
+        self.next_expr_id += 1;
+        id
     }
 
     /// Enter a self-recursive parse step, bumping the live recursion depth and

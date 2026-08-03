@@ -481,7 +481,7 @@ pub(crate) fn write(project_root: &Path, reg: &SchemaRegistry) -> Result<(), Str
 mod tests {
     use super::*;
     use bynk_syntax::ast::{
-        Annotation, AnnotationArg, BaseType, Expr, ExprKind, Ident, RecordBody, Trivia,
+        Annotation, AnnotationArg, BaseType, Expr, ExprId, ExprKind, Ident, RecordBody, Trivia,
     };
     use bynk_syntax::span::Span;
     use std::collections::HashMap as StdHashMap;
@@ -495,6 +495,7 @@ mod tests {
 
     fn int_lit(value: i64) -> Expr {
         Expr {
+            id: ExprId::SYNTHETIC,
             kind: ExprKind::IntLit {
                 value,
                 lexeme: value.to_string(),

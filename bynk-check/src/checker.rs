@@ -3729,7 +3729,11 @@ mod pure_helper_pins {
         Ty::Base(BaseType::String)
     }
     fn expr(kind: ExprKind) -> Expr {
-        Expr { kind, span: sp() }
+        Expr {
+            id: ExprId::SYNTHETIC,
+            kind,
+            span: sp(),
+        }
     }
     fn pred(kind: PredKind) -> RefinementPred {
         RefinementPred { kind, span: sp() }

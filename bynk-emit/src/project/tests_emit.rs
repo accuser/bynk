@@ -2128,6 +2128,7 @@ fn check_restated_contract(
         for (result_name, (f, args)) in &bound {
             // subst: result → r, each param → its call argument.
             let result_ident = Expr {
+                id: ExprId::SYNTHETIC,
                 kind: ExprKind::Ident(Ident {
                     name: result_name.clone(),
                     span: e.span,
@@ -5485,6 +5486,7 @@ fn emit_contract_attack_function(
         Some(match acc {
             None => c.predicate.clone(),
             Some(rest) => Expr {
+                id: ExprId::SYNTHETIC,
                 kind: ExprKind::BinOp(BinOp::And, Box::new(c.predicate.clone()), Box::new(rest)),
                 span: f.span,
             },
