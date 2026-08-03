@@ -263,7 +263,9 @@ neither `lower.rs` nor itself in any conflicting way, and runs without a freeze.
 
 So: **no feature work lands in `bynk-emit/src/emitter/lower.rs` while T2.1 is open.** That is a
 narrower and much cheaper commitment than ADR 0059's, and it is the only conflict the tier structure
-actually creates.
+actually creates. **Lifted** — T2.1 ([#1017](https://github.com/accuser/bynk/issues/1017)) has
+merged, so `lower.rs` is open to feature work again. T2.2 and T2.3 do not re-arm it: their remaining
+scope is re-assessed against T2.1's diff (see the slice table), not against a frozen file.
 
 ### 3.6 Sequencing relative to 1.0 — **Settled, and reframed under review.**
 
@@ -478,7 +480,7 @@ to the IR, and nothing about the IR is reachable without it.
 
 | Slice | What lands | Rules |
 |---|---|---|
-| **T2.1** | `lower_expr` returns `Lowered { pre: Vec<String>, expr: String }` instead of taking a sink; threaded across ~90 functions. The two ternary throwaway vectors, the `simple_expr` gate and its `debug_assert!`s are deleted | R6.2 |
+| **T2.1** ✅ **landed** ([#1017](https://github.com/accuser/bynk/issues/1017)) | `lower_expr` returns `Lowered { pre: Vec<String>, expr: String }` instead of taking a sink; threaded across every call site. The two ternary throwaway vectors, the `simple_expr` gate and its `debug_assert!`s are deleted. Also closed: a fifth, live instance of the classifier's defect class (its blanket `_ => true` caught `ListLit`/`InterpStr`/`RecordSpread`/`EffectPure`/`Val`/`Wire`), and the `if`-expression half of R6.6's wrapper gap | R6.2 |
 | **T2.2** | `maybe_async_iife`'s `contains("await ")` scan replaced by a flag computed during lowering; the `if`-IIFE path uses it too | R6.4 |
 | **T2.3** | `lower_and_with_is` can no longer splice statements into a string; `lower_bin_op`'s general path no longer shares one vector across operands | R6.3 |
 
@@ -486,7 +488,8 @@ to the IR, and nothing about the IR is reachable without it.
 `let x = match risky()? { … }` miscompile, and the short-circuit violation the type-system spec says
 "developers can rely on".
 
-**Completion probe:** `rg 'stmts: &mut Vec<String>' bynk-emit/` returns zero.
+**Completion probe:** `rg 'stmts: &mut Vec<String>' bynk-emit/` returns zero. ✅ **Reads 0** as of
+T2.1; the gated `hoist_sinks` probe in `design/greenfield-status.md` holds it there.
 
 **Regression fixtures required:** one per closed defect, named in the slice proposals.
 

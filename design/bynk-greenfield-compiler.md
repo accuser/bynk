@@ -2544,7 +2544,7 @@ revision is the proof.
 | R5.6 | trailing `throw` unconditional on the switch path | small |
 | R5.9 | narrowing computed in checker and emitter separately | medium |
 | R5.11 | `positional_field_name` hard-codes `Ok`/`Err`/`Some` | small |
-| R6.2 | `stmts: &mut Vec<String>` = **32** | **medium — "mechanical across roughly ninety functions"**; closes four defects |
+| R6.2 | `stmts: &mut Vec<String>` = **0** ✅ **landed** (T2.1, #1017) | — |
 | R6.4 | `contains("await` = **1** in `lower.rs` | small — a flag on the IIFE |
 | R6.5 | `block_writes_state` now descends via `expr_children` ✅; the name-matched receiver remains | small as a patch; free under R6.2 |
 | R6.10 | two hand-synced dispatch ladders, no enum | large |
