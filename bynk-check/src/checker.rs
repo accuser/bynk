@@ -2655,10 +2655,12 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
     // depends on — Locale capability track, slice 1, #844). A genuine `{ … }`
     // block's span always strictly contains its tail's, so this only ever
     // skips the redundant case.
-    if let Some(ty) = &ty
-        && block.span != block.tail.span
-    {
-        ctx.expr_types.insert(block.span, ty.clone());
+    // T3.3b (R4.3): total for the same reason as `type_of`'s own write site —
+    // a block whose tail failed to type still gets an `expr_types` entry at
+    // its own span, `Ty::Error` rather than nothing.
+    if block.span != block.tail.span {
+        ctx.expr_types
+            .insert(block.span, ty.clone().unwrap_or(Ty::Error));
     }
     ctx.pop_scope();
     ty
@@ -3108,9 +3110,17 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
             None
         }
     };
-    if let Some(ty) = &ty {
-        ctx.expr_types.insert(expr.span, ty.clone());
-    }
+    // T3.3b (R4.3, R2.5, R4.9): `expr_types` is total for every expression
+    // `type_of` is called on — a `None` result (whether from a diagnosed
+    // failure or a deliberate, undiagnosed non-type such as an untyped
+    // test-body binding) records `Ty::Error` rather than leaving the span
+    // unrecorded. This changes only what gets *written*; every caller of
+    // `type_of` still sees its actual `Option<Ty>` return value and every
+    // existing `?`/`.or(...)` control-flow site is unaffected — `Ty::Error`
+    // only becomes observable to an external reader of `expr_types` (the
+    // emitter, the LSP), never to internal checker logic.
+    ctx.expr_types
+        .insert(expr.span, ty.clone().unwrap_or(Ty::Error));
     ty
 }
 
