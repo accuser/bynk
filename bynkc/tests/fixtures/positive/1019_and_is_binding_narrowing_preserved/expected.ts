@@ -16,15 +16,21 @@ export function risky(): Result<number, string> {
   return Ok(1);
 }
 
-export function check(o: Outcome, threshold: number): Result<boolean, string> {
+export function check(o: Outcome): Result<number, string> {
   let __r1: boolean;
   if (o.tag === "Hit") {
+    const score = o.score;
     const __r0 = risky();
     if (__r0.tag === "Err") return __r0;
-    __r1 = __r0.value > threshold;
+    __r1 = __r0.value > 0;
   } else {
     __r1 = false;
   }
-  return Ok(o.tag === "Hit" && __r1);
+  if (o.tag === "Hit" && __r1) {
+    const score = o.score;
+    return Ok(score);
+  } else {
+    return Ok(0);
+  }
 }
 

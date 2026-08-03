@@ -4255,10 +4255,27 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         // it instead of letting it exit the enclosing function — reuse
         // `hoist_if_as_statement` (built for T2.1's `if`-hoisting) to hoist
         // this `&&` as a real `if` statement instead.
+        //
+        // #1044 review: `hoist_if_as_statement`'s bare `slot` return is right
+        // for the general path (no narrowing at stake there — see below), but
+        // wrong here. `lhs_expr` is the very `is`-check `lower_if`'s own
+        // `gather_is_bindings_for_emit` relies on being *textually present* in
+        // the condition it hands to `tsc` — that's what lets `o` narrow to
+        // `Hit` for a hoisted `const score = o.score;` in the caller's
+        // then-block. Dropping `lhs_expr` for a disconnected `let __rN:
+        // boolean` (assigned across an `if`/`else`, not a `tsc`-4.4+ aliased
+        // `const`) severs that link and turns a silent `?`-escape miscompile
+        // into a hard `tsc --strict` failure on the same input. Re-including
+        // `lhs_expr` in the returned text — safe to re-evaluate, since it is
+        // always a pure tag/field read on an already-hoisted receiver, never
+        // the original (possibly effectful) `is` subject — keeps the
+        // conjunction's left side exactly where a caller's narrowing expects
+        // to find it; `slot` only stands in for rhs's value, gated by the
+        // same `if` that already guards evaluating it.
         if rhs_returns {
-            let value = hoist_if_as_statement(
+            let slot = hoist_if_as_statement(
                 &mut pre,
-                lhs_expr,
+                lhs_expr.clone(),
                 Lowered {
                     pre: bindings,
                     expr: rhs_expr,
@@ -4267,7 +4284,7 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
                 Some("boolean".to_string()),
                 cx,
             );
-            return pre.finish(value);
+            return pre.finish(format!("{lhs_expr} && {slot}"));
         }
         // Emit:  lhs && (() => { const n = ...; return rhs; })()
         let mut wrap = String::new();
@@ -4291,19 +4308,25 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         if bindings.is_empty() {
             return pre.finish(format!("(!({lhs_expr}) || {rhs_expr})"));
         }
+        // #1044 review: same fix as the `And` arm above — `lhs_expr` (the
+        // antecedent's `is`-check) must stay in the returned text for a
+        // caller's narrowing to hold, so gate `slot`'s computation on
+        // `lhs_expr` directly (rhs is only reached when the antecedent
+        // holds, same guard as `&&`) rather than folding the negation into
+        // the hoisted `if`'s own condition.
         if rhs_returns {
-            let value = hoist_if_as_statement(
+            let slot = hoist_if_as_statement(
                 &mut pre,
-                format!("!({lhs_expr})"),
-                Lowered::bare("true"),
+                lhs_expr.clone(),
                 Lowered {
                     pre: bindings,
                     expr: rhs_expr,
                 },
+                Lowered::bare("true"),
                 Some("boolean".to_string()),
                 cx,
             );
-            return pre.finish(value);
+            return pre.finish(format!("(!({lhs_expr}) || {slot})"));
         }
         let mut wrap = String::new();
         wrap.push_str(&format!("(!({lhs_expr}) || ((() => {{ "));
