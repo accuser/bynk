@@ -3745,20 +3745,22 @@ impl<'a> LowerCtx<'a> {
     /// inline exactly as before (preserving rewrites such as `self.state` or
     /// capability access). A complex receiver (anything `value_text_for_is`
     /// could not render — e.g. a call) is evaluated once into a fresh temp
-    /// emitted into `stmts` and cached by span, so the bindings gathered later
-    /// reference the same evaluation rather than re-running the expression.
-    fn is_receiver_ref(&mut self, value: &Expr, stmts: &mut Vec<String>) -> String {
+    /// hoisted into the returned `Lowered` and cached by span, so the bindings
+    /// gathered later reference the same evaluation rather than re-running the
+    /// expression.
+    fn is_receiver_ref(&mut self, value: &Expr) -> Lowered {
         if let Some(t) = self.is_receiver_temps.get(&value.span) {
-            return t.clone();
+            return Lowered::bare(t.clone());
         }
-        let lowered = lower_expr_into(value, stmts, self);
+        let mut pre = Pre::new();
+        let lowered = pre.lower(value, self);
         if is_simple_is_receiver(value) {
-            return lowered;
+            return pre.finish(lowered);
         }
         let tmp = self.fresh();
-        stmts.push(format!("const {tmp} = {lowered};"));
+        pre.push(format!("const {tmp} = {lowered};"));
         self.is_receiver_temps.insert(value.span, tmp.clone());
-        tmp
+        pre.finish(tmp)
     }
 
     /// v0.13: like `is_receiver_ref` but always lifts to a temp, even for a
@@ -3766,15 +3768,16 @@ impl<'a> LowerCtx<'a> {
     /// branded refined type (`const n = <temp> as Quantity`); that shadowing
     /// const cannot reference the same name (TDZ), so the value is captured in a
     /// temp first and both the check and the binding read the temp.
-    fn is_receiver_ref_forced(&mut self, value: &Expr, stmts: &mut Vec<String>) -> String {
+    fn is_receiver_ref_forced(&mut self, value: &Expr) -> Lowered {
         if let Some(t) = self.is_receiver_temps.get(&value.span) {
-            return t.clone();
+            return Lowered::bare(t.clone());
         }
-        let lowered = lower_expr_into(value, stmts, self);
+        let mut pre = Pre::new();
+        let lowered = pre.lower(value, self);
         let tmp = self.fresh();
-        stmts.push(format!("const {tmp} = {lowered};"));
+        pre.push(format!("const {tmp} = {lowered};"));
         self.is_receiver_temps.insert(value.span, tmp.clone());
-        tmp
+        pre.finish(tmp)
     }
 
     /// v0.13: true when `value is Name` is a *refinement* check — the value is a
@@ -3795,8 +3798,8 @@ impl<'a> LowerCtx<'a> {
         );
         value_baseish && name_refined
     }
-    /// Read-only counterpart for the binding gatherer (which has no `stmts`
-    /// and cannot lift). If the receiver was already lifted to a temp during
+    /// Read-only counterpart for the binding gatherer (which returns no
+    /// `Lowered`, so it has nowhere to hoist and cannot lift). If the receiver was already lifted to a temp during
     /// condition lowering, reuse that temp; otherwise it must be a simple
     /// repeatable lvalue, rendered inline. The "lower the condition before
     /// gathering its bindings" ordering in `emit_if_tail` / `lower_and_with_is`

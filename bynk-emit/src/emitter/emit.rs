@@ -596,9 +596,9 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
     };
     // Precondition guards — parameters are the TS function params, in scope.
     for c in &f.requires {
-        let mut stmts = Vec::new();
-        let pred = lower_expr_into(&c.predicate, &mut stmts, cx);
-        for s in &stmts {
+        let mut pre = Pre::new();
+        let pred = pre.lower(&c.predicate, cx);
+        for s in pre.stmts() {
             writeln!(out, "  {s}").unwrap();
         }
         writeln!(
@@ -626,9 +626,9 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
     writeln!(out, "  }})();").unwrap();
     // Postcondition guards — `result` (and the parameters) are in scope.
     for c in &f.ensures {
-        let mut stmts = Vec::new();
-        let pred = lower_expr_into(&c.predicate, &mut stmts, cx);
-        for s in &stmts {
+        let mut pre = Pre::new();
+        let pred = pre.lower(&c.predicate, cx);
+        for s in pre.stmts() {
             writeln!(out, "  {s}").unwrap();
         }
         writeln!(
@@ -2133,10 +2133,11 @@ pub(crate) fn lower_workers_cross_context_call(
     consumed: &str,
     method: &Ident,
     args: &[Expr],
-    stmts: &mut Vec<String>,
     cx: &mut LowerCtx<'_>,
-) -> String {
+) -> Lowered {
     use crate::emitter::serialisation::{deserialise_ref_via, serialise_expr_via};
+
+    let mut pre = Pre::new();
 
     let info = cx.cross_context();
     let binding = crate::emitter::wrangler::consumed_binding_name(consumed);
@@ -2198,7 +2199,7 @@ pub(crate) fn lower_workers_cross_context_call(
 
     let mut args_serialised: Vec<String> = Vec::new();
     for (i, a) in args.iter().enumerate() {
-        let lowered = lower_expr_into(a, stmts, cx);
+        let lowered = pre.lower(a, cx);
         let (_, param_ty) = &svc.params[i];
         args_serialised.push(serialise_expr_via(
             param_ty,
@@ -2245,10 +2246,10 @@ pub(crate) fn lower_workers_cross_context_call(
         ),
     };
 
-    format!(
+    pre.finish(format!(
         "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\", \"{contract}\")",
         method.name
-    )
+    ))
 }
 
 /// If `receiver` is a dotted chain or single ident that matches one of the
@@ -2747,7 +2748,7 @@ pub(crate) fn emit_agent(
         let mut parts: Vec<String> = Vec::new();
         for f in &effective_fields {
             let val = if let Some(init) = &f.init {
-                let mut stmts = Vec::new();
+                let mut pre = Pre::new();
                 let mut module = ModuleCtx::new(commons, &ctx.cross_context, &ctx.runtime_use);
                 module.target = ctx.target;
                 module.agent_method_givens = ctx.agent_method_givens.clone();
@@ -2755,14 +2756,14 @@ pub(crate) fn emit_agent(
                 module.set_rebrand_info(commons, ctx);
                 let mut icx = LowerCtx::new(module, BodyMode::StaticInit);
                 icx.local_agents = ctx.local_agents.clone();
-                let expr = lower_expr_into(init, &mut stmts, &mut icx);
+                let expr = pre.lower(init, &mut icx);
                 // A static initialiser lowers to a pure expression (no setup
                 // statements); if any appear, fall back to inlining them as a
                 // comma sequence so the record stays valid.
-                if stmts.is_empty() {
+                if pre.is_empty() {
                     expr
                 } else {
-                    format!("({}, {expr})", stmts.join(", "))
+                    format!("({}, {expr})", pre.stmts().join(", "))
                 }
             } else {
                 bynk_check::checker::zero_value_ts(
@@ -3009,9 +3010,9 @@ pub(crate) fn emit_agent(
                     fields: field_names.clone(),
                 },
             );
-            let mut pre = Vec::new();
-            let pred = lower_expr_into(&inv.predicate, &mut pre, &mut cx);
-            for s in &pre {
+            let mut pre = Pre::new();
+            let pred = pre.lower(&inv.predicate, &mut cx);
+            for s in pre.stmts() {
                 writeln!(out, "    {s}").unwrap();
             }
             writeln!(out, "    if (!({pred})) {{").unwrap();
@@ -3056,9 +3057,9 @@ pub(crate) fn emit_agent(
                     new: "__new".to_string(),
                 },
             );
-            let mut pre = Vec::new();
-            let pred = lower_expr_into(&tr.predicate, &mut pre, &mut cx);
-            for s in &pre {
+            let mut pre = Pre::new();
+            let pred = pre.lower(&tr.predicate, &mut cx);
+            for s in pre.stmts() {
                 writeln!(out, "      {s}").unwrap();
             }
             writeln!(out, "      if (!({pred})) {{").unwrap();
