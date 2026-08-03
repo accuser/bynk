@@ -52,11 +52,16 @@ updates:
     schedule:
       interval: weekly
     groups:
-      # `astro` pins `@astrojs/markdown-remark` to an *exact* version as a
-      # peer (astro 7.1.4 wants 7.2.1, 7.1.5 wants 7.2.2), and Starlight pulls
-      # both in transitively. Bumped one at a time they deadlock: each PR's
-      # `npm ci` dies on ERESOLVE against the version the other PR would bring.
+      # Astro and Starlight move in lockstep — Starlight's peer range tracks
+      # the astro minor, so a split bump means one PR waiting on the other.
       # Group them so a release lands as one resolvable PR.
+      #
+      # This is defence in depth, not the whole fix: grouping only merges what
+      # dependabot updates in the *same* run, so a staggered release can still
+      # split. The exact-peer trap that deadlocked #1036/#1038 is closed at the
+      # source instead — `@astrojs/markdown-remark` is no longer a direct
+      # dependency of /site, so it resolves transitively to whatever version
+      # `astro` pins and never gets a standalone PR to conflict with.
       astro:
         patterns:
           - "astro"
