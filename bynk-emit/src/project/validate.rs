@@ -1740,9 +1740,9 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         if resolve_ty(&p.type_ref) == resolve_ty(in_type) {
                             continue; // the decoded frame, not a route value
                         }
-                        if !op
+                        if op
                             .get(idx)
-                            .is_some_and(|o| resolve_ty(&p.type_ref) == resolve_ty(&o.type_ref))
+                            .is_none_or(|o| resolve_ty(&p.type_ref) != resolve_ty(&o.type_ref))
                         {
                             route_mismatch(p, errors);
                         }
@@ -1751,9 +1751,9 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                 }
                 if let [close] = closes.as_slice() {
                     for (i, p) in close.params.iter().enumerate() {
-                        if !op
+                        if op
                             .get(i)
-                            .is_some_and(|o| resolve_ty(&p.type_ref) == resolve_ty(&o.type_ref))
+                            .is_none_or(|o| resolve_ty(&p.type_ref) != resolve_ty(&o.type_ref))
                         {
                             route_mismatch(p, errors);
                         }
