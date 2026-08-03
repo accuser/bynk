@@ -395,7 +395,7 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it, and §9's settling-review addendum for the real decomposition (once someone picks it up: `bynk-check` first as one atomic PR — `Ty`'s field definition can't change gradually — then `bynk-emit`, then `bynk-ide`/`bynk-lsp`) and the one small, real prerequisite (`Ty`'s `Hash`/`Eq`/`Ord` test coverage) already closed alongside this review, not left as a finding with no test to show for it | R4.1, R4.2 (`Copy` half) | independent — no scaffolding-first increment exists (investigated twice, see §9); the crate boundary is the smallest real slice |
+| **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it, and §9's settling-review addenda for the real decomposition (`bynk-check` first as one atomic PR — `Ty`'s field definition can't change gradually — then `bynk-emit`, then `bynk-ide`/`bynk-lsp`; `compatible`/`unify`/`substitute` alone are 149 call sites, confirmed contained to `bynk-check`), the resolved `Types`-table-ownership question (owned per `check_record` invocation, carried on `TypedCommons`/`CheckedProgram` — confirmed safe by checking how `compose_unit_symbols` actually merges cross-unit declarations, not assumed), and the one small, real prerequisite (`Ty`'s `Hash`/`Eq`/`Ord` test coverage) already closed alongside this review, not left as findings with no code to show for them | R4.1, R4.2 (`Copy` half) | independent — no scaffolding-first increment exists and the ownership design is now settled (investigated and resolved across four passes, see §9); ready to execute as the large, multi-crate rewrite tiers 1–3 describe |
 
 T3.6b above is not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a, T3.7a, T3.7b, above, are). Deliberately not decomposed to
 signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
@@ -776,9 +776,32 @@ doesn't pattern-match `Ty`, just holds and forwards it. Answering this — a sin
 other shape — is real design work with real tradeoffs (a global table risks cross-file/cross-compile
 identity confusion, echoing exactly the R2.2/R2.4 lesson this track already learned about `Span`/
 `ExprId`; a per-`TypedCommons` table means `TyId`s aren't comparable *across* units, which `unify`/
-`compatible` calls spanning a `uses` boundary may need). Not decided here — this is the next real
-question tier 1 needs answered before it can be sliced with confidence, not a signature-threading
-exercise like the tier 1/2/3 breakdown above might suggest on its own.
+`compatible` calls spanning a `uses` boundary may need).
+
+**Resolved by checking, not assuming, how cross-unit type references actually flow today.**
+`bynk-emit/src/project.rs`'s `compose_unit_symbols` — the function that builds each unit's own
+`combined_types`/`combined_fns`/`combined_methods` before that unit is checked — merges `TypeDecl`
+(the immutable AST-level declaration) from transitively-`uses`d units into the checking unit's own
+resolved input; it never shares an already-*checked* `Ty` value across units. Each unit's own
+`check_record` call independently constructs its own `Ty` graph from that merged declaration set,
+including for cross-unit types — `named_ty(decl)` builds a fresh `Ty::Named` from the shared
+`Arc<TypeDecl>` every time a unit needs to represent that declaration as a type, regardless of which
+unit originally declared it. `unify`/`compatible`/`substitute` therefore only ever compare `Ty` values
+produced within the *same* `check_record` invocation — cross-unit `TyId` comparison across two
+separate `check_record` calls never happens in the current architecture, so the "not comparable across
+units" risk of a per-unit table isn't a real risk at all.
+
+**Decision: `Types` is owned per `check_record` invocation** — created fresh at its entry, threaded
+through via `Ctx` (already pervasive through every function that would need it), and carried out as a
+new field alongside `expr_types` on `TypedCommons`/`RecordCheck`, exactly the shape `ExprId`'s own
+counter took in T3.4. `CheckedProgram` (T3.7a/T3.7b) already exists as the boundary object handed from
+`bynk-check` to `bynk-emit` for precisely this reason — extending it to carry `types: Types` alongside
+its wrapped `TypedCommons` is the natural, already-built seam for getting the interner across the
+crate boundary, not a new mechanism. `bynk-ide`/`bynk-lsp`'s `Mode::Analyse` path (which never calls
+`certify`) would need the equivalent carried on `RecordCheck`/`ExprTypeSink` directly. This is now a
+settled design decision, not an open question — tier 1 (and 2, and 3) can be scoped and executed with
+confidence against it; implementing it is still the large, multi-function, multi-crate undertaking
+tiers 1–3 already describe, which is why it remains future work rather than attempted in this pass.
 
 The one real, small, immediately-shippable piece this review *did* find — closed in this same commit,
 not deferred as a bare finding — is test coverage for the specific failure mode unique to interning
