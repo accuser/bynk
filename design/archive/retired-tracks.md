@@ -71,20 +71,20 @@ imposed; entries keep the order they were retired in.
   T2.2's `emitted_await` mechanism, because the same defect class — a control-flow property inferred
   by local, textual reasoning instead of tracked structurally through lowering — surfaced at a third
   site after the ADR naming the pattern was already on file. This closes into a new phase-3 track
-  (#TBD-phase3) rather than the state-migrations track §3.6
+  ([#1046](https://github.com/accuser/bynk/issues/1046)) rather than the state-migrations track §3.6
   anticipated running next; the two are independent and neither blocks the other.
 
   **Deferred follow-ons, named not silently assumed away:** three Tier A slices shipped narrower than
   their row named, and nothing tracked the remainder until now — **T0.7's remaining six filesystem
   reads below the driver** (`bynk-emit`=4, `bynk-ide`=2; only `bynk-fmt` was cleared, in
   [#1012](https://github.com/accuser/bynk/pull/1012)), filed as
-  #TBD-t07; **T-D1/R10.4's remaining whole-module
+  [#1047](https://github.com/accuser/bynk/issues/1047); **T-D1/R10.4's remaining whole-module
   re-exports** — `bynk-syntax` (7 modules), `bynk-driver` (2), and `bynk_fmt as fmt` (the whole crate)
   are still re-exported whole from `bynkc/src/lib.rs`, the same defect T-D1 closed for
-  `bynk-check`/`bynk-emit` — filed as #TBD-r10.4; **T1.8's
+  `bynk-check`/`bynk-emit` — filed as [#1048](https://github.com/accuser/bynk/issues/1048); **T1.8's
   `Positive`/`NonNegative` predicate fold**, blocked on a real ambiguity (`Positive`/`NonNegative` on
   `Float` has no clean exclusive-vs-inclusive-bound answer, #1021's Decision A) — filed as
-  #TBD-t1.8. A fourth item, T0.3's per-crate `deny`
+  [#1049](https://github.com/accuser/bynk/issues/1049). A fourth item, T0.3's per-crate `deny`
   rollout (`[workspace.lints]` currently `warn`, zero crates opted in via `[lints] workspace = true`),
   was **deliberately** left incremental by its own row ("`deny` per crate as each is cleared") and is
   not residue in the same sense — no issue filed; each crate's `deny` graduation rides its own future
