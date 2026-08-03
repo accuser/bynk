@@ -1123,7 +1123,7 @@ fn walk_expr_for_constraints(
         // If the discriminant is typed as an opaquely-exported consumed
         // type, the match is forbidden because we can't reveal the variants.
         ExprKind::Match { discriminant, .. } => {
-            if let Some(ty) = typed.expr_types.get(&discriminant.span) {
+            if let Some(ty) = typed.expr_types.get(&discriminant.id).map(|te| &te.ty) {
                 let display = ty.display();
                 if let Some(ct) = consumed.get(&display)
                     && ct.visibility == Visibility::Opaque
@@ -1349,7 +1349,7 @@ fn check_event_field_defaults(
     table: &UnitTable,
     resolved: &ResolvedCommons,
     subscriber_visible_types: &HashMap<String, Arc<TypeDecl>>,
-    expr_types: &mut HashMap<Span, Ty>,
+    expr_types: &mut HashMap<ExprId, TypedExpr>,
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,

@@ -223,6 +223,7 @@ pub(crate) fn parse_sources(
     prefix: &Path,
     path: &Path,
     source: String,
+    next_expr_id: &mut u32,
 ) -> Result<(Vec<ParsedFile>, Vec<CompileError>), Vec<CompileError>> {
     let tokens = lexer::tokenize(&source).map_err(|e| vec![e])?;
     // v0.113: a file may declare more than one top-level unit — an *atomic*
@@ -233,7 +234,14 @@ pub(crate) fn parse_sources(
     // ADR 0117: a warning-severity parse diagnostic (an orphan doc block)
     // must not hard-fail discovery — the parsed units flow to the build and
     // the warnings ride out to the caller's severity-aware sink.
-    let (units, warnings) = parser::parse_units_with_warnings(&tokens, &source)?;
+    // T3.4 (R2.4): `next_expr_id` continues one `ExprId` counter across every
+    // file `phase_parse` parses in this project, not just this one file — a
+    // multi-file commons later merges sibling files' methods into one
+    // `check_record` call (`collect_unit_methods`), and two independently
+    // zero-based files would otherwise collide on the same id in the same
+    // `expr_types` map. Caught live by finding #28's debug assertion on
+    // `bynkc/tests/fixtures/positive/64_full_time_commons` before this fix.
+    let (units, warnings) = parser::parse_units_with_warnings_from(&tokens, &source, next_expr_id)?;
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
     // v0.72: store an *absolute* path — `path` is relative when the compiler
     // was invoked with a relative input (`bynkc test .`), and a relative map

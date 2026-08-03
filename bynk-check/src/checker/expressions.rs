@@ -2591,7 +2591,13 @@ pub(crate) fn check_field_access(
         let q = Ty::Query(Box::new(elem));
         // Record the receiver's lifted query type (the dispatch keys off the
         // store field, not a typed receiver) so hover/linearity see it.
-        ctx.expr_types.insert(receiver.span, q.clone());
+        ctx.expr_types.insert(
+            receiver.id,
+            TypedExpr {
+                span: receiver.span,
+                ty: q.clone(),
+            },
+        );
         return Some(q);
     }
     // Qualified nullary variant: `TypeName.Variant` where TypeName is a
@@ -3051,8 +3057,10 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
             // span-keyed passes can read it. The linearity pass (v0.193) relies
             // on this to learn whether an arm binding names a held resource
             // (`Some(conn)` over `Option[Connection]`) — patterns are not
-            // expressions, so this is their only entry into `expr_types`.
-            ctx.expr_types.insert(id.span, ty.clone());
+            // expressions, so `Ident` has no `ExprId` and this is deliberately
+            // `pattern_binding_types`, not `expr_types` (T3.4; see the field's
+            // own doc comment on `Ctx`).
+            ctx.pattern_binding_types.insert(id.span, ty.clone());
             ctx.bind(id.name.clone(), ty.clone());
         }
         Pattern::Literal { value, span } => {
@@ -3250,7 +3258,7 @@ fn check_or_pattern_bindings(alts: &[Pattern], ctx: &mut Ctx) {
         let mut names: Vec<String> = Vec::new();
         for id in alt.bound_names() {
             names.push(id.name.clone());
-            let Some(bty) = ctx.expr_types.get(&id.span).cloned() else {
+            let Some(bty) = ctx.pattern_binding_types.get(&id.span).cloned() else {
                 continue;
             };
             match first_types.get(&id.name) {
@@ -3786,12 +3794,12 @@ fn collect_is_bindings(expr: &Expr, ctx: &mut Ctx) -> Vec<(String, Ty)> {
     // per-span cache is sound and collapses the chain to a single pass. The
     // `&&`/paren recursion below goes through this memoised entry, so inner
     // nodes are cached as they are visited.
-    if let Some(cached) = ctx.is_binding_cache.get(&expr.span) {
+    if let Some(cached) = ctx.is_binding_cache.get(&expr.id) {
         return cached.clone();
     }
     let mut out = Vec::new();
     collect_is_bindings_into(expr, ctx, &mut out);
-    ctx.is_binding_cache.insert(expr.span, out.clone());
+    ctx.is_binding_cache.insert(expr.id, out.clone());
     out
 }
 
@@ -3801,7 +3809,7 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
             // Recompute value type from the expr_types side-table; this avoids
             // mutating type-checking state. If we don't have it, fall back to
             // recomputing.
-            let value_ty = ctx.expr_types.get(&value.span).cloned();
+            let value_ty = ctx.expr_types.get(&value.id).map(|te| te.ty.clone());
             if let Some(value_ty) = value_ty {
                 // v0.13 refinement narrowing: `ident is RefinedType` re-binds the
                 // identifier to the refined type in the narrowed branch.

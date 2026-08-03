@@ -246,11 +246,25 @@ pub struct TypedCommons {
     pub types: HashMap<String, Arc<TypeDecl>>,
     pub fns: HashMap<String, Arc<FnDecl>>,
     pub methods: HashMap<String, MethodTable>,
-    pub expr_types: HashMap<Span, Ty>,
+    /// T3.4 (R2.4/R2.5): keyed by [`ExprId`] — a node's identity, not its
+    /// position. The value carries its own `span` alongside `ty`, so
+    /// LSP-facing consumers that need "type at this cursor offset" (a
+    /// position-shaped question, asked at the editor boundary, not the
+    /// checker's own identity) can still answer it without a second map.
+    pub expr_types: HashMap<ExprId, TypedExpr>,
     /// v0.89 (ADR 0117): non-failing warnings produced while checking this unit
     /// — surfaced but not gating. Empty unless a warning-category diagnostic
     /// (e.g. `bynk.given.unused_capability`) fired on an otherwise-clean check.
     pub warnings: Vec<CompileError>,
+}
+
+/// T3.4: an `expr_types` entry — the checked type, plus the span of the node
+/// it was computed for. `Deref`-free by design (`.ty`/`.span`, not `.0`/`.1`)
+/// so call sites read the same as they did against a bare `Ty` before this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedExpr {
+    pub span: Span,
+    pub ty: Ty,
 }
 
 /// The outcome of [`check_record`]: the typed model (`Err` if the file had any
@@ -260,7 +274,7 @@ pub struct TypedCommons {
 /// on the Ok path the types live in the `TypedCommons`, so this is empty.
 pub struct RecordCheck {
     pub result: Result<TypedCommons, Vec<CompileError>>,
-    pub partial_expr_types: HashMap<Span, Ty>,
+    pub partial_expr_types: HashMap<ExprId, TypedExpr>,
 }
 
 // ==== Entry points ====
@@ -286,7 +300,7 @@ pub fn check_record(
     requirements: &mut RequirementSink,
 ) -> RecordCheck {
     let mut errors = Vec::new();
-    let mut expr_types: HashMap<Span, Ty> = HashMap::new();
+    let mut expr_types: HashMap<ExprId, TypedExpr> = HashMap::new();
 
     // 1. Validate each type declaration.
     for item in &input.commons.items {
@@ -332,7 +346,7 @@ pub fn check_record(
     #[cfg(debug_assertions)]
     for item in &input.commons.items {
         if let CommonsItem::Fn(f) = item {
-            let mut seen: HashSet<Span> = HashSet::new();
+            let mut seen: HashSet<ExprId> = HashSet::new();
             assert_expr_types_disjoint_in_block(&f.body, &expr_types, &mut seen);
         }
     }
@@ -362,13 +376,18 @@ pub fn check_record(
     }
 }
 
-/// Finding #28 (debug-only): the block-level half of the `expr_types`
-/// span-uniqueness walk — visits every statement expression and the tail.
+/// Finding #28 (debug-only), T3.4: the block-level half of the `expr_types`
+/// identity-uniqueness walk — visits every statement expression and the tail.
+/// `ExprId` uniqueness is guaranteed by construction (`Parser::alloc_expr_id`
+/// is the sole allocation point), so this can no longer catch a *parser*
+/// collision the way it caught #844 on `Span`; it stays as the loud check
+/// that a synthetic node (`ExprId::SYNTHETIC`) never reaches the checker's
+/// own `expr_types` — the one way two entries could still collide.
 #[cfg(debug_assertions)]
 fn assert_expr_types_disjoint_in_block(
     block: &Block,
-    expr_types: &HashMap<Span, Ty>,
-    seen: &mut HashSet<Span>,
+    expr_types: &HashMap<ExprId, TypedExpr>,
+    seen: &mut HashSet<ExprId>,
 ) {
     let mut roots: Vec<&Expr> = Vec::new();
     for s in &block.statements {
@@ -380,17 +399,31 @@ fn assert_expr_types_disjoint_in_block(
     }
 }
 
-/// Finding #28 (debug-only): recurses over an expression with the total
-/// child iterator `ast::expr_children`, asserting no two nodes recorded into
-/// `expr_types` share a `Span` — a collision means one node's recorded type
-/// silently clobbered another's (bug #844's class of bug).
+/// Finding #28 (debug-only), T3.4: recurses over an expression with the
+/// total child iterator `ast::expr_children`, asserting no two nodes
+/// recorded into `expr_types` share an [`ExprId`] — a collision means one
+/// node's recorded type silently clobbered another's (bug #844's class of
+/// bug, before `ExprId` made position-derived collisions structurally
+/// impossible for parser-allocated nodes).
 #[cfg(debug_assertions)]
-fn assert_expr_types_disjoint(e: &Expr, expr_types: &HashMap<Span, Ty>, seen: &mut HashSet<Span>) {
-    if expr_types.contains_key(&e.span) {
+fn assert_expr_types_disjoint(
+    e: &Expr,
+    expr_types: &HashMap<ExprId, TypedExpr>,
+    seen: &mut HashSet<ExprId>,
+) {
+    assert!(
+        e.id != ExprId::SYNTHETIC || !expr_types.contains_key(&e.id),
+        "bynk internal error (finding #28): a synthetic node (ExprId::SYNTHETIC) reached the \
+         checker's own `expr_types` at {:?} — synthetic nodes are built after checking and must \
+         never be inserted here",
+        e.span
+    );
+    if expr_types.contains_key(&e.id) {
         assert!(
-            seen.insert(e.span),
-            "bynk internal error (finding #28): two typed AST nodes share span {:?} in \
+            seen.insert(e.id),
+            "bynk internal error (finding #28): two typed AST nodes share id {:?} (span {:?}) in \
              `expr_types` — one node's recorded type silently clobbered another's",
+            e.id,
             e.span
         );
     }
@@ -402,7 +435,7 @@ fn assert_expr_types_disjoint(e: &Expr, expr_types: &HashMap<Span, Ty>, seen: &m
 /// #522: the six output sinks a handler-body check writes into. One struct at
 /// each call site instead of six positional `&mut` arguments.
 pub struct CheckSinks<'a> {
-    pub expr_types: &'a mut HashMap<Span, Ty>,
+    pub expr_types: &'a mut HashMap<ExprId, TypedExpr>,
     pub errors: &'a mut Vec<CompileError>,
     pub refs: &'a mut RefSink,
     pub hints: &'a mut HintSink,
@@ -558,6 +591,7 @@ pub fn check_handler_body(
         requirements,
         scopes: vec![param_scope],
         is_binding_cache: HashMap::new(),
+        pattern_binding_types: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span,
         effectful,
@@ -588,6 +622,7 @@ pub fn check_handler_body(
         params,
         &input.types,
         ctx.expr_types,
+        &ctx.pattern_binding_types,
         &borrowed_held,
         ctx.errors,
     );
@@ -600,7 +635,7 @@ pub fn check_handler_body(
     // multi-file commons re-checking the same handler doesn't false-positive.
     #[cfg(debug_assertions)]
     {
-        let mut seen: HashSet<Span> = HashSet::new();
+        let mut seen: HashSet<ExprId> = HashSet::new();
         assert_expr_types_disjoint_in_block(body, ctx.expr_types, &mut seen);
     }
     if !compatible(&body_ty, &return_ty) {
@@ -700,6 +735,7 @@ pub fn check_body(
         requirements,
         scopes: vec![scope],
         is_binding_cache: HashMap::new(),
+        pattern_binding_types: HashMap::new(),
         return_ty: return_ty.clone(),
         return_ty_span,
         effectful: matches!(return_ty, Ty::Effect(_)),
@@ -733,7 +769,7 @@ pub fn check_body(
     // `check_record`'s walk the same way handler bodies do.
     #[cfg(debug_assertions)]
     {
-        let mut seen: HashSet<Span> = HashSet::new();
+        let mut seen: HashSet<ExprId> = HashSet::new();
         assert_expr_types_disjoint_in_block(body, ctx.expr_types, &mut seen);
     }
     result
@@ -760,7 +796,7 @@ pub fn check_invariants(
     store_cells: &HashMap<String, Ty>,
     agent_name: &str,
     input: &ResolvedCommons,
-    expr_types: &mut HashMap<Span, Ty>,
+    expr_types: &mut HashMap<ExprId, TypedExpr>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     hints: &mut HintSink,
@@ -843,6 +879,7 @@ pub fn check_invariants(
             requirements,
             scopes: vec![field_scope.clone()],
             is_binding_cache: HashMap::new(),
+            pattern_binding_types: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: inv.predicate.span,
             // A predicate is a pure expression — effectful operations (capability
@@ -915,7 +952,7 @@ pub fn check_contracts(
     has_result_param: bool,
     fn_label: &str,
     input: &ResolvedCommons,
-    expr_types: &mut HashMap<Span, Ty>,
+    expr_types: &mut HashMap<ExprId, TypedExpr>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     hints: &mut HintSink,
@@ -946,7 +983,7 @@ pub fn check_contracts(
     // impurity / non-`Bool` diagnostics.
     let check_clause = |c: &Contract,
                         scope: HashMap<String, Ty>,
-                        expr_types: &mut HashMap<Span, Ty>,
+                        expr_types: &mut HashMap<ExprId, TypedExpr>,
                         errors: &mut Vec<CompileError>,
                         refs: &mut RefSink,
                         hints: &mut HintSink,
@@ -981,6 +1018,7 @@ pub fn check_contracts(
             requirements,
             scopes: vec![scope],
             is_binding_cache: HashMap::new(),
+            pattern_binding_types: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: c.predicate.span,
             effectful: false,
@@ -1097,7 +1135,7 @@ pub fn check_transitions(
     // Resolved commons carrying the synthetic `<Agent>State` record so field
     // access on `old`/`new` resolves.
     input: &ResolvedCommons,
-    expr_types: &mut HashMap<Span, Ty>,
+    expr_types: &mut HashMap<ExprId, TypedExpr>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     hints: &mut HintSink,
@@ -1197,6 +1235,7 @@ pub fn check_transitions(
             requirements,
             scopes: vec![scope.clone()],
             is_binding_cache: HashMap::new(),
+            pattern_binding_types: HashMap::new(),
             return_ty: bool_ty.clone(),
             return_ty_span: tr.predicate.span,
             effectful: false,
@@ -1422,7 +1461,7 @@ pub enum StoreField {
 /// external construction site.
 pub(crate) struct Ctx<'a> {
     pub input: &'a ResolvedCommons,
-    pub expr_types: &'a mut HashMap<Span, Ty>,
+    pub expr_types: &'a mut HashMap<ExprId, TypedExpr>,
     pub errors: &'a mut Vec<CompileError>,
     /// v0.25 (ADR 0053): binding edges recorded at the checker's own
     /// resolution sites — capability/service dispatch, typed call dispatch,
@@ -1451,7 +1490,16 @@ pub(crate) struct Ctx<'a> {
     /// pure read over `expr_types` (already populated by the time it runs) and
     /// spans are unique per body, caching each node's result collapses the walk
     /// to a single pass.
-    pub is_binding_cache: HashMap<Span, Vec<(String, Ty)>>,
+    pub is_binding_cache: HashMap<ExprId, Vec<(String, Ty)>>,
+    /// T3.4: a pattern-bound name's resolved type, keyed by the binding
+    /// `Ident`'s own span. Deliberately **not** `ExprId`-keyed and not
+    /// folded into `expr_types` — a `Pattern::Binding` is not an `Expr` and
+    /// giving `Ident` an id of its own would touch every identifier
+    /// construction site in the workspace (field names, type names, params,
+    /// …), not just the handful that bind. This is exactly the `PatId`
+    /// reference draws as a *separate* identity from `ExprId` (Part 2) —
+    /// out of this slice's scope on purpose, not overlooked.
+    pub pattern_binding_types: HashMap<Span, Ty>,
     pub return_ty: Ty,
     pub return_ty_span: Span,
     /// True if the enclosing function/handler returns `Effect[T]` (v0.5).
@@ -2647,21 +2695,19 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
     }
     let ty = type_of(&block.tail, expected, ctx);
     let ty = maybe_auto_lift(ty, expected);
-    // A synthetic single-expression block (e.g. a `stub … returns <value>`
-    // rhs) has `block.span == block.tail.span` — recording the auto-lifted
-    // (possibly Effect-wrapped) type there would clobber the tail
-    // expression's own, more specific entry that `type_of` already recorded
-    // (e.g. a bare refined-literal admission the emitter's brand-cast lookup
-    // depends on — Locale capability track, slice 1, #844). A genuine `{ … }`
-    // block's span always strictly contains its tail's, so this only ever
-    // skips the redundant case.
-    // T3.3b (R4.3): total for the same reason as `type_of`'s own write site —
-    // a block whose tail failed to type still gets an `expr_types` entry at
-    // its own span, `Ty::Error` rather than nothing.
-    if block.span != block.tail.span {
-        ctx.expr_types
-            .insert(block.span, ty.clone().unwrap_or(Ty::Error));
-    }
+    // T3.4: this block previously wrote its own auto-lifted type into
+    // `expr_types` at `block.span` (bug #844's era — recording it only when
+    // `block.span != block.tail.span`, to avoid clobbering a synthetic
+    // single-expression block's more specific tail entry). `Block` has no
+    // `ExprId` of its own to key that write with now, and — checked, not
+    // assumed — nothing in the workspace ever read it: the only caller that
+    // has a real enclosing expression to attribute it to (`ExprKind::Block`,
+    // `checker.rs`'s own `type_of` dispatch) already gets an identical entry
+    // for free from `type_of`'s own choke-point write on the way back out,
+    // since the parser sets that expression's span to `block.span` exactly.
+    // The other eight callers (function/handler bodies, `if` branches,
+    // `match` arm bodies) never had a real position to attribute it to
+    // either, span-keyed or not. Dropped rather than worked around.
     ctx.pop_scope();
     ty
 }
@@ -3014,8 +3060,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                             // otherwise `ty_of(receiver)` is `None` and the
                             // no-consume-in-a-broadcast rule is silently
                             // unenforced.
-                            ctx.expr_types
-                                .insert(receiver.span, Ty::Query(Box::new(v.clone())));
+                            ctx.expr_types.insert(
+                                receiver.id,
+                                TypedExpr {
+                                    span: receiver.span,
+                                    ty: Ty::Query(Box::new(v.clone())),
+                                },
+                            );
                             check_query_kernel_method(method, args, &v, expr.span, ctx)
                         } else {
                             check_store_map_op(method, args, &k, &v, expr.span, ctx)
@@ -3119,8 +3170,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
     // existing `?`/`.or(...)` control-flow site is unaffected — `Ty::Error`
     // only becomes observable to an external reader of `expr_types` (the
     // emitter, the LSP), never to internal checker logic.
-    ctx.expr_types
-        .insert(expr.span, ty.clone().unwrap_or(Ty::Error));
+    ctx.expr_types.insert(
+        expr.id,
+        TypedExpr {
+            span: expr.span,
+            ty: ty.clone().unwrap_or(Ty::Error),
+        },
+    );
     ty
 }
 

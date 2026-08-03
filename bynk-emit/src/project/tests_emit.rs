@@ -792,7 +792,7 @@ fn check_integration_case_body(
         unit_span,
     );
     let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
-    let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+    let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
     // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
     let mut no_hints = HintSink::new();
     let mut no_locals = LocalsSink::new();
@@ -1770,7 +1770,7 @@ fn stub_value_typechecks(
     resolved: &bynk_check::resolver::ResolvedCommons,
 ) -> bool {
     let block = value_block(e);
-    let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+    let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
     let mut errs: Vec<CompileError> = Vec::new();
     checker::check_handler_body(
         resolved,
@@ -1969,8 +1969,8 @@ fn typecheck_case_body(
     // v0.119: bindings already in scope for the body — empty for a `case`, the
     // `run: List[Step]` binding for a history property.
     initial_scope: HashMap<String, checker::Ty>,
-) -> HashMap<Span, checker::Ty> {
-    let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+) -> HashMap<ExprId, checker::TypedExpr> {
+    let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
     // Synthesise an Effect[Result[(), ValidationError]] return type as a
     // stand-in for Effect[Result[(), ExpectationError]]. v0.7 doesn't model an
     // explicit ExpectationError type — the runtime catches it instead.
@@ -2930,7 +2930,7 @@ fn check_property_body(
 
     // Type the `where`/body predicates in the target's privileged view with the
     // bindings in scope — mirroring the `case` body context.
-    let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+    let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
     let unit_span = prop.span;
     let synthetic_return = TypeRef::Effect(
         Box::new(TypeRef::Result(

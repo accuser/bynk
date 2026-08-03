@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bynk_syntax::ast::{
-    Block, Expr, ExprKind, Ident, MatchBody, Param, Pattern, Statement, TypeDecl,
+    Block, Expr, ExprId, ExprKind, Ident, MatchBody, Param, Pattern, Statement, TypeDecl,
 };
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
 
-use super::{Ty, resolve_type_ref};
+use super::{Ty, TypedExpr, resolve_type_ref};
 
 /// The ownership state of a held binding on the current control-flow path.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -40,7 +40,11 @@ enum Held {
 type State = HashMap<String, Held>;
 
 struct Lin<'a> {
-    expr_types: &'a HashMap<Span, Ty>,
+    expr_types: &'a HashMap<ExprId, TypedExpr>,
+    /// T3.4: pattern-bound names' types, keyed by the binding `Ident`'s own
+    /// span — deliberately not `expr_types`/`ExprId`-keyed (see `Ctx`'s field
+    /// of the same name).
+    pattern_binding_types: &'a HashMap<Span, Ty>,
     errors: &'a mut Vec<CompileError>,
 }
 
@@ -60,7 +64,8 @@ pub(crate) fn check(
     body: &Block,
     params: &[Param],
     types: &HashMap<String, Arc<TypeDecl>>,
-    expr_types: &HashMap<Span, Ty>,
+    expr_types: &HashMap<ExprId, TypedExpr>,
+    pattern_binding_types: &HashMap<Span, Ty>,
     // v0.106 (slice 3b-iii): names of held params that are **borrowed**, not owned
     // — e.g. the firing `connection` of a `from websocket` `on message`/`on close`,
     // which the handler may `send` to but does not own/dispose. A borrowed binding
@@ -69,7 +74,11 @@ pub(crate) fn check(
     borrowed: &std::collections::HashSet<String>,
     errors: &mut Vec<CompileError>,
 ) {
-    let mut lin = Lin { expr_types, errors };
+    let mut lin = Lin {
+        expr_types,
+        pattern_binding_types,
+        errors,
+    };
     let mut state = State::new();
     let mut seeded = Vec::new();
     for p in params {
@@ -99,7 +108,7 @@ pub(crate) fn check(
 
 impl Lin<'_> {
     fn ty_of(&self, e: &Expr) -> Option<&Ty> {
-        self.expr_types.get(&e.span)
+        self.expr_types.get(&e.id).map(|te| &te.ty)
     }
 
     fn leak(&mut self, name: &str, span: Span) {
@@ -448,7 +457,11 @@ impl Lin<'_> {
     fn held_pattern_bindings<'p>(&self, pat: &'p Pattern) -> Vec<&'p Ident> {
         pat.bound_names()
             .into_iter()
-            .filter(|id| self.expr_types.get(&id.span).is_some_and(held_value))
+            .filter(|id| {
+                self.pattern_binding_types
+                    .get(&id.span)
+                    .is_some_and(held_value)
+            })
             .collect()
     }
 

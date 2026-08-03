@@ -1725,7 +1725,16 @@ impl<'a> Parser<'a> {
         let (content, trivia) = split_trivia(&tokens, self.source);
         let mut warnings = Vec::new();
         let mut sub = Parser::new(&content, self.source, trivia, &mut warnings);
+        // T3.4 (finding #28, caught live): a fresh `Parser::new` starts its
+        // `ExprId` counter at 0, which collides with every id the *outer*
+        // parser has already handed out — this hole's sub-parse must
+        // continue the same counter, not restart it, or two unrelated nodes
+        // end up sharing an id. Carry the counter back out afterward too, so
+        // ids the outer parser allocates *after* this hole don't re-collide
+        // with ones the sub-parse just handed out.
+        sub.next_expr_id = self.next_expr_id;
         let expr = sub.parse_expr()?;
+        self.next_expr_id = sub.next_expr_id;
         if let Some(extra) = sub.peek() {
             return Err(CompileError::new(
                 "bynk.parse.extra_tokens",

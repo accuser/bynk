@@ -1069,7 +1069,7 @@ fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
             }
             match method.name.as_str() {
                 "decode" => {
-                    if let Some(Ty::Result(t, _)) = commons.expr_types.get(&e.span)
+                    if let Some(Ty::Result(t, _)) = commons.expr_types.get(&e.id).map(|te| &te.ty)
                         && let Some(tr) = ty_to_type_ref(t)
                     {
                         roots.push(tr);
@@ -1077,7 +1077,7 @@ fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
                 }
                 "encode" => {
                     if let Some(a) = args.first()
-                        && let Some(t) = commons.expr_types.get(&a.span)
+                        && let Some(t) = commons.expr_types.get(&a.id).map(|te| &te.ty)
                         && let Some(tr) = ty_to_type_ref(t)
                     {
                         roots.push(tr);
@@ -1937,7 +1937,7 @@ fn collect_refs_in_expr(
         // owning type must be imported (v0.18: first hit by `Get` from the
         // consumed bynk surface's `Method`).
         ExprKind::Ident(id) => {
-            if let Some(type_name) = sum_owner_of_variant(&id.name, e.span, commons) {
+            if let Some(type_name) = sum_owner_of_variant(&id.name, e.id, commons) {
                 record_name_ref(&type_name, local_to_file, ctx, out);
             }
         }
@@ -2014,7 +2014,7 @@ fn collect_refs_in_expr(
             record_name_ref(&name.name, local_to_file, ctx, out);
             // A payload-carrying bare variant call (`Won(prize)`) lowers to
             // `Type.Variant(…)` — import the owning sum type too.
-            if let Some(type_name) = sum_owner_of_variant(&name.name, e.span, commons) {
+            if let Some(type_name) = sum_owner_of_variant(&name.name, e.id, commons) {
                 record_name_ref(&type_name, local_to_file, ctx, out);
             }
             // #527: a call to a commons-imported fn may lower with a rebrand
@@ -2130,14 +2130,14 @@ fn collect_refs_in_expr(
 /// `ExprKind::Ident` arm of `lower_expr_into`).
 fn sum_owner_of_variant(
     name: &str,
-    span: bynk_syntax::span::Span,
+    id: bynk_syntax::ast::ExprId,
     commons: &TypedCommons,
 ) -> Option<String> {
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
         name: type_name,
         ..
-    }) = commons.expr_types.get(&span)
+    }) = commons.expr_types.get(&id).map(|te| &te.ty)
         && let Some(decl) = commons.types.get(type_name)
         && let TypeBody::Sum(s) = &decl.body
         && s.variants.iter().any(|v| v.name.name == name)
@@ -3813,7 +3813,7 @@ impl<'a> LowerCtx<'a> {
     /// variant test. Mirrors the checker's disambiguation.
     fn is_refined_is_check(&self, value: &Expr, name: &str) -> bool {
         let value_baseish = matches!(
-            self.commons().expr_types.get(&value.span),
+            self.commons().expr_types.get(&value.id).map(|te| &te.ty),
             Some(Ty::Base(_))
                 | Some(Ty::Named {
                     kind: NamedKind::Refined(_),
@@ -3839,7 +3839,7 @@ impl<'a> LowerCtx<'a> {
         value_text_for_is(value)
     }
     fn receiver_namespace(&self, e: &Expr) -> Option<String> {
-        let ty = self.commons().expr_types.get(&e.span)?;
+        let ty = self.commons().expr_types.get(&e.id).map(|te| &te.ty)?;
         if let Ty::Named { name, .. } = ty {
             Some(name.clone())
         } else {

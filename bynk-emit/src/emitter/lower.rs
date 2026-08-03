@@ -395,7 +395,7 @@ fn lower_tail_expr(e: &Expr, cx: &mut LowerCtx, async_tail: bool) -> Lowered {
 /// `Effect`-typed falls through to `lower_expr` and yields `Promise<T>` — so the
 /// annotation admits both rather than picking one.
 fn async_tail_slot_ty(e: &Expr, cx: &LowerCtx) -> Option<String> {
-    match cx.commons().expr_types.get(&e.span) {
+    match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
         Some(Ty::Effect(inner)) => {
             let inner_ts = match inner.as_ref() {
                 Ty::Unit => "void".to_string(),
@@ -464,7 +464,11 @@ fn assign_branch(tail: Lowered, slot: &str) -> Vec<String> {
 /// The TypeScript rendering of the type the checker recorded for `e`, if any.
 /// Used to annotate the slot [`hoist_if_as_statement`] declares.
 fn checked_ty_ts(e: &Expr, cx: &LowerCtx) -> Option<String> {
-    cx.commons().expr_types.get(&e.span).map(ts_ty)
+    cx.commons()
+        .expr_types
+        .get(&e.id)
+        .map(|te| &te.ty)
+        .map(ts_ty)
 }
 
 /// T2.1 (R6.2): the ternary form's **structural** precondition — everything
@@ -924,7 +928,7 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
         name,
         kind: NamedKind::Refined(_),
         ..
-    }) = cx.commons().expr_types.get(&e.span)
+    }) = cx.commons().expr_types.get(&e.id).map(|te| &te.ty)
         && let Some(raw) = lower_const_literal_raw(e)
     {
         // ADR 0182: in GENERATED TEST scaffolding a branded type is in scope only
@@ -981,7 +985,7 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
             // v0.9: `Ok` is overloaded — use the checker's recorded type to
             // decide between `Result.Ok` and `HttpResult.Ok`.
             if matches!(
-                cx.commons().expr_types.get(&e.span),
+                cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
                 Some(Ty::HttpResult(_))
             ) {
                 format!("HttpResult.Ok({s})")
@@ -1007,7 +1011,12 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
             // always present — assert it, so a future gap surfaces loudly in
             // tests rather than silently emitting the `Result` branch (which on
             // an untyped `Option` would leak `None` → `undefined`).
-            let operand_ty = cx.commons().expr_types.get(&inner.span).cloned();
+            let operand_ty = cx
+                .commons()
+                .expr_types
+                .get(&inner.id)
+                .map(|te| &te.ty)
+                .cloned();
             debug_assert!(
                 matches!(operand_ty, Some(Ty::Option(_) | Ty::Result(_, _))),
                 "`?` operand has no `Option`/`Result` checked type at {:?}: {operand_ty:?}",
@@ -1461,7 +1470,7 @@ fn lower_method_call(
                 ),
                 method,
                 &a,
-                cx.commons().expr_types.get(&e.span),
+                cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
             )
             .unwrap_or_else(|| {
                 format!("(/* unsupported held Map op {} */ undefined)", method.name)
@@ -1538,7 +1547,7 @@ fn lower_method_call(
                 format!("Object.values({m})"),
                 method,
                 &a,
-                cx.commons().expr_types.get(&e.span),
+                cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
             )
             .unwrap_or_else(|| format!("(/* unsupported Map op {} */ undefined)", method.name)),
         });
@@ -1650,7 +1659,7 @@ fn lower_method_call(
             )),
             "reversed" => thunk(format!("[...{g}].reverse().map((__e) => __e.v)")),
             // The general query vocabulary over the entry values.
-            _ => lower_query_method(values, method, &a, cx.commons().expr_types.get(&e.span))
+            _ => lower_query_method(values, method, &a, cx.commons().expr_types.get(&e.id).map(|te| &te.ty))
                 .unwrap_or_else(|| format!("(/* unsupported Log op {} */ undefined)", method.name)),
         });
     }
@@ -1703,7 +1712,7 @@ fn lower_method_call(
         && args.is_empty()
         && !cx.commons().types.contains_key(&id.name)
     {
-        match cx.commons().expr_types.get(&e.span) {
+        match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
             Some(Ty::List(t)) => return pre.finish(format!("([] as readonly {}[])", ts_ty(t))),
             Some(Ty::Map(k, v)) => {
                 return pre.finish(format!("new Map<{}, {}>()", ts_ty(k), ts_ty(v)));
@@ -2151,7 +2160,13 @@ fn lower_method_call(
     // dispatched on the receiver's checked type. Emitted inline
     // (typed IIFEs / spreads) — no runtime imports, so files that
     // never touch collections emit byte-identically to v0.20a.
-    if let Some(recv_ty) = cx.commons().expr_types.get(&receiver.span).cloned() {
+    if let Some(recv_ty) = cx
+        .commons()
+        .expr_types
+        .get(&receiver.id)
+        .map(|te| &te.ty)
+        .cloned()
+    {
         match &recv_ty {
             Ty::List(elem) => {
                 if let Some(s) =
@@ -2165,7 +2180,7 @@ fn lower_method_call(
             Ty::Query(_) => {
                 let recv = pre.lower(receiver, cx);
                 let a: Vec<String> = args.iter().map(|x| pre.lower(x, cx)).collect();
-                let result_ty = cx.commons().expr_types.get(&e.span).cloned();
+                let result_ty = cx.commons().expr_types.get(&e.id).map(|te| &te.ty).cloned();
                 if let Some(s) =
                     lower_query_method(format!("({recv})()"), method, &a, result_ty.as_ref())
                 {
@@ -2337,7 +2352,12 @@ fn lower_json_codec_call(
         && args.len() == 1
     {
         if method.name == "encode"
-            && let Some(arg_ty) = cx.commons().expr_types.get(&args[0].span).cloned()
+            && let Some(arg_ty) = cx
+                .commons()
+                .expr_types
+                .get(&args[0].id)
+                .map(|te| &te.ty)
+                .cloned()
             && let Some(tref) = ty_to_type_ref(&arg_ty)
         {
             // #917: a test-scaffold module's target/`uses` types export no codec
@@ -2353,7 +2373,8 @@ fn lower_json_codec_call(
             return Some(pre.finish(format!("JSON.stringify({ser})")));
         }
         if method.name == "decode"
-            && let Some(Ty::Result(t, _)) = cx.commons().expr_types.get(&e.span).cloned()
+            && let Some(Ty::Result(t, _)) =
+                cx.commons().expr_types.get(&e.id).map(|te| &te.ty).cloned()
             && let Some(tref) = ty_to_type_ref(&t)
         {
             // #917: in a test-scaffold module `T` may be foreign (owned by the
@@ -2538,7 +2559,12 @@ fn gather_is_bindings_for_emit(
         ExprKind::Is { value, pattern } => {
             *found = true;
             let value_text = cx.is_receiver_text(value);
-            let disc_ty = cx.commons().expr_types.get(&value.span).cloned();
+            let disc_ty = cx
+                .commons()
+                .expr_types
+                .get(&value.id)
+                .map(|te| &te.ty)
+                .cloned();
             if let Pattern::Variant {
                 variant, bindings, ..
             } = pattern.as_ref()
@@ -2736,8 +2762,8 @@ fn lower_list_kernel(
             let acc_ts = cx
                 .commons()
                 .expr_types
-                .get(&e.span)
-                .map(ts_ty)
+                .get(&e.id)
+                .map(|te| ts_ty(&te.ty))
                 .unwrap_or_else(|| {
                     panic!(
                         "bynk internal error (finding #28): emitter has no recorded type for a \
@@ -2755,7 +2781,7 @@ fn lower_list_kernel(
         (FOLD_EFF, [init, f]) => {
             // The call's checked type is `Effect[Acc]` — peel for the TS
             // accumulator annotation.
-            let acc_ts = match cx.commons().expr_types.get(&e.span) {
+            let acc_ts = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
                 Some(Ty::Effect(acc)) => ts_ty(acc),
                 Some(other) => ts_ty(other),
                 None => panic!(
@@ -2800,7 +2826,7 @@ fn lower_list_kernel(
         (TRAVERSE_ALL, [f]) => {
             // The call's checked type is `Effect[List[Result[B, E]]]` — peel to
             // the `Result[B, E]` TS for the output-array annotation.
-            let res_ts = match cx.commons().expr_types.get(&e.span) {
+            let res_ts = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
                 Some(Ty::Effect(inner)) => match &**inner {
                     Ty::List(el) => ts_ty(el),
                     other => ts_ty(other),
@@ -2830,7 +2856,7 @@ fn lower_list_kernel(
         // awaits each in order, bailing on the first `Err`; `parTraverseTry`
         // issues all at once, then scans the resolved `Result`s in input order.
         (TRAVERSE_TRY, [f]) => {
-            let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.span));
+            let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.id).map(|te| &te.ty));
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
@@ -2838,7 +2864,7 @@ fn lower_list_kernel(
             ))
         }
         (PAR_TRAVERSE_TRY, [f]) => {
-            let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.span));
+            let u_ts = list_ok_elem_ts(cx.commons().expr_types.get(&e.id).map(|te| &te.ty));
             let recv = pre.lower(receiver, cx);
             let f = pre.lower(f, cx);
             Some(format!(
@@ -2950,7 +2976,7 @@ fn lower_list_kernel(
         ("average", [key]) => {
             // D3: Duration averages round to integer millis; Int/Float -> Float.
             let round = matches!(
-                cx.commons().expr_types.get(&e.span),
+                cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
                 Some(Ty::Option(inner)) if matches!(inner.as_ref(), Ty::Base(BaseType::Duration))
             );
             let mean = if round {
@@ -3020,7 +3046,7 @@ fn lower_list_kernel(
 /// `List`/`Query` element), for typing the hash-map buckets. Falls back to
 /// `unknown` if the checker recorded no type (an already-diagnosed program).
 fn join_other_elem_ts(args: &[Expr], cx: &LowerCtx) -> String {
-    match cx.commons().expr_types.get(&args[0].span) {
+    match cx.commons().expr_types.get(&args[0].id).map(|te| &te.ty) {
         Some(Ty::List(u) | Ty::Query(u)) => ts_ty(u),
         _ => "unknown".to_string(),
     }
@@ -3541,7 +3567,7 @@ fn lower_option_kernel(
     let text: Option<String> = match (method.name.as_str(), args) {
         ("map", [f]) => {
             // The call's checked type is `Option[B]` — peel for B.
-            let b = match cx.commons().expr_types.get(&e.span) {
+            let b = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
                 Some(Ty::Option(b)) => ts_ty(b),
                 other => panic!(
                     "bynk internal error (finding #28): emitter expected `Option[_]` recorded \
@@ -3557,7 +3583,7 @@ fn lower_option_kernel(
             ))
         }
         ("andThen", [f]) => {
-            let b = match cx.commons().expr_types.get(&e.span) {
+            let b = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
                 Some(Ty::Option(b)) => ts_ty(b),
                 other => panic!(
                     "bynk internal error (finding #28): emitter expected `Option[_]` recorded \
@@ -3585,7 +3611,7 @@ fn lower_option_kernel(
         }
         ("okOr", [error]) => {
             // The call's checked type is `Result[T, E]` — peel for E.
-            let err = match cx.commons().expr_types.get(&e.span) {
+            let err = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
                 Some(Ty::Result(_, err)) => ts_ty(err),
                 other => panic!(
                     "bynk internal error (finding #28): emitter expected `Result[_, _]` \
@@ -3624,7 +3650,7 @@ fn lower_result_kernel(
     let text: Option<String> = match (method.name.as_str(), args) {
         ("map", [f]) => {
             // The call's checked type is `Result[B, E]` — peel for B.
-            let b = match cx.commons().expr_types.get(&e.span) {
+            let b = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
                 Some(Ty::Result(b, _)) => ts_ty(b),
                 other => panic!(
                     "bynk internal error (finding #28): emitter expected `Result[_, _]` \
@@ -3640,7 +3666,7 @@ fn lower_result_kernel(
             ))
         }
         ("andThen", [f]) => {
-            let b = match cx.commons().expr_types.get(&e.span) {
+            let b = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
                 Some(Ty::Result(b, _)) => ts_ty(b),
                 other => panic!(
                     "bynk internal error (finding #28): emitter expected `Result[_, _]` \
@@ -3657,7 +3683,7 @@ fn lower_result_kernel(
         }
         ("mapErr", [f]) => {
             // The call's checked type is `Result[T, F]` — peel for F.
-            let fts = match cx.commons().expr_types.get(&e.span) {
+            let fts = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
                 Some(Ty::Result(_, f)) => ts_ty(f),
                 other => panic!(
                     "bynk internal error (finding #28): emitter expected `Result[_, _]` \
@@ -3710,7 +3736,7 @@ fn lower_effect_result_kernel(
     let et = ts_ty(err);
     // The call's checked type is `Effect[Result[a, b]]`; peel `(a, b)` for the
     // transformed parameter's TS type.
-    let (a_ts, b_ts) = match cx.commons().expr_types.get(&e.span) {
+    let (a_ts, b_ts) = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
         Some(Ty::Effect(inner)) => match inner.as_ref() {
             Ty::Result(a, b) => (ts_ty(a), ts_ty(b)),
             other => panic!(
@@ -4079,15 +4105,17 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // v0.9: a nullary HttpResult variant (whose checker type is
     // `HttpResult[_]`) constructs an HttpResult.<Variant>.
     if matches!(
-        cx.commons().expr_types.get(&e.span),
+        cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
         Some(Ty::HttpResult(_))
     ) && http_variant(&id.name).is_some()
     {
         return format!("HttpResult.{}", id.name);
     }
     // v0.44: a nullary QueueResult variant (`Ack`) constructs `QueueResult.Ack`.
-    if matches!(cx.commons().expr_types.get(&e.span), Some(Ty::QueueResult))
-        && bynk_syntax::ast::queue_variant(&id.name).is_some()
+    if matches!(
+        cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
+        Some(Ty::QueueResult)
+    ) && bynk_syntax::ast::queue_variant(&id.name).is_some()
     {
         return format!("QueueResult.{}", id.name);
     }
@@ -4099,7 +4127,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         kind: NamedKind::Sum,
         name: type_name,
         ..
-    }) = cx.commons().expr_types.get(&e.span)
+    }) = cx.commons().expr_types.get(&e.id).map(|te| &te.ty)
         && let Some(decl) = cx.commons().types.get(type_name)
         && let TypeBody::Sum(s) = &decl.body
         && s.variants.iter().any(|v| v.name.name == id.name)
@@ -4110,7 +4138,10 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // actor is threaded through `deps.who` at the boundary wrapper, so the
     // binder ident lowers to it (the tagged union the body `match`es).
     if cx.actor_sum_binder() == Some(id.name.as_str())
-        && matches!(cx.commons().expr_types.get(&e.span), Some(Ty::ActorSum(_)))
+        && matches!(
+            cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
+            Some(Ty::ActorSum(_))
+        )
     {
         return "deps.who".to_string();
     }
@@ -4127,7 +4158,7 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
     let args_lowered: Vec<String> = args.iter().map(|a| pre.lower(a, cx)).collect();
     // v0.9: HttpResult variant call.
     if matches!(
-        cx.commons().expr_types.get(&e.span),
+        cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
         Some(Ty::HttpResult(_))
     ) && http_variant(&name.name).is_some()
     {
@@ -4138,8 +4169,10 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
         ));
     }
     // v0.44: a QueueResult variant call (`Retry(reason)`) → `QueueResult.Retry(...)`.
-    if matches!(cx.commons().expr_types.get(&e.span), Some(Ty::QueueResult))
-        && bynk_syntax::ast::queue_variant(&name.name).is_some()
+    if matches!(
+        cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
+        Some(Ty::QueueResult)
+    ) && bynk_syntax::ast::queue_variant(&name.name).is_some()
     {
         return pre.finish(format!(
             "QueueResult.{}({})",
@@ -4160,7 +4193,7 @@ fn lower_call(e: &Expr, name: &Ident, args: &[Expr], cx: &mut LowerCtx) -> Lower
         kind: NamedKind::Sum,
         name: type_name,
         ..
-    }) = cx.commons().expr_types.get(&e.span)
+    }) = cx.commons().expr_types.get(&e.id).map(|te| &te.ty)
         && type_name != &name.name
         && call_is_sum_variant(cx, type_name, &name.name)
     {
@@ -4426,8 +4459,8 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         let lhs_is_float = cx
             .commons()
             .expr_types
-            .get(&lhs.span)
-            .and_then(|t| t.base())
+            .get(&lhs.id)
+            .and_then(|te| te.ty.base())
             == Some(BaseType::Float);
         if lhs_is_float {
             format!("{l} / {r}")
@@ -4438,8 +4471,8 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
         && cx
             .commons()
             .expr_types
-            .get(&lhs.span)
-            .and_then(|t| t.base())
+            .get(&lhs.id)
+            .and_then(|te| te.ty.base())
             == Some(BaseType::Bytes)
     {
         // v0.110 (ADR 0142 D4): `Bytes` is the one base type whose `==` is not
@@ -4571,7 +4604,7 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
     // stay the unit value `undefined`.
     if field.name == "identity"
         && matches!(
-            cx.commons().expr_types.get(&receiver.span),
+            cx.commons().expr_types.get(&receiver.id).map(|te| &te.ty),
             Some(Ty::Actor(_))
         )
     {
@@ -4591,7 +4624,7 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
         && let Some(Ty::Named {
             kind: NamedKind::Opaque(base),
             ..
-        }) = cx.commons().expr_types.get(&receiver.span)
+        }) = cx.commons().expr_types.get(&receiver.id).map(|te| &te.ty)
     {
         return pre.finish(format!("({r} as {})", ts_base(*base)));
     }
@@ -4608,7 +4641,7 @@ fn lower_field_access(e: &Expr, receiver: &Expr, field: &Ident, cx: &mut LowerCt
 /// that: the fallback identity decode must never be reached for an `Int` key,
 /// which would silently emit a string where a `number` is expected.
 fn map_key_ty<'a>(e: &Expr, cx: &'a LowerCtx) -> Option<&'a Ty> {
-    match cx.commons().expr_types.get(&e.span)? {
+    match cx.commons().expr_types.get(&e.id).map(|te| &te.ty)? {
         Ty::Query(inner) => match &**inner {
             Ty::Named { name, args, .. } if name == MAP_ENTRY && !args.is_empty() => Some(&args[0]),
             k => Some(k),
@@ -4708,7 +4741,7 @@ mod decode_map_key_tests {
 
 fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     let is_async = matches!(
-        cx.commons().expr_types.get(&e.span),
+        cx.commons().expr_types.get(&e.id).map(|te| &te.ty),
         Some(bynk_check::checker::Ty::Fn { ret, .. }) if ret.is_effect()
     );
     let prefix = if is_async { "async " } else { "" };
@@ -4734,7 +4767,7 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     // `return_ty` to the lambda's own return (its `Fn` type's `ret`) so an
     // embedding `?` anywhere in the body — block-bodied or expression-bodied —
     // uses that, not the outer one; restore after either form.
-    let lam_ret = match cx.commons().expr_types.get(&e.span) {
+    let lam_ret = match cx.commons().expr_types.get(&e.id).map(|te| &te.ty) {
         Some(bynk_check::checker::Ty::Fn { ret, .. }) => Some((**ret).clone()),
         _ => None,
     };
@@ -4846,7 +4879,12 @@ fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
 /// analogous case before this same class of fix).
 fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx) -> Lowered {
     let mut pre = Pre::new();
-    let disc_ty = cx.commons().expr_types.get(&discriminant.span).cloned();
+    let disc_ty = cx
+        .commons()
+        .expr_types
+        .get(&discriminant.id)
+        .map(|te| &te.ty)
+        .cloned();
     let disc = pre.lower(discriminant, cx);
     // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, so a
     // `return` in an arm exits the arrow, not the function — clear `return_ty`
@@ -5009,7 +5047,12 @@ fn emit_match_tail(
     cx.record_span(out.len(), discriminant.span);
     let mut pre = Pre::new();
     let mut disc = pre.lower(discriminant, cx);
-    let disc_ty = cx.commons().expr_types.get(&discriminant.span).cloned();
+    let disc_ty = cx
+        .commons()
+        .expr_types
+        .get(&discriminant.id)
+        .map(|te| &te.ty)
+        .cloned();
     for s in pre.stmts() {
         write_line(out, indent, s);
     }
@@ -5611,7 +5654,12 @@ fn lower_is(value: &Expr, pattern: &Pattern, cx: &mut LowerCtx) -> Lowered {
         // (which already handles `Pattern::Refined` — inner tests plus the
         // predicate via `refined_check_as_bool`).
         Pattern::Refined { .. } => {
-            let scrut_ty = cx.commons().expr_types.get(&value.span).cloned();
+            let scrut_ty = cx
+                .commons()
+                .expr_types
+                .get(&value.id)
+                .map(|te| &te.ty)
+                .cloned();
             let mut tests = Vec::new();
             pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
             if tests.is_empty() {
@@ -5629,7 +5677,12 @@ fn lower_is(value: &Expr, pattern: &Pattern, cx: &mut LowerCtx) -> Lowered {
         // outcome — the single-field `"value"` fallback matches the runtime
         // `{ tag, value }` shape, so the nested test lands without a static type.
         Pattern::Variant { .. } => {
-            let scrut_ty = cx.commons().expr_types.get(&value.span).cloned();
+            let scrut_ty = cx
+                .commons()
+                .expr_types
+                .get(&value.id)
+                .map(|te| &te.ty)
+                .cloned();
             let mut tests = Vec::new();
             // For a loose scrutinee, a *multi*-payload nested pattern would map
             // every positional field to the single-field `"value"` fallback; that
@@ -5654,7 +5707,12 @@ fn lower_is(value: &Expr, pattern: &Pattern, cx: &mut LowerCtx) -> Lowered {
         // already knows how to OR its alternatives together (pushing one
         // combined `(...) || (...)` term), so this is a thin wrapper.
         Pattern::Or(..) => {
-            let scrut_ty = cx.commons().expr_types.get(&value.span).cloned();
+            let scrut_ty = cx
+                .commons()
+                .expr_types
+                .get(&value.id)
+                .map(|te| &te.ty)
+                .cloned();
             let mut tests = Vec::new();
             pattern_match_tests(&v, scrut_ty.as_ref(), pattern, cx, &mut tests);
             tests.join(" && ")

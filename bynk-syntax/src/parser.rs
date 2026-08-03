@@ -248,9 +248,31 @@ pub fn parse_unit_with_warnings(
     tokens: &[Token],
     source: &str,
 ) -> Result<(SourceUnit, Vec<CompileError>), Vec<CompileError>> {
+    parse_unit_with_warnings_from(tokens, source, &mut 0)
+}
+
+/// [`parse_unit_with_warnings`], continuing [`ExprId`] allocation from
+/// `next_id` instead of starting at 0, and writing the id one past the last
+/// one this parse handed out back into it. T3.4 (R2.4): every top-level parse
+/// entry point in this file constructs its own `Parser` and therefore its own
+/// zero-based id space; a caller that will check two files' output together
+/// in one pass (a multi-file commons — `bynk-emit`'s `collect_unit_methods`
+/// merges a type's methods from sibling files into the file that declares the
+/// type, before one `check_record` call) must thread one counter across every
+/// file it parses, or two independently-numbered files collide on the same
+/// id in the same `expr_types` map. Every *other* caller (a single buffer, an
+/// LSP hover/completion query, a fixture test) never merges its output with
+/// another file's before checking, so starting at 0 every time is correct —
+/// [`parse_unit_with_warnings`] above is that default, unchanged.
+pub fn parse_unit_with_warnings_from(
+    tokens: &[Token],
+    source: &str,
+    next_id: &mut u32,
+) -> Result<(SourceUnit, Vec<CompileError>), Vec<CompileError>> {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
+    p.next_expr_id = *next_id;
     let result = match p.parse_unit() {
         Ok(u) => {
             if let Some(extra) = p.peek() {
@@ -270,6 +292,7 @@ pub fn parse_unit_with_warnings(
         }
         Err(e) => Err(vec![e]),
     };
+    *next_id = p.next_expr_id;
     // ADR 0117: warnings (e.g. orphan doc blocks) ride alongside a successful
     // parse — severity governs gating at the caller, not here.
     match result {
@@ -314,6 +337,21 @@ pub fn parse_units_with_warnings(
         .map(|(units, warnings, _drained)| (units, warnings))
 }
 
+/// [`parse_units_with_warnings`], continuing [`ExprId`] allocation from
+/// `next_id` rather than starting at 0 — see [`parse_unit_with_warnings_from`]
+/// for why this exists. The one production caller is `bynk-emit`'s per-file
+/// parse loop (`phase_parse`), which owns one counter across every file in a
+/// single project parse so two files whose methods later get merged into one
+/// `check_record` call (a multi-file commons) never collide.
+pub fn parse_units_with_warnings_from(
+    tokens: &[Token],
+    source: &str,
+    next_id: &mut u32,
+) -> Result<(Vec<SourceUnit>, Vec<CompileError>), Vec<CompileError>> {
+    parse_units_with_drain_check_from(tokens, source, next_id)
+        .map(|(units, warnings, _drained)| (units, warnings))
+}
+
 /// [`parse_units_with_warnings`] plus whether every comment's trivia was
 /// drained into the AST (`TriviaTable::is_fully_drained`). Finding #66:
 /// `bynk-fmt`'s comment-preservation guard re-tokenized its own rendered
@@ -328,9 +366,20 @@ pub fn parse_units_with_drain_check(
     tokens: &[Token],
     source: &str,
 ) -> Result<(Vec<SourceUnit>, Vec<CompileError>, bool), Vec<CompileError>> {
+    parse_units_with_drain_check_from(tokens, source, &mut 0)
+}
+
+/// [`parse_units_with_drain_check`], continuing [`ExprId`] allocation from
+/// `next_id` — see [`parse_unit_with_warnings_from`].
+pub fn parse_units_with_drain_check_from(
+    tokens: &[Token],
+    source: &str,
+    next_id: &mut u32,
+) -> Result<(Vec<SourceUnit>, Vec<CompileError>, bool), Vec<CompileError>> {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
+    p.next_expr_id = *next_id;
     let mut units = Vec::new();
     let mut errors: Vec<CompileError> = Vec::new();
     while p.peek().is_some() {
@@ -342,6 +391,7 @@ pub fn parse_units_with_drain_check(
             }
         }
     }
+    *next_id = p.next_expr_id;
     let eof = p.eof_span();
     let fully_drained = p.trivia.is_fully_drained();
     // `p` (and thus its `&mut warnings` borrow) is no longer used past here, so

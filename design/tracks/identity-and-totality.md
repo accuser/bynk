@@ -3,11 +3,14 @@
 - **Status:** **Settled — Slicing.** §3's seven questions were argued under a same-day settling
   review; Q1 was reversed once there (toward `ExprKey(Span)` scaffolding), then **reversed again**
   while slicing T3.1 (§1.1), once implementation work found the scaffolding had already been built —
-  and already rejected — by a commit that predates this track. Three slices have shipped for real:
+  and already rejected — by a commit that predates this track. Four slices have shipped for real:
   T3.0 (extending an existing debug-only check to handler bodies), T3.3a (`Ty::Error` as a real,
-  correctly-handled variant), and T3.3b (`expr_types` made total — **R4.3 closed in full**, at two
-  write choke-points rather than the ~81-function conversion originally estimated; §6). T3.4–T3.7
-  remain unbuilt. Merging settled **direction**; it is not a build authorisation.
+  correctly-handled variant), T3.3b (`expr_types` made total — **R4.3 closed in full**, at two
+  write choke-points rather than the ~81-function conversion originally estimated), and T3.4 (real
+  `ExprId` at parse, `expr_types` re-keyed by it — **R2.4 closed for expressions**; caught and fixed a
+  genuine cross-file collision bug before it shipped, see §9). `span_keyed_maps` is 3, down from 27 —
+  the remainder is `Ctx::pattern_binding_types`, a deliberate, principled exclusion (§6), not residue.
+  T3.5–T3.7 remain unbuilt. Merging settled **direction**; it is not a build authorisation.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -348,6 +351,7 @@ replaces it with the one real gap found while preparing it.
 | **T3.0** | Extended `43abc242`'s debug-only uniqueness check (finding #28) to `check_handler_body` and `check_body` — previously covered only `check_record`'s top-level-`fn` loop, leaving service/agent handler bodies and test-case bodies with no collision protection. Same per-call `seen` set granularity `43abc242` chose, for the same reason (a multi-file commons legitimately re-checks a handler more than once). `bynk-check/src/checker.rs` | R2.4 (verification) | **Shipped** — `cargo test --workspace` green, no existing fixture triggers the extended assertion |
 | **T3.3a** | `Ty::Error` added as a real variant on `enum Ty`, and given deliberate (not default/panicking-by-omission) semantics at every *exhaustive* match over `Ty` the compiler's own exhaustiveness check found: `compatible`/`structurally_compatible_inner` treat it as compatible with anything in both positions (R4.3's "assignable to and from everything"); `unify` binds it trivially; `substitute`/`contains_var`/`contains_flexible_var`/`rebrand_return_type` treat it as the leaf it is; `display` renders `<type error>`; `json_codable` treats it as codable (no cascading `json_uncodable`, matching "suppresses all downstream diagnostics that mention it"); `ty_to_type_ref` returns `None` (no codec); `ts_ty` — reached only if a checked, emission-bound program somehow contains one, which R4.3 says should never happen — raises a loud internal error (finding #28's own convention) rather than silently emitting a type for it. **Measured, not assumed:** the compiler's own exhaustiveness check found exactly 11 sites needing an arm (9 in `bynk-check`, 2 in `bynk-emit`) out of 900+ raw `Ty::` mentions across the two crates — most of those are constructors and non-exhaustive matches, not sites this change touches. `bynk-ide`/`bynk-lsp`/`bynk-wasm` needed no changes at all. | R4.3 (scaffolding) | **Shipped** — `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, `cargo test --workspace` all clean (one pre-existing, environment-only failure, unrelated) |
 | **T3.3b** | `expr_types` made total for real, at both of its actual write choke points — `type_of`'s own `ctx.expr_types.insert(expr.span, …)` (`checker.rs`) and `type_of_block`'s equivalent for a block's own span — changed to record `Ty::Error` rather than skip the entry when the computed type is `None`. **This closes R4.3's externally-observable content in full**, not partially: every expression `type_of` is called on (directly or through its ~90 recursive/nested self-calls) now gets an `expr_types` entry, whichever of the checker's internal paths produced `None` and for whatever reason. Verified with a new regression test (`a_diagnosed_resolution_failure_records_ty_error_instead_of_nothing`, `bynk-emit/src/project.rs`) asserting the actual behaviour, not just absence of failure: a diagnosed `type_of` failure (`bynk.types.uninferable_element_type` on an empty `[]` with no inferable element type) now records `<type error>` at its span instead of nothing. | R4.3 | **Shipped** — full workspace build/clippy/fmt/test clean, including the `bynkc` byte-identical golden fixture corpus (unchanged output — this is purely additive on the *recording* side) |
+| **T3.4** | Real `ExprId(u32)` allocated at parse — `id: ExprId` added to `Expr`, populated by a monotonic counter on `Parser<'a>` (`Parser::alloc_expr_id`, mirroring its existing `brace_depth` field), one allocation point so no two parser-produced nodes ever share an id. `expr_types`/`partial_expr_types` re-keyed from `HashMap<Span, Ty>` to `HashMap<ExprId, TypedExpr>` (`TypedExpr { span, ty }` — the value carries its own span so LSP consumers keep a position-shaped answer without a second map). `is_binding_cache` (genuinely `Expr`-keyed — condition-sub-expression memoisation, not pattern-related despite living beside `Ctx`'s pattern-binding field) converted the same way. Pattern-bound identifier types (`Pattern::Binding`, three sites) **deliberately kept `Span`-keyed** in a new, narrowly-scoped `Ctx::pattern_binding_types` field — `Ident` has no `ExprId` and giving it one would touch every identifier construction site in the workspace, not just the handful that bind; this is exactly the `PatId`/`ExprId` split the reference draws (Part 2), out of scope on purpose. **Measured, not assumed:** the compiler's own missing-field errors enumerated 46 real parser construction sites (of ~59 raw `Expr {` matches — the rest were struct *definitions* and function signatures, not constructions) plus 3 post-parse synthetic sites (`ExprId::SYNTHETIC`); the `expr_types` re-keying touched 61 read/write call sites, 49 of them the single uniform shape `expr_types.get(&X.span)` → `.get(&X.id).map(\|te\| &te.ty)`. | R2.4, R2.5, R4.9 | **Shipped** — see §9 for a real bug this slice found and fixed before it shipped, not after |
 
 **Why this closed in two edits, not ~81 functions and ~193 call sites — the estimate directly above
 this table (preserved, not deleted, as an example of the same "measure before trusting an estimate"
@@ -378,23 +382,27 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.4** | Real `ExprId` allocated at parse (no `ExprKey(Span)` predecessor — see above); `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>` entirely, migrated crate-by-crate per §3.3's seven-crate list (dual-map: both forms populated during migration, `Span`-keyed form deleted last) | R2.4, R2.5, R4.9 | none — T3.3b's totality no longer gates this; `HashMap<Span, Ty>` is total today, `IndexVec<ExprId, TyId>` is a representation change, not a totality one |
-| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.4. **§3.2 (Q2) called this "lowest coupling… could be its own early, small slice" — measured and found larger; see §9** |
+| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent. **§3.2 (Q2) called this "lowest coupling… could be its own early, small slice" — measured and found larger; see §9** |
 | **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | independent |
-| **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.4, T3.6 |
+| **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.6 (no longer gated on T3.4 — `ExprId` already exists) |
 
-T3.4–T3.7 above are not built (T3.0, T3.3a, T3.3b, above, are). Deliberately not decomposed to
+T3.5–T3.7 above are not built (T3.0, T3.3a, T3.3b, T3.4, above, are). Deliberately not decomposed to
 signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
 up: "an unopened phase whose slices are already written is a wish list." Each exists so a proposal
 citing it is recognised as this track's future work, not unclaimed scope — none is a proposal itself,
 and (per §1.1's correction) none should be assumed still-accurate without re-measuring against the
 tree first — the same discipline that caught the `ExprKey(Span)` premise being stale, found T3.3a's
-real 11-site scope instead of trusting a 900+-mention grep count, and found T3.3b closable in two
-edits instead of the ~81-function estimate directly above.
+real 11-site scope instead of trusting a 900+-mention grep count, found T3.3b closable in two edits
+instead of the ~81-function estimate, and (§9) found and fixed a real cross-file collision bug in T3.4
+before it ever shipped.
 
-**Completion probe:** `span_keyed_maps` = 0. Already built (T0.0, #999/#1000) and CI-gated
-(`greenfield_status_table_is_current`); reads **27** as of `3691d6a3`, **unchanged by T3.0** (a
-debug-only assertion, not a representation change).
+**Completion probe:** `span_keyed_maps` = 3 (down from 27). `HashMap<Span` now appears only in
+`Ctx::pattern_binding_types`'s own type signature (3 sites, deliberately, per T3.4's row above) — not
+0, but the remaining 3 are a stated, principled exclusion, not residue. `IndexVec<ExprId, TyId>`
+(R2.5/R4.9's literal "IndexVec, i.e. total" wording) is not yet built — `expr_types` is
+`HashMap<ExprId, TypedExpr>` today, which T3.3b already made *functionally* total (every id anyone
+would query has an entry) without being an `IndexVec` structurally. Whether that gap is worth closing
+on its own is an open question for whoever picks this phase back up, not decided here.
 
 ---
 
@@ -426,6 +434,31 @@ Appendix D row).
 
 ## 9. Risks
 
+**T3.4 found a real, silently-miscompiling bug in itself, before it shipped — recorded here in full
+because catching it is the whole point of this phase, not a footnote to it.** Making `expr_types`
+`ExprId`-keyed exposed that `bynk-emit`'s `collect_unit_methods` merges a type's methods from sibling
+files into the file that declares the type (so a type's methods surface together regardless of which
+file wrote them), *before* a single `check_record` call — and each file was parsed by its own,
+independently-zero-based `Parser`. Two files of similar size are *likely*, not just theoretically able,
+to produce colliding `ExprId`s once merged into one `expr_types` map. Finding #28's debug-only
+uniqueness assertion (extended to handler bodies in T3.0) caught it immediately on real fixtures
+(`bynkc/tests/fixtures/positive/64_full_time_commons`, `65_money_uses_time`) the first time the full
+test suite ran against the re-keyed map — a silent type-coercion drop (`self.raw` losing its
+`(self as number)` cast) that byte-identical golden tests alone would eventually have caught (the
+fixture's expected output would differ) but with no indication of *why*, and only for the specific
+files that happened to collide. The fix: `ExprId` allocation is now a single counter threaded across
+every file one project parse touches (`bynk-emit`'s `phase_parse`/`parse_sources`, via new
+`parse_*_from` entry points in `bynk-syntax` that seed and hand back a running counter — the existing,
+zero-based entry points are unchanged thin wrappers, so none of the ~20 single-file callers this doc's
+T3.4 row measured needed touching), not reset per file. The cached first-party synthetic units
+(`bynk.bynk`, `bynk/map.bynk`, five more — parsed once per *process* behind a `OnceLock`, reused across
+every later compile regardless of that compile's own file count) get their own fixed, disjoint,
+1M-wide reserved id ranges instead, since a `OnceLock`-cached parse can't participate in a live
+per-compile counter. Full workspace test suite (including the two fixtures above) verified green
+after the fix, on the same run that would have caught a wrong fix immediately. This is not a caveat on
+T3.4's totality claim — it's evidence the uniqueness assertion this track has been building on since
+T3.0 does exactly what it says on the tin, on a real defect, before a user ever saw it.
+
 **The largest phase attempted so far.** Relative size 8 against Tier B's 3 (trajectory §5). §3.7 (Q7)
 is where slicing granularity gets tested against that, rather than assumed.
 
@@ -437,8 +470,9 @@ this.
 **Totality had a bootstrapping order — resolved, not just avoided.** §3.2 (Q2) named it: `IndexVec`'s
 totality guarantee (R2.5) needs somewhere honest to record "this node's resolution failed," which
 didn't exist until `Ty::Error` (R4.3) landed. T3.3a then T3.3b landed in that order for exactly this
-reason, and R4.9's future `IndexVec<ExprId, TyId>` (T3.4) now has `Ty::Error` to put at a missing
-index instead of needing to invent the same answer under different, more gated conditions later.
+reason, and a future literal `IndexVec<ExprId, TyId>` (should one still be built — see T3.4's
+completion-probe note in §6) already has `Ty::Error` to put at a missing index instead of needing to
+invent the same answer under different, more gated conditions later.
 
 **Seven consumer crates, not three.** §3.3 (Q3) counts `expr_types`'s actual readers against the
 review's "three consumer crates" framing (which measured something else — the AST-retrofit cost, not
