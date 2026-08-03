@@ -88,26 +88,30 @@ serde_json = "1"
 [profile.release]
 lto = "thin"
 
-# Test and dev builds carry line-tables-only debuginfo instead of the default
-# full debuginfo. `profile.test` inherits `profile.dev`, so setting it here
-# covers both the dependency graph and the test binaries themselves — stating it
-# twice would only invite the two halves to drift.
+# NO `[profile.dev]` debuginfo override here — it was tried, measured, and was
+# WORSE. Recorded so the next person to have the idea doesn't pay for it again.
 #
-# Why, measured rather than guessed: the `Test suite (windows-latest)` leg is the
-# PR gate's whole critical path. On run 2817 (2026-08-03) it took ~7 min while
-# every other job in the workflow finished 3m33s in, and its 5m31s of work split
-# 2m37s of compile/link against 143.8s of actual test execution. The suite links
-# 141 separate test binaries; on Windows, emitting and linking a full PDB per
-# binary is the bulk of that first half.
+# The reasoning that motivated it is still correct: the `Test suite
+# (windows-latest)` leg is the PR gate's entire critical path (every other job
+# finishes ~3m30s in), and roughly half of it is compile/link, not test
+# execution — the suite links 141 separate test binaries. Cutting the per-binary
+# PDB work by setting `[profile.dev] debug = "line-tables-only"` (inherited by
+# `profile.test`) looked like the obvious lever.
 #
-# `line-tables-only` keeps file/line in panic backtraces — what a red CI run
-# needs to stay diagnosable, and what nextest's `failure-output = "final"` exists
-# to surface — and drops only the variable-level debuginfo an interactive
-# debugger uses. If you need to step through a test in a debugger, override it
-# for that run: `CARGO_PROFILE_DEV_DEBUG=full cargo test ...`.
+# It is not. Windows compile/link, from the `Finished \`test\` profile` line:
 #
-# NOTE: changing a profile changes every crate's fingerprint, so the first CI run
-# after this lands rebuilds from cold on each OS and will NOT show the win — read
-# the second run on a branch, not the first.
-[profile.dev]
-debug = "line-tables-only"
+#     full debuginfo (default)   2m22s (run 2822), 2m37s (run 2817)
+#     line-tables-only           2m50s (run 2824), 2m53s (run 2823)
+#
+# Consistently ~14% SLOWER, with no overlap between the two ranges. Whatever
+# dominates that half on windows-msvc, it is not the volume of debuginfo — so
+# the default stands, and the leg keeps full debuginfo for free diagnosability.
+#
+# Note the job total misleads here (465s → 415s across the same runs) because
+# test execution itself swings 124-144s run to run. Compare the `Finished` line,
+# not the job.
+#
+# Untested from here: `debug = 0`, and `-C link-arg=/DEBUG:NONE`. If you try
+# either, measure the `Finished` line across at least two warm runs per arm —
+# and note a profile change rewrites every crate fingerprint, so the first run
+# on a branch rebuilds cold and tells you nothing.
