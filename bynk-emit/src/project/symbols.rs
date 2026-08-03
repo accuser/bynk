@@ -729,6 +729,7 @@ fn synthetic_render_fn() -> FnDecl {
         body: Block {
             statements: Vec::new(),
             tail: Box::new(Expr {
+                id: ExprId::SYNTHETIC,
                 kind: ExprKind::StrLit(String::new()),
                 span,
             }),

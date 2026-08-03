@@ -1,7 +1,8 @@
 //! v0.30.2 (ADR 0063): the expression-type sink.
 //!
-//! The checker computes `expr_types: HashMap<Span, Ty>` per file as it types
-//! each expression, but that map rides inside the `Ok(TypedCommons)` payload
+//! The checker computes `expr_types: HashMap<ExprId, TypedExpr>` per file as
+//! it types each expression (T3.4, R2.4 — keyed by node identity, not
+//! position), but that map rides inside the `Ok(TypedCommons)` payload
 //! `check_record` drops on error, and the LSP `Analyse` path discards it
 //! entirely. This sink carries it out to the analysis so completion can ask
 //! *"what is the type of the expression at this offset?"* (the receiver before
@@ -13,7 +14,8 @@
 //! Unlike hints, **test/integration files are not muted** (completion runs in
 //! them); only synthetic toolchain-injected files are.
 
-use crate::checker::Ty;
+use crate::checker::{Ty, TypedExpr};
+use bynk_syntax::ast::ExprId;
 use bynk_syntax::span::Span;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -47,7 +49,14 @@ impl ExprTypeSink {
 
     /// Record a whole file's `expr_types` map (the Ok-path capture). Dropped
     /// when muted or before any `enter_file`.
-    pub fn record_file(&mut self, expr_types: &HashMap<Span, Ty>) {
+    ///
+    /// T3.4: the checker's own map is keyed by [`ExprId`] (R2.4) — position
+    /// is never identity there. This sink's own storage stays position-keyed
+    /// on purpose: an editor asks "what's at this cursor offset," a
+    /// position-shaped question asked at the LSP boundary, not the
+    /// checker's. `TypedExpr` carries the span the checker computed it
+    /// against, so the join needs no separate id→span table.
+    pub fn record_file(&mut self, expr_types: &HashMap<ExprId, TypedExpr>) {
         if self.muted {
             return;
         }
@@ -55,7 +64,7 @@ impl ExprTypeSink {
             return;
         };
         let entry = self.files.entry(file.clone()).or_default();
-        entry.extend(expr_types.iter().map(|(span, ty)| (*span, ty.clone())));
+        entry.extend(expr_types.values().map(|te| (te.span, te.ty.clone())));
     }
 
     /// Drain the recorded types, each file's entries ordered by span (start

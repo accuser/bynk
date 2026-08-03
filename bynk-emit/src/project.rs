@@ -28,7 +28,7 @@ use std::sync::OnceLock;
 
 use crate::emitter;
 use bynk_check::checker;
-use bynk_check::checker::{CapabilityInfo, CapabilityOpInfo, Ty};
+use bynk_check::checker::{CapabilityInfo, CapabilityOpInfo, Ty, TypedExpr};
 use bynk_check::expr_types::{ExprTypeSink, FileExprTypes};
 use bynk_check::firstparty::{self, Platform};
 use bynk_check::hints::{FileHints, HintSink};
@@ -36,6 +36,7 @@ use bynk_check::index::{IndexBuilder, ProjectIndex, RefSink, SiteRef, SymbolKind
 use bynk_check::locals::{FileLocals, LocalsSink};
 use bynk_check::requirements::{FileRequirements, RequirementSink};
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
+use bynk_syntax::ast::ExprId;
 use bynk_syntax::ast::*;
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
@@ -1112,7 +1113,7 @@ fn record_analyse_types(
     exprs: &mut ExprTypeSink,
     source_path: &Path,
     synthetic: bool,
-    types: &HashMap<Span, Ty>,
+    types: &HashMap<ExprId, TypedExpr>,
 ) {
     exprs.enter_file(source_path, synthetic);
     exprs.record_file(types);
@@ -1182,17 +1183,38 @@ fn phase_discovery(
 /// round. The gating below (`consumes_bynk`, `uses_map`, etc.) is unaffected —
 /// it still runs fresh for every project from that project's own parsed
 /// `uses`/`consumes`; only the parse *result* being gated is cached.
+/// T3.4 (R2.4): each first-party synthetic unit reserves its own 1M-wide
+/// `ExprId` block, spaced far above anything a real project's own file count
+/// could ever reach — see [`firstparty_parsed`]'s doc comment for why a fixed
+/// reservation, not a threaded counter, is the right shape here.
+const FIRSTPARTY_ID_BLOCK: u32 = 1_000_000;
+const FIRSTPARTY_ID_BASE: u32 = 1_000_000_000;
+
 fn firstparty_parsed(
     cache: &'static OnceLock<Result<ParsedFile, Vec<CompileError>>>,
     identity_path: &'static str,
     src: &'static str,
     kind: UnitKind,
+    // T3.4 (R2.4): a fixed base, not a live project counter — `cache` is a
+    // `OnceLock`, parsed once per *process*, and reused as-is across every
+    // later compile in that process regardless of how many real files that
+    // *particular* compile happens to have. A threaded counter can't work
+    // here (this parse doesn't know, and must never depend on, which compile
+    // triggers it first); a fixed, permanently-reserved range that no real
+    // project could ever grow into does. Call sites space their bases
+    // `FIRSTPARTY_ID_BLOCK` apart so the (currently seven) first-party units
+    // can never collide with each other either, however many of them one
+    // project ends up injecting together.
+    id_base: u32,
 ) -> Result<ParsedFile, Vec<CompileError>> {
     cache
         .get_or_init(|| {
             lexer::tokenize(src)
                 .map_err(|e| vec![e])
-                .and_then(|toks| parser::parse_unit(&toks, src))
+                .and_then(|toks| {
+                    parser::parse_unit_with_warnings_from(&toks, src, &mut { id_base })
+                        .map(|(unit, _warnings)| unit)
+                })
                 .map(|unit| ParsedFile {
                     identity_path: PathBuf::from(identity_path),
                     source_path: PathBuf::from(identity_path),
@@ -1230,12 +1252,18 @@ fn phase_parse(
     snapshots: &mut Vec<(PathBuf, String)>,
 ) -> Result<(Vec<ParsedFile>, bool, bool), ()> {
     let mut parsed: Vec<ParsedFile> = Vec::new();
+    // T3.4 (R2.4): one `ExprId` counter across every file this project parse
+    // touches (both trees, in split mode) — see `parse_sources`'s own doc
+    // comment for why a per-file counter would collide once
+    // `collect_unit_methods` merges sibling files' methods together.
+    let mut next_expr_id: u32 = 0;
     let parse_tree = |root: &Path,
                       prefix: &Path,
                       files: &[PathBuf],
                       parsed: &mut Vec<ParsedFile>,
                       errors: &mut ErrorSink,
-                      snapshots: &mut Vec<(PathBuf, String)>| {
+                      snapshots: &mut Vec<(PathBuf, String)>,
+                      next_expr_id: &mut u32| {
         for path in files {
             // Tree-relative: what unit validation reads.
             let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
@@ -1257,7 +1285,7 @@ fn phase_parse(
                 }
             };
             snapshots.push((id.clone(), source.clone()));
-            match parse_sources(root, prefix, path, source) {
+            match parse_sources(root, prefix, path, source, next_expr_id) {
                 Ok((pfs, warnings)) => {
                     parsed.extend(pfs);
                     // ADR 0117: the sink classifies these as warnings — they
@@ -1275,6 +1303,7 @@ fn phase_parse(
         &mut parsed,
         errors,
         snapshots,
+        &mut next_expr_id,
     );
     if split_mode {
         parse_tree(
@@ -1284,6 +1313,7 @@ fn phase_parse(
             &mut parsed,
             errors,
             snapshots,
+            &mut next_expr_id,
         );
     }
     if !errors.is_empty() && parsed.is_empty() {
@@ -1307,6 +1337,7 @@ fn phase_parse(
             "bynk.bynk",
             firstparty::BYNK_ADAPTER_SRC,
             UnitKind::Adapter,
+            FIRSTPARTY_ID_BASE,
         ) {
             Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
@@ -1327,6 +1358,7 @@ fn phase_parse(
             "bynk/cloudflare.bynk",
             firstparty::CLOUDFLARE_ADAPTER_SRC,
             UnitKind::Adapter,
+            FIRSTPARTY_ID_BASE + FIRSTPARTY_ID_BLOCK,
         ) {
             Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
@@ -1362,6 +1394,7 @@ fn phase_parse(
             "bynk/map.bynk",
             firstparty::BYNK_MAP_SRC,
             UnitKind::Commons,
+            FIRSTPARTY_ID_BASE + 2 * FIRSTPARTY_ID_BLOCK,
         ) {
             Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
@@ -1374,6 +1407,7 @@ fn phase_parse(
             "bynk/list.bynk",
             firstparty::BYNK_LIST_SRC,
             UnitKind::Commons,
+            FIRSTPARTY_ID_BASE + 3 * FIRSTPARTY_ID_BLOCK,
         ) {
             Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
@@ -1388,6 +1422,7 @@ fn phase_parse(
             "bynk/string.bynk",
             firstparty::BYNK_STRING_SRC,
             UnitKind::Commons,
+            FIRSTPARTY_ID_BASE + 4 * FIRSTPARTY_ID_BLOCK,
         ) {
             Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
@@ -1405,6 +1440,7 @@ fn phase_parse(
             "bynk/locale/types.bynk",
             firstparty::BYNK_LOCALE_TYPES_SRC,
             UnitKind::Commons,
+            FIRSTPARTY_ID_BASE + 5 * FIRSTPARTY_ID_BLOCK,
         ) {
             Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),
@@ -1419,6 +1455,7 @@ fn phase_parse(
             "bynk/locale.bynk",
             firstparty::BYNK_LOCALE_SRC,
             UnitKind::Commons,
+            FIRSTPARTY_ID_BASE + 6 * FIRSTPARTY_ID_BLOCK,
         ) {
             Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend_for(None, errs),

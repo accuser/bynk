@@ -2365,8 +2365,27 @@ pub fn generic_record_is_recursive(
     false
 }
 
+/// T3.4 (R2.4): a node's identity, independent of position — allocated once,
+/// monotonically, per expression the parser constructs (`Parser::alloc_expr_id`
+/// in `bynk-syntax/src/parser.rs`). Never derived from a `Span`, so two
+/// expressions occupying the same byte range (a synthetic node, a
+/// zero-width span) never collide the way a span-keyed side table could.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ExprId(pub u32);
+
+impl ExprId {
+    /// Reserved for `Expr` nodes built outside the parser — after checking,
+    /// during emission — that are never looked up in a checker-populated
+    /// `expr_types`/`expr_ty` table (they are lowered directly, from
+    /// already-typed sub-expressions they wrap or splice). A lookup against
+    /// this id is a bug: the node was never checked and has no recorded
+    /// type of its own.
+    pub const SYNTHETIC: ExprId = ExprId(u32::MAX);
+}
+
 #[derive(Debug, Clone)]
 pub struct Expr {
+    pub id: ExprId,
     pub kind: ExprKind,
     pub span: Span,
 }
@@ -2376,7 +2395,13 @@ pub struct Expr {
 /// field are boxed specifically to keep it small (176 bytes unboxed, 128
 /// boxed, measured on this target). Pinned so the next large variant added
 /// to `ExprKind` is a compile error here rather than a silent regression.
-const _: () = assert!(std::mem::size_of::<Expr>() <= 128);
+/// T3.4: `id: ExprId` adds 4 bytes (padded); the budget is unchanged, so this
+/// still fits.
+/// T3.4 (R2.4): `id: ExprId` is a deliberate 8-byte increase (128 → 136,
+/// alignment-padded from 4), not a silent regression — the ceiling moves
+/// with it, once, here, so the next *accidental* growth still trips this
+/// assertion rather than hiding under slack headroom.
+const _: () = assert!(std::mem::size_of::<Expr>() <= 136);
 
 impl ExprKind {
     /// Construct an `IntLit` for a *synthesized* integer — one the compiler
