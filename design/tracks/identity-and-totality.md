@@ -3,22 +3,22 @@
 - **Status:** **Settled — Slicing.** §3's seven questions were argued under a same-day settling
   review; Q1 was reversed once there (toward `ExprKey(Span)` scaffolding), then **reversed again**
   while slicing T3.1 (§1.1), once implementation work found the scaffolding had already been built —
-  and already rejected — by a commit that predates this track. Six slices have shipped for real:
+  and already rejected — by a commit that predates this track. Seven slices have shipped for real:
   T3.0 (extending an existing debug-only check to handler bodies), T3.3a (`Ty::Error` as a real,
   correctly-handled variant), T3.3b (`expr_types` made total — **R4.3 closed in full**, at two
   write choke-points rather than the ~81-function conversion originally estimated), T3.4 (real
   `ExprId` at parse, `expr_types` re-keyed by it — **R2.4 closed for expressions**; caught and fixed a
   genuine cross-file collision bug before it shipped, see §9), T3.5 (real `FileId` on `Span`,
   stamped at the lexer — **R2.2 closed**, at one choke point rather than the 160-construction-site
-  conversion originally estimated; see §9), and T3.6a (`Hash`/`Ord` on `Ty`/`NamedKind`/`BaseType` —
+  conversion originally estimated; see §9), T3.6a (`Hash`/`Ord` on `Ty`/`NamedKind`/`BaseType` —
   **half of R4.2 closed**, a 3-line derive diff touching zero call sites; the other half, real `TyId`
   interning for `Copy`, is **not** a choke-point fix — split out as T3.6b, its own larger effort, see
-  §9). `span_keyed_maps` is 3, down from 27 —
+  §9), and T3.7a (`certify`/`CheckedProgram`, scoped to the single-file compile path — **half of
+  R3.10 closed**; its "gated on T3.6" was itself re-measured and found stale, see §9). `span_keyed_maps`
+  is 3, down from 27 —
   the remainder is `Ctx::pattern_binding_types`, a deliberate, principled exclusion (§6), not residue.
-  T3.7's "gated on T3.6" was itself re-measured and found stale (§9) — R3.10 needs only `Ty::Error`
-  (T3.3a) and total `expr_types` (T3.3b), both shipped; it is gated on neither T3.4 nor T3.6b, though
-  a real open design question (does `certify` wrap `TypedCommons` in a new `CheckedProgram`, or does
-  `TypedCommons` itself go private) remains unresolved. T3.6b–T3.7 remain unbuilt. Merging settled
+  T3.6b and T3.7b (the project/batch path's `certify`, which needs a real design pass on emission
+  ordering before it can be sliced — see §9) remain unbuilt. Merging settled
   **direction**; it is not a build authorisation.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
@@ -363,6 +363,7 @@ replaces it with the one real gap found while preparing it.
 | **T3.4** | Real `ExprId(u32)` allocated at parse — `id: ExprId` added to `Expr`, populated by a monotonic counter on `Parser<'a>` (`Parser::alloc_expr_id`, mirroring its existing `brace_depth` field), one allocation point so no two parser-produced nodes ever share an id. `expr_types`/`partial_expr_types` re-keyed from `HashMap<Span, Ty>` to `HashMap<ExprId, TypedExpr>` (`TypedExpr { span, ty }` — the value carries its own span so LSP consumers keep a position-shaped answer without a second map). `is_binding_cache` (genuinely `Expr`-keyed — condition-sub-expression memoisation, not pattern-related despite living beside `Ctx`'s pattern-binding field) converted the same way. Pattern-bound identifier types (`Pattern::Binding`, three sites) **deliberately kept `Span`-keyed** in a new, narrowly-scoped `Ctx::pattern_binding_types` field — `Ident` has no `ExprId` and giving it one would touch every identifier construction site in the workspace, not just the handful that bind; this is exactly the `PatId`/`ExprId` split the reference draws (Part 2), out of scope on purpose. **Measured, not assumed:** the compiler's own missing-field errors enumerated 46 real parser construction sites (of ~59 raw `Expr {` matches — the rest were struct *definitions* and function signatures, not constructions) plus 3 post-parse synthetic sites (`ExprId::SYNTHETIC`); the `expr_types` re-keying touched 61 read/write call sites, 49 of them the single uniform shape `expr_types.get(&X.span)` → `.get(&X.id).map(\|te\| &te.ty)`. | R2.4, R2.5, R4.9 | **Shipped** — see §9 for a real bug this slice found and fixed before it shipped, not after |
 | **T3.5** | Real `FileId(u32)` on `Span` (`pub file: FileId`), stamped at the one place a `Span` is ever first minted from real source bytes — the lexer. `Span::new(start, end)` kept its existing two-argument signature, now defaulting `file: FileId::UNKNOWN`; a new `Span::new_in(file, start, end)` is the real-identity constructor. `lexer::tokenize`/`tokenize_expanding_holes` became thin wrappers around new `tokenize_in`/`tokenize_expanding_holes_in` entry points that thread `file` through every one of the lexer's internal span constructions (13 sites in the main scan loop, plus the `scan_str`/`scan_hole`/`split_interp` string-and-interpolation helpers it calls). `bynk-emit`'s `phase_parse`/`parse_sources` gained a `next_file_id: u32` counter threaded exactly like T3.4's `next_expr_id` — one `FileId` allocated per source file, at the same choke point. The interpolation-hole re-lexer (`Parser::parse_hole_expr`) needed no new field: it already receives the hole's own `Span`, which now carries the right `file` once the lexer is fixed, so its `tokenize(src)` call became `tokenize_in(src, hole.file)`. **Every other `Span` construction site in the workspace — the parser, the checker, the IDE/LSP single-document call sites, all tests — needed no change at all**, because they safely default to `FileId::UNKNOWN` exactly as T3.4's non-origin `Expr` construction sites defaulted to zero threading. | R2.2 | **Shipped** — see §9 for a real bug this slice's own safety-net effect (not finding #28 this time, but the same "a total field exposes a latent assumption" pattern) caught in the LSP rename validator before it shipped |
 | **T3.6a** | `Hash, PartialOrd, Ord` added to `Ty`, `NamedKind`, and `BaseType`'s derive lists. **Measured, not assumed** (see §9): unlike every prior slice, T3.6 as a whole (real `TyId` interning, R4.1's `Copy` requirement) genuinely has no choke point — `Ty` is minted at ~200+ scattered sites and recursively pattern-matched in ~25-30 functions across four crates, so the naive size estimate was, unusually, roughly *right* for that half. But R4.2's `Hash`/`Ord` half is unrelated to interning: `Ty`'s recursive fields (`Box<Ty>`, `Vec<Ty>`, `String`, tuples) already support derived `Hash`/`Ord` with zero manual trait impls to conflict with, so adding the derives is a 3-line diff touching zero of the workspace's 958 `Ty::` call sites. Exposed one unrelated, pre-existing `clippy::nonminimal_bool` warning in `bynk-emit/src/project/validate.rs` (`!opt.is_some_and(f)` → `opt.is_none_or(!f)`) that a full downstream rebuild surfaced for the first time; fixed alongside since it now blocks `-D warnings`. | R4.2 (half) | **Shipped** |
+| **T3.7a** | `CheckedProgram`/`certify` (`bynk-check/src/checker.rs`), scoped to the single-file compile path. `certify(program: TypedCommons, diagnostics: Vec<CompileError>) -> Result<CheckedProgram, Vec<CompileError>>` rejects on any error-severity diagnostic (reusing `bynk_syntax::partition_by_severity`, the same split `check_record` already applies) and otherwise wraps `program`; `CheckedProgram` has no public constructor and no way back to a bare `TypedCommons`, so the only way to obtain one is `certify`. `emitter::emit` (`bynk-emit/src/emitter.rs`) — confirmed, not assumed, to have exactly one production caller (`bynk-emit/src/lib.rs`'s `compile_with_warnings`) — now takes `&CheckedProgram` instead of `&TypedCommons`; `compile_with_warnings` calls `certify` right after `checker::check(...)?` and unwraps with a loud internal-error panic on the (structurally unreachable, since `check` already gated on hard errors) `Err` path, rather than silently trusting the caller not to skip the check. **Deliberately does not touch the project/batch path** (`bynk-emit/src/project.rs`'s `emit_project`): its per-unit call happens *before* that unit's build-wide gate is finally decided (cross-unit validation can still fail the whole build afterward), so wrapping it in `CheckedProgram` at today's call site would misrepresent an unfinished decision as a certified one — split out as T3.7b, see §9. | R3.10 (single-file half) | **Shipped** |
 
 **Why this closed in two edits, not ~81 functions and ~193 call sites — the estimate directly above
 this table (preserved, not deleted, as an example of the same "measure before trusting an estimate"
@@ -394,9 +395,9 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
 | **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it | R4.1, R4.2 (`Copy` half) | independent — needs its own settling review before slicing further, since (per §9) the realistic scope here is a checker-and-emitter-wide rewrite of construction and destructuring, not a threading problem |
-| **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | **independent of T3.6b — re-measured, see §9.** Not gated on `ExprId` (T3.4) either; both were stale artifacts of the original four-item numbered sequencing, not re-derived dependencies |
+| **T3.7b** | `certify`/`CheckedProgram` for the project/batch path — `bynk-emit/src/project.rs`'s `finish_build` and its per-unit `emit_project` call. Needs its own design pass first (see §9, T3.7a's row): today's per-unit emission is speculative, running *before* the build-wide gate is finally decided (cross-unit validation can still fail afterward), so a straight port of T3.7a's shape would misrepresent an unfinished decision as certified — the emission/gating order itself may need to change, not just the type at the boundary | R3.10 (project/batch half) | independent of T3.6b (re-measured, see §9) — gated on resolving the speculative-emission-vs-certify ordering question first |
 
-T3.6b–T3.7 above are not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a, above, are). Deliberately not decomposed to
+T3.6b, T3.7b above are not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a, T3.7a, above, are). Deliberately not decomposed to
 signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
 up: "an unopened phase whose slices are already written is a wish list." Each exists so a proposal
 citing it is recognised as this track's future work, not unclaimed scope — none is a proposal itself,
@@ -654,6 +655,41 @@ itself exactly as constructible as today, so those test fixtures need no change)
 test-only bypass)? That boundary — not `Ty` interning — is the one open question worth resolving before
 T3.7 is sliced for real; not decided here, per this track's own discipline of not writing slices further
 than the tree currently supports measuring.
+
+**T3.7a answered that open question the same way T3.4/T3.5 resolved theirs — by attempting the
+smaller half and finding it genuinely small, then discovering the other half's real shape only once
+code was in hand.** Chose the wrapper: `pub struct CheckedProgram(TypedCommons)` (private field, no
+`Deref`, one `.program()` accessor, no way back to a bare `TypedCommons`), constructed only by
+`certify(program: TypedCommons, diagnostics: Vec<CompileError>) -> Result<CheckedProgram,
+Vec<CompileError>>` — reusing `bynk_syntax::partition_by_severity`, the exact split `check_record`
+already applies, rather than inventing a second error-severity test. This leaves the three existing
+test-only hand-built `TypedCommons` literals (`emitter/lower.rs`'s `empty_commons()`,
+`project/tests_emit.rs`'s two synthetic builders) untouched — none of them call `emitter::emit`
+directly (confirmed by grep, not assumed), so none needed to route through `certify`.
+`emitter::emit`'s signature changing from `&TypedCommons` to `&CheckedProgram` touched exactly one
+production call site (`bynk-emit/src/lib.rs`'s `compile_with_warnings`) — confirmed by grep before
+changing it, not assumed from the doc comment's claim that `emit` is single-file-only — with the same
+zero-ripple shape as T3.4/T3.5's other choke-point fixes: `cargo build --workspace` and `cargo test
+--workspace --no-run` both came back clean on the first try, meaning no other call site anywhere in
+the workspace (including every test crate) constructs a `TypedCommons` and feeds it to `emit` outside
+that one path.
+
+**The project/batch path (T3.7b) is deliberately not attempted, and this is not the same shape of gap
+T3.6b is.** Reading `bynk-emit/src/project.rs`'s per-unit loop (around `emit_project`'s call site)
+found something the earlier measurement pass didn't surface: after `checker::check_record` returns
+`Ok`, the same unit still passes through *further* gates in the same loop —
+`check_context_constraints`, `check_context_declarations` (whose `blocks_emission` is itself decided
+by diagnostic severity, mirroring `certify`'s own logic) — and `emit_project` is called before all of
+those, and before the cross-unit validation `finish_build` runs afterward, and *before* `finish_build`'s
+own final `errors.is_empty()` gate. TS is generated speculatively, per unit, before the build as a
+whole is known to succeed; `ProjectOutput` is only returned if the aggregate, end-of-build check later
+passes. Wrapping `emit_project`'s call site in `CheckedProgram` today, at that point in the loop,
+would not be a mechanical port of T3.7a's shape — it would either be a lie (claiming "certified" for a
+unit whose sibling units haven't finished validating yet) or require restructuring `finish_build` to
+defer all emission until after the aggregate gate, which is a real architectural change to the
+build's control flow, not a signature change at an existing boundary. That's why T3.7b is scoped as
+needing its own design pass on emission ordering, not slotted in as "T3.7's other half" the way T3.6a
+and T3.6b split cleanly.
 
 ## 10. What "transformational" means here
 

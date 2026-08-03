@@ -30,7 +30,7 @@ use bynk_check::builtin_names::methods::{
     TRAVERSE_TRY,
 };
 use bynk_check::builtin_names::types::*;
-use bynk_check::checker::{NamedKind, Ty, TypedCommons};
+use bynk_check::checker::{CheckedProgram, NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
 
 pub mod contracts;
@@ -178,7 +178,13 @@ pub(crate) fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
 }
 
 /// Emit TypeScript source for the typed commons (single-file mode).
-pub(crate) fn emit(commons: &TypedCommons) -> String {
+///
+/// Takes a [`CheckedProgram`] rather than a bare `TypedCommons` (T3.7, R3.10):
+/// the only way to obtain one is [`bynk_check::checker::certify`], so this
+/// function can no longer be called with an unchecked or partially-checked
+/// program by construction.
+pub(crate) fn emit(program: &CheckedProgram) -> String {
+    let commons = program.program();
     // Emit the body first so the header can decide which runtime helpers to
     // import from what the body actually referenced (v0.110: the `__bynkBytes*`
     // helpers are imported only when a `Bytes` value is constructed/compared).
