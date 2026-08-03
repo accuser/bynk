@@ -51,3 +51,14 @@ updates:
     directory: "/site"
     schedule:
       interval: weekly
+    groups:
+      # `astro` pins `@astrojs/markdown-remark` to an *exact* version as a
+      # peer (astro 7.1.4 wants 7.2.1, 7.1.5 wants 7.2.2), and Starlight pulls
+      # both in transitively. Bumped one at a time they deadlock: each PR's
+      # `npm ci` dies on ERESOLVE against the version the other PR would bring.
+      # Group them so a release lands as one resolvable PR.
+      astro:
+        patterns:
+          - "astro"
+          - "@astrojs/*"
+          - "starlight-*"
