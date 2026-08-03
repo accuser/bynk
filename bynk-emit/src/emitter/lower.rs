@@ -1036,6 +1036,10 @@ pub(crate) fn lower_expr(e: &Expr, cx: &mut LowerCtx) -> Lowered {
             } else {
                 pre.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
             }
+            // T2.3 (R6.3): every branch above just pushed a `return` that must
+            // exit the enclosing function, not whatever scope this `Lowered`
+            // eventually lands in — see `LowerCtx::emitted_early_return`.
+            cx.emitted_early_return = true;
             format!("{tmp}.value")
         }
         ExprKind::ConstructorCall {
@@ -2475,7 +2479,7 @@ fn lower_and_with_is(
     lhs: &Expr,
     rhs: &Expr,
     cx: &mut LowerCtx,
-) -> Option<(Vec<String>, Lowered, String)> {
+) -> Option<(Vec<String>, Lowered, String, bool)> {
     // Probe structurally (no lowering) so a `&&` without an `is` falls through
     // to the caller's ordinary lowering untouched. This mirrors exactly the
     // shapes `gather_is_bindings_for_emit` walks (`&&` and parens), preserving
@@ -2508,10 +2512,17 @@ fn lower_and_with_is(
     // order, before the final `return rhs_expr` the caller wraps them in, so
     // one combined list is exactly what the caller's existing wrap already
     // expects.
+    // T2.3 (R6.3): isolate the flag to just `rhs`'s own lowering, so a `?`
+    // inside `lhs`'s `is`-receiver (already hoisted unconditionally into the
+    // caller's own statement position, not this arrow — see `lower_bin_op`)
+    // doesn't falsely report a propagating return coming from `bindings`.
+    let saved_early_return = std::mem::take(&mut cx.emitted_early_return);
     let rhs_lowered = lower_expr(rhs, cx);
+    let rhs_returns = cx.emitted_early_return;
+    cx.emitted_early_return = saved_early_return || rhs_returns;
     bindings.extend(rhs_lowered.pre);
     cx.shadow_scopes.pop();
-    Some((bindings, lhs_lowered, rhs_lowered.expr))
+    Some((bindings, lhs_lowered, rhs_lowered.expr, rhs_returns))
 }
 
 /// Walk an expression collecting `const name = expr.field;` strings for
@@ -4231,11 +4242,32 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     // we lower the rhs assuming the binding `n = x.value` was
     // captured. We use a parenthesised IIFE to scope the binding.
     if op == BinOp::And
-        && let Some((bindings, lhs_lowered, rhs_expr)) = lower_and_with_is(lhs, rhs, cx)
+        && let Some((bindings, lhs_lowered, rhs_expr, rhs_returns)) =
+            lower_and_with_is(lhs, rhs, cx)
     {
         let lhs_expr = pre.absorb(lhs_lowered);
         if bindings.is_empty() {
             return pre.finish(format!("{lhs_expr} && {rhs_expr}"));
+        }
+        // T2.3 (R6.3): `bindings` includes rhs's own hoisted statements
+        // (`lower_and_with_is`'s doc comment above), so if one of those is a
+        // `?`'s propagating early return, the arrow-IIFE below would capture
+        // it instead of letting it exit the enclosing function — reuse
+        // `hoist_if_as_statement` (built for T2.1's `if`-hoisting) to hoist
+        // this `&&` as a real `if` statement instead.
+        if rhs_returns {
+            let value = hoist_if_as_statement(
+                &mut pre,
+                lhs_expr,
+                Lowered {
+                    pre: bindings,
+                    expr: rhs_expr,
+                },
+                Lowered::bare("false"),
+                Some("boolean".to_string()),
+                cx,
+            );
+            return pre.finish(value);
         }
         // Emit:  lhs && (() => { const n = ...; return rhs; })()
         let mut wrap = String::new();
@@ -4252,11 +4284,26 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     // the antecedent binds into the consequent (the consequent is only reached
     // when the antecedent holds), so reuse the same is-binding IIFE flow.
     if op == BinOp::Implies
-        && let Some((bindings, lhs_lowered, rhs_expr)) = lower_and_with_is(lhs, rhs, cx)
+        && let Some((bindings, lhs_lowered, rhs_expr, rhs_returns)) =
+            lower_and_with_is(lhs, rhs, cx)
     {
         let lhs_expr = pre.absorb(lhs_lowered);
         if bindings.is_empty() {
             return pre.finish(format!("(!({lhs_expr}) || {rhs_expr})"));
+        }
+        if rhs_returns {
+            let value = hoist_if_as_statement(
+                &mut pre,
+                format!("!({lhs_expr})"),
+                Lowered::bare("true"),
+                Lowered {
+                    pre: bindings,
+                    expr: rhs_expr,
+                },
+                Some("boolean".to_string()),
+                cx,
+            );
+            return pre.finish(value);
         }
         let mut wrap = String::new();
         wrap.push_str(&format!("(!({lhs_expr}) || ((() => {{ "));
@@ -4279,23 +4326,54 @@ fn lower_bin_op(op: BinOp, lhs: &Expr, rhs: &Expr, cx: &mut LowerCtx) -> Lowered
     // hoists nothing; otherwise wrap it in an IIFE so the hoist runs only
     // when the operator actually reaches rhs.
     //
-    // Residual gap, not introduced here: if rhs's hoist itself contains a
-    // `?`'s early return (`if (__rN.tag === "Err") return __rN;`), that
-    // `return` now exits this wrapper arrow rather than the enclosing
-    // function — the same class of miscompile `lower_match_as_iife` had.
-    // Unlike that case, this one isn't a regression: the pre-existing
-    // behaviour already produced either a syntax error (the is-condition
-    // path spliced rhs's hoisted statements into flattened expression text)
-    // or, on this general path, correct `?` propagation at the cost of
-    // always violating short-circuiting. Trading a systemic, always-firing
-    // violation for a narrow one (a `?` specifically nested inside a
-    // short-circuited operand — unusual style; idiomatic Bynk binds it with
-    // `let x <- expr` first) is the net improvement in scope here. Fully
-    // closing it needs the caller's expression context to accept a real
-    // statement sequence, not just an expression — out of scope for this
-    // pass.
+    // T2.3 (R6.3): if rhs's hoist itself contains a `?`'s propagating early
+    // return (`if (__rN.tag === "Err") return __rN;`), a plain
+    // `(() => { ...; return expr; })()` wrap would capture that `return`
+    // instead of letting it exit the enclosing function — the same class of
+    // miscompile `lower_match_as_iife` had. `LowerCtx::emitted_early_return`
+    // says whether rhs's own lowering hit that case; when it did, hoist this
+    // operator as a real `if` statement via `hoist_if_as_statement` (built for
+    // T2.1's `if`-hoisting) instead of an expression-position IIFE — the
+    // `return` then keeps exiting the enclosing function, and still only runs
+    // when the operator actually reaches rhs. An ordinary hoist (no `?`
+    // involved) keeps the cheaper arrow form; nothing inside it needs to
+    // escape past the arrow, and this is the shape the `947_short_circuit_rhs_hoist`
+    // fixture pins.
     if matches!(op, BinOp::And | BinOp::Or | BinOp::Implies) {
+        let saved_early_return = std::mem::take(&mut cx.emitted_early_return);
         let r = lower_expr(rhs, cx);
+        let rhs_returns = cx.emitted_early_return;
+        cx.emitted_early_return = saved_early_return || rhs_returns;
+        if !r.pre.is_empty() && rhs_returns {
+            let value = match op {
+                BinOp::And => hoist_if_as_statement(
+                    &mut pre,
+                    l,
+                    r,
+                    Lowered::bare("false"),
+                    Some("boolean".to_string()),
+                    cx,
+                ),
+                BinOp::Or => hoist_if_as_statement(
+                    &mut pre,
+                    l,
+                    Lowered::bare("true"),
+                    r,
+                    Some("boolean".to_string()),
+                    cx,
+                ),
+                BinOp::Implies => hoist_if_as_statement(
+                    &mut pre,
+                    format!("!({l})"),
+                    Lowered::bare("true"),
+                    r,
+                    Some("boolean".to_string()),
+                    cx,
+                ),
+                _ => unreachable!("guarded by the outer `matches!`"),
+            };
+            return pre.finish(value);
+        }
         let rhs_text = if r.pre.is_empty() {
             r.expr
         } else {
