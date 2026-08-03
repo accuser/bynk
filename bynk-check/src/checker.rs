@@ -48,6 +48,8 @@ pub use refinements::{locale_tag_accepts, locale_tag_pattern, zero_value_ts};
 /// A resolved type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ty {
+    /// R4.3 measurement probe (not shipped): a real Error variant.
+    Error,
     /// A base type (`Int`, `String`, `Bool`).
     Base(BaseType),
     /// A user-declared named type. `kind` records the declaration's shape
@@ -148,6 +150,11 @@ impl Ty {
     /// Display name for diagnostics.
     pub fn display(&self) -> String {
         match self {
+            // R4.3: a resolution failure already has its own diagnostic at the
+            // site that produced this; this string exists only so a *second*
+            // diagnostic that happens to mention the type (e.g. a mismatch one
+            // level up) reads as "type error" rather than a blank or `unknown`.
+            Ty::Error => "<type error>".to_string(),
             Ty::Base(b) => b.name().to_string(),
             Ty::Named { name, args, .. } if args.is_empty() => name.clone(),
             Ty::Named { name, args, .. } => format!(
@@ -1744,7 +1751,10 @@ pub(crate) fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         // Leaves (no inner type to ground) and the sealed actor bindings
         // (boundary-minted, never Var-bearing). Enumerated — no `_` — so a
         // new `Ty` variant must state whether substitution recurses into it.
-        Ty::Base(_)
+        // `Ty::Error` is a leaf by construction (R4.3): it never carries a
+        // `Var` to ground.
+        Ty::Error
+        | Ty::Base(_)
         | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
@@ -1758,6 +1768,8 @@ pub(crate) fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
 pub(crate) fn contains_var(t: &Ty) -> bool {
     match t {
         Ty::Var(_) => true,
+        // R4.3: `Ty::Error` is a leaf; it never carries a `Var`.
+        Ty::Error => false,
         Ty::Result(a, b) | Ty::Map(a, b) => contains_var(a) || contains_var(b),
         Ty::Option(a)
         | Ty::Effect(a)
@@ -1786,6 +1798,8 @@ pub(crate) fn contains_var(t: &Ty) -> bool {
 fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
     match t {
         Ty::Var(n) => !rigid.contains(n),
+        // R4.3: `Ty::Error` is a leaf; it never carries a `Var`.
+        Ty::Error => false,
         Ty::Result(a, b) | Ty::Map(a, b) => {
             contains_flexible_var(a, rigid) || contains_flexible_var(b, rigid)
         }
@@ -1885,7 +1899,11 @@ pub(crate) fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) 
             | Ty::Unit
             | Ty::Actor(_)
             | Ty::ActorSum(_)
-            | Ty::Fn { .. },
+            | Ty::Fn { .. }
+            // R4.3: an already-diagnosed subtree unifies with anything —
+            // the failure was reported once, at the site that produced
+            // `Ty::Error`; unification is not where a second one belongs.
+            | Ty::Error,
             _,
         ) => true,
     }
@@ -2143,6 +2161,12 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> 
 /// `t` is usable where `u` is expected.
 pub fn compatible(t: &Ty, u: &Ty) -> bool {
     match (t, u) {
+        // R4.3: `Ty::Error` is compatible with everything, in both positions
+        // — the failure that produced it was already diagnosed at its own
+        // site, and a mismatch diagnostic naming it here would be a second
+        // report of the same failure, not a new one. Ordered first so it
+        // takes priority over the more specific arms below.
+        (Ty::Error, _) | (_, Ty::Error) => true,
         (Ty::Base(a), Ty::Base(b)) => a == b,
         // v0.157 (ADR 0183): two named types are compatible when they share a
         // name and kind and their applied type arguments are pairwise
@@ -3205,7 +3229,9 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, Arc<TypeDecl>>) ->
             Box::new(rebrand_return_type(k, caller_types)),
             Box::new(rebrand_return_type(v, caller_types)),
         ),
-        Ty::Base(_)
+        // R4.3: `Ty::Error` carries no name to rebrand — pass it through.
+        Ty::Error
+        | Ty::Base(_)
         | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
@@ -3240,6 +3266,10 @@ fn structurally_compatible_inner(
     visited: &mut HashSet<(String, String)>,
 ) -> bool {
     match (arg, param) {
+        // R4.3: as in `compatible` — an already-diagnosed side is compatible
+        // with anything, so a cross-context signature check doesn't report
+        // the same failure a second time as a signature mismatch.
+        (Ty::Error, _) | (_, Ty::Error) => true,
         (Ty::Base(a), Ty::Base(b)) => a == b,
         (Ty::ValidationError, Ty::ValidationError) => true,
         (Ty::JsonError, Ty::JsonError) => true,
