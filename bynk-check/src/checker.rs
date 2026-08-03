@@ -46,7 +46,7 @@ pub use refinements::{locale_tag_accepts, locale_tag_pattern, zero_value_ts};
 // ==== Type representation ====
 
 /// A resolved type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Ty {
     /// R4.3 measurement probe (not shipped): a real Error variant.
     Error,
@@ -132,7 +132,7 @@ pub enum Ty {
 /// `Refined` widens to its base type when used in arithmetic, comparisons,
 /// and other operations on the base. `Opaque` does NOT widen — its identity
 /// is nominal and the base type is hidden outside the defining commons.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NamedKind {
     /// Refined-base type: widens to the recorded base.
     Refined(BaseType),

@@ -3,16 +3,19 @@
 - **Status:** **Settled — Slicing.** §3's seven questions were argued under a same-day settling
   review; Q1 was reversed once there (toward `ExprKey(Span)` scaffolding), then **reversed again**
   while slicing T3.1 (§1.1), once implementation work found the scaffolding had already been built —
-  and already rejected — by a commit that predates this track. Five slices have shipped for real:
+  and already rejected — by a commit that predates this track. Six slices have shipped for real:
   T3.0 (extending an existing debug-only check to handler bodies), T3.3a (`Ty::Error` as a real,
   correctly-handled variant), T3.3b (`expr_types` made total — **R4.3 closed in full**, at two
   write choke-points rather than the ~81-function conversion originally estimated), T3.4 (real
   `ExprId` at parse, `expr_types` re-keyed by it — **R2.4 closed for expressions**; caught and fixed a
-  genuine cross-file collision bug before it shipped, see §9), and T3.5 (real `FileId` on `Span`,
+  genuine cross-file collision bug before it shipped, see §9), T3.5 (real `FileId` on `Span`,
   stamped at the lexer — **R2.2 closed**, at one choke point rather than the 160-construction-site
-  conversion originally estimated; see §9). `span_keyed_maps` is 3, down from 27 —
+  conversion originally estimated; see §9), and T3.6a (`Hash`/`Ord` on `Ty`/`NamedKind`/`BaseType` —
+  **half of R4.2 closed**, a 3-line derive diff touching zero call sites; the other half, real `TyId`
+  interning for `Copy`, is **not** a choke-point fix — split out as T3.6b, its own larger effort, see
+  §9). `span_keyed_maps` is 3, down from 27 —
   the remainder is `Ctx::pattern_binding_types`, a deliberate, principled exclusion (§6), not residue.
-  T3.6–T3.7 remain unbuilt. Merging settled **direction**; it is not a build authorisation.
+  T3.6b–T3.7 remain unbuilt. Merging settled **direction**; it is not a build authorisation.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -355,6 +358,7 @@ replaces it with the one real gap found while preparing it.
 | **T3.3b** | `expr_types` made total for real, at both of its actual write choke points — `type_of`'s own `ctx.expr_types.insert(expr.span, …)` (`checker.rs`) and `type_of_block`'s equivalent for a block's own span — changed to record `Ty::Error` rather than skip the entry when the computed type is `None`. **This closes R4.3's externally-observable content in full**, not partially: every expression `type_of` is called on (directly or through its ~90 recursive/nested self-calls) now gets an `expr_types` entry, whichever of the checker's internal paths produced `None` and for whatever reason. Verified with a new regression test (`a_diagnosed_resolution_failure_records_ty_error_instead_of_nothing`, `bynk-emit/src/project.rs`) asserting the actual behaviour, not just absence of failure: a diagnosed `type_of` failure (`bynk.types.uninferable_element_type` on an empty `[]` with no inferable element type) now records `<type error>` at its span instead of nothing. | R4.3 | **Shipped** — full workspace build/clippy/fmt/test clean, including the `bynkc` byte-identical golden fixture corpus (unchanged output — this is purely additive on the *recording* side) |
 | **T3.4** | Real `ExprId(u32)` allocated at parse — `id: ExprId` added to `Expr`, populated by a monotonic counter on `Parser<'a>` (`Parser::alloc_expr_id`, mirroring its existing `brace_depth` field), one allocation point so no two parser-produced nodes ever share an id. `expr_types`/`partial_expr_types` re-keyed from `HashMap<Span, Ty>` to `HashMap<ExprId, TypedExpr>` (`TypedExpr { span, ty }` — the value carries its own span so LSP consumers keep a position-shaped answer without a second map). `is_binding_cache` (genuinely `Expr`-keyed — condition-sub-expression memoisation, not pattern-related despite living beside `Ctx`'s pattern-binding field) converted the same way. Pattern-bound identifier types (`Pattern::Binding`, three sites) **deliberately kept `Span`-keyed** in a new, narrowly-scoped `Ctx::pattern_binding_types` field — `Ident` has no `ExprId` and giving it one would touch every identifier construction site in the workspace, not just the handful that bind; this is exactly the `PatId`/`ExprId` split the reference draws (Part 2), out of scope on purpose. **Measured, not assumed:** the compiler's own missing-field errors enumerated 46 real parser construction sites (of ~59 raw `Expr {` matches — the rest were struct *definitions* and function signatures, not constructions) plus 3 post-parse synthetic sites (`ExprId::SYNTHETIC`); the `expr_types` re-keying touched 61 read/write call sites, 49 of them the single uniform shape `expr_types.get(&X.span)` → `.get(&X.id).map(\|te\| &te.ty)`. | R2.4, R2.5, R4.9 | **Shipped** — see §9 for a real bug this slice found and fixed before it shipped, not after |
 | **T3.5** | Real `FileId(u32)` on `Span` (`pub file: FileId`), stamped at the one place a `Span` is ever first minted from real source bytes — the lexer. `Span::new(start, end)` kept its existing two-argument signature, now defaulting `file: FileId::UNKNOWN`; a new `Span::new_in(file, start, end)` is the real-identity constructor. `lexer::tokenize`/`tokenize_expanding_holes` became thin wrappers around new `tokenize_in`/`tokenize_expanding_holes_in` entry points that thread `file` through every one of the lexer's internal span constructions (13 sites in the main scan loop, plus the `scan_str`/`scan_hole`/`split_interp` string-and-interpolation helpers it calls). `bynk-emit`'s `phase_parse`/`parse_sources` gained a `next_file_id: u32` counter threaded exactly like T3.4's `next_expr_id` — one `FileId` allocated per source file, at the same choke point. The interpolation-hole re-lexer (`Parser::parse_hole_expr`) needed no new field: it already receives the hole's own `Span`, which now carries the right `file` once the lexer is fixed, so its `tokenize(src)` call became `tokenize_in(src, hole.file)`. **Every other `Span` construction site in the workspace — the parser, the checker, the IDE/LSP single-document call sites, all tests — needed no change at all**, because they safely default to `FileId::UNKNOWN` exactly as T3.4's non-origin `Expr` construction sites defaulted to zero threading. | R2.2 | **Shipped** — see §9 for a real bug this slice's own safety-net effect (not finding #28 this time, but the same "a total field exposes a latent assumption" pattern) caught in the LSP rename validator before it shipped |
+| **T3.6a** | `Hash, PartialOrd, Ord` added to `Ty`, `NamedKind`, and `BaseType`'s derive lists. **Measured, not assumed** (see §9): unlike every prior slice, T3.6 as a whole (real `TyId` interning, R4.1's `Copy` requirement) genuinely has no choke point — `Ty` is minted at ~200+ scattered sites and recursively pattern-matched in ~25-30 functions across four crates, so the naive size estimate was, unusually, roughly *right* for that half. But R4.2's `Hash`/`Ord` half is unrelated to interning: `Ty`'s recursive fields (`Box<Ty>`, `Vec<Ty>`, `String`, tuples) already support derived `Hash`/`Ord` with zero manual trait impls to conflict with, so adding the derives is a 3-line diff touching zero of the workspace's 958 `Ty::` call sites. Exposed one unrelated, pre-existing `clippy::nonminimal_bool` warning in `bynk-emit/src/project/validate.rs` (`!opt.is_some_and(f)` → `opt.is_none_or(!f)`) that a full downstream rebuild surfaced for the first time; fixed alongside since it now blocks `-D warnings`. | R4.2 (half) | **Shipped** |
 
 **Why this closed in two edits, not ~81 functions and ~193 call sites — the estimate directly above
 this table (preserved, not deleted, as an example of the same "measure before trusting an estimate"
@@ -385,10 +389,10 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | independent |
-| **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.6 (no longer gated on T3.4 — `ExprId` already exists) |
+| **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it | R4.1, R4.2 (`Copy` half) | independent — needs its own settling review before slicing further, since (per §9) the realistic scope here is a checker-and-emitter-wide rewrite of construction and destructuring, not a threading problem |
+| **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.6b (no longer gated on T3.4 — `ExprId` already exists) |
 
-T3.6–T3.7 above are not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, above, are). Deliberately not decomposed to
+T3.6b–T3.7 above are not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a, above, are). Deliberately not decomposed to
 signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
 up: "an unopened phase whose slices are already written is a wish list." Each exists so a proposal
 citing it is recognised as this track's future work, not unclaimed scope — none is a proposal itself,
@@ -396,8 +400,12 @@ and (per §1.1's correction) none should be assumed still-accurate without re-me
 tree first — the same discipline that caught the `ExprKey(Span)` premise being stale, found T3.3a's
 real 11-site scope instead of trusting a 900+-mention grep count, found T3.3b closable in two edits
 instead of the ~81-function estimate, found and fixed a real cross-file collision bug in T3.4
-before it ever shipped, and found T3.5 closable at one choke point (the lexer) instead of the
-160-construction-site conversion its own settling estimate called for — see §9 for both bugs.
+before it ever shipped, found T3.5 closable at one choke point (the lexer) instead of the
+160-construction-site conversion its own settling estimate called for, and — the discipline's first
+negative result — found that T3.6's `Copy`-via-interning half genuinely has *no* choke point and is
+roughly as large as its own settling label already said, while still finding a real, small,
+independently-shippable slice (T3.6a) inside it that a same-sized-or-nothing framing would have
+missed. See §9 for all of the above.
 
 **Completion probe:** `span_keyed_maps` = 3 (down from 27). `HashMap<Span` now appears only in
 `Ctx::pattern_binding_types`'s own type signature (3 sites, deliberately, per T3.4's row above) — not
@@ -562,6 +570,53 @@ until totality made the mismatch observable. Fixed by preserving `site.span.file
 #28 established for `ExprId`: giving an identity field real, non-default values across a slice is
 itself a verification pass over every consumer that compares by it — this is why T3.3a, T3.3b, T3.4,
 and now T3.5 have each shipped a full `cargo test --workspace` as part of "done," not as a formality.
+
+**T3.6 is where this discipline's honesty gets tested the other direction: not every slice shrinks
+under measurement, and pretending otherwise would be the same mistake in reverse.** `Ty`
+(`bynk-check/src/checker.rs`) derives `Debug, Clone, PartialEq, Eq` today, with `Box<Ty>`/`Vec<Ty>`
+recursion exactly as the reference doc's rationale describes — every `Ty` is a fully-owned deep tree,
+deep-cloned on every `.clone()`, never a map key (a workspace-wide check found zero existing
+`HashMap<Ty, _>`/`HashSet<Ty>` — every `Ty`-adjacent map today is keyed on something else instead,
+e.g. `Span` or `String`). Direct measurement, mirroring T3.3a/T3.3b/T3.5's method: 958 raw `Ty::`
+mentions across 30 files in 4 crates (`bynk-check`, `bynk-emit`, `bynk-ide`, `bynk-lsp`). Unlike those
+three slices, this time the raw count was not an overestimate of the real scope, because `Ty` is
+structurally unlike an `ExprId`/`FileId`-style opaque leaf identity in two ways at once: it is
+**minted at ~200+ scattered ad hoc sites** (only `Ty::Named` has any central builder — `List`,
+`Option`, `Result`, `Map`, `Effect`, `Fn`, and every base type are written as inline variant literals
+wherever a kernel or operator needs one, e.g. 173 `Ty::Base(...)` literals alone across 14 files), and
+it is **recursively pattern-matched** in ~25-30 functions across all four crates that destructure it to
+decide real compiler behaviour — `compatible`, `unify`, `substitute`, `display`, `json_codable`,
+`ty_to_type_ref`, hover/completion rendering, and more. Interning doesn't relabel these call sites the
+way re-keying `expr_types` by `ExprId` did; `match ty { Ty::Option(inner) => … }` becomes `match
+types.get(id) { Ty::Option(inner_id) => …types.get(*inner_id)… }` at every recursive step of every one
+of those ~25-30 functions — an added interner-lookup indirection in the function *body*, not a
+mechanical signature edit. There is no single write choke-point standing in for all of them, because
+there is no single place "a type gets read" the way there was a single place "an expression's type
+gets recorded" (T3.3b) or "a token gets minted" (T3.5).
+
+**But R4.2's literal wording — "`Ty` and `TyId` are `Copy`-cheap, `Hash` and `Ord`" — bundles two
+independent asks, and only one of them shares `Ty`'s hard shape.** `Hash`/`Ord` need nothing from
+interning: `Ty`'s recursive fields (`Box<Ty>`, `Vec<Ty>`, `String`, tuples) already support derived
+`Hash`/`Ord` the moment their element types do, with no manual trait impl anywhere to conflict —
+confirmed by shipping it: adding `Hash, PartialOrd, Ord` to `Ty`, `NamedKind`, and (already-`Copy`)
+`BaseType`'s derive lists was a 3-line diff, and `cargo build --workspace` came back clean with zero
+of the 958 call sites touched (**T3.6a**). `Copy` is the one demand that cannot be satisfied this way
+— `Box`, `Vec`, and `String` are non-`Copy` by construction, so satisfying it is not a shortcut away
+from full interning, it *is* full interning. That half — real `TyId`, the intern table, `Copy` — is
+split out as **T3.6b**, scoped honestly as its own larger, multi-session effort (an estimated
+150-300+ genuine touch sites, a much higher true-positive fraction of the raw count than any prior
+slice saw, and a real share of them needing interner-lookup logic changes, not mechanical rekeying),
+not forced into this track's usual "measure it down to a choke point" shape just because every
+previous slice fit that shape.
+
+**Shipping T3.6a also surfaced a real but unrelated latent issue**, the same way T3.5 exposed
+`remap_site`: adding the derives forced a full downstream rebuild of `bynk-emit`, and `clippy`'s fresh
+lint pass over `bynk-emit/src/project/validate.rs` (unchanged by this slice) reported a genuine
+`nonminimal_bool` finding — `!opt.get(i).is_some_and(f)` is more directly written
+`opt.get(i).is_none_or(!f)` — that a stale incremental cache had been masking. Confirmed by a clean
+rebuild of `bynk-emit` on unmodified `main`: zero warnings before, the same warning every time after,
+with or without a `touch`. Fixed alongside, since it now blocks `-D warnings` in CI regardless of
+whether this slice caused it.
 
 ## 10. What "transformational" means here
 
