@@ -373,7 +373,7 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 |---|---|---|---|
 | **T3.3b** | Convert the ~81 `Option<Ty>`-returning functions in `bynk-check` (`type_of` foremost, plus its callees) to return `Ty` and construct `Ty::Error` at genuine resolution-failure points instead of `None`; update the ~193 call sites (`type_of` alone). This is where R4.3 actually closes — T3.3a only prepared the type to receive it | R4.3 | T3.3a (landed) |
 | **T3.4** | Real `ExprId` allocated at parse (no `ExprKey(Span)` predecessor — see above); `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>` entirely, migrated crate-by-crate per §3.3's seven-crate list (dual-map: both forms populated during migration, `Span`-keyed form deleted last) | R2.4, R2.5, R4.9 | T3.3b (unblocks totality) |
-| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.3b/T3.4 |
+| **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.3b/T3.4. **§3.2 (Q2) called this "lowest coupling… could be its own early, small slice" — measured and found larger; see §9** |
 | **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | T3.3b |
 | **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.4, T3.6 |
 
@@ -468,6 +468,20 @@ resolution failure *produce* `Ty::Error` instead of `None` — is the ~81-functi
 conversion T3.3b names, and *that* is genuinely large, because it is a semantic decision at each site
 (does `None` here mean "resolution failed," or something else), not a mechanical one the compiler can
 enumerate for you the way exhaustiveness checking did for T3.3a.
+
+**T3.5 ("lowest coupling... could be its own early, small slice", Q2 in §3.2) is also bigger than
+that line said, and this time the compiler-enumeration trick that worked for T3.3a doesn't apply.**
+`Span`'s two fields (`start`, `end`) are `pub`, so the type is constructed by struct-literal syntax
+directly, not funnelled through one constructor the way `Ty`'s variants are matched exhaustively.
+Direct measurement: **50 `Span { ... }` struct literals and 110 `Span::new(...)` calls — 160
+construction sites**, not the ~31 a looser first-pass grep suggested. Unlike T3.3a, most of these
+aren't a judgement call (a construction site just needs "which file is this," not a decision about
+failure semantics), but there is real design work with no shortcut: `FileId`/`Sources` (reference
+R2.1) don't exist yet in any form, so T3.5 has to build the registry *and* thread "which file" to 160
+sites, most of them inside `bynk-syntax`'s parser, where no per-file identity is threaded through
+today at all. Smaller in kind than T3.3b (mechanical once the registry exists, not semantically
+loaded per site), but not the "small slice" its own settling decision called it — another case, like
+T3.3, of this doc's own sizing being optimistic until it was actually measured.
 
 ## 10. What "transformational" means here
 
