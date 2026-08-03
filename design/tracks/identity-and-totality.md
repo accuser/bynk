@@ -1,10 +1,11 @@
 # Identity and totality — migrating to the greenfield reference (phase 3)
 
-- **Status:** **Settling.** This is the first commit adding this doc; §3's design questions are
-  stated, not closed. Unlike `compiler-architecture.md`'s merged form (settled under review before it
-  ever reached `main`), this draft is genuinely mid-settling — marking a future PR against this file
-  "ready for review" is the assertion that §3 is closed; merging settles direction, not build
-  authorisation.
+- **Status:** **Settled — Slicing on merge.** §3's seven questions were argued under a settling
+  review the same day this draft opened. Q1 was **reversed**: the draft's initial recommendation
+  (allocate `ExprId` directly) is overturned in favour of the review's cheaper scaffolding, landed
+  first and on its own merits — see the provenance note at the head of §3. Merging settles
+  **direction**; it is not a build authorisation. Each slice is still an ordinary increment
+  proposal, and `accepted` on that sub-issue is the approval to build.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -85,13 +86,34 @@ new probe infrastructure to know when it is done.
 
 ---
 
-## 3. Design questions — open, not yet closed
+## 3. Design questions — answered 3 August 2026, argued under a same-day settling review
 
-> **Provenance.** These are stated as open because they are open — this is a first draft, not a
-> post-review merge. A settling PR against this file closes them under line-anchored review; the
-> recommendations below are starting positions to argue with, not decisions.
+> **Provenance: one of these seven changed under review.**
+>
+> Draft PR #1052 opened this file with all seven questions stated as open, per ADR 0167 step 2. The
+> settling review that followed tested each recommendation against the rest of this document and the
+> tree rather than accepting it on the strength of its own argument — the discipline
+> `compiler-architecture.md`'s own settling review modelled, which overturned that track's D2.
+>
+> **Q1 is the one that moved, and it moved against the draft's own recommendation.** The draft argued
+> for allocating `ExprId` directly, on the ground that the review's `ExprKey(Span)` scaffolding was
+> "scoped for a world where phase 3 wasn't open" and that world no longer holds. The review found that
+> argument proves too much: it would justify skipping *every* piece of migration scaffolding this
+> corpus has ever used, including Tier B's own `Lowered` signature change and phase 0's `sources` seam,
+> both of which were "small, safe, and load-bearing for what came after" rather than the end state
+> itself. `ExprId`-at-parse touches the parser, every AST-node consumer across (at least) the seven
+> crates §3.3 counts, and the arena/generational-index question (does a re-parse invalidate every
+> `ExprId` a client holds?) that R2.4 itself does not answer. `ExprKey(Span)` touches none of that — it
+> is a type-alias-shaped change over the exact ~11 signatures the review already enumerated — and it is
+> independently complete: it closes the #844 defect class and the else-less-`if` collision on its own,
+> whether or not `ExprId` ever lands. Shipping it first is not a detour from phase 3's invariant; it is
+> the same "parallel data, single pipeline" technique §4.1 of the retired track named, applied one
+> level earlier than the draft applied it.
+>
+> The remaining six (Q2 through Q7) were examined and stand as written, with their recommendations
+> promoted to decisions.
 
-### 3.1 Q1 — Does this track commit to the full retrofit now, or open on the review's scaffolding alone?
+### 3.1 Q1 — Does this track commit to the full retrofit now, or open on the review's scaffolding alone? **Settled — reversed under review.**
 
 The review's verification pass named three cheap steps as "the migration scaffolding **if the
 retrofit ever happens**": newtype the key as `ExprKey(Span)` (~11 signatures), give blocks their own
@@ -107,13 +129,21 @@ R2.2/R4.1–R4.3/R3.10, and only nominally addresses R2.4: it is still keyed by 
 index — R2.4's own rationale names position-as-identity as the defect class, and wrapping the
 position in a newtype doesn't change what it *is*, only how it reads at call sites.
 
-**The scaffolding was scoped for a world where phase 3 wasn't open.** It isn't that world now — this
-track *is* the retrofit's opening. Recommendation to test under review: allocate `ExprId` at parse
-time directly (R2.4) rather than newtyping `Span`; keep the uniqueness-check and loud-internal-error
-halves of the review's proposal (T3.2) regardless of how Q1 resolves, since neither depends on which
-key type wins.
+**The scaffolding was scoped for a world where phase 3 wasn't open.** That was this draft's original
+argument for skipping straight to `ExprId`, and the settling review's provenance note above is where
+it was tested and reversed.
 
-### 3.2 Q2 — Sequencing among the reference's four identity/totality pieces
+**Decision: land `ExprKey(Span)` first, as its own complete slice, on its own merits — not as a detour
+en route to `ExprId`.** T3.1/T3.2 (§6) ship the review's scaffolding exactly as specified: the newtype,
+block-local maps, the uniqueness assertion, the loud internal error. This closes the #844 defect class
+and the else-less-`if` collision immediately, and it is the "parallel data" half of the migration
+technique applied to the *key type* before it is applied to the *table shape* (T3.4). True `ExprId`
+allocation at parse time is **not refused** — it is renamed **T3.4** in §6 and stays gated on T3.1
+having proven the per-consumer-crate migration mechanics (§3.3) across all seven readers first. If
+that proof goes badly, the cost paid is one newtype's worth of scaffolding, not a parser change with
+seven crates mid-migration.
+
+### 3.2 Q2 — Sequencing among the reference's four identity/totality pieces **Settled.**
 
 Four pieces; the reference specifies the end state, not the path through it for *this* codebase:
 
@@ -140,13 +170,12 @@ Dependency read, to test under review:
 - **R3.10 (`certify`) is the capstone.** It needs a total `expr_ty` to gate on and a real `Ty::Error`
   to reject, so it lands last by construction.
 
-Working order to test: R2.2 and R2.4 first, in parallel, using
-`compiler-architecture.md` §4.1's named technique for R2.4 specifically (`ExprId` allocated alongside
-`Span`, both tables populated, consumers migrated one at a time, the `Span`-keyed table deleted last)
-→ R4.3 (unblocks R4.9) → R4.9 (the total table) → R4.1/R4.2 (interning, its own larger slice, nothing
-else strictly gates on it before `certify`) → R3.10 last.
+**Decision.** Order confirmed, amended only to insert Q1's `ExprKey`-first step ahead of R2.4 proper:
+`ExprKey(Span)` (T3.1/T3.2) → R2.2 `FileId` and R2.4 real `ExprId` in parallel (T3.5, T3.4 — neither
+gates the other) → R4.3 `Ty::Error` (T3.3, unblocks R4.9) → R4.9 the total table (folded into T3.4
+once `ExprId` exists) → R4.1/R4.2 interning (T3.6, its own larger slice) → R3.10 `certify` last (T3.7).
 
-### 3.3 Q3 — What does "parallel data, single pipeline" mean across this map's actual readers?
+### 3.3 Q3 — What does "parallel data, single pipeline" mean across this map's actual readers? **Settled.**
 
 `compiler-architecture.md` §4.1 named the technique for this phase but never applied it to real call
 sites — not this track's business at the time it was written. Measured against `3691d6a3`,
@@ -159,12 +188,13 @@ the full `NodeId` question, a different count from this one): `bynk-check` (the 
 `bynk-wasm` (1 file), and `bynkc`'s own test suite. Seven migration boundaries, not three — the slice
 count in §6 needs re-checking against whichever number survives review.
 
-Needs settling: does the map itself go dual for the whole migration window (both
-`HashMap<Span, Ty>` and `IndexVec<ExprId, TyId>` populated, symmetric, deleted-last on the old side),
-with one cutover slice per *consumer crate* above? That matches `compiler-architecture.md` §4.1's
-stated technique and should be the default absent a reason found under review to do otherwise.
+**Decision: the map goes dual for the whole migration window** — both the old keying and the new one
+populated and symmetric, deleted-last on the old side, one cutover slice per consumer crate above.
+Applied first to T3.1 (both `HashMap<Span, Ty>` and `HashMap<ExprKey, Ty>` populated during the T3.1
+window, `Span` form deleted once every one of the seven crates reads `ExprKey`), then again when T3.4
+introduces the real `IndexVec<ExprId, TyId>` alongside whatever T3.1 left in place.
 
-### 3.4 Q4 — Does ADR 0309's tier table need amending for this phase's gate?
+### 3.4 Q4 — Does ADR 0309's tier table need amending for this phase's gate? **Settled.**
 
 ADR 0309 defines four tiers — Enablers / Paydown / Structural / Layering — mapping "Structural" to
 Tier B and "Layering" to phase 5. Phase 3 has no named tier. It resembles Structural (crate-local
@@ -174,13 +204,14 @@ goldens) but its blast radius differs in kind, not just size: Tier B touched one
 today — `bynk-ide`/`bynk-lsp`'s hover, completion, and live diagnostics. A byte-identical-emission
 gate says nothing about whether hover regresses.
 
-Recommendation to test: amend ADR 0309 with an added requirement rather than invent a fifth tier name
-— the gate's *shape* stays Structural (fixture-backed, byte-identical goldens, per-defect regression);
-what's missing is a requirement that each migrated consumer crate in §3.3's list carries an
-LSP-surface fixture (hover, completion, or diagnostic-shape, as applicable), not only an
-emitted-TypeScript one.
+**Decision: ADR 0309 is amended, not superseded.** The gate's *shape* stays Structural
+(fixture-backed, byte-identical goldens, per-defect regression); the amendment adds one requirement:
+each migrated consumer crate in §3.3's seven-crate list carries an LSP-surface fixture (hover,
+completion, or diagnostic-shape, as applicable) in addition to any emitted-TypeScript one. Lands as
+a pending ADR block riding this settling pass (§11), amending ADR 0309 the same way ADR 0309 itself
+amended ADR 0059 property 1.
 
-### 3.5 Q5 — Freeze scope
+### 3.5 Q5 — Freeze scope **Settled.**
 
 Tier B's freeze (`compiler-architecture.md` §3.5) was one file, `lower.rs`, for the duration of T2.1.
 This phase's footprint is wider: 12 of the 27 `HashMap<Span` sites live in `bynk-check/src/checker.rs`
@@ -192,7 +223,11 @@ same narrow-scoping reasoning §3.5 used originally — touch one contended file
 No freeze proposed for R2.2 (`FileId`) or R4.1–R4.3 (`Ty`), which touch less-contended surface and can
 proceed unfrozen per Q2's ordering.
 
-### 3.6 Q6 — Sequencing relative to 1.0 and the state-migrations track
+**Decision: confirmed as recommended.** No feature work lands in `bynk-check/src/checker.rs` while
+T3.1 or T3.2 is open. Lifts automatically when T3.2 merges, the same mechanism §3.5 of the retired
+track used for `lower.rs`.
+
+### 3.6 Q6 — Sequencing relative to 1.0 and the state-migrations track **Settled.**
 
 The retirement summary that opened this spine already states the independence claim: phase 3 "closes
 into a new phase-3 track ([#1046]) rather than the state-migrations track [`compiler-architecture.md`]
@@ -202,7 +237,11 @@ What wants testing here rather than repeating is whether this phase's *size* (§
 the same reviewer bandwidth a state-migrations track would need — a scheduling question, not a
 technical one.
 
-### 3.7 Q7 — Slicing granularity given the size
+**Decision: confirmed independent; not re-litigated further here.** If reviewer bandwidth becomes the
+binding constraint later, that is a scheduling call for whoever opens the state-migrations track, not
+a reason to slow this one now.
+
+### 3.7 Q7 — Slicing granularity given the size **Settled.**
 
 Trajectory §5 rates this phase relative size 8 against Tier B's 3 and Tier A's combined 2 — the
 largest phase attempted so far, at medium confidence ("the review killed a naive retrofit; §6's
@@ -210,6 +249,12 @@ parallel-data technique is the mitigation"). §6 below decomposes a first pair (
 the review's named scaffolding, gated on Q1) and names five more without detailing them. Needs
 settling: whether five undetailed forward-references is the right grain, or whether some of them
 (R2.2 in particular, per Q2's independence finding) should be detailed now since nothing gates them.
+
+**Decision: keep T3.3–T3.7 as forward references for now.** §6's T3.1/T3.2 are the only slices this
+settling pass details to signature level — cutting five more before T3.1 has even landed is exactly
+the "an unopened phase whose slices are already written is a wish list" failure
+`compiler-architecture.md` §7 named. Revisit the grain once T3.1/T3.2 ship and §3.3's seven-crate
+migration mechanics are proven in practice, not just argued.
 
 ---
 
@@ -235,27 +280,23 @@ serving stale narrowings on collision (`checker.rs:1426`) — is the standing ar
 
 ---
 
-## 6. Slice decomposition (draft — gated on §3)
+## 6. Slice decomposition
 
-### Decision slice
+§3 is settled; T3.1 and T3.2 below are accepted, buildable slices, not forward references.
 
-| Slice | What it resolves | Gated on |
-|---|---|---|
-| — | This document's §3, closed under line-anchored review | — |
-
-### Scaffolding — named by `compiler-architecture.md` §4.1 as T3.1/T3.2, detailed here
+### Scaffolding — named by `compiler-architecture.md` §4.1 as T3.1/T3.2, detailed and settled here
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **T3.1** | Node identity: either `ExprKey(Span)` (the review's ~11-signature newtype) or `ExprId` allocated at parse (Q1's fork) — plus giving blocks their own map, splitting them out of the shared keyspace the `block.span != block.tail.span` guard (`checker.rs:2614`) currently patches around | R2.4 | Q1, Q2 |
+| **T3.1** | `ExprKey(Span)` newtype (Q1's decision) across the review's ~11 signatures in `bynk-check/src/checker.rs`, `expr_types.rs`, `checker/calls.rs`, `checker/linearity.rs` and `bynk-emit`'s readers; blocks split into their own map, out of the shared keyspace the `block.span != block.tail.span` guard (`checker.rs:2614`) currently patches around; dual-map migration per Q3 (both `HashMap<Span, Ty>` and `HashMap<ExprKey, Ty>` populated, old form deleted once all seven consumer crates in §3.3 have cut over) | R2.4 (partial — see §3.1) | — settled, ready to slice |
 | **T3.2** | A debug-only uniqueness check at the end of `check_record`, walking the unit via `ast::expr_children` and asserting no two typed nodes share a key (the guard at `checker.rs:381-393` generalised into an assertion, per the review's exact proposal — would have caught #844 on introduction); replace the remaining `_ => "unknown".to_string()` fallback (`lower.rs:3025` — down to one live site as of `3691d6a3`, from the three-plus the review counted; sweep the sibling `.unwrap_or_else(|| "unknown".to_string())` at `lower.rs:1848` in the same pass) with a loud internal error | R2.4 | T3.1 |
 
-### Forward-referenced, not yet detailed
+### Forward-referenced, not yet detailed (§3.7/Q7's decision: kept coarse until T3.1/T3.2 prove the mechanics)
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.3** | `Ty::Error` as a real variant; `expr_types` records it instead of omitting the entry on `None` | R4.3 | Q2 |
-| **T3.4** | `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing `HashMap<Span, Ty>`, migrated crate-by-crate per §3.3's seven-crate list | R2.5, R4.9 | T3.1, T3.3, Q3 |
+| **T3.3** | `Ty::Error` as a real variant; `expr_types` records it instead of omitting the entry on `None` | R4.3 | T3.1 landed |
+| **T3.4** | Real `ExprId` allocated at parse, replacing `ExprKey(Span)`; `expr_ty` as a total `IndexVec<ExprId, TyId>` replacing the keyed map entirely, migrated crate-by-crate per §3.3's seven-crate list | R2.4, R2.5, R4.9 | T3.1 (mechanics proven), T3.3 |
 | **T3.5** | `FileId` on `Span`; `Sources` as the compiler's one view of file contents | R2.2 | independent — can run in parallel with T3.1–T3.4 |
 | **T3.6** | `Ty` interned (`TyId`, `Copy`/`Hash`/`Ord`) | R4.1, R4.2 | T3.3 |
 | **T3.7** | `certify` as the sole constructor of a `CheckedProgram`; the editor stops routing a non-compiling file through the batch-checking path | R3.10 | T3.4, T3.6 |
@@ -336,10 +377,20 @@ trajectory §4) and for phase 4's project model sitting cleanly below both check
 
 ## 11. ADRs
 
-None land with this settling draft. §3's open questions, once closed under review, are expected to
-produce at least one ADR recording the phase-3 migration technique and sequencing decision (Q1/Q2) —
-lettered as unlanded here, numbered at merge by the stamp, the pattern `compiler-architecture.md` §11
-used for ADRs 0309–0312.
+Per ADR 0167 step 2, the load-bearing, hard-to-reverse decisions land before slicing. Two do, with
+this settling pass (`level: patch`, no code); their numbers are assigned at merge by the stamp
+(ADR 0206), so this doc refers to them by letter until they exist — the pattern
+`compiler-architecture.md` §11 used for ADRs 0309–0312.
+
+- **ADR-A — the phase-3 migration technique: `ExprKey(Span)` scaffolding first, real `ExprId` and
+  totality later, gated on the scaffolding proving out.** §3.1 (Q1). Reverses this doc's own initial
+  draft recommendation under review — the reversal is the ADR's content, not an embarrassment to
+  paper over.
+- **ADR-B — ADR 0309's Structural tier gains an LSP-surface-fixture requirement for consumer crates
+  that ship developer-facing behaviour.** §3.4 (Q4). Amends ADR 0309 the same way ADR 0309 amended
+  ADR 0059 property 1.
+
+Lands as `design/pending/identity-and-totality-settling.md`.
 
 ---
 
