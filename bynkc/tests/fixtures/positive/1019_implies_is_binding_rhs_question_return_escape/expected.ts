@@ -23,8 +23,8 @@ export function check(o: Outcome, threshold: number): Result<boolean, string> {
     if (__r0.tag === "Err") return __r0;
     __r1 = __r0.value > threshold;
   } else {
-    __r1 = false;
+    __r1 = true;
   }
-  return Ok(o.tag === "Hit" && __r1);
+  return Ok((!(o.tag === "Hit") || __r1));
 }
 
