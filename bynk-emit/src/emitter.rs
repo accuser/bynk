@@ -3157,6 +3157,16 @@ pub(crate) struct LowerCtx<'a> {
     /// scan did (its own body text also contained `"await "`); closing that is a
     /// separate, unscoped defect, not this one.
     pub(crate) emitted_await: bool,
+    /// T2.3 (R6.3): set when lowering a `?` pushes a propagating early-return
+    /// statement (`if (...) return ...;`) into the current `Pre`. Read (and
+    /// reset) around a short-circuit operand's own lowering in `lower_bin_op`/
+    /// `lower_and_with_is`, so those can tell a hoisted `?` apart from an
+    /// ordinary hoisted statement: a plain `(() => { ...; return expr; })()`
+    /// wrap is safe for the latter (nothing inside needs to escape the arrow)
+    /// but captures the former's `return` instead of letting it exit the
+    /// enclosing function — the residual gap `hoist_if_as_statement` (built for
+    /// T2.1's `if`-hoisting) also closes here, once this flag says it's needed.
+    pub(crate) emitted_early_return: bool,
 }
 
 /// v0.59: the source context an `assert` lowering needs to turn its span into a
@@ -3189,6 +3199,7 @@ impl<'a> LowerCtx<'a> {
             call_site_no_credential: false,
             source_map: None,
             emitted_await: false,
+            emitted_early_return: false,
         }
     }
 
