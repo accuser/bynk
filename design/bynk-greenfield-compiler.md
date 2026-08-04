@@ -2565,7 +2565,7 @@ revision is the proof.
 | R11.2 | 3 `expected_contains`, 2 `expected_absent`, 4 `expected_diagnostics` against **419** `expected_error` | **the format exists ✅; adoption is ~1%** |
 | R11.7 | conformance test is case-scoped to the type surface | **small — widen the corpus to totality** |
 | R11.8 | four bounds exist; no rule, no inventory | small |
-| R12.2 | `canon_refinement` compares as a set ✅; `NonEmpty` → `MinLength(1)` normalisation ✅ (#1021); `Positive`/`NonNegative` → `InRange` normalisation still open (needs a base-threaded signature change, Float exclusive-bound ambiguity) | small |
+| R12.2 | `canon_refinement` compares as a set ✅; `NonEmpty` → `MinLength(1)` normalisation ✅ (#1021); `Positive`/`NonNegative` → `InRange` normalisation declined (#1049) — neither base has a writable bound standing for `∞` to fold onto, so there is no second spelling to collapse onto and nothing consumes the normal form until R12.3 exists | none — deferred to R12.3 |
 | R14.1 | no tier concept | small — three checks the compiler already has the data for |
 
 **How to read this now.** Fourteen rows are ✅. The remaining short-and-high-value set is: the lint
