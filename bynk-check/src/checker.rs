@@ -12,7 +12,9 @@
 //! - The `is` operator with binding flow into truthy contexts.
 //! - The built-in generic `Option[T]`.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::builtin_names::map_query;
@@ -56,10 +58,30 @@ pub use refinements::{locale_tag_accepts, locale_tag_pattern, zero_value_ts};
 /// across units, never an already-interned `Ty`/`TyId` — every unit
 /// re-interns its own `Ty` graph from shared declarations, so `TyId`s are
 /// never compared across two different `check_record` invocations.
-#[derive(Debug, Default)]
+///
+/// **Why [`intern`](Self::intern) takes `&self`, not `&mut self`.** The table
+/// is reached from `Ctx`, whose other fields (`expr_types`, `errors`, the
+/// sinks) are themselves `&mut` and are routinely live across an interning
+/// call — `ctx.types.intern(…)` inside a loop over `ctx.scopes` is the
+/// common shape, not the exception. A `&mut Types` would make the borrow
+/// checker, not the type system, the thing every one of the ~200 minting
+/// sites is written around. Interior mutability keeps `&'a Types` `Copy`, so
+/// a function that needs the table just reads `ctx.types` once and is done.
+/// `RefCell` (over a lock) is the right cell here for the same reason
+/// `bynk-emit`'s `SourceMapBuilder` uses one: the compiler is single-threaded
+/// and never re-enters `intern` from inside `intern`.
+#[derive(Default)]
 pub struct Types {
-    table: Vec<Ty>,
-    index: HashMap<Ty, TyId>,
+    inner: RefCell<TypesInner>,
+}
+
+#[derive(Debug, Default)]
+struct TypesInner {
+    /// `TyId(i)` resolves to `table[i]`. `Rc` so [`Types::get`] hands back a
+    /// handle by refcount bump rather than cloning the node, and so the same
+    /// allocation backs both `table` and `index` without storing it twice.
+    table: Vec<Rc<Ty>>,
+    index: HashMap<Rc<Ty>, TyId>,
 }
 
 impl Types {
@@ -69,27 +91,87 @@ impl Types {
 
     /// Intern `ty`, returning its `TyId`. The same `Ty` value (by `Eq`)
     /// always yields the same `TyId` — the property `ty_hash_eq_ord_tests`
-    /// (T3.6b's own settling-review prerequisite) pins directly.
-    pub fn intern(&mut self, ty: Ty) -> TyId {
-        if let Some(&id) = self.index.get(&ty) {
+    /// (T3.6b's own settling-review prerequisite) pins directly. Dedup is by
+    /// the *shallow* `Ty`, which is sound precisely because every recursive
+    /// field is already a `TyId`: two structurally-equal types have equal
+    /// children ids by induction, so they hash and compare equal here.
+    pub fn intern(&self, ty: Ty) -> TyId {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(&id) = inner.index.get(&ty) {
             return id;
         }
-        let id = TyId(self.table.len() as u32);
-        self.table.push(ty.clone());
-        self.index.insert(ty, id);
+        let node = Rc::new(ty);
+        let id = TyId(inner.table.len() as u32);
+        inner.table.push(Rc::clone(&node));
+        inner.index.insert(node, id);
         id
     }
 
-    pub fn resolve(&self, id: TyId) -> &Ty {
-        &self.table[id.0 as usize]
+    /// The node `id` was interned from. Panics on a `TyId` minted by a
+    /// *different* table — see this type's doc for why that cannot happen
+    /// across `check_record` invocations.
+    pub fn get(&self, id: TyId) -> Rc<Ty> {
+        Rc::clone(&self.inner.borrow().table[id.0 as usize])
+    }
+
+    /// [`Ty::display`] for an already-interned type.
+    pub fn display(&self, id: TyId) -> String {
+        self.get(id).display(self)
+    }
+
+    /// Number of distinct types interned so far. Exposed for the interner's
+    /// own tests (dedup is observable only as "the table did not grow").
+    pub fn len(&self) -> usize {
+        self.inner.borrow().table.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl std::fmt::Debug for Types {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Types")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
     }
 }
 
 /// T3.6b (R4.1/R4.2): a `Ty`'s identity above the intern table — `Copy`,
-/// `Hash`, `Ord`, cheap to pass and compare. Resolved back to a `&Ty` only
-/// via the `Types` table it was interned into (see `Types`'s own doc).
+/// `Hash`, `Ord`, cheap to pass and compare. Resolved back to a `Ty` only
+/// via the [`Types`] table it was interned into (see that type's own doc).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TyId(u32);
+
+impl TyId {
+    /// The interned node, for the (many) sites that need to look at the
+    /// type's shape. Sugar for [`Types::get`], so a `TyId` reads like the
+    /// `&Ty` it replaced.
+    pub fn get(self, tys: &Types) -> Rc<Ty> {
+        tys.get(self)
+    }
+
+    /// [`Ty::display`] for this id — the form nearly every diagnostic uses.
+    pub fn display(self, tys: &Types) -> String {
+        tys.display(self)
+    }
+
+    /// True if this type is `Effect[_]` (v0.5).
+    pub fn is_effect(self, tys: &Types) -> bool {
+        tys.get(self).is_effect()
+    }
+
+    /// v0.102: true if this type belongs to the closed `Held` kind.
+    pub fn is_held(self, tys: &Types) -> bool {
+        tys.get(self).is_held()
+    }
+
+    /// The underlying base type, if this type widens to one.
+    pub fn base(self, tys: &Types) -> Option<BaseType> {
+        tys.get(self).base()
+    }
+}
 
 /// A resolved type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -193,8 +275,10 @@ pub enum NamedKind {
 }
 
 impl Ty {
-    /// Display name for diagnostics.
-    pub fn display(&self) -> String {
+    /// Display name for diagnostics. Takes the table the type was interned
+    /// into (T3.6b): every recursive field is a `TyId` now, so rendering a
+    /// nested type is a table read rather than a pointer chase.
+    pub fn display(&self, types: &Types) -> String {
         match self {
             // R4.3: a resolution failure already has its own diagnostic at the
             // site that produced this; this string exists only so a *second*
@@ -206,22 +290,27 @@ impl Ty {
             Ty::Named { name, args, .. } => format!(
                 "{}[{}]",
                 name,
-                args.iter().map(Ty::display).collect::<Vec<_>>().join(", ")
+                args.iter()
+                    .map(|a| types.display(*a))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
-            Ty::Result(t, e) => format!("Result[{}, {}]", t.display(), e.display()),
-            Ty::Option(t) => format!("Option[{}]", t.display()),
-            Ty::Effect(t) => format!("Effect[{}]", t.display()),
-            Ty::HttpResult(t) => format!("HttpResult[{}]", t.display()),
+            Ty::Result(t, e) => {
+                format!("Result[{}, {}]", types.display(*t), types.display(*e))
+            }
+            Ty::Option(t) => format!("Option[{}]", types.display(*t)),
+            Ty::Effect(t) => format!("Effect[{}]", types.display(*t)),
+            Ty::HttpResult(t) => format!("HttpResult[{}]", types.display(*t)),
             Ty::QueueResult => "QueueResult".to_string(),
-            Ty::List(t) => format!("List[{}]", t.display()),
-            Ty::Map(k, v) => format!("Map[{}, {}]", k.display(), v.display()),
-            Ty::Query(t) => format!("Query[{}]", t.display()),
-            Ty::Stream(t) => format!("Stream[{}]", t.display()),
-            Ty::Connection(t) => format!("Connection[{}]", t.display()),
+            Ty::List(t) => format!("List[{}]", types.display(*t)),
+            Ty::Map(k, v) => format!("Map[{}, {}]", types.display(*k), types.display(*v)),
+            Ty::Query(t) => format!("Query[{}]", types.display(*t)),
+            Ty::Stream(t) => format!("Stream[{}]", types.display(*t)),
+            Ty::Connection(t) => format!("Connection[{}]", types.display(*t)),
             Ty::ValidationError => "ValidationError".to_string(),
             Ty::JsonError => "JsonError".to_string(),
             Ty::Unit => "()".to_string(),
-            Ty::Actor(id) => format!("actor[{}]", id.display()),
+            Ty::Actor(id) => format!("actor[{}]", types.display(*id)),
             Ty::ActorSum(members) => members
                 .iter()
                 .map(|(name, _)| name.clone())
@@ -232,17 +321,19 @@ impl Ty {
                     0 => "()".to_string(),
                     // A single Fn-typed param needs parens to stay readable
                     // under right-associativity.
-                    1 if !matches!(params[0], Ty::Fn { .. }) => params[0].display(),
+                    1 if !matches!(&*types.get(params[0]), Ty::Fn { .. }) => {
+                        types.display(params[0])
+                    }
                     _ => format!(
                         "({})",
                         params
                             .iter()
-                            .map(|p| p.display())
+                            .map(|p| types.display(*p))
                             .collect::<Vec<_>>()
                             .join(", ")
                     ),
                 };
-                format!("{params} -> {}", ret.display())
+                format!("{params} -> {}", types.display(*ret))
             }
             Ty::Var(name) => name.clone(),
         }
@@ -264,9 +355,9 @@ impl Ty {
     /// v0.102: for a `Held` type, the held element it wraps (the frame type of a
     /// `Connection[F]`). Used by the storage-admission rules to look through an
     /// `Option[Connection]` value.
-    pub fn held_inner(&self) -> Option<&Ty> {
+    pub fn held_inner(&self) -> Option<TyId> {
         match self {
-            Ty::Connection(t) => Some(t),
+            Ty::Connection(t) => Some(*t),
             _ => None,
         }
     }
@@ -302,15 +393,26 @@ pub struct TypedCommons {
     /// — surfaced but not gating. Empty unless a warning-category diagnostic
     /// (e.g. `bynk.given.unused_capability`) fired on an otherwise-clean check.
     pub warnings: Vec<CompileError>,
+    /// T3.6b (R4.1): the intern table every `TyId` on this unit — in
+    /// `expr_types`, in a `Ty` node's own recursive fields — was minted from.
+    /// Named `ty_intern` rather than `types` only because `types` above is
+    /// already this struct's *declaration* table (`TypeDecl` by name); the two
+    /// are unrelated. `Rc` so [`RecordCheck`] can hand the same table out
+    /// alongside `partial_expr_types` on the error path, where no
+    /// `TypedCommons` is built to own it.
+    pub ty_intern: Rc<Types>,
 }
 
 /// T3.4: an `expr_types` entry — the checked type, plus the span of the node
 /// it was computed for. `Deref`-free by design (`.ty`/`.span`, not `.0`/`.1`)
 /// so call sites read the same as they did against a bare `Ty` before this.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// T3.6b (R4.1/R4.2): `ty` is a `TyId`, not a `Ty` — the whole entry is
+/// `Copy`-cheap, and resolving it needs the unit's `ty_intern` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TypedExpr {
     pub span: Span,
-    pub ty: Ty,
+    pub ty: TyId,
 }
 
 /// The outcome of [`check_record`]: the typed model (`Err` if the file had any
@@ -321,6 +423,10 @@ pub struct TypedExpr {
 pub struct RecordCheck {
     pub result: Result<TypedCommons, Vec<CompileError>>,
     pub partial_expr_types: HashMap<ExprId, TypedExpr>,
+    /// T3.6b (R4.1): the table `partial_expr_types`' `TyId`s resolve against.
+    /// The same `Rc` the `Ok` path's `TypedCommons::ty_intern` carries, so a
+    /// caller that reads either map has the table either way.
+    pub ty_intern: Rc<Types>,
 }
 
 /// T3.7 (R3.10): the gate between analysis and emission, as a type rather
@@ -393,11 +499,16 @@ pub fn check_record(
 ) -> RecordCheck {
     let mut errors = Vec::new();
     let mut expr_types: HashMap<ExprId, TypedExpr> = HashMap::new();
+    // T3.6b (R4.1): one intern table per invocation — the ownership the track
+    // doc settled. Every `TyId` minted below resolves against this table and
+    // no other; it rides out on `TypedCommons`/`RecordCheck` so `bynk-emit`
+    // and the analyse-mode surfaces can resolve what they are handed.
+    let ty_intern = Rc::new(Types::new());
 
     // 1. Validate each type declaration.
     for item in &input.commons.items {
         if let CommonsItem::Type(t) = item {
-            check_type_decl(t, &input.types, &mut errors);
+            check_type_decl(t, &input.types, &ty_intern, &mut errors);
         }
     }
 
@@ -414,6 +525,7 @@ pub fn check_record(
                 hints,
                 locals,
                 requirements,
+                &ty_intern,
             );
             refs.clear_owner();
         }
@@ -453,8 +565,10 @@ pub fn check_record(
                 methods: input.methods,
                 expr_types,
                 warnings,
+                ty_intern: Rc::clone(&ty_intern),
             }),
             partial_expr_types: HashMap::new(),
+            ty_intern,
         }
     } else {
         // Keep the best-effort types the checker already computed; Analyse mode
@@ -464,6 +578,7 @@ pub fn check_record(
         RecordCheck {
             result: Err(all),
             partial_expr_types: expr_types,
+            ty_intern,
         }
     }
 }
@@ -527,6 +642,12 @@ fn assert_expr_types_disjoint(
 /// #522: the six output sinks a handler-body check writes into. One struct at
 /// each call site instead of six positional `&mut` arguments.
 pub struct CheckSinks<'a> {
+    /// T3.6b (R4.1): the intern table the `TyId`s written into `expr_types`
+    /// (and carried on [`HandlerBodyCheck`]) resolve against. Belongs with the
+    /// sinks rather than the signature: it is the thing a body check *writes*
+    /// types into, and a caller holding a `TypedCommons` passes its
+    /// `ty_intern` straight through.
+    pub tys: &'a Types,
     pub expr_types: &'a mut HashMap<ExprId, TypedExpr>,
     pub errors: &'a mut Vec<CompileError>,
     pub refs: &'a mut RefSink,
@@ -552,13 +673,13 @@ pub struct HandlerBodyCheck<'a> {
     pub given_anchor: Option<Span>,
     pub report_unused: bool,
     /// An agent handler's synthetic state-record type, when one is in scope.
-    pub agent_state_ty: Option<Ty>,
-    pub agent_self_scope: Option<HashMap<String, Ty>>,
+    pub agent_state_ty: Option<TyId>,
+    pub agent_self_scope: Option<HashMap<String, TyId>>,
     /// v0.45/v0.52: the `by <binder>: <Actor(s)>` binding — the binder name and
     /// its fully-formed sealed type: `Ty::Actor(identity)` for a single actor
     /// (so `binder.identity` type-checks), or `Ty::ActorSum(members)` for a sum
     /// (so the body `match`es on it). `None` for handlers without a `by` binder.
-    pub actor_binding: Option<(String, Ty)>,
+    pub actor_binding: Option<(String, TyId)>,
     /// The agent's `store` fields, by name (finding #36 — see [`StoreField`]),
     /// so the `:=` write form, `<field>.<op>(…)`, and the map query accessors
     /// can resolve their target. Empty for service/test bodies and `state {
@@ -621,6 +742,7 @@ pub fn check_handler_body(
         borrowed_held,
     } = check;
     let CheckSinks {
+        tys,
         expr_types,
         errors,
         refs,
@@ -629,15 +751,15 @@ pub fn check_handler_body(
         requirements,
     } = sinks;
     let return_ty_span = return_type.span();
-    let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
+    let Some(return_ty) = resolve_type_ref(return_type, &input.types, tys) else {
         return;
     };
     let no_vars = HashSet::new();
     record_type_refs(return_type, &input.types, &no_vars, refs);
     // Build the parameter scope.
-    let mut param_scope: HashMap<String, Ty> = HashMap::new();
+    let mut param_scope: HashMap<String, TyId> = HashMap::new();
     for p in params {
-        if let Some(t) = resolve_type_ref(&p.type_ref, &input.types) {
+        if let Some(t) = resolve_type_ref(&p.type_ref, &input.types, tys) {
             record_type_refs(&p.type_ref, &input.types, &no_vars, refs);
             // v0.31: a handler/op parameter is in scope over the whole body.
             if p.name.name != "_" {
@@ -645,7 +767,7 @@ pub fn check_handler_body(
                     p.name.name.clone(),
                     p.name.span,
                     crate::locals::LocalKind::Param,
-                    t.display(),
+                    t.display(tys),
                     body.span,
                 );
             }
@@ -667,7 +789,7 @@ pub fn check_handler_body(
     if let Some(self_scope) = agent_self_scope {
         param_scope.extend(self_scope);
     }
-    let effectful = matches!(&return_ty, Ty::Effect(_));
+    let effectful = return_ty.is_effect(tys);
     let given_entries: Vec<(String, Span)> = given
         .iter()
         .map(|c| (c.key().to_string(), c.span))
@@ -675,6 +797,7 @@ pub fn check_handler_body(
     let given_remaining: HashSet<String> = given_entries.iter().map(|(k, _)| k.clone()).collect();
     let mut ctx = Ctx {
         input,
+        tys,
         expr_types,
         errors,
         refs,
@@ -684,7 +807,7 @@ pub fn check_handler_body(
         scopes: vec![param_scope],
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
-        return_ty: return_ty.clone(),
+        return_ty,
         return_ty_span,
         effectful,
         agent_state_ty,
@@ -704,7 +827,7 @@ pub fn check_handler_body(
         store_fields,
     };
     // Check the body and validate it matches the return type.
-    let Some(body_ty) = type_of_block(body, Some(&return_ty), &mut ctx) else {
+    let Some(body_ty) = type_of_block(body, Some(return_ty), &mut ctx) else {
         return;
     };
     // v0.102 (§3 step 11): the held-resource linearity pass, now that
@@ -717,6 +840,7 @@ pub fn check_handler_body(
         &ctx.pattern_binding_types,
         &borrowed_held,
         ctx.errors,
+        tys,
     );
     // Finding #28 (debug-only), extended: `check_record`'s per-function walk
     // (43abc242) never reaches a handler body — `check_handler_body` is
@@ -730,15 +854,15 @@ pub fn check_handler_body(
         let mut seen: HashSet<ExprId> = HashSet::new();
         assert_expr_types_disjoint_in_block(body, ctx.expr_types, &mut seen);
     }
-    if !compatible(&body_ty, &return_ty) {
+    if !compatible(body_ty, return_ty, tys) {
         ctx.errors.push(
             CompileError::new(
                 "bynk.types.return_mismatch",
                 body.tail.span,
                 format!(
                     "handler body has type `{}`, but the declared return type is `{}`",
-                    body_ty.display(),
-                    return_ty.display()
+                    body_ty.display(tys),
+                    return_ty.display(tys)
                 ),
             )
             .with_label(return_ty_span, "declared return type"),
@@ -800,16 +924,17 @@ pub fn check_handler_body(
 pub fn check_body(
     input: &ResolvedCommons,
     body: &Block,
-    return_ty: &Ty,
+    return_ty: TyId,
     return_ty_span: Span,
-    scope: HashMap<String, Ty>,
+    scope: HashMap<String, TyId>,
     caps: CapabilityCtx,
     test_services: HashMap<String, TestServiceSig>,
     test_actors: HashMap<String, bynk_syntax::ast::ActorDecl>,
     where_pred: Option<&Expr>,
     sinks: CheckSinks<'_>,
-) -> Option<Ty> {
+) -> Option<TyId> {
     let CheckSinks {
+        tys,
         expr_types,
         errors,
         refs,
@@ -819,6 +944,7 @@ pub fn check_body(
     } = sinks;
     let mut ctx = Ctx {
         input,
+        tys,
         expr_types,
         errors,
         refs,
@@ -828,9 +954,9 @@ pub fn check_body(
         scopes: vec![scope],
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
-        return_ty: return_ty.clone(),
+        return_ty,
         return_ty_span,
-        effectful: matches!(return_ty, Ty::Effect(_)),
+        effectful: return_ty.is_effect(tys),
         agent_state_ty: None,
         commit_seen: false,
         caps,
@@ -841,16 +967,16 @@ pub fn check_body(
         store_fields: HashMap::new(),
     };
     if let Some(w) = where_pred {
-        let bool_ty = Ty::Base(BaseType::Bool);
-        if let Some(actual) = type_of(w, Some(&bool_ty), &mut ctx)
-            && actual.base() != Some(BaseType::Bool)
+        let bool_ty = tys.intern(Ty::Base(BaseType::Bool));
+        if let Some(actual) = type_of(w, Some(bool_ty), &mut ctx)
+            && actual.base(tys) != Some(BaseType::Bool)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.property.where_not_bool",
                 w.span,
                 format!(
                     "a `for all ... where` filter has type `{}`, but a `Bool` is required",
-                    actual.display()
+                    actual.display(tys)
                 ),
             ));
         }
@@ -885,9 +1011,10 @@ pub fn check_invariants(
     invariants: &[Invariant],
     // A `store`-bearing agent's invariants reference its `Cell` fields by bare
     // name (a pure read of the staged value), so they form the predicate scope.
-    store_cells: &HashMap<String, Ty>,
+    store_cells: &HashMap<String, TyId>,
     agent_name: &str,
     input: &ResolvedCommons,
+    tys: &Types,
     expr_types: &mut HashMap<ExprId, TypedExpr>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
@@ -915,9 +1042,9 @@ pub fn check_invariants(
 
     // Build the predicate scope once: each `store` `Cell` is in scope by bare
     // name (a `Cell` reads as its element type).
-    let mut field_scope: HashMap<String, Ty> = HashMap::new();
+    let mut field_scope: HashMap<String, TyId> = HashMap::new();
     for (name, ty) in store_cells {
-        field_scope.insert(name.clone(), ty.clone());
+        field_scope.insert(name.clone(), *ty);
     }
 
     for inv in invariants {
@@ -960,9 +1087,10 @@ pub fn check_invariants(
             continue;
         }
 
-        let bool_ty = Ty::Base(BaseType::Bool);
+        let bool_ty = tys.intern(Ty::Base(BaseType::Bool));
         let mut ctx = Ctx {
             input,
+            tys,
             expr_types,
             errors,
             refs,
@@ -972,7 +1100,7 @@ pub fn check_invariants(
             scopes: vec![field_scope.clone()],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
-            return_ty: bool_ty.clone(),
+            return_ty: bool_ty,
             return_ty_span: inv.predicate.span,
             // A predicate is a pure expression — effectful operations (capability
             // calls, `<-`) are not permitted and are rejected as type errors.
@@ -993,9 +1121,9 @@ pub fn check_invariants(
             type_vars: HashSet::new(),
             store_fields: HashMap::new(),
         };
-        let pred_ty = type_of(&inv.predicate, Some(&bool_ty), &mut ctx);
+        let pred_ty = type_of(&inv.predicate, Some(bool_ty), &mut ctx);
         if let Some(t) = pred_ty
-            && t.base() != Some(BaseType::Bool)
+            && t.base(tys) != Some(BaseType::Bool)
         {
             ctx.errors.push(
                 CompileError::new(
@@ -1004,7 +1132,7 @@ pub fn check_invariants(
                     format!(
                         "invariant `{}` predicate has type `{}`, but an invariant must be `Bool`",
                         inv.name.name,
-                        t.display()
+                        t.display(tys)
                     ),
                 )
                 .with_note("an invariant predicate is a `Bool`-valued property of the state"),
@@ -1035,10 +1163,10 @@ pub fn check_contracts(
     ensures: &[Contract],
     // The function's parameters in scope by bare name (plus `self` for a
     // method), the shared predicate scope for both clause kinds.
-    param_scope: &HashMap<String, Ty>,
+    param_scope: &HashMap<String, TyId>,
     // The declared return type, awaited for an `Effect` — the type of `result`
     // inside an `ensures` predicate.
-    result_ty: &Ty,
+    result_ty: TyId,
     // True when a parameter is literally named `result`; then `result` in a
     // `requires` is that parameter, not the (unbound) return value.
     has_result_param: bool,
@@ -1051,6 +1179,7 @@ pub fn check_contracts(
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
     type_vars: &HashSet<String>,
+    tys: &Types,
 ) {
     // Duplicate-name check across *all* clauses — the name is the dedup key for
     // the failure report and the redundant-test flag, so it is unique per fn.
@@ -1074,7 +1203,7 @@ pub fn check_contracts(
     // Type-check one clause predicate in the given scope, emitting the shared
     // impurity / non-`Bool` diagnostics.
     let check_clause = |c: &Contract,
-                        scope: HashMap<String, Ty>,
+                        scope: HashMap<String, TyId>,
                         expr_types: &mut HashMap<ExprId, TypedExpr>,
                         errors: &mut Vec<CompileError>,
                         refs: &mut RefSink,
@@ -1099,9 +1228,10 @@ pub fn check_contracts(
             );
             return;
         }
-        let bool_ty = Ty::Base(BaseType::Bool);
+        let bool_ty = tys.intern(Ty::Base(BaseType::Bool));
         let mut ctx = Ctx {
             input,
+            tys,
             expr_types,
             errors,
             refs,
@@ -1111,7 +1241,7 @@ pub fn check_contracts(
             scopes: vec![scope],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
-            return_ty: bool_ty.clone(),
+            return_ty: bool_ty,
             return_ty_span: c.predicate.span,
             effectful: false,
             agent_state_ty: None,
@@ -1130,9 +1260,9 @@ pub fn check_contracts(
             type_vars: type_vars.clone(),
             store_fields: HashMap::new(),
         };
-        let pred_ty = type_of(&c.predicate, Some(&bool_ty), &mut ctx);
+        let pred_ty = type_of(&c.predicate, Some(bool_ty), &mut ctx);
         if let Some(t) = pred_ty
-            && t.base() != Some(BaseType::Bool)
+            && t.base(tys) != Some(BaseType::Bool)
         {
             ctx.errors.push(
                 CompileError::new(
@@ -1142,7 +1272,7 @@ pub fn check_contracts(
                         "contract clause `{}` predicate has type `{}`, but a contract clause \
                              must be `Bool`",
                         c.name.name,
-                        t.display()
+                        t.display(tys)
                     ),
                 )
                 .with_note("a contract predicate is a `Bool`-valued claim over the arguments"),
@@ -1222,7 +1352,7 @@ pub fn check_transitions(
     transitions: &[Transition],
     // The agent's synthetic state record type — both `old` and `new` are bound to
     // it, so `old.field` / `new.field` read as the field's element type.
-    state_ty: &Ty,
+    state_ty: TyId,
     agent_name: &str,
     // Resolved commons carrying the synthetic `<Agent>State` record so field
     // access on `old`/`new` resolves.
@@ -1233,6 +1363,7 @@ pub fn check_transitions(
     hints: &mut HintSink,
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
+    tys: &Types,
 ) {
     // Duplicate-name check across the agent's transitions.
     let mut seen: HashMap<&str, ()> = HashMap::new();
@@ -1253,7 +1384,7 @@ pub fn check_transitions(
     }
 
     // Both `old` and `new` are in scope as the state record.
-    let mut scope: HashMap<String, Ty> = HashMap::new();
+    let mut scope: HashMap<String, TyId> = HashMap::new();
     scope.insert("old".to_string(), state_ty.clone());
     scope.insert("new".to_string(), state_ty.clone());
 
@@ -1316,9 +1447,10 @@ pub fn check_transitions(
             continue;
         }
 
-        let bool_ty = Ty::Base(BaseType::Bool);
+        let bool_ty = tys.intern(Ty::Base(BaseType::Bool));
         let mut ctx = Ctx {
             input,
+            tys,
             expr_types,
             errors,
             refs,
@@ -1328,7 +1460,7 @@ pub fn check_transitions(
             scopes: vec![scope.clone()],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
-            return_ty: bool_ty.clone(),
+            return_ty: bool_ty,
             return_ty_span: tr.predicate.span,
             effectful: false,
             agent_state_ty: None,
@@ -1347,9 +1479,9 @@ pub fn check_transitions(
             type_vars: HashSet::new(),
             store_fields: HashMap::new(),
         };
-        let pred_ty = type_of(&tr.predicate, Some(&bool_ty), &mut ctx);
+        let pred_ty = type_of(&tr.predicate, Some(bool_ty), &mut ctx);
         if let Some(t) = pred_ty
-            && t.base() != Some(BaseType::Bool)
+            && t.base(tys) != Some(BaseType::Bool)
         {
             ctx.errors.push(
                 CompileError::new(
@@ -1358,7 +1490,7 @@ pub fn check_transitions(
                     format!(
                         "transition `{}` predicate has type `{}`, but a transition must be `Bool`",
                         tr.name.name,
-                        t.display()
+                        t.display(tys)
                     ),
                 )
                 .with_note("a transition predicate is a `Bool`-valued property of the state move"),
@@ -1533,18 +1665,18 @@ impl TestServiceSig {
 /// dispatch keys off this instead of five separate per-kind maps, so a new
 /// storage kind is one new variant rather than a sixth map threaded through
 /// every constructor and lookup site.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum StoreField {
     /// `store <name>: Cell[T]` — element type.
-    Cell(Ty),
+    Cell(TyId),
     /// `store <name>: Map[K, V]` — key, value.
-    Map(Ty, Ty),
+    Map(TyId, TyId),
     /// `store <name>: Set[T]` — element type.
-    Set(Ty),
+    Set(TyId),
     /// `store <name>: Cache[K, V] @ttl(...)` — key, value, TTL in milliseconds.
-    Cache(Ty, Ty, i64),
+    Cache(TyId, TyId, i64),
     /// `store <name>: Log[T]` — element type.
-    Log(Ty),
+    Log(TyId),
 }
 
 /// The checker's working context. `pub(crate)`: every caller outside this
@@ -1553,6 +1685,12 @@ pub enum StoreField {
 /// external construction site.
 pub(crate) struct Ctx<'a> {
     pub input: &'a ResolvedCommons,
+    /// T3.6b (R4.1): the unit's intern table. A shared `&` (the table is
+    /// interior-mutable, see [`Types`]) so it stays `Copy` — a function that
+    /// needs it reads `ctx.tys` once and is then free of the `ctx` borrow.
+    /// Spelled `tys`, not `types`, because `input.types` next door is the
+    /// unrelated `TypeDecl`-by-name declaration map.
+    pub tys: &'a Types,
     pub expr_types: &'a mut HashMap<ExprId, TypedExpr>,
     pub errors: &'a mut Vec<CompileError>,
     /// v0.25 (ADR 0053): binding edges recorded at the checker's own
@@ -1574,7 +1712,7 @@ pub(crate) struct Ctx<'a> {
     /// surfaces (the ghost `given` inlay hint, hover) can read it.
     pub requirements: &'a mut RequirementSink,
     /// Stack of in-scope name → type frames.
-    pub scopes: Vec<HashMap<String, Ty>>,
+    pub scopes: Vec<HashMap<String, TyId>>,
     /// Memoised `is`-pattern bindings, keyed by the condition sub-expression's
     /// span. `collect_is_bindings` runs at every `&&`/`implies` node and, for a
     /// left-nested `&&` chain, would otherwise re-walk each lhs subtree once per
@@ -1582,7 +1720,7 @@ pub(crate) struct Ctx<'a> {
     /// pure read over `expr_types` (already populated by the time it runs) and
     /// spans are unique per body, caching each node's result collapses the walk
     /// to a single pass.
-    pub is_binding_cache: HashMap<ExprId, Vec<(String, Ty)>>,
+    pub is_binding_cache: HashMap<ExprId, Vec<(String, TyId)>>,
     /// T3.4: a pattern-bound name's resolved type, keyed by the binding
     /// `Ident`'s own span. Deliberately **not** `ExprId`-keyed and not
     /// folded into `expr_types` — a `Pattern::Binding` is not an `Expr` and
@@ -1591,15 +1729,15 @@ pub(crate) struct Ctx<'a> {
     /// …), not just the handful that bind. This is exactly the `PatId`
     /// reference draws as a *separate* identity from `ExprId` (Part 2) —
     /// out of this slice's scope on purpose, not overlooked.
-    pub pattern_binding_types: HashMap<Span, Ty>,
-    pub return_ty: Ty,
+    pub pattern_binding_types: HashMap<Span, TyId>,
+    pub return_ty: TyId,
     pub return_ty_span: Span,
     /// True if the enclosing function/handler returns `Effect[T]` (v0.5).
     /// Determines whether `<-` and capability calls are permitted.
     pub effectful: bool,
     /// If inside an agent handler, the agent's state type and the agent's
     /// name. Used to validate `commit` statements.
-    pub agent_state_ty: Option<Ty>,
+    pub agent_state_ty: Option<TyId>,
     /// True if a `commit` has been seen on the current control-flow path.
     /// Used to detect "two reachable commits".
     pub commit_seen: bool,
@@ -1653,7 +1791,7 @@ pub struct CapabilityOpInfo {
     /// collapsing to `Ty::Unit` — a call site substitutes a concrete `Ty` for
     /// each before checking arguments/return.
     pub type_params: Vec<String>,
-    pub params: Vec<Ty>,
+    pub params: Vec<TyId>,
     /// The operation's parameter names, positionally aligned with `params`
     /// (v0.117). Needed for observation: the `with <pred>` scope binds them by
     /// name and `trace(Cap.op)` yields records with these fields.
@@ -1668,10 +1806,10 @@ pub fn call_record_type_name(cap: &str, op: &str) -> String {
 }
 
 impl<'a> Ctx<'a> {
-    pub fn lookup(&self, name: &str) -> Option<Ty> {
+    pub fn lookup(&self, name: &str) -> Option<TyId> {
         for scope in self.scopes.iter().rev() {
             if let Some(t) = scope.get(name) {
-                return Some(t.clone());
+                return Some(*t);
             }
         }
         None
@@ -1680,7 +1818,7 @@ impl<'a> Ctx<'a> {
     /// Returns the type of an expression's "root identifier" — for `a.b.c`
     /// that's `a`; for a bare `a` it's `a`. Used to detect whether a chain's
     /// outermost name shadows an alias / consumed-context prefix.
-    pub fn lookup_root_ident(&self, expr: &Expr) -> Option<Ty> {
+    pub fn lookup_root_ident(&self, expr: &Expr) -> Option<TyId> {
         match &expr.kind {
             ExprKind::Ident(id) => self.lookup(&id.name),
             ExprKind::FieldAccess { receiver, .. } => self.lookup_root_ident(receiver),
@@ -1711,7 +1849,7 @@ impl<'a> Ctx<'a> {
     pub fn pop_scope(&mut self) {
         self.scopes.pop();
     }
-    pub fn bind(&mut self, name: String, ty: Ty) {
+    pub fn bind(&mut self, name: String, ty: TyId) {
         self.scopes.last_mut().unwrap().insert(name, ty);
     }
 }
@@ -1719,30 +1857,34 @@ impl<'a> Ctx<'a> {
 // ==== Type-system core (resolution, unification, compatibility, inference) ====
 
 /// Build a `Ty` from a TypeDecl name reference.
-pub fn type_from_decl(id: &Ident, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Ty> {
+pub fn type_from_decl(
+    id: &Ident,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> Option<TyId> {
     let decl = types.get(&id.name)?;
-    Some(named_ty(decl))
+    Some(named_ty(decl, tys))
 }
 
 /// Build a `Ty::Named` for the given declaration with the given applied type
 /// arguments (empty for a non-generic reference).
-pub fn named_ty_with_args(decl: &TypeDecl, args: Vec<Ty>) -> Ty {
+pub fn named_ty_with_args(decl: &TypeDecl, args: Vec<TyId>, tys: &Types) -> TyId {
     let kind = match &decl.body {
         TypeBody::Refined { base, .. } => NamedKind::Refined(*base),
         TypeBody::Record(_) => NamedKind::Record,
         TypeBody::Sum(_) => NamedKind::Sum,
         TypeBody::Opaque { base, .. } => NamedKind::Opaque(*base),
     };
-    Ty::Named {
+    tys.intern(Ty::Named {
         name: decl.name.name.clone(),
         kind,
         args,
-    }
+    })
 }
 
 /// Build a `Ty::Named` for the given declaration (no applied type arguments).
-pub fn named_ty(decl: &TypeDecl) -> Ty {
-    named_ty_with_args(decl, Vec::new())
+pub fn named_ty(decl: &TypeDecl, tys: &Types) -> TyId {
+    named_ty_with_args(decl, Vec::new(), tys)
 }
 
 /// v0.158 (ADR 0184): the compiler-known `MapEntry[K, V]` record — the element
@@ -1751,23 +1893,23 @@ pub fn named_ty(decl: &TypeDecl) -> Ty {
 /// and the ADR 0183 non-boundary rule like any generic-record instantiation;
 /// its fields are resolved by name in `check_field_access` (it has no
 /// user-visible `TypeDecl`, like `JsonError`).
-pub fn map_entry_ty(k: Ty, v: Ty) -> Ty {
-    Ty::Named {
+pub fn map_entry_ty(k: TyId, v: TyId, tys: &Types) -> TyId {
+    tys.intern(Ty::Named {
         name: MAP_ENTRY.to_string(),
         kind: NamedKind::Record,
         args: vec![k, v],
-    }
+    })
 }
 
 /// v0.157 (ADR 0183): the substitution mapping a generic record's declared
 /// type parameters onto a concrete instantiation's arguments. Empty when the
 /// type is non-generic or `args` is empty (an under-applied reference — the
 /// resolver reports that separately).
-pub fn type_param_subst(decl: &TypeDecl, args: &[Ty]) -> HashMap<String, Ty> {
+pub fn type_param_subst(decl: &TypeDecl, args: &[TyId]) -> HashMap<String, TyId> {
     decl.type_params
         .iter()
         .map(|p| p.name.name.clone())
-        .zip(args.iter().cloned())
+        .zip(args.iter().copied())
         .collect()
 }
 
@@ -1777,12 +1919,13 @@ pub fn type_param_subst(decl: &TypeDecl, args: &[Ty]) -> HashMap<String, Ty> {
 /// instantiation's `args`. For a non-generic record this is a plain resolve.
 pub fn instantiate_field_ty(
     decl: &TypeDecl,
-    args: &[Ty],
+    args: &[TyId],
     field_ref: &TypeRef,
     types: &HashMap<String, Arc<TypeDecl>>,
-) -> Option<Ty> {
+    tys: &Types,
+) -> Option<TyId> {
     if decl.type_params.is_empty() {
-        return resolve_type_ref(field_ref, types);
+        return resolve_type_ref(field_ref, types, tys);
     }
     // Without a full argument set the substitution is partial and would leave a
     // rigid `Ty::Var` in the field type; an under-/over-applied reference is an
@@ -1795,8 +1938,8 @@ pub fn instantiate_field_ty(
         .iter()
         .map(|p| p.name.name.clone())
         .collect();
-    let field_ty = resolve_type_ref_in(field_ref, types, &vars)?;
-    Some(substitute(&field_ty, &type_param_subst(decl, args)))
+    let field_ty = resolve_type_ref_in(field_ref, types, &vars, tys)?;
+    Some(substitute(field_ty, &type_param_subst(decl, args), tys))
 }
 
 /// v0.20a: like [`resolve_type_ref`], with a set of in-scope **type
@@ -1807,37 +1950,34 @@ pub fn resolve_type_ref_in(
     r: &TypeRef,
     types: &HashMap<String, Arc<TypeDecl>>,
     vars: &HashSet<String>,
-) -> Option<Ty> {
-    match r {
-        TypeRef::Named(id) if vars.contains(&id.name) => Some(Ty::Var(id.name.clone())),
-        TypeRef::Result(t, e, _) => Some(Ty::Result(
-            Box::new(resolve_type_ref_in(t, types, vars)?),
-            Box::new(resolve_type_ref_in(e, types, vars)?),
-        )),
-        TypeRef::Option(t, _) => Some(Ty::Option(Box::new(resolve_type_ref_in(t, types, vars)?))),
-        TypeRef::Effect(t, _) => Some(Ty::Effect(Box::new(resolve_type_ref_in(t, types, vars)?))),
-        TypeRef::HttpResult(t, _) => Some(Ty::HttpResult(Box::new(resolve_type_ref_in(
-            t, types, vars,
-        )?))),
-        TypeRef::List(t, _) => Some(Ty::List(Box::new(resolve_type_ref_in(t, types, vars)?))),
-        TypeRef::Query(t, _) => Some(Ty::Query(Box::new(resolve_type_ref_in(t, types, vars)?))),
-        TypeRef::Stream(t, _) => Some(Ty::Stream(Box::new(resolve_type_ref_in(t, types, vars)?))),
-        TypeRef::Connection(t, _) => Some(Ty::Connection(Box::new(resolve_type_ref_in(
-            t, types, vars,
-        )?))),
-        TypeRef::Map(k, v, _) => Some(Ty::Map(
-            Box::new(resolve_type_ref_in(k, types, vars)?),
-            Box::new(resolve_type_ref_in(v, types, vars)?),
-        )),
+    tys: &Types,
+) -> Option<TyId> {
+    let ty = match r {
+        TypeRef::Named(id) if vars.contains(&id.name) => Ty::Var(id.name.clone()),
+        TypeRef::Result(t, e, _) => Ty::Result(
+            resolve_type_ref_in(t, types, vars, tys)?,
+            resolve_type_ref_in(e, types, vars, tys)?,
+        ),
+        TypeRef::Option(t, _) => Ty::Option(resolve_type_ref_in(t, types, vars, tys)?),
+        TypeRef::Effect(t, _) => Ty::Effect(resolve_type_ref_in(t, types, vars, tys)?),
+        TypeRef::HttpResult(t, _) => Ty::HttpResult(resolve_type_ref_in(t, types, vars, tys)?),
+        TypeRef::List(t, _) => Ty::List(resolve_type_ref_in(t, types, vars, tys)?),
+        TypeRef::Query(t, _) => Ty::Query(resolve_type_ref_in(t, types, vars, tys)?),
+        TypeRef::Stream(t, _) => Ty::Stream(resolve_type_ref_in(t, types, vars, tys)?),
+        TypeRef::Connection(t, _) => Ty::Connection(resolve_type_ref_in(t, types, vars, tys)?),
+        TypeRef::Map(k, v, _) => Ty::Map(
+            resolve_type_ref_in(k, types, vars, tys)?,
+            resolve_type_ref_in(v, types, vars, tys)?,
+        ),
         TypeRef::Fn(params, ret, _) => {
-            let params: Option<Vec<Ty>> = params
+            let params: Option<Vec<TyId>> = params
                 .iter()
-                .map(|p| resolve_type_ref_in(p, types, vars))
+                .map(|p| resolve_type_ref_in(p, types, vars, tys))
                 .collect();
-            Some(Ty::Fn {
+            Ty::Fn {
                 params: params?,
-                ret: Box::new(resolve_type_ref_in(ret, types, vars)?),
-            })
+                ret: resolve_type_ref_in(ret, types, vars, tys)?,
+            }
         }
         // v0.157 (ADR 0183): `Name[Arg, …]` — application of a user generic
         // type. Arguments resolve with the enclosing type parameters in scope;
@@ -1845,40 +1985,36 @@ pub fn resolve_type_ref_in(
         // mis-applied name simply produces no type here.
         TypeRef::App { name, args, .. } => {
             let decl = types.get(&name.name)?;
-            let args: Option<Vec<Ty>> = args
+            let args: Option<Vec<TyId>> = args
                 .iter()
-                .map(|a| resolve_type_ref_in(a, types, vars))
+                .map(|a| resolve_type_ref_in(a, types, vars, tys))
                 .collect();
-            Some(named_ty_with_args(decl, args?))
+            return Some(named_ty_with_args(decl, args?, tys));
         }
-        _ => resolve_type_ref(r, types),
-    }
+        _ => return resolve_type_ref(r, types, tys),
+    };
+    Some(tys.intern(ty))
 }
 
 /// v0.20a: substitute type variables in `t` per `subst`. Must be total when
 /// instantiating a call (the uninferable check runs first); an unbound Var
 /// passes through unchanged for partial substitution during inference.
-pub(crate) fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
-    match t {
-        Ty::Var(n) => subst.get(n).cloned().unwrap_or_else(|| t.clone()),
-        Ty::Result(a, b) => Ty::Result(
-            Box::new(substitute(a, subst)),
-            Box::new(substitute(b, subst)),
-        ),
-        Ty::Option(a) => Ty::Option(Box::new(substitute(a, subst))),
-        Ty::Effect(a) => Ty::Effect(Box::new(substitute(a, subst))),
-        Ty::HttpResult(a) => Ty::HttpResult(Box::new(substitute(a, subst))),
-        Ty::List(a) => Ty::List(Box::new(substitute(a, subst))),
-        Ty::Query(a) => Ty::Query(Box::new(substitute(a, subst))),
-        Ty::Stream(a) => Ty::Stream(Box::new(substitute(a, subst))),
-        Ty::Connection(a) => Ty::Connection(Box::new(substitute(a, subst))),
-        Ty::Map(k, v) => Ty::Map(
-            Box::new(substitute(k, subst)),
-            Box::new(substitute(v, subst)),
-        ),
+pub(crate) fn substitute(t: TyId, subst: &HashMap<String, TyId>, tys: &Types) -> TyId {
+    let node = tys.get(t);
+    let substituted = match &*node {
+        Ty::Var(n) => return subst.get(n).copied().unwrap_or(t),
+        Ty::Result(a, b) => Ty::Result(substitute(*a, subst, tys), substitute(*b, subst, tys)),
+        Ty::Option(a) => Ty::Option(substitute(*a, subst, tys)),
+        Ty::Effect(a) => Ty::Effect(substitute(*a, subst, tys)),
+        Ty::HttpResult(a) => Ty::HttpResult(substitute(*a, subst, tys)),
+        Ty::List(a) => Ty::List(substitute(*a, subst, tys)),
+        Ty::Query(a) => Ty::Query(substitute(*a, subst, tys)),
+        Ty::Stream(a) => Ty::Stream(substitute(*a, subst, tys)),
+        Ty::Connection(a) => Ty::Connection(substitute(*a, subst, tys)),
+        Ty::Map(k, v) => Ty::Map(substitute(*k, subst, tys), substitute(*v, subst, tys)),
         Ty::Fn { params, ret } => Ty::Fn {
-            params: params.iter().map(|p| substitute(p, subst)).collect(),
-            ret: Box::new(substitute(ret, subst)),
+            params: params.iter().map(|p| substitute(*p, subst, tys)).collect(),
+            ret: substitute(*ret, subst, tys),
         },
         // v0.157 (ADR 0183): a generic named type's arguments may carry vars —
         // substitution recurses into them (an under-applied bare reference has
@@ -1886,13 +2022,14 @@ pub(crate) fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         Ty::Named { name, kind, args } => Ty::Named {
             name: name.clone(),
             kind: kind.clone(),
-            args: args.iter().map(|a| substitute(a, subst)).collect(),
+            args: args.iter().map(|a| substitute(*a, subst, tys)).collect(),
         },
         // Leaves (no inner type to ground) and the sealed actor bindings
         // (boundary-minted, never Var-bearing). Enumerated — no `_` — so a
         // new `Ty` variant must state whether substitution recurses into it.
         // `Ty::Error` is a leaf by construction (R4.3): it never carries a
-        // `Var` to ground.
+        // `Var` to ground. T3.6b: a leaf substitutes to itself, and its `TyId`
+        // is already that value — return it rather than re-interning.
         Ty::Error
         | Ty::Base(_)
         | Ty::QueueResult
@@ -1900,27 +2037,30 @@ pub(crate) fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         | Ty::JsonError
         | Ty::Unit
         | Ty::Actor(_)
-        | Ty::ActorSum(_) => t.clone(),
-    }
+        | Ty::ActorSum(_) => return t,
+    };
+    tys.intern(substituted)
 }
 
 /// v0.20a: does `t` still contain a type variable?
-pub(crate) fn contains_var(t: &Ty) -> bool {
-    match t {
+pub(crate) fn contains_var(t: TyId, tys: &Types) -> bool {
+    match &*tys.get(t) {
         Ty::Var(_) => true,
         // R4.3: `Ty::Error` is a leaf; it never carries a `Var`.
         Ty::Error => false,
-        Ty::Result(a, b) | Ty::Map(a, b) => contains_var(a) || contains_var(b),
+        Ty::Result(a, b) | Ty::Map(a, b) => contains_var(*a, tys) || contains_var(*b, tys),
         Ty::Option(a)
         | Ty::Effect(a)
         | Ty::HttpResult(a)
         | Ty::List(a)
         | Ty::Query(a)
         | Ty::Stream(a)
-        | Ty::Connection(a) => contains_var(a),
-        Ty::Fn { params, ret } => params.iter().any(contains_var) || contains_var(ret),
+        | Ty::Connection(a) => contains_var(*a, tys),
+        Ty::Fn { params, ret } => {
+            params.iter().any(|p| contains_var(*p, tys)) || contains_var(*ret, tys)
+        }
         // v0.157 (ADR 0183): a generic named type's arguments may carry vars.
-        Ty::Named { args, .. } => args.iter().any(contains_var),
+        Ty::Named { args, .. } => args.iter().any(|a| contains_var(*a, tys)),
         Ty::Base(_)
         | Ty::QueueResult
         | Ty::ValidationError
@@ -1935,13 +2075,13 @@ pub(crate) fn contains_var(t: &Ty) -> bool {
 /// function's rigid type parameters? Rigid vars are fully constrained inside
 /// the body; only flexible (call-site instantiation) vars mean "still being
 /// inferred".
-fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
-    match t {
+fn contains_flexible_var(t: TyId, rigid: &HashSet<String>, tys: &Types) -> bool {
+    match &*tys.get(t) {
         Ty::Var(n) => !rigid.contains(n),
         // R4.3: `Ty::Error` is a leaf; it never carries a `Var`.
         Ty::Error => false,
         Ty::Result(a, b) | Ty::Map(a, b) => {
-            contains_flexible_var(a, rigid) || contains_flexible_var(b, rigid)
+            contains_flexible_var(*a, rigid, tys) || contains_flexible_var(*b, rigid, tys)
         }
         Ty::Option(a)
         | Ty::Effect(a)
@@ -1949,13 +2089,13 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
         | Ty::List(a)
         | Ty::Query(a)
         | Ty::Stream(a)
-        | Ty::Connection(a) => contains_flexible_var(a, rigid),
+        | Ty::Connection(a) => contains_flexible_var(*a, rigid, tys),
         Ty::Fn { params, ret } => {
-            params.iter().any(|p| contains_flexible_var(p, rigid))
-                || contains_flexible_var(ret, rigid)
+            params.iter().any(|p| contains_flexible_var(*p, rigid, tys))
+                || contains_flexible_var(*ret, rigid, tys)
         }
         // v0.157 (ADR 0183): a generic named type's arguments may carry vars.
-        Ty::Named { args, .. } => args.iter().any(|a| contains_flexible_var(a, rigid)),
+        Ty::Named { args, .. } => args.iter().any(|a| contains_flexible_var(*a, rigid, tys)),
         Ty::Base(_)
         | Ty::QueueResult
         | Ty::ValidationError
@@ -1972,17 +2112,29 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
 /// and predictable — the explicit `name[T](…)` form is the pressure valve).
 /// Returns false on a conflict; structural mismatches are NOT reported here —
 /// the post-substitution `compatible` check owns those diagnostics.
-pub(crate) fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
-    match (pattern, actual) {
-        (Ty::Var(n), a) => match subst.get(n) {
-            Some(bound) => bound == a,
+pub(crate) fn unify(
+    pattern: TyId,
+    actual: TyId,
+    subst: &mut HashMap<String, TyId>,
+    tys: &Types,
+) -> bool {
+    // T3.6b: bind the two nodes first — the `Rc`s must outlive the `match`
+    // they are destructured by, and a `TyId` pair is not itself matchable.
+    let (p_node, a_node) = (tys.get(pattern), tys.get(actual));
+    match (&*p_node, &*a_node) {
+        (Ty::Var(n), _) => match subst.get(n) {
+            // T3.6b (R4.1): "matches its prior binding exactly" is now a
+            // `TyId` comparison — one `u32` equality, where it used to be a
+            // recursive structural walk. Interning is what makes the two
+            // equivalent.
+            Some(bound) => *bound == actual,
             None => {
-                subst.insert(n.clone(), a.clone());
+                subst.insert(n.clone(), actual);
                 true
             }
         },
         (Ty::Result(a1, b1), Ty::Result(a2, b2)) | (Ty::Map(a1, b1), Ty::Map(a2, b2)) => {
-            unify(a1, a2, subst) && unify(b1, b2, subst)
+            unify(*a1, *a2, subst, tys) && unify(*b1, *b2, subst, tys)
         }
         (Ty::Option(a1), Ty::Option(a2))
         | (Ty::Effect(a1), Ty::Effect(a2))
@@ -1990,7 +2142,7 @@ pub(crate) fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) 
         | (Ty::List(a1), Ty::List(a2))
         | (Ty::Query(a1), Ty::Query(a2))
         | (Ty::Stream(a1), Ty::Stream(a2))
-        | (Ty::Connection(a1), Ty::Connection(a2)) => unify(a1, a2, subst),
+        | (Ty::Connection(a1), Ty::Connection(a2)) => unify(*a1, *a2, subst, tys),
         (
             Ty::Fn {
                 params: p1,
@@ -2002,8 +2154,11 @@ pub(crate) fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) 
             },
         ) => {
             p1.len() == p2.len()
-                && p1.iter().zip(p2).all(|(a, b)| unify(a, b, subst))
-                && unify(r1, r2, subst)
+                && p1
+                    .iter()
+                    .zip(p2)
+                    .all(|(a, b)| unify(*a, *b, subst, tys))
+                && unify(*r1, *r2, subst, tys)
         }
         // v0.157 (ADR 0183): a generic named type binds vars through its
         // arguments — `Paginated[T]` against `Paginated[User]` binds `T=User`.
@@ -2015,7 +2170,7 @@ pub(crate) fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) 
                 name: n2, args: a2, ..
             },
         ) if n1 == n2 && a1.len() == a2.len() && !a1.is_empty() => {
-            a1.iter().zip(a2).all(|(x, y)| unify(x, y, subst))
+            a1.iter().zip(a2).all(|(x, y)| unify(*x, *y, subst, tys))
         }
         // Ground-vs-ground: any pair is fine here; `compatible` owns the
         // real check after substitution. The left side is enumerated — no
@@ -2113,8 +2268,9 @@ pub fn record_type_refs(
 /// `fn`/method bodies, and the checker runs only after the resolver returns Ok
 /// (`bynk-emit`'s pipeline sequences `resolve(..)?` then `check(..)`), so this
 /// never double-reports.
-pub(crate) fn resolve_expr_type_ref(r: &TypeRef, ctx: &mut Ctx) -> Option<Ty> {
-    match resolve_type_ref_in(r, &ctx.input.types, &ctx.type_vars) {
+pub(crate) fn resolve_expr_type_ref(r: &TypeRef, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
+    match resolve_type_ref_in(r, &ctx.input.types, &ctx.type_vars, tys) {
         Some(ty) => {
             record_type_refs(r, &ctx.input.types, &ctx.type_vars, ctx.refs);
             Some(ty)
@@ -2207,11 +2363,13 @@ fn first_unresolved_type_name<'a>(
 /// emitter (to lower the `Err`-wrap) from the **same** rule, so the two cannot
 /// diverge.
 pub fn embedding_for(
-    target_err: &Ty,
-    source_err: &Ty,
+    target_err: TyId,
+    source_err: TyId,
     types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
 ) -> Option<(String, String)> {
-    let Ty::Named { name, .. } = target_err else {
+    let target_node = tys.get(target_err);
+    let Ty::Named { name, .. } = &*target_node else {
         return None;
     };
     let decl = types.get(name)?;
@@ -2219,8 +2377,8 @@ pub fn embedding_for(
         return None;
     };
     for clause in &sum.embeds {
-        if let Some(src) = resolve_type_ref(&clause.source_type, types)
-            && compatible(source_err, &src)
+        if let Some(src) = resolve_type_ref(&clause.source_type, types, tys)
+            && compatible(source_err, src, tys)
         {
             return Some((name.clone(), clause.variant.name.clone()));
         }
@@ -2228,79 +2386,73 @@ pub fn embedding_for(
     None
 }
 
-pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Ty> {
-    match r {
-        TypeRef::Base(b, _) => Some(Ty::Base(*b)),
-        TypeRef::Named(id) => type_from_decl(id, types),
+pub fn resolve_type_ref(
+    r: &TypeRef,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> Option<TyId> {
+    let ty = match r {
+        TypeRef::Base(b, _) => Ty::Base(*b),
+        TypeRef::Named(id) => return type_from_decl(id, types, tys),
         // v0.20a: a function type. Effectfulness is structural (ret is
         // Effect[_]); nothing extra to record.
         TypeRef::Fn(params, ret, _) => {
-            let params: Option<Vec<Ty>> =
-                params.iter().map(|p| resolve_type_ref(p, types)).collect();
-            Some(Ty::Fn {
+            let params: Option<Vec<TyId>> = params
+                .iter()
+                .map(|p| resolve_type_ref(p, types, tys))
+                .collect();
+            Ty::Fn {
                 params: params?,
-                ret: Box::new(resolve_type_ref(ret, types)?),
-            })
+                ret: resolve_type_ref(ret, types, tys)?,
+            }
         }
-        TypeRef::Result(t, e, _) => {
-            let t = resolve_type_ref(t, types)?;
-            let e = resolve_type_ref(e, types)?;
-            Some(Ty::Result(Box::new(t), Box::new(e)))
-        }
-        TypeRef::Option(t, _) => {
-            let t = resolve_type_ref(t, types)?;
-            Some(Ty::Option(Box::new(t)))
-        }
-        TypeRef::Effect(t, _) => {
-            let t = resolve_type_ref(t, types)?;
-            Some(Ty::Effect(Box::new(t)))
-        }
-        TypeRef::HttpResult(t, _) => {
-            let t = resolve_type_ref(t, types)?;
-            Some(Ty::HttpResult(Box::new(t)))
-        }
-        TypeRef::List(t, _) => {
-            let t = resolve_type_ref(t, types)?;
-            Some(Ty::List(Box::new(t)))
-        }
-        TypeRef::Query(t, _) => {
-            let t = resolve_type_ref(t, types)?;
-            Some(Ty::Query(Box::new(t)))
-        }
-        TypeRef::Stream(t, _) => {
-            let t = resolve_type_ref(t, types)?;
-            Some(Ty::Stream(Box::new(t)))
-        }
-        TypeRef::Connection(t, _) => {
-            let t = resolve_type_ref(t, types)?;
-            Some(Ty::Connection(Box::new(t)))
-        }
-        TypeRef::Map(k, v, _) => {
-            let k = resolve_type_ref(k, types)?;
-            let v = resolve_type_ref(v, types)?;
-            Some(Ty::Map(Box::new(k), Box::new(v)))
-        }
-        TypeRef::QueueResult(_) => Some(Ty::QueueResult),
+        TypeRef::Result(t, e, _) => Ty::Result(
+            resolve_type_ref(t, types, tys)?,
+            resolve_type_ref(e, types, tys)?,
+        ),
+        TypeRef::Option(t, _) => Ty::Option(resolve_type_ref(t, types, tys)?),
+        TypeRef::Effect(t, _) => Ty::Effect(resolve_type_ref(t, types, tys)?),
+        TypeRef::HttpResult(t, _) => Ty::HttpResult(resolve_type_ref(t, types, tys)?),
+        TypeRef::List(t, _) => Ty::List(resolve_type_ref(t, types, tys)?),
+        TypeRef::Query(t, _) => Ty::Query(resolve_type_ref(t, types, tys)?),
+        TypeRef::Stream(t, _) => Ty::Stream(resolve_type_ref(t, types, tys)?),
+        TypeRef::Connection(t, _) => Ty::Connection(resolve_type_ref(t, types, tys)?),
+        TypeRef::Map(k, v, _) => Ty::Map(
+            resolve_type_ref(k, types, tys)?,
+            resolve_type_ref(v, types, tys)?,
+        ),
+        TypeRef::QueueResult(_) => Ty::QueueResult,
         // v0.119 (ADR 0155): `History[Agent]` is not a value type — it is a
         // test-only generator handled directly in `check_property_body`. It never
         // resolves as an ordinary type, so a stray `History[…]` in a value
         // position fails to resolve (the resolver reports `outside_property`).
-        TypeRef::History(_, _) => None,
+        TypeRef::History(_, _) => return None,
         // v0.157 (ADR 0183): `Name[Arg, …]` — a user generic-type application.
         TypeRef::App { name, args, .. } => {
             let decl = types.get(&name.name)?;
-            let args: Option<Vec<Ty>> = args.iter().map(|a| resolve_type_ref(a, types)).collect();
-            Some(named_ty_with_args(decl, args?))
+            let args: Option<Vec<TyId>> = args
+                .iter()
+                .map(|a| resolve_type_ref(a, types, tys))
+                .collect();
+            return Some(named_ty_with_args(decl, args?, tys));
         }
-        TypeRef::ValidationError(_) => Some(Ty::ValidationError),
-        TypeRef::JsonError(_) => Some(Ty::JsonError),
-        TypeRef::Unit(_) => Some(Ty::Unit),
-    }
+        TypeRef::ValidationError(_) => Ty::ValidationError,
+        TypeRef::JsonError(_) => Ty::JsonError,
+        TypeRef::Unit(_) => Ty::Unit,
+    };
+    Some(tys.intern(ty))
 }
 
 /// `t` is usable where `u` is expected.
-pub fn compatible(t: &Ty, u: &Ty) -> bool {
-    match (t, u) {
+///
+/// T3.6b: deliberately **no** `t == u` fast path, tempting as interning makes
+/// one. `compatible` is not reflexive — `Actor`/`ActorSum` are sealed boundary
+/// values that fall through to the `false` arm below even against themselves
+/// (they are matched, never assigned), so short-circuiting on id equality
+/// would silently make them assignable.
+pub fn compatible(t: TyId, u: TyId, tys: &Types) -> bool {
+    let (t_node, u_node) = (tys.get(t), tys.get(u));
+    match (&*t_node, &*u_node) {
         // R4.3: `Ty::Error` is compatible with everything, in both positions
         // — the failure that produced it was already diagnosed at its own
         // site, and a mismatch diagnostic naming it here would be a second
@@ -2327,7 +2479,7 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
             a == b
                 && ka == kb
                 && aa.len() == ba.len()
-                && aa.iter().zip(ba).all(|(x, y)| compatible(x, y))
+                && aa.iter().zip(ba).all(|(x, y)| compatible(*x, *y, tys))
         }
         // Refined → base (widening).
         (
@@ -2338,38 +2490,42 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
             Ty::Base(target),
         ) => b == target,
         (Ty::Base(_), Ty::Named { .. }) => false,
-        (Ty::Result(t1, e1), Ty::Result(t2, e2)) => compatible(t1, t2) && compatible(e1, e2),
-        (Ty::Option(a), Ty::Option(b)) => compatible(a, b),
-        (Ty::Effect(a), Ty::Effect(b)) => compatible(a, b),
-        (Ty::HttpResult(a), Ty::HttpResult(b)) => compatible(a, b),
+        (Ty::Result(t1, e1), Ty::Result(t2, e2)) => {
+            compatible(*t1, *t2, tys) && compatible(*e1, *e2, tys)
+        }
+        (Ty::Option(a), Ty::Option(b)) => compatible(*a, *b, tys),
+        (Ty::Effect(a), Ty::Effect(b)) => compatible(*a, *b, tys),
+        (Ty::HttpResult(a), Ty::HttpResult(b)) => compatible(*a, *b, tys),
         // v0.20b: collections are covariant in their element/value types;
         // Map keys must match exactly — key-position widening would split a
         // map's keys across refined/base identities at lookup time.
-        (Ty::List(a), Ty::List(b)) => compatible(a, b),
+        (Ty::List(a), Ty::List(b)) => compatible(*a, *b, tys),
         // v0.100: `Stream[T]` is covariant in its element, like `List`/`Effect`.
         // (Assignability only — streams are not value-comparable for `==`.)
-        (Ty::Stream(a), Ty::Stream(b)) => compatible(a, b),
+        (Ty::Stream(a), Ty::Stream(b)) => compatible(*a, *b, tys),
         // v0.91: `Query[T]` is covariant in its element, like `List`/`Stream`.
         // (Assignability only — queries are not value-comparable for `==`.)
-        (Ty::Query(a), Ty::Query(b)) => compatible(a, b),
+        (Ty::Query(a), Ty::Query(b)) => compatible(*a, *b, tys),
         // v0.102: a `Connection[F]` is assignable to itself (the linearity pass
         // governs the move). Held values have identity, not value-equality, so
         // they are not `==`-comparable (guarded in the `Eq`/`NotEq` arm).
-        (Ty::Connection(a), Ty::Connection(b)) => compatible(a, b),
-        (Ty::Map(k1, v1), Ty::Map(k2, v2)) => k1 == k2 && compatible(v1, v2),
+        (Ty::Connection(a), Ty::Connection(b)) => compatible(*a, *b, tys),
+        (Ty::Map(k1, v1), Ty::Map(k2, v2)) => k1 == k2 && compatible(*v1, *v2, tys),
         (Ty::QueueResult, Ty::QueueResult) => true,
         (Ty::ValidationError, Ty::ValidationError) => true,
         (Ty::JsonError, Ty::JsonError) => true,
         (Ty::Unit, Ty::Unit) => true,
         // v0.20a: function types — **contravariant** in parameters, covariant
-        // in the return type. `compatible(t, u)` is "t usable where u is
+        // in the return type. `compatible(t, u, tys)` is "t usable where u is
         // expected" and is already asymmetric (refined → base widening), so
         // the per-position argument order flips for params: a function
         // expecting the *wider* param type is usable where one expecting the
         // narrower is required — and crucially, the covariant direction would
         // let unvalidated base values flow into a refined-typed body.
         (Ty::Fn { params: p, ret: r }, Ty::Fn { params: q, ret: s }) => {
-            p.len() == q.len() && p.iter().zip(q).all(|(a, b)| compatible(b, a)) && compatible(r, s)
+            p.len() == q.len()
+                && p.iter().zip(q).all(|(a, b)| compatible(*b, *a, tys))
+                && compatible(*r, *s, tys)
         }
         // v0.20a: rigid type variables (a generic fn's own body) match by
         // name. Flexible vars never reach `compatible` — they are eliminated
@@ -2405,7 +2561,8 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
     }
 }
 
-pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     ctx.push_scope();
     for stmt in &block.statements {
         match stmt {
@@ -2413,7 +2570,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                 let annot_ty = l.type_annot.as_ref().and_then(|a| {
                     // v0.20b: the enclosing fn's type parameters are legal
                     // in body annotations (`let init: List[B] = …`).
-                    let r = resolve_type_ref_in(a, &ctx.input.types, &ctx.type_vars);
+                    let r = resolve_type_ref_in(a, &ctx.input.types, &ctx.type_vars, tys);
                     if r.is_none() {
                         ctx.errors.push(CompileError::new(
                             "bynk.resolve.unknown_type",
@@ -2425,18 +2582,18 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                     }
                     r
                 });
-                let rhs_ty = type_of(&l.value, annot_ty.as_ref(), ctx);
+                let rhs_ty = type_of(&l.value, annot_ty, ctx);
                 let final_ty = match (annot_ty, rhs_ty) {
                     (Some(annot), Some(rhs)) => {
-                        if !compatible(&rhs, &annot) {
+                        if !compatible(rhs, annot, tys) {
                             ctx.errors.push(
                                 CompileError::new(
                                     "bynk.types.let_annotation_mismatch",
                                     l.value.span,
                                     format!(
                                         "let binding's value has type `{}`, but the annotation declares `{}`",
-                                        rhs.display(),
-                                        annot.display()
+                                        rhs.display(tys),
+                                        annot.display(tys)
                                     ),
                                 )
                                 .with_label(
@@ -2456,14 +2613,14 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                     // inferred-type inlay hint at the binding name.
                     if l.type_annot.is_none() {
                         ctx.hints
-                            .record(l.name.span, format!(": {}", final_ty.display()));
+                            .record(l.name.span, format!(": {}", final_ty.display(tys)));
                     }
                     // v0.31: in scope from after this statement to block end.
                     ctx.locals.record(
                         l.name.name.clone(),
                         l.name.span,
                         crate::locals::LocalKind::Let,
-                        final_ty.display(),
+                        final_ty.display(tys),
                         Span {
                             file: l.span.file,
                             start: l.span.end,
@@ -2483,7 +2640,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                         )
                         .with_label(
                             ctx.return_ty_span,
-                            format!("enclosing return type is `{}`", ctx.return_ty.display()),
+                            format!("enclosing return type is `{}`", ctx.return_ty.display(tys)),
                         )
                         .with_note(
                             "change the enclosing function/handler's return type to `Effect[...]`, or use `let ... =` for a pure binding",
@@ -2494,7 +2651,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                 let annot_ty = l.type_annot.as_ref().and_then(|a| {
                     // v0.20b: the enclosing fn's type parameters are legal
                     // in body annotations (`let init: List[B] = …`).
-                    let r = resolve_type_ref_in(a, &ctx.input.types, &ctx.type_vars);
+                    let r = resolve_type_ref_in(a, &ctx.input.types, &ctx.type_vars, tys);
                     if r.is_none() {
                         ctx.errors.push(CompileError::new(
                             "bynk.resolve.unknown_type",
@@ -2507,23 +2664,23 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                     r
                 });
                 // The expected type for the RHS is `Effect[annot]` if annot present.
-                let rhs_expected = annot_ty.as_ref().map(|t| Ty::Effect(Box::new(t.clone())));
-                let rhs_ty = type_of(&l.value, rhs_expected.as_ref(), ctx);
+                let rhs_expected = annot_ty.map(|t| tys.intern(Ty::Effect(t)));
+                let rhs_ty = type_of(&l.value, rhs_expected, ctx);
                 // v0.182 (#664): validate the call-site principal against the
                 // addressed handler — including the *absent* case, where an
                 // identity-carrying handler driven with no `by` would silently
                 // drop the identity.
                 calls::check_effect_let_principal(&l.value, l.principal.as_ref(), ctx);
-                let inner_ty = match rhs_ty {
-                    Some(Ty::Effect(t)) => Some((*t).clone()),
-                    Some(other) => {
+                let inner_ty = match rhs_ty.map(|t| tys.get(t)).as_deref() {
+                    Some(Ty::Effect(t)) => Some(*t),
+                    Some(_) => {
                         ctx.errors.push(
                             CompileError::new(
                                 "bynk.effect.bind_on_non_effect",
                                 l.value.span,
                                 format!(
                                     "the `<-` operator requires an `Effect[T]` value, but got `{}`",
-                                    other.display()
+                                    rhs_ty.expect("matched Some").display(tys)
                                 ),
                             )
                             .with_note(
@@ -2536,14 +2693,14 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                 };
                 let final_ty = match (annot_ty, inner_ty) {
                     (Some(annot), Some(rhs)) => {
-                        if !compatible(&rhs, &annot) {
+                        if !compatible(rhs, annot, tys) {
                             ctx.errors.push(CompileError::new(
                                 "bynk.types.let_annotation_mismatch",
                                 l.value.span,
                                 format!(
                                     "let-binding's value has type `Effect[{}]`, but the annotation declares `Effect[{}]`",
-                                    rhs.display(),
-                                    annot.display()
+                                    rhs.display(tys),
+                                    annot.display(tys)
                                 ),
                             ));
                         }
@@ -2559,13 +2716,13 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                     // actual type, which is what the hint must show.
                     if l.type_annot.is_none() {
                         ctx.hints
-                            .record(l.name.span, format!(": {}", final_ty.display()));
+                            .record(l.name.span, format!(": {}", final_ty.display(tys)));
                     }
                     ctx.locals.record(
                         l.name.name.clone(),
                         l.name.span,
                         crate::locals::LocalKind::Let,
-                        final_ty.display(),
+                        final_ty.display(tys),
                         Span {
                             file: l.span.file,
                             start: l.span.end,
@@ -2588,16 +2745,16 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                         ),
                     );
                 }
-                let val_ty = type_of(&a.value, Some(&Ty::Base(BaseType::Bool)), ctx);
+                let val_ty = type_of(&a.value, Some(tys.intern(Ty::Base(BaseType::Bool).clone())), ctx);
                 if let Some(actual) = val_ty
-                    && !compatible(&actual, &Ty::Base(BaseType::Bool))
+                    && !compatible(actual, tys.intern(Ty::Base(BaseType::Bool)), tys)
                 {
                     ctx.errors.push(CompileError::new(
                         "bynk.expect.not_bool",
                         a.value.span,
                         format!(
                             "`expect` predicate has type `{}`, but a `Bool` is required",
-                            actual.display(),
+                            actual.display(tys),
                         ),
                     ));
                 }
@@ -2614,7 +2771,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                         )
                         .with_label(
                             ctx.return_ty_span,
-                            format!("enclosing return type is `{}`", ctx.return_ty.display()),
+                            format!("enclosing return type is `{}`", ctx.return_ty.display(tys)),
                         )
                         .with_note(
                             "change the enclosing function/handler's return type to `Effect[...]`",
@@ -2625,10 +2782,11 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                 // would be silently dropped by a fire-and-forget send — the error
                 // gate ([DECISION C/D]). `let _ <- e` is the honest spelling for
                 // "await and discard".
-                let expected = Ty::Effect(Box::new(Ty::Unit));
-                let rhs_ty = type_of(&s.value, Some(&expected), ctx);
-                match rhs_ty {
-                    Some(Ty::Effect(inner)) if matches!(*inner, Ty::Unit) => {}
+                let unit = tys.intern(Ty::Unit);
+                let expected = tys.intern(Ty::Effect(unit));
+                let rhs_ty = type_of(&s.value, Some(expected), ctx);
+                match rhs_ty.map(|t| tys.get(t)).as_deref() {
+                    Some(Ty::Effect(inner)) if *inner == unit => {}
                     Some(Ty::Effect(inner)) => {
                         ctx.errors.push(
                             CompileError::new(
@@ -2636,7 +2794,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                                 s.value.span,
                                 format!(
                                     "`~>` requires an `Effect[()]` reply, but this send returns `Effect[{}]` — its result would be silently dropped",
-                                    inner.display()
+                                    inner.display(tys)
                                 ),
                             )
                             .with_note(
@@ -2651,7 +2809,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                                 s.value.span,
                                 format!(
                                     "the `~>` send requires an `Effect[()]` value, but got `{}`",
-                                    other.display()
+                                    other.display(tys)
                                 ),
                             )
                             .with_note("`~>` sends an effectful call; the target must be a call returning `Effect[()]`"),
@@ -2675,17 +2833,18 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                         )
                         .with_label(
                             ctx.return_ty_span,
-                            format!("enclosing return type is `{}`", ctx.return_ty.display()),
+                            format!("enclosing return type is `{}`", ctx.return_ty.display(tys)),
                         )
                         .with_note(
                             "change the enclosing function/handler's return type to `Effect[...]`",
                         ),
                     );
                 }
-                let expected = Ty::Effect(Box::new(Ty::Unit));
-                let rhs_ty = type_of(&d.value, Some(&expected), ctx);
-                match rhs_ty {
-                    Some(Ty::Effect(inner)) if matches!(*inner, Ty::Unit) => {}
+                let unit = tys.intern(Ty::Unit);
+                let expected = tys.intern(Ty::Effect(unit));
+                let rhs_ty = type_of(&d.value, Some(expected), ctx);
+                match rhs_ty.map(|t| tys.get(t)).as_deref() {
+                    Some(Ty::Effect(inner)) if *inner == unit => {}
                     Some(Ty::Effect(inner)) => {
                         ctx.errors.push(
                             CompileError::new(
@@ -2693,7 +2852,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                                 d.value.span,
                                 format!(
                                     "a `do` statement requires an `Effect[()]`, but this is `Effect[{}]` — its result would be silently dropped",
-                                    inner.display()
+                                    inner.display(tys)
                                 ),
                             )
                             .with_note(
@@ -2708,7 +2867,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                                 d.value.span,
                                 format!(
                                     "a `do` statement requires an `Effect[()]` value, but got `{}`",
-                                    other.display()
+                                    other.display(tys)
                                 ),
                             )
                             .with_note("`do` performs an effect; its operand must be a call returning `Effect[()]`"),
@@ -2768,17 +2927,17 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
                                 ),
                             );
                         }
-                        if let Some(vt) = type_of(&a.value, Some(&elem_ty), ctx)
-                            && !compatible(&vt, &elem_ty)
+                        if let Some(vt) = type_of(&a.value, Some(elem_ty), ctx)
+                            && !compatible(vt, elem_ty, tys)
                         {
                             ctx.errors.push(CompileError::new(
                                 "bynk.types.type_mismatch",
                                 a.value.span,
                                 format!(
                                     "this `:=` writes `{}`, but the cell `{}` holds `{}`",
-                                    vt.display(),
+                                    vt.display(tys),
                                     a.target.name,
-                                    elem_ty.display()
+                                    elem_ty.display(tys)
                                 ),
                             ));
                         }
@@ -2788,7 +2947,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
         }
     }
     let ty = type_of(&block.tail, expected, ctx);
-    let ty = maybe_auto_lift(ty, expected);
+    let ty = maybe_auto_lift(ty, expected, tys);
     // T3.4: this block previously wrote its own auto-lifted type into
     // `expr_types` at `block.span` (bug #844's era — recording it only when
     // `block.span != block.tail.span`, to avoid clobbering a synthetic
@@ -2810,13 +2969,14 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx)
 /// the computed type is `T` (not itself an `Effect[_]`), lift it to
 /// `Effect[T]`. Otherwise leave the type alone — the surrounding compatibility
 /// check will report any genuine mismatch.
-fn maybe_auto_lift(ty: Option<Ty>, expected: Option<&Ty>) -> Option<Ty> {
-    if let Some(actual) = &ty
-        && let Some(Ty::Effect(et)) = expected
-        && !actual.is_effect()
-        && compatible(actual, et)
+fn maybe_auto_lift(ty: Option<TyId>, expected: Option<TyId>, tys: &Types) -> Option<TyId> {
+    if let Some(actual) = ty
+        && let Some(exp) = expected
+        && let Ty::Effect(et) = &*tys.get(exp)
+        && !actual.is_effect(tys)
+        && compatible(actual, *et, tys)
     {
-        return Some(Ty::Effect(Box::new(actual.clone())));
+        return Some(tys.intern(Ty::Effect(actual)));
     }
     ty
 }
@@ -2825,9 +2985,9 @@ fn maybe_auto_lift(ty: Option<Ty>, expected: Option<&Ty>) -> Option<Ty> {
 /// 0075): a base scalar, or a refinement of one (which widens to its base for
 /// display). Opaque types are excluded — their base is hidden, so a value must
 /// be `.raw`-ed out first.
-fn interpolable(ty: &Ty) -> bool {
+fn interpolable(ty: TyId, tys: &Types) -> bool {
     matches!(
-        ty,
+        &*tys.get(ty),
         Ty::Base(_)
             | Ty::Named {
                 kind: NamedKind::Refined(_),
@@ -2836,7 +2996,8 @@ fn interpolable(ty: &Ty) -> bool {
     )
 }
 
-pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     let ty = match &expr.kind {
         // v0.9.4: a literal in a refined-expected position takes the refined
         // type (validated now); otherwise it keeps its base type.
@@ -2846,16 +3007,16 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
         // effectfulness is inferred bottom-up by a syntactic pre-scan.
         ExprKind::Lambda(lambda) => check_lambda(lambda, expected, ctx),
         ExprKind::IntLit { .. } => {
-            admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::Int)))
+            admit_refined_literal(expr, expected, ctx).or(Some(tys.intern(Ty::Base(BaseType::Int))))
         }
         ExprKind::FloatLit { .. } => {
-            admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::Float)))
+            admit_refined_literal(expr, expected, ctx).or(Some(tys.intern(Ty::Base(BaseType::Float))))
         }
         // v0.86 (ADR 0112): a `Duration` literal always takes the base
         // `Duration` (no refined `Duration` types exist).
-        ExprKind::DurationLit { .. } => Some(Ty::Base(BaseType::Duration)),
+        ExprKind::DurationLit { .. } => Some(tys.intern(Ty::Base(BaseType::Duration))),
         ExprKind::StrLit(_) => {
-            admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::String)))
+            admit_refined_literal(expr, expected, ctx).or(Some(tys.intern(Ty::Base(BaseType::String))))
         }
         // An interpolated string (v0.43, ADR 0075). Each hole must type to a
         // base scalar (String/Int/Float/Bool) or a *refinement* of one — those
@@ -2871,12 +3032,12 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                     continue;
                 };
                 match type_of(hole, None, ctx) {
-                    Some(ty) if interpolable(&ty) => {}
+                    Some(ty) if interpolable(ty, tys) => {}
                     Some(other) => ctx.errors.push(
                         CompileError::new(
                             "bynk.types.interpolation_non_scalar",
                             hole.span,
-                            format!("type `{}` has no string form here", other.display()),
+                            format!("type `{}` has no string form here", other.display(tys)),
                         )
                         .with_note(
                             "interpolation holes accept the base scalar types (String, Int, Float, Bool) or a refinement of one; map other values to a String first",
@@ -2886,17 +3047,17 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                     None => {}
                 }
             }
-            Some(Ty::Base(BaseType::String))
+            Some(tys.intern(Ty::Base(BaseType::String)))
         }
-        ExprKind::BoolLit(_) => Some(Ty::Base(BaseType::Bool)),
+        ExprKind::BoolLit(_) => Some(tys.intern(Ty::Base(BaseType::Bool))),
         // v0.20b: a list literal. Elements check against the expected
         // element type when one is supplied (so refined literals admit,
         // v0.9.4); an empty `[]` has no inferable element type without one.
         ExprKind::ListLit(elems) => {
-            let expected_elem = expected.and_then(peel_to_list);
+            let expected_elem = expected.and_then(|t| peel_to_list(t, tys));
             if elems.is_empty() {
                 match expected_elem {
-                    Some(t) => Some(Ty::List(Box::new(t))),
+                    Some(t) => Some(tys.intern(Ty::List(t))),
                     None => {
                         ctx.errors.push(
                             CompileError::new(
@@ -2912,21 +3073,21 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                     }
                 }
             } else {
-                let mut elem_ty: Option<Ty> = expected_elem;
+                let mut elem_ty: Option<TyId> = expected_elem;
                 for e in elems {
-                    let Some(t) = type_of(e, elem_ty.as_ref(), ctx) else {
+                    let Some(t) = type_of(e, elem_ty, ctx) else {
                         continue;
                     };
                     match &elem_ty {
                         Some(et) => {
-                            if !compatible(&t, et) {
+                            if !compatible(t, *et, tys) {
                                 ctx.errors.push(CompileError::new(
                                     "bynk.types.list_element_mismatch",
                                     e.span,
                                     format!(
                                         "list element has type `{}`, but the list's element type is `{}`",
-                                        t.display(),
-                                        et.display()
+                                        t.display(tys),
+                                        et.display(tys)
                                     ),
                                 ));
                             }
@@ -2934,7 +3095,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                         None => elem_ty = Some(t),
                     }
                 }
-                elem_ty.map(|t| Ty::List(Box::new(t)))
+                elem_ty.map(|t| tys.intern(Ty::List(t)))
             }
         }
         ExprKind::Ident(id) => {
@@ -2945,7 +3106,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
             if ctx.lookup(id.name.as_str()).is_none()
                 && let Some(StoreField::Map(_, v)) = ctx.store_fields.get(&id.name).cloned()
             {
-                Some(Ty::Query(Box::new(v)))
+                Some(tys.intern(Ty::Query(v)))
             }
             // v0.9: a bare ident may name an HttpResult variant. Resolve to
             // HttpResult only when (a) the surrounding type implies it, or
@@ -2960,9 +3121,9 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                         if s.variants.iter().any(|var| var.name.name == id.name))
                 });
                 let http_implied = expected
-                    .map(|t| peel_to_http_result(t).is_some())
+                    .map(|t| peel_to_http_result(t, tys).is_some())
                     .unwrap_or(false)
-                    || peel_to_http_result(&ctx.return_ty).is_some();
+                    || peel_to_http_result(ctx.return_ty, tys).is_some();
                 if http_implied || !user_owns {
                     check_http_variant(id.span, v, &[], expected, ctx)
                 } else {
@@ -2970,8 +3131,8 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                 }
             } else if ctx.lookup(id.name.as_str()).is_none()
                 && let Some(qv) = queue_variant(&id.name)
-                && (expected.is_some_and(peel_to_queue_result)
-                    || peel_to_queue_result(&ctx.return_ty))
+                && (expected.is_some_and(|t| peel_to_queue_result(t, tys))
+                    || peel_to_queue_result(ctx.return_ty, tys))
             {
                 // v0.44: a bare QueueResult variant (`Ack`) in a queue handler.
                 check_queue_variant(id.span, qv, &[], ctx)
@@ -2999,9 +3160,9 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
             // type does not already imply HttpResult.
             if let Some(v) = http_variant(&name.name) {
                 let http_implied = expected
-                    .map(|t| peel_to_http_result(t).is_some())
+                    .map(|t| peel_to_http_result(t, tys).is_some())
                     .unwrap_or(false)
-                    || peel_to_http_result(&ctx.return_ty).is_some();
+                    || peel_to_http_result(ctx.return_ty, tys).is_some();
                 let owned_elsewhere = || {
                     ctx.input.fns.contains_key(&name.name)
                         || ctx.input.types.values().any(|t| {
@@ -3019,8 +3180,8 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                     check_call(name, type_args, args, expr.span, expected, ctx)
                 }
             } else if let Some(qv) = queue_variant(&name.name)
-                && (expected.is_some_and(peel_to_queue_result)
-                    || peel_to_queue_result(&ctx.return_ty))
+                && (expected.is_some_and(|t| peel_to_queue_result(t, tys))
+                    || peel_to_queue_result(ctx.return_ty, tys))
             {
                 // v0.44: a QueueResult variant call (`Retry(reason)`).
                 check_queue_variant(expr.span, qv, args, ctx)
@@ -3158,33 +3319,33 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
                                 receiver.id,
                                 TypedExpr {
                                     span: receiver.span,
-                                    ty: Ty::Query(Box::new(v.clone())),
+                                    ty: tys.intern(Ty::Query(v)),
                                 },
                             );
-                            check_query_kernel_method(method, args, &v, expr.span, ctx)
+                            check_query_kernel_method(method, args, v, expr.span, ctx)
                         } else {
-                            check_store_map_op(method, args, &k, &v, expr.span, ctx)
+                            check_store_map_op(method, args, k, v, expr.span, ctx)
                         }
                     }
                     // v0.83: `<set>.<op>(…)` on a `store Set[T]` field —
                     // effectful storage-set ops.
-                    StoreField::Set(t) => check_store_set_op(method, args, &t, expr.span, ctx),
+                    StoreField::Set(t) => check_store_set_op(method, args, t, expr.span, ctx),
                     // v0.87 (ADR 0113): `<cache>.<op>(…)` on a `store
                     // Cache[K, V]` field — the storage-map ops plus a `given
                     // Clock` requirement (eviction).
                     StoreField::Cache(k, v, _ttl) => {
-                        check_store_cache_op(method, args, &k, &v, expr.span, ctx)
+                        check_store_cache_op(method, args, k, v, expr.span, ctx)
                     }
                     // v0.95 (ADR 0121): `<log>.<op>(…)` on a `store Log[T]`
                     // field — `append` is the effectful non-idempotent write
                     // (`given Clock`); the time-window roots and general
                     // builders lift the log into a lazy `Query[T]` over its
                     // entry values.
-                    StoreField::Log(t) => check_store_log_op(method, args, &t, expr.span, ctx),
+                    StoreField::Log(t) => check_store_log_op(method, args, t, expr.span, ctx),
                     // v0.98 (ADR 0125): `<cell>.update(f)` on a `store
                     // Cell[T]` field — the one method-shaped cell op (read is
                     // the bare name, write is `:=`).
-                    StoreField::Cell(t) => check_store_cell_op(method, args, &t, expr.span, ctx),
+                    StoreField::Cell(t) => check_store_cell_op(method, args, t, expr.span, ctx),
                 }
             }
             // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
@@ -3210,14 +3371,14 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
             check_match(discriminant, arms, expr.span, expected, ctx)
         }
         ExprKind::Is { value, pattern } => check_is(value, pattern, expr.span, ctx),
-        ExprKind::UnitLit => Some(Ty::Unit),
+        ExprKind::UnitLit => Some(tys.intern(Ty::Unit)),
         ExprKind::EffectPure(inner) => {
-            let expected_inner = match expected {
-                Some(Ty::Effect(t)) => Some((**t).clone()),
+            let expected_inner = match expected.map(|e| tys.get(e)).as_deref() {
+                Some(Ty::Effect(t)) => Some(*t),
                 _ => None,
             };
-            let inner_ty = type_of(inner, expected_inner.as_ref(), ctx)?;
-            Some(Ty::Effect(Box::new(inner_ty)))
+            let inner_ty = type_of(inner, expected_inner, ctx)?;
+            Some(tys.intern(Ty::Effect(inner_ty)))
         }
         ExprKind::RecordSpread {
             type_name,
@@ -3241,7 +3402,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
         // inner and the `system` tier. Anywhere else it is an error. The inner is
         // still typed so a mistake inside it is reported too.
         ExprKind::Wire(inner) => {
-            let _ = type_of(inner, Some(&Ty::Base(BaseType::String)), ctx);
+            let _ = type_of(inner, Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx);
             ctx.errors.push(
                 CompileError::new(
                     "bynk.test.wire_needs_system",
@@ -3260,7 +3421,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
     // failure or a deliberate, undiagnosed non-type such as an untyped
     // test-body binding) records `Ty::Error` rather than leaving the span
     // unrecorded. This changes only what gets *written*; every caller of
-    // `type_of` still sees its actual `Option<Ty>` return value and every
+    // `type_of` still sees its actual `Option<TyId>` return value and every
     // existing `?`/`.or(...)` control-flow site is unaffected — `Ty::Error`
     // only becomes observable to an external reader of `expr_types` (the
     // emitter, the LSP), never to internal checker logic.
@@ -3268,7 +3429,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
         expr.id,
         TypedExpr {
             span: expr.span,
-            ty: ty.clone().unwrap_or(Ty::Error),
+            ty: ty.unwrap_or_else(|| tys.intern(Ty::Error)),
         },
     );
     ty
@@ -3277,49 +3438,53 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Opti
 // ==== Peel helpers (unwrap Effect / Result / Option / List / Map) ====
 
 /// Peel one optional `Effect[_]` wrapper to expose an underlying `HttpResult[T]`.
-pub(crate) fn peel_to_http_result(ty: &Ty) -> Option<Ty> {
-    match ty {
-        Ty::HttpResult(inner) => Some((**inner).clone()),
-        Ty::Effect(inner) => peel_to_http_result(inner),
+pub(crate) fn peel_to_http_result(ty: TyId, tys: &Types) -> Option<TyId> {
+    match &*tys.get(ty) {
+        Ty::HttpResult(inner) => Some(*inner),
+        Ty::Effect(inner) => peel_to_http_result(*inner, tys),
         _ => None,
     }
 }
 
 /// v0.44: peel an optional `Effect[_]` to detect an underlying `QueueResult`.
-fn peel_to_queue_result(ty: &Ty) -> bool {
-    match ty {
+fn peel_to_queue_result(ty: TyId, tys: &Types) -> bool {
+    match &*tys.get(ty) {
         Ty::QueueResult => true,
-        Ty::Effect(inner) => peel_to_queue_result(inner),
+        Ty::Effect(inner) => peel_to_queue_result(*inner, tys),
         _ => false,
     }
 }
 
-fn surrounding_result(expected: Option<&Ty>, return_ty: &Ty) -> Option<(Ty, Ty)> {
+fn surrounding_result(
+    expected: Option<TyId>,
+    return_ty: TyId,
+    tys: &Types,
+) -> Option<(TyId, TyId)> {
     if let Some(t) = expected
-        && let Some(pair) = peel_to_result(t)
+        && let Some(pair) = peel_to_result(t, tys)
     {
         return Some(pair);
     }
-    peel_to_result(return_ty)
+    peel_to_result(return_ty, tys)
 }
 
 /// Peel one optional `Effect[_]` wrapper to expose an underlying `Result[T, E]`.
 /// Used by `Ok` / `Err` checking in v0.7.1 so that bare constructors in
 /// `Effect[Result[T, E]]` tail positions can pick up the surrounding type's
 /// parameters via the auto-lift propagation.
-fn peel_to_result(ty: &Ty) -> Option<(Ty, Ty)> {
-    match ty {
-        Ty::Result(t, e) => Some(((**t).clone(), (**e).clone())),
-        Ty::Effect(inner) => peel_to_result(inner),
+fn peel_to_result(ty: TyId, tys: &Types) -> Option<(TyId, TyId)> {
+    match &*tys.get(ty) {
+        Ty::Result(t, e) => Some((*t, *e)),
+        Ty::Effect(inner) => peel_to_result(*inner, tys),
         _ => None,
     }
 }
 
 /// Companion to `peel_to_result` for `Option[T]`.
-fn peel_to_option(ty: &Ty) -> Option<Ty> {
-    match ty {
-        Ty::Option(t) => Some((**t).clone()),
-        Ty::Effect(inner) => peel_to_option(inner),
+fn peel_to_option(ty: TyId, tys: &Types) -> Option<TyId> {
+    match &*tys.get(ty) {
+        Ty::Option(t) => Some(*t),
+        Ty::Effect(inner) => peel_to_option(*inner, tys),
         _ => None,
     }
 }
@@ -3327,19 +3492,19 @@ fn peel_to_option(ty: &Ty) -> Option<Ty> {
 /// Companion to `peel_to_result` for `List[T]` (v0.20b) — the expected
 /// element type of a list literal, looking through `Effect[_]` so tail
 /// auto-lift positions still propagate it.
-fn peel_to_list(ty: &Ty) -> Option<Ty> {
-    match ty {
-        Ty::List(t) => Some((**t).clone()),
-        Ty::Effect(inner) => peel_to_list(inner),
+fn peel_to_list(ty: TyId, tys: &Types) -> Option<TyId> {
+    match &*tys.get(ty) {
+        Ty::List(t) => Some(*t),
+        Ty::Effect(inner) => peel_to_list(*inner, tys),
         _ => None,
     }
 }
 
 /// Companion to `peel_to_list` for `Map[K, V]` (v0.20b).
-fn peel_to_map(ty: &Ty) -> Option<(Ty, Ty)> {
-    match ty {
-        Ty::Map(k, v) => Some(((**k).clone(), (**v).clone())),
-        Ty::Effect(inner) => peel_to_map(inner),
+fn peel_to_map(ty: TyId, tys: &Types) -> Option<(TyId, TyId)> {
+    match &*tys.get(ty) {
+        Ty::Map(k, v) => Some((*k, *v)),
+        Ty::Effect(inner) => peel_to_map(*inner, tys),
         _ => None,
     }
 }
@@ -3349,14 +3514,19 @@ fn peel_to_map(ty: &Ty) -> Option<(Ty, Ty)> {
 /// A flattened view of a type's variants (name + payload types).
 struct VariantInfo {
     name: String,
-    payload: Vec<(String, Ty)>,
+    payload: Vec<(String, TyId)>,
 }
 
 /// Project a return type produced in the consumed context's namespace into
 /// the caller's namespace by re-resolving named types that exist on both
 /// sides. The structural shape stays the same; the brand changes.
-fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, Arc<TypeDecl>>) -> Ty {
-    match t {
+fn rebrand_return_type(
+    t: TyId,
+    caller_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> TyId {
+    let node = tys.get(t);
+    let rebranded = match &*node {
         Ty::Named { name, kind, args } => {
             // If the caller's namespace has the same name, prefer the caller's
             // view (it carries the caller's brand at emission time). Otherwise
@@ -3365,30 +3535,30 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, Arc<TypeDecl>>) ->
             // way — though a generic record is non-boundary, so this path only
             // ever sees the empty-args non-generic case in practice.
             if let Some(decl) = caller_types.get(name) {
-                named_ty_with_args(decl, args.clone())
+                named_ty_with_args(decl, args.clone(), tys)
             } else {
-                Ty::Named {
+                tys.intern(Ty::Named {
                     name: name.clone(),
                     kind: kind.clone(),
                     args: args.clone(),
-                }
+                })
             }
         }
-        Ty::Result(t, e) => Ty::Result(
-            Box::new(rebrand_return_type(t, caller_types)),
-            Box::new(rebrand_return_type(e, caller_types)),
-        ),
-        Ty::Option(t) => Ty::Option(Box::new(rebrand_return_type(t, caller_types))),
-        Ty::Effect(t) => Ty::Effect(Box::new(rebrand_return_type(t, caller_types))),
-        Ty::HttpResult(t) => Ty::HttpResult(Box::new(rebrand_return_type(t, caller_types))),
-        Ty::List(t) => Ty::List(Box::new(rebrand_return_type(t, caller_types))),
-        Ty::Query(t) => Ty::Query(Box::new(rebrand_return_type(t, caller_types))),
-        Ty::Stream(t) => Ty::Stream(Box::new(rebrand_return_type(t, caller_types))),
-        Ty::Connection(t) => Ty::Connection(Box::new(rebrand_return_type(t, caller_types))),
-        Ty::Map(k, v) => Ty::Map(
-            Box::new(rebrand_return_type(k, caller_types)),
-            Box::new(rebrand_return_type(v, caller_types)),
-        ),
+        Ty::Result(t, e) => tys.intern(Ty::Result(
+            rebrand_return_type(*t, caller_types, tys),
+            rebrand_return_type(*e, caller_types, tys),
+        )),
+        Ty::Option(t) => tys.intern(Ty::Option(rebrand_return_type(*t, caller_types, tys))),
+        Ty::Effect(t) => tys.intern(Ty::Effect(rebrand_return_type(*t, caller_types, tys))),
+        Ty::HttpResult(t) => tys.intern(Ty::HttpResult(rebrand_return_type(*t, caller_types, tys))),
+        Ty::List(t) => tys.intern(Ty::List(rebrand_return_type(*t, caller_types, tys))),
+        Ty::Query(t) => tys.intern(Ty::Query(rebrand_return_type(*t, caller_types, tys))),
+        Ty::Stream(t) => tys.intern(Ty::Stream(rebrand_return_type(*t, caller_types, tys))),
+        Ty::Connection(t) => tys.intern(Ty::Connection(rebrand_return_type(*t, caller_types, tys))),
+        Ty::Map(k, v) => tys.intern(Ty::Map(
+            rebrand_return_type(*k, caller_types, tys),
+            rebrand_return_type(*v, caller_types, tys),
+        )),
         // R4.3: `Ty::Error` carries no name to rebrand — pass it through.
         Ty::Error
         | Ty::Base(_)
@@ -3397,12 +3567,13 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, Arc<TypeDecl>>) ->
         | Ty::JsonError
         | Ty::Unit
         | Ty::Actor(_)
-        | Ty::ActorSum(_) => t.clone(),
+        | Ty::ActorSum(_) => return t,
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so a cross-context return can
         // never carry one; Vars never escape call checking.
-        Ty::Fn { .. } | Ty::Var(_) => t.clone(),
-    }
+        Ty::Fn { .. } | Ty::Var(_) => return t,
+    };
+    rebranded
 }
 
 /// Structural compatibility check for values crossing a context boundary
@@ -3410,22 +3581,32 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, Arc<TypeDecl>>) ->
 /// (caller-side / callee-side type tables), so we walk them in parallel
 /// against their respective tables.
 fn structurally_compatible(
-    arg: &Ty,
-    param: &Ty,
+    arg: TyId,
+    param: TyId,
     arg_types: &HashMap<String, Arc<TypeDecl>>,
     param_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
 ) -> bool {
-    structurally_compatible_inner(arg, param, arg_types, param_types, &mut HashSet::new())
+    structurally_compatible_inner(
+        arg,
+        param,
+        arg_types,
+        param_types,
+        tys,
+        &mut HashSet::new(),
+    )
 }
 
 fn structurally_compatible_inner(
-    arg: &Ty,
-    param: &Ty,
+    arg: TyId,
+    param: TyId,
     arg_types: &HashMap<String, Arc<TypeDecl>>,
     param_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
     visited: &mut HashSet<(String, String)>,
 ) -> bool {
-    match (arg, param) {
+    let (arg_node, param_node) = (tys.get(arg), tys.get(param));
+    match (&*arg_node, &*param_node) {
         // R4.3: as in `compatible` — an already-diagnosed side is compatible
         // with anything, so a cross-context signature check doesn't report
         // the same failure a second time as a signature mismatch.
@@ -3435,27 +3616,27 @@ fn structurally_compatible_inner(
         (Ty::JsonError, Ty::JsonError) => true,
         (Ty::Unit, Ty::Unit) => true,
         (Ty::Result(t1, e1), Ty::Result(t2, e2)) => {
-            structurally_compatible_inner(t1, t2, arg_types, param_types, visited)
-                && structurally_compatible_inner(e1, e2, arg_types, param_types, visited)
+            structurally_compatible_inner(*t1, *t2, arg_types, param_types, tys, visited)
+                && structurally_compatible_inner(*e1, *e2, arg_types, param_types, tys, visited)
         }
         (Ty::Option(a), Ty::Option(b)) => {
-            structurally_compatible_inner(a, b, arg_types, param_types, visited)
+            structurally_compatible_inner(*a, *b, arg_types, param_types, tys, visited)
         }
         (Ty::Effect(a), Ty::Effect(b)) => {
-            structurally_compatible_inner(a, b, arg_types, param_types, visited)
+            structurally_compatible_inner(*a, *b, arg_types, param_types, tys, visited)
         }
         (Ty::HttpResult(a), Ty::HttpResult(b)) => {
-            structurally_compatible_inner(a, b, arg_types, param_types, visited)
+            structurally_compatible_inner(*a, *b, arg_types, param_types, tys, visited)
         }
         // The boundary-crossing collections walk their element types like
         // `Result`/`Option` — without these arms an identical `List[Int]`
         // was rejected against itself at a context boundary.
         (Ty::List(a), Ty::List(b)) => {
-            structurally_compatible_inner(a, b, arg_types, param_types, visited)
+            structurally_compatible_inner(*a, *b, arg_types, param_types, tys, visited)
         }
         (Ty::Map(k1, v1), Ty::Map(k2, v2)) => {
-            structurally_compatible_inner(k1, k2, arg_types, param_types, visited)
-                && structurally_compatible_inner(v1, v2, arg_types, param_types, visited)
+            structurally_compatible_inner(*k1, *k2, arg_types, param_types, tys, visited)
+                && structurally_compatible_inner(*v1, *v2, arg_types, param_types, tys, visited)
         }
         (Ty::QueueResult, Ty::QueueResult) => true,
         (
@@ -3471,7 +3652,7 @@ fn structurally_compatible_inner(
             // brand (latent while generic records are boundary-rejected).
             if aa.len() != ba.len()
                 || !aa.iter().zip(ba).all(|(x, y)| {
-                    structurally_compatible_inner(x, y, arg_types, param_types, visited)
+                    structurally_compatible_inner(*x, *y, arg_types, param_types, tys, visited)
                 })
             {
                 return false;
@@ -3482,7 +3663,7 @@ fn structurally_compatible_inner(
             if !visited.insert(key.clone()) {
                 return true;
             }
-            let ok = structural_compare_named(an, bn, arg_types, param_types, visited);
+            let ok = structural_compare_named(an, bn, arg_types, param_types, tys, visited);
             visited.remove(&key);
             ok
         }
@@ -3533,6 +3714,7 @@ fn structural_compare_named(
     param_name: &str,
     arg_types: &HashMap<String, Arc<TypeDecl>>,
     param_types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
     visited: &mut HashSet<(String, String)>,
 ) -> bool {
     // The "same nominal name" case is the most common: both sides derive
@@ -3591,12 +3773,12 @@ fn structural_compare_named(
                 let Some(bf) = b.fields.iter().find(|f| f.name.name == af.name.name) else {
                     return false;
                 };
-                let at = resolve_type_ref(&af.type_ref, arg_types);
-                let bt = resolve_type_ref(&bf.type_ref, param_types);
+                let at = resolve_type_ref(&af.type_ref, arg_types, tys);
+                let bt = resolve_type_ref(&bf.type_ref, param_types, tys);
                 let (Some(at), Some(bt)) = (at, bt) else {
                     return false;
                 };
-                if !structurally_compatible_inner(&at, &bt, arg_types, param_types, visited) {
+                if !structurally_compatible_inner(at, bt, arg_types, param_types, tys, visited) {
                     return false;
                 }
             }
@@ -3617,12 +3799,19 @@ fn structural_compare_named(
                     if af.name.name != bf.name.name {
                         return false;
                     }
-                    let at = resolve_type_ref(&af.type_ref, arg_types);
-                    let bt = resolve_type_ref(&bf.type_ref, param_types);
+                    let at = resolve_type_ref(&af.type_ref, arg_types, tys);
+                    let bt = resolve_type_ref(&bf.type_ref, param_types, tys);
                     let (Some(at), Some(bt)) = (at, bt) else {
                         return false;
                     };
-                    if !structurally_compatible_inner(&at, &bt, arg_types, param_types, visited) {
+                    if !structurally_compatible_inner(
+                        at,
+                        bt,
+                        arg_types,
+                        param_types,
+                        tys,
+                        visited,
+                    ) {
                         return false;
                     }
                 }
@@ -3667,8 +3856,12 @@ fn refinements_match(a: Option<&Refinement>, b: Option<&Refinement>) -> bool {
     }
 }
 
-fn variants_of(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Vec<VariantInfo>> {
-    match ty {
+fn variants_of(
+    ty: TyId,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
+) -> Option<Vec<VariantInfo>> {
+    match &*tys.get(ty) {
         Ty::Named {
             kind: NamedKind::Sum,
             name,
@@ -3692,8 +3885,11 @@ fn variants_of(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Vec<Va
                                     // at an instantiation. `instantiate_field_ty`
                                     // degrades to a plain resolve for a non-generic
                                     // sum (empty `args`).
-                                    let t = instantiate_field_ty(decl, args, &f.type_ref, types)
-                                        .unwrap_or(Ty::Base(BaseType::Int));
+                                    let t =
+                                        instantiate_field_ty(decl, args, &f.type_ref, types, tys)
+                                            .unwrap_or_else(|| {
+                                                tys.intern(Ty::Base(BaseType::Int))
+                                            });
                                     (f.name.name.clone(), t)
                                 })
                                 .collect(),
@@ -3707,17 +3903,17 @@ fn variants_of(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Vec<Va
         Ty::Result(t, e) => Some(vec![
             VariantInfo {
                 name: "Ok".to_string(),
-                payload: vec![("value".to_string(), (**t).clone())],
+                payload: vec![("value".to_string(), *t)],
             },
             VariantInfo {
                 name: "Err".to_string(),
-                payload: vec![("error".to_string(), (**e).clone())],
+                payload: vec![("error".to_string(), *e)],
             },
         ]),
         Ty::Option(t) => Some(vec![
             VariantInfo {
                 name: "Some".to_string(),
-                payload: vec![("value".to_string(), (**t).clone())],
+                payload: vec![("value".to_string(), *t)],
             },
             VariantInfo {
                 name: "None".to_string(),
@@ -3734,9 +3930,9 @@ fn variants_of(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Vec<Va
                 .iter()
                 .map(|(name, id)| VariantInfo {
                     name: name.clone(),
-                    payload: match id {
+                    payload: match &*tys.get(*id) {
                         Ty::Unit => vec![],
-                        _ => vec![("identity".to_string(), id.clone())],
+                        _ => vec![("identity".to_string(), *id)],
                     },
                 })
                 .collect(),
@@ -3748,25 +3944,34 @@ fn variants_of(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Vec<Va
                     name: v.name.to_string(),
                     payload: match v.payload {
                         HttpVariantPayload::None => vec![],
-                        HttpVariantPayload::Value => vec![("value".to_string(), (**t).clone())],
+                        HttpVariantPayload::Value => vec![("value".to_string(), *t)],
                         HttpVariantPayload::Message => {
-                            vec![("message".to_string(), Ty::Base(BaseType::String))]
+                            vec![(
+                                "message".to_string(),
+                                tys.intern(Ty::Base(BaseType::String)),
+                            )]
                         }
                         HttpVariantPayload::Location => {
-                            vec![("location".to_string(), Ty::Base(BaseType::String))]
+                            vec![(
+                                "location".to_string(),
+                                tys.intern(Ty::Base(BaseType::String)),
+                            )]
                         }
-                        HttpVariantPayload::Streamed => vec![(
-                            "stream".to_string(),
-                            Ty::Stream(Box::new(Ty::Base(BaseType::String))),
-                        )],
+                        HttpVariantPayload::Streamed => {
+                            let elem = tys.intern(Ty::Base(BaseType::String));
+                            vec![("stream".to_string(), tys.intern(Ty::Stream(elem)))]
+                        }
                         // v0.111: the first two-field payload. Field names are
                         // kept byte-identical to the runtime union in
                         // `bynk-emit/runtime/src/http.ts`. An `HttpResult` is
                         // construct-only in handler position (never scrutinised),
                         // so this binding exists for exhaustiveness, not a path.
                         HttpVariantPayload::Raw => vec![
-                            ("body".to_string(), Ty::Base(BaseType::Bytes)),
-                            ("contentType".to_string(), Ty::Base(BaseType::String)),
+                            ("body".to_string(), tys.intern(Ty::Base(BaseType::Bytes))),
+                            (
+                                "contentType".to_string(),
+                                tys.intern(Ty::Base(BaseType::String)),
+                            ),
                         ],
                     },
                 })
@@ -3790,49 +3995,56 @@ fn variants_of(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>) -> Option<Vec<Va
 mod generics_tests {
     use super::*;
 
-    fn var(n: &str) -> Ty {
-        Ty::Var(n.to_string())
+    fn var(tys: &Types, n: &str) -> TyId {
+        tys.intern(Ty::Var(n.to_string()))
     }
-    fn int() -> Ty {
-        Ty::Base(BaseType::Int)
+    fn int(tys: &Types) -> TyId {
+        tys.intern(Ty::Base(BaseType::Int))
+    }
+    fn string(tys: &Types) -> TyId {
+        tys.intern(Ty::Base(BaseType::String))
     }
 
     #[test]
     fn unify_binds_and_holds() {
+        let tys = &Types::new();
         let mut s = HashMap::new();
-        assert!(unify(&var("A"), &int(), &mut s));
-        assert_eq!(s.get("A"), Some(&int()));
+        assert!(unify(var(tys, "A"), int(tys), &mut s, tys));
+        assert_eq!(s.get("A"), Some(&int(tys)));
         // Same binding again: fine. A different one: conflict.
-        assert!(unify(&var("A"), &int(), &mut s));
-        assert!(!unify(&var("A"), &Ty::Base(BaseType::String), &mut s));
+        assert!(unify(var(tys, "A"), int(tys), &mut s, tys));
+        assert!(!unify(var(tys, "A"), string(tys), &mut s, tys));
     }
 
     #[test]
     fn unify_walks_structure() {
+        let tys = &Types::new();
         let mut s = HashMap::new();
-        let pattern = Ty::Fn {
-            params: vec![var("A")],
-            ret: Box::new(Ty::Effect(Box::new(var("B")))),
-        };
-        let actual = Ty::Fn {
-            params: vec![int()],
-            ret: Box::new(Ty::Effect(Box::new(Ty::Base(BaseType::String)))),
-        };
-        assert!(unify(&pattern, &actual, &mut s));
-        assert_eq!(s.get("A"), Some(&int()));
-        assert_eq!(s.get("B"), Some(&Ty::Base(BaseType::String)));
+        let pattern = tys.intern(Ty::Fn {
+            params: vec![var(tys, "A")],
+            ret: tys.intern(Ty::Effect(var(tys, "B"))),
+        });
+        let actual = tys.intern(Ty::Fn {
+            params: vec![int(tys)],
+            ret: tys.intern(Ty::Effect(string(tys))),
+        });
+        assert!(unify(pattern, actual, &mut s, tys));
+        assert_eq!(s.get("A"), Some(&int(tys)));
+        assert_eq!(s.get("B"), Some(&string(tys)));
     }
 
     #[test]
     fn substitute_grounds_fully() {
+        let tys = &Types::new();
         let mut s = HashMap::new();
-        s.insert("A".to_string(), int());
-        let t = Ty::Option(Box::new(Ty::Fn {
-            params: vec![var("A")],
-            ret: Box::new(var("A")),
-        }));
-        let g = substitute(&t, &s);
-        assert!(!contains_var(&g));
+        s.insert("A".to_string(), int(tys));
+        let inner = tys.intern(Ty::Fn {
+            params: vec![var(tys, "A")],
+            ret: var(tys, "A"),
+        });
+        let t = tys.intern(Ty::Option(inner));
+        let g = substitute(t, &s, tys);
+        assert!(!contains_var(g, tys));
     }
 
     /// The §2 invariant (pinned per the plan): every expected-driven feature
@@ -3841,26 +4053,29 @@ mod generics_tests {
     /// Var-vs-ground pairs rather than panic or accept.
     #[test]
     fn var_bearing_expected_is_benign() {
-        assert!(!compatible(&int(), &var("A")));
-        assert!(!compatible(&var("A"), &int()));
+        let tys = &Types::new();
+        assert!(!compatible(int(tys), var(tys, "A"), tys));
+        assert!(!compatible(var(tys, "A"), int(tys), tys));
         // Rigid vars: name equality only.
-        assert!(compatible(&var("A"), &var("A")));
-        assert!(!compatible(&var("A"), &var("B")));
+        assert!(compatible(var(tys, "A"), var(tys, "A"), tys));
+        assert!(!compatible(var(tys, "A"), var(tys, "B"), tys));
     }
 }
 
-/// T3.6b prep (R4.1/R4.2): `Ty` shipped `Hash`/`Eq`/`Ord` in T3.6a, but
-/// nothing in the tree exercised them — a workspace-wide search found zero
-/// `Ty`-keyed `HashMap`/`HashSet` anywhere. These pin the one property a
-/// future interner's `intern()` will depend on and that no existing test
-/// covers: two `Ty` values built through *different construction paths* but
-/// structurally identical must hash and compare equal (or interning would
-/// silently mint duplicate `TyId`s for the same type), and structurally
-/// different `Ty` values must not collapse into one `HashSet`/`HashMap`
-/// entry. Investigated as part of scoping T3.6b's real first increment (see
-/// the identity-and-totality track doc §9) — this is the gap that
-/// investigation found, closed on its own rather than left as a finding with
-/// no test to show for it.
+/// T3.6b (R4.1/R4.2): the interner's dedup property, and the `Hash`/`Eq`/`Ord`
+/// it rests on.
+///
+/// T3.6a shipped the derives; these tests (added while scoping T3.6b, see the
+/// identity-and-totality track doc §9) pinned the property `intern` would
+/// depend on before it existed. Now that it does, they pin it directly: two
+/// types built through *different construction paths* but structurally
+/// identical must intern to the **same** `TyId` (or the checker's `TyId`
+/// equality — which `unify` and `Ty::Map`'s key comparison now rely on —
+/// would be unsound), and structurally different types must never collide.
+///
+/// Dedup being by the *shallow* `Ty` is exactly what makes this work: every
+/// recursive field is already a `TyId`, so equal children imply equal parents
+/// by induction. The nested cases below are what test that induction.
 #[cfg(test)]
 mod ty_hash_eq_ord_tests {
     use super::*;
@@ -3878,60 +4093,94 @@ mod ty_hash_eq_ord_tests {
     /// builds — two different construction paths for the same type.
     #[test]
     fn map_entry_ty_matches_its_own_raw_literal() {
-        let via_constructor = map_entry_ty(Ty::Base(BaseType::Int), Ty::Base(BaseType::String));
-        let via_literal = Ty::Named {
+        let tys = &Types::new();
+        let int = tys.intern(Ty::Base(BaseType::Int));
+        let string = tys.intern(Ty::Base(BaseType::String));
+        let via_constructor = map_entry_ty(int, string, tys);
+        let via_literal = tys.intern(Ty::Named {
             name: MAP_ENTRY.to_string(),
             kind: NamedKind::Record,
-            args: vec![Ty::Base(BaseType::Int), Ty::Base(BaseType::String)],
-        };
+            args: vec![int, string],
+        });
         assert_eq!(via_constructor, via_literal);
-        assert_eq!(hash_of(&via_constructor), hash_of(&via_literal));
-        assert_eq!(via_constructor.cmp(&via_literal), std::cmp::Ordering::Equal);
+        assert_eq!(
+            hash_of(&tys.get(via_constructor)),
+            hash_of(&tys.get(via_literal))
+        );
     }
 
-    /// A deeply nested type built two separate times must hash and compare
-    /// equal — the property `intern()` would dedup on.
+    /// A deeply nested type built two separate times interns to one `TyId` —
+    /// the property `unify`'s "matches its prior binding exactly" now rests on.
     #[test]
-    fn structurally_identical_nested_types_hash_and_compare_equal() {
+    fn structurally_identical_nested_types_intern_to_one_id() {
+        let tys = &Types::new();
         let build = || {
-            Ty::Map(
-                Box::new(Ty::Base(BaseType::String)),
-                Box::new(Ty::List(Box::new(Ty::Option(Box::new(Ty::Base(
-                    BaseType::Int,
-                )))))),
-            )
+            let int = tys.intern(Ty::Base(BaseType::Int));
+            let opt = tys.intern(Ty::Option(int));
+            let list = tys.intern(Ty::List(opt));
+            let string = tys.intern(Ty::Base(BaseType::String));
+            tys.intern(Ty::Map(string, list))
         };
         let a = build();
+        let before = tys.len();
         let b = build();
         assert_eq!(a, b);
-        assert_eq!(hash_of(&a), hash_of(&b));
-        assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
+        // Re-building it added nothing: every node was already interned.
+        assert_eq!(tys.len(), before);
+        assert_eq!(hash_of(&tys.get(a)), hash_of(&tys.get(b)));
     }
 
-    /// Structurally different types must not collapse into one `HashSet`
-    /// entry — the flip side of the dedup property above.
+    /// Structurally different types must get distinct ids — the flip side of
+    /// the dedup property above.
     #[test]
-    fn structurally_different_types_do_not_collide_in_a_hash_set() {
-        let mut set = HashSet::new();
-        set.insert(Ty::List(Box::new(Ty::Base(BaseType::Int))));
-        set.insert(Ty::List(Box::new(Ty::Base(BaseType::String))));
-        set.insert(Ty::Option(Box::new(Ty::Base(BaseType::Int))));
-        assert_eq!(set.len(), 3);
+    fn structurally_different_types_get_distinct_ids() {
+        let tys = &Types::new();
+        let int = tys.intern(Ty::Base(BaseType::Int));
+        let string = tys.intern(Ty::Base(BaseType::String));
+        let ids = HashSet::from([
+            tys.intern(Ty::List(int)),
+            tys.intern(Ty::List(string)),
+            tys.intern(Ty::Option(int)),
+        ]);
+        assert_eq!(ids.len(), 3);
     }
 
-    /// A `HashSet` built from several structurally-equal insertions
-    /// (mirroring what a real interner's dedup loop would do) collapses to
-    /// one entry.
+    /// Interning the same type repeatedly grows the table exactly once.
     #[test]
-    fn a_hash_set_deduplicates_structurally_equal_types() {
-        let mut set = HashSet::new();
-        for _ in 0..3 {
-            set.insert(map_entry_ty(
-                Ty::Base(BaseType::Int),
-                Ty::Base(BaseType::Bool),
-            ));
-        }
-        assert_eq!(set.len(), 1);
+    fn repeated_interning_grows_the_table_once() {
+        let tys = &Types::new();
+        let int = tys.intern(Ty::Base(BaseType::Int));
+        let bool_ = tys.intern(Ty::Base(BaseType::Bool));
+        let before = tys.len();
+        let ids: HashSet<TyId> = (0..3).map(|_| map_entry_ty(int, bool_, tys)).collect();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(tys.len(), before + 1);
+    }
+
+    /// `resolve`-round-trip: an id resolves to the node it was minted from.
+    #[test]
+    fn an_id_resolves_to_the_node_it_was_interned_from() {
+        let tys = &Types::new();
+        let int = tys.intern(Ty::Base(BaseType::Int));
+        assert_eq!(&*tys.get(int), &Ty::Base(BaseType::Int));
+        let list = tys.intern(Ty::List(int));
+        assert_eq!(&*tys.get(list), &Ty::List(int));
+    }
+
+    /// T3.6b's own soundness guard: `compatible` is deliberately **not**
+    /// reflexive for the sealed boundary values, so interning must not be
+    /// short-circuited on id equality. Pinned here because the fast path is
+    /// the obvious "optimisation" a later reader would add.
+    #[test]
+    fn compatible_is_not_reflexive_for_sealed_actor_types() {
+        let tys = &Types::new();
+        let id_ty = tys.intern(Ty::Base(BaseType::String));
+        let actor = tys.intern(Ty::Actor(id_ty));
+        assert!(!compatible(actor, actor, tys));
+        let sum = tys.intern(Ty::ActorSum(vec![("User".to_string(), id_ty)]));
+        assert!(!compatible(sum, sum, tys));
+        // …while an ordinary type still is.
+        assert!(compatible(id_ty, id_ty, tys));
     }
 }
 
@@ -3955,14 +4204,14 @@ mod pure_helper_pins {
             span: sp(),
         }
     }
-    fn var(n: &str) -> Ty {
-        Ty::Var(n.to_string())
+    fn var(tys: &Types, n: &str) -> TyId {
+        tys.intern(Ty::Var(n.to_string()))
     }
-    fn int() -> Ty {
-        Ty::Base(BaseType::Int)
+    fn int(tys: &Types) -> TyId {
+        tys.intern(Ty::Base(BaseType::Int))
     }
-    fn string() -> Ty {
-        Ty::Base(BaseType::String)
+    fn string(tys: &Types) -> TyId {
+        tys.intern(Ty::Base(BaseType::String))
     }
     fn expr(kind: ExprKind) -> Expr {
         Expr {
@@ -4029,174 +4278,187 @@ mod pure_helper_pins {
 
     #[test]
     fn unify_identical_concrete_types() {
+        let tys = &Types::new();
         let mut s = HashMap::new();
-        assert!(unify(&int(), &int(), &mut s));
+        assert!(unify(int(tys), int(tys), &mut s, tys));
         assert!(s.is_empty());
     }
 
     #[test]
     fn unify_var_binds_in_subst() {
+        let tys = &Types::new();
         let mut s = HashMap::new();
-        assert!(unify(&var("A"), &string(), &mut s));
-        assert_eq!(s.get("A"), Some(&string()));
+        assert!(unify(var(tys, "A"), string(tys), &mut s, tys));
+        assert_eq!(s.get("A"), Some(&string(tys)));
     }
 
     #[test]
     fn unify_nested_generic_binds() {
+        let tys = &Types::new();
         // List[A] vs List[Int] binds A := Int.
         let mut s = HashMap::new();
-        let pat = Ty::List(Box::new(var("A")));
-        let act = Ty::List(Box::new(int()));
-        assert!(unify(&pat, &act, &mut s));
-        assert_eq!(s.get("A"), Some(&int()));
+        let pat = tys.intern(Ty::List(var(tys, "A")));
+        let act = tys.intern(Ty::List(int(tys)));
+        assert!(unify(pat, act, &mut s, tys));
+        assert_eq!(s.get("A"), Some(&int(tys)));
     }
 
     #[test]
     fn unify_surprise_concrete_mismatch_returns_true() {
+        let tys = &Types::new();
         // SURPRISING (pinned as-is): `unify`'s catch-all is `_ => true`, so a
         // ground-vs-ground mismatch (Int vs String) and a constructor mismatch
         // (List vs Option) both *succeed* here — `compatible` owns those
         // diagnostics post-substitution, not `unify`.
         let mut s = HashMap::new();
-        assert!(unify(&int(), &string(), &mut s));
-        assert!(unify(
-            &Ty::List(Box::new(int())),
-            &Ty::Option(Box::new(int())),
-            &mut s,
-        ));
+        assert!(unify(int(tys), string(tys), &mut s, tys));
+        assert!(unify(tys.intern(Ty::List(int(tys))), tys.intern(Ty::Option(int(tys))), &mut s, tys));
         // The only false paths: a Var rebind conflict and an Fn arity mismatch.
         let mut s2 = HashMap::new();
-        assert!(unify(&var("A"), &int(), &mut s2));
-        assert!(!unify(&var("A"), &string(), &mut s2));
+        assert!(unify(var(tys, "A"), int(tys), &mut s2, tys));
+        assert!(!unify(var(tys, "A"), string(tys), &mut s2, tys));
         let mut s3 = HashMap::new();
-        let f1 = Ty::Fn {
-            params: vec![int()],
-            ret: Box::new(int()),
-        };
-        let f2 = Ty::Fn {
-            params: vec![int(), int()],
-            ret: Box::new(int()),
-        };
-        assert!(!unify(&f1, &f2, &mut s3));
+        let f1 = tys.intern(Ty::Fn {
+            params: vec![int(tys)],
+            ret: int(tys),
+        });
+        let f2 = tys.intern(Ty::Fn {
+            params: vec![int(tys), int(tys)],
+            ret: int(tys),
+        });
+        assert!(!unify(f1, f2, &mut s3, tys));
     }
 
     // -- substitute --------------------------------------------------------
 
     #[test]
     fn substitute_replaces_bound_var() {
+        let tys = &Types::new();
         let mut s = HashMap::new();
-        s.insert("A".to_string(), int());
-        assert_eq!(substitute(&var("A"), &s), int());
+        s.insert("A".to_string(), int(tys));
+        assert_eq!(substitute(var(tys, "A"), &s, tys), int(tys));
     }
 
     #[test]
     fn substitute_recurses_into_nested() {
+        let tys = &Types::new();
         let mut s = HashMap::new();
-        s.insert("A".to_string(), string());
-        let t = Ty::Map(Box::new(var("A")), Box::new(int()));
+        s.insert("A".to_string(), string(tys));
+        let t = tys.intern(Ty::Map(var(tys, "A"), int(tys)));
         assert_eq!(
-            substitute(&t, &s),
-            Ty::Map(Box::new(string()), Box::new(int())),
+            substitute(t, &s, tys),
+            tys.intern(Ty::Map(string(tys), int(tys))),
         );
     }
 
     #[test]
     fn substitute_leaves_unbound_var_alone() {
+        let tys = &Types::new();
         let s = HashMap::new();
-        assert_eq!(substitute(&var("Z"), &s), var("Z"));
+        assert_eq!(substitute(var(tys, "Z"), &s, tys), var(tys, "Z"));
     }
 
     // -- contains_var / contains_flexible_var ------------------------------
 
     #[test]
     fn contains_var_positive_and_negative() {
-        assert!(contains_var(&Ty::Option(Box::new(var("A")))));
-        assert!(!contains_var(&Ty::Option(Box::new(int()))));
-        assert!(!contains_var(&int()));
+        let tys = &Types::new();
+        assert!(contains_var(tys.intern(Ty::Option(var(tys, "A"))), tys));
+        assert!(!contains_var(tys.intern(Ty::Option(int(tys))), tys));
+        assert!(!contains_var(int(tys), tys));
     }
 
     #[test]
     fn contains_flexible_var_respects_rigid_set() {
+        let tys = &Types::new();
         let mut rigid = HashSet::new();
         rigid.insert("A".to_string());
         // A is rigid → not flexible.
-        assert!(!contains_flexible_var(&var("A"), &rigid));
+        assert!(!contains_flexible_var(var(tys, "A"), &rigid, tys));
         // B is not rigid → flexible.
-        assert!(contains_flexible_var(&var("B"), &rigid));
+        assert!(contains_flexible_var(var(tys, "B"), &rigid, tys));
         // No vars at all → not flexible.
-        assert!(!contains_flexible_var(&int(), &rigid));
+        assert!(!contains_flexible_var(int(tys), &rigid, tys));
     }
 
     // -- peel_to_* ---------------------------------------------------------
 
     #[test]
     fn peel_to_result_matches_and_misses() {
-        let r = Ty::Result(Box::new(int()), Box::new(string()));
-        assert_eq!(peel_to_result(&r), Some((int(), string())));
-        assert_eq!(peel_to_result(&int()), None);
+        let tys = &Types::new();
+        let r = tys.intern(Ty::Result(int(tys), string(tys)));
+        assert_eq!(peel_to_result(r, tys), Some((int(tys), string(tys))));
+        assert_eq!(peel_to_result(int(tys), tys), None);
         // Pinned: peels through Effect[_].
         assert_eq!(
-            peel_to_result(&Ty::Effect(Box::new(r))),
-            Some((int(), string()))
+            peel_to_result(tys.intern(Ty::Effect(r)), tys),
+            Some((int(tys), string(tys)))
         );
     }
 
     #[test]
     fn peel_to_option_matches_and_misses() {
-        assert_eq!(peel_to_option(&Ty::Option(Box::new(int()))), Some(int()));
-        assert_eq!(peel_to_option(&int()), None);
+        let tys = &Types::new();
+        assert_eq!(peel_to_option(tys.intern(Ty::Option(int(tys))), tys), Some(int(tys)));
+        assert_eq!(peel_to_option(int(tys), tys), None);
     }
 
     #[test]
     fn peel_to_list_matches_and_misses() {
-        assert_eq!(peel_to_list(&Ty::List(Box::new(string()))), Some(string()));
-        assert_eq!(peel_to_list(&int()), None);
+        let tys = &Types::new();
+        assert_eq!(peel_to_list(tys.intern(Ty::List(string(tys))), tys), Some(string(tys)));
+        assert_eq!(peel_to_list(int(tys), tys), None);
     }
 
     #[test]
     fn peel_to_map_matches_and_misses() {
-        let m = Ty::Map(Box::new(string()), Box::new(int()));
-        assert_eq!(peel_to_map(&m), Some((string(), int())));
-        assert_eq!(peel_to_map(&int()), None);
+        let tys = &Types::new();
+        let m = tys.intern(Ty::Map(string(tys), int(tys)));
+        assert_eq!(peel_to_map(m, tys), Some((string(tys), int(tys))));
+        assert_eq!(peel_to_map(int(tys), tys), None);
     }
 
     #[test]
     fn peel_to_http_result_matches_and_misses() {
+        let tys = &Types::new();
         assert_eq!(
-            peel_to_http_result(&Ty::HttpResult(Box::new(int()))),
-            Some(int()),
+            peel_to_http_result(tys.intern(Ty::HttpResult(int(tys))), tys),
+            Some(int(tys)),
         );
-        assert_eq!(peel_to_http_result(&int()), None);
+        assert_eq!(peel_to_http_result(int(tys), tys), None);
     }
 
     // -- maybe_auto_lift ---------------------------------------------------
 
     #[test]
     fn maybe_auto_lift_lifts_into_expected_effect() {
+        let tys = &Types::new();
         // T lifts to Effect[T] when expected is Effect[T] and T is not effectful.
-        let expected = Ty::Effect(Box::new(int()));
-        let lifted = maybe_auto_lift(Some(int()), Some(&expected));
-        assert_eq!(lifted, Some(Ty::Effect(Box::new(int()))));
+        let expected = tys.intern(Ty::Effect(int(tys)));
+        let lifted = maybe_auto_lift(Some(int(tys)), Some(expected), tys);
+        assert_eq!(lifted, Some(tys.intern(Ty::Effect(int(tys)))));
     }
 
     #[test]
     fn maybe_auto_lift_leaves_non_matching_alone() {
+        let tys = &Types::new();
         // Already Effect[_]: untouched.
-        let expected = Ty::Effect(Box::new(int()));
+        let expected = tys.intern(Ty::Effect(int(tys)));
         assert_eq!(
-            maybe_auto_lift(Some(Ty::Effect(Box::new(int()))), Some(&expected)),
-            Some(Ty::Effect(Box::new(int()))),
+            maybe_auto_lift(Some(tys.intern(Ty::Effect(int(tys)))), Some(expected), tys),
+            Some(tys.intern(Ty::Effect(int(tys)))),
         );
         // Expected not an Effect: untouched.
-        assert_eq!(maybe_auto_lift(Some(int()), Some(&int())), Some(int()));
+        assert_eq!(maybe_auto_lift(Some(int(tys)), Some(int(tys)), tys), Some(int(tys)));
         // None type: untouched.
-        assert_eq!(maybe_auto_lift(None, Some(&expected)), None);
+        assert_eq!(maybe_auto_lift(None, Some(expected), tys), None);
     }
 
     // -- const_literal -----------------------------------------------------
 
     #[test]
     fn const_literal_extracts_literals() {
+        let tys = &Types::new();
         assert!(matches!(
             const_literal(&expr(ExprKind::int_lit(7))),
             Some(ConstLit::Int(7)),
@@ -4226,6 +4488,7 @@ mod pure_helper_pins {
 
     #[test]
     fn const_literal_rejects_non_literals() {
+        let tys = &Types::new();
         assert!(const_literal(&expr(ExprKind::Ident(ident("x")))).is_none());
     }
 
@@ -4233,6 +4496,7 @@ mod pure_helper_pins {
 
     #[test]
     fn eval_predicate_int_and_float() {
+        let tys = &Types::new();
         assert!(eval_predicate(&PredKind::NonNegative, &ConstLit::Int(0)));
         assert!(!eval_predicate(&PredKind::NonNegative, &ConstLit::Int(-1)));
         assert!(eval_predicate(&PredKind::Positive, &ConstLit::Int(1)));
@@ -4243,6 +4507,7 @@ mod pure_helper_pins {
 
     #[test]
     fn eval_predicate_string() {
+        let tys = &Types::new();
         assert!(eval_predicate(
             &PredKind::MinLength(2),
             &ConstLit::Str("ab".into()),
@@ -4271,6 +4536,7 @@ mod pure_helper_pins {
 
     #[test]
     fn eval_predicate_base_mismatch_is_vacuously_true() {
+        let tys = &Types::new();
         // SURPRISING (pinned as-is): a predicate/literal base mismatch returns
         // `true` — base/predicate mismatch is a declaration-time error reported
         // elsewhere, not by construction-time eval.
@@ -4281,6 +4547,7 @@ mod pure_helper_pins {
 
     #[test]
     fn literal_matches_base_pairs() {
+        let tys = &Types::new();
         assert!(literal_matches_base(&ConstLit::Int(1), BaseType::Int));
         assert!(literal_matches_base(
             &ConstLit::Str("x".into()),
@@ -4294,6 +4561,7 @@ mod pure_helper_pins {
 
     #[test]
     fn type_decl_base_refined_vs_record() {
+        let tys = &Types::new();
         let refined = refined_decl("Age", BaseType::Int, None);
         assert_eq!(type_decl_base(&refined), Some(BaseType::Int));
         assert_eq!(type_decl_base(&record_decl("Pt")), None);
@@ -4301,6 +4569,7 @@ mod pure_helper_pins {
 
     #[test]
     fn type_decl_refinement_present_vs_absent() {
+        let tys = &Types::new();
         let with = refined_decl(
             "Age",
             BaseType::Int,
@@ -4316,6 +4585,7 @@ mod pure_helper_pins {
 
     #[test]
     fn int_refinement_consistency() {
+        let tys = &Types::new();
         // Consistent: 1..=10 with Positive — no error.
         let mut errs = vec![];
         check_int_refinement_consistency(
@@ -4332,6 +4602,7 @@ mod pure_helper_pins {
 
     #[test]
     fn float_refinement_consistency() {
+        let tys = &Types::new();
         // Consistent range.
         let mut errs = vec![];
         check_float_refinement_consistency(
@@ -4362,6 +4633,7 @@ mod pure_helper_pins {
 
     #[test]
     fn string_refinement_consistency() {
+        let tys = &Types::new();
         // Consistent: MinLength(1), MaxLength(10).
         let mut errs = vec![];
         check_string_refinement_consistency(
@@ -4399,6 +4671,7 @@ mod pure_helper_pins {
     /// this was `false`.
     #[test]
     fn refinements_match_treats_non_empty_and_min_length_one_as_equal() {
+        let tys = &Types::new();
         let a = refinement(vec![PredKind::NonEmpty]);
         let b = refinement(vec![PredKind::MinLength(1)]);
         assert!(refinements_match(Some(&a), Some(&b)));
@@ -4416,6 +4689,7 @@ mod pure_helper_pins {
 
     #[test]
     fn numeric_mix_int_float_pairs() {
+        let tys = &Types::new();
         assert!(numeric_mix(Some(BaseType::Int), Some(BaseType::Float)));
         assert!(numeric_mix(Some(BaseType::Float), Some(BaseType::Int)));
         assert!(!numeric_mix(Some(BaseType::Int), Some(BaseType::Int)));

@@ -14,7 +14,7 @@
 //! drives every listed method through the real checker and asserts none is
 //! rejected as `method_not_found`, so the table can't list a phantom method.
 
-use crate::checker::{NamedKind, Ty};
+use crate::checker::{NamedKind, Ty, TyId, Types};
 use bynk_syntax::ast::BaseType;
 
 /// One built-in kernel method: its name and a display signature.
@@ -281,8 +281,8 @@ pub const BYTES_METHODS: &[KernelMethod] = &[
 /// The value methods of a receiver type, or `&[]` for a type with no kernel
 /// methods (record/sum named types, `Bool`, `Effect`, …). Record *fields* are
 /// resolved separately by the LSP (they need the type declaration).
-pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
-    match ty {
+pub fn methods_for(ty: TyId, tys: &Types) -> &'static [KernelMethod] {
+    match &*tys.get(ty) {
         Ty::Base(BaseType::Int) => INT_METHODS,
         Ty::Base(BaseType::Float) => FLOAT_METHODS,
         Ty::Base(BaseType::Duration) => DURATION_METHODS,
@@ -296,7 +296,7 @@ pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
         Ty::Result(_, _) => RESULT_METHODS,
         // §2.8.3: an `Effect[Result[T, E]]` receiver offers the cross-context
         // combinators; any other `Effect[_]` has no kernel methods.
-        Ty::Effect(inner) if matches!(inner.as_ref(), Ty::Result(_, _)) => EFFECT_RESULT_METHODS,
+        Ty::Effect(inner) if matches!(&*tys.get(*inner), Ty::Result(_, _)) => EFFECT_RESULT_METHODS,
         // #561: a refined receiver inherits its base type's read-only kernel
         // methods (after its own declared methods, which the completion layer
         // merges in), so `.`-member completion offers them. `Bool` has no
@@ -321,40 +321,39 @@ pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
 mod tests {
     use super::*;
 
-    fn refined(base: BaseType) -> Ty {
-        Ty::Named {
+    fn refined(tys: &Types, base: BaseType) -> TyId {
+        tys.intern(Ty::Named {
             name: "R".to_string(),
             kind: NamedKind::Refined(base),
             args: Vec::new(),
-        }
+        })
     }
 
     #[test]
     fn refined_receiver_inherits_base_kernel_methods() {
+        let tys = &Types::new();
         // #561: completion on a refined receiver offers the base kernel.
         assert_eq!(
-            methods_for(&refined(BaseType::String)).len(),
+            methods_for(refined(tys, BaseType::String), tys).len(),
             STRING_METHODS.len()
         );
         assert_eq!(
-            methods_for(&refined(BaseType::Int)).len(),
+            methods_for(refined(tys, BaseType::Int), tys).len(),
             INT_METHODS.len()
         );
         assert_eq!(
-            methods_for(&refined(BaseType::Float)).len(),
+            methods_for(refined(tys, BaseType::Float), tys).len(),
             FLOAT_METHODS.len()
         );
         // `Bool` has no kernel, so a `Bool`-based refinement inherits nothing.
-        assert!(methods_for(&refined(BaseType::Bool)).is_empty());
+        assert!(methods_for(refined(tys, BaseType::Bool), tys).is_empty());
         // Opaque types do not widen — no inherited kernel.
-        assert!(
-            methods_for(&Ty::Named {
-                name: "O".to_string(),
-                kind: NamedKind::Opaque(BaseType::String),
-                args: Vec::new(),
-            })
-            .is_empty()
-        );
+        let opaque = tys.intern(Ty::Named {
+            name: "O".to_string(),
+            kind: NamedKind::Opaque(BaseType::String),
+            args: Vec::new(),
+        });
+        assert!(methods_for(opaque, tys).is_empty());
     }
 
     /// #596: a `Query[T]` receiver (a `store Map`'s `.entries`/`.keys`/
@@ -363,9 +362,11 @@ mod tests {
     /// completion on any `Query` offered nothing.
     #[test]
     fn query_receiver_offers_the_query_vocabulary() {
-        let query = Ty::Query(Box::new(Ty::Base(BaseType::Int)));
-        assert_eq!(methods_for(&query).len(), QUERY_METHODS.len());
-        assert!(methods_for(&query).iter().any(|m| m.name == "filter"));
-        assert!(methods_for(&query).iter().any(|m| m.name == "collect"));
+        let tys = &Types::new();
+        let int = tys.intern(Ty::Base(BaseType::Int));
+        let query = tys.intern(Ty::Query(int));
+        assert_eq!(methods_for(query, tys).len(), QUERY_METHODS.len());
+        assert!(methods_for(query, tys).iter().any(|m| m.name == "filter"));
+        assert!(methods_for(query, tys).iter().any(|m| m.name == "collect"));
     }
 }

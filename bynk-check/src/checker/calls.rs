@@ -31,6 +31,7 @@ pub(crate) fn check_fn(
     hints: &mut HintSink,
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
+    tys: &Types,
 ) {
     // v0.20a: the fn's type parameters are *rigid* type variables while
     // checking its own body. A type param shadowing a declared type is
@@ -67,12 +68,12 @@ pub(crate) fn check_fn(
             vars.insert(tp.name.name.clone());
         }
     }
-    let return_ty = match resolve_type_ref_in(&f.return_type, &input.types, &vars) {
+    let return_ty = match resolve_type_ref_in(&f.return_type, &input.types, &vars, tys) {
         Some(t) => t,
         None => return,
     };
     record_type_refs(&f.return_type, &input.types, &vars, refs);
-    let mut param_scope: HashMap<String, Ty> = HashMap::new();
+    let mut param_scope: HashMap<String, TyId> = HashMap::new();
     // For methods, the implicit `self` parameter has the attached type. #594: on
     // a generic receiver, `self` is the type applied to its own parameters as
     // rigid vars (`Box[A]`), so field access substitutes them and the body's
@@ -84,12 +85,15 @@ pub(crate) fn check_fn(
         let self_args = decl
             .type_params
             .iter()
-            .map(|tp| Ty::Var(tp.name.name.clone()))
+            .map(|tp| tys.intern(Ty::Var(tp.name.name.clone())))
             .collect();
-        param_scope.insert("self".to_string(), named_ty_with_args(decl, self_args));
+        param_scope.insert(
+            "self".to_string(),
+            named_ty_with_args(decl, self_args, tys),
+        );
     }
     for p in &f.params {
-        if let Some(ty) = resolve_type_ref_in(&p.type_ref, &input.types, &vars) {
+        if let Some(ty) = resolve_type_ref_in(&p.type_ref, &input.types, &vars, tys) {
             record_type_refs(&p.type_ref, &input.types, &vars, refs);
             // v0.31: a fn parameter is in scope over the whole body.
             if p.name.name != "_" {
@@ -97,7 +101,7 @@ pub(crate) fn check_fn(
                     p.name.name.clone(),
                     p.name.span,
                     crate::locals::LocalKind::Param,
-                    ty.display(),
+                    ty.display(tys),
                     f.body.span,
                 );
             }
@@ -109,9 +113,9 @@ pub(crate) fn check_fn(
     // predicate attached to a function (ADR 0144). `result` in an `ensures` is
     // the return value, awaited for an `Effect`.
     if !f.requires.is_empty() || !f.ensures.is_empty() {
-        let result_ty = match &return_ty {
-            Ty::Effect(inner) => (**inner).clone(),
-            t => t.clone(),
+        let result_ty = match &*tys.get(return_ty) {
+            Ty::Effect(inner) => *inner,
+            _ => return_ty,
         };
         let has_result_param = f.params.iter().any(|p| p.name.name == "result");
         let fn_label = format!("function `{}`", f.name.display());
@@ -119,7 +123,7 @@ pub(crate) fn check_fn(
             &f.requires,
             &f.ensures,
             &param_scope,
-            &result_ty,
+            result_ty,
             has_result_param,
             &fn_label,
             input,
@@ -130,11 +134,13 @@ pub(crate) fn check_fn(
             locals,
             requirements,
             &vars,
+            tys,
         );
     }
-    let effectful = matches!(&return_ty, Ty::Effect(_));
+    let effectful = return_ty.is_effect(tys);
     let mut ctx = Ctx {
         input,
+        tys,
         expr_types,
         errors,
         refs,
@@ -144,7 +150,7 @@ pub(crate) fn check_fn(
         scopes: vec![param_scope],
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
-        return_ty: return_ty.clone(),
+        return_ty,
         return_ty_span: f.return_type.span(),
         effectful,
         agent_state_ty: None,
@@ -156,7 +162,7 @@ pub(crate) fn check_fn(
         type_vars: vars.clone(),
         store_fields: HashMap::new(),
     };
-    let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
+    let Some(body_ty) = type_of_block(&f.body, Some(return_ty), &mut ctx) else {
         return;
     };
     // #718: run the held-resource linearity pass over `fn`/method bodies too, not
@@ -174,16 +180,17 @@ pub(crate) fn check_fn(
         &ctx.pattern_binding_types,
         &HashSet::new(),
         ctx.errors,
+        tys,
     );
-    if !compatible(&body_ty, &return_ty) {
+    if !compatible(body_ty, return_ty, tys) {
         ctx.errors.push(
             CompileError::new(
                 "bynk.types.return_mismatch",
                 f.body.tail.span,
                 format!(
                     "function body has type `{}`, but the declared return type is `{}`",
-                    body_ty.display(),
-                    return_ty.display()
+                    body_ty.display(tys),
+                    return_ty.display(tys)
                 ),
             )
             .with_label(f.return_type.span(), "declared return type"),
@@ -212,8 +219,9 @@ fn check_static_initialiser(
     locals: &mut LocalsSink,
     code: &'static str,
     subject: &str,
+    tys: &Types,
 ) {
-    let Some(field_ty) = resolve_type_ref(field_type, &input.types) else {
+    let Some(field_ty) = resolve_type_ref(field_type, &input.types, tys) else {
         return; // an unresolved field type is reported elsewhere
     };
     let mut local_errors: Vec<CompileError> = Vec::new();
@@ -223,6 +231,7 @@ fn check_static_initialiser(
     let result = {
         let mut ctx = Ctx {
             input,
+            tys,
             expr_types,
             errors: &mut local_errors,
             refs,
@@ -232,7 +241,7 @@ fn check_static_initialiser(
             scopes: vec![HashMap::new()],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
-            return_ty: field_ty.clone(),
+            return_ty: field_ty,
             return_ty_span: init.span,
             effectful: false,
             agent_state_ty: None,
@@ -244,13 +253,12 @@ fn check_static_initialiser(
             type_vars: HashSet::new(),
             store_fields: HashMap::new(),
         };
-        type_of(init, Some(&field_ty), &mut ctx)
+        type_of(init, Some(field_ty), &mut ctx)
     };
-    let compatible_result = matches!(&result, Some(t) if compatible(t, &field_ty));
+    let compatible_result = matches!(&result, Some(t) if compatible(*t, field_ty, tys));
     if !compatible_result || !local_errors.is_empty() {
         let got = result
-            .as_ref()
-            .map(|t| t.display())
+            .map(|t| t.display(tys))
             .unwrap_or_else(|| "an invalid expression".to_string());
         errors.push(
             CompileError::new(
@@ -258,7 +266,7 @@ fn check_static_initialiser(
                 init.span,
                 format!(
                     "{subject} must be a static value of type `{}` (got `{got}`)",
-                    field_ty.display(),
+                    field_ty.display(tys),
                 ),
             )
             .with_note(
@@ -278,6 +286,7 @@ pub fn check_state_initialiser(
     init: &Expr,
     field_type: &TypeRef,
     input: &ResolvedCommons,
+    tys: &Types,
     expr_types: &mut HashMap<ExprId, TypedExpr>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
@@ -295,6 +304,7 @@ pub fn check_state_initialiser(
         locals,
         "bynk.agents.bad_state_initialiser",
         "state field initialiser",
+        tys,
     );
 }
 
@@ -320,6 +330,7 @@ pub fn check_event_field_default(
     init: &Expr,
     field_type: &TypeRef,
     input: &ResolvedCommons,
+    tys: &Types,
     expr_types: &mut HashMap<ExprId, TypedExpr>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
@@ -337,6 +348,7 @@ pub fn check_event_field_default(
         locals,
         "bynk.event.bad_field_default",
         "event field default",
+        tys,
     );
     // `T.unsafe(lit)` parses as `ExprKind::MethodCall { receiver: Ident(T),
     // method: "unsafe", .. }` — confirmed by direct AST inspection; the
@@ -452,9 +464,10 @@ pub(crate) fn check_call(
     span: Span,
     // #593: the binding's expected type grounds a generic variant constructor
     // whose payload cannot determine every parameter (`let o: Opt[Int] = Nil`).
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     if let Some(fn_decl) = ctx.input.fns.get(&name.name) {
         ctx.refs.record(name.span, SymbolKind::Fn, &name.name);
         warn_bynk_list_deprecation(name, args, span, ctx);
@@ -493,7 +506,7 @@ pub(crate) fn check_call(
     // `agent_instance.method(args)` lookups can find the agent's handler set.
     if let Some(agent) = ctx.input.agents.get(&name.name).cloned() {
         ctx.refs.record(name.span, SymbolKind::Agent, &name.name);
-        let key_ty = resolve_type_ref(&agent.key_type, &ctx.input.types);
+        let key_ty = resolve_type_ref(&agent.key_type, &ctx.input.types, tys);
         if args.len() != 1 {
             ctx.errors.push(CompileError::new(
                 "bynk.agent.construction_arity",
@@ -509,9 +522,9 @@ pub(crate) fn check_call(
             }
             return None;
         }
-        let arg_ty = type_of(&args[0], key_ty.as_ref(), ctx);
-        if let (Some(a), Some(k)) = (arg_ty.as_ref(), key_ty.as_ref())
-            && !compatible(a, k)
+        let arg_ty = type_of(&args[0], key_ty, ctx);
+        if let (Some(a), Some(k)) = (arg_ty, key_ty)
+            && !compatible(a, k, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.agent.key_mismatch",
@@ -519,16 +532,16 @@ pub(crate) fn check_call(
                 format!(
                     "agent `{}` key is `{}`, but a value of type `{}` was given",
                     name.name,
-                    k.display(),
-                    a.display()
+                    k.display(tys),
+                    a.display(tys)
                 ),
             ));
         }
-        return Some(Ty::Named {
+        return Some(tys.intern(Ty::Named {
             name: name.name.clone(),
             kind: NamedKind::Record,
             args: Vec::new(),
-        });
+        }));
     }
     // v0.20a: value application — calling a scope binding (param/local) of
     // function type. Placed AFTER fns/variants/agents: putting scope first
@@ -536,9 +549,11 @@ pub(crate) fn check_call(
     // guard); the resulting ident/call precedence asymmetry is pre-existing
     // and documented in §5.
     if let Some(ty) = ctx.lookup(&name.name) {
-        return match ty {
-            Ty::Fn { params, ret } => check_value_application(name, &params, &ret, args, span, ctx),
-            other => {
+        return match &*tys.get(ty) {
+            Ty::Fn { params, ret } => {
+                check_value_application(name, params, *ret, args, span, ctx)
+            }
+            _ => {
                 // Relocated from the resolver (which has no type info): a
                 // non-function-typed value called as a function.
                 ctx.errors.push(
@@ -548,7 +563,7 @@ pub(crate) fn check_call(
                         format!(
                             "`{}` has type `{}` and is not callable",
                             name.name,
-                            other.display()
+                            ty.display(tys)
                         ),
                     )
                     .with_note("only values of function type can be applied"),
@@ -608,13 +623,14 @@ pub(crate) fn check_call(
 
 fn check_value_application(
     name: &Ident,
-    params: &[Ty],
-    ret: &Ty,
+    params: &[TyId],
+    ret: TyId,
     args: &[Expr],
     span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
-    if ret.is_effect() && !ctx.effectful {
+) -> Option<TyId> {
+    let tys = ctx.tys;
+    if ret.is_effect(tys) && !ctx.effectful {
         ctx.errors.push(
             CompileError::new(
                 "bynk.effect.fn_value_in_pure_context",
@@ -624,9 +640,9 @@ fn check_value_application(
                     name.name,
                     Ty::Fn {
                         params: params.to_vec(),
-                        ret: Box::new(ret.clone())
+                        ret: ret.clone()
                     }
-                    .display()
+                    .display(tys)
                 ),
             )
             .with_note(
@@ -651,18 +667,18 @@ fn check_value_application(
         return None;
     }
     for (arg, param_ty) in args.iter().zip(params) {
-        let arg_ty = type_of(arg, Some(param_ty), ctx);
-        if let Some(a) = arg_ty.as_ref()
-            && !compatible(a, param_ty)
+        let arg_ty = type_of(arg, Some(*param_ty), ctx);
+        if let Some(a) = arg_ty
+            && !compatible(a, *param_ty, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 arg.span,
                 format!(
                     "argument has type `{}`, but `{}` expects `{}`",
-                    a.display(),
+                    a.display(tys),
                     name.name,
-                    param_ty.display()
+                    param_ty.display(tys)
                 ),
             ));
         }
@@ -686,7 +702,8 @@ fn check_generic_call(
     type_args: &[TypeRef],
     args: &[Expr],
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let vars: HashSet<String> = fn_decl
         .type_params
         .iter()
@@ -713,14 +730,14 @@ fn check_generic_call(
         }
         return None;
     }
-    let var_params: Vec<Option<Ty>> = fn_decl
+    let var_params: Vec<Option<TyId>> = fn_decl
         .params
         .iter()
-        .map(|p| resolve_type_ref_in(&p.type_ref, &ctx.input.types, &vars))
+        .map(|p| resolve_type_ref_in(&p.type_ref, &ctx.input.types, &vars, tys))
         .collect();
-    let ret_pattern = resolve_type_ref_in(&fn_decl.return_type, &ctx.input.types, &vars)?;
+    let ret_pattern = resolve_type_ref_in(&fn_decl.return_type, &ctx.input.types, &vars, tys)?;
 
-    let mut subst: HashMap<String, Ty> = HashMap::new();
+    let mut subst: HashMap<String, TyId> = HashMap::new();
     if !type_args.is_empty() {
         if type_args.len() != fn_decl.type_params.len() {
             ctx.errors.push(CompileError::new(
@@ -746,16 +763,16 @@ fn check_generic_call(
         }
     }
 
-    let mut arg_tys: Vec<Option<Ty>> = vec![None; args.len()];
+    let mut arg_tys: Vec<Option<TyId>> = vec![None; args.len()];
     // Pass 1 — non-lambda arguments.
     for (i, arg) in args.iter().enumerate() {
         if matches!(arg.kind, ExprKind::Lambda(_)) {
             continue;
         }
-        let expected = var_params[i].as_ref().map(|p| substitute(p, &subst));
-        let ty = type_of(arg, expected.as_ref(), ctx);
-        if let (Some(pattern), Some(actual)) = (var_params[i].as_ref(), ty.as_ref())
-            && !unify(pattern, actual, &mut subst)
+        let expected = var_params[i].map(|p| substitute(p, &subst, tys));
+        let ty = type_of(arg, expected, ctx);
+        if let (Some(pattern), Some(actual)) = (var_params[i], ty)
+            && !unify(pattern, actual, &mut subst, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.generics.type_arg_mismatch",
@@ -776,11 +793,11 @@ fn check_generic_call(
         if !matches!(arg.kind, ExprKind::Lambda(_)) {
             continue;
         }
-        let expected = var_params[i].as_ref().map(|p| substitute(p, &subst));
-        let params_unconstrained = matches!(
-            expected.as_ref(),
-            Some(Ty::Fn { params, .. }) if params.iter().any(contains_var)
-        );
+        let expected = var_params[i].map(|p| substitute(p, &subst, tys));
+        let params_unconstrained = expected.is_some_and(|e| {
+            matches!(&*tys.get(e), Ty::Fn { params, .. }
+                if params.iter().any(|p| contains_var(*p, tys)))
+        });
         let fully_annotated = matches!(
             &arg.kind,
             ExprKind::Lambda(l) if l.params.iter().all(|p| p.type_ref.is_some())
@@ -804,10 +821,10 @@ fn check_generic_call(
         let ty = if params_unconstrained {
             type_of(arg, None, ctx)
         } else {
-            type_of(arg, expected.as_ref(), ctx)
+            type_of(arg, expected, ctx)
         };
-        if let (Some(pattern), Some(actual)) = (var_params[i].as_ref(), ty.as_ref())
-            && !unify(pattern, actual, &mut subst)
+        if let (Some(pattern), Some(actual)) = (var_params[i], ty)
+            && !unify(pattern, actual, &mut subst, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.generics.type_arg_mismatch",
@@ -843,11 +860,11 @@ fn check_generic_call(
     let mut ok = true;
     for (i, (pattern, arg)) in var_params.iter().zip(args).enumerate() {
         record_param_hint(ctx.hints, &fn_decl.params[i].name.name, arg);
-        let (Some(pattern), Some(arg_ty)) = (pattern.as_ref(), arg_tys[i].as_ref()) else {
+        let (Some(pattern), Some(arg_ty)) = (pattern, arg_tys[i].as_ref()) else {
             continue;
         };
-        let ground = substitute(pattern, &subst);
-        if !compatible(arg_ty, &ground) {
+        let ground = substitute(*pattern, &subst, tys);
+        if !compatible(*arg_ty, ground, tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 arg.span,
@@ -855,8 +872,8 @@ fn check_generic_call(
                     "argument {} to `{}` has type `{}`, but `{}` is expected",
                     i + 1,
                     name.name,
-                    arg_ty.display(),
-                    ground.display()
+                    arg_ty.display(tys),
+                    ground.display(tys)
                 ),
             ));
             ok = false;
@@ -873,14 +890,14 @@ fn check_generic_call(
         let rendered: Option<Vec<String>> = fn_decl
             .type_params
             .iter()
-            .map(|tp| subst.get(&tp.name.name).map(|t| t.display()))
+            .map(|tp| subst.get(&tp.name.name).map(|t| t.display(tys)))
             .collect();
         if let Some(parts) = rendered {
             ctx.hints
                 .record(name.span, format!("[{}]", parts.join(", ")));
         }
     }
-    let ret = substitute(&ret_pattern, &subst);
+    let ret = substitute(ret_pattern, &subst, tys);
     // v0.20b: the return is ground *up to the caller's rigid type
     // parameters* — a generic fn calling another generic fn (bynk.list's
     // `map` calling `reverse`) legitimately instantiates the callee at its
@@ -894,7 +911,8 @@ fn check_call_against_fn(
     type_args: &[TypeRef],
     args: &[Expr],
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // v0.20a: generic functions take the instantiation path; the
     // non-generic path below runs byte-identically to v0.19 (the additive
     // guard). Explicit type args on a non-generic fn are rejected.
@@ -937,20 +955,20 @@ fn check_call_against_fn(
         }
         return None;
     }
-    let resolved_params: Vec<(Option<Ty>, &Param)> = fn_decl
+    let resolved_params: Vec<(Option<TyId>, &Param)> = fn_decl
         .params
         .iter()
-        .map(|p| (resolve_type_ref(&p.type_ref, &ctx.input.types), p))
+        .map(|p| (resolve_type_ref(&p.type_ref, &ctx.input.types, tys), p))
         .collect();
     let mut ok = true;
     for (i, ((param_ty, param), arg)) in resolved_params.iter().zip(args.iter()).enumerate() {
         record_param_hint(ctx.hints, &param.name.name, arg);
-        let arg_ty = type_of(arg, param_ty.as_ref(), ctx);
-        let (Some(arg_ty), Some(param_ty)) = (arg_ty, param_ty.as_ref()) else {
+        let arg_ty = type_of(arg, *param_ty, ctx);
+        let (Some(arg_ty), Some(param_ty)) = (arg_ty, *param_ty) else {
             ok = false;
             continue;
         };
-        if !compatible(&arg_ty, param_ty) {
+        if !compatible(arg_ty, param_ty, tys) {
             ctx.errors.push(
                 CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -959,9 +977,9 @@ fn check_call_against_fn(
                         "argument {} to `{}` has type `{}`, but parameter `{}` expects `{}`",
                         i + 1,
                         name.name,
-                        arg_ty.display(),
+                        arg_ty.display(tys),
                         param.name.name,
-                        param_ty.display()
+                        param_ty.display(tys)
                     ),
                 )
                 .with_label(param.span, "parameter declared here"),
@@ -972,23 +990,24 @@ fn check_call_against_fn(
     if !ok {
         return None;
     }
-    resolve_type_ref(&fn_decl.return_type, &ctx.input.types)
+    resolve_type_ref(&fn_decl.return_type, &ctx.input.types, tys)
 }
 
 /// Type-check a kernel-method argument against its expected type, with the
 /// expected type propagated in (so lambdas and literals type contextually).
-pub(crate) fn check_arg(arg: &Expr, expected: &Ty, what: &str, ctx: &mut Ctx) {
+pub(crate) fn check_arg(arg: &Expr, expected: TyId, what: &str, ctx: &mut Ctx) {
+    let tys = ctx.tys;
     let Some(actual) = type_of(arg, Some(expected), ctx) else {
         return;
     };
-    if !compatible(&actual, expected) {
+    if !compatible(actual, expected, tys) {
         ctx.errors.push(CompileError::new(
             "bynk.types.type_mismatch",
             arg.span,
             format!(
                 "{what} has type `{}`, but `{}` is required",
-                actual.display(),
-                expected.display()
+                actual.display(tys),
+                expected.display(tys)
             ),
         ));
     }
@@ -1020,9 +1039,10 @@ pub(crate) fn check_static_call(
     span: Span,
     // #593: threaded to `check_variant_construction` so a qualified generic
     // variant (`Opt.Nil`) can ground its arguments from the binding's type.
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // Capability dispatch (v0.5): if `type_name` names a capability declared
     // in the context, dispatch via the capability table. If the capability is
     // declared but not in `given`, error specifically.
@@ -1145,7 +1165,7 @@ pub(crate) fn check_static_call(
         // (this file) is the model; only its arity-check + substitution-build
         // half applies here, since a capability op has no argument-driven
         // inference pass.
-        let mut subst: HashMap<String, Ty> = HashMap::new();
+        let mut subst: HashMap<String, TyId> = HashMap::new();
         if !op_clone.type_params.is_empty() || !type_args.is_empty() {
             if type_args.is_empty() {
                 ctx.errors.push(
@@ -1214,7 +1234,9 @@ pub(crate) fn check_static_call(
                             .get("Events")
                             .map(String::as_str)
                             == Some(crate::firstparty::BYNK_UNIT));
-                if is_first_party_events && let Ty::Named { name: ename, .. } = &ty {
+                if is_first_party_events
+                    && let Ty::Named { name: ename, .. } = &*tys.get(ty)
+                {
                     if ctx.input.is_local_event(ename) {
                         // Locally-declared event — the owner. Fine.
                     } else if ctx.input.is_local_type(ename) {
@@ -1257,10 +1279,10 @@ pub(crate) fn check_static_call(
             }
         }
         for (i, (param_ty, arg)) in op_clone.params.iter().zip(args.iter()).enumerate() {
-            let param_ty = substitute(param_ty, &subst);
-            let arg_ty = type_of(arg, Some(&param_ty), ctx);
+            let param_ty = substitute(*param_ty, &subst, tys);
+            let arg_ty = type_of(arg, Some(param_ty), ctx);
             if let Some(actual) = arg_ty
-                && !compatible(&actual, &param_ty)
+                && !compatible(actual, param_ty, tys)
             {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1270,13 +1292,13 @@ pub(crate) fn check_static_call(
                         i + 1,
                         type_name.name,
                         method.name,
-                        actual.display(),
-                        param_ty.display()
+                        actual.display(tys),
+                        param_ty.display(tys)
                     ),
                 ));
             }
         }
-        return Some(substitute(&op_clone.return_ty, &subst));
+        return Some(substitute(tys.intern(op_clone.return_ty), &subst, tys));
     }
     let decl = ctx.input.types.get(&type_name.name)?;
     ctx.refs
@@ -1312,8 +1334,8 @@ pub(crate) fn check_static_call(
         }
         let arg = &args[0];
         let expected = Ty::Base(base);
-        let arg_ty = type_of(arg, Some(&expected), ctx)?;
-        if !compatible(&arg_ty, &expected) {
+        let arg_ty = type_of(arg, Some(tys.intern(expected.clone())), ctx)?;
+        if !compatible(arg_ty, tys.intern(expected), tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.constructor_base_mismatch",
                 arg.span,
@@ -1321,7 +1343,7 @@ pub(crate) fn check_static_call(
                     "constructor `{}.of` expects a `{}` argument, but got `{}`",
                     type_name.name,
                     base.name(),
-                    arg_ty.display()
+                    arg_ty.display(tys)
                 ),
             ));
             return None;
@@ -1331,10 +1353,10 @@ pub(crate) fn check_static_call(
         // happens instead wherever an expected refined type is known — see
         // `admit_refined_literal`, used by `type_of` — so `.of`'s type never
         // depends on the form of its argument.
-        return Some(Ty::Result(
-            Box::new(named_ty(decl)),
-            Box::new(Ty::ValidationError),
-        ));
+        return Some(tys.intern(Ty::Result(
+            named_ty(decl, tys),
+            tys.intern(Ty::ValidationError),
+        )));
     }
 
     // 2b) Built-in `unsafe` constructor on opaque types — only available
@@ -1372,8 +1394,8 @@ pub(crate) fn check_static_call(
         }
         let arg = &args[0];
         let expected = Ty::Base(*base);
-        let arg_ty = type_of(arg, Some(&expected), ctx)?;
-        if !compatible(&arg_ty, &expected) {
+        let arg_ty = type_of(arg, Some(tys.intern(expected.clone())), ctx)?;
+        if !compatible(arg_ty, tys.intern(expected), tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.constructor_base_mismatch",
                 arg.span,
@@ -1381,12 +1403,12 @@ pub(crate) fn check_static_call(
                     "`{}.unsafe` expects a `{}` argument, but got `{}`",
                     type_name.name,
                     base.name(),
-                    arg_ty.display()
+                    arg_ty.display(tys)
                 ),
             ));
             return None;
         }
-        return Some(named_ty(decl));
+        return Some(named_ty(decl, tys));
     }
 
     // 3) Qualified variant construction `TypeName.Variant(args)`.
@@ -1416,7 +1438,8 @@ fn check_method_args(
     ctx: &mut Ctx,
     type_name: &Ident,
     method: &Ident,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     if method_decl.params.len() != args.len() {
         ctx.errors.push(
             CompileError::new(
@@ -1440,13 +1463,13 @@ fn check_method_args(
     let mut ok = true;
     for (i, (param, arg)) in method_decl.params.iter().zip(args.iter()).enumerate() {
         record_param_hint(ctx.hints, &param.name.name, arg);
-        let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
-        let actual = type_of(arg, expected.as_ref(), ctx);
+        let expected = resolve_type_ref(&param.type_ref, &ctx.input.types, tys);
+        let actual = type_of(arg, expected, ctx);
         let (Some(actual), Some(expected)) = (actual, expected) else {
             ok = false;
             continue;
         };
-        if !compatible(&actual, &expected) {
+        if !compatible(actual, expected, tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 arg.span,
@@ -1455,9 +1478,9 @@ fn check_method_args(
                     i + 1,
                     type_name.name,
                     method.name,
-                    actual.display(),
+                    actual.display(tys),
                     param.name.name,
-                    expected.display()
+                    expected.display(tys)
                 ),
             ));
             ok = false;
@@ -1466,7 +1489,7 @@ fn check_method_args(
     if !ok {
         return None;
     }
-    resolve_type_ref(&method_decl.return_type, &ctx.input.types)
+    resolve_type_ref(&method_decl.return_type, &ctx.input.types, tys)
 }
 
 /// v0.82 (ADR 0110): resolve a storage-map operation `<map>.<op>(args)` on a
@@ -1479,14 +1502,15 @@ fn check_method_args(
 pub(crate) fn check_store_map_op(
     method: &Ident,
     args: &[Expr],
-    k: &Ty,
-    v: &Ty,
+    k: TyId,
+    v: TyId,
     span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let vfn = || Ty::Fn {
         params: vec![v.clone()],
-        ret: Box::new(v.clone()),
+        ret: v.clone(),
     };
     // v0.105 (slice 3b-ii): a held `Map[K, Connection]` stores connection ids and
     // resolves them by identity; `update`/`upsert` transform the value through a
@@ -1494,7 +1518,7 @@ pub(crate) fn check_store_map_op(
     // derive a new connection from an old one. Reject them (the other entry ops —
     // `put`/`get`/`remove`/`contains`/`size` — are admitted) so the program is a
     // clean compile error rather than a silent miscompile.
-    if v.is_held() && matches!(method.name.as_str(), "update" | "upsert") {
+    if v.is_held(tys) && matches!(method.name.as_str(), "update" | "upsert") {
         ctx.errors.push(
             CompileError::new(
                 "bynk.held.unsupported_map_op",
@@ -1513,14 +1537,14 @@ pub(crate) fn check_store_map_op(
         }
         return None;
     }
-    let (expected, result): (Vec<Ty>, Ty) = match method.name.as_str() {
-        "put" => (vec![k.clone(), v.clone()], Ty::Unit),
-        "get" => (vec![k.clone()], Ty::Option(Box::new(v.clone()))),
-        "remove" => (vec![k.clone()], Ty::Unit),
-        "contains" => (vec![k.clone()], Ty::Base(BaseType::Bool)),
-        "size" => (vec![], Ty::Base(BaseType::Int)),
-        "update" => (vec![k.clone(), vfn()], Ty::Unit),
-        "upsert" => (vec![k.clone(), v.clone(), vfn()], Ty::Unit),
+    let (expected, result): (Vec<TyId>, TyId) = match method.name.as_str() {
+        "put" => (vec![k.clone(), v.clone()], tys.intern(Ty::Unit)),
+        "get" => (vec![k.clone()], tys.intern(Ty::Option(v.clone()))),
+        "remove" => (vec![k.clone()], tys.intern(Ty::Unit)),
+        "contains" => (vec![k.clone()], tys.intern(Ty::Base(BaseType::Bool))),
+        "size" => (vec![], tys.intern(Ty::Base(BaseType::Int))),
+        "update" => (vec![k.clone(), tys.intern(vfn())], tys.intern(Ty::Unit)),
+        "upsert" => (vec![k.clone(), v.clone(), tys.intern(vfn())], tys.intern(Ty::Unit)),
         other => {
             ctx.errors.push(
                 CompileError::new(
@@ -1539,7 +1563,7 @@ pub(crate) fn check_store_map_op(
             return None;
         }
     };
-    let effect = Ty::Effect(Box::new(result));
+    let effect = Ty::Effect(result);
     if args.len() != expected.len() {
         ctx.errors.push(CompileError::new(
             "bynk.types.call_arity",
@@ -1554,20 +1578,20 @@ pub(crate) fn check_store_map_op(
         for a in args {
             type_of(a, None, ctx);
         }
-        return Some(effect);
+        return Some(tys.intern(effect));
     }
     for (a, exp) in args.iter().zip(expected.iter()) {
-        if let Some(at) = type_of(a, Some(exp), ctx)
-            && !compatible(&at, exp)
+        if let Some(at) = type_of(a, Some(*exp), ctx)
+            && !compatible(at, *exp, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 a.span,
-                format!("expected `{}`, found `{}`", exp.display(), at.display()),
+                format!("expected `{}`, found `{}`", exp.display(tys), at.display(tys)),
             ));
         }
     }
-    Some(effect)
+    Some(tys.intern(effect))
 }
 
 /// v0.99: record a capability requirement at `site` into the ledger, and — when
@@ -1635,23 +1659,24 @@ fn record_requirement(
 pub(crate) fn check_store_cache_op(
     method: &Ident,
     args: &[Expr],
-    k: &Ty,
-    v: &Ty,
+    k: TyId,
+    v: TyId,
     span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let vfn = || Ty::Fn {
         params: vec![v.clone()],
-        ret: Box::new(v.clone()),
+        ret: v.clone(),
     };
-    let (expected, result): (Vec<Ty>, Ty) = match method.name.as_str() {
-        "put" => (vec![k.clone(), v.clone()], Ty::Unit),
-        "get" => (vec![k.clone()], Ty::Option(Box::new(v.clone()))),
-        "remove" => (vec![k.clone()], Ty::Unit),
-        "contains" => (vec![k.clone()], Ty::Base(BaseType::Bool)),
-        "size" => (vec![], Ty::Base(BaseType::Int)),
-        "update" => (vec![k.clone(), vfn()], Ty::Unit),
-        "upsert" => (vec![k.clone(), v.clone(), vfn()], Ty::Unit),
+    let (expected, result): (Vec<TyId>, TyId) = match method.name.as_str() {
+        "put" => (vec![k.clone(), v.clone()], tys.intern(Ty::Unit)),
+        "get" => (vec![k.clone()], tys.intern(Ty::Option(v.clone()))),
+        "remove" => (vec![k.clone()], tys.intern(Ty::Unit)),
+        "contains" => (vec![k.clone()], tys.intern(Ty::Base(BaseType::Bool))),
+        "size" => (vec![], tys.intern(Ty::Base(BaseType::Int))),
+        "update" => (vec![k.clone(), tys.intern(vfn())], tys.intern(Ty::Unit)),
+        "upsert" => (vec![k.clone(), v.clone(), tys.intern(vfn())], tys.intern(Ty::Unit)),
         other => {
             ctx.errors.push(
                 CompileError::new(
@@ -1684,7 +1709,7 @@ pub(crate) fn check_store_cache_op(
             "a `Cache` operation applies TTL expiry, which reads the clock — the handler must declare `given Clock`",
         );
     }
-    let effect = Ty::Effect(Box::new(result));
+    let effect = Ty::Effect(result);
     if args.len() != expected.len() {
         ctx.errors.push(CompileError::new(
             "bynk.types.call_arity",
@@ -1699,20 +1724,20 @@ pub(crate) fn check_store_cache_op(
         for a in args {
             type_of(a, None, ctx);
         }
-        return Some(effect);
+        return Some(tys.intern(effect));
     }
     for (a, exp) in args.iter().zip(expected.iter()) {
-        if let Some(at) = type_of(a, Some(exp), ctx)
-            && !compatible(&at, exp)
+        if let Some(at) = type_of(a, Some(*exp), ctx)
+            && !compatible(at, *exp, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 a.span,
-                format!("expected `{}`, found `{}`", exp.display(), at.display()),
+                format!("expected `{}`, found `{}`", exp.display(tys), at.display(tys)),
             ));
         }
     }
-    Some(effect)
+    Some(tys.intern(effect))
 }
 
 /// v0.95 (ADR 0121): resolve a storage-`Log` operation `<log>.<op>(args)` on a
@@ -1725,11 +1750,12 @@ pub(crate) fn check_store_cache_op(
 pub(crate) fn check_store_log_op(
     method: &Ident,
     args: &[Expr],
-    elem: &Ty,
+    elem: TyId,
     span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
-    let query = || Ty::Query(Box::new(elem.clone()));
+) -> Option<TyId> {
+    let tys = ctx.tys;
+    let query = || Ty::Query(elem.clone());
     let arity = |n: usize, ctx: &mut Ctx| {
         if args.len() != n {
             ctx.errors.push(CompileError::new(
@@ -1749,13 +1775,13 @@ pub(crate) fn check_store_log_op(
         true
     };
     let window_arg = |a: &Expr, what: &str, ctx: &mut Ctx| {
-        if let Some(at) = type_of(a, Some(&Ty::Base(BaseType::Instant)), ctx)
-            && !compatible(&at, &Ty::Base(BaseType::Instant))
+        if let Some(at) = type_of(a, Some(tys.intern(Ty::Base(BaseType::Instant).clone())), ctx)
+            && !compatible(at, tys.intern(Ty::Base(BaseType::Instant)), tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 a.span,
-                format!("{what} expects `Instant`, found `{}`", at.display()),
+                format!("{what} expects `Instant`, found `{}`", at.display(tys)),
             ));
         }
     };
@@ -1774,52 +1800,52 @@ pub(crate) fn check_store_log_op(
                 "`Log.append` stamps the current time, which reads the clock — the handler must declare `given Clock`",
             );
             if !arity(1, ctx) {
-                return Some(Ty::Effect(Box::new(Ty::Unit)));
+                return Some(tys.intern(Ty::Effect(tys.intern(Ty::Unit))));
             }
             if let Some(at) = type_of(&args[0], Some(elem), ctx)
-                && !compatible(&at, elem)
+                && !compatible(at, elem, tys)
             {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
                     args[0].span,
-                    format!("expected `{}`, found `{}`", elem.display(), at.display()),
+                    format!("expected `{}`, found `{}`", elem.display(tys), at.display(tys)),
                 ));
             }
-            Some(Ty::Effect(Box::new(Ty::Unit)))
+            Some(tys.intern(Ty::Effect(tys.intern(Ty::Unit))))
         }
         // Time-window query roots → `Query[T]` (lazy; no clock).
         "since" | "before" => {
             if !arity(1, ctx) {
-                return Some(query());
+                return Some(tys.intern(query()));
             }
             window_arg(&args[0], &format!("`Log.{}`", method.name), ctx);
-            Some(query())
+            Some(tys.intern(query()))
         }
         "between" => {
             if !arity(2, ctx) {
-                return Some(query());
+                return Some(tys.intern(query()));
             }
             window_arg(&args[0], "`Log.between` start", ctx);
             window_arg(&args[1], "`Log.between` end", ctx);
-            Some(query())
+            Some(tys.intern(query()))
         }
         "recent" => {
             if !arity(1, ctx) {
-                return Some(query());
+                return Some(tys.intern(query()));
             }
             check_arg(
                 &args[0],
-                &Ty::Base(BaseType::Int),
+                tys.intern(Ty::Base(BaseType::Int).clone()),
                 "the `Log.recent` count",
                 ctx,
             );
-            Some(query())
+            Some(tys.intern(query()))
         }
         "reversed" => {
             if !arity(0, ctx) {
-                return Some(query());
+                return Some(tys.intern(query()));
             }
-            Some(query())
+            Some(tys.intern(query()))
         }
         // The general query vocabulary over the entry values.
         name if is_query_op(name) => check_query_kernel_method(method, args, elem, span, ctx),
@@ -1854,15 +1880,16 @@ pub(crate) fn check_store_log_op(
 pub(crate) fn check_store_set_op(
     method: &Ident,
     args: &[Expr],
-    t: &Ty,
+    t: TyId,
     span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
-    let (expected, result): (Vec<Ty>, Ty) = match method.name.as_str() {
-        "add" => (vec![t.clone()], Ty::Unit),
-        "remove" => (vec![t.clone()], Ty::Unit),
-        "contains" => (vec![t.clone()], Ty::Base(BaseType::Bool)),
-        "size" => (vec![], Ty::Base(BaseType::Int)),
+) -> Option<TyId> {
+    let tys = ctx.tys;
+    let (expected, result): (Vec<TyId>, TyId) = match method.name.as_str() {
+        "add" => (vec![t.clone()], tys.intern(Ty::Unit)),
+        "remove" => (vec![t.clone()], tys.intern(Ty::Unit)),
+        "contains" => (vec![t.clone()], tys.intern(Ty::Base(BaseType::Bool))),
+        "size" => (vec![], tys.intern(Ty::Base(BaseType::Int))),
         other => {
             ctx.errors.push(
                 CompileError::new(
@@ -1883,7 +1910,7 @@ pub(crate) fn check_store_set_op(
             return None;
         }
     };
-    let effect = Ty::Effect(Box::new(result));
+    let effect = Ty::Effect(result);
     if args.len() != expected.len() {
         ctx.errors.push(CompileError::new(
             "bynk.types.call_arity",
@@ -1898,20 +1925,20 @@ pub(crate) fn check_store_set_op(
         for a in args {
             type_of(a, None, ctx);
         }
-        return Some(effect);
+        return Some(tys.intern(effect));
     }
     for (a, exp) in args.iter().zip(expected.iter()) {
-        if let Some(at) = type_of(a, Some(exp), ctx)
-            && !compatible(&at, exp)
+        if let Some(at) = type_of(a, Some(*exp), ctx)
+            && !compatible(at, *exp, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 a.span,
-                format!("expected `{}`, found `{}`", exp.display(), at.display()),
+                format!("expected `{}`, found `{}`", exp.display(tys), at.display(tys)),
             ));
         }
     }
-    Some(effect)
+    Some(tys.intern(effect))
 }
 
 /// v0.98 (ADR 0125): resolve a storage-`Cell` operation `<cell>.<op>(args)` on a
@@ -1924,16 +1951,17 @@ pub(crate) fn check_store_set_op(
 pub(crate) fn check_store_cell_op(
     method: &Ident,
     args: &[Expr],
-    t: &Ty,
+    t: TyId,
     span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let tfn = || Ty::Fn {
         params: vec![t.clone()],
-        ret: Box::new(t.clone()),
+        ret: t.clone(),
     };
-    let (expected, result): (Vec<Ty>, Ty) = match method.name.as_str() {
-        "update" => (vec![tfn()], Ty::Unit),
+    let (expected, result): (Vec<TyId>, TyId) = match method.name.as_str() {
+        "update" => (vec![tys.intern(tfn())], tys.intern(Ty::Unit)),
         other => {
             ctx.errors.push(
                 CompileError::new(
@@ -1952,7 +1980,7 @@ pub(crate) fn check_store_cell_op(
             return None;
         }
     };
-    let effect = Ty::Effect(Box::new(result));
+    let effect = Ty::Effect(result);
     if args.len() != expected.len() {
         ctx.errors.push(CompileError::new(
             "bynk.types.call_arity",
@@ -1967,20 +1995,20 @@ pub(crate) fn check_store_cell_op(
         for a in args {
             type_of(a, None, ctx);
         }
-        return Some(effect);
+        return Some(tys.intern(effect));
     }
     for (a, exp) in args.iter().zip(expected.iter()) {
-        if let Some(at) = type_of(a, Some(exp), ctx)
-            && !compatible(&at, exp)
+        if let Some(at) = type_of(a, Some(*exp), ctx)
+            && !compatible(at, *exp, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 a.span,
-                format!("expected `{}`, found `{}`", exp.display(), at.display()),
+                format!("expected `{}`, found `{}`", exp.display(tys), at.display(tys)),
             ));
         }
     }
-    Some(effect)
+    Some(tys.intern(effect))
 }
 
 pub(crate) fn check_method_call(
@@ -1989,9 +2017,10 @@ pub(crate) fn check_method_call(
     type_args: &[TypeRef],
     args: &[Expr],
     span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // v0.22b: explicit type arguments apply only to the `Json.decode[T]`
     // static — every other method/static takes none (the 0039/0045 rule). A
     // user-declared type named `Json` shadows the codec module and takes no type
@@ -2197,35 +2226,35 @@ pub(crate) fn check_method_call(
     // propagate an expected collection type down the chain so
     // `let m: Map[String, Int] = Map.empty().insert("a", 1)` infers.
     let recv_expected = match (expected, method.name.as_str()) {
-        (Some(t), "insert") => peel_to_map(t).map(|(k, v)| Ty::Map(Box::new(k), Box::new(v))),
-        (Some(t), "prepend") => peel_to_list(t).map(|e| Ty::List(Box::new(e))),
+        (Some(t), "insert") => peel_to_map(t, tys).map(|(k, v)| tys.intern(Ty::Map(k, v))),
+        (Some(t), "prepend") => peel_to_list(t, tys).map(|e| tys.intern(Ty::List(e))),
         _ => None,
     };
-    let recv_ty = type_of(receiver, recv_expected.as_ref(), ctx)?;
+    let recv_ty = type_of(receiver, recv_expected, ctx)?;
     // v0.20b: built-in kernel methods on the collection types. These are
     // compiler-known special forms typed directly here — generic in their
     // accumulator without the (deferred) declared-generic-methods feature;
     // the deferral bites only on declared methods (ADR 0037).
-    match recv_ty.clone() {
+    match &*tys.get(recv_ty) {
         Ty::List(elem) => {
-            return check_list_kernel_method(method, args, &elem, span, ctx);
+            return check_list_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.91 (ADR 0115): a chained builder/terminal on a lazy `Query[T]`.
         Ty::Query(elem) => {
-            return check_query_kernel_method(method, args, &elem, span, ctx);
+            return check_query_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.100: a chained builder/terminal on a `Stream[T]`.
         Ty::Stream(elem) => {
-            return check_stream_kernel_method(method, args, &elem, span, ctx);
+            return check_stream_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.102: the held-resource operations on a `Connection[F]` — `send(f)`
         // (non-consuming) and `close()` (consuming). The linearity pass tracks
         // the ownership transitions; this types the operations.
         Ty::Connection(frame) => {
-            return check_connection_method(method, args, &frame, span, ctx);
+            return check_connection_method(method, args, *frame, span, ctx);
         }
         Ty::Map(key, val) => {
-            return check_map_kernel_method(method, args, &key, &val, span, ctx);
+            return check_map_kernel_method(method, args, *key, *val, span, ctx);
         }
         // v0.21: the numeric kernel — conversions as value methods on the
         // bare base types. A refined value reaches these too, but via the
@@ -2235,7 +2264,7 @@ pub(crate) fn check_method_call(
         // opaque type it exposes no `.unsafe` (that is opaque-only, confined
         // to the defining commons).
         Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
-            return check_numeric_kernel_method(method, args, base, span, ctx);
+            return check_numeric_kernel_method(method, args, *base, span, ctx);
         }
         // v0.86 (ADR 0112): the `Duration` kernel — `toMillis`/`toString`.
         Ty::Base(BaseType::Duration) => {
@@ -2255,24 +2284,24 @@ pub(crate) fn check_method_call(
         }
         // v0.22a: the Option/Result combinators as kernel methods (ADR 0048).
         Ty::Option(inner) => {
-            return check_option_kernel_method(method, args, &inner, span, ctx);
+            return check_option_kernel_method(method, args, *inner, span, ctx);
         }
         Ty::Result(ok, err) => {
-            return check_result_kernel_method(method, args, &ok, &err, span, ctx);
+            return check_result_kernel_method(method, args, *ok, *err, span, ctx);
         }
         // The `Effect[Result[T, E]]` combinators (§2.8.3): `mapOk`/`mapErr`/
         // `flatMapOk`/`flatMapErr` on the universal cross-context shape. Only an
         // `Effect` wrapping a `Result` has methods; any other `Effect[_]` falls
         // through to the "no methods" error below.
         Ty::Effect(inner) => {
-            if let Ty::Result(ok, err) = inner.as_ref() {
-                return check_effect_result_kernel_method(method, args, ok, err, span, ctx);
+            if let Ty::Result(ok, err) = &*tys.get(*inner) {
+                return check_effect_result_kernel_method(method, args, *ok, *err, span, ctx);
             }
         }
         _ => {}
     }
     // Find a named type for the receiver, then look up its instance methods.
-    let type_name = match &recv_ty {
+    let type_name = match &*tys.get(recv_ty) {
         Ty::Named { name, .. } => name.clone(),
         _ => {
             ctx.errors.push(CompileError::new(
@@ -2280,7 +2309,7 @@ pub(crate) fn check_method_call(
                 method.span,
                 format!(
                     "type `{}` has no methods — only user-declared types support method calls",
-                    recv_ty.display()
+                    recv_ty.display(tys)
                 ),
             ));
             return None;
@@ -2335,25 +2364,25 @@ pub(crate) fn check_method_call(
             return None;
         }
         for (p, arg) in handler.params.iter().zip(args.iter()) {
-            let pty = resolve_type_ref(&p.type_ref, &ctx.input.types);
-            let arg_ty = type_of(arg, pty.as_ref(), ctx);
-            if let (Some(a), Some(p_ty)) = (arg_ty.as_ref(), pty.as_ref())
-                && !compatible(a, p_ty)
+            let pty = resolve_type_ref(&p.type_ref, &ctx.input.types, tys);
+            let arg_ty = type_of(arg, pty, ctx);
+            if let (Some(a), Some(p_ty)) = (arg_ty, pty.as_ref())
+                && !compatible(a, *p_ty, tys)
             {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
                     arg.span,
                     format!(
                         "argument has type `{}`, but `{}.{}` expects `{}`",
-                        a.display(),
+                        a.display(tys),
                         type_name,
                         method.name,
-                        p_ty.display()
+                        p_ty.display(tys)
                     ),
                 ));
             }
         }
-        return resolve_type_ref(&handler.return_type, &ctx.input.types);
+        return resolve_type_ref(&handler.return_type, &ctx.input.types, tys);
     }
     let table = ctx
         .input
@@ -2374,7 +2403,7 @@ pub(crate) fn check_method_call(
         if let Ty::Named {
             kind: NamedKind::Refined(base),
             ..
-        } = &recv_ty
+        } = &*tys.get(recv_ty)
         {
             match base {
                 BaseType::Int | BaseType::Float => {
@@ -2423,7 +2452,7 @@ pub(crate) fn check_method_call(
         return check_generic_method_call(
             &type_name,
             &recv_type_params,
-            &recv_ty,
+            recv_ty,
             &method_decl,
             method,
             args,
@@ -2454,13 +2483,13 @@ pub(crate) fn check_method_call(
     let mut ok = true;
     for (i, (param, arg)) in method_decl.params.iter().zip(args.iter()).enumerate() {
         record_param_hint(ctx.hints, &param.name.name, arg);
-        let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
-        let actual = type_of(arg, expected.as_ref(), ctx);
+        let expected = resolve_type_ref(&param.type_ref, &ctx.input.types, tys);
+        let actual = type_of(arg, expected, ctx);
         let (Some(actual), Some(expected)) = (actual, expected) else {
             ok = false;
             continue;
         };
-        if !compatible(&actual, &expected) {
+        if !compatible(actual, expected, tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 arg.span,
@@ -2469,9 +2498,9 @@ pub(crate) fn check_method_call(
                     i + 1,
                     type_name,
                     method.name,
-                    actual.display(),
+                    actual.display(tys),
                     param.name.name,
-                    expected.display()
+                    expected.display(tys)
                 ),
             ));
             ok = false;
@@ -2481,7 +2510,7 @@ pub(crate) fn check_method_call(
     if !ok {
         return None;
     }
-    resolve_type_ref(&method_decl.return_type, &ctx.input.types)
+    resolve_type_ref(&method_decl.return_type, &ctx.input.types, tys)
 }
 
 /// #594: type-check a call to a generic instance method — one attached to a
@@ -2495,12 +2524,13 @@ pub(crate) fn check_method_call(
 fn check_generic_method_call(
     type_name: &str,
     recv_type_params: &[String],
-    recv_ty: &Ty,
+    recv_ty: TyId,
     method_decl: &FnDecl,
     method: &Ident,
     args: &[Expr],
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // Rigid vars: the receiver type's parameters plus the method's own.
     let mut vars: HashSet<String> = recv_type_params.iter().cloned().collect();
     for tp in &method_decl.type_params {
@@ -2533,10 +2563,10 @@ fn check_generic_method_call(
     // it binds `A` to its own rigid var). An arity mismatch here means the
     // receiver was under-applied — reported where the receiver was typed — so we
     // leave those parameters unseeded and fail below as uninferable.
-    let mut subst: HashMap<String, Ty> = HashMap::new();
+    let mut subst: HashMap<String, TyId> = HashMap::new();
     if let Ty::Named {
         args: recv_args, ..
-    } = recv_ty
+    } = &*tys.get(recv_ty)
         && recv_args.len() == recv_type_params.len()
     {
         for (name, arg) in recv_type_params.iter().zip(recv_args.iter()) {
@@ -2545,23 +2575,23 @@ fn check_generic_method_call(
     }
     // Resolve the method's parameter and return patterns with every rigid var in
     // scope (a name matching one resolves to `Ty::Var`, not an unknown type).
-    let var_params: Vec<Option<Ty>> = method_decl
+    let var_params: Vec<Option<TyId>> = method_decl
         .params
         .iter()
-        .map(|p| resolve_type_ref_in(&p.type_ref, &ctx.input.types, &vars))
+        .map(|p| resolve_type_ref_in(&p.type_ref, &ctx.input.types, &vars, tys))
         .collect();
-    let ret_pattern = resolve_type_ref_in(&method_decl.return_type, &ctx.input.types, &vars)?;
+    let ret_pattern = resolve_type_ref_in(&method_decl.return_type, &ctx.input.types, &vars, tys)?;
 
-    let mut arg_tys: Vec<Option<Ty>> = vec![None; args.len()];
+    let mut arg_tys: Vec<Option<TyId>> = vec![None; args.len()];
     // Pass 1 — non-lambda arguments (mirrors `check_generic_call`).
     for (i, arg) in args.iter().enumerate() {
         if matches!(arg.kind, ExprKind::Lambda(_)) {
             continue;
         }
-        let expected = var_params[i].as_ref().map(|p| substitute(p, &subst));
-        let ty = type_of(arg, expected.as_ref(), ctx);
-        if let (Some(pattern), Some(actual)) = (var_params[i].as_ref(), ty.as_ref())
-            && !unify(pattern, actual, &mut subst)
+        let expected = var_params[i].map(|p| substitute(p, &subst, tys));
+        let ty = type_of(arg, expected, ctx);
+        if let (Some(pattern), Some(actual)) = (var_params[i], ty)
+            && !unify(pattern, actual, &mut subst, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.generics.type_arg_mismatch",
@@ -2582,11 +2612,11 @@ fn check_generic_method_call(
         if !matches!(arg.kind, ExprKind::Lambda(_)) {
             continue;
         }
-        let expected = var_params[i].as_ref().map(|p| substitute(p, &subst));
-        let params_unconstrained = matches!(
-            expected.as_ref(),
-            Some(Ty::Fn { params, .. }) if params.iter().any(contains_var)
-        );
+        let expected = var_params[i].map(|p| substitute(p, &subst, tys));
+        let params_unconstrained = expected.is_some_and(|e| {
+            matches!(&*tys.get(e), Ty::Fn { params, .. }
+                if params.iter().any(|p| contains_var(*p, tys)))
+        });
         let fully_annotated = matches!(
             &arg.kind,
             ExprKind::Lambda(l) if l.params.iter().all(|p| p.type_ref.is_some())
@@ -2608,10 +2638,10 @@ fn check_generic_method_call(
         let ty = if params_unconstrained {
             type_of(arg, None, ctx)
         } else {
-            type_of(arg, expected.as_ref(), ctx)
+            type_of(arg, expected, ctx)
         };
-        if let (Some(pattern), Some(actual)) = (var_params[i].as_ref(), ty.as_ref())
-            && !unify(pattern, actual, &mut subst)
+        if let (Some(pattern), Some(actual)) = (var_params[i], ty)
+            && !unify(pattern, actual, &mut subst, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.generics.type_arg_mismatch",
@@ -2647,11 +2677,11 @@ fn check_generic_method_call(
     let mut ok = true;
     for (i, (pattern, arg)) in var_params.iter().zip(args).enumerate() {
         record_param_hint(ctx.hints, &method_decl.params[i].name.name, arg);
-        let (Some(pattern), Some(arg_ty)) = (pattern.as_ref(), arg_tys[i].as_ref()) else {
+        let (Some(pattern), Some(arg_ty)) = (pattern, arg_tys[i].as_ref()) else {
             continue;
         };
-        let ground = substitute(pattern, &subst);
-        if !compatible(arg_ty, &ground) {
+        let ground = substitute(*pattern, &subst, tys);
+        if !compatible(*arg_ty, ground, tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
                 arg.span,
@@ -2660,8 +2690,8 @@ fn check_generic_method_call(
                     i + 1,
                     type_name,
                     method.name,
-                    arg_ty.display(),
-                    ground.display()
+                    arg_ty.display(tys),
+                    ground.display(tys)
                 ),
             ));
             ok = false;
@@ -2677,14 +2707,14 @@ fn check_generic_method_call(
         let rendered: Option<Vec<String>> = method_decl
             .type_params
             .iter()
-            .map(|tp| subst.get(&tp.name.name).map(|t| t.display()))
+            .map(|tp| subst.get(&tp.name.name).map(|t| t.display(tys)))
             .collect();
         if let Some(parts) = rendered {
             ctx.hints
                 .record(method.span, format!("[{}]", parts.join(", ")));
         }
     }
-    Some(substitute(&ret_pattern, &subst))
+    Some(substitute(ret_pattern, &subst, tys))
 }
 
 /// v0.178 (#662) / v0.182 (#664): resolve a test-body service invocation against
@@ -2705,7 +2735,7 @@ fn check_test_service_address(
     method: &Ident,
     args: &[Expr],
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
     use bynk_syntax::ast::{ExprKind as EK, HandlerKind};
 
     // `svc.call(...)` — the `on call` handler (Slice 0).
@@ -2905,7 +2935,7 @@ fn check_test_service_address(
 
 /// What identity, if any, a resolved actor expects (v0.182).
 enum ActorIdentity {
-    Typed(Ty),
+    Typed(TyId),
     CallerString,
     Unit,
     Unknown,
@@ -2913,10 +2943,11 @@ enum ActorIdentity {
 
 /// Resolve an actor name to the identity it carries (v0.182).
 fn resolve_actor_identity(name: &str, ctx: &Ctx) -> ActorIdentity {
+    let tys = ctx.tys;
     use crate::actors::{Identity, prelude_actor};
     if let Some(decl) = ctx.test_actors.get(name) {
         return match &decl.identity {
-            Some(t) => match resolve_type_ref(t, &ctx.input.types) {
+            Some(t) => match resolve_type_ref(t, &ctx.input.types, tys) {
                 Some(ty) => ActorIdentity::Typed(ty),
                 None => ActorIdentity::Unit,
             },
@@ -2996,6 +3027,7 @@ pub(crate) fn check_effect_let_principal(
     principal: Option<&bynk_syntax::ast::CallSiteActor>,
     ctx: &mut Ctx,
 ) {
+    let tys = ctx.tys;
     let ExprKind::MethodCall {
         receiver,
         method,
@@ -3108,7 +3140,7 @@ pub(crate) fn check_effect_let_principal(
                         p.span,
                         format!(
                             "this handler runs as an actor carrying `{}`, but `by {}` supplies no matching identity",
-                            ty.display(),
+                            ty.display(tys),
                             p.actor.name
                         ),
                     ));
@@ -3118,17 +3150,17 @@ pub(crate) fn check_effect_let_principal(
                 }
                 ActorIdentity::Typed(_) => match &p.identity {
                     Some(idv) => {
-                        let got = type_of(idv, Some(&ty), ctx);
-                        if let Some(g) = got.as_ref()
-                            && !compatible(g, &ty)
+                        let got = type_of(idv, Some(ty), ctx);
+                        if let Some(g) = got
+                            && !compatible(g, ty, tys)
                         {
                             ctx.errors.push(CompileError::new(
                                 "bynk.types.argument_mismatch",
                                 idv.span,
                                 format!(
                                     "identity has type `{}`, but the handler expects `{}`",
-                                    g.display(),
-                                    ty.display()
+                                    g.display(tys),
+                                    ty.display(tys)
                                 ),
                             ));
                         }
@@ -3149,7 +3181,7 @@ pub(crate) fn check_effect_let_principal(
                     value.span,
                     format!(
                         "this handler runs as a verified actor carrying `{}`; the case must act as it with `by <Actor>(<identity>)`",
-                        ty.display()
+                        ty.display(tys)
                     ),
                 )
                 .with_note("append a call-site actor, e.g. `... by User(\"alice\")`"),
@@ -3162,6 +3194,7 @@ pub(crate) fn check_effect_let_principal(
 
 /// Resolve a call-site principal actor for its own diagnostics (v0.182).
 fn report_principal_actor(p: &bynk_syntax::ast::CallSiteActor, ctx: &mut Ctx) {
+    let tys = ctx.tys;
     let name = &p.actor.name;
     match resolve_actor_identity(name, ctx) {
         ActorIdentity::Unknown => {
@@ -3179,17 +3212,17 @@ fn report_principal_actor(p: &bynk_syntax::ast::CallSiteActor, ctx: &mut Ctx) {
         }
         ActorIdentity::Typed(ty) => match &p.identity {
             Some(id) => {
-                let got = type_of(id, Some(&ty), ctx);
-                if let Some(g) = got.as_ref()
-                    && !compatible(g, &ty)
+                let got = type_of(id, Some(ty), ctx);
+                if let Some(g) = got
+                    && !compatible(g, ty, tys)
                 {
                     ctx.errors.push(CompileError::new(
                         "bynk.types.argument_mismatch",
                         id.span,
                         format!(
                             "identity has type `{}`, but actor `{name}` expects `{}`",
-                            g.display(),
-                            ty.display()
+                            g.display(tys),
+                            ty.display(tys)
                         ),
                     ));
                 }
@@ -3229,6 +3262,7 @@ fn check_address_args(
     err_span: Span,
     ctx: &mut Ctx,
 ) {
+    let tys = ctx.tys;
     if params.len() != positional.len() {
         ctx.errors.push(
             CompileError::new(
@@ -3259,13 +3293,13 @@ fn check_address_args(
         // `type_of`, which would otherwise report the address-arg `Wire` as
         // misplaced.
         if let bynk_syntax::ast::ExprKind::Wire(inner) = &arg.kind {
-            let _ = type_of(inner, Some(&Ty::Base(BaseType::String)), ctx);
+            let _ = type_of(inner, Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx);
             continue;
         }
-        let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
-        let arg_ty = type_of(arg, expected.as_ref(), ctx);
-        if let (Some(a), Some(p)) = (arg_ty.as_ref(), expected.as_ref())
-            && !compatible(a, p)
+        let expected = resolve_type_ref(&param.type_ref, &ctx.input.types, tys);
+        let arg_ty = type_of(arg, expected, ctx);
+        if let (Some(a), Some(p)) = (arg_ty, expected)
+            && !compatible(a, p, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
@@ -3273,8 +3307,8 @@ fn check_address_args(
                 format!(
                     "argument {} has type `{}`, but `{svc}.{addr}` expects `{}` for `{}`",
                     i + 1,
-                    a.display(),
-                    p.display(),
+                    a.display(tys),
+                    p.display(tys),
                     param.name.name
                 ),
             ));
@@ -3343,7 +3377,8 @@ fn check_cross_context_capability_call(
     args: &[Expr],
     _span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // Capability calls require an effectful body (same rule as local ones).
     if !ctx.effectful {
         ctx.errors.push(CompileError::new(
@@ -3446,7 +3481,7 @@ fn check_cross_context_capability_call(
     // params/return vs. call-site type args in the local-capability path,
     // `check_static_call`). Explicit only, never inferred.
     let vars: HashSet<String> = op.type_params.iter().cloned().collect();
-    let mut subst: HashMap<String, Ty> = HashMap::new();
+    let mut subst: HashMap<String, TyId> = HashMap::new();
     if !op.type_params.is_empty() || !type_args.is_empty() {
         if type_args.is_empty() {
             ctx.errors.push(
@@ -3492,13 +3527,13 @@ fn check_cross_context_capability_call(
     let mut all_ok = true;
     for (i, ((pname, ptype_ref), arg)) in op.params.iter().zip(args.iter()).enumerate() {
         record_param_hint(ctx.hints, pname, arg);
-        let param_ty = resolve_type_ref_in(ptype_ref, &consumed_types, &vars).unwrap_or(Ty::Unit);
-        let param_ty = substitute(&param_ty, &subst);
+        let param_ty = resolve_type_ref_in(ptype_ref, &consumed_types, &vars, tys).unwrap_or(tys.intern(Ty::Unit));
+        let param_ty = substitute(param_ty, &subst, tys);
         let Some(arg_ty) = type_of(arg, None, ctx) else {
             all_ok = false;
             continue;
         };
-        if !structurally_compatible(&arg_ty, &param_ty, &ctx.input.types, &consumed_types) {
+        if !structurally_compatible(arg_ty, param_ty, &ctx.input.types, &consumed_types, tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.boundary.structural_mismatch",
                 arg.span,
@@ -3506,8 +3541,8 @@ fn check_cross_context_capability_call(
                     "cross-context argument {} to `{consumed}.{cap}.{}` has type `{}`, but parameter `{pname}` expects `{}`",
                     i + 1,
                     method.name,
-                    arg_ty.display(),
-                    param_ty.display(),
+                    arg_ty.display(tys),
+                    param_ty.display(tys),
                 ),
             ));
             all_ok = false;
@@ -3516,9 +3551,9 @@ fn check_cross_context_capability_call(
     if !all_ok {
         return None;
     }
-    let raw_ret = resolve_type_ref_in(&op.return_type, &consumed_types, &vars).unwrap_or(Ty::Unit);
-    let raw_ret = substitute(&raw_ret, &subst);
-    Some(rebrand_return_type(&raw_ret, &ctx.input.types))
+    let raw_ret = resolve_type_ref_in(&op.return_type, &consumed_types, &vars, tys).unwrap_or(tys.intern(Ty::Unit));
+    let raw_ret = substitute(raw_ret, &subst, tys);
+    Some(rebrand_return_type(raw_ret, &ctx.input.types, tys))
 }
 
 fn check_cross_context_call(
@@ -3528,7 +3563,8 @@ fn check_cross_context_call(
     args: &[Expr],
     _span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // The consuming context must be effectful at this call site (services
     // and agent handlers are; pure free fns are not).
     if !ctx.effectful {
@@ -3619,14 +3655,14 @@ fn check_cross_context_call(
     let mut all_ok = true;
     for (i, ((pname, ptype_ref), arg)) in service.params.iter().zip(args.iter()).enumerate() {
         record_param_hint(ctx.hints, pname, arg);
-        let param_ty = resolve_type_ref(ptype_ref, &consumed_types).unwrap_or(Ty::Unit);
+        let param_ty = resolve_type_ref(ptype_ref, &consumed_types, tys).unwrap_or(tys.intern(Ty::Unit));
         // Type-check the argument in the caller's context.
         let arg_ty = type_of(arg, None, ctx);
         let Some(arg_ty) = arg_ty else {
             all_ok = false;
             continue;
         };
-        if !structurally_compatible(&arg_ty, &param_ty, &ctx.input.types, &consumed_types) {
+        if !structurally_compatible(arg_ty, param_ty, &ctx.input.types, &consumed_types, tys) {
             ctx.errors.push(
                 CompileError::new(
                     "bynk.boundary.structural_mismatch",
@@ -3635,13 +3671,13 @@ fn check_cross_context_call(
                         "cross-context argument {} to `{consumed}.{}` has type `{}` in `{}`, but parameter `{pname}` expects `{}` in `{}`",
                         i + 1,
                         method.name,
-                        arg_ty.display(),
+                        arg_ty.display(tys),
                         ctx.input
                             .cross_context
                             .self_context
                             .as_deref()
                             .unwrap_or("?"),
-                        param_ty.display(),
+                        param_ty.display(tys),
                         consumed,
                     ),
                 )
@@ -3661,7 +3697,7 @@ fn check_cross_context_call(
     // Return type rebrand: project the consumed context's return type into
     // the calling context's namespace by renaming named types whose unqualified
     // name appears in the caller's type table (v0.6 §4.5).
-    let raw_ret = resolve_type_ref(&service.return_type, &consumed_types).unwrap_or(Ty::Unit);
-    let rebranded = rebrand_return_type(&raw_ret, &ctx.input.types);
+    let raw_ret = resolve_type_ref(&service.return_type, &consumed_types, tys).unwrap_or(tys.intern(Ty::Unit));
+    let rebranded = rebrand_return_type(raw_ret, &ctx.input.types, tys);
     Some(rebranded)
 }
