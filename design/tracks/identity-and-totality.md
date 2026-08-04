@@ -18,8 +18,11 @@
   emission ordering was itself re-checked while implementing T3.7b and found to be a conflation, see
   §9). `span_keyed_maps` is 3, down from 27 —
   the remainder is `Ctx::pattern_binding_types`, a deliberate, principled exclusion (§6), not residue.
-  T3.6b (real `Ty` interning, confirmed genuinely large — see §9) is the only slice left unbuilt.
-  Merging settled **direction**; it is not a build authorisation.
+  T3.6b (real `Ty` interning, confirmed genuinely large — see §9) is the only slice left unbuilt,
+  tracked as its own issue, [#1072](https://github.com/accuser/bynk/issues/1072), rather than folded
+  into this spine — a WIP branch (`slice/t3.6b-ty-interning`) has the enum conversion done, not yet
+  the ~20-23 functions and 149+ call sites it unblocks. Merging settled **direction**; it is not a
+  build authorisation.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -395,7 +398,7 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 | Slice | What it names | Rules | Gated on |
 |---|---|---|---|
-| **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it, and §9's settling-review addenda for the real decomposition (`bynk-check` first as one atomic PR — `Ty`'s field definition can't change gradually — then `bynk-emit`, then `bynk-ide`/`bynk-lsp`; `compatible`/`unify`/`substitute` alone are 149 call sites, confirmed contained to `bynk-check`), the resolved `Types`-table-ownership question (owned per `check_record` invocation, carried on `TypedCommons`/`CheckedProgram` — confirmed safe by checking how `compose_unit_symbols` actually merges cross-unit declarations, not assumed), and the one small, real prerequisite (`Ty`'s `Hash`/`Eq`/`Ord` test coverage) already closed alongside this review, not left as findings with no code to show for them | R4.1, R4.2 (`Copy` half) | independent — no scaffolding-first increment exists and the ownership design is now settled (investigated and resolved across four passes, see §9); ready to execute as the large, multi-crate rewrite tiers 1–3 describe |
+| **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it, and §9's settling-review addenda for the real decomposition (`bynk-check` first as one atomic PR — `Ty`'s field definition can't change gradually — then `bynk-emit`, then `bynk-ide`/`bynk-lsp`; `compatible`/`unify`/`substitute` alone are 149 call sites, confirmed contained to `bynk-check`), the resolved `Types`-table-ownership question (owned per `check_record` invocation, carried on `TypedCommons`/`CheckedProgram` — confirmed safe by checking how `compose_unit_symbols` actually merges cross-unit declarations, not assumed), the ruled-out per-variant shortcut (§9), and the one small, real prerequisite (`Ty`'s `Hash`/`Eq`/`Ord` test coverage) already closed alongside this review, not left as findings with no code to show for them. **Tracked as its own issue, [#1072](https://github.com/accuser/bynk/issues/1072)**, with a WIP branch (`slice/t3.6b-ty-interning`, not merged — the enum conversion is done, producing 370 real, measured compile errors in `checker.rs` alone, before its five submodules or the other three crates) as the concrete starting point for whoever picks this up | R4.1, R4.2 (`Copy` half) | independent — no scaffolding-first increment exists and the ownership design is now settled (investigated and resolved across five passes, see §9); ready to execute as the large, multi-crate rewrite tiers 1–3 describe, from a real starting point rather than a blank one |
 
 T3.6b above is not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a, T3.7a, T3.7b, above, are). Deliberately not decomposed to
 signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
