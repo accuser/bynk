@@ -15,6 +15,7 @@ use bynk_emit::project::{
 use bynk_fmt::{FormatOptions, IndentStyle, format_source};
 
 pub mod coverage;
+pub mod discovery;
 pub mod output;
 pub mod probe;
 pub mod test_json;
@@ -29,11 +30,18 @@ pub use output::{write_compiled_file, write_output};
 /// otherwise the legacy **single-tree** where `<dir>` is itself the root.
 /// `check`, `compile`, `test`, and `dev` all route through this so the
 /// conventional layout works the same from any of them.
+///
+/// #1077 (R2.3/T0.7 residue): reads and populates `.sources(...)` itself —
+/// `bynk-emit` no longer discovers or reads project files on disk, so this is
+/// now the one real place that walk happens for the live CLI path.
 pub fn project_options(input: &Path) -> CompileOptions {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        CompileOptions::split(input.to_path_buf(), read_project_paths(input))
+        let paths = read_project_paths(input);
+        let sources = discovery::sources_for_split(input, &paths);
+        CompileOptions::split(input.to_path_buf(), paths).sources(sources)
     } else {
-        CompileOptions::single(input.to_path_buf())
+        let sources = discovery::read_bynk_tree_single(input);
+        CompileOptions::single(input.to_path_buf()).sources(sources)
     }
 }
 
@@ -44,12 +52,12 @@ pub fn project_options(input: &Path) -> CompileOptions {
 /// plainly exist on disk.
 pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectPathsError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        Ok(CompileOptions::split(
-            input.to_path_buf(),
-            try_read_project_paths(input)?,
-        ))
+        let paths = try_read_project_paths(input)?;
+        let sources = discovery::sources_for_split(input, &paths);
+        Ok(CompileOptions::split(input.to_path_buf(), paths).sources(sources))
     } else {
-        Ok(CompileOptions::single(input.to_path_buf()))
+        let sources = discovery::read_bynk_tree_single(input);
+        Ok(CompileOptions::single(input.to_path_buf()).sources(sources))
     }
 }
 
