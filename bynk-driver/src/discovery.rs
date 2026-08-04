@@ -21,20 +21,50 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use bynk_emit::project::ProjectPaths;
+use bynk_emit::project::Roots;
+
+/// An I/O failure while walking a project tree for `.bynk` files, or reading
+/// one found there.
+///
+/// #1081 review: `read_bynk_tree` used to `panic!` on any such failure, on the
+/// premise that every caller was a test fixture. That stopped being true the
+/// moment `project_options`/`try_project_options` (below) became its
+/// production callers — a `bynk.toml` with an `include` root that does not
+/// exist yet (or any other unreadable directory) is a normal, recoverable
+/// input on the live CLI path, not a broken fixture, and `try_project_options`
+/// already has a `Result` error channel for exactly this kind of thing.
+#[derive(Debug)]
+pub struct DiscoveryError {
+    path: PathBuf,
+    source: std::io::Error,
+}
+
+impl std::fmt::Display for DiscoveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "could not read project files under `{}`: {}",
+            self.path.display(),
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for DiscoveryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 /// Walk `root` for every `.bynk` file (skipping `excludes` and hidden
 /// directories, mirroring `bynk-emit`'s former `discover_bynk_files` exactly)
 /// and read each one's content. Keys are the same literal (non-canonicalised)
 /// path shape a plain recursive walk produces — `CompileOptions.sources`'s own
 /// contract, and what `read_source`'s overlay lookup tries first.
-///
-/// Panics on any I/O error (a missing root, an unreadable directory, a file
-/// that vanishes between listing and reading) — every caller today already
-/// treats a broken fixture tree as a test-setup bug, not a case to handle
-/// gracefully, so this matches the `.unwrap()` idiom already at every call
-/// site rather than inventing a `Result` threading obligation none of them had.
-pub fn read_bynk_tree(root: &Path, excludes: &[PathBuf]) -> HashMap<PathBuf, String> {
+pub fn read_bynk_tree(
+    root: &Path,
+    excludes: &[PathBuf],
+) -> Result<HashMap<PathBuf, String>, DiscoveryError> {
     let mut out = HashMap::new();
     let is_excluded = |dir: &Path| {
         excludes.iter().any(|ex| dir == ex || dir.starts_with(ex))
@@ -43,32 +73,33 @@ pub fn read_bynk_tree(root: &Path, excludes: &[PathBuf]) -> HashMap<PathBuf, Str
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with('.') && n != ".")
     };
+    let to_err = |path: &Path, source: std::io::Error| DiscoveryError {
+        path: path.to_path_buf(),
+        source,
+    };
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let rd = match std::fs::read_dir(&dir) {
-            Ok(r) => r,
-            Err(e) => panic!("could not read directory `{}`: {e}", dir.display()),
-        };
-        for entry in rd.flatten() {
+        let rd = std::fs::read_dir(&dir).map_err(|e| to_err(&dir, e))?;
+        for entry in rd {
+            let entry = entry.map_err(|e| to_err(&dir, e))?;
             let p = entry.path();
             if p.is_dir() {
                 if !is_excluded(&p) {
                     stack.push(p);
                 }
             } else if p.extension().and_then(|e| e.to_str()) == Some("bynk") {
-                let text = std::fs::read_to_string(&p)
-                    .unwrap_or_else(|e| panic!("could not read `{}`: {e}", p.display()));
+                let text = std::fs::read_to_string(&p).map_err(|e| to_err(&p, e))?;
                 out.insert(p, text);
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// [`read_bynk_tree`] with no excludes — the common case for a single-root
 /// project (`CompileOptions::single`, whose own `Roots::excludes()` is always
 /// empty) and for test fixtures, which rarely declare an `exclude` list.
-pub fn read_bynk_tree_single(root: &Path) -> HashMap<PathBuf, String> {
+pub fn read_bynk_tree_single(root: &Path) -> Result<HashMap<PathBuf, String>, DiscoveryError> {
     read_bynk_tree(root, &[])
 }
 
@@ -76,33 +107,185 @@ pub fn read_bynk_tree_single(root: &Path) -> HashMap<PathBuf, String> {
 /// roots (`src`/`tests`), matching `Roots::Split`'s own `resolve()` shape —
 /// the primary root's `paths.exclude` (plus the tool's own `out`/
 /// `node_modules` caches) applies to both.
+///
+/// #1081 review: the secondary root is optional in a way the primary is not —
+/// a conventional `src`-only project has no `tests/` at all — so only its
+/// absence is tolerated (`.exists()`); a missing *primary* root surfaces as a
+/// real [`DiscoveryError`], same as any other unreadable directory.
 pub fn read_bynk_tree_split(
     primary_root: &Path,
     secondary_root: &Path,
     excludes: &[PathBuf],
-) -> HashMap<PathBuf, String> {
-    let mut out = read_bynk_tree(primary_root, excludes);
+) -> Result<HashMap<PathBuf, String>, DiscoveryError> {
+    let mut out = read_bynk_tree(primary_root, excludes)?;
     if secondary_root != primary_root && secondary_root.exists() {
-        out.extend(read_bynk_tree(secondary_root, excludes));
+        out.extend(read_bynk_tree(secondary_root, excludes)?);
     }
-    out
+    Ok(out)
 }
 
-/// The complete `CompileOptions.sources` map for a [`bynk_emit::project::Roots::Split`]
-/// project — every `.bynk` file under `project_root.join(paths.include[..2])`,
-/// skipping `paths.exclude` and the tool's own `out`/`node_modules` caches.
-/// Mirrors `Roots::resolve`/`Roots::excludes`'s own (private, single-crate)
-/// logic exactly, since those live in `bynk-emit` and can't be called from here.
-pub fn sources_for_split(project_root: &Path, paths: &ProjectPaths) -> HashMap<PathBuf, String> {
-    let primary = project_root.join(paths.include.first().cloned().unwrap_or_default());
-    let secondary = paths
-        .include
-        .get(1)
-        .map(|p| project_root.join(p))
-        .unwrap_or_else(|| primary.clone());
-    let mut excludes: Vec<PathBuf> = paths.exclude.iter().map(|p| project_root.join(p)).collect();
-    for cache in ["out", "node_modules"] {
-        excludes.push(project_root.join(cache));
+/// The complete `CompileOptions.sources` map for a project rooted at `roots`.
+///
+/// #1081 review: this used to re-implement `Roots::resolve`/`Roots::excludes`
+/// verbatim (down to the hardcoded `out`/`node_modules` cache list) because
+/// those were private to `bynk-emit`. Now that they're `pub`, this calls them
+/// directly — one definition of "which files are in this project", shared by
+/// the CLI's own walk and `compile_project`'s in-memory partitioning, so the
+/// two can no longer drift.
+pub fn sources_for_roots(roots: &Roots) -> Result<HashMap<PathBuf, String>, DiscoveryError> {
+    let (primary, secondary) = roots.resolve();
+    read_bynk_tree_split(&primary, &secondary, &roots.excludes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bynk_emit::project::{ProjectPaths, read_project_paths};
+    use std::fs;
+
+    /// A throwaway on-disk directory tree, removed on drop (including on
+    /// panic) — mirrors `bynk-driver/tests/project_diagnostics.rs`'s own
+    /// `Scratch` helper.
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
-    read_bynk_tree_split(&primary, &secondary, &excludes)
+
+    fn scratch(tag: &str, files: &[(&str, &str)]) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "bynk_driver_discovery_{tag}_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        for (rel, body) in files {
+            let p = dir.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, body).unwrap();
+        }
+        Scratch(dir)
+    }
+
+    #[test]
+    fn walks_nested_files_and_skips_hidden_directories() {
+        let root = scratch(
+            "hidden",
+            &[
+                ("a.bynk", "context a\n"),
+                ("nested/b.bynk", "context b\n"),
+                (".git/c.bynk", "context c\n"),
+            ],
+        );
+        let found = read_bynk_tree(&root.0, &[]).expect("a real tree must not error");
+        assert_eq!(
+            found.len(),
+            2,
+            "found: {:?}",
+            found.keys().collect::<Vec<_>>()
+        );
+        assert!(found.contains_key(&root.0.join("a.bynk")));
+        assert!(found.contains_key(&root.0.join("nested/b.bynk")));
+    }
+
+    #[test]
+    fn excludes_skip_the_named_subtree() {
+        let root = scratch(
+            "excludes",
+            &[("a.bynk", "context a\n"), ("out/b.bynk", "context b\n")],
+        );
+        let found = read_bynk_tree(&root.0, &[root.0.join("out")]).expect("must not error");
+        assert_eq!(found.len(), 1);
+        assert!(found.contains_key(&root.0.join("a.bynk")));
+    }
+
+    #[test]
+    fn an_empty_tree_is_not_an_error() {
+        let root = scratch("empty", &[(".keep", "")]);
+        let found = read_bynk_tree(&root.0, &[]).expect("an empty tree is a valid, empty result");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn a_missing_root_is_a_discovery_error_not_a_panic() {
+        let missing = std::env::temp_dir().join(format!(
+            "bynk_driver_discovery_missing_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&missing);
+        let err = read_bynk_tree(&missing, &[]).expect_err("a nonexistent root must not panic");
+        assert!(err.to_string().contains(&missing.display().to_string()));
+    }
+
+    #[test]
+    fn split_secondary_root_is_optional_but_primary_is_not() {
+        // `tests/` need not exist for a `src`-only project.
+        let root = scratch("split_no_secondary", &[("src/a.bynk", "context a\n")]);
+        let found = read_bynk_tree_split(&root.0.join("src"), &root.0.join("tests"), &[])
+            .expect("a missing secondary root is tolerated");
+        assert_eq!(found.len(), 1);
+
+        // A missing *primary* root is a real error, matching the review's
+        // "missing include root panics instead of erroring" finding.
+        let missing_primary = root.0.join("does-not-exist");
+        read_bynk_tree_split(&missing_primary, &root.0.join("tests"), &[])
+            .expect_err("a missing primary root must error, not panic");
+    }
+
+    /// The `include.len()` == 0/1/2 branches `Roots::Split::resolve` takes,
+    /// exercised through `sources_for_roots` the way `project_options` calls
+    /// it — the file set a real `bynk.toml` project resolves to.
+    #[test]
+    fn sources_for_roots_matches_a_conventional_split_project() {
+        let root = scratch(
+            "conventional",
+            &[
+                ("bynk.toml", "[project]\nname = \"x\"\n"),
+                ("src/a.bynk", "context a\n"),
+                ("tests/a.bynk", "suite a\n"),
+            ],
+        );
+        let paths: ProjectPaths = read_project_paths(&root.0);
+        let roots = Roots::Split {
+            project_root: root.0.clone(),
+            paths,
+        };
+        let found = sources_for_roots(&roots).expect("a well-formed project must not error");
+        assert_eq!(found.len(), 2);
+        assert!(found.contains_key(&root.0.join("src/a.bynk")));
+        assert!(found.contains_key(&root.0.join("tests/a.bynk")));
+    }
+
+    #[test]
+    fn sources_for_roots_on_a_flat_include_root_excludes_its_own_caches() {
+        // `include = ["."]` (`ProjectPaths::conventional`'s flat fallback):
+        // one root, and `node_modules`/`out` must still be swept out of it.
+        let root = scratch(
+            "flat",
+            &[
+                ("bynk.toml", "[project]\nname = \"x\"\n"),
+                ("a.bynk", "context a\n"),
+                ("node_modules/dep.bynk", "context dep\n"),
+                ("out/built.bynk", "context built\n"),
+            ],
+        );
+        let paths = ProjectPaths {
+            include: vec![PathBuf::from(".")],
+            exclude: Vec::new(),
+        };
+        let roots = Roots::Split {
+            project_root: root.0.clone(),
+            paths,
+        };
+        let found = sources_for_roots(&roots).expect("must not error");
+        assert_eq!(
+            found.len(),
+            1,
+            "found: {:?}",
+            found.keys().collect::<Vec<_>>()
+        );
+        assert!(found.contains_key(&root.0.join("a.bynk")));
+    }
 }

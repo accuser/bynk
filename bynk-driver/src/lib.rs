@@ -34,14 +34,17 @@ pub use output::{write_compiled_file, write_output};
 /// #1077 (R2.3/T0.7 residue): reads and populates `.sources(...)` itself —
 /// `bynk-emit` no longer discovers or reads project files on disk, so this is
 /// now the one real place that walk happens for the live CLI path.
-pub fn project_options(input: &Path) -> CompileOptions {
+///
+/// #1081 review: returns `Result` because that walk is real I/O against a
+/// user-controlled `bynk.toml` (a missing `include` root, an unreadable
+/// directory) — [`discovery::DiscoveryError`], not a panic.
+pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::DiscoveryError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
         let paths = read_project_paths(input);
-        let sources = discovery::sources_for_split(input, &paths);
-        CompileOptions::split(input.to_path_buf(), paths).sources(sources)
+        options_for_split(input, paths)
     } else {
-        let sources = discovery::read_bynk_tree_single(input);
-        CompileOptions::single(input.to_path_buf()).sources(sources)
+        let sources = discovery::read_bynk_tree_single(input)?;
+        Ok(CompileOptions::single(input.to_path_buf()).sources(sources))
     }
 }
 
@@ -50,14 +53,72 @@ pub fn project_options(input: &Path) -> CompileOptions {
 /// hand-edits that the compiler otherwise reads without checking, after which
 /// a cascade of `bynk.uses.unknown_target` errors points at units that
 /// plainly exist on disk.
-pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectPathsError> {
+pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectOptionsError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
         let paths = try_read_project_paths(input)?;
-        let sources = discovery::sources_for_split(input, &paths);
-        Ok(CompileOptions::split(input.to_path_buf(), paths).sources(sources))
+        Ok(options_for_split(input, paths)?)
     } else {
-        let sources = discovery::read_bynk_tree_single(input);
+        let sources = discovery::read_bynk_tree_single(input)?;
         Ok(CompileOptions::single(input.to_path_buf()).sources(sources))
+    }
+}
+
+/// The split-layout half of `project_options`/`try_project_options`: build the
+/// one `Roots` value the project resolves to, walk exactly that (via
+/// [`discovery::sources_for_roots`] — #1081 review, so the CLI's walk can't
+/// drift from what `Roots::resolve`/`Roots::excludes` themselves say), and
+/// hand the result to `CompileOptions::split` alongside it.
+fn options_for_split(
+    input: &Path,
+    paths: project::ProjectPaths,
+) -> Result<CompileOptions, discovery::DiscoveryError> {
+    let roots = project::Roots::Split {
+        project_root: input.to_path_buf(),
+        paths: paths.clone(),
+    };
+    let sources = discovery::sources_for_roots(&roots)?;
+    Ok(CompileOptions::split(input.to_path_buf(), paths).sources(sources))
+}
+
+/// Why [`try_project_options`] could not produce a usable [`CompileOptions`]:
+/// either the manifest itself is unreadable ([`ProjectPathsError`]), or a
+/// well-formed manifest names a project tree that can't be walked
+/// ([`discovery::DiscoveryError`]) — #1081 review.
+#[derive(Debug)]
+pub enum ProjectOptionsError {
+    Paths(ProjectPathsError),
+    Discovery(discovery::DiscoveryError),
+}
+
+impl std::fmt::Display for ProjectOptionsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Paths(e) => write!(f, "{e}"),
+            Self::Discovery(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectOptionsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            // `ProjectPathsError` doesn't itself implement `Error` (no
+            // further cause to chain to — it's already a leaf).
+            Self::Paths(_) => None,
+            Self::Discovery(e) => Some(e),
+        }
+    }
+}
+
+impl From<ProjectPathsError> for ProjectOptionsError {
+    fn from(e: ProjectPathsError) -> Self {
+        Self::Paths(e)
+    }
+}
+
+impl From<discovery::DiscoveryError> for ProjectOptionsError {
+    fn from(e: discovery::DiscoveryError) -> Self {
+        Self::Discovery(e)
     }
 }
 
