@@ -270,7 +270,7 @@ pub(crate) fn check_val(
                     }
                 }
                 [arg] => {
-                    type_of(arg, Some(tys.intern(Ty::Base(base).clone())), ctx);
+                    type_of(arg, Some(tys.intern(Ty::Base(base))), ctx);
                     match const_literal(arg) {
                         Some(lit) if literal_matches_base(&lit, base) => {
                             if let Some(r) = refinement
@@ -1764,11 +1764,7 @@ pub(crate) fn check_queue_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(
-                &args[0],
-                Some(tys.intern(Ty::Base(BaseType::String).clone())),
-                ctx,
-            )?;
+            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String))), ctx)?;
             if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1860,11 +1856,7 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(
-                &args[0],
-                Some(tys.intern(Ty::Base(BaseType::String).clone())),
-                ctx,
-            )?;
+            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String))), ctx)?;
             if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1896,11 +1888,7 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(
-                &args[0],
-                Some(tys.intern(Ty::Base(BaseType::String).clone())),
-                ctx,
-            )?;
+            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String))), ctx)?;
             if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1968,11 +1956,7 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let body_ty = type_of(
-                &args[0],
-                Some(tys.intern(Ty::Base(BaseType::Bytes).clone())),
-                ctx,
-            )?;
+            let body_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::Bytes))), ctx)?;
             if !compatible(body_ty, tys.intern(Ty::Base(BaseType::Bytes)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1985,11 +1969,7 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let ct_ty = type_of(
-                &args[1],
-                Some(tys.intern(Ty::Base(BaseType::String).clone())),
-                ctx,
-            )?;
+            let ct_ty = type_of(&args[1], Some(tys.intern(Ty::Base(BaseType::String))), ctx)?;
             if !compatible(ct_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
