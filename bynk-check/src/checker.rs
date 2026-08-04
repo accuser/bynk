@@ -12,10 +12,8 @@
 //! - The `is` operator with binding flow into truthy contexts.
 //! - The built-in generic `Option[T]`.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::builtin_names::map_query;
 use crate::builtin_names::methods::*;
@@ -62,26 +60,31 @@ pub use refinements::{locale_tag_accepts, locale_tag_pattern, zero_value_ts};
 /// **Why [`intern`](Self::intern) takes `&self`, not `&mut self`.** The table
 /// is reached from `Ctx`, whose other fields (`expr_types`, `errors`, the
 /// sinks) are themselves `&mut` and are routinely live across an interning
-/// call — `ctx.types.intern(…)` inside a loop over `ctx.scopes` is the
-/// common shape, not the exception. A `&mut Types` would make the borrow
-/// checker, not the type system, the thing every one of the ~200 minting
-/// sites is written around. Interior mutability keeps `&'a Types` `Copy`, so
-/// a function that needs the table just reads `ctx.types` once and is done.
-/// `RefCell` (over a lock) is the right cell here for the same reason
-/// `bynk-emit`'s `SourceMapBuilder` uses one: the compiler is single-threaded
-/// and never re-enters `intern` from inside `intern`.
+/// call — `ctx.tys.intern(…)` inside a loop over `ctx.scopes` is the common
+/// shape, not the exception. A `&mut Types` would make the borrow checker,
+/// not the type system, the thing every one of the ~200 minting sites is
+/// written around. Interior mutability keeps `&'a Types` `Copy`, so a
+/// function that needs the table just reads `ctx.tys` once and is done.
+///
+/// **Why a `Mutex` and `Arc`, not a `RefCell` and `Rc`.** The compiler itself
+/// is single-threaded, so a cell would do for `bynk-check` and `bynk-emit` —
+/// but the table rides out on `TypedCommons`/`ProjectAnalysis` into
+/// `bynk-lsp`, whose `tower-lsp` handlers are `async` and therefore require
+/// `Send`. A non-atomic refcount is exactly what `Send` forbids, so the
+/// choice is made by the consumer, not by the compiler's own threading. The
+/// lock is uncontended in every current caller.
 #[derive(Default)]
 pub struct Types {
-    inner: RefCell<TypesInner>,
+    inner: Mutex<TypesInner>,
 }
 
 #[derive(Debug, Default)]
 struct TypesInner {
-    /// `TyId(i)` resolves to `table[i]`. `Rc` so [`Types::get`] hands back a
+    /// `TyId(i)` resolves to `table[i]`. `Arc` so [`Types::get`] hands back a
     /// handle by refcount bump rather than cloning the node, and so the same
     /// allocation backs both `table` and `index` without storing it twice.
-    table: Vec<Rc<Ty>>,
-    index: HashMap<Rc<Ty>, TyId>,
+    table: Vec<Arc<Ty>>,
+    index: HashMap<Arc<Ty>, TyId>,
 }
 
 impl Types {
@@ -96,13 +99,13 @@ impl Types {
     /// field is already a `TyId`: two structurally-equal types have equal
     /// children ids by induction, so they hash and compare equal here.
     pub fn intern(&self, ty: Ty) -> TyId {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.lock();
         if let Some(&id) = inner.index.get(&ty) {
             return id;
         }
-        let node = Rc::new(ty);
+        let node = Arc::new(ty);
         let id = TyId(inner.table.len() as u32);
-        inner.table.push(Rc::clone(&node));
+        inner.table.push(Arc::clone(&node));
         inner.index.insert(node, id);
         id
     }
@@ -110,8 +113,8 @@ impl Types {
     /// The node `id` was interned from. Panics on a `TyId` minted by a
     /// *different* table — see this type's doc for why that cannot happen
     /// across `check_record` invocations.
-    pub fn get(&self, id: TyId) -> Rc<Ty> {
-        Rc::clone(&self.inner.borrow().table[id.0 as usize])
+    pub fn get(&self, id: TyId) -> Arc<Ty> {
+        Arc::clone(&self.lock().table[id.0 as usize])
     }
 
     /// [`Ty::display`] for an already-interned type.
@@ -122,7 +125,15 @@ impl Types {
     /// Number of distinct types interned so far. Exposed for the interner's
     /// own tests (dedup is observable only as "the table did not grow").
     pub fn len(&self) -> usize {
-        self.inner.borrow().table.len()
+        self.lock().table.len()
+    }
+
+    /// The lock, recovered from poisoning. `intern` never panics while
+    /// holding it (it only pushes to a `Vec` and a `HashMap`), so a poisoned
+    /// lock can only mean an unrelated panic unwound past a live guard —
+    /// where the table is still structurally sound.
+    fn lock(&self) -> std::sync::MutexGuard<'_, TypesInner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -148,7 +159,7 @@ impl TyId {
     /// The interned node, for the (many) sites that need to look at the
     /// type's shape. Sugar for [`Types::get`], so a `TyId` reads like the
     /// `&Ty` it replaced.
-    pub fn get(self, tys: &Types) -> Rc<Ty> {
+    pub fn get(self, tys: &Types) -> Arc<Ty> {
         tys.get(self)
     }
 
@@ -400,7 +411,28 @@ pub struct TypedCommons {
     /// are unrelated. `Rc` so [`RecordCheck`] can hand the same table out
     /// alongside `partial_expr_types` on the error path, where no
     /// `TypedCommons` is built to own it.
-    pub ty_intern: Rc<Types>,
+    pub ty_intern: Arc<Types>,
+}
+
+impl TypedCommons {
+    /// T3.6b (R4.1): this unit's intern table — what every `TyId` reachable
+    /// from `expr_types` resolves against.
+    /// Returns the `Rc` handle rather than a bare `&Types` so a caller that
+    /// needs to *share* the table (the project path, which checks many units
+    /// into one `ExprTypeSink`) can clone it; `&Arc<Types>` deref-coerces to
+    /// `&Types` everywhere a plain borrow is wanted.
+    pub fn tys(&self) -> &Arc<Types> {
+        &self.ty_intern
+    }
+
+    /// The interned node an expression was typed to, resolved in one step.
+    /// The reader-side shape `bynk-emit`/the LSP want: they ask "what shape is
+    /// this expression?", never "which id is it?". `Rc` so the resolve is a
+    /// refcount bump, and `.as_deref()` gives back the `&Ty` these call sites
+    /// read before T3.6b.
+    pub fn expr_ty(&self, id: ExprId) -> Option<Arc<Ty>> {
+        self.expr_types.get(&id).map(|te| self.ty_intern.get(te.ty))
+    }
 }
 
 /// T3.4: an `expr_types` entry — the checked type, plus the span of the node
@@ -426,7 +458,7 @@ pub struct RecordCheck {
     /// T3.6b (R4.1): the table `partial_expr_types`' `TyId`s resolve against.
     /// The same `Rc` the `Ok` path's `TypedCommons::ty_intern` carries, so a
     /// caller that reads either map has the table either way.
-    pub ty_intern: Rc<Types>,
+    pub ty_intern: Arc<Types>,
 }
 
 /// T3.7 (R3.10): the gate between analysis and emission, as a type rather
@@ -497,14 +529,37 @@ pub fn check_record(
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
 ) -> RecordCheck {
+    check_record_in(
+        input,
+        &Arc::new(Types::new()),
+        refs,
+        hints,
+        locals,
+        requirements,
+    )
+}
+
+/// [`check_record`] against a **caller-supplied** intern table (T3.6b, R4.1).
+///
+/// The per-invocation table `check_record` mints is the right default: one
+/// unit, one table, ids that never escape it. A *project* check is the case
+/// that needs more — it runs `check_record` once per unit but funnels every
+/// unit's `expr_types` into one `ExprTypeSink`, so a `TyId` recorded there
+/// would be ambiguous if each unit interned into a table of its own. Sharing
+/// one table across the whole analysis makes those ids mean one thing, and is
+/// strictly safer than the per-unit case the track doc argued for: ids are
+/// still only ever compared against ids from the same table.
+pub fn check_record_in(
+    input: ResolvedCommons,
+    ty_intern: &Arc<Types>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
+) -> RecordCheck {
+    let ty_intern = Arc::clone(ty_intern);
     let mut errors = Vec::new();
     let mut expr_types: HashMap<ExprId, TypedExpr> = HashMap::new();
-    // T3.6b (R4.1): one intern table per invocation — the ownership the track
-    // doc settled. Every `TyId` minted below resolves against this table and
-    // no other; it rides out on `TypedCommons`/`RecordCheck` so `bynk-emit`
-    // and the analyse-mode surfaces can resolve what they are handed.
-    let ty_intern = Rc::new(Types::new());
-
     // 1. Validate each type declaration.
     for item in &input.commons.items {
         if let CommonsItem::Type(t) = item {
@@ -565,7 +620,7 @@ pub fn check_record(
                 methods: input.methods,
                 expr_types,
                 warnings,
-                ty_intern: Rc::clone(&ty_intern),
+                ty_intern: Arc::clone(&ty_intern),
             }),
             partial_expr_types: HashMap::new(),
             ty_intern,
@@ -1796,7 +1851,7 @@ pub struct CapabilityOpInfo {
     /// (v0.117). Needed for observation: the `with <pred>` scope binds them by
     /// name and `trace(Cap.op)` yields records with these fields.
     pub param_names: Vec<String>,
-    pub return_ty: Ty,
+    pub return_ty: TyId,
 }
 
 /// The synthetic record type name for `trace(Cap.op)`'s call records (v0.117):

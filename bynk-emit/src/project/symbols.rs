@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use super::*;
 
 /// v0.25 (ADR 0053): walk every parsed file's top-level declarations into

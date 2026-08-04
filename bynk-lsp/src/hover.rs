@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use bynk_check::checker::Types;
 use bynk_check::index::SymbolKind;
 use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::Url;
@@ -42,6 +43,8 @@ pub struct HoverAnalysis<'a> {
     pub snapshots: &'a HashMap<PathBuf, String>,
     pub locals: &'a bynk_check::locals::FileLocals,
     pub expr_types: &'a bynk_check::expr_types::FileExprTypes,
+    /// T3.6b (R4.1): the table `expr_types`' `TyId`s resolve against.
+    pub tys: &'a Types,
     /// The cursor's file (project-relative) and its offset **into the snapshot**.
     pub rel: &'a Path,
     pub offset: usize,
@@ -85,6 +88,7 @@ pub struct HoverInput<'a> {
 /// turn and the first `Some` wins.
 pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
     if let Some(a) = &input.analysis {
+        let tys = a.tys;
         // 1. v0.25: binding-index path — a resolved symbol reference, described
         //    from its *defining* file (names are unique per file, so the per-file
         //    lookup is exact). Binding-correct: a duplicate name in another unit
@@ -150,7 +154,7 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
                 .and_then(|locals| crate::locals_nav::describe_local_at(locals, text, a.offset))
                 .or_else(|| {
                     let entries = a.expr_types.get(a.rel)?;
-                    crate::symbols::describe_self_at(text, a.offset, entries)
+                    crate::symbols::describe_self_at(text, a.offset, entries, tys)
                 });
             if let Some(content) = local {
                 return Some(content);
@@ -180,6 +184,7 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
                 &handler,
                 info,
                 expr_types,
+                tys,
                 a.context_count,
             ) {
                 return Some(wire_contract_standalone(&model));
@@ -286,6 +291,7 @@ fn wire_contract_for_service_key(
     def_path: &Path,
     def_text: &str,
 ) -> Option<bynk_ide::wire_contract::WireContractModel> {
+    let tys = a.tys;
     let info = a.boundary_info.get(&key.unit)?;
     let svc = info.services.get(&key.name)?;
     let [handler] = svc.handlers.as_slice() else {
@@ -303,6 +309,7 @@ fn wire_contract_for_service_key(
         handler,
         info,
         expr_types,
+        tys,
         a.context_count,
     )
 }

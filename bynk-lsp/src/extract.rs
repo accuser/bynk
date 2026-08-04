@@ -39,7 +39,7 @@
 //! referenced later in the same block: lifting it away would strand that
 //! reference.
 
-use bynk_check::checker::Ty;
+use bynk_check::checker::{TyId, Types};
 use bynk_check::locals::{LocalBinding, locals_at};
 use bynk_check::requirements::Requirement;
 use bynk_syntax::ast::*;
@@ -141,7 +141,8 @@ pub fn extract_function(
     version: Option<i32>,
     requirements: &[Requirement],
     locals: &[LocalBinding],
-    expr_types: &[(Span, Ty)],
+    expr_types: &[(Span, TyId)],
+    tys: &Types,
 ) -> Vec<CodeActionOrCommand> {
     if requested.start == requested.end {
         return Vec::new();
@@ -166,7 +167,7 @@ pub fn extract_function(
                 return Vec::new();
             };
             exprs.push(expr);
-            (ret_ty.display(), CallSiteForm::Bare)
+            (ret_ty.display(tys), CallSiteForm::Bare)
         }
         FunctionSelection::Stmts {
             stmts,
@@ -188,7 +189,7 @@ pub fn extract_function(
                         return Vec::new();
                     };
                     exprs.push(t);
-                    (ret_ty.display(), CallSiteForm::Bare)
+                    (ret_ty.display(tys), CallSiteForm::Bare)
                 }
                 None => {
                     if leaks_a_binding(stmts, remainder, locals, site.span) {
@@ -974,8 +975,8 @@ fn collect_idents<'a>(expr: &'a Expr, out: &mut Vec<&'a Ident>) {
 /// The recorded type of the expression whose span is exactly `span` — an
 /// exact match, not [`bynk_check::expr_types::type_at_offset`]'s tightest-
 /// containing-offset search, since the caller already knows the precise node.
-fn ty_at_span(entries: &[(Span, Ty)], span: Span) -> Option<&Ty> {
-    entries.iter().find(|(s, _)| *s == span).map(|(_, t)| t)
+fn ty_at_span(entries: &[(Span, TyId)], span: Span) -> Option<TyId> {
+    entries.iter().find(|(s, _)| *s == span).map(|(_, t)| *t)
 }
 
 /// The whitespace-only run from `offset`'s line start up to `offset` — empty
@@ -1166,7 +1167,7 @@ mod tests {
             needle: &str,
             requirements: &[Requirement],
             locals: &[LocalBinding],
-            expr_types: &[(Span, Ty)],
+            expr_types: &[(Span, TyId)],
         ) -> Vec<CodeActionOrCommand> {
             let start = text.find(needle).expect("needle present");
             let requested = Span::new(start, start + needle.len());

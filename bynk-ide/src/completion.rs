@@ -42,7 +42,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::SystemTime;
 
-use bynk_check::checker::{NamedKind, Ty};
+use bynk_check::checker::{NamedKind, Ty, TyId, Types};
 use bynk_check::kernel_methods;
 use bynk_check::locals::LocalBinding;
 use bynk_check::store_ops;
@@ -813,8 +813,13 @@ pub fn sum_type_variants(name: &str, doc_text: &str, files: Option<&[PathBuf]>) 
 /// are not declared types, so `sum_type_variants` can't see them) and are
 /// intrinsic here. This is why match-arm / `is` completion now fires for a
 /// `Result`/`Option` scrutinee, not only a user sum.
-pub fn variants_for_ty(ty: &Ty, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
-    match ty {
+pub fn variants_for_ty(
+    ty: TyId,
+    tys: &Types,
+    doc_text: &str,
+    files: Option<&[PathBuf]>,
+) -> Vec<Completion> {
+    match &*tys.get(ty) {
         Ty::Named { name, .. } => sum_type_variants(name, doc_text, files),
         Ty::Result(..) => built_in_variants(&["Ok", "Err"], "Result"),
         Ty::Option(..) => built_in_variants(&["Some", "None"], "Option"),
@@ -830,19 +835,20 @@ pub fn variants_for_ty(ty: &Ty, doc_text: &str, files: Option<&[PathBuf]>) -> Ve
 /// user-declared sum's field type is walked from source. `Ok`/`Err` inside
 /// `Some(‸)` on an `Option[Result[…]]` is the headline case.
 pub fn nested_variant_completions(
-    ty: &Ty,
+    ty: TyId,
+    tys: &Types,
     outer_variant: &str,
     doc_text: &str,
     files: Option<&[PathBuf]>,
 ) -> Vec<Completion> {
-    match ty {
+    match &*tys.get(ty) {
         Ty::Result(t, e) => match outer_variant {
-            "Ok" => variants_for_ty(t, doc_text, files),
-            "Err" => variants_for_ty(e, doc_text, files),
+            "Ok" => variants_for_ty(*t, tys, doc_text, files),
+            "Err" => variants_for_ty(*e, tys, doc_text, files),
             _ => Vec::new(),
         },
-        Ty::HttpResult(t) if outer_variant == "Ok" => variants_for_ty(t, doc_text, files),
-        Ty::Option(t) if outer_variant == "Some" => variants_for_ty(t, doc_text, files),
+        Ty::HttpResult(t) if outer_variant == "Ok" => variants_for_ty(*t, tys, doc_text, files),
+        Ty::Option(t) if outer_variant == "Some" => variants_for_ty(*t, tys, doc_text, files),
         Ty::Named {
             kind: NamedKind::Sum,
             name,
@@ -1728,11 +1734,12 @@ pub fn ident_ending_at(text: &str, end: usize) -> Option<(&str, usize)> {
 /// The members of a typed value receiver: the built-in kernel methods of its
 /// type (from the enumerable registry) plus, for a record, its fields.
 pub fn value_member_candidates(
-    ty: &Ty,
+    ty: TyId,
+    tys: &Types,
     doc_text: &str,
     files: Option<&[PathBuf]>,
 ) -> Vec<Completion> {
-    let mut out: Vec<Completion> = kernel_methods::methods_for(ty)
+    let mut out: Vec<Completion> = kernel_methods::methods_for(ty, tys)
         .iter()
         .map(|km| {
             Completion::item(
@@ -1743,7 +1750,7 @@ pub fn value_member_candidates(
         })
         .collect();
     // Record fields — resolve the receiver's named type to its declaration.
-    if let Ty::Named { name, .. } = ty {
+    if let Ty::Named { name, .. } = &*tys.get(ty) {
         let mut seen: BTreeSet<String> = BTreeSet::new();
         for_each_unit(doc_text, files, |unit| {
             let items = match unit {

@@ -6,12 +6,13 @@
 //! `emitter.rs` (ADR 0060); the codec/reference/import/header helpers and the
 //! `ts_*`/`LowerCtx` core stay in the parent and are reached via `use super::*`.
 
+use std::sync::Arc;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::project::EmitProjectCtx;
-use bynk_check::checker::TypedCommons;
+use bynk_check::checker::{TypedCommons, Types};
 
 use super::*;
 
@@ -2503,6 +2504,7 @@ pub(crate) fn emit_agent(
     ctx: &EmitProjectCtx,
     source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
+    let tys = commons.tys();
     emit_doc_block(out, a.documentation.as_deref(), 0);
     let state_ty = format!("{}State", a.name.name);
     // v0.81 (storage track, ADR 0109): an agent's `Cell` fields ARE its state
@@ -2774,11 +2776,7 @@ pub(crate) fn emit_agent(
                     format!("(() => {{ {} return {expr}; }})()", pre.stmts().join(" "))
                 }
             } else {
-                bynk_check::checker::zero_value_ts(
-                    &f.type_ref,
-                    f.refinement.as_ref(),
-                    &commons.types,
-                )
+                bynk_check::checker::zero_value_ts(&f.type_ref, f.refinement.as_ref(), &commons.types)
                 .unwrap_or_else(|| "undefined as never".to_string())
             };
             parts.push(format!("{}: {val}", f.name.name));
@@ -3473,7 +3471,7 @@ pub(crate) fn emit_agent(
         // frame against `in:` (reject-and-close on failure), recover the sender
         // identity + route args from the socket attachment, and run the body.
         for host in &ws_open_hosts {
-            emit_ws_dispatch_handlers(out, host, &ctx.runtime_use, &commons.types);
+            emit_ws_dispatch_handlers(out, host, &ctx.runtime_use, &commons.types, tys);
         }
     }
     writeln!(out, "}}").unwrap();
@@ -3911,6 +3909,7 @@ fn emit_ws_dispatch_handlers(
     host: &WsOpenHost<'_>,
     runtime_use: &RuntimeUse,
     types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Arc<Types>,
 ) {
     if !host.has_inbound() {
         return;
@@ -3971,8 +3970,8 @@ fn emit_ws_dispatch_handlers(
         // program this picks a different (or no) param's argument for.
         let no_vars = HashSet::new();
         let resolve_ty = |t: &TypeRef| {
-            bynk_check::checker::resolve_type_ref_in(t, types, &no_vars)
-                .unwrap_or(bynk_check::checker::Ty::Unit)
+            bynk_check::checker::resolve_type_ref_in(t, types, &no_vars, tys)
+                .unwrap_or(tys.intern(bynk_check::checker::Ty::Unit))
         };
         for p in &m.params {
             if resolve_ty(&p.type_ref) == resolve_ty(host.in_type) {

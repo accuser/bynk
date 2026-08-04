@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use bynk_check::checker::Ty;
+use bynk_check::checker::{Ty, TyId, Types};
 use bynk_check::index::{ProjectIndex, SiteRef, SymbolKey, SymbolKind};
 use bynk_syntax::ast::BaseType;
 use bynk_syntax::span::Span;
@@ -326,10 +326,12 @@ pub fn resolve_doc_link<'a>(
 /// (`Option`/`Effect`/`List`/`HttpResult`) unwrapped to it. Built-in, function,
 /// actor, and two-parameter (`Result`/`Map`) types have no single
 /// type-declaration target and yield `None`.
-pub fn named_type_target(ty: &Ty) -> Option<&str> {
-    match ty {
-        Ty::Named { name, .. } => Some(name),
-        Ty::Option(t) | Ty::Effect(t) | Ty::List(t) | Ty::HttpResult(t) => named_type_target(t),
+pub fn named_type_target(ty: TyId, tys: &Types) -> Option<String> {
+    match &*tys.get(ty) {
+        Ty::Named { name, .. } => Some(name.clone()),
+        Ty::Option(t) | Ty::Effect(t) | Ty::List(t) | Ty::HttpResult(t) => {
+            named_type_target(*t, tys)
+        }
         _ => None,
     }
 }

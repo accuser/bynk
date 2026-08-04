@@ -28,7 +28,7 @@ use std::sync::OnceLock;
 
 use crate::emitter;
 use bynk_check::checker;
-use bynk_check::checker::{CapabilityInfo, CapabilityOpInfo, Ty, TypedExpr};
+use bynk_check::checker::{CapabilityInfo, CapabilityOpInfo, Ty, TyId, TypedExpr, Types};
 use bynk_check::expr_types::{ExprTypeSink, FileExprTypes};
 use bynk_check::firstparty::{self, Platform};
 use bynk_check::hints::{FileHints, HintSink};
@@ -472,6 +472,8 @@ impl CompileOptions {
 /// `.map_err(ProjectFailure::flatten)` for the flattened `Vec<CompileError>`
 /// shape.
 pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, ProjectFailure> {
+    // T3.6b (R4.1): one table per build, shared across every unit compiled.
+    let tys = &Arc::new(Types::new());
     let (src_root, tests_root) = options.roots.resolve();
     let src_prefix = options.roots.src_prefix();
     let tests_prefix = options.roots.tests_prefix();
@@ -508,6 +510,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         discovered,
         options.contracts,
         schema_root_path.as_deref(),
+        tys,
     );
     // Events track, slice 3c (#980): only a fully clean build writes the
     // registry — a build that fails for any reason (including a schema
@@ -562,6 +565,8 @@ impl ProjectCheck {
 /// error, but wrong for `check`, whose only job is to report everything.
 /// `bynk check`'s directory path calls this instead of `compile_project`.
 pub fn check_project(options: &CompileOptions) -> ProjectCheck {
+    // T3.6b (R4.1): one table per check, shared across every unit.
+    let tys = &Arc::new(Types::new());
     let (src_root, tests_root) = options.roots.resolve();
     let src_prefix = options.roots.src_prefix();
     let tests_prefix = options.roots.tests_prefix();
@@ -591,6 +596,7 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         discovered,
         options.contracts,
         None,
+        tys,
     );
     match run {
         RunChecks::Bailed {
@@ -622,6 +628,8 @@ pub fn compile_in_memory(
     target: BuildTarget,
     platform: Platform,
 ) -> Result<ProjectOutput, ProjectFailure> {
+    // T3.6b (R4.1): one table for this virtual project's compile.
+    let tys = &Arc::new(Types::new());
     // A single-tree (`src_root == tests_root`) virtual project rooted at `.`: the
     // one source file is supplied directly and its text layered in via the
     // overlay, so discovery and every other disk read are bypassed.
@@ -632,9 +640,6 @@ pub fn compile_in_memory(
     let run = run_checks(
         &root,
         &root,
-        // Slice 0: an in-memory build is single-root — an empty prefix keeps
-        // `identity_path == source_path`. (`&root` here is `.`, which would
-        // otherwise leak in as `./<file>`.)
         Path::new(""),
         &root,
         target,
@@ -646,6 +651,7 @@ pub fn compile_in_memory(
         Some((vec![path], Vec::new())),
         false,
         None,
+        tys,
     );
     finish_build(run, ImportExt::Js)
 }
@@ -673,7 +679,9 @@ pub fn analyse_in_memory(
 /// "what's in scope at this offset").
 pub struct InMemoryAnalysis {
     pub errors: Vec<AttributedError>,
-    pub expr_types: Vec<(bynk_syntax::span::Span, Ty)>,
+    pub expr_types: Vec<(bynk_syntax::span::Span, TyId)>,
+    /// T3.6b (R4.1): the table `expr_types`' ids resolve against.
+    pub ty_intern: std::sync::Arc<bynk_check::checker::Types>,
     pub locals: Vec<bynk_check::locals::LocalBinding>,
 }
 
@@ -691,6 +699,10 @@ pub fn analyse_in_memory_with_types(
     target: BuildTarget,
     platform: Platform,
 ) -> InMemoryAnalysis {
+    // T3.6b (R4.1): one table for the whole analysis — every unit it checks
+    // interns into this, so the `TyId`s it hands back on `InMemoryAnalysis`
+    // all resolve against the one table it also hands back.
+    let tys = &Arc::new(Types::new());
     let root = PathBuf::from(".");
     let path = in_memory_logical_path(source);
     let mut overlay = HashMap::new();
@@ -698,9 +710,6 @@ pub fn analyse_in_memory_with_types(
     let run = run_checks(
         &root,
         &root,
-        // Slice 0: an in-memory build is single-root — an empty prefix keeps
-        // `identity_path == source_path`. (`&root` here is `.`, which would
-        // otherwise leak in as `./<file>`.)
         Path::new(""),
         &root,
         target,
@@ -712,6 +721,7 @@ pub fn analyse_in_memory_with_types(
         Some((vec![path.clone()], Vec::new())),
         false,
         None,
+        tys,
     );
     match run {
         RunChecks::Bailed {
@@ -728,6 +738,7 @@ pub fn analyse_in_memory_with_types(
         } => InMemoryAnalysis {
             errors: errors.into_all(),
             expr_types: exprs.take_files().remove(&path).unwrap_or_default(),
+            ty_intern: Arc::clone(tys),
             locals: locals.take_files().remove(&path).unwrap_or_default(),
         },
     }
@@ -875,6 +886,9 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
 /// Identity is project-relative (ADR 0198): a file's `source_path` here is
 /// unique across `include` roots.
 pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
+    // T3.6b (R4.1): see `analyse_in_memory_with_types` — one table per
+    // analysis, shared by every unit, carried out on the result.
+    let tys = &Arc::new(Types::new());
     // Resolved exactly as `compile_project` does — one project model, not two.
     let (src_root, tests_root) = roots.resolve();
     let src_prefix = roots.src_prefix();
@@ -894,6 +908,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
         None,
         false,
         None,
+        tys,
     ) {
         RunChecks::Bailed {
             errors,
@@ -911,6 +926,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
             hints: hints.take_files(),
             locals: locals.take_files(),
             expr_types: exprs.take_files(),
+            ty_intern: Arc::clone(tys),
             requirements: requirements.take_files(),
             // No parsed tree on the bail path — the map stays empty (ADR 0095).
             unit_sources: HashMap::new(),
@@ -1026,6 +1042,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
                 hints: hints.take_files(),
                 locals: locals.take_files(),
                 expr_types: exprs.take_files(),
+                ty_intern: Arc::clone(tys),
                 requirements: requirements.take_files(),
                 unit_sources,
                 sequence_info,
@@ -1488,6 +1505,7 @@ fn phase_group(
     consumes_cloudflare: bool,
     overlay: &HashMap<PathBuf, String>,
     errors: &mut ErrorSink,
+    tys: &Arc<Types>,
 ) -> (
     BTreeMap<String, Vec<usize>>,
     BTreeMap<String, UnitKind>,
@@ -1544,7 +1562,7 @@ fn phase_group(
     }
 
     // v0.20a: function types are confined to non-boundary positions.
-    for (path, err) in check_function_type_boundaries(parsed) {
+    for (path, err) in check_function_type_boundaries(parsed, tys) {
         errors.push_for(Some(&path), err);
     }
 
@@ -2344,6 +2362,7 @@ fn phase_validate_providers(
     groups: &BTreeMap<String, Vec<usize>>,
     parsed: &[ParsedFile],
     errors: &mut ErrorSink,
+    tys: &Arc<Types>,
 ) {
     for (name, table) in unit_tables {
         // Map each provided capability to the project-relative path of the file
@@ -2473,19 +2492,19 @@ fn phase_validate_providers(
                 // `_ => false` on both sides of an `!`. A Bynk-bodied
                 // provider op has no type params of its own (checked above),
                 // so its params/return type resolve with no vars in scope.
-                let cap_info = build_capability_op_info(cap_op, &table.types);
+                let cap_info = build_capability_op_info(cap_op, &table.types, tys);
                 let no_vars = HashSet::new();
-                let prov_params: Vec<Ty> = prov_op
+                let prov_params: Vec<TyId> = prov_op
                     .params
                     .iter()
                     .map(|p| {
-                        checker::resolve_type_ref_in(&p.type_ref, &table.types, &no_vars)
-                            .unwrap_or(Ty::Unit)
+                        checker::resolve_type_ref_in(&p.type_ref, &table.types, &no_vars, tys)
+                            .unwrap_or(tys.intern(Ty::Unit))
                     })
                     .collect();
                 let prov_return_ty =
-                    checker::resolve_type_ref_in(&prov_op.return_type, &table.types, &no_vars)
-                        .unwrap_or(Ty::Unit);
+                    checker::resolve_type_ref_in(&prov_op.return_type, &table.types, &no_vars, tys)
+                        .unwrap_or(tys.intern(Ty::Unit));
                 for (i, (cap_ty, (prov_p, prov_ty))) in cap_info
                     .params
                     .iter()
@@ -3113,6 +3132,7 @@ fn check_unit_files(
     // reconciled value when the registry is on, empty (so every lookup falls
     // through to `EventDecl::schema_version()`) when it is off.
     schema_effective_versions: &HashMap<String, i64>,
+    tys: &Arc<Types>,
 ) {
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
@@ -3328,7 +3348,7 @@ fn check_unit_files(
             errors.extend_for(Some(&pf.identity_path), errs);
             continue;
         }
-        let rc = checker::check_record(resolved, refs, hints, locals, requirements);
+        let rc = checker::check_record_in(resolved, tys, refs, hints, locals, requirements);
         let typed = match rc.result {
             Ok(t) => {
                 // v0.89 (ADR 0117): a unit that checks clean may still carry
@@ -3360,7 +3380,7 @@ fn check_unit_files(
         // Run the context-specific checks: forbidden construction,
         // private-type references.
         if kind == UnitKind::Context {
-            let context_check_errs = check_context_constraints(&typed, consumed_types, local_names);
+            let context_check_errs = check_context_constraints(&typed, consumed_types, local_names, tys);
             if !context_check_errs.is_empty() {
                 errors.extend_for(Some(&pf.identity_path), context_check_errs);
                 if mode == Mode::Analyse {
@@ -3390,6 +3410,7 @@ fn check_unit_files(
                 hints,
                 locals,
                 requirements,
+                tys,
             );
             if !decl_errs.is_empty() {
                 // ADR 0117: a warning-severity declaration diagnostic (e.g. the
@@ -3538,6 +3559,7 @@ fn run_checks(
     // `bynk.schema.lock` reconciliation; `None` (every in-memory/test/LSP
     // caller) skips it entirely. See `CompileOptions::schema_registry`.
     schema_root: Option<&Path>,
+    tys: &Arc<Types>,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
     // v0.25 (ADR 0053): binding edges, recorded at the resolution sites and
@@ -3620,6 +3642,7 @@ fn run_checks(
         consumes_cloudflare,
         overlay,
         &mut errors,
+        tys,
     );
 
     // -- 4. Build per-unit combined symbol tables. --
@@ -3765,7 +3788,7 @@ fn run_checks(
     );
 
     // -- 6c. Validate that providers match their capabilities exactly. --
-    phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors);
+    phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors, tys);
 
     // -- 6d. Events track, slice 3c (#980): reconcile every event's shape
     //        against the committed schema registry. `schema_root` is `None`
@@ -3924,6 +3947,7 @@ fn run_checks(
             &mut requirements,
             &mut compiled,
             &schema_effective_versions,
+            tys,
         );
     }
 
@@ -3953,6 +3977,7 @@ fn run_checks(
         &mut emitted_barrels,
         &mut test_errors,
         &mut refs,
+        tys,
     );
     // #696: test-suite diagnostics do have owning files, but attributing them
     // means threading a file through `process_tests`'s many internal push sites —
@@ -3980,6 +4005,7 @@ fn run_checks(
         &mut emitted_barrels,
         &mut integration_errors,
         &mut refs,
+        tys,
     );
     // #696: integration-suite diagnostics, like the unit-test ones above, stay
     // unattributed pending the same `process_integration_tests` threading.

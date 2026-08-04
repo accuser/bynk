@@ -109,6 +109,10 @@ struct Analysis {
     /// Slice 6: project-relative path → the round's expression types, spans
     /// against the analysed snapshots — backs go-to-type-definition.
     expr_types: bynk_check::expr_types::FileExprTypes,
+    /// T3.6b (R4.1): the round's intern table — what every `TyId` in
+    /// `expr_types` resolves against. One per analysis round, shared across
+    /// every unit it checked.
+    ty_intern: std::sync::Arc<bynk_check::checker::Types>,
     /// Slice 6b (ADR 0095): qualified unit name → its project source file(s),
     /// project-relative — backs document links (`uses`/`consumes` → source).
     unit_sources: std::collections::HashMap<String, Vec<PathBuf>>,
@@ -670,6 +674,7 @@ impl Backend {
                 requirements: result.requirements,
                 locals: result.locals,
                 expr_types: result.expr_types,
+                ty_intern: result.ty_intern,
                 unit_sources: result.unit_sources,
                 sequence_info: result.sequence_info,
                 boundary_info: result.boundary_info,
@@ -918,13 +923,13 @@ impl Backend {
             return Vec::new();
         };
         let mut items: Vec<CompletionItem> = Vec::new();
-        if let Some(ty) = self
+        if let Some((ty, tys)) = self
             .type_receiver(uri, rewritten.clone(), recv_offset)
             .await
         {
             let files = self.project_files(uri).await;
             items.extend(
-                completion::value_member_candidates(&ty, text, files.as_deref())
+                completion::value_member_candidates(ty, &tys, text, files.as_deref())
                     .into_iter()
                     .map(to_completion_item),
             );
@@ -1005,11 +1010,11 @@ impl Backend {
         text: &str,
         scrut_off: usize,
     ) -> Vec<CompletionItem> {
-        let Some(ty) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
+        let Some((ty, tys)) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
         let files = self.project_files(uri).await;
-        completion::variants_for_ty(&ty, text, files.as_deref())
+        completion::variants_for_ty(ty, &tys, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
             .collect()
@@ -1030,11 +1035,11 @@ impl Backend {
         let Some((scrut_off, variant)) = nested_pattern_offset(text, offset) else {
             return Vec::new();
         };
-        let Some(ty) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
+        let Some((ty, tys)) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
         let files = self.project_files(uri).await;
-        completion::nested_variant_completions(&ty, &variant, text, files.as_deref())
+        completion::nested_variant_completions(ty, &tys, &variant, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
             .collect()
@@ -1049,7 +1054,13 @@ impl Backend {
         uri: &Url,
         rewritten: String,
         recv_offset: usize,
-    ) -> Option<bynk_check::checker::Ty> {
+    ) -> Option<(
+        bynk_check::checker::TyId,
+        std::sync::Arc<bynk_check::checker::Types>,
+    )> {
+        // T3.6b (R4.1): the id is meaningless without the table it was minted
+        // from, so both travel together — the round's own table on the fast
+        // path, the fresh re-analysis's on the slow one.
         let roots = self.analysis_roots_for(uri).await?;
         let project_root = roots.project_root().to_path_buf();
         let canonical_root = project_root
@@ -1085,14 +1096,16 @@ impl Backend {
             && analysis.snapshots.get(&rel).map(String::as_str) == Some(rewritten.as_str())
             && let Some((_, entries)) = analysis.expr_types.iter().find(|(p, _)| **p == rel)
         {
-            return bynk_check::expr_types::type_at_offset(entries, recv_offset).cloned();
+            return bynk_check::expr_types::type_at_offset(entries, recv_offset)
+                .map(|t| (t, std::sync::Arc::clone(&analysis.ty_intern)));
         }
         let result =
             tokio::task::spawn_blocking(move || bynk_ide::diagnose_project_with(&roots, &overlay))
                 .await
                 .ok()?;
         let (_, entries) = result.expr_types.iter().find(|(p, _)| **p == rel)?;
-        bynk_check::expr_types::type_at_offset(entries, recv_offset).cloned()
+        bynk_check::expr_types::type_at_offset(entries, recv_offset)
+            .map(|t| (t, std::sync::Arc::clone(&result.ty_intern)))
     }
 
     /// Slice D: the committed analysis for one project root, ungated — the raw
@@ -1794,6 +1807,7 @@ impl Backend {
         let Some(analysis) = self.committed_analysis(&uri).await else {
             return Ok(None);
         };
+        let tys = &analysis.ty_intern;
         let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
             return Ok(None);
         };
@@ -1826,6 +1840,7 @@ impl Backend {
             offset,
             info,
             expr_types,
+            tys,
             context_count,
         ) else {
             return Ok(None);
@@ -2029,6 +2044,7 @@ impl LanguageServer for Backend {
                 snapshots: &a.snapshots,
                 locals: &a.locals,
                 expr_types: &a.expr_types,
+                tys: &a.ty_intern,
                 rel,
                 offset: *offset,
                 project_root: &a.project_root,
@@ -2106,9 +2122,10 @@ impl LanguageServer for Backend {
                             ctx.open_paren,
                             offset,
                         )
-                        && let Some(ty) = self.type_receiver(&uri, rewritten, recv_offset).await
+                        && let Some((ty, tys)) =
+                            self.type_receiver(&uri, rewritten, recv_offset).await
                     {
-                        crate::signature_help::kernel_method_signature(&ty, method)
+                        crate::signature_help::kernel_method_signature(ty, &tys, method)
                     } else {
                         None
                     }
@@ -2358,17 +2375,18 @@ impl LanguageServer for Backend {
         let Some((analysis, rel, offset)) = self.index_position(&uri, pos).await else {
             return Ok(None);
         };
+        let tys = &analysis.ty_intern;
         let Some(entries) = analysis.expr_types.get(&rel) else {
             return Ok(None);
         };
         let Some(ty) = bynk_check::expr_types::type_at_offset(entries, offset) else {
             return Ok(None);
         };
-        let Some(name) = crate::index_queries::named_type_target(ty) else {
+        let Some(name) = crate::index_queries::named_type_target(ty, tys) else {
             return Ok(None);
         };
         let locations: Vec<Location> =
-            crate::index_queries::type_definitions_named(&analysis.index, name)
+            crate::index_queries::type_definitions_named(&analysis.index, &name)
                 .into_iter()
                 .filter_map(|d| Self::site_to_location(&analysis, d))
                 .collect();
@@ -2885,6 +2903,7 @@ impl LanguageServer for Backend {
             analysis.requirements.get(&rel).unwrap_or(&empty_reqs),
             analysis.locals.get(&rel).unwrap_or(&empty_locals),
             analysis.expr_types.get(&rel).unwrap_or(&empty_types),
+            &analysis.ty_intern,
         ));
         // #804: honour the client's requested action kinds, if any.
         let actions = crate::code_actions::filter_by_only(actions, params.context.only.as_deref());

@@ -502,7 +502,8 @@ fn render_state_hover(sig: &str, contextual_kw: &str) -> String {
 pub fn describe_self_at(
     text: &str,
     offset: usize,
-    expr_types: &[(Span, bynk_check::checker::Ty)],
+    expr_types: &[(Span, bynk_check::checker::TyId)],
+    tys: &bynk_check::checker::Types,
 ) -> Option<String> {
     let tokens = tokenize(text).ok()?;
     let on_self = tokens.iter().any(|t| {
@@ -512,7 +513,7 @@ pub fn describe_self_at(
         return None;
     }
     let ty = bynk_check::expr_types::type_at_offset(expr_types, offset)?;
-    let display = ty.display();
+    let display = ty.display(tys);
     let name = display
         .strip_prefix("__")
         .and_then(|s| s.strip_suffix("Self"))
