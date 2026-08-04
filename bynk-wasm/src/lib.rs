@@ -290,7 +290,7 @@ pub fn hover(source: &str, offset: usize, platform: Platform) -> HoverResult {
 
 fn hover_inner(source: &str, offset: usize, platform: Platform) -> HoverResult {
     let analysis = analyse_in_memory_with_types(source, BuildTarget::Bundle, platform);
-    let ty = type_at_offset(&analysis.expr_types, offset).map(Ty::display);
+    let ty = type_at_offset(&analysis.expr_types, offset).map(|t| t.display(&analysis.ty_intern));
     HoverResult { ty }
 }
 
@@ -383,7 +383,7 @@ fn complete_inner(source: &str, offset: usize, platform: Platform) -> CompleteRe
     {
         let analysis = analyse_in_memory_with_types(&rewritten, BuildTarget::Bundle, platform);
         if let Some(ty) = type_at_offset(&analysis.expr_types, recv_offset) {
-            items = completion::value_member_candidates(ty, source, None)
+            items = completion::value_member_candidates(ty, &analysis.ty_intern, source, None)
                 .into_iter()
                 .map(to_candidate)
                 .collect();

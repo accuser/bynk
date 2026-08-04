@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use super::*;
 use crate::emitter::RuntimeUse;
 use crate::emitter::source_map::SourceMapBuilder;
+use bynk_check::checker::{Types};
 
 /// Render a type-ref in the same form the user wrote it, for diagnostics.
 pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
@@ -113,6 +115,7 @@ pub(crate) fn process_tests(
     emitted_barrels: &mut HashSet<PathBuf>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    tys: &Arc<Types>,
 ) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
     let mut outputs: Vec<CompiledFile> = Vec::new();
     let mut runnable_tests: Vec<RunnableTest> = Vec::new();
@@ -205,6 +208,7 @@ pub(crate) fn process_tests(
             unit_consumes_aliases,
             unit_uses,
             refs,
+            tys,
         );
         let bodies_failed = !bodies_errs.is_empty();
         errors.extend(bodies_errs);
@@ -229,6 +233,7 @@ pub(crate) fn process_tests(
             tests_prefix,
             import_ext,
             contracts,
+            tys,
         );
         if let Some((path, source, source_map, runnable)) = emit_out {
             outputs.push(CompiledFile {
@@ -418,6 +423,7 @@ pub(crate) fn process_integration_tests(
     emitted_barrels: &mut HashSet<PathBuf>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    tys: &Arc<Types>,
 ) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
     let mut outputs: Vec<CompiledFile> = Vec::new();
     let mut runnables: Vec<RunnableTest> = Vec::new();
@@ -553,6 +559,7 @@ pub(crate) fn process_integration_tests(
                     unit_tables,
                     &mut body_errs,
                     refs,
+                    tys,
                 );
                 // Slice C: `Wire(…)` is a `system`-only raw argument (it drives the
                 // real wire); in a non-`system` case it has no wire to be raw
@@ -705,6 +712,7 @@ fn check_integration_case_body(
     unit_tables: &HashMap<String, UnitTable>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    tys: &Arc<Types>,
 ) {
     // Names in scope: types/fns/methods from `uses` commons (for constructing
     // arguments) plus each participant's types/methods (so return types rebrand
@@ -791,7 +799,7 @@ fn check_integration_case_body(
         )),
         unit_span,
     );
-    let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
+    let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types, tys).unwrap();
     let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
     // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
     let mut no_hints = HintSink::new();
@@ -801,7 +809,7 @@ fn check_integration_case_body(
     let _ = checker::check_body(
         &resolved,
         &case.body,
-        &return_ty,
+        return_ty,
         case.span,
         HashMap::new(),
         checker::CapabilityCtx::default(),
@@ -812,6 +820,7 @@ fn check_integration_case_body(
         target_test_actors(participants.first().and_then(|t| unit_tables.get(t))),
         None,
         checker::CheckSinks {
+            tys,
             expr_types: &mut expr_types,
             errors,
             refs,
@@ -1531,6 +1540,11 @@ fn integration_typed_commons(
         methods,
         expr_types: HashMap::new(),
         warnings: vec![],
+        // T3.6b (R4.1): a synthesised commons carries no checked expressions
+        // (`expr_types` is empty), so it owns a fresh table. Every `TyId` the
+        // emission of *this* commons mints comes from here, and none from a
+        // real unit's table is ever resolved against it.
+        ty_intern: std::sync::Arc::new(checker::Types::new()),
     }
 }
 
@@ -1626,6 +1640,7 @@ fn check_test_bodies(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
     refs: &mut RefSink,
+    tys: &Arc<Types>,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
     let _ = exports_visibility;
@@ -1655,7 +1670,7 @@ fn check_test_bodies(
                     continue;
                 };
                 let check_value = |e: &Expr, errors: &mut Vec<CompileError>| {
-                    if !stub_value_typechecks(e, op, &resolved) {
+                    if !stub_value_typechecks(e, op, &resolved, tys) {
                         errors.push(CompileError::new(
                             "bynk.stub.rhs_type",
                             e.span,
@@ -1703,6 +1718,7 @@ fn check_test_bodies(
                 unit_consumes_aliases,
                 &mut errors,
                 refs,
+                tys,
             );
         }
         // v0.114: generative `property` blocks — check their `for all` bindings,
@@ -1732,6 +1748,7 @@ fn check_test_bodies(
                 unit_consumes_aliases,
                 &mut errors,
                 refs,
+                tys,
             );
         }
     }
@@ -1768,6 +1785,7 @@ fn stub_value_typechecks(
     e: &Expr,
     op: &CapabilityOp,
     resolved: &bynk_check::resolver::ResolvedCommons,
+    tys: &Arc<Types>,
 ) -> bool {
     let block = value_block(e);
     let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
@@ -1776,6 +1794,7 @@ fn stub_value_typechecks(
         resolved,
         checker::HandlerBodyCheck::new(&block, &op.return_type, &op.params, &[]),
         checker::CheckSinks {
+            tys,
             expr_types: &mut expr_types,
             errors: &mut errs,
             refs: &mut RefSink::new(),
@@ -1968,7 +1987,8 @@ fn typecheck_case_body(
     refs: &mut RefSink,
     // v0.119: bindings already in scope for the body — empty for a `case`, the
     // `run: List[Step]` binding for a history property.
-    initial_scope: HashMap<String, checker::Ty>,
+    initial_scope: HashMap<String, checker::TyId>,
+    tys: &Arc<Types>,
 ) -> HashMap<ExprId, checker::TypedExpr> {
     let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
     // Synthesise an Effect[Result[(), ValidationError]] return type as a
@@ -1991,7 +2011,7 @@ fn typecheck_case_body(
             let ops = decl
                 .ops
                 .iter()
-                .map(|op| build_capability_op_info(op, &resolved.types))
+                .map(|op| build_capability_op_info(op, &resolved.types, tys))
                 .collect();
             capability_info_map.insert(
                 name.clone(),
@@ -2008,7 +2028,7 @@ fn typecheck_case_body(
     // to both `capabilities` (in-scope) and `declared_capabilities`.
     let given_declared: Vec<String> = capability_info_map.keys().cloned().collect();
 
-    let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
+    let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types, tys).unwrap();
     let return_ty_span = unit_span;
     // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
     let mut no_hints = HintSink::new();
@@ -2018,7 +2038,7 @@ fn typecheck_case_body(
     let _ = checker::check_body(
         resolved,
         body,
-        &return_ty,
+        return_ty,
         return_ty_span,
         initial_scope,
         checker::CapabilityCtx {
@@ -2033,6 +2053,7 @@ fn typecheck_case_body(
         target_test_actors(unit_tables.get(target_name)),
         None,
         checker::CheckSinks {
+            tys,
             expr_types: &mut expr_types,
             errors,
             refs,
@@ -2055,6 +2076,7 @@ fn check_test_case_body(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    tys: &Arc<Types>,
 ) {
     let Some((mut resolved, _)) = build_privileged_resolved(
         target_name,
@@ -2076,6 +2098,7 @@ fn check_test_case_body(
         errors,
         refs,
         HashMap::new(),
+        tys,
     );
     // Don't enforce return-type equality; the test runner discards the
     // tail expression and recovers success/failure from expectation outcome.
@@ -2261,14 +2284,15 @@ const PROP_GEN_DEPTH: u32 = 12;
 /// and sums/records must have every component recursively generable within the
 /// depth cap. Mirrors the checker's `can_mock_bare`.
 fn prop_binding_generable(
-    ty: &checker::Ty,
+    ty: checker::TyId,
     types: &HashMap<String, Arc<TypeDecl>>,
     depth: u32,
+    tys: &Arc<Types>,
 ) -> bool {
     if depth == 0 {
         return false;
     }
-    match ty {
+    match &*tys.get(ty) {
         checker::Ty::Base(_) => true,
         checker::Ty::Named { name, .. } => {
             let Some(decl) = types.get(name) else {
@@ -2284,13 +2308,13 @@ fn prop_binding_generable(
                 }
                 TypeBody::Sum(s) => s.variants.first().is_some_and(|v| {
                     v.payload.iter().all(|f| {
-                        checker::resolve_type_ref(&f.type_ref, types)
-                            .is_some_and(|t| prop_binding_generable(&t, types, depth - 1))
+                        checker::resolve_type_ref(&f.type_ref, types, tys)
+                            .is_some_and(|t| prop_binding_generable(t, types, depth - 1, tys))
                     })
                 }),
                 TypeBody::Record(r) => r.fields.iter().all(|f| {
-                    checker::resolve_type_ref(&f.type_ref, types)
-                        .is_some_and(|t| prop_binding_generable(&t, types, depth - 1))
+                    checker::resolve_type_ref(&f.type_ref, types, tys)
+                        .is_some_and(|t| prop_binding_generable(t, types, depth - 1, tys))
                 }),
             }
         }
@@ -2301,10 +2325,12 @@ fn prop_binding_generable(
 /// The refinement of a resolved refined/opaque named type, if any — used by the
 /// conservative restates-refinement check.
 fn named_refinement<'a>(
-    ty: &checker::Ty,
+    ty: checker::TyId,
     types: &'a HashMap<String, Arc<TypeDecl>>,
+    tys: &Arc<Types>,
 ) -> Option<&'a Refinement> {
-    let checker::Ty::Named { name, .. } = ty else {
+    let node = tys.get(ty);
+    let checker::Ty::Named { name, .. } = &*node else {
         return None;
     };
     match &types.get(name)?.body {
@@ -2595,6 +2621,7 @@ fn check_history_binding(
     span: Span,
     resolved: &mut ResolvedCommons,
     refs: &mut RefSink,
+    tys: &Arc<Types>,
 ) -> Result<checker::Ty, CompileError> {
     // DECISION B: only an agent has handlers to sequence and reachable states to
     // observe. `History[Value]` / `History[List[…]]` is `not_an_agent`.
@@ -2630,8 +2657,8 @@ fn check_history_binding(
     // the runner cannot synthesise a call.
     for h in &handlers {
         for p in &h.params {
-            let generable = checker::resolve_type_ref(&p.type_ref, &resolved.types)
-                .is_some_and(|t| prop_binding_generable(&t, &resolved.types, PROP_GEN_DEPTH));
+            let generable = checker::resolve_type_ref(&p.type_ref, &resolved.types, tys)
+                .is_some_and(|t| prop_binding_generable(t, &resolved.types, PROP_GEN_DEPTH, tys));
             if !generable {
                 return Err(CompileError::new(
                     "bynk.history.not_generable",
@@ -2805,7 +2832,7 @@ fn check_history_binding(
         }),
     );
 
-    Ok(checker::Ty::List(Box::new(checker::Ty::Named {
+    Ok(checker::Ty::List(tys.intern(checker::Ty::Named {
         name: step_name,
         kind: checker::NamedKind::Record,
         args: Vec::new(),
@@ -2830,6 +2857,7 @@ fn check_property_body(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    tys: &Arc<Types>,
 ) {
     let Some((mut resolved, _)) = build_privileged_resolved(
         target_name,
@@ -2844,8 +2872,8 @@ fn check_property_body(
     let _ = target_kind;
 
     // Bind each `for all x: T` into the predicate scope, checking generability.
-    let mut binding_scope: HashMap<String, checker::Ty> = HashMap::new();
-    let mut binding_types: Vec<(String, Option<checker::Ty>)> = Vec::new();
+    let mut binding_scope: HashMap<String, checker::TyId> = HashMap::new();
+    let mut binding_types: Vec<(String, Option<checker::TyId>)> = Vec::new();
     // v0.119: the single `History[Agent]` binding (run-var, agent), for the
     // post-body `restates_invariant` check (DECISION D).
     let mut history_binding: Option<(String, AgentDecl)> = None;
@@ -2853,15 +2881,15 @@ fn check_property_body(
         // v0.119 (ADR 0155): `for all run: History[Agent]` — the history rung. A
         // driven call-history, bound as an ordinary `List[Step]`.
         if let TypeRef::History(inner, hspan) = &b.type_ref {
-            match check_history_binding(inner, *hspan, &mut resolved, refs) {
+            match check_history_binding(inner, *hspan, &mut resolved, refs, tys) {
                 Ok(step_ty) => {
                     if let TypeRef::Named(agent_id) = &**inner
                         && let Some(agent) = resolved.agents.get(&agent_id.name)
                     {
                         history_binding = Some((b.name.name.clone(), agent.clone()));
                     }
-                    binding_scope.insert(b.name.name.clone(), step_ty.clone());
-                    binding_types.push((b.name.name.clone(), Some(step_ty)));
+                    binding_scope.insert(b.name.name.clone(), tys.intern(step_ty.clone()));
+                    binding_types.push((b.name.name.clone(), Some(tys.intern(step_ty))));
                 }
                 Err(err) => {
                     errors.push(err);
@@ -2891,7 +2919,7 @@ fn check_property_body(
             binding_types.push((b.name.name.clone(), None));
             continue;
         }
-        let ty = match checker::resolve_type_ref(&b.type_ref, &resolved.types) {
+        let ty = match checker::resolve_type_ref(&b.type_ref, &resolved.types, tys) {
             Some(t) => {
                 record_type_refs_in_property(&b.type_ref, &resolved, refs);
                 t
@@ -2910,7 +2938,7 @@ fn check_property_body(
                 continue;
             }
         };
-        if !prop_binding_generable(&ty, &resolved.types, PROP_GEN_DEPTH) {
+        if !prop_binding_generable(ty, &resolved.types, PROP_GEN_DEPTH, tys) {
             errors.push(
                 CompileError::new(
                     "bynk.val.needs_pin",
@@ -2924,7 +2952,7 @@ fn check_property_body(
                 .with_note("supply the witness in a `case` with a pinned `Val[T](...)` instead"),
             );
         }
-        binding_scope.insert(b.name.name.clone(), ty.clone());
+        binding_scope.insert(b.name.name.clone(), ty);
         binding_types.push((b.name.name.clone(), Some(ty)));
     }
 
@@ -2946,7 +2974,7 @@ fn check_property_body(
             let ops = decl
                 .ops
                 .iter()
-                .map(|op| build_capability_op_info(op, &resolved.types))
+                .map(|op| build_capability_op_info(op, &resolved.types, tys))
                 .collect();
             capability_info_map.insert(
                 name.clone(),
@@ -2958,7 +2986,7 @@ fn check_property_body(
         }
     }
     let given_declared: Vec<String> = capability_info_map.keys().cloned().collect();
-    let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
+    let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types, tys).unwrap();
     let return_ty_span = prop.span;
     let mut no_hints = HintSink::new();
     let mut no_locals = LocalsSink::new();
@@ -2969,7 +2997,7 @@ fn check_property_body(
     let _ = checker::check_body(
         &resolved,
         &prop.forall.body,
-        &return_ty,
+        return_ty,
         return_ty_span,
         binding_scope,
         checker::CapabilityCtx {
@@ -2984,6 +3012,7 @@ fn check_property_body(
         target_test_actors(unit_tables.get(target_name)),
         prop.forall.where_pred.as_ref(),
         checker::CheckSinks {
+            tys,
             expr_types: &mut expr_types,
             errors,
             refs,
@@ -2996,7 +3025,7 @@ fn check_property_body(
     // Conservative restates-refinement flag: a single-binding property whose
     // body is exactly `expect <pred>` restating the bound var's refinement.
     if let [(var, Some(ty))] = binding_types.as_slice()
-        && let Some(refinement) = named_refinement(ty, &resolved.types)
+        && let Some(refinement) = named_refinement(*ty, &resolved.types, tys)
         && let [stmt] = prop.forall.body.statements.as_slice()
         && let Statement::Expect(e) = stmt
         && predicate_restates_refinement(&e.value, var, refinement)
@@ -3008,7 +3037,7 @@ fn check_property_body(
                 format!(
                     "property `{}` merely re-checks a refinement type `{}` already guarantees",
                     prop.name,
-                    ty.display()
+                    ty.display(tys)
                 ),
             )
             .with_note(
@@ -3177,7 +3206,7 @@ fn build_privileged_resolved(
 /// and could mix with `number` arithmetic — dev-guard only), or a parameter the
 /// generator cannot inhabit (an over-narrow / `Matches`-pinned refinement) —
 /// never a false error, mirroring an over-narrow `where`.
-fn is_attackable_contract(f: &FnDecl, resolved: &ResolvedCommons) -> bool {
+fn is_attackable_contract(f: &FnDecl, resolved: &ResolvedCommons, tys: &Arc<Types>) -> bool {
     if !matches!(&f.name, FnName::Free(_)) {
         return false;
     }
@@ -3191,17 +3220,17 @@ fn is_attackable_contract(f: &FnDecl, resolved: &ResolvedCommons) -> bool {
         return false;
     }
     for p in &f.params {
-        let Some(ty) = checker::resolve_type_ref(&p.type_ref, &resolved.types) else {
+        let Some(ty) = checker::resolve_type_ref(&p.type_ref, &resolved.types, tys) else {
             return false;
         };
         // Restrict to primitive (or refined-over-primitive) parameters: a
         // generated composite carries `bigint` fields that would mix with the
         // function's `number` arithmetic. Composite-param contracts are covered
         // by the dev guard.
-        if numeric_or_scalar_base(&ty, &resolved.types).is_none() {
+        if numeric_or_scalar_base(ty, &resolved.types, tys).is_none() {
             return false;
         }
-        if !prop_binding_generable(&ty, &resolved.types, PROP_GEN_DEPTH) {
+        if !prop_binding_generable(ty, &resolved.types, PROP_GEN_DEPTH, tys) {
             return false;
         }
     }
@@ -3215,10 +3244,11 @@ fn is_attackable_contract(f: &FnDecl, resolved: &ResolvedCommons) -> bool {
 /// (`Int` generates a `bigint`, but functions do `number` arithmetic — v0.114's
 /// generator/erasure split, harmless until a generated value flows into a call).
 fn numeric_or_scalar_base(
-    ty: &checker::Ty,
+    ty: checker::TyId,
     types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Arc<Types>,
 ) -> Option<BaseType> {
-    match ty {
+    match &*tys.get(ty) {
         checker::Ty::Base(b) => Some(*b),
         checker::Ty::Named { name, .. } => match &types.get(name)?.body {
             TypeBody::Refined { base, .. } | TypeBody::Opaque { base, .. } => Some(*base),
@@ -3236,6 +3266,7 @@ fn attackable_contracts(
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    tys: &Arc<Types>,
 ) -> Option<(ResolvedCommons, Vec<FnDecl>)> {
     let (resolved, _) = build_privileged_resolved(
         target_name,
@@ -3249,7 +3280,7 @@ fn attackable_contracts(
         .fns
         .values()
         .map(std::sync::Arc::as_ref)
-        .filter(|f| is_attackable_contract(f, &resolved))
+        .filter(|f| is_attackable_contract(f, &resolved, tys))
         .cloned()
         .collect();
     fns.sort_by_key(|a| a.name.display());
@@ -3305,6 +3336,7 @@ fn emit_test_module(
     tests_prefix: &Path,
     import_ext: ImportExt,
     contracts: bool,
+    tys: &Arc<Types>,
 ) -> Option<(PathBuf, String, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
     // fixed set, but the bodies spliced into it lower through the ordinary `Bytes`
@@ -3399,6 +3431,7 @@ fn emit_test_module(
             unit_uses,
             unit_consumes,
             unit_consumes_aliases,
+            tys,
         )
         .map(|(r, fns)| (Some(r), fns))
         .unwrap_or((None, Vec::new()))
@@ -3467,6 +3500,7 @@ fn emit_test_module(
             unit_consumes,
             unit_consumes_aliases,
             &runtime_use,
+            tys,
         ));
         out.push('\n');
     }
@@ -3524,6 +3558,7 @@ fn emit_test_module(
                 &parsed[i].source,
                 &rel_path,
                 &runtime_use,
+                tys,
             );
             // v0.70: merge this case's body checkpoints into the module map under
             // the case's `.bynk` source (a test group can span several files).
@@ -3581,6 +3616,7 @@ fn emit_test_module(
                     &parsed[i].source,
                     &rel_path,
                     &runtime_use,
+                    tys,
                 )
             } else {
                 emit_test_property_function(
@@ -3596,6 +3632,7 @@ fn emit_test_module(
                     &parsed[i].source,
                     &rel_path,
                     &runtime_use,
+                    tys,
                 )
             };
             out.push_str(&prop_text);
@@ -3644,6 +3681,7 @@ fn emit_test_module(
             unit_consumes_aliases,
             &rep_rel_path,
             &runtime_use,
+            tys,
         );
         out.push_str(&attack_text);
         out.push('\n');
@@ -3896,6 +3934,7 @@ fn emit_stub_class(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     runtime_use: &RuntimeUse,
+    tys: &Arc<Types>,
 ) -> String {
     let mut out = String::new();
     let cap = &rp.cap;
@@ -4009,6 +4048,7 @@ fn emit_stub_class(
                         unit_consumes,
                         unit_consumes_aliases,
                         runtime_use,
+                        tys,
                     );
                     let vname = format!("__pv_{idx}_{i}");
                     out.push_str(&format!("    const {vname} = await (async () => {{\n"));
@@ -4037,6 +4077,7 @@ fn emit_stub_class(
                 unit_consumes,
                 unit_consumes_aliases,
                 runtime_use,
+                tys,
             );
             for line in rhs_body.lines() {
                 out.push_str("      ");
@@ -4067,6 +4108,7 @@ fn emit_stub_rhs(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     runtime_use: &RuntimeUse,
+    tys: &Arc<Types>,
 ) -> String {
     const FAULT: &str = "throw new Error(\"bynk: injected capability fault (stubs … fails)\");";
     let lower = |e: &Expr| {
@@ -4080,6 +4122,7 @@ fn emit_stub_rhs(
             unit_consumes,
             unit_consumes_aliases,
             runtime_use,
+            tys,
         )
     };
     match &clause.rhs {
@@ -4137,6 +4180,7 @@ fn lower_stub_value_block(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     runtime_use: &RuntimeUse,
+    tys: &Arc<Types>,
 ) -> String {
     let owning_unit = target_name.to_string();
     let mut typed = synthetic_typed_commons_for_target(&owning_unit, unit_tables, unit_uses);
@@ -4155,6 +4199,7 @@ fn lower_stub_value_block(
             &resolved,
             checker::HandlerBodyCheck::new(&block, ret_type, params, &[]),
             checker::CheckSinks {
+                tys,
                 expr_types: &mut typed.expr_types,
                 errors: &mut errs,
                 refs: &mut RefSink::new(),
@@ -4244,6 +4289,11 @@ fn synthetic_typed_commons_for_target(
         methods,
         expr_types: HashMap::new(),
         warnings: vec![],
+        // T3.6b (R4.1): a synthesised commons carries no checked expressions
+        // (`expr_types` is empty), so it owns a fresh table. Every `TyId` the
+        // emission of *this* commons mints comes from here, and none from a
+        // real unit's table is ever resolved against it.
+        ty_intern: std::sync::Arc::new(checker::Types::new()),
     }
 }
 
@@ -4563,6 +4613,7 @@ fn emit_test_case_function(
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
+    tys: &Arc<Types>,
 ) -> (String, SourceMapBuilder) {
     let _ = stubs;
     let mut out = String::new();
@@ -4601,6 +4652,7 @@ fn emit_test_case_function(
             &mut throwaway_errors,
             &mut throwaway_refs,
             HashMap::new(),
+            tys,
         );
     }
     let cross = bynk_check::resolver::CrossContextInfo::default();
@@ -4840,11 +4892,16 @@ fn refined_gen_ts(
 /// A TypeScript expression drawing a random inhabitant of a resolved type using
 /// the in-scope `rng` — the property generator (DECISION P: a type is its own
 /// inhabitant space). Sums pick a random variant; records generate every field.
-fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, depth: u32) -> String {
+fn gen_ts_for_ty(
+    ty: checker::TyId,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    depth: u32,
+    tys: &Arc<Types>,
+) -> String {
     if depth == 0 {
-        return canon_ts_for_ty(ty, types, 1);
+        return canon_ts_for_ty(ty, types, 1, tys);
     }
-    match ty {
+    match &*tys.get(ty) {
         checker::Ty::Base(BaseType::Int) => {
             let (lo, hi, _) = int_bounds(None);
             format!("rng.int({lo}n, {hi}n)")
@@ -4881,8 +4938,8 @@ fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, depth
                                     .payload
                                     .iter()
                                     .map(|f| {
-                                        checker::resolve_type_ref(&f.type_ref, types)
-                                            .map(|t| gen_ts_for_ty(&t, types, depth - 1))
+                                        checker::resolve_type_ref(&f.type_ref, types, tys)
+                                            .map(|t| gen_ts_for_ty(t, types, depth - 1, tys))
                                             .unwrap_or_else(|| "undefined".to_string())
                                     })
                                     .collect();
@@ -4901,8 +4958,8 @@ fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, depth
                         .fields
                         .iter()
                         .map(|f| {
-                            let g = checker::resolve_type_ref(&f.type_ref, types)
-                                .map(|t| gen_ts_for_ty(&t, types, depth - 1))
+                            let g = checker::resolve_type_ref(&f.type_ref, types, tys)
+                                .map(|t| gen_ts_for_ty(t, types, depth - 1, tys))
                                 .unwrap_or_else(|| "undefined".to_string());
                             format!("{}: {}", f.name.name, g)
                         })
@@ -4918,11 +4975,16 @@ fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, depth
 /// A canonical (deterministic, boundary) inhabitant of a resolved type — the
 /// boundary value the runner draws first (refinement floor / minimum length /
 /// first variant), and the shrink target for sums.
-fn canon_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, depth: u32) -> String {
+fn canon_ts_for_ty(
+    ty: checker::TyId,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    depth: u32,
+    tys: &Arc<Types>,
+) -> String {
     if depth == 0 {
         return "undefined".to_string();
     }
-    match ty {
+    match &*tys.get(ty) {
         checker::Ty::Base(BaseType::Int) => "0n".to_string(),
         checker::Ty::Base(BaseType::String) => "\"\"".to_string(),
         checker::Ty::Base(BaseType::Bool) => "true".to_string(),
@@ -4969,8 +5031,8 @@ fn canon_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, dep
                             .payload
                             .iter()
                             .map(|f| {
-                                checker::resolve_type_ref(&f.type_ref, types)
-                                    .map(|t| canon_ts_for_ty(&t, types, depth - 1))
+                                checker::resolve_type_ref(&f.type_ref, types, tys)
+                                    .map(|t| canon_ts_for_ty(t, types, depth - 1, tys))
                                     .unwrap_or_else(|| "undefined".to_string())
                             })
                             .collect();
@@ -4982,8 +5044,8 @@ fn canon_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>, dep
                         .fields
                         .iter()
                         .map(|f| {
-                            let g = checker::resolve_type_ref(&f.type_ref, types)
-                                .map(|t| canon_ts_for_ty(&t, types, depth - 1))
+                            let g = checker::resolve_type_ref(&f.type_ref, types, tys)
+                                .map(|t| canon_ts_for_ty(t, types, depth - 1, tys))
                                 .unwrap_or_else(|| "undefined".to_string());
                             format!("{}: {}", f.name.name, g)
                         })
@@ -5006,9 +5068,9 @@ struct BindingGen {
 }
 
 /// Build the generator descriptor for a binding whose resolved type is `ty`.
-fn binding_gen(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>) -> BindingGen {
-    let gen_ts = gen_ts_for_ty(ty, types, PROP_GEN_DEPTH);
-    let (boundaries, shrink) = match ty {
+fn binding_gen(ty: checker::TyId, types: &HashMap<String, Arc<TypeDecl>>, tys: &Arc<Types>) -> BindingGen {
+    let gen_ts = gen_ts_for_ty(ty, types, PROP_GEN_DEPTH, tys);
+    let (boundaries, shrink) = match &*tys.get(ty) {
         checker::Ty::Base(BaseType::Int) => {
             let (lo, hi, floor) = int_bounds(None);
             (
@@ -5068,17 +5130,17 @@ fn binding_gen(ty: &checker::Ty, types: &HashMap<String, Arc<TypeDecl>>) -> Bind
                         )
                     }
                     _ => (
-                        vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
+                        vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH, tys)],
                         "[]".to_string(),
                     ),
                 }
             }
             Some(TypeBody::Sum(_)) => (
-                vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
-                format!("[{}]", canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)),
+                vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH, tys)],
+                format!("[{}]", canon_ts_for_ty(ty, types, PROP_GEN_DEPTH, tys)),
             ),
             _ => (
-                vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
+                vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH, tys)],
                 "[]".to_string(),
             ),
         },
@@ -5109,6 +5171,7 @@ fn emit_test_property_function(
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
+    tys: &Arc<Types>,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("async function {runner_name}() {{\n"));
@@ -5137,8 +5200,8 @@ fn emit_test_property_function(
     for b in &prop.forall.bindings {
         let bg = resolved
             .as_ref()
-            .and_then(|r| checker::resolve_type_ref(&b.type_ref, &r.types).map(|t| (t, r)))
-            .map(|(t, r)| binding_gen(&t, &r.types))
+            .and_then(|r| checker::resolve_type_ref(&b.type_ref, &r.types, tys).map(|t| (t, r)))
+            .map(|(t, r)| binding_gen(t, &r.types, tys))
             .unwrap_or(BindingGen {
                 boundaries: Vec::new(),
                 gen_ts: "undefined".to_string(),
@@ -5257,6 +5320,7 @@ fn emit_test_history_property_function(
     source: &str,
     rel_path: &str,
     runtime_use: &RuntimeUse,
+    tys: &Arc<Types>,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("async function {runner_name}() {{\n"));
@@ -5304,7 +5368,7 @@ fn emit_test_history_property_function(
         });
         let mut throwaway_refs = RefSink::new();
         let step_ty =
-            check_history_binding(&inner, prop.span, &mut resolved, &mut throwaway_refs).ok();
+            check_history_binding(&inner, prop.span, &mut resolved, &mut throwaway_refs, tys).ok();
 
         // Per-handler argument generators (the slice-2 value generator over each
         // handler parameter), in declaration order — the sequence generator picks a
@@ -5316,8 +5380,8 @@ fn emit_test_history_property_function(
                     .params
                     .iter()
                     .map(|p| {
-                        let bg = checker::resolve_type_ref(&p.type_ref, &resolved.types)
-                            .map(|t| binding_gen(&t, &resolved.types))
+                        let bg = checker::resolve_type_ref(&p.type_ref, &resolved.types, tys)
+                            .map(|t| binding_gen(t, &resolved.types, tys))
                             .unwrap_or(BindingGen {
                                 boundaries: Vec::new(),
                                 gen_ts: "undefined".to_string(),
@@ -5340,8 +5404,8 @@ fn emit_test_history_property_function(
         }
 
         if let Some(step_ty) = step_ty {
-            let mut scope: HashMap<String, checker::Ty> = HashMap::new();
-            scope.insert(run_var.to_string(), step_ty);
+            let mut scope: HashMap<String, checker::TyId> = HashMap::new();
+            scope.insert(run_var.to_string(), tys.intern(step_ty));
             let mut throwaway_errors: Vec<CompileError> = Vec::new();
             let mut throwaway_refs2 = RefSink::new();
             typed.expr_types = typecheck_case_body(
@@ -5353,6 +5417,7 @@ fn emit_test_history_property_function(
                 &mut throwaway_errors,
                 &mut throwaway_refs2,
                 scope,
+                tys,
             );
         }
         // Carry the synthetic call/step/state types into the lowering commons so
@@ -5439,6 +5504,7 @@ fn emit_contract_attack_function(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     rel_path: &str,
     runtime_use: &RuntimeUse,
+    tys: &Arc<Types>,
 ) -> String {
     let FnName::Free(fname) = &f.name else {
         return String::new();
@@ -5460,8 +5526,8 @@ fn emit_contract_attack_function(
     // Generator descriptors, one per parameter, over the target's privileged view.
     out.push_str("    const __gens = [\n");
     for p in &f.params {
-        let bg = checker::resolve_type_ref(&p.type_ref, &resolved.types)
-            .map(|t| binding_gen(&t, &resolved.types))
+        let bg = checker::resolve_type_ref(&p.type_ref, &resolved.types, tys)
+            .map(|t| binding_gen(t, &resolved.types, tys))
             .unwrap_or(BindingGen {
                 boundaries: Vec::new(),
                 gen_ts: "undefined".to_string(),
@@ -5528,8 +5594,8 @@ fn emit_contract_attack_function(
         .params
         .iter()
         .map(|p| {
-            let base = checker::resolve_type_ref(&p.type_ref, &resolved.types)
-                .and_then(|t| numeric_or_scalar_base(&t, &resolved.types));
+            let base = checker::resolve_type_ref(&p.type_ref, &resolved.types, tys)
+                .and_then(|t| numeric_or_scalar_base(t, &resolved.types, tys));
             if base == Some(BaseType::Int) {
                 format!("Number({})", p.name.name)
             } else {

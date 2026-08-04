@@ -1298,7 +1298,7 @@ pub(crate) fn check_static_call(
                 ));
             }
         }
-        return Some(substitute(tys.intern(op_clone.return_ty), &subst, tys));
+        return Some(substitute(op_clone.return_ty, &subst, tys));
     }
     let decl = ctx.input.types.get(&type_name.name)?;
     ctx.refs

@@ -112,6 +112,11 @@ pub struct ProjectAnalysis {
     /// completion's receiver typing. Empty for files with errors (the
     /// clean-file ceiling) and for synthetic files.
     pub expr_types: FileExprTypes,
+    /// T3.6b (R4.1): the intern table every `TyId` in `expr_types` resolves
+    /// against — one table shared across the whole analysis (see
+    /// `checker::check_record_in`), so ids drawn from different units are
+    /// still comparable and resolvable through this one handle.
+    pub ty_intern: std::sync::Arc<bynk_check::checker::Types>,
     /// v0.31 (ADR 0064): per-file local bindings with their scope ranges —
     /// `let`/`let <-`, fn/handler/lambda params — for the scope-at-offset
     /// query backing locals completion + navigation. Synthetic files muted.

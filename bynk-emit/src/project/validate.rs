@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use super::*;
 use crate::emitter;
 use bynk_check::builtin_names::methods::{OF, UNSAFE};
+use bynk_check::checker::{TyId, Types};
 
 /// #926: build a checker-facing [`CapabilityOpInfo`] from a capability op's
 /// AST, with the op's own type parameters (if any) resolved as [`Ty::Var`]
@@ -11,6 +13,7 @@ use bynk_check::builtin_names::methods::{OF, UNSAFE};
 pub(crate) fn build_capability_op_info(
     op: &CapabilityOp,
     types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Arc<Types>,
 ) -> CapabilityOpInfo {
     let vars: HashSet<String> = op.type_params.iter().map(|p| p.name.name.clone()).collect();
     CapabilityOpInfo {
@@ -19,11 +22,12 @@ pub(crate) fn build_capability_op_info(
         params: op
             .params
             .iter()
-            .map(|p| checker::resolve_type_ref_in(&p.type_ref, types, &vars))
-            .map(|t| t.unwrap_or(Ty::Unit))
+            .map(|p| checker::resolve_type_ref_in(&p.type_ref, types, &vars, tys))
+            .map(|t| t.unwrap_or_else(|| tys.intern(Ty::Unit)))
             .collect(),
         param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
-        return_ty: checker::resolve_type_ref_in(&op.return_type, types, &vars).unwrap_or(Ty::Unit),
+        return_ty: checker::resolve_type_ref_in(&op.return_type, types, &vars, tys)
+            .unwrap_or_else(|| tys.intern(Ty::Unit)),
     }
 }
 
@@ -956,6 +960,7 @@ pub(crate) fn check_context_constraints(
     typed: &checker::TypedCommons,
     consumed_types: &HashMap<String, ConsumedType>,
     local_type_names: &HashSet<String>,
+    tys: &Arc<Types>,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
     for item in &typed.commons.items {
@@ -966,6 +971,7 @@ pub(crate) fn check_context_constraints(
                 consumed_types,
                 local_type_names,
                 &mut errors,
+                tys,
             );
         }
     }
@@ -978,6 +984,7 @@ fn walk_block_for_constraints(
     consumed: &HashMap<String, ConsumedType>,
     local: &HashSet<String>,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     let mut exprs = Vec::new();
     for stmt in &block.statements {
@@ -985,7 +992,7 @@ fn walk_block_for_constraints(
     }
     exprs.push(&block.tail);
     for e in exprs {
-        walk_expr_for_constraints(e, typed, consumed, local, errors);
+        walk_expr_for_constraints(e, typed, consumed, local, errors, tys);
     }
 }
 
@@ -1009,6 +1016,7 @@ fn walk_expr_for_constraints(
     consumed: &HashMap<String, ConsumedType>,
     local: &HashSet<String>,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     match &e.kind {
         ExprKind::RecordConstruction { type_name, .. } => {
@@ -1123,8 +1131,8 @@ fn walk_expr_for_constraints(
         // If the discriminant is typed as an opaquely-exported consumed
         // type, the match is forbidden because we can't reveal the variants.
         ExprKind::Match { discriminant, .. } => {
-            if let Some(ty) = typed.expr_types.get(&discriminant.id).map(|te| &te.ty) {
-                let display = ty.display();
+            if let Some(ty) = typed.expr_ty(discriminant.id).as_deref() {
+                let display = ty.display(tys);
                 if let Some(ct) = consumed.get(&display)
                     && ct.visibility == Visibility::Opaque
                 {
@@ -1147,7 +1155,7 @@ fn walk_expr_for_constraints(
         _ => {}
     }
     for child in expr_children(e) {
-        walk_expr_for_constraints(child, typed, consumed, local, errors);
+        walk_expr_for_constraints(child, typed, consumed, local, errors, tys);
     }
 }
 
@@ -1181,6 +1189,7 @@ pub(crate) fn check_context_declarations(
     hints: &mut HintSink,
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
+    tys: &Arc<Types>,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
     let no_vars: HashSet<String> = HashSet::new();
@@ -1217,7 +1226,7 @@ pub(crate) fn check_context_declarations(
             let ops = decl
                 .ops
                 .iter()
-                .map(|op| build_capability_op_info(op, &typed.types))
+                .map(|op| build_capability_op_info(op, &typed.types, tys))
                 .collect();
             (
                 name.clone(),
@@ -1251,13 +1260,13 @@ pub(crate) fn check_context_declarations(
                         .params
                         .iter()
                         .map(|(_, tr)| {
-                            checker::resolve_type_ref_in(tr, &typed.types, &vars)
-                                .unwrap_or(Ty::Unit)
+                            checker::resolve_type_ref_in(tr, &typed.types, &vars, tys)
+                                .unwrap_or_else(|| tys.intern(Ty::Unit))
                         })
                         .collect(),
                     param_names: op.params.iter().map(|(n, _)| n.clone()).collect(),
-                    return_ty: checker::resolve_type_ref_in(&op.return_type, &typed.types, &vars)
-                        .unwrap_or(Ty::Unit),
+                    return_ty: checker::resolve_type_ref_in(&op.return_type, &typed.types, &vars, tys)
+                        .unwrap_or_else(|| tys.intern(Ty::Unit)),
                 }
             })
             .collect();
@@ -1281,6 +1290,7 @@ pub(crate) fn check_context_declarations(
         locals,
         requirements,
         &mut errors,
+        tys,
     );
     check_service_decls(
         typed,
@@ -1293,6 +1303,7 @@ pub(crate) fn check_context_declarations(
         locals,
         requirements,
         &mut errors,
+        tys,
     );
     check_agent_decls(
         typed,
@@ -1307,6 +1318,7 @@ pub(crate) fn check_context_declarations(
         locals,
         requirements,
         &mut errors,
+        tys,
     );
 
     check_event_field_defaults(
@@ -1318,6 +1330,7 @@ pub(crate) fn check_context_declarations(
         hints,
         locals,
         &mut errors,
+        tys,
     );
 
     check_event_annotations(table, &mut errors);
@@ -1354,6 +1367,7 @@ fn check_event_field_defaults(
     hints: &mut HintSink,
     locals: &mut LocalsSink,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     for event in table.events.values() {
         for field in &event.body.fields {
@@ -1365,6 +1379,7 @@ fn check_event_field_defaults(
                 init,
                 &field.type_ref,
                 resolved,
+                tys,
                 expr_types,
                 errors,
                 refs,
@@ -1521,6 +1536,7 @@ fn check_provider_decls(
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     for provider in table.providers.values() {
         refs.set_owner(&provider.provider_name.name);
@@ -1563,6 +1579,7 @@ fn check_provider_decls(
                     )
                 },
                 checker::CheckSinks {
+                    tys,
                     expr_types: &mut typed.expr_types,
                     errors,
                     refs,
@@ -1589,7 +1606,7 @@ fn check_provider_decls(
 /// v0.44: a service is one protocol adapter — every handler's form must match
 /// the `from <protocol>` header. A `from`-less service (`Call`) admits only
 /// `on call`; mismatches are `bynk.service.{missing_from,mixed_protocols}`.
-fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
+fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>, tys: &Arc<Types>) {
     // v0.104 (slice 3b, D5): at v1 the Workers upgrade routes by the `Upgrade:
     // websocket` header alone (no path/query discriminator), so a context may hold
     // at most one `from websocket` service. Report every WS service past the first
@@ -1657,7 +1674,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
             // distinct types `type_refs_match`'s `_ => false` fallback
             // couldn't classify (List/Map/Query/…) as matching.
             let resolve_ty = |t: &TypeRef| {
-                checker::resolve_type_ref_in(t, &table.types, &HashSet::new()).unwrap_or(Ty::Unit)
+                checker::resolve_type_ref_in(t, &table.types, &HashSet::new(), tys).unwrap_or(tys.intern(Ty::Unit))
             };
             let messages: Vec<&Handler> = service
                 .handlers
@@ -2573,10 +2590,11 @@ fn check_service_decls(
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     // v0.44: a service is one protocol adapter — every handler's form must
     // match the service's `from <protocol>` header.
-    check_service_protocols(table, errors);
+    check_service_protocols(table, errors, tys);
 
     // v0.45: actor-contract well-formedness and the handler `by`-clause checks.
     check_actor_contracts(table, resolved, refs, errors);
@@ -2734,7 +2752,7 @@ fn check_service_decls(
                 ));
             }
             // v0.45: the `by`-bound actor identity, in scope for the body.
-            let actor_binding = handler_actor_binding(handler, &service.protocol, table, resolved);
+            let actor_binding = handler_actor_binding(handler, &service.protocol, table, resolved, tys);
             // v0.103 (real-time track slice 3): an `on open` handler receives a
             // fresh owned `Connection[out]` named `connection`. Inject it as a
             // synthetic first parameter so the body type-checks against it and
@@ -2790,6 +2808,7 @@ fn check_service_decls(
                     )
                 },
                 checker::CheckSinks {
+                    tys,
                     expr_types: &mut typed.expr_types,
                     errors,
                     refs,
@@ -2852,7 +2871,8 @@ fn handler_actor_binding(
     _protocol: &ServiceProtocol,
     table: &UnitTable,
     resolved: &ResolvedCommons,
-) -> Option<(String, checker::Ty)> {
+    tys: &Arc<Types>,
+) -> Option<(String, checker::TyId)> {
     let by = handler.by_clause.as_ref()?;
     // No binder (binder-less `by <Actor>`) ⇒ no identity binding in scope.
     let binder = by.binder.as_ref()?;
@@ -2865,17 +2885,18 @@ fn handler_actor_binding(
     // v0.52: a sum (`by who: A | B`) binds an `ActorSum` the body matches; a
     // single actor binds an `Actor` exposing `.identity`.
     let binder_ty = if by.is_sum() {
-        checker::Ty::ActorSum(
+        tys.intern(checker::Ty::ActorSum(
             by.actors
                 .iter()
-                .map(|a| (a.name.clone(), actor_identity_ty(&a.name, table, resolved)))
+                .map(|a| (a.name.clone(), actor_identity_ty(&a.name, table, resolved, tys)))
                 .collect(),
-        )
+        ))
     } else {
-        checker::Ty::Actor(Box::new(actor_identity_ty(
+        tys.intern(checker::Ty::Actor(actor_identity_ty(
             &by.primary().name,
             table,
             resolved,
+            tys,
         )))
     };
     Some((binder.name.clone(), binder_ty))
@@ -2887,8 +2908,9 @@ fn actor_identity_ty(
     actor_name: &str,
     table: &UnitTable,
     resolved: &ResolvedCommons,
-) -> checker::Ty {
-    actor_identity_ty_guarded(actor_name, table, resolved, &mut Vec::new())
+    tys: &Arc<Types>,
+) -> checker::TyId {
+    actor_identity_ty_guarded(actor_name, table, resolved, &mut Vec::new(), tys)
 }
 
 /// Inner worker carrying a `seen` chain so a malformed **refinement cycle**
@@ -2903,31 +2925,33 @@ fn actor_identity_ty_guarded<'a>(
     table: &'a UnitTable,
     resolved: &ResolvedCommons,
     seen: &mut Vec<&'a str>,
-) -> checker::Ty {
+    tys: &Arc<Types>,
+) -> checker::TyId {
     use bynk_check::actors::{Identity, prelude_actor};
     if let Some(local) = table.actors.get(actor_name) {
         // v0.53: a refinement actor (`actor Admin = User where …`) yields its
         // base's identity — refinement elimination, an `Admin` is-a `User`.
         if let Some(r) = &local.refinement {
             if seen.contains(&actor_name) {
-                return checker::Ty::Unit;
+                return tys.intern(checker::Ty::Unit);
             }
             seen.push(actor_name);
             // Resolve against the declaration's own key so the cycle guard sees
             // the same name on a self-reference.
             if let Some((key, _)) = table.actors.get_key_value(&r.base.name) {
-                return actor_identity_ty_guarded(key.as_str(), table, resolved, seen);
+                return actor_identity_ty_guarded(key.as_str(), table, resolved, seen, tys);
             }
-            return checker::Ty::Unit;
+            return tys.intern(checker::Ty::Unit);
         }
         return match &local.identity {
-            Some(id) => checker::resolve_type_ref(id, &resolved.types).unwrap_or(checker::Ty::Unit),
-            None => checker::Ty::Unit,
+            Some(id) => checker::resolve_type_ref(id, &resolved.types, tys)
+                .unwrap_or_else(|| tys.intern(checker::Ty::Unit)),
+            None => tys.intern(checker::Ty::Unit),
         };
     }
     match prelude_actor(actor_name).map(|c| c.identity) {
-        Some(Identity::CallerId) => checker::Ty::Base(bynk_syntax::ast::BaseType::String),
-        _ => checker::Ty::Unit,
+        Some(Identity::CallerId) => tys.intern(checker::Ty::Base(bynk_syntax::ast::BaseType::String)),
+        _ => tys.intern(checker::Ty::Unit),
     }
 }
 
@@ -3340,18 +3364,19 @@ fn store_field_scopes(
     no_vars: &HashSet<String>,
     refs: &mut RefSink,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) -> (
-    HashMap<String, Ty>,
-    HashMap<String, (Ty, Ty)>,
-    HashMap<String, Ty>,
-    HashMap<String, (Ty, Ty, i64)>,
-    HashMap<String, Ty>,
+    HashMap<String, TyId>,
+    HashMap<String, (TyId, TyId)>,
+    HashMap<String, TyId>,
+    HashMap<String, (TyId, TyId, i64)>,
+    HashMap<String, TyId>,
 ) {
-    let mut cells: HashMap<String, Ty> = HashMap::new();
-    let mut maps: HashMap<String, (Ty, Ty)> = HashMap::new();
-    let mut sets: HashMap<String, Ty> = HashMap::new();
-    let mut caches: HashMap<String, (Ty, Ty, i64)> = HashMap::new();
-    let mut logs: HashMap<String, Ty> = HashMap::new();
+    let mut cells: HashMap<String, TyId> = HashMap::new();
+    let mut maps: HashMap<String, (TyId, TyId)> = HashMap::new();
+    let mut sets: HashMap<String, TyId> = HashMap::new();
+    let mut caches: HashMap<String, (TyId, TyId, i64)> = HashMap::new();
+    let mut logs: HashMap<String, TyId> = HashMap::new();
     let arity_err = |f: &StoreField, kind: &str, want: usize, errors: &mut Vec<CompileError>| {
         errors.push(CompileError::new(
             "bynk.store.kind_arity",
@@ -3388,7 +3413,7 @@ fn store_field_scopes(
                 }
                 let elem = &f.kind.args[0];
                 checker::record_type_refs(elem, types, no_vars, refs);
-                if let Some(ty) = checker::resolve_type_ref(elem, types) {
+                if let Some(ty) = checker::resolve_type_ref(elem, types, tys) {
                     cells.insert(f.name.name.clone(), ty);
                 }
             }
@@ -3400,8 +3425,8 @@ fn store_field_scopes(
                 checker::record_type_refs(&f.kind.args[0], types, no_vars, refs);
                 checker::record_type_refs(&f.kind.args[1], types, no_vars, refs);
                 if let (Some(k), Some(v)) = (
-                    checker::resolve_type_ref(&f.kind.args[0], types),
-                    checker::resolve_type_ref(&f.kind.args[1], types),
+                    checker::resolve_type_ref(&f.kind.args[0], types, tys),
+                    checker::resolve_type_ref(&f.kind.args[1], types, tys),
                 ) {
                     maps.insert(f.name.name.clone(), (k, v));
                 }
@@ -3413,7 +3438,7 @@ fn store_field_scopes(
                 }
                 let elem = &f.kind.args[0];
                 checker::record_type_refs(elem, types, no_vars, refs);
-                if let Some(ty) = checker::resolve_type_ref(elem, types) {
+                if let Some(ty) = checker::resolve_type_ref(elem, types, tys) {
                     sets.insert(f.name.name.clone(), ty);
                 }
             }
@@ -3429,8 +3454,8 @@ fn store_field_scopes(
                 // the entry lifetime. Absent → steer the author to a `Map`.
                 let ttl = cache_ttl_millis(f, errors);
                 if let (Some(k), Some(v), Some(ttl)) = (
-                    checker::resolve_type_ref(&f.kind.args[0], types),
-                    checker::resolve_type_ref(&f.kind.args[1], types),
+                    checker::resolve_type_ref(&f.kind.args[0], types, tys),
+                    checker::resolve_type_ref(&f.kind.args[1], types, tys),
                     ttl,
                 ) {
                     caches.insert(f.name.name.clone(), (k, v, ttl));
@@ -3446,7 +3471,7 @@ fn store_field_scopes(
                 }
                 let elem = &f.kind.args[0];
                 checker::record_type_refs(elem, types, no_vars, refs);
-                if let Some(t) = checker::resolve_type_ref(elem, types) {
+                if let Some(t) = checker::resolve_type_ref(elem, types, tys) {
                     logs.insert(f.name.name.clone(), t);
                 }
             }
@@ -3506,6 +3531,7 @@ fn check_agent_decls(
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     for agent in table.agents.values() {
         refs.set_owner(&agent.name.name);
@@ -3517,11 +3543,11 @@ fn check_agent_decls(
         // bare-read scope and the `:=`/invariant checks below.
         #[allow(clippy::type_complexity)]
         let (store_cells, store_maps, store_sets, store_caches, store_logs): (
-            HashMap<String, Ty>,
-            HashMap<String, (Ty, Ty)>,
-            HashMap<String, Ty>,
-            HashMap<String, (Ty, Ty, i64)>,
-            HashMap<String, Ty>,
+            HashMap<String, TyId>,
+            HashMap<String, (TyId, TyId)>,
+            HashMap<String, TyId>,
+            HashMap<String, (TyId, TyId, i64)>,
+            HashMap<String, TyId>,
         ) = if agent.store_fields.is_empty() {
             (
                 HashMap::new(),
@@ -3531,7 +3557,7 @@ fn check_agent_decls(
                 HashMap::new(),
             )
         } else {
-            store_field_scopes(agent, &typed.types, no_vars, refs, errors)
+            store_field_scopes(agent, &typed.types, no_vars, refs, errors, tys)
         };
         // v0.93 (ADR 0118 D4): index-hygiene warnings cross-reference `@indexed`
         // declarations against the equality filters in the handlers.
@@ -3610,6 +3636,7 @@ fn check_agent_decls(
                     init,
                     elem,
                     &resolved_for_handler,
+                    tys,
                     &mut typed.expr_types,
                     errors,
                     refs,
@@ -3634,13 +3661,14 @@ fn check_agent_decls(
                 );
             }
         }
-        let state_ty = Ty::Named {
+        let state_ty = tys.intern(Ty::Named {
             name: agent_state_name.clone(),
             kind: checker::NamedKind::Record,
             args: Vec::new(),
-        };
-        let key_ty = checker::resolve_type_ref(&agent.key_type, &typed.types).unwrap_or(Ty::Unit);
-        let mut self_scope: HashMap<String, Ty> = HashMap::new();
+        });
+        let key_ty = checker::resolve_type_ref(&agent.key_type, &typed.types, tys)
+            .unwrap_or_else(|| tys.intern(Ty::Unit));
+        let mut self_scope: HashMap<String, TyId> = HashMap::new();
         // `self` is a synthetic record carrying the agent's key field, so that
         // `self.<key>` resolves. The parser treats `self.x` as FieldAccess on
         // Ident("self"), so `self` is given a one-off synthetic record type.
@@ -3688,11 +3716,11 @@ fn check_agent_decls(
         );
         self_scope.insert(
             "self".to_string(),
-            Ty::Named {
+            tys.intern(Ty::Named {
                 name: agent_self_name.clone(),
                 kind: checker::NamedKind::Record,
                 args: Vec::new(),
-            },
+            }),
         );
         // v0.81: each `Cell` store field is a bare local of its element type
         // (implicit deref in read position); the `:=` write form is checked
@@ -3736,6 +3764,7 @@ fn check_agent_decls(
             &store_cells,
             &agent.name.name,
             &resolved_for_handler,
+            tys,
             &mut typed.expr_types,
             errors,
             refs,
@@ -3748,7 +3777,7 @@ fn check_agent_decls(
         // `old`/`new` state pair, checked against the synthetic state record.
         checker::check_transitions(
             &agent.transitions,
-            &state_ty,
+            state_ty,
             &agent.name.name,
             &resolved_for_handler,
             &mut typed.expr_types,
@@ -3757,6 +3786,7 @@ fn check_agent_decls(
             hints,
             locals,
             requirements,
+            tys,
         );
 
         for handler in &agent.handlers {
@@ -3804,7 +3834,7 @@ fn check_agent_decls(
                 checker::HandlerBodyCheck {
                     capabilities: handler_caps,
                     declared_capabilities: capability_info_map.clone(),
-                    agent_state_ty: Some(state_ty.clone()),
+                    agent_state_ty: Some(state_ty),
                     agent_self_scope: Some(self_scope.clone()),
                     given_anchor: Some(handler.return_type.span()),
                     report_unused: true,
@@ -3817,6 +3847,7 @@ fn check_agent_decls(
                     )
                 },
                 checker::CheckSinks {
+                    tys,
                     expr_types: &mut typed.expr_types,
                     errors,
                     refs,
@@ -4557,6 +4588,7 @@ fn validate_store_field_value_types(
     f: &StoreField,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     let head = f.kind.head.name.as_str();
     let reject_held_storage = |span: Span, errors: &mut Vec<CompileError>| {
@@ -4577,19 +4609,19 @@ fn validate_store_field_value_types(
         // The value position(s) where a held resource is admitted.
         "Cell" => match f.kind.args.first() {
             Some(v) if type_ref_is_held(v) => {} // admitted
-            Some(v) => reject_fn_types(v, "an agent store field", types, errors),
+            Some(v) => reject_fn_types(v, "an agent store field", types, errors, tys),
             None => {}
         },
         "Map" => match f.kind.args.as_slice() {
             [k, v] => {
-                reject_fn_types(k, "an agent store field", types, errors); // key
+                reject_fn_types(k, "an agent store field", types, errors, tys); // key
                 if !type_ref_is_held(v) {
-                    reject_fn_types(v, "an agent store field", types, errors);
+                    reject_fn_types(v, "an agent store field", types, errors, tys);
                 }
             }
             args => {
                 for arg in args {
-                    reject_fn_types(arg, "an agent store field", types, errors);
+                    reject_fn_types(arg, "an agent store field", types, errors, tys);
                 }
             }
         },
@@ -4599,13 +4631,13 @@ fn validate_store_field_value_types(
                 if type_ref_is_held(arg) {
                     reject_held_storage(arg.span(), errors);
                 } else {
-                    reject_fn_types(arg, "an agent store field", types, errors);
+                    reject_fn_types(arg, "an agent store field", types, errors, tys);
                 }
             }
         }
         _ => {
             for arg in &f.kind.args {
-                reject_fn_types(arg, "an agent store field", types, errors);
+                reject_fn_types(arg, "an agent store field", types, errors, tys);
             }
         }
     }
@@ -4616,6 +4648,7 @@ fn reject_fn_types(
     what: &str,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     match r {
         TypeRef::Fn(_, _, span) => {
@@ -4685,13 +4718,13 @@ fn reject_fn_types(
         // v0.20b: the boundary rule looks through collections — a
         // `List[Int -> Int]` field is still `function_at_boundary`.
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
-            reject_fn_types(a, what, types, errors);
-            reject_fn_types(b, what, types, errors);
+            reject_fn_types(a, what, types, errors, tys);
+            reject_fn_types(b, what, types, errors, tys);
         }
         TypeRef::Option(a, _)
         | TypeRef::Effect(a, _)
         | TypeRef::HttpResult(a, _)
-        | TypeRef::List(a, _) => reject_fn_types(a, what, types, errors),
+        | TypeRef::List(a, _) => reject_fn_types(a, what, types, errors, tys),
         // v0.119: a `History[Agent]` reaching a declared position is already
         // reported by the resolver (`bynk.history.outside_property`); nothing to
         // add here.
@@ -4726,7 +4759,7 @@ fn reject_fn_types(
                 );
             }
             for a in args {
-                reject_fn_types(a, what, types, errors);
+                reject_fn_types(a, what, types, errors, tys);
             }
         }
         TypeRef::Base(..)
@@ -4751,6 +4784,7 @@ fn reject_fn_types(
 /// source.
 pub(crate) fn check_function_type_boundaries(
     parsed: &[ParsedFile],
+    tys: &Arc<Types>,
 ) -> Vec<(PathBuf, CompileError)> {
     // v0.174 (#592): the boundary check now also rejects a *recursive* generic
     // record (`reject_fn_types`' `App` arm), which needs the type declarations to
@@ -4760,7 +4794,7 @@ pub(crate) fn check_function_type_boundaries(
     let mut attributed: Vec<(PathBuf, CompileError)> = Vec::new();
     for pf in parsed {
         let mut file_errors: Vec<CompileError> = Vec::new();
-        check_function_type_boundary_items(pf.items(), &types, &mut file_errors);
+        check_function_type_boundary_items(pf.items(), &types, &mut file_errors, tys);
         attributed.extend(
             file_errors
                 .into_iter()
@@ -4801,6 +4835,7 @@ pub fn check_function_type_boundary_items(
     items: &[CommonsItem],
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
+    tys: &Arc<Types>,
 ) {
     {
         for item in items {
@@ -4808,7 +4843,7 @@ pub fn check_function_type_boundary_items(
                 CommonsItem::Type(t) => match &t.body {
                     TypeBody::Record(r) => {
                         for f in &r.fields {
-                            reject_fn_types(&f.type_ref, "a record field", types, errors);
+                            reject_fn_types(&f.type_ref, "a record field", types, errors, tys);
                         }
                     }
                     TypeBody::Sum(s) => {
@@ -4819,6 +4854,7 @@ pub fn check_function_type_boundary_items(
                                     "a sum-variant payload",
                                     types,
                                     errors,
+                                    tys,
                                 );
                             }
                         }
@@ -4830,7 +4866,7 @@ pub fn check_function_type_boundary_items(
                 // so the same record-field rule applies as for a `type`.
                 CommonsItem::Event(e) => {
                     for f in &e.body.fields {
-                        reject_fn_types(&f.type_ref, "an event field", types, errors);
+                        reject_fn_types(&f.type_ref, "an event field", types, errors, tys);
                     }
                 }
                 CommonsItem::Capability(c) => {
@@ -4841,6 +4877,7 @@ pub fn check_function_type_boundary_items(
                                 "a capability operation signature",
                                 types,
                                 errors,
+                                tys,
                             );
                         }
                         // v0.102 (§2.9.1): a capability operation may *produce* a
@@ -4852,6 +4889,7 @@ pub fn check_function_type_boundary_items(
                                 "a capability operation signature",
                                 types,
                                 errors,
+                                tys,
                             );
                         }
                     }
@@ -4869,6 +4907,7 @@ pub fn check_function_type_boundary_items(
                                     "a service handler signature",
                                     types,
                                     errors,
+                                    tys,
                                 );
                             }
                         }
@@ -4877,13 +4916,14 @@ pub fn check_function_type_boundary_items(
                             "a service handler signature",
                             types,
                             errors,
+                            tys,
                         );
                     }
                 }
                 CommonsItem::Agent(a) => {
-                    reject_fn_types(&a.key_type, "an agent key", types, errors);
+                    reject_fn_types(&a.key_type, "an agent key", types, errors, tys);
                     for f in &a.store_fields {
-                        validate_store_field_value_types(f, types, errors);
+                        validate_store_field_value_types(f, types, errors, tys);
                     }
                     for h in &a.handlers {
                         for p in &h.params {
@@ -4895,6 +4935,7 @@ pub fn check_function_type_boundary_items(
                                     "an agent handler signature",
                                     types,
                                     errors,
+                                    tys,
                                 );
                             }
                         }
@@ -4903,12 +4944,13 @@ pub fn check_function_type_boundary_items(
                             "an agent handler signature",
                             types,
                             errors,
+                            tys,
                         );
                     }
                 }
                 CommonsItem::Actor(a) => {
                     if let Some(id) = &a.identity {
-                        reject_fn_types(id, "an actor identity type", types, errors);
+                        reject_fn_types(id, "an actor identity type", types, errors, tys);
                     }
                 }
                 // slice 1: `MessageEntry.code`/`.template` are plain string

@@ -30,7 +30,7 @@ use bynk_check::builtin_names::methods::{
     TRAVERSE_TRY,
 };
 use bynk_check::builtin_names::types::*;
-use bynk_check::checker::{CheckedProgram, NamedKind, Ty, TypedCommons};
+use bynk_check::checker::{CheckedProgram, NamedKind, Ty, TyId, TypedCommons, Types};
 use bynk_syntax::ast::*;
 
 pub mod contracts;
@@ -995,9 +995,9 @@ fn file_mentions_connection(commons: &TypedCommons) -> bool {
 /// v0.22b: a checker `Ty` rendered back to a `TypeRef` for the codec
 /// machinery (which is `TypeRef`-driven). `None` for types the codec
 /// rejects anyway (functions, effects, type variables).
-fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
+fn ty_to_type_ref(t: TyId, tys: &Arc<Types>) -> Option<TypeRef> {
     let sp = bynk_syntax::span::Span::new(0, 0);
-    Some(match t {
+    Some(match &*tys.get(t) {
         Ty::Base(b) => TypeRef::Base(*b, sp),
         // v0.174 (#592): a generic-record instantiation (`Paginated[User]`,
         // `args` non-empty) round-trips as a `TypeRef::App` so the codec closure
@@ -1010,7 +1010,7 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
             },
             args: args
                 .iter()
-                .map(ty_to_type_ref)
+                .map(|a| ty_to_type_ref(*a, tys))
                 .collect::<Option<Vec<_>>>()?,
             span: sp,
         },
@@ -1019,15 +1019,15 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
             span: sp,
         }),
         Ty::Result(a, b) => TypeRef::Result(
-            Box::new(ty_to_type_ref(a)?),
-            Box::new(ty_to_type_ref(b)?),
+            Box::new(ty_to_type_ref(*a, tys)?),
+            Box::new(ty_to_type_ref(*b, tys)?),
             sp,
         ),
-        Ty::Option(a) => TypeRef::Option(Box::new(ty_to_type_ref(a)?), sp),
-        Ty::List(a) => TypeRef::List(Box::new(ty_to_type_ref(a)?), sp),
+        Ty::Option(a) => TypeRef::Option(Box::new(ty_to_type_ref(*a, tys)?), sp),
+        Ty::List(a) => TypeRef::List(Box::new(ty_to_type_ref(*a, tys)?), sp),
         Ty::Map(k, v) => TypeRef::Map(
-            Box::new(ty_to_type_ref(k)?),
-            Box::new(ty_to_type_ref(v)?),
+            Box::new(ty_to_type_ref(*k, tys)?),
+            Box::new(ty_to_type_ref(*v, tys)?),
             sp,
         ),
         Ty::Unit => TypeRef::Unit(sp),
@@ -1055,6 +1055,7 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
 /// v0.22b: collect the `Json.encode`/`Json.decode[T]` target type-refs in
 /// this file's bodies — the roots of the module-local codec-helper closure.
 fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
+    let tys = commons.tys();
     let mut roots: Vec<TypeRef> = Vec::new();
     {
         let mut visit = |e: &Expr| {
@@ -1075,16 +1076,16 @@ fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
             }
             match method.name.as_str() {
                 "decode" => {
-                    if let Some(Ty::Result(t, _)) = commons.expr_types.get(&e.id).map(|te| &te.ty)
-                        && let Some(tr) = ty_to_type_ref(t)
+                    if let Some(Ty::Result(t, _)) = commons.expr_ty(e.id).as_deref()
+                        && let Some(tr) = ty_to_type_ref(*t, tys)
                     {
                         roots.push(tr);
                     }
                 }
                 "encode" => {
                     if let Some(a) = args.first()
-                        && let Some(t) = commons.expr_types.get(&a.id).map(|te| &te.ty)
-                        && let Some(tr) = ty_to_type_ref(t)
+                        && let Some(t) = commons.expr_types.get(&a.id).map(|te| te.ty)
+                        && let Some(tr) = ty_to_type_ref(t, tys)
                     {
                         roots.push(tr);
                     }
@@ -2143,7 +2144,7 @@ fn sum_owner_of_variant(
         kind: NamedKind::Sum,
         name: type_name,
         ..
-    }) = commons.expr_types.get(&id).map(|te| &te.ty)
+    }) = commons.expr_ty(id).as_deref()
         && let Some(decl) = commons.types.get(type_name)
         && let TypeBody::Sum(s) = &decl.body
         && s.variants.iter().any(|v| v.name.name == name)
@@ -3109,7 +3110,7 @@ pub(crate) struct LowerCtx<'a> {
     /// Genuinely cross-cutting rather than kind-specific: it is saved/restored
     /// around lambda bodies, `?`-embedding and match arms *within* whichever
     /// kind is being lowered.
-    return_ty: Option<bynk_check::checker::Ty>,
+    return_ty: Option<bynk_check::checker::TyId>,
     next_tmp: u32,
     /// #908: a stack of per-block frames tracking `let`/`let <-` names that
     /// needed a fresh emitted identifier because the name was already bound
@@ -3819,7 +3820,7 @@ impl<'a> LowerCtx<'a> {
     /// variant test. Mirrors the checker's disambiguation.
     fn is_refined_is_check(&self, value: &Expr, name: &str) -> bool {
         let value_baseish = matches!(
-            self.commons().expr_types.get(&value.id).map(|te| &te.ty),
+            self.commons().expr_ty(value.id).as_deref(),
             Some(Ty::Base(_))
                 | Some(Ty::Named {
                     kind: NamedKind::Refined(_),
@@ -3845,8 +3846,8 @@ impl<'a> LowerCtx<'a> {
         value_text_for_is(value)
     }
     fn receiver_namespace(&self, e: &Expr) -> Option<String> {
-        let ty = self.commons().expr_types.get(&e.id).map(|te| &te.ty)?;
-        if let Ty::Named { name, .. } = ty {
+        let ty = self.commons().expr_ty(e.id)?;
+        if let Ty::Named { name, .. } = &*ty {
             Some(name.clone())
         } else {
             None
@@ -3857,9 +3858,10 @@ impl<'a> LowerCtx<'a> {
     /// looked up via the type tables.
     fn positional_field_name(
         &self,
-        discriminant_ty: Option<&Ty>,
+        discriminant_ty: Option<TyId>,
         variant: &str,
         idx: usize,
+        tys: &Arc<Types>,
     ) -> String {
         match (variant, idx) {
             ("Ok", 0) | ("Some", 0) => return "value".to_string(),
@@ -3868,14 +3870,15 @@ impl<'a> LowerCtx<'a> {
         }
         // v0.52: a multi-actor sum arm binds the resolved actor's identity,
         // carried in the `identity` field of the tagged object.
-        if let Some(Ty::ActorSum(_)) = discriminant_ty {
+        let disc_node = discriminant_ty.map(|t| tys.get(t));
+        if let Some(Ty::ActorSum(_)) = disc_node.as_deref() {
             return "identity".to_string();
         }
         if let Some(Ty::Named {
             kind: NamedKind::Sum,
             name,
             ..
-        }) = discriminant_ty
+        }) = disc_node.as_deref()
             && let Some(decl) = self.commons().types.get(name)
             && let TypeBody::Sum(s) = &decl.body
             && let Some(v) = s.variants.iter().find(|v| v.name.name == variant)
@@ -3891,15 +3894,15 @@ impl<'a> LowerCtx<'a> {
     /// recurse field-name resolution through nested payload patterns (ADR 0169).
     /// Precise for `Result`/`Option`/`HttpResult` and user sums; `None` otherwise
     /// (callers fall back to the single-field `"value"` name).
-    fn payload_field_ty(&self, ty: Option<&Ty>, variant: &str, idx: usize) -> Option<Ty> {
-        match ty {
+    fn payload_field_ty(&self, ty: Option<TyId>, variant: &str, idx: usize, tys: &Arc<Types>) -> Option<TyId> {
+        match ty.map(|t| tys.get(t)).as_deref() {
             Some(Ty::Result(t, e)) => match (variant, idx) {
-                ("Ok", 0) => Some((**t).clone()),
-                ("Err", 0) => Some((**e).clone()),
+                ("Ok", 0) => Some(*t),
+                ("Err", 0) => Some(*e),
                 _ => None,
             },
-            Some(Ty::HttpResult(t)) if variant == "Ok" && idx == 0 => Some((**t).clone()),
-            Some(Ty::Option(t)) if variant == "Some" && idx == 0 => Some((**t).clone()),
+            Some(Ty::HttpResult(t)) if variant == "Ok" && idx == 0 => Some(*t),
+            Some(Ty::Option(t)) if variant == "Some" && idx == 0 => Some(*t),
             Some(Ty::Named {
                 kind: NamedKind::Sum,
                 name,
@@ -3917,12 +3920,7 @@ impl<'a> LowerCtx<'a> {
                 // `variants_of` does. Plain resolve for a non-generic sum (empty
                 // `args`), so a nested positional binding recovers the real field
                 // name instead of falling back to the generic `"value"`.
-                bynk_check::checker::instantiate_field_ty(
-                    decl,
-                    args,
-                    &f.type_ref,
-                    &self.commons().types,
-                )
+                bynk_check::checker::instantiate_field_ty(decl, args, &f.type_ref, &self.commons().types, tys)
             }
             _ => None,
         }
@@ -4107,8 +4105,8 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<QualifyFn<'_>>) -> String {
 /// kernel-method lowerings, whose IIFE parameters must be annotated
 /// (`noImplicitAny`). Rigid type variables render as themselves — inside an
 /// emitted generic function they are in scope as TS type parameters.
-fn ts_ty(t: &Ty) -> String {
-    match t {
+fn ts_ty(t: TyId, tys: &Arc<Types>) -> String {
+    match &*tys.get(t) {
         // bynk internal error (finding #28, R4.3): `Ty::Error` records a
         // resolution failure, which per R4.3 is always accompanied by a
         // pushed diagnostic — the check that produced it should have failed
@@ -4130,24 +4128,27 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Named { name, args, .. } if args.is_empty() => name.clone(),
         Ty::Named { name, args, .. } => format!(
             "{name}<{}>",
-            args.iter().map(ts_ty).collect::<Vec<_>>().join(", ")
+            args.iter()
+                .map(|a| ts_ty(*a, tys))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
-        Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
-        Ty::Option(t) => format!("Option<{}>", ts_ty(t)),
-        Ty::Effect(t) => match &**t {
+        Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(*t, tys), ts_ty(*e, tys)),
+        Ty::Option(t) => format!("Option<{}>", ts_ty(*t, tys)),
+        Ty::Effect(t) => match &*tys.get(*t) {
             Ty::Unit => "Promise<void>".to_string(),
-            other => format!("Promise<{}>", ts_ty(other)),
+            _ => format!("Promise<{}>", ts_ty(*t, tys)),
         },
-        Ty::HttpResult(t) => format!("HttpResult<{}>", ts_ty(t)),
-        Ty::List(t) => format!("readonly {}[]", ts_ty(t)),
+        Ty::HttpResult(t) => format!("HttpResult<{}>", ts_ty(*t, tys)),
+        Ty::List(t) => format!("readonly {}[]", ts_ty(*t, tys)),
         // v0.91 (ADR 0119): a `Query[T]` lowers to a deferred producer of its
         // elements — a thunk run by the terminal.
-        Ty::Query(t) => format!("(() => readonly {}[])", ts_ty(t)),
+        Ty::Query(t) => format!("(() => readonly {}[])", ts_ty(*t, tys)),
         // v0.100: a `Stream[T]` lowers to a host async iterable.
-        Ty::Stream(t) => format!("AsyncIterable<{}>", ts_ty(t)),
+        Ty::Stream(t) => format!("AsyncIterable<{}>", ts_ty(*t, tys)),
         // v0.102: a `Connection[F]` lowers to the runtime `Connection<F>` interface.
-        Ty::Connection(t) => format!("Connection<{}>", ts_ty(t)),
-        Ty::Map(k, v) => format!("ReadonlyMap<{}, {}>", ts_ty(k), ts_ty(v)),
+        Ty::Connection(t) => format!("Connection<{}>", ts_ty(*t, tys)),
+        Ty::Map(k, v) => format!("ReadonlyMap<{}, {}>", ts_ty(*k, tys), ts_ty(*v, tys)),
         Ty::QueueResult => "QueueResult".to_string(),
         Ty::ValidationError => "ValidationError".to_string(),
         Ty::JsonError => "JsonError".to_string(),
@@ -4156,20 +4157,20 @@ fn ts_ty(t: &Ty) -> String {
             let params: Vec<String> = params
                 .iter()
                 .enumerate()
-                .map(|(i, p)| format!("a{i}: {}", ts_ty(p)))
+                .map(|(i, p)| format!("a{i}: {}", ts_ty(*p, tys)))
                 .collect();
-            format!("({}) => {}", params.join(", "), ts_ty(ret))
+            format!("({}) => {}", params.join(", "), ts_ty(*ret, tys))
         }
         Ty::Var(n) => n.clone(),
         // The identity type the actor binding yields (`name.identity`).
-        Ty::Actor(id) => ts_ty(id),
+        Ty::Actor(id) => ts_ty(*id, tys),
         // v0.52: a resolved multi-actor sum lowers to a discriminated union
         // tagged by actor name; non-unit members carry their identity.
         Ty::ActorSum(members) => members
             .iter()
-            .map(|(name, id)| match id {
+            .map(|(name, id)| match &*tys.get(*id) {
                 Ty::Unit => format!("{{ tag: \"{name}\" }}"),
-                _ => format!("{{ tag: \"{name}\", identity: {} }}", ts_ty(id)),
+                _ => format!("{{ tag: \"{name}\", identity: {} }}", ts_ty(*id, tys)),
             })
             .collect::<Vec<_>>()
             .join(" | "),

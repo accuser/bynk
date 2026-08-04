@@ -34,7 +34,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use bynk_check::checker::Ty;
+use bynk_check::checker::{Ty, TyId, Types};
 use bynk_check::contract;
 use bynk_check::resolver::CrossContextService;
 use bynk_check::wire::{self, WireModel, WireRef};
@@ -216,7 +216,8 @@ pub fn wire_contract_at(
     text: &str,
     offset: usize,
     info: &ContextBoundaryInfo,
-    expr_types: &[(Span, Ty)],
+    expr_types: &[(Span, TyId)],
+    tys: &Types,
     context_count: usize,
 ) -> Option<WireContractModel> {
     let tokens = bynk_syntax::lexer::tokenize(text).ok()?;
@@ -237,6 +238,7 @@ pub fn wire_contract_at(
                 h,
                 info,
                 expr_types,
+                tys,
                 context_count,
             );
         }
@@ -269,7 +271,8 @@ pub fn wire_contract_for_service(
     service_name: &str,
     handler: &Handler,
     info: &ContextBoundaryInfo,
-    expr_types: &[(Span, Ty)],
+    expr_types: &[(Span, TyId)],
+    tys: &Types,
     context_count: usize,
 ) -> Option<WireContractModel> {
     let real = info.services.get(service_name)?;
@@ -310,7 +313,7 @@ pub fn wire_contract_for_service(
     };
 
     let responses = if matches!(kind, BoundaryKind::Http { .. }) {
-        http_responses(handler, expr_types)
+        http_responses(handler, expr_types, tys)
     } else {
         Vec::new()
     };
@@ -380,7 +383,11 @@ fn contract_form(
 /// cases the body never names (400 on any param, 404 on an `Option?`
 /// short-circuit — ADR 0177). 401 on a caller binding is deferred (plan
 /// risk 8; needs actor/`by` resolution this phase does not do).
-fn http_responses(handler: &Handler, expr_types: &[(Span, Ty)]) -> Vec<HttpResponse> {
+fn http_responses(
+    handler: &Handler,
+    expr_types: &[(Span, TyId)],
+    tys: &Types,
+) -> Vec<HttpResponse> {
     let declared_is_http_result =
         matches!(strip_effect(&handler.return_type), TypeRef::HttpResult(..));
 
@@ -395,6 +402,7 @@ fn http_responses(handler: &Handler, expr_types: &[(Span, Ty)]) -> Vec<HttpRespo
 
     let mut walk = ResponseWalk {
         expr_types,
+        tys,
         declared_is_http_result,
         seen: out.iter().map(|r| r.variant.clone()).collect(),
         saw_option_question: false,
@@ -446,7 +454,9 @@ fn strip_effect(t: &TypeRef) -> &TypeRef {
 /// expression tree (a call argument, a record field), not only in tail
 /// position.
 struct ResponseWalk<'a> {
-    expr_types: &'a [(Span, Ty)],
+    expr_types: &'a [(Span, TyId)],
+    /// T3.6b (R4.1): the table `expr_types`' ids resolve against.
+    tys: &'a Types,
     /// #855 risk 7 ("the `Ok` overload"): the declared-return-type fallback
     /// used whenever `expr_types` has no entry for a span (a file with
     /// errors, ADR 0063's clean-file ceiling) — mirrors
@@ -464,11 +474,11 @@ struct ResponseWalk<'a> {
 }
 
 impl<'a> ResponseWalk<'a> {
-    fn expr_ty(&self, span: Span) -> Option<&Ty> {
+    fn expr_ty(&self, span: Span) -> Option<std::sync::Arc<Ty>> {
         self.expr_types
             .iter()
             .find(|(s, _)| *s == span)
-            .map(|(_, t)| t)
+            .map(|(_, t)| self.tys.get(*t))
     }
 
     /// Whether `span`'s expression checked as `HttpResult[_]` — the same
@@ -480,7 +490,7 @@ impl<'a> ResponseWalk<'a> {
     /// is low-risk there. **Not** used for a bare `Ident` — see
     /// `is_http_result_ident` below.
     fn is_http_result_expr(&self, span: Span) -> bool {
-        match self.expr_ty(span) {
+        match self.expr_ty(span).as_deref() {
             Some(Ty::HttpResult(_)) => true,
             Some(_) => false,
             None => self.declared_is_http_result,
@@ -498,7 +508,7 @@ impl<'a> ResponseWalk<'a> {
     /// expression the plan's risk 7 is about; a bare identifier read has no
     /// such asymmetry — unknown stays unknown.
     fn is_http_result_ident(&self, span: Span) -> bool {
-        matches!(self.expr_ty(span), Some(Ty::HttpResult(_)))
+        matches!(self.expr_ty(span).as_deref(), Some(Ty::HttpResult(_)))
     }
 
     fn push(&mut self, variant: HttpVariant, span: Span) {
@@ -577,7 +587,7 @@ impl<'a> ResponseWalk<'a> {
                 }
             }
             ExprKind::Question(inner) => {
-                if matches!(self.expr_ty(inner.span), Some(Ty::Option(_))) {
+                if matches!(self.expr_ty(inner.span).as_deref(), Some(Ty::Option(_))) {
                     self.saw_option_question = true;
                 }
             }
@@ -761,7 +771,7 @@ service api from http {
             })
             .map(|f| f.source_path.clone())
             .expect("ratelimit.bynk in the round's files");
-        let expr_types: &[(Span, Ty)] = diag
+        let expr_types: &[(Span, TyId)] = diag
             .expr_types
             .get(&rel)
             .map(|v| v.as_slice())

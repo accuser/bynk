@@ -74,8 +74,12 @@ pub fn value_receiver_rewrite(
 }
 
 /// The kernel-method signature for `method` on receiver type `ty`, if any.
-pub fn kernel_method_signature(ty: &bynk_check::checker::Ty, method: &str) -> Option<String> {
-    bynk_check::kernel_methods::methods_for(ty)
+pub fn kernel_method_signature(
+    ty: bynk_check::checker::TyId,
+    tys: &bynk_check::checker::Types,
+    method: &str,
+) -> Option<String> {
+    bynk_check::kernel_methods::methods_for(ty, tys)
         .iter()
         .find(|m| m.name == method)
         .map(|m| m.signature.to_string())

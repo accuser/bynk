@@ -161,6 +161,9 @@ pub struct ProjectDiagnostics {
     /// captured on the Ok path, for `.`-member completion's receiver typing.
     /// Empty for files with errors (the clean-file ceiling).
     pub expr_types: expr_types::FileExprTypes,
+    /// T3.6b (R4.1): the intern table `expr_types`' `TyId`s resolve against —
+    /// one per analysis, shared across every unit it checked.
+    pub ty_intern: std::sync::Arc<bynk_check::checker::Types>,
     /// v0.31 (ADR 0064): per-file local bindings with scope ranges, for the
     /// scope-at-offset query backing locals completion + navigation.
     pub locals: locals::FileLocals,
@@ -276,6 +279,7 @@ pub fn diagnose_project_with(
         index,
         hints,
         expr_types,
+        ty_intern,
         locals,
         requirements,
         unit_sources,
@@ -315,6 +319,7 @@ pub fn diagnose_project_with(
         hints,
         requirements,
         expr_types,
+        ty_intern,
         locals,
         unit_sources,
         sequence_info,
