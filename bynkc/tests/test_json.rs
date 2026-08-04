@@ -15,7 +15,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use bynkc::test_json::{Case, Location, Suite, TestRun, parse_ndjson};
+use bynk_driver::test_json::{Case, Location, Suite, TestRun, parse_ndjson};
 
 fn bless_or_assert(name: &str, actual: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

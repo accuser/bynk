@@ -14,9 +14,9 @@
 //! Standalone `tsc --strict` over the embedded TypeScript runtime lives in
 //! `tsc_verify.rs` (it reuses that file's tsc runner / skip-loudly logic).
 
-use bynkc::fmt::{FormatOptions, format_source};
-use bynkc::lexer::tokenize;
-use bynkc::parser::parse_unit;
+use bynk_fmt::{FormatOptions, format_source};
+use bynk_syntax::lexer::tokenize;
+use bynk_syntax::parser::parse_unit;
 
 /// The first-party Bynk sources, by display name — the single
 /// `FIRSTPARTY_SOURCES` list, so this guard covers every first-party commons

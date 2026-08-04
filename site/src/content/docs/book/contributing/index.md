@@ -12,7 +12,7 @@ Bynk is a Cargo workspace plus two JavaScript/TypeScript projects:
 | Crate / project | What it is |
 |---|---|
 | `bynkc` | The compiler and CLI (`bynkc`): lex → parse → resolve → check → emit. |
-| `bynk-fmt` | A thin crate re-exporting the formatter from `bynkc::fmt`. |
+| `bynk-fmt` | The formatter, a leaf over `bynk-syntax`. |
 | `bynk-lsp` | The language server (`bynkc-lsp`), built on `tower-lsp`. |
 | `tree-sitter-bynk` | The grammar (`grammar.js` → generated parser) and highlight queries. |
 | `vscode-bynk` | The VS Code extension. |

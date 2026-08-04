@@ -21,8 +21,9 @@ lex  →  parse  →  resolve  →  check  →  emit
 
 `bynkc` is a thin front-end: it owns the CLI and the compile/diagnose glue, and
 the pipeline itself lives in a layered set of library crates it depends on and
-re-exports from (so `bynkc::ast`, `bynkc::Platform`, `bynkc::compile_project`, …
-resolve):
+partly re-exports from (so `bynkc::Platform`, `bynkc::compile_project`, …
+resolve — but not a crate's whole module tree, e.g. `bynk_syntax::ast` stays
+`bynk_syntax::ast`, not `bynkc::ast`):
 
 - [`bynk-syntax`](https://crates.io/crates/bynk-syntax) — lexer, parser, AST,
   spans, the `CompileError` type, and the `bynk.*` diagnostic-code registry.

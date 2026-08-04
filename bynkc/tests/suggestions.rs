@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use bynkc::error::{Applicability, Suggestion};
+use bynk_syntax::error::{Applicability, Suggestion};
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/suggestions/src")
@@ -332,9 +332,9 @@ fn missing_field_suggestions(diags: &[bynk_ide::Diagnostic]) -> Vec<Suggestion> 
 /// A fixed buffer must format without error and be fmt-idempotent (#852's
 /// "round-trips through fmt" acceptance condition).
 fn assert_fmt_roundtrips(fixed: &str) {
-    let opts = bynkc::fmt::FormatOptions::default();
-    let once = bynkc::fmt::format_source(fixed, &opts).expect("fixed buffer formats");
-    let twice = bynkc::fmt::format_source(&once, &opts).expect("fmt is idempotent");
+    let opts = bynk_fmt::FormatOptions::default();
+    let once = bynk_fmt::format_source(fixed, &opts).expect("fixed buffer formats");
+    let twice = bynk_fmt::format_source(&once, &opts).expect("fmt is idempotent");
     assert_eq!(once, twice, "fmt not idempotent on the fixed buffer");
 }
 

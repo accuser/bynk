@@ -2,9 +2,9 @@
 title: "`bynk-fmt`"
 ---
 Bynk's formatter. There is one implementation, in the `bynk-fmt` crate — a leaf
-over `bynk-syntax` that never links the compiler; `bynkc` re-exports it as
-`bynkc::fmt`, and the CLI and the language server both drive that one copy. You
-invoke it as `bynkc fmt` (or `bynk fmt`) — see the how-to
+over `bynk-syntax` that never links the compiler; the CLI (via `bynk-driver`)
+and the language server both drive that one copy. You invoke it as `bynkc fmt`
+(or `bynk fmt`) — see the how-to
 [Format your code with `bynk-fmt`](/docs/editor-and-tooling/format/) for usage.
 
 ## What it does

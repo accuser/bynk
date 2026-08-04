@@ -15,30 +15,21 @@
 
 pub mod cli;
 
-// `coverage`/`test_json` moved down into `bynk-driver` (Wave 5 §5.4, findings
-// #40/#72): `bynk` needs the same `TestRun` document and V8-coverage
-// attribution for its own (in-process-capable) test path, and `bynk-driver`
-// is the crate both `bynkc` and `bynk` already depend on. Re-exported here so
-// `bynkc`'s own `crate::coverage`/`crate::test_json` paths (main.rs) and its
-// public API resolve unchanged.
-pub use bynk_driver::{coverage, test_json};
-
 // `write_output`/`write_compiled_file` moved down into `bynk-driver` (#1047,
 // R2.3/T0.7 residue) — every caller was already at driver level. Re-exported
 // here so `bynkc::write_output`/`bynkc::write_compiled_file` resolve unchanged.
 pub use bynk_driver::{write_compiled_file, write_output};
 
-// The syntax foundation now lives in the `bynk-syntax` leaf crate (slice 1 of
-// the crate-decomposition track). Re-export its modules at the crate root so
-// `bynkc`'s public API and every internal `crate::ast` / `crate::lexer` path is
-// preserved — consumers and the rest of the pipeline see no change.
+// R10.4 residue (#1048, ADR 0312's reasoning applied to the three re-exports
+// T-D1 didn't scope): `bynk_driver::{coverage, test_json}`,
+// `bynk_syntax::{ast, diagnostics, error, keywords, lexer, parser, span}` and
+// `bynk_fmt as fmt` were whole-module/whole-crate re-exports with no in-repo
+// consumer besides `bynkc`'s own integration tests, which now import
+// `bynk_syntax`/`bynk_driver`/`bynk_fmt` directly — the correct import in any
+// case, same as T-D1. `CompileError` stays: `compile`/`compile_with_warnings`
+// below return it, so it is genuinely part of the published API.
+pub use bynk_syntax::CompileError;
 pub use bynk_syntax::error::Severity;
-pub use bynk_syntax::{CompileError, ast, diagnostics, error, keywords, lexer, parser, span};
-
-// The formatter moved down into the `bynk-fmt` leaf (slice 2). Re-export it as
-// `bynkc::fmt` so the `bynkc fmt` command and existing `bynkc::fmt::…` consumers
-// (e.g. the LSP's formatting path) keep resolving unchanged.
-pub use bynk_fmt as fmt;
 
 // The diagnostic renderers moved down into the `bynk-render` crate (slice 6):
 // ariadne human + the short/json line forms over `CompileError`. Re-export them

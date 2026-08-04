@@ -5,8 +5,8 @@
 
 use bynk_check::checker::{Ty, TyId};
 use bynk_check::expr_types::type_at_offset;
-use bynkc::ast::BaseType;
-use bynkc::span::Span;
+use bynk_syntax::ast::BaseType;
+use bynk_syntax::span::Span;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
