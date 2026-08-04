@@ -19,7 +19,8 @@ turns a checked program into output:
   shared runtime, and a `wrangler.toml`.
 
 The `workers` target emits one Worker per context; the `compile_project` result
-is an in-memory tree of TypeScript files, written to disk with `write_output`.
+is an in-memory tree of TypeScript files — writing it to disk is the driver's
+job (`bynk-driver::write_output`), not this crate's.
 
 ## Where it sits
 
@@ -43,8 +44,7 @@ bynk-emit = "0.247"
 use bynk_emit::project::{compile_project, CompileOptions, BuildTarget};
 
 let options = CompileOptions::single(root).target(BuildTarget::Workers);
-let output = compile_project(&options)?;       // in-memory TypeScript tree
-bynk_emit::write_output(&output, &build_dir)?; // write it to disk
+let output = compile_project(&options)?; // in-memory TypeScript tree — bynk-emit never touches disk
 ```
 
 See the [API docs](https://docs.rs/bynk-emit) for the full surface.
