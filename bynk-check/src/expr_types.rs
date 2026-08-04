@@ -14,7 +14,7 @@
 //! Unlike hints, **test/integration files are not muted** (completion runs in
 //! them); only synthetic toolchain-injected files are.
 
-use crate::checker::{Ty, TypedExpr};
+use crate::checker::{TyId, TypedExpr};
 use bynk_syntax::ast::ExprId;
 use bynk_syntax::span::Span;
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 /// Project-relative source path → that file's `(expr span, type)` entries,
 /// ordered by span (innermost-last within a start, so a containment search can
 /// prefer the tightest match).
-pub type FileExprTypes = HashMap<PathBuf, Vec<(Span, Ty)>>;
+pub type FileExprTypes = HashMap<PathBuf, Vec<(Span, TyId)>>;
 
 /// Records per-file expression types. A fresh sink records nothing until
 /// [`enter_file`](Self::enter_file) attributes it.
@@ -64,7 +64,7 @@ impl ExprTypeSink {
             return;
         };
         let entry = self.files.entry(file.clone()).or_default();
-        entry.extend(expr_types.values().map(|te| (te.span, te.ty.clone())));
+        entry.extend(expr_types.values().map(|te| (te.span, te.ty)));
     }
 
     /// Drain the recorded types, each file's entries ordered by span (start
@@ -81,17 +81,18 @@ impl ExprTypeSink {
 
 /// The type of the **innermost** expression whose span contains `offset`, if
 /// any — the receiver-typing query for `.`-member completion.
-pub fn type_at_offset(entries: &[(Span, Ty)], offset: usize) -> Option<&Ty> {
+pub fn type_at_offset(entries: &[(Span, TyId)], offset: usize) -> Option<TyId> {
     entries
         .iter()
         .filter(|(span, _)| span.start <= offset && offset <= span.end)
         .min_by_key(|(span, _)| span.end - span.start)
-        .map(|(_, ty)| ty)
+        .map(|(_, ty)| *ty)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checker::{Ty, Types};
     use bynk_syntax::ast::BaseType;
 
     fn span(start: usize, end: usize) -> Span {
@@ -100,12 +101,13 @@ mod tests {
 
     #[test]
     fn type_at_offset_prefers_the_innermost_span() {
-        let int = Ty::Base(BaseType::Int);
-        let string = Ty::Base(BaseType::String);
+        let tys = Types::new();
+        let int = tys.intern(Ty::Base(BaseType::Int));
+        let string = tys.intern(Ty::Base(BaseType::String));
         // An outer `String` expression 0..10 with an inner `Int` 2..4.
-        let entries = vec![(span(0, 10), string.clone()), (span(2, 4), int.clone())];
-        assert_eq!(type_at_offset(&entries, 3), Some(&int)); // inside the inner span
-        assert_eq!(type_at_offset(&entries, 7), Some(&string)); // outer span only
+        let entries = vec![(span(0, 10), string), (span(2, 4), int)];
+        assert_eq!(type_at_offset(&entries, 3), Some(int)); // inside the inner span
+        assert_eq!(type_at_offset(&entries, 7), Some(string)); // outer span only
         assert_eq!(type_at_offset(&entries, 20), None); // outside everything
     }
 }

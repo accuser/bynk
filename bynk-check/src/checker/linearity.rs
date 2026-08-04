@@ -22,7 +22,7 @@ use bynk_syntax::ast::{
 use bynk_syntax::error::CompileError;
 use bynk_syntax::span::Span;
 
-use super::{Ty, TypedExpr, resolve_type_ref};
+use super::{Ty, TyId, TypedExpr, Types, resolve_type_ref};
 
 /// The ownership state of a held binding on the current control-flow path.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -40,20 +40,24 @@ enum Held {
 type State = HashMap<String, Held>;
 
 struct Lin<'a> {
+    /// T3.6b (R4.1): the unit's intern table — `expr_types` and
+    /// `pattern_binding_types` hand out `TyId`s, and this pass resolves them
+    /// to ask "is this held?".
+    tys: &'a Types,
     expr_types: &'a HashMap<ExprId, TypedExpr>,
     /// T3.4: pattern-bound names' types, keyed by the binding `Ident`'s own
     /// span — deliberately not `expr_types`/`ExprId`-keyed (see `Ctx`'s field
     /// of the same name).
-    pattern_binding_types: &'a HashMap<Span, Ty>,
+    pattern_binding_types: &'a HashMap<Span, TyId>,
     errors: &'a mut Vec<CompileError>,
 }
 
 /// True if a value type is (or wraps, through `Option`) a held resource — the
 /// shape a `take(k) -> Option[Connection]` result or a held binding takes.
-fn held_value(ty: &Ty) -> bool {
-    match ty {
+fn held_value(ty: TyId, tys: &Types) -> bool {
+    match &*tys.get(ty) {
         t if t.is_held() => true,
-        Ty::Option(inner) => held_value(inner),
+        Ty::Option(inner) => held_value(*inner, tys),
         _ => false,
     }
 }
@@ -65,7 +69,7 @@ pub(crate) fn check(
     params: &[Param],
     types: &HashMap<String, Arc<TypeDecl>>,
     expr_types: &HashMap<ExprId, TypedExpr>,
-    pattern_binding_types: &HashMap<Span, Ty>,
+    pattern_binding_types: &HashMap<Span, TyId>,
     // v0.106 (slice 3b-iii): names of held params that are **borrowed**, not owned
     // — e.g. the firing `connection` of a `from websocket` `on message`/`on close`,
     // which the handler may `send` to but does not own/dispose. A borrowed binding
@@ -73,8 +77,10 @@ pub(crate) fn check(
     // exit. (`on open`'s connection is owned — empty set — and must be disposed.)
     borrowed: &std::collections::HashSet<String>,
     errors: &mut Vec<CompileError>,
+    tys: &Types,
 ) {
     let mut lin = Lin {
+        tys,
         expr_types,
         pattern_binding_types,
         errors,
@@ -85,8 +91,8 @@ pub(crate) fn check(
         if p.name.name == "_" {
             continue;
         }
-        if let Some(ty) = resolve_type_ref(&p.type_ref, types)
-            && held_value(&ty)
+        if let Some(ty) = resolve_type_ref(&p.type_ref, types, tys)
+            && held_value(ty, tys)
         {
             if borrowed.contains(&p.name.name) {
                 state.insert(p.name.name.clone(), Held::Borrowed);
@@ -107,8 +113,8 @@ pub(crate) fn check(
 }
 
 impl Lin<'_> {
-    fn ty_of(&self, e: &Expr) -> Option<&Ty> {
-        self.expr_types.get(&e.id).map(|te| &te.ty)
+    fn ty_of(&self, e: &Expr) -> Option<TyId> {
+        self.expr_types.get(&e.id).map(|te| te.ty)
     }
 
     fn leak(&mut self, name: &str, span: Span) {
@@ -153,13 +159,16 @@ impl Lin<'_> {
                 // Does this binding name a held value? For an `EffectLet` the
                 // value is `Effect[T]`; the binding is `T`. For a `Let` the
                 // binding type is the value's type directly.
-                let bound = self.ty_of(&l.value).and_then(|t| match (stmt, t) {
-                    (Statement::EffectLet(_), Ty::Effect(inner)) => Some((**inner).clone()),
-                    (Statement::Let(_), t) => Some(t.clone()),
+                let bound = self.ty_of(&l.value).and_then(|t| match stmt {
+                    Statement::EffectLet(_) => match &*self.tys.get(t) {
+                        Ty::Effect(inner) => Some(*inner),
+                        _ => None,
+                    },
+                    Statement::Let(_) => Some(t),
                     _ => None,
                 });
                 if let Some(t) = bound
-                    && held_value(&t)
+                    && held_value(t, self.tys)
                     && l.name.name != "_"
                 {
                     // A `let` reusing a name this block already bound to a held
@@ -377,8 +386,7 @@ impl Lin<'_> {
         // `traverseAll`/`parTraverseAll` lend the element identically).
         let recv_holds_held = self
             .ty_of(receiver)
-            .map(storage_value_is_held)
-            .unwrap_or(false);
+            .is_some_and(|t| storage_value_is_held(t, self.tys));
         if recv_holds_held
             && matches!(
                 method,
@@ -460,7 +468,7 @@ impl Lin<'_> {
             .filter(|id| {
                 self.pattern_binding_types
                     .get(&id.span)
-                    .is_some_and(held_value)
+                    .is_some_and(|t| held_value(*t, self.tys))
             })
             .collect()
     }
@@ -533,10 +541,10 @@ impl Lin<'_> {
 
 /// True if a storage collection's *type* carries held values — `Map[K, Conn]`,
 /// `Cell[Option[Conn]]`, or a `Query`/`List` view over connections.
-fn storage_value_is_held(t: &Ty) -> bool {
-    match t {
-        Ty::Map(_, v) => held_value(v),
-        Ty::Query(v) | Ty::List(v) => held_value(v),
+fn storage_value_is_held(t: TyId, tys: &Types) -> bool {
+    match &*tys.get(t) {
+        Ty::Map(_, v) => held_value(*v, tys),
+        Ty::Query(v) | Ty::List(v) => held_value(*v, tys),
         _ => false,
     }
 }

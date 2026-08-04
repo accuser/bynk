@@ -8,6 +8,7 @@ use super::*;
 pub(crate) fn check_type_decl(
     t: &TypeDecl,
     types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Types,
     errors: &mut Vec<CompileError>,
 ) {
     match &t.body {
@@ -73,7 +74,7 @@ pub(crate) fn check_type_decl(
             }
         }
         TypeBody::Sum(s) => {
-            check_embeds(&t.name.name, s, types, errors);
+            check_embeds(&t.name.name, s, types, errors, tys);
         }
     }
 }
@@ -88,10 +89,11 @@ pub(crate) fn check_embeds(
     s: &SumBody,
     types: &HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
+    tys: &Types,
 ) {
-    let mut seen_sources: Vec<Ty> = Vec::new();
+    let mut seen_sources: Vec<TyId> = Vec::new();
     for clause in &s.embeds {
-        let Some(source_ty) = resolve_type_ref(&clause.source_type, types) else {
+        let Some(source_ty) = resolve_type_ref(&clause.source_type, types, tys) else {
             // An unresolvable type ref is already reported by reference
             // resolution; skip to avoid a duplicate error.
             continue;
@@ -129,32 +131,32 @@ pub(crate) fn check_embeds(
             );
             continue;
         }
-        let field_ty = resolve_type_ref(&variant.payload[0].type_ref, types);
+        let field_ty = resolve_type_ref(&variant.payload[0].type_ref, types, tys);
         if let Some(field_ty) = &field_ty
-            && !compatible(&source_ty, field_ty)
+            && !compatible(source_ty, *field_ty, tys)
         {
             errors.push(CompileError::new(
                 "bynk.types.embeds_variant_shape",
                 clause.span,
                 format!(
                     "`embeds {} as {}` — but `{}`'s payload field has type `{}`, not `{}`",
-                    source_ty.display(),
+                    source_ty.display(tys),
                     clause.variant.name,
                     clause.variant.name,
-                    field_ty.display(),
-                    source_ty.display()
+                    field_ty.display(tys),
+                    source_ty.display(tys)
                 ),
             ));
             continue;
         }
         // The same source type may be embedded once at most (unambiguous `?`).
-        if seen_sources.iter().any(|t| compatible(t, &source_ty)) {
+        if seen_sources.iter().any(|t| compatible(*t, source_ty, tys)) {
             errors.push(CompileError::new(
                 "bynk.types.embeds_ambiguous",
                 clause.span,
                 format!(
                     "`{}` is embedded more than once by `{}` — the conversion would be ambiguous",
-                    source_ty.display(),
+                    source_ty.display(tys),
                     sum_name
                 ),
             ));
@@ -339,18 +341,20 @@ pub(crate) fn literal_matches_base(lit: &ConstLit, base: BaseType) -> bool {
 /// auto-lift's own `compatible` check then rejects it.
 pub(crate) fn admit_refined_literal(
     expr: &Expr,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
-    let expected = match expected {
-        Some(Ty::Effect(inner)) => Some(inner.as_ref()),
-        other => other,
+) -> Option<TyId> {
+    let tys = ctx.tys;
+    let expected = match expected.map(|e| tys.get(e)).as_deref() {
+        Some(Ty::Effect(inner)) => Some(*inner),
+        _ => expected,
     };
+    let expected_node = expected.map(|e| tys.get(e));
     let Some(Ty::Named {
         name,
         kind: NamedKind::Refined(base),
         ..
-    }) = expected
+    }) = expected_node.as_deref()
     else {
         return None;
     };
@@ -373,7 +377,7 @@ pub(crate) fn admit_refined_literal(
             ),
         ));
     }
-    Some(named_ty(&decl))
+    Some(named_ty(&decl, tys))
 }
 
 pub(crate) fn check_refinement(

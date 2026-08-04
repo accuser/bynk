@@ -44,7 +44,8 @@ pub(crate) fn given_insertion_edit(
 
 // -- type-declaration validation --
 
-pub(crate) fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     if let Some(ty) = ctx.lookup(id.name.as_str()) {
         return Some(ty);
     }
@@ -53,7 +54,7 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> O
     // relocated here from the resolver). A Var-bearing expected (generic
     // instantiation, pass 1) counts as a function-type expectation.
     if let Some(fn_decl) = ctx.input.fns.get(&id.name).cloned() {
-        let fn_expected = matches!(expected, Some(Ty::Fn { .. }));
+        let fn_expected = expected.is_some_and(|e| matches!(&*tys.get(e), Ty::Fn { .. }));
         if fn_expected {
             ctx.refs.record(id.span, SymbolKind::Fn, &id.name);
             if !fn_decl.type_params.is_empty() {
@@ -70,16 +71,16 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> O
                 );
                 return None;
             }
-            let params: Option<Vec<Ty>> = fn_decl
+            let params: Option<Vec<TyId>> = fn_decl
                 .params
                 .iter()
-                .map(|p| resolve_type_ref(&p.type_ref, &ctx.input.types))
+                .map(|p| resolve_type_ref(&p.type_ref, &ctx.input.types, tys))
                 .collect();
-            let ret = resolve_type_ref(&fn_decl.return_type, &ctx.input.types)?;
-            return Some(Ty::Fn {
+            let ret = resolve_type_ref(&fn_decl.return_type, &ctx.input.types, tys)?;
+            return Some(tys.intern(Ty::Fn {
                 params: params?,
-                ret: Box::new(ret),
-            });
+                ret: ret,
+            }));
         }
         // Bare reference outside a function-typed position: the original
         // rule, with the checker's type knowledge behind it.
@@ -186,7 +187,8 @@ pub(crate) fn check_val(
     args: &[Expr],
     span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     if !ctx.in_test_body {
         ctx.errors.push(
             CompileError::new(
@@ -199,7 +201,7 @@ pub(crate) fn check_val(
             ),
         );
     }
-    let ty = match resolve_type_ref(type_ref, &ctx.input.types) {
+    let ty = match resolve_type_ref(type_ref, &ctx.input.types, tys) {
         Some(t) => {
             // v0.25: `Val[T]` names the type.
             record_type_refs(type_ref, &ctx.input.types, &HashSet::new(), ctx.refs);
@@ -220,7 +222,7 @@ pub(crate) fn check_val(
     // `Val[Wrapper]` on a generic type is caught as well as `Val[Wrapper[T]]`
     // — the resolver does not walk a `Val` type ref, so it never fires its own
     // arity check for the bare form.
-    if let Ty::Named { name, .. } = &ty
+    if let Ty::Named { name, .. } = &*tys.get(ty)
         && ctx
             .input
             .types
@@ -237,7 +239,7 @@ pub(crate) fn check_val(
         );
         return None;
     }
-    match &ty {
+    match &*tys.get(ty) {
         // Refined types: bare (generate a default) or a single literal pin.
         Ty::Named {
             name,
@@ -268,7 +270,7 @@ pub(crate) fn check_val(
                     }
                 }
                 [arg] => {
-                    type_of(arg, Some(&Ty::Base(base)), ctx);
+                    type_of(arg, Some(tys.intern(Ty::Base(base).clone())), ctx);
                     match const_literal(arg) {
                         Some(lit) if literal_matches_base(&lit, base) => {
                             if let Some(r) = refinement
@@ -329,7 +331,7 @@ pub(crate) fn check_val(
                     )
                     .with_note("literal pins are currently supported for refined types only"),
                 );
-            } else if !can_mock_bare(&ty, &ctx.input.types, MOCK_DEPTH) {
+            } else if !can_mock_bare(ty, &ctx.input.types, MOCK_DEPTH, tys) {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.val.needs_pin",
@@ -346,7 +348,7 @@ pub(crate) fn check_val(
             ctx.errors.push(CompileError::new(
                 "bynk.val.unsupported_kind",
                 span,
-                format!("`Val` is not a value type: `{}`", ty.display()),
+                format!("`Val` is not a value type: `{}`", ty.display(tys)),
             ));
         }
     }
@@ -362,14 +364,14 @@ const MOCK_DEPTH: u32 = 12;
 /// not carry a `Matches` predicate (no default), and sums/records must have
 /// every (first-variant / field) component recursively mockable within the
 /// depth cap.
-fn can_mock_bare(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>, depth: u32) -> bool {
+fn can_mock_bare(ty: TyId, types: &HashMap<String, Arc<TypeDecl>>, depth: u32, tys: &Types) -> bool {
     if depth == 0 {
         return false;
     }
-    match ty {
+    match &*tys.get(ty) {
         Ty::Base(_) => true,
         Ty::Named { name, .. } => {
-            let Some(decl) = types.get(name) else {
+            let Some(decl) = types.get(name.as_str()) else {
                 return false;
             };
             match &decl.body {
@@ -379,13 +381,13 @@ fn can_mock_bare(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>, depth: u32) ->
                 TypeBody::Opaque { .. } => true,
                 TypeBody::Sum(s) => s.variants.first().is_some_and(|v| {
                     v.payload.iter().all(|f| {
-                        resolve_type_ref(&f.type_ref, types)
-                            .is_some_and(|t| can_mock_bare(&t, types, depth - 1))
+                        resolve_type_ref(&f.type_ref, types, tys)
+                            .is_some_and(|t| can_mock_bare(t, types, depth - 1, tys))
                     })
                 }),
                 TypeBody::Record(r) => r.fields.iter().all(|f| {
-                    resolve_type_ref(&f.type_ref, types)
-                        .is_some_and(|t| can_mock_bare(&t, types, depth - 1))
+                    resolve_type_ref(&f.type_ref, types, tys)
+                        .is_some_and(|t| can_mock_bare(t, types, depth - 1, tys))
                 }),
             }
         }
@@ -393,7 +395,8 @@ fn can_mock_bare(ty: &Ty, types: &HashMap<String, Arc<TypeDecl>>, depth: u32) ->
     }
 }
 
-pub(crate) fn check_expect(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_expect(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     if !ctx.in_test_body {
         ctx.errors.push(
             CompileError::new(
@@ -406,20 +409,20 @@ pub(crate) fn check_expect(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty
             ),
         );
     }
-    let val_ty = type_of(inner, Some(&Ty::Base(BaseType::Bool)), ctx);
+    let val_ty = type_of(inner, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx);
     if let Some(actual) = val_ty
-        && !compatible(&actual, &Ty::Base(BaseType::Bool))
+        && !compatible(actual, tys.intern(Ty::Base(BaseType::Bool)), tys)
     {
         ctx.errors.push(CompileError::new(
             "bynk.expect.not_bool",
             inner.span,
             format!(
                 "`expect` predicate has type `{}`, but a `Bool` is required",
-                actual.display(),
+                actual.display(tys),
             ),
         ));
     }
-    Some(Ty::Unit)
+    Some(tys.intern(Ty::Unit))
 }
 
 /// Resolve an observation seam `Cap.op` (v0.117) against the capabilities the
@@ -466,7 +469,8 @@ fn resolve_observation_seam(cap: &Ident, op: &Ident, ctx: &mut Ctx) -> Option<Ca
 /// invariant predicate over the operation's parameters (in scope by name); a
 /// count must be a non-negative literal; `before Cap.op` resolves a second seam.
 /// The observation itself is a `Bool` claim about the recorded trace.
-pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     if !ctx.in_test_body {
         ctx.errors.push(
             CompileError::new(
@@ -503,24 +507,24 @@ pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) 
                     );
                 }
                 // Scope the predicate over the operation's parameters by name.
-                let mut scope: HashMap<String, Ty> = HashMap::new();
+                let mut scope: HashMap<String, TyId> = HashMap::new();
                 if let Some(info) = &op_info {
                     for (name, ty) in info.param_names.iter().zip(info.params.iter()) {
                         scope.insert(name.clone(), ty.clone());
                     }
                 }
                 ctx.scopes.push(scope);
-                let pred_ty = type_of(p, Some(&Ty::Base(BaseType::Bool)), ctx);
+                let pred_ty = type_of(p, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx);
                 ctx.scopes.pop();
                 if let Some(t) = pred_ty
-                    && !compatible(&t, &Ty::Base(BaseType::Bool))
+                    && !compatible(t, tys.intern(Ty::Base(BaseType::Bool)), tys)
                 {
                     ctx.errors.push(CompileError::new(
                         "bynk.observe.with_not_bool",
                         p.span,
                         format!(
                             "a `with` predicate has type `{}`, but a `Bool` is required",
-                            t.display()
+                            t.display(tys)
                         ),
                     ));
                 }
@@ -531,14 +535,15 @@ pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) 
             let _ = resolve_observation_seam(cap, op, ctx);
         }
     }
-    Some(Ty::Base(BaseType::Bool))
+    Some(tys.intern(Ty::Base(BaseType::Bool)))
 }
 
 /// Type-check `trace(Cap.op)` (v0.117). Resolves the seam and yields
 /// `List[<CallRecord>]`, where `<CallRecord>` is the synthetic per-operation
 /// record (registered in the test-body type table) whose fields are the
 /// operation's parameters.
-pub(crate) fn check_trace(cap: &Ident, op: &Ident, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_trace(cap: &Ident, op: &Ident, span: Span, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     if !ctx.in_test_body {
         ctx.errors.push(
             CompileError::new(
@@ -550,41 +555,42 @@ pub(crate) fn check_trace(cap: &Ident, op: &Ident, span: Span, ctx: &mut Ctx) ->
         );
     }
     resolve_observation_seam(cap, op, ctx)?;
-    Some(Ty::List(Box::new(Ty::Named {
+    Some(tys.intern(Ty::List(tys.intern(Ty::Named {
         name: call_record_type_name(&cap.name, &op.name),
         kind: NamedKind::Record,
         args: Vec::new(),
-    })))
+    }))))
 }
 
-pub(crate) fn check_unary(op: UnaryOp, inner: &Expr, op_span: Span, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_unary(op: UnaryOp, inner: &Expr, op_span: Span, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     let t = type_of(inner, None, ctx)?;
     match op {
         UnaryOp::Neg => {
-            if t.base() == Some(BaseType::Int) {
-                Some(Ty::Base(BaseType::Int))
+            if t.base(tys) == Some(BaseType::Int) {
+                Some(tys.intern(Ty::Base(BaseType::Int)))
             } else {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.type_mismatch",
                     op_span,
                     format!(
                         "unary `-` requires `Int`, but the operand has type `{}`",
-                        t.display()
+                        t.display(tys)
                     ),
                 ));
                 None
             }
         }
         UnaryOp::Not => {
-            if t.base() == Some(BaseType::Bool) {
-                Some(Ty::Base(BaseType::Bool))
+            if t.base(tys) == Some(BaseType::Bool) {
+                Some(tys.intern(Ty::Base(BaseType::Bool)))
             } else {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.type_mismatch",
                     op_span,
                     format!(
                         "unary `!` requires `Bool`, but the operand has type `{}`",
-                        t.display()
+                        t.display(tys)
                     ),
                 ));
                 None
@@ -605,7 +611,8 @@ pub(crate) fn numeric_mix(a: Option<BaseType>, b: Option<BaseType>) -> bool {
 /// v0.86 (ADR 0112): a `Duration` operand misused. Shares the
 /// `no_numeric_coercion` code (D4) but with a `Duration`-specific message,
 /// since the `.toFloat()` advice is wrong here.
-fn push_duration_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx) {
+fn push_duration_op_error(op: BinOp, span: Span, lt: TyId, rt: TyId, ctx: &mut Ctx) {
+    let tys = ctx.tys;
     ctx.errors.push(
         CompileError::new(
             "bynk.types.no_numeric_coercion",
@@ -613,8 +620,8 @@ fn push_duration_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx
             format!(
                 "operator `{}` is not defined for operands `{}` and `{}`",
                 op.name(),
-                lt.display(),
-                rt.display()
+                lt.display(tys),
+                rt.display(tys)
             ),
         )
         .with_note(
@@ -627,7 +634,8 @@ fn push_duration_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx
 
 /// v0.90 (ADR 0114): an `Instant` operand misused. Shares the
 /// `no_numeric_coercion` code with an `Instant`-specific message.
-fn push_instant_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx) {
+fn push_instant_op_error(op: BinOp, span: Span, lt: TyId, rt: TyId, ctx: &mut Ctx) {
+    let tys = ctx.tys;
     ctx.errors.push(
         CompileError::new(
             "bynk.types.no_numeric_coercion",
@@ -635,8 +643,8 @@ fn push_instant_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx)
             format!(
                 "operator `{}` is not defined for operands `{}` and `{}`",
                 op.name(),
-                lt.display(),
-                rt.display()
+                lt.display(tys),
+                rt.display(tys)
             ),
         )
         .with_note(
@@ -647,7 +655,8 @@ fn push_instant_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx)
     );
 }
 
-fn push_no_numeric_coercion(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx) {
+fn push_no_numeric_coercion(op: BinOp, span: Span, lt: TyId, rt: TyId, ctx: &mut Ctx) {
+    let tys = ctx.tys;
     ctx.errors.push(
         CompileError::new(
             "bynk.types.no_numeric_coercion",
@@ -655,8 +664,8 @@ fn push_no_numeric_coercion(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut C
             format!(
                 "operator `{}` cannot mix `Int` and `Float` operands; got `{}` and `{}`",
                 op.name(),
-                lt.display(),
-                rt.display()
+                lt.display(tys),
+                rt.display(tys)
             ),
         )
         .with_note(
@@ -667,13 +676,14 @@ fn push_no_numeric_coercion(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut C
     );
 }
 
-pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     // For `&&` (and v0.80 `implies`), if the lhs is or contains an `is` test,
     // propagate the bindings into the rhs scope (so `r is Ok(n) && n > 0`, and
     // `r is Ok(n) implies n > 0`, both work). `implies` is `!P || Q`, so the rhs
     // is only reached when the lhs holds — the same binding scope as `&&`.
     if matches!(op, BinOp::And | BinOp::Implies) {
-        let lt = type_of(lhs, Some(&Ty::Base(BaseType::Bool)), ctx);
+        let lt = type_of(lhs, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx);
         // Must run *after* `type_of(lhs)`: `collect_is_bindings` reads (and
         // memoises by span) the lhs's `expr_types`, so type-checking has to
         // have populated them first — collecting earlier would cache empties.
@@ -682,42 +692,42 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
         for (name, ty) in bindings {
             ctx.bind(name, ty);
         }
-        let rt = type_of(rhs, Some(&Ty::Base(BaseType::Bool)), ctx);
+        let rt = type_of(rhs, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx);
         ctx.pop_scope();
         let (lt, rt) = (lt?, rt?);
-        if lt.base() != Some(BaseType::Bool) {
+        if lt.base(tys) != Some(BaseType::Bool) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.type_mismatch",
                 lhs.span,
                 format!(
                     "operator `{}` requires `Bool` operands; left operand has type `{}`",
                     op.name(),
-                    lt.display()
+                    lt.display(tys)
                 ),
             ));
             return None;
         }
-        if rt.base() != Some(BaseType::Bool) {
+        if rt.base(tys) != Some(BaseType::Bool) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.type_mismatch",
                 rhs.span,
                 format!(
                     "operator `{}` requires `Bool` operands; right operand has type `{}`",
                     op.name(),
-                    rt.display()
+                    rt.display(tys)
                 ),
             ));
             return None;
         }
-        return Some(Ty::Base(BaseType::Bool));
+        return Some(tys.intern(Ty::Base(BaseType::Bool)));
     }
 
     let lt = type_of(lhs, None, ctx);
     let rt = type_of(rhs, None, ctx);
     let (lt, rt) = (lt?, rt?);
     let span = lhs.span.merge(rhs.span);
-    let lt_base = lt.base();
-    let rt_base = rt.base();
+    let lt_base = lt.base(tys);
+    let rt_base = rt.base(tys);
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
             // v0.90 (ADR 0114): `Instant` arithmetic. Handled first so an
@@ -729,12 +739,12 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                 return match (op, lt_base, rt_base) {
                     (BinOp::Add, Some(Instant), Some(Duration))
                     | (BinOp::Add, Some(Duration), Some(Instant))
-                    | (BinOp::Sub, Some(Instant), Some(Duration)) => Some(Ty::Base(Instant)),
-                    (BinOp::Sub, Some(Instant), Some(Instant)) => Some(Ty::Base(Duration)),
+                    | (BinOp::Sub, Some(Instant), Some(Duration)) => Some(tys.intern(Ty::Base(Instant))),
+                    (BinOp::Sub, Some(Instant), Some(Instant)) => Some(tys.intern(Ty::Base(Duration))),
                     // Every other `Instant` combination is rejected (e.g.
                     // `Instant + Instant`, `Instant * Int`, `Instant ± Int`).
                     _ => {
-                        push_instant_op_error(op, span, &lt, &rt, ctx);
+                        push_instant_op_error(op, span, lt, rt, ctx);
                         None
                     }
                 };
@@ -748,14 +758,14 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                 return match (op, lt_base, rt_base) {
                     // D3: span ± span; span scaled by an integer scalar.
                     (BinOp::Add | BinOp::Sub, Some(Duration), Some(Duration)) => {
-                        Some(Ty::Base(Duration))
+                        Some(tys.intern(Ty::Base(Duration)))
                     }
                     (BinOp::Mul, Some(Duration), Some(Int))
-                    | (BinOp::Mul, Some(Int), Some(Duration)) => Some(Ty::Base(Duration)),
+                    | (BinOp::Mul, Some(Int), Some(Duration)) => Some(tys.intern(Ty::Base(Duration))),
                     // Every other `Duration` combination is rejected (e.g.
                     // `Duration + Int`, `Int + Duration`, `Duration * Duration`).
                     _ => {
-                        push_duration_op_error(op, span, &lt, &rt, ctx);
+                        push_duration_op_error(op, span, lt, rt, ctx);
                         None
                     }
                 };
@@ -763,11 +773,11 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             // v0.21: arithmetic is defined on `Int` and `Float`, never mixed
             // — there is no implicit numeric coercion (ADR 0041).
             match (lt_base, rt_base) {
-                (Some(BaseType::Int), Some(BaseType::Int)) => Some(Ty::Base(BaseType::Int)),
-                (Some(BaseType::Float), Some(BaseType::Float)) => Some(Ty::Base(BaseType::Float)),
+                (Some(BaseType::Int), Some(BaseType::Int)) => Some(tys.intern(Ty::Base(BaseType::Int))),
+                (Some(BaseType::Float), Some(BaseType::Float)) => Some(tys.intern(Ty::Base(BaseType::Float))),
                 (Some(BaseType::Int), Some(BaseType::Float))
                 | (Some(BaseType::Float), Some(BaseType::Int)) => {
-                    push_no_numeric_coercion(op, span, &lt, &rt, ctx);
+                    push_no_numeric_coercion(op, span, lt, rt, ctx);
                     None
                 }
                 _ => {
@@ -783,7 +793,7 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                         format!(
                             "operator `{}` requires `Int` or `Float` operands; {side} operand has type `{}`",
                             op.name(),
-                            ty.display()
+                            ty.display(tys)
                         ),
                     ));
                     None
@@ -793,7 +803,7 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
         BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
             if lt_base != rt_base || lt_base.is_none() {
                 if numeric_mix(lt_base, rt_base) {
-                    push_no_numeric_coercion(op, span, &lt, &rt, ctx);
+                    push_no_numeric_coercion(op, span, lt, rt, ctx);
                     return None;
                 }
                 ctx.errors.push(CompileError::new(
@@ -802,8 +812,8 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                     format!(
                         "operator `{}` requires both operands to have the same base type; got `{}` and `{}`",
                         op.name(),
-                        lt.display(),
-                        rt.display()
+                        lt.display(tys),
+                        rt.display(tys)
                     ),
                 ));
                 return None;
@@ -822,19 +832,19 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                     format!(
                         "operator `{}` is only defined on `Int`, `Float`, `Duration`, `Instant`, and `String`, not `{}`",
                         op.name(),
-                        lt.display()
+                        lt.display(tys)
                     ),
                 ));
                 return None;
             }
-            Some(Ty::Base(BaseType::Bool))
+            Some(tys.intern(Ty::Base(BaseType::Bool)))
         }
         BinOp::Eq | BinOp::NotEq => {
             // v0.100: a `Stream[T]` is a live value-over-time source, not a
             // value — it is not equatable. (Assignability makes `Stream`
             // structurally `compatible`, which `==` would otherwise accept;
             // this guard keeps the non-comparable promise the type carries.)
-            if matches!(lt, Ty::Stream(_)) || matches!(rt, Ty::Stream(_)) {
+            if matches!(&*tys.get(lt), Ty::Stream(_)) || matches!(&*tys.get(rt), Ty::Stream(_)) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.stream_not_comparable",
                     span,
@@ -848,14 +858,14 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             // v0.102: a held value (`Connection[F]`) has identity, not
             // value-equality (§2.9.3), so it is not `==`-comparable — the same
             // guard as `Stream` (assignability would otherwise let `==` accept it).
-            if lt.is_held() || rt.is_held() {
+            if lt.is_held(tys) || rt.is_held(tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.held_not_comparable",
                     span,
                     format!(
                         "operator `{}` cannot compare held values — a `{}` has identity, not value-equality",
                         op.name(),
-                        if lt.is_held() { lt.display() } else { rt.display() },
+                        if lt.is_held(tys) { lt.display(tys) } else { rt.display(tys) },
                     ),
                 ));
                 return None;
@@ -863,7 +873,7 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             if lt_base.is_some() && rt_base.is_some() {
                 if lt_base != rt_base {
                     if numeric_mix(lt_base, rt_base) {
-                        push_no_numeric_coercion(op, span, &lt, &rt, ctx);
+                        push_no_numeric_coercion(op, span, lt, rt, ctx);
                         return None;
                     }
                     ctx.errors.push(CompileError::new(
@@ -872,55 +882,55 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                         format!(
                             "operator `{}` requires both operands to have the same base type; got `{}` and `{}`",
                             op.name(),
-                            lt.display(),
-                            rt.display()
+                            lt.display(tys),
+                            rt.display(tys)
                         ),
                     ));
                     return None;
                 }
-            } else if !compatible(&lt, &rt) && !compatible(&rt, &lt) {
+            } else if !compatible(lt, rt, tys) && !compatible(rt, lt, tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.type_mismatch",
                     span,
                     format!(
                         "operator `{}` requires both operands to have the same type; got `{}` and `{}`",
                         op.name(),
-                        lt.display(),
-                        rt.display()
+                        lt.display(tys),
+                        rt.display(tys)
                     ),
                 ));
                 return None;
             }
-            Some(Ty::Base(BaseType::Bool))
+            Some(tys.intern(Ty::Base(BaseType::Bool)))
         }
         // `And` and `Implies` are handled in the early-return block above (for
         // is-binding propagation); listed here only for match exhaustiveness.
         BinOp::And | BinOp::Or | BinOp::Implies => {
-            if lt.base() != Some(BaseType::Bool) {
+            if lt.base(tys) != Some(BaseType::Bool) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.type_mismatch",
                     lhs.span,
                     format!(
                         "operator `{}` requires `Bool` operands; left operand has type `{}`",
                         op.name(),
-                        lt.display()
+                        lt.display(tys)
                     ),
                 ));
                 return None;
             }
-            if rt.base() != Some(BaseType::Bool) {
+            if rt.base(tys) != Some(BaseType::Bool) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.type_mismatch",
                     rhs.span,
                     format!(
                         "operator `{}` requires `Bool` operands; right operand has type `{}`",
                         op.name(),
-                        rt.display()
+                        rt.display(tys)
                     ),
                 ));
                 return None;
             }
-            Some(Ty::Base(BaseType::Bool))
+            Some(tys.intern(Ty::Base(BaseType::Bool)))
         }
     }
 }
@@ -948,17 +958,18 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
 /// the existing `bynk.commit.outside_agent`).
 pub(crate) fn check_lambda(
     lambda: &LambdaExpr,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
-    let expected_fn = match expected {
-        Some(Ty::Fn { params, ret }) => Some((params.clone(), (**ret).clone())),
+) -> Option<TyId> {
+    let tys = ctx.tys;
+    let expected_fn = match expected.map(|e| tys.get(e)).as_deref() {
+        Some(Ty::Fn { params, ret }) => Some((params.clone(), *ret)),
         _ => None,
     };
 
     // Establish param types.
-    let mut param_tys: Vec<Ty> = Vec::new();
-    let mut scope: HashMap<String, Ty> = HashMap::new();
+    let mut param_tys: Vec<TyId> = Vec::new();
+    let mut scope: HashMap<String, TyId> = HashMap::new();
     if let Some((eps, _)) = &expected_fn {
         if eps.len() != lambda.params.len() {
             ctx.errors.push(CompileError::new(
@@ -978,15 +989,15 @@ pub(crate) fn check_lambda(
                     // #712: report an unknown annotation type instead of the
                     // bare `?` silently dropping the lambda in a handler body.
                     let annotated = resolve_expr_type_ref(tr, ctx)?;
-                    if !compatible(ep, &annotated) {
+                    if !compatible(*ep, annotated, tys) {
                         ctx.errors.push(CompileError::new(
                             "bynk.types.lambda_mismatch",
                             p.span,
                             format!(
                                 "lambda parameter `{}` is annotated `{}`, but `{}` is expected here",
                                 p.name.name,
-                                annotated.display(),
-                                ep.display()
+                                annotated.display(tys),
+                                ep.display(tys)
                             ),
                         ));
                     }
@@ -996,7 +1007,7 @@ pub(crate) fn check_lambda(
                     // v0.27 (ADR 0056): a param typed from the expected fn
                     // type gets an inferred-type inlay hint at its name.
                     if p.name.name != "_" {
-                        ctx.hints.record(p.name.span, format!(": {}", ep.display()));
+                        ctx.hints.record(p.name.span, format!(": {}", ep.display(tys)));
                     }
                     ep.clone()
                 }
@@ -1043,7 +1054,7 @@ pub(crate) fn check_lambda(
                 p.name.name.clone(),
                 p.name.span,
                 crate::locals::LocalKind::Param,
-                ty.display(),
+                ty.display(tys),
                 lambda.body.span,
             );
         }
@@ -1060,13 +1071,13 @@ pub(crate) fn check_lambda(
     // body's `None`/`[]`/`Map.empty()` may infer from it.
     let ret_constrained = expected_fn
         .as_ref()
-        .is_some_and(|(_, er)| !contains_flexible_var(er, &ctx.type_vars));
+        .is_some_and(|(_, er)| !contains_flexible_var(*er, &ctx.type_vars, tys));
 
     // Decide the body's effectfulness BEFORE typing it: the effect gates
     // (`bind_in_pure_context`, `capability_in_pure_context`, the fn-value
     // gate) fire during typing off `ctx.effectful`.
     let body_effectful = match &expected_fn {
-        Some((_, er)) if ret_constrained => er.is_effect(),
+        Some((_, er)) if ret_constrained => er.is_effect(tys),
         _ => body_performs_effects(&lambda.body, ctx),
     };
 
@@ -1083,7 +1094,7 @@ pub(crate) fn check_lambda(
         // Placeholder: no diagnostic path can consult it — the pre-scan sets
         // `effectful` whenever a `<-` exists, so `bind_in_pure_context`'s
         // return-type label is unreachable here.
-        _ => Ty::Unit,
+        _ => tys.intern(Ty::Unit),
     };
     ctx.return_ty_span = lambda.span;
     ctx.commit_seen = false;
@@ -1092,7 +1103,7 @@ pub(crate) fn check_lambda(
         Some((_, er)) if ret_constrained => Some(er.clone()),
         _ => None,
     };
-    let body_ty = type_of(&lambda.body, body_expected.as_ref(), ctx);
+    let body_ty = type_of(&lambda.body, body_expected, ctx);
 
     ctx.effectful = saved_effectful;
     ctx.return_ty = saved_return_ty;
@@ -1106,51 +1117,51 @@ pub(crate) fn check_lambda(
         // let the caller's unify bind the variable.
         Some((eps, _)) if !ret_constrained => {
             let bt = body_ty?;
-            let ret = if body_effectful && !bt.is_effect() {
-                Ty::Effect(Box::new(bt))
+            let ret = if body_effectful && !bt.is_effect(tys) {
+                tys.intern(Ty::Effect(bt))
             } else {
                 bt
             };
-            Some(Ty::Fn {
+            Some(tys.intern(Ty::Fn {
                 params: eps,
-                ret: Box::new(ret),
-            })
+                ret: ret,
+            }))
         }
         Some((eps, er)) => {
             if let Some(bt) = body_ty.as_ref() {
                 // A pure body against an effectful expected return auto-lifts
                 // (the emitter's async arrow realises the lifted Promise).
                 let lifted =
-                    maybe_auto_lift(Some(bt.clone()), Some(&er)).unwrap_or_else(|| bt.clone());
-                if !compatible(&lifted, &er) {
+                    maybe_auto_lift(Some(bt.clone()), Some(er), tys).unwrap_or_else(|| bt.clone());
+                if !compatible(lifted, er, tys) {
                     ctx.errors.push(CompileError::new(
                         "bynk.types.lambda_mismatch",
                         lambda.body.span,
                         format!(
                             "lambda body has type `{}`, but `{}` is expected",
-                            bt.display(),
-                            er.display()
+                            bt.display(tys),
+                            er.display(tys)
                         ),
                     ));
                     return None;
                 }
             }
-            Some(Ty::Fn {
+            Some(tys.intern(Ty::Fn {
                 params: eps,
-                ret: Box::new(er),
-            })
+                ret: er,
+            }))
         }
         None => {
             let bt = body_ty?;
-            let ret = if body_effectful && !bt.is_effect() {
-                Ty::Effect(Box::new(bt))
+            let ret = if body_effectful && !bt.is_effect(tys) {
+                tys.intern(Ty::Effect(bt))
             } else {
                 bt
             };
-            Some(Ty::Fn {
+            Some(tys.intern(Ty::Fn {
                 params: param_tys,
-                ret: Box::new(ret),
-            })
+                ret: ret,
+            }))
         }
     }
 }
@@ -1232,8 +1243,9 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
                 || args.iter().any(|a| body_performs_effects(a, ctx))
         }
         ExprKind::Call { name, args, .. } => {
-            if let Some(Ty::Fn { ret, .. }) = ctx.lookup(&name.name)
-                && ret.is_effect()
+            if let Some(f) = ctx.lookup(&name.name)
+                && let Ty::Fn { ret, .. } = &*ctx.tys.get(f)
+                && ret.is_effect(ctx.tys)
             {
                 return true;
             }
@@ -1314,21 +1326,23 @@ pub(crate) fn nullary_variant_ty(
     owner: &TypeDecl,
     variant_name: &str,
     span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     if reject_rebrand_construction(&owner.name.name, span, ctx) {
         return None;
     }
     if owner.type_params.is_empty() {
-        return Some(named_ty(owner));
+        return Some(named_ty(owner, tys));
     }
-    if let Some(Ty::Named { name, args, .. }) = expected
+    if let Some(exp) = expected
+        && let Ty::Named { name, args, .. } = &*tys.get(exp)
         && *name == owner.name.name
         && args.len() == owner.type_params.len()
-        && !args.iter().any(contains_var)
+        && !args.iter().any(|a| contains_var(*a, tys))
     {
-        return Some(named_ty_with_args(owner, args.clone()));
+        return Some(named_ty_with_args(owner, args.clone(), tys));
     }
     ctx.errors.push(
         CompileError::new(
@@ -1349,9 +1363,10 @@ pub(crate) fn check_variant_construction(
     variant_name: &str,
     args: &[Expr],
     span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let TypeBody::Sum(s) = &owner.body else {
         return None;
     };
@@ -1391,12 +1406,13 @@ pub(crate) fn check_variant_construction(
             .iter()
             .map(|p| p.name.name.clone())
             .collect();
-        let mut subst: HashMap<String, Ty> = HashMap::new();
+        let mut subst: HashMap<String, TyId> = HashMap::new();
         // Seed from an expected `Name[…]` of this same sum, so `let o: Opt[Int]
         // = Nil` (or an under-determined variant) grounds the arguments.
-        if let Some(Ty::Named {
-            name, args: eargs, ..
-        }) = expected
+        if let Some(exp) = expected
+            && let Ty::Named {
+                name, args: eargs, ..
+            } = &*tys.get(exp)
             && *name == owner.name.name
             && eargs.len() == owner.type_params.len()
         {
@@ -1405,15 +1421,15 @@ pub(crate) fn check_variant_construction(
         // Pass 1: type each argument once, binding parameters only from fully
         // ground actuals (a `None`/empty list adopting `Var(T)` from the
         // expected type carries no information — mirrors the record rule).
-        let mut typed: Vec<(&VariantField, Option<Ty>, Option<Ty>, Span)> = Vec::new();
+        let mut typed: Vec<(&VariantField, Option<TyId>, Option<TyId>, Span)> = Vec::new();
         for (field, arg) in variant.payload.iter().zip(args.iter()) {
-            let pattern = resolve_type_ref_in(&field.type_ref, &ctx.input.types, &vars);
-            let expected_now = pattern.as_ref().map(|p| substitute(p, &subst));
-            let actual = type_of(arg, expected_now.as_ref(), ctx);
-            if let (Some(pat), Some(act)) = (pattern.as_ref(), actual.as_ref())
-                && !contains_var(act)
+            let pattern = resolve_type_ref_in(&field.type_ref, &ctx.input.types, &vars, tys);
+            let expected_now = pattern.map(|p| substitute(p, &subst, tys));
+            let actual = type_of(arg, expected_now, ctx);
+            if let (Some(pat), Some(act)) = (pattern, actual)
+                && !contains_var(act, tys)
             {
-                unify(pat, act, &mut subst);
+                unify(pat, act, &mut subst, tys);
             }
             typed.push((field, pattern, actual, arg.span));
         }
@@ -1423,7 +1439,7 @@ pub(crate) fn check_variant_construction(
         let mut uninferable = Vec::new();
         for p in &owner.type_params {
             match subst.get(&p.name.name) {
-                Some(t) if !contains_var(t) => inferred.push(t.clone()),
+                Some(t) if !contains_var(*t, tys) => inferred.push(t.clone()),
                 _ => uninferable.push(p.name.name.clone()),
             }
         }
@@ -1454,11 +1470,11 @@ pub(crate) fn check_variant_construction(
         let mut ok = true;
         for (i, (field, pattern, actual, aspan)) in typed.into_iter().enumerate() {
             if let (Some(pat), Some(act)) = (pattern, actual) {
-                let expected_ty = substitute(&pat, &subst);
-                let actual_ty = substitute(&act, &subst);
-                if !contains_var(&expected_ty)
-                    && !contains_var(&actual_ty)
-                    && !compatible(&actual_ty, &expected_ty)
+                let expected_ty = substitute(pat, &subst, tys);
+                let actual_ty = substitute(act, &subst, tys);
+                if !contains_var(expected_ty, tys)
+                    && !contains_var(actual_ty, tys)
+                    && !compatible(actual_ty, expected_ty, tys)
                 {
                     ctx.errors.push(CompileError::new(
                         "bynk.types.variant_payload_mismatch",
@@ -1467,9 +1483,9 @@ pub(crate) fn check_variant_construction(
                             "argument {} to variant `{}` has type `{}`, but field `{}` expects `{}`",
                             i + 1,
                             variant_name,
-                            actual_ty.display(),
+                            actual_ty.display(tys),
                             field.name.name,
-                            expected_ty.display()
+                            expected_ty.display(tys)
                         ),
                     ));
                     ok = false;
@@ -1481,18 +1497,18 @@ pub(crate) fn check_variant_construction(
         if !ok {
             return None;
         }
-        return Some(named_ty_with_args(owner, inferred));
+        return Some(named_ty_with_args(owner, inferred, tys));
     }
 
     let mut ok = true;
     for (i, (field, arg)) in variant.payload.iter().zip(args.iter()).enumerate() {
-        let expected = resolve_type_ref(&field.type_ref, &ctx.input.types);
-        let actual = type_of(arg, expected.as_ref(), ctx);
+        let expected = resolve_type_ref(&field.type_ref, &ctx.input.types, tys);
+        let actual = type_of(arg, expected, ctx);
         let (Some(actual), Some(expected)) = (actual, expected) else {
             ok = false;
             continue;
         };
-        if !compatible(&actual, &expected) {
+        if !compatible(actual, expected, tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.variant_payload_mismatch",
                 arg.span,
@@ -1500,9 +1516,9 @@ pub(crate) fn check_variant_construction(
                     "argument {} to variant `{}` has type `{}`, but field `{}` expects `{}`",
                     i + 1,
                     variant_name,
-                    actual.display(),
+                    actual.display(tys),
                     field.name.name,
-                    expected.display()
+                    expected.display(tys)
                 ),
             ));
             ok = false;
@@ -1511,7 +1527,7 @@ pub(crate) fn check_variant_construction(
     if !ok {
         return None;
     }
-    Some(named_ty(owner))
+    Some(named_ty(owner, tys))
 }
 
 pub(crate) fn check_if(
@@ -1519,19 +1535,20 @@ pub(crate) fn check_if(
     then_block: &Block,
     else_block: &Block,
     if_span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
-    let cond_ty = type_of(cond, Some(&Ty::Base(BaseType::Bool)), ctx);
+) -> Option<TyId> {
+    let tys = ctx.tys;
+    let cond_ty = type_of(cond, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx);
     if let Some(c) = &cond_ty
-        && c.base() != Some(BaseType::Bool)
+        && c.base(tys) != Some(BaseType::Bool)
     {
         ctx.errors.push(CompileError::new(
             "bynk.types.if_non_bool_cond",
             cond.span,
             format!(
                 "`if` condition must have type `Bool`, but has type `{}`",
-                c.display()
+                c.display(tys)
             ),
         ));
     }
@@ -1551,9 +1568,9 @@ pub(crate) fn check_if(
     // would have no matching value. The synthesised block is typed against the
     // then-branch's type so its `()` lifts to `Effect[()]` when needed.
     if else_block.is_synth_unit() {
-        if let Some(t) = &then_ty {
-            let is_unit = matches!(t, Ty::Unit)
-                || matches!(t, Ty::Effect(inner) if matches!(**inner, Ty::Unit));
+        if let Some(t) = then_ty {
+            let is_unit = matches!(&*tys.get(t), Ty::Unit)
+                || matches!(&*tys.get(t), Ty::Effect(inner) if matches!(&*tys.get(*inner), Ty::Unit));
             if !is_unit {
                 ctx.errors.push(
                     CompileError::new(
@@ -1561,12 +1578,12 @@ pub(crate) fn check_if(
                         if_span,
                         format!(
                             "an `if` with no `else` must produce `()` or `Effect[()]`, but its branch has type `{}`",
-                            t.display()
+                            t.display(tys)
                         ),
                     )
                     .with_label(
                         then_block.tail.span,
-                        format!("this branch has type `{}`", t.display()),
+                        format!("this branch has type `{}`", t.display(tys)),
                     )
                     .with_note(
                         "add an `else` branch to produce a value, or make the branch a unit effect",
@@ -1575,7 +1592,7 @@ pub(crate) fn check_if(
                 return None;
             }
         }
-        let else_ty = type_of_block(else_block, then_ty.as_ref(), ctx);
+        let else_ty = type_of_block(else_block, then_ty, ctx);
         return match (then_ty, else_ty) {
             (Some(t), Some(_)) => Some(t),
             _ => None,
@@ -1583,7 +1600,7 @@ pub(crate) fn check_if(
     }
     let else_ty = type_of_block(else_block, expected, ctx);
     match (then_ty, else_ty) {
-        (Some(t), Some(e)) => match join_ty(&t, &e) {
+        (Some(t), Some(e)) => match join_ty(t, e, tys) {
             Some(joined) => Some(joined),
             None => {
                 ctx.errors.push(
@@ -1592,17 +1609,17 @@ pub(crate) fn check_if(
                         if_span,
                         format!(
                             "`if` branches produce different types: `{}` and `{}`",
-                            t.display(),
-                            e.display()
+                            t.display(tys),
+                            e.display(tys)
                         ),
                     )
                     .with_label(
                         then_block.tail.span,
-                        format!("then-branch has type `{}`", t.display()),
+                        format!("then-branch has type `{}`", t.display(tys)),
                     )
                     .with_label(
                         else_block.tail.span,
-                        format!("else-branch has type `{}`", e.display()),
+                        format!("else-branch has type `{}`", e.display(tys)),
                     )
                     .with_note(
                         "both branches of an `if` must join to a common type — a refined type and its base agree at the base",
@@ -1618,16 +1635,17 @@ pub(crate) fn check_if(
 pub(crate) fn check_ok(
     inner: &Expr,
     span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // v0.9: `Ok` is now overloaded between `Result.Ok` and `HttpResult.Ok`.
     // First consult the expected type (propagated from let-annotations, match
     // arms, and the enclosing return type via tail-position auto-lift).
-    let in_result = surrounding_result(expected, &ctx.return_ty);
+    let in_result = surrounding_result(expected, ctx.return_ty, tys);
     let in_http = expected
-        .and_then(peel_to_http_result)
-        .or_else(|| peel_to_http_result(&ctx.return_ty));
+        .and_then(|t| peel_to_http_result(t, tys))
+        .or_else(|| peel_to_http_result(ctx.return_ty, tys));
     match (in_result.clone(), in_http.clone()) {
         (Some(_), Some(_)) => {
             ctx.errors.push(
@@ -1643,40 +1661,40 @@ pub(crate) fn check_ok(
             None
         }
         (None, Some(t_ty)) => {
-            let inner_ty = type_of(inner, Some(&t_ty), ctx)?;
-            if !compatible(&inner_ty, &t_ty) {
+            let inner_ty = type_of(inner, Some(t_ty), ctx)?;
+            if !compatible(inner_ty, t_ty, tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.ok_value_mismatch",
                     inner.span,
                     format!(
                         "`Ok(...)` value has type `{}`, but the surrounding context expects `HttpResult[{}]`",
-                        inner_ty.display(),
-                        t_ty.display(),
+                        inner_ty.display(tys),
+                        t_ty.display(tys),
                     ),
                 ));
                 return None;
             }
-            Some(Ty::HttpResult(Box::new(t_ty)))
+            Some(tys.intern(Ty::HttpResult(t_ty)))
         }
         (Some((t_ty, e_ty)), None) => {
-            let inner_ty = type_of(inner, Some(&t_ty), ctx)?;
-            if !compatible(&inner_ty, &t_ty) {
+            let inner_ty = type_of(inner, Some(t_ty), ctx)?;
+            if !compatible(inner_ty, t_ty, tys) {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.types.ok_value_mismatch",
                         inner.span,
                         format!(
                             "`Ok(...)` value has type `{}`, but the surrounding context expects `Result[{}, {}]`",
-                            inner_ty.display(),
-                            t_ty.display(),
-                            e_ty.display()
+                            inner_ty.display(tys),
+                            t_ty.display(tys),
+                            e_ty.display(tys)
                         ),
                     )
                     .with_label(ctx.return_ty_span, "context's expected `Result` type"),
                 );
                 return None;
             }
-            Some(Ty::Result(Box::new(t_ty), Box::new(e_ty)))
+            Some(tys.intern(Ty::Result(t_ty, e_ty)))
         }
         (None, None) => {
             let _ = type_of(inner, None, ctx);
@@ -1703,7 +1721,8 @@ pub(crate) fn check_queue_variant(
     variant: QueueVariant,
     args: &[Expr],
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     match variant.payload {
         QueueVariantPayload::None => {
             if !args.is_empty() {
@@ -1718,7 +1737,7 @@ pub(crate) fn check_queue_variant(
                 ));
                 return None;
             }
-            Some(Ty::QueueResult)
+            Some(tys.intern(Ty::QueueResult))
         }
         QueueVariantPayload::Message => {
             if args.len() != 1 {
@@ -1733,20 +1752,20 @@ pub(crate) fn check_queue_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(&args[0], Some(&Ty::Base(BaseType::String)), ctx)?;
-            if !compatible(&arg_ty, &Ty::Base(BaseType::String)) {
+            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx)?;
+            if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
                     args[0].span,
                     format!(
                         "`QueueResult.{}` expects a `String` reason, but got `{}`",
                         variant.name,
-                        arg_ty.display(),
+                        arg_ty.display(tys),
                     ),
                 ));
                 return None;
             }
-            Some(Ty::QueueResult)
+            Some(tys.intern(Ty::QueueResult))
         }
     }
 }
@@ -1769,12 +1788,13 @@ pub(crate) fn check_http_variant(
     span: Span,
     variant: HttpVariant,
     args: &[Expr],
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let expected_t = expected
-        .and_then(peel_to_http_result)
-        .or_else(|| peel_to_http_result(&ctx.return_ty));
+        .and_then(|t| peel_to_http_result(t, tys))
+        .or_else(|| peel_to_http_result(ctx.return_ty, tys));
     match variant.payload {
         HttpVariantPayload::Value => {
             if args.len() != 1 {
@@ -1789,18 +1809,18 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(&args[0], expected_t.as_ref(), ctx)?;
+            let arg_ty = type_of(&args[0], expected_t, ctx)?;
             let t_ty = match (expected_t, arg_ty.clone()) {
                 (Some(t), _) => {
-                    if !compatible(&arg_ty, &t) {
+                    if !compatible(arg_ty, t, tys) {
                         ctx.errors.push(CompileError::new(
                             "bynk.types.ok_value_mismatch",
                             args[0].span,
                             format!(
                                 "`HttpResult.{}` value has type `{}`, but the surrounding context expects `HttpResult[{}]`",
                                 variant.name,
-                                arg_ty.display(),
-                                t.display(),
+                                arg_ty.display(tys),
+                                t.display(tys),
                             ),
                         ));
                         return None;
@@ -1809,7 +1829,7 @@ pub(crate) fn check_http_variant(
                 }
                 (None, t) => t,
             };
-            Some(Ty::HttpResult(Box::new(t_ty)))
+            Some(tys.intern(Ty::HttpResult(t_ty)))
         }
         HttpVariantPayload::Message => {
             if args.len() != 1 {
@@ -1824,15 +1844,15 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(&args[0], Some(&Ty::Base(BaseType::String)), ctx)?;
-            if !compatible(&arg_ty, &Ty::Base(BaseType::String)) {
+            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx)?;
+            if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
                     args[0].span,
                     format!(
                         "`HttpResult.{}` expects a `String` message, but got `{}`",
                         variant.name,
-                        arg_ty.display(),
+                        arg_ty.display(tys),
                     ),
                 ));
                 return None;
@@ -1840,8 +1860,8 @@ pub(crate) fn check_http_variant(
             // Inner T is irrelevant for message variants but the type needs
             // a concrete payload. Pick `()` when nothing is known; otherwise
             // use the propagated expected type.
-            let t_ty = expected_t.unwrap_or(Ty::Unit);
-            Some(Ty::HttpResult(Box::new(t_ty)))
+            let t_ty = expected_t.unwrap_or(tys.intern(Ty::Unit));
+            Some(tys.intern(Ty::HttpResult(t_ty)))
         }
         HttpVariantPayload::Location => {
             if args.len() != 1 {
@@ -1856,29 +1876,29 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(&args[0], Some(&Ty::Base(BaseType::String)), ctx)?;
-            if !compatible(&arg_ty, &Ty::Base(BaseType::String)) {
+            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx)?;
+            if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
                     args[0].span,
                     format!(
                         "`HttpResult.{}` expects a `String` location URL, but got `{}`",
                         variant.name,
-                        arg_ty.display(),
+                        arg_ty.display(tys),
                     ),
                 ));
                 return None;
             }
             // A redirect carries no body; inner T is irrelevant, so fall back
             // to the propagated expected type or `()`.
-            let t_ty = expected_t.unwrap_or(Ty::Unit);
-            Some(Ty::HttpResult(Box::new(t_ty)))
+            let t_ty = expected_t.unwrap_or(tys.intern(Ty::Unit));
+            Some(tys.intern(Ty::HttpResult(t_ty)))
         }
         // v0.101 (real-time track slice 1): `Streaming(s)` carries a
         // `Stream[String]` body, SSE-framed at the boundary. Like the redirect
         // and message shapes, the JSON body parameter `T` is irrelevant.
         HttpVariantPayload::Streamed => {
-            let stream_str = Ty::Stream(Box::new(Ty::Base(BaseType::String)));
+            let stream_str = Ty::Stream(tys.intern(Ty::Base(BaseType::String)));
             if args.len() != 1 {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.variant_arity",
@@ -1891,21 +1911,21 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(&args[0], Some(&stream_str), ctx)?;
-            if !compatible(&arg_ty, &stream_str) {
+            let arg_ty = type_of(&args[0], Some(tys.intern(stream_str.clone())), ctx)?;
+            if !compatible(arg_ty, tys.intern(stream_str), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
                     args[0].span,
                     format!(
                         "`HttpResult.{}` expects a `Stream[String]` body, but got `{}`",
                         variant.name,
-                        arg_ty.display(),
+                        arg_ty.display(tys),
                     ),
                 ));
                 return None;
             }
-            let t_ty = expected_t.unwrap_or(Ty::Unit);
-            Some(Ty::HttpResult(Box::new(t_ty)))
+            let t_ty = expected_t.unwrap_or(tys.intern(Ty::Unit));
+            Some(tys.intern(Ty::HttpResult(t_ty)))
         }
         // v0.111: `Raw(body, contentType)` — the first two-argument shape. The
         // body is a `Bytes` written straight into the response; the content-type
@@ -1924,34 +1944,34 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let body_ty = type_of(&args[0], Some(&Ty::Base(BaseType::Bytes)), ctx)?;
-            if !compatible(&body_ty, &Ty::Base(BaseType::Bytes)) {
+            let body_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::Bytes).clone())), ctx)?;
+            if !compatible(body_ty, tys.intern(Ty::Base(BaseType::Bytes)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
                     args[0].span,
                     format!(
                         "`HttpResult.{}` expects a `Bytes` body, but got `{}`",
                         variant.name,
-                        body_ty.display(),
+                        body_ty.display(tys),
                     ),
                 ));
                 return None;
             }
-            let ct_ty = type_of(&args[1], Some(&Ty::Base(BaseType::String)), ctx)?;
-            if !compatible(&ct_ty, &Ty::Base(BaseType::String)) {
+            let ct_ty = type_of(&args[1], Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx)?;
+            if !compatible(ct_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
                     args[1].span,
                     format!(
                         "`HttpResult.{}` expects a `String` content-type, but got `{}`",
                         variant.name,
-                        ct_ty.display(),
+                        ct_ty.display(tys),
                     ),
                 ));
                 return None;
             }
-            let t_ty = expected_t.unwrap_or(Ty::Unit);
-            Some(Ty::HttpResult(Box::new(t_ty)))
+            let t_ty = expected_t.unwrap_or(tys.intern(Ty::Unit));
+            Some(tys.intern(Ty::HttpResult(t_ty)))
         }
         HttpVariantPayload::None => {
             if !args.is_empty() {
@@ -1966,8 +1986,8 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let t_ty = expected_t.unwrap_or(Ty::Unit);
-            Some(Ty::HttpResult(Box::new(t_ty)))
+            let t_ty = expected_t.unwrap_or(tys.intern(Ty::Unit));
+            Some(tys.intern(Ty::HttpResult(t_ty)))
         }
     }
 }
@@ -1975,31 +1995,32 @@ pub(crate) fn check_http_variant(
 pub(crate) fn check_err(
     inner: &Expr,
     span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
-    let surrounding = surrounding_result(expected, &ctx.return_ty);
+) -> Option<TyId> {
+    let tys = ctx.tys;
+    let surrounding = surrounding_result(expected, ctx.return_ty, tys);
     let expected_e = surrounding.as_ref().map(|(_, e)| e.clone());
-    let inner_ty = type_of(inner, expected_e.as_ref(), ctx)?;
+    let inner_ty = type_of(inner, expected_e, ctx)?;
     match surrounding {
         Some((t_ty, e_ty)) => {
-            if !compatible(&inner_ty, &e_ty) {
+            if !compatible(inner_ty, e_ty, tys) {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.types.err_value_mismatch",
                         inner.span,
                         format!(
                             "`Err(...)` value has type `{}`, but the surrounding context expects `Result[{}, {}]`",
-                            inner_ty.display(),
-                            t_ty.display(),
-                            e_ty.display()
+                            inner_ty.display(tys),
+                            t_ty.display(tys),
+                            e_ty.display(tys)
                         ),
                     )
                     .with_label(ctx.return_ty_span, "context's expected `Result` type"),
                 );
                 return None;
             }
-            Some(Ty::Result(Box::new(t_ty), Box::new(e_ty)))
+            Some(tys.intern(Ty::Result(t_ty, e_ty)))
         }
         None => {
             ctx.errors.push(
@@ -2020,36 +2041,38 @@ pub(crate) fn check_err(
 pub(crate) fn check_some(
     inner: &Expr,
     _span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let expected_inner = expected
-        .and_then(peel_to_option)
-        .or_else(|| peel_to_option(&ctx.return_ty));
-    let inner_ty = type_of(inner, expected_inner.as_ref(), ctx)?;
+        .and_then(|t| peel_to_option(t, tys))
+        .or_else(|| peel_to_option(ctx.return_ty, tys));
+    let inner_ty = type_of(inner, expected_inner, ctx)?;
     if let Some(exp) = &expected_inner
-        && !compatible(&inner_ty, exp)
+        && !compatible(inner_ty, *exp, tys)
     {
         ctx.errors.push(CompileError::new(
             "bynk.types.some_value_mismatch",
             inner.span,
             format!(
                 "`Some(...)` value has type `{}`, but the surrounding context expects `Option[{}]`",
-                inner_ty.display(),
-                exp.display()
+                inner_ty.display(tys),
+                exp.display(tys)
             ),
         ));
         return None;
     }
-    Some(Ty::Option(Box::new(inner_ty)))
+    Some(tys.intern(Ty::Option(inner_ty)))
 }
 
-pub(crate) fn check_none(span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
-    if let Some(t) = expected.and_then(peel_to_option) {
-        return Some(Ty::Option(Box::new(t)));
+pub(crate) fn check_none(span: Span, expected: Option<TyId>, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
+    if let Some(t) = expected.and_then(|t| peel_to_option(t, tys)) {
+        return Some(tys.intern(Ty::Option(t)));
     }
-    if let Some(t) = peel_to_option(&ctx.return_ty) {
-        return Some(Ty::Option(Box::new(t)));
+    if let Some(t) = peel_to_option(ctx.return_ty, tys) {
+        return Some(tys.intern(Ty::Option(t)));
     }
     ctx.errors.push(
         CompileError::new(
@@ -2064,16 +2087,17 @@ pub(crate) fn check_none(span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> Op
     None
 }
 
-pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     let inner_ty = type_of(inner, None, ctx)?;
     // v0.153 (ADR 0177): `Option[T]?` lifts into an HttpResult-returning
     // handler — `Some(v)` yields `v`, `None` early-returns `NotFound` (404).
     // Allowed ONLY where the enclosing return peels to `HttpResult[_]` (a bare
     // `HttpResult[T]` handler or `Effect[HttpResult[T]]`); anywhere else an
     // `Option` has no error channel to propagate into.
-    if let Ty::Option(t) = &inner_ty {
-        if peel_to_http_result(&ctx.return_ty).is_some() {
-            return Some((**t).clone());
+    if let Ty::Option(t) = &*tys.get(inner_ty) {
+        if peel_to_http_result(ctx.return_ty, tys).is_some() {
+            return Some(*t);
         }
         ctx.errors.push(
             CompileError::new(
@@ -2083,20 +2107,20 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
             )
             .with_label(
                 ctx.return_ty_span,
-                format!("function returns `{}`", ctx.return_ty.display()),
+                format!("function returns `{}`", ctx.return_ty.display(tys)),
             )
             .with_note("to turn an `Option` into a `Result` elsewhere, use `.okOr(err)`"),
         );
         return None;
     }
-    let Ty::Result(t, e) = &inner_ty else {
+    let Ty::Result(t, e) = &*tys.get(inner_ty) else {
         ctx.errors.push(
             CompileError::new(
                 "bynk.types.question_on_non_result",
                 inner.span,
                 format!(
                     "the `?` operator requires a `Result[T, E]` value (or an `Option[T]` in an HttpResult handler), but got `{}`",
-                    inner_ty.display()
+                    inner_ty.display(tys)
                 ),
             )
             .with_label(span, "this `?` requires a Result"),
@@ -2105,19 +2129,19 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
     };
     // v0.5: `?` is also valid inside `Effect[Result[T, E]]` — the `Err` is
     // propagated as `Effect.pure(Err(e))`.
-    let effect_result = if let Ty::Effect(inner_eff) = &ctx.return_ty
-        && let Ty::Result(_, eff_e) = inner_eff.as_ref()
+    let effect_result = if let Ty::Effect(inner_eff) = &*tys.get(ctx.return_ty)
+        && let Ty::Result(_, eff_e) = &*tys.get(*inner_eff)
     {
-        Some(eff_e.as_ref().clone())
+        Some(*eff_e)
     } else {
         None
     };
-    let Ty::Result(_ret_t, ret_e) = &ctx.return_ty else {
+    let Ty::Result(_ret_t, ret_e) = &*tys.get(ctx.return_ty) else {
         if let Some(eff_e) = effect_result {
             // v0.154 (ADR 0178): the error propagates as-is when compatible, or
             // via a declared embedding (`eff_e embeds e as V`) that `?` auto-wraps.
-            if !compatible(e, &eff_e) {
-                match embedding_for(&eff_e, e, &ctx.input.types) {
+            if !compatible(*e, eff_e, tys) {
+                match embedding_for(eff_e, *e, &ctx.input.types, tys) {
                     Some((sum_name, _)) => {
                         // #907: the emitter lowers this auto-wrap to a real
                         // runtime `SumType.Variant(...)` reference (`embed_conversion`
@@ -2135,15 +2159,15 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
                             span,
                             format!(
                                 "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Effect[Result[_, {}]]` (and no `embeds` clause converts it)",
-                                e.display(),
-                                eff_e.display()
+                                e.display(tys),
+                                eff_e.display(tys)
                             ),
                         ));
                         return None;
                     }
                 }
             }
-            return Some((**t).clone());
+            return Some(t.clone());
         }
         ctx.errors.push(
             CompileError::new(
@@ -2153,13 +2177,13 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
             )
             .with_label(
                 ctx.return_ty_span,
-                format!("function returns `{}`", ctx.return_ty.display()),
+                format!("function returns `{}`", ctx.return_ty.display(tys)),
             ),
         );
         return None;
     };
-    if !compatible(e, ret_e) {
-        match embedding_for(ret_e, e, &ctx.input.types) {
+    if !compatible(*e, *ret_e, tys) {
+        match embedding_for(*ret_e, *e, &ctx.input.types, tys) {
             Some((sum_name, _)) => {
                 if reject_rebrand_construction(&sum_name, span, ctx) {
                     return None;
@@ -2171,15 +2195,15 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
                     span,
                     format!(
                         "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Result[_, {}]` (and no `embeds` clause converts it)",
-                        e.display(),
-                        ret_e.display()
+                        e.display(tys),
+                        ret_e.display(tys)
                     ),
                 ));
                 return None;
             }
         }
     }
-    Some((**t).clone())
+    Some(t.clone())
 }
 
 pub(crate) fn check_record_spread(
@@ -2187,12 +2211,13 @@ pub(crate) fn check_record_spread(
     base: &Expr,
     overrides: &[FieldInit],
     span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // 1) Determine the record type.
     let base_ty = type_of(base, expected, ctx)?;
-    let (record_name, base_args) = match &base_ty {
+    let (record_name, base_args) = match &*tys.get(base_ty) {
         Ty::Named {
             name,
             kind: NamedKind::Record,
@@ -2204,7 +2229,7 @@ pub(crate) fn check_record_spread(
                 base.span,
                 format!(
                     "record spread requires a record-typed base, but got `{}`",
-                    base_ty.display()
+                    base_ty.display(tys)
                 ),
             ));
             return None;
@@ -2251,18 +2276,13 @@ pub(crate) fn check_record_spread(
         // the declared field type, so an override on a generic record
         // (`{ ...p, items: [...] }` where `p: Paginated[String]`) is checked
         // against `List[String]`, not a `None`-resolving type variable.
-        let expected_ty = instantiate_field_ty(
-            &decl,
-            &base_args,
-            &declared_field.type_ref,
-            &ctx.input.types,
-        );
+        let expected_ty = instantiate_field_ty(&decl, &base_args, &declared_field.type_ref, &ctx.input.types, tys);
         let value_ty = match &f.value {
-            Some(v) => type_of(v, expected_ty.as_ref(), ctx),
+            Some(v) => type_of(v, expected_ty, ctx),
             None => ctx.lookup(&f.name.name),
         };
         if let (Some(actual), Some(expected_ty)) = (value_ty, expected_ty)
-            && !compatible(&actual, &expected_ty)
+            && !compatible(actual, expected_ty, tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.record_spread.field_type_mismatch",
@@ -2270,8 +2290,8 @@ pub(crate) fn check_record_spread(
                 format!(
                     "spread override of field `{}` has type `{}`, but the declared type is `{}`",
                     f.name.name,
-                    actual.display(),
-                    expected_ty.display()
+                    actual.display(tys),
+                    expected_ty.display(tys)
                 ),
             ));
         }
@@ -2323,10 +2343,11 @@ fn reject_rebrand_construction(type_name: &str, span: Span, ctx: &mut Ctx) -> bo
 pub(crate) fn check_record_construction(
     type_name: &Ident,
     fields: &[FieldInit],
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     span: Span,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let decl = ctx.input.types.get(&type_name.name)?.clone();
     ctx.refs
         .record(type_name.span, SymbolKind::Type, &type_name.name);
@@ -2382,13 +2403,13 @@ pub(crate) fn check_record_construction(
                     SymbolKind::Field,
                     &format!("{}.{}", type_name.name, f.name.name),
                 );
-                let expected = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+                let expected = resolve_type_ref(&declared_field.type_ref, &ctx.input.types, tys);
                 let value_ty = match &f.value {
-                    Some(v) => type_of(v, expected.as_ref(), ctx),
+                    Some(v) => type_of(v, expected, ctx),
                     None => ctx.lookup(&f.name.name),
                 };
                 if let (Some(actual), Some(expected)) = (value_ty, expected)
-                    && !compatible(&actual, &expected)
+                    && !compatible(actual, expected, tys)
                 {
                     ctx.errors.push(
                         CompileError::new(
@@ -2397,8 +2418,8 @@ pub(crate) fn check_record_construction(
                             format!(
                                 "field `{}` expects `{}`, but the value has type `{}`",
                                 f.name.name,
-                                expected.display(),
-                                actual.display()
+                                expected.display(tys),
+                                actual.display(tys)
                             ),
                         )
                         .with_label(declared_field.name.span, "field declared here"),
@@ -2406,7 +2427,7 @@ pub(crate) fn check_record_construction(
                 }
             }
         }
-        return Some(named_ty(&decl));
+        return Some(named_ty(&decl, tys));
     }
 
     // v0.157 (ADR 0183): a generic record infers its type arguments from the
@@ -2418,11 +2439,12 @@ pub(crate) fn check_record_construction(
         .iter()
         .map(|p| p.name.name.clone())
         .collect();
-    let mut subst: HashMap<String, Ty> = HashMap::new();
+    let mut subst: HashMap<String, TyId> = HashMap::new();
     // Seed the substitution from an expected `Name[…]` of this same type — this
     // lets `let p: Paginated[String] = Paginated { … }` ground the arguments
     // even when a field (e.g. an empty list) cannot determine them.
-    if let Some(Ty::Named { name, args, .. }) = expected
+    if let Some(exp) = expected
+        && let Ty::Named { name, args, .. } = &*tys.get(exp)
         && *name == decl.name.name
         && args.len() == decl.type_params.len()
     {
@@ -2434,7 +2456,7 @@ pub(crate) fn check_record_construction(
     // var — an empty list adopts `List[Var(T)]` from the expected type, a `None`
     // adopts `Option[Var(T)]` — carries no information about `T` and must not
     // bind it (that made inference order-dependent — ADR 0183 #5).
-    let mut typed: Vec<(&RecordField, Option<Ty>, Option<Ty>, Span)> = Vec::new();
+    let mut typed: Vec<(&RecordField, Option<TyId>, Option<TyId>, Span)> = Vec::new();
     for f in fields {
         if let Some(declared_field) = declared.get(f.name.name.as_str()) {
             // v0.36 (ADR 0069, slice 2): a construction field label is a
@@ -2444,10 +2466,10 @@ pub(crate) fn check_record_construction(
                 SymbolKind::Field,
                 &format!("{}.{}", type_name.name, f.name.name),
             );
-            let pattern = resolve_type_ref_in(&declared_field.type_ref, &ctx.input.types, &vars);
-            let expected_now = pattern.as_ref().map(|p| substitute(p, &subst));
+            let pattern = resolve_type_ref_in(&declared_field.type_ref, &ctx.input.types, &vars, tys);
+            let expected_now = pattern.map(|p| substitute(p, &subst, tys));
             let value_ty = match &f.value {
-                Some(v) => type_of(v, expected_now.as_ref(), ctx),
+                Some(v) => type_of(v, expected_now, ctx),
                 None => ctx.lookup(&f.name.name),
             };
             // #594: bind type parameters from an actual that is ground *up to the
@@ -2456,11 +2478,11 @@ pub(crate) fn check_record_construction(
             // `Box[U]`. A still-*flexible* var (an empty list adopting `List[Var(T)]`
             // from the expected type, ADR 0183 #5) carries no information and is
             // still skipped. Outside a generic body `ctx.type_vars` is empty, so this
-            // is exactly `!contains_var(actual)`.
-            if let (Some(pat), Some(actual)) = (pattern.as_ref(), value_ty.as_ref())
-                && !contains_flexible_var(actual, &ctx.type_vars)
+            // is exactly `!contains_var(actual, tys)`.
+            if let (Some(pat), Some(actual)) = (pattern, value_ty)
+                && !contains_flexible_var(actual, &ctx.type_vars, tys)
             {
-                unify(pat, actual, &mut subst);
+                unify(pat, actual, &mut subst, tys);
             }
             let fspan = f.value.as_ref().map(|v| v.span).unwrap_or(f.name.span);
             typed.push((declared_field, pattern, value_ty, fspan));
@@ -2475,7 +2497,7 @@ pub(crate) fn check_record_construction(
         match subst.get(&p.name.name) {
             // #594: a rigid var (the enclosing method's own parameter) is a fully
             // determined argument here — `Box[U]` is ground inside `Box.map[U]`.
-            Some(t) if !contains_flexible_var(t, &ctx.type_vars) => args.push(t.clone()),
+            Some(t) if !contains_flexible_var(*t, &ctx.type_vars, tys) => args.push(t.clone()),
             _ => uninferable.push(p.name.name.clone()),
         }
     }
@@ -2506,11 +2528,11 @@ pub(crate) fn check_record_construction(
     // both sides, so it neither errors nor is skipped spuriously.
     for (declared_field, pattern, value_ty, fspan) in typed {
         if let (Some(pat), Some(actual)) = (pattern, value_ty) {
-            let expected_ty = substitute(&pat, &subst);
-            let actual_ty = substitute(&actual, &subst);
-            if !contains_var(&expected_ty)
-                && !contains_var(&actual_ty)
-                && !compatible(&actual_ty, &expected_ty)
+            let expected_ty = substitute(pat, &subst, tys);
+            let actual_ty = substitute(actual, &subst, tys);
+            if !contains_var(expected_ty, tys)
+                && !contains_var(actual_ty, tys)
+                && !compatible(actual_ty, expected_ty, tys)
             {
                 ctx.errors.push(
                     CompileError::new(
@@ -2519,8 +2541,8 @@ pub(crate) fn check_record_construction(
                         format!(
                             "field `{}` expects `{}`, but the value has type `{}`",
                             declared_field.name.name,
-                            expected_ty.display(),
-                            actual_ty.display()
+                            expected_ty.display(tys),
+                            actual_ty.display(tys)
                         ),
                     )
                     .with_label(declared_field.name.span, "field declared here"),
@@ -2529,16 +2551,17 @@ pub(crate) fn check_record_construction(
         }
     }
 
-    Some(named_ty_with_args(&decl, args))
+    Some(named_ty_with_args(&decl, args, tys))
 }
 
 pub(crate) fn check_field_access(
     receiver: &Expr,
     field: &Ident,
     // #593: grounds a qualified payload-less generic variant (`Opt.Nil`).
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
     // Map[K, V]` field — the key-exposing lazy queries. Dispatched by receiver
     // provenance (a bare ident naming a store map, not shadowed by a local),
@@ -2554,7 +2577,7 @@ pub(crate) fn check_field_access(
         // (§2.9) and a dedicated broadcast surface (`forEach`/`parTraverse`/…),
         // so the connections are iterated there, never lifted into a key query or
         // a `MapEntry` record.
-        if v.is_held()
+        if v.is_held(tys)
             && matches!(
                 field.name.as_str(),
                 map_query::ENTRIES | map_query::KEYS | map_query::VALUES
@@ -2566,13 +2589,13 @@ pub(crate) fn check_field_access(
                 format!(
                     "`.{}` is not available on a held `Map[K, {}]` — a held resource is iterated with the broadcast ops (`forEach`/`parTraverse`/`traverseAll`), not a key query",
                     field.name,
-                    v.display()
+                    v.display(tys)
                 ),
             ));
             return None;
         }
         let elem = match field.name.as_str() {
-            map_query::ENTRIES => map_entry_ty(k, v),
+            map_query::ENTRIES => map_entry_ty(k, v, tys),
             map_query::KEYS => k,
             map_query::VALUES => v,
             other => {
@@ -2588,17 +2611,17 @@ pub(crate) fn check_field_access(
                 return None;
             }
         };
-        let q = Ty::Query(Box::new(elem));
+        let q = Ty::Query(elem);
         // Record the receiver's lifted query type (the dispatch keys off the
         // store field, not a typed receiver) so hover/linearity see it.
         ctx.expr_types.insert(
             receiver.id,
             TypedExpr {
                 span: receiver.span,
-                ty: q.clone(),
+                ty: tys.intern(q.clone()),
             },
         );
-        return Some(q);
+        return Some(tys.intern(q));
     }
     // Qualified nullary variant: `TypeName.Variant` where TypeName is a
     // declared sum type and Variant is one of its payload-less variants.
@@ -2627,9 +2650,9 @@ pub(crate) fn check_field_access(
     let recv_ty = type_of(receiver, None, ctx)?;
     // v0.45: a verified actor binding exposes exactly `.identity` — the sealed,
     // boundary-minted identity value. No other member is valid.
-    if let Ty::Actor(identity) = &recv_ty {
+    if let Ty::Actor(identity) = &*tys.get(recv_ty) {
         if field.name == "identity" {
-            return Some((**identity).clone());
+            return Some(identity.clone());
         }
         ctx.errors.push(CompileError::new(
             "bynk.types.unknown_field",
@@ -2649,7 +2672,7 @@ pub(crate) fn check_field_access(
             kind: NamedKind::Opaque(base),
             name,
             ..
-        } = &recv_ty
+        } = &*tys.get(recv_ty)
     {
         if !ctx.input.is_local_type(name) {
             ctx.errors.push(
@@ -2668,13 +2691,13 @@ pub(crate) fn check_field_access(
             );
             return None;
         }
-        return Some(Ty::Base(*base));
+        return Some(tys.intern(Ty::Base(*base)));
     }
     // v0.22b: `JsonError` is a compiler-known record (ADR 0047) — uniform
     // `String` fields so a decode failure is inspectable in Bynk.
-    if recv_ty == Ty::JsonError {
+    if recv_ty == tys.intern(Ty::JsonError) {
         return match field.name.as_str() {
-            "kind" | "path" | "message" => Some(Ty::Base(BaseType::String)),
+            "kind" | "path" | "message" => Some(tys.intern(Ty::Base(BaseType::String))),
             other => {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.unknown_field",
@@ -2695,14 +2718,14 @@ pub(crate) fn check_field_access(
         name,
         kind: NamedKind::Record,
         args,
-    } = &recv_ty
+    } = &*tys.get(recv_ty)
         && name == MAP_ENTRY
         && args.len() == 2
         && !ctx.input.types.contains_key(name.as_str())
     {
         return match field.name.as_str() {
-            map_query::KEY => Some(args[0].clone()),
-            map_query::VALUE => Some(args[1].clone()),
+            map_query::KEY => Some(args[0]),
+            map_query::VALUE => Some(args[1]),
             other => {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.unknown_field",
@@ -2715,18 +2738,19 @@ pub(crate) fn check_field_access(
             }
         };
     }
+    let recv_node = tys.get(recv_ty);
     let Ty::Named {
         name,
         kind: NamedKind::Record,
         args,
-    } = &recv_ty
+    } = &*recv_node
     else {
         let mut err = CompileError::new(
             "bynk.types.field_access_on_non_record",
             field.span,
             format!(
                 "field access requires a record type, but the receiver has type `{}`",
-                recv_ty.display()
+                recv_ty.display(tys)
             ),
         );
         // #48: a `.raw` (or any field) on a *refined* value is a common
@@ -2736,7 +2760,7 @@ pub(crate) fn check_field_access(
         if let Ty::Named {
             kind: NamedKind::Refined(_),
             ..
-        } = &recv_ty
+        } = &*tys.get(recv_ty)
         {
             err = err.with_note(
                 "a refined value is usable wherever its base type is expected — \
@@ -2782,7 +2806,7 @@ pub(crate) fn check_field_access(
     );
     // v0.157 (ADR 0183): resolve the field type at this instantiation —
     // substituting the record's type parameters by the receiver's `args`.
-    instantiate_field_ty(decl, args, &field_decl.type_ref, &ctx.input.types)
+    instantiate_field_ty(decl, args, &field_decl.type_ref, &ctx.input.types, tys)
 }
 
 /// What a `match` ranges over (v0.130, DECISION D). A discriminant is either
@@ -2797,8 +2821,8 @@ enum MatchKind {
 /// `String`/`Bool`, or a refined type over one of those bases (which widens to
 /// its base — ADR 0001 / `NamedKind::Refined`). Opaque types do *not* widen, so
 /// they are not literal-matchable.
-fn literal_base_of(ty: &Ty) -> Option<BaseType> {
-    let base = match ty {
+fn literal_base_of(ty: TyId, tys: &Types) -> Option<BaseType> {
+    let base = match &*tys.get(ty) {
         Ty::Base(b) => *b,
         Ty::Named {
             kind: NamedKind::Refined(b),
@@ -2820,13 +2844,13 @@ fn literal_value_base(value: &LiteralValue) -> BaseType {
 
 /// A refined type widened to its base (`Email` → `String`); any other type is
 /// returned unchanged. Mirrors the ADR 0001 widening used by `literal_base_of`.
-fn widen_refined(t: &Ty) -> Ty {
-    match t {
+fn widen_refined(t: TyId, tys: &Types) -> TyId {
+    match &*tys.get(t) {
         Ty::Named {
             kind: NamedKind::Refined(base),
             ..
-        } => Ty::Base(*base),
-        _ => t.clone(),
+        } => tys.intern(Ty::Base(*base)),
+        _ => t,
     }
 }
 
@@ -2839,22 +2863,22 @@ fn widen_refined(t: &Ty) -> Ty {
 /// (both usable at `String`). We pick the wider type when one branch is usable
 /// where the other is expected, then fall back to widening both refined types
 /// to their shared base — so the fold is independent of arm order.
-fn join_ty(a: &Ty, b: &Ty) -> Option<Ty> {
+fn join_ty(a: TyId, b: TyId, tys: &Types) -> Option<TyId> {
     if a == b {
-        return Some(a.clone());
+        return Some(a);
     }
     // One branch is a subtype of the other → the supertype is the join.
-    if compatible(a, b) {
-        return Some(b.clone());
+    if compatible(a, b, tys) {
+        return Some(b);
     }
-    if compatible(b, a) {
-        return Some(a.clone());
+    if compatible(b, a, tys) {
+        return Some(a);
     }
     // Two distinct refined types over the same base (e.g. `Email` and
     // `Username`, both `String`): widen each to its base and retry.
-    let (wa, wb) = (widen_refined(a), widen_refined(b));
-    if &wa != a || &wb != b {
-        return join_ty(&wa, &wb);
+    let (wa, wb) = (widen_refined(a, tys), widen_refined(b, tys));
+    if wa != a || wb != b {
+        return join_ty(wa, wb, tys);
     }
     None
 }
@@ -2863,17 +2887,18 @@ pub(crate) fn check_match(
     discriminant: &Expr,
     arms: &[MatchArm],
     span: Span,
-    expected: Option<&Ty>,
+    expected: Option<TyId>,
     ctx: &mut Ctx,
-) -> Option<Ty> {
+) -> Option<TyId> {
+    let tys = ctx.tys;
     let disc_ty = type_of(discriminant, None, ctx)?;
     // v0.130 (DECISION D): a match is *either* variant-kind (sum/`Result`/
     // `Option`) *or* literal-kind (a primitive `Int`/`String`/`Bool` scrutinee,
     // including a refined type over one of those bases). Anything else — a
     // record, `Float`, a function — cannot be matched.
-    let kind = if variants_of(&disc_ty, &ctx.input.types).is_some() {
+    let kind = if variants_of(disc_ty, &ctx.input.types, tys).is_some() {
         MatchKind::Variant
-    } else if let Some(base) = literal_base_of(&disc_ty) {
+    } else if let Some(base) = literal_base_of(disc_ty, tys) {
         MatchKind::Literal(base)
     } else {
         ctx.errors.push(CompileError::new(
@@ -2881,12 +2906,12 @@ pub(crate) fn check_match(
             discriminant.span,
             format!(
                 "cannot match on a value of type `{}` — `match` requires a sum, `Result`, `Option`, or a primitive `Int`/`String`/`Bool`",
-                disc_ty.display()
+                disc_ty.display(tys)
             ),
         ));
         return None;
     };
-    let mut arm_types: Vec<(Ty, Span)> = Vec::new();
+    let mut arm_types: Vec<(TyId, Span)> = Vec::new();
     let mut saw_wildcard = false;
     let mut unreachable_reported = false;
     // Unguarded, refutable patterns already seen — structural duplicate
@@ -2905,7 +2930,7 @@ pub(crate) fn check_match(
         ctx.push_scope();
         // Validate the pattern against the scrutinee and bind its names,
         // recursing through nested payload patterns (ADR 0169).
-        check_pattern(&arm.pattern, &disc_ty, ctx);
+        check_pattern(&arm.pattern, disc_ty, ctx);
         // Structural duplicate detection over unguarded, refutable patterns —
         // `Err(A)` and `Err(B)` are distinct, `Ok(_)` twice is a duplicate.
         // #474: an or-pattern is checked alternative-by-alternative, so
@@ -2934,20 +2959,20 @@ pub(crate) fn check_match(
         }
         // Guard (ADR 0169): must be `Bool`; a guarded arm never covers.
         if let Some(guard) = &arm.guard
-            && let Some(gt) = type_of(guard, Some(&Ty::Base(BaseType::Bool)), ctx)
-            && !compatible(&gt, &Ty::Base(BaseType::Bool))
+            && let Some(gt) = type_of(guard, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx)
+            && !compatible(gt, tys.intern(Ty::Base(BaseType::Bool)), tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.guard_not_bool",
                 guard.span,
                 format!(
                     "a match-arm `if` guard must be `Bool`, but this guard is `{}`",
-                    gt.display()
+                    gt.display(tys)
                 ),
             ));
         }
         let body_ty = match &arm.body {
-            MatchBody::Expr(e) => maybe_auto_lift(type_of(e, expected, ctx), expected),
+            MatchBody::Expr(e) => maybe_auto_lift(type_of(e, expected, ctx), expected, tys),
             MatchBody::Block(b) => type_of_block(b, expected, ctx),
         };
         ctx.pop_scope();
@@ -2969,7 +2994,7 @@ pub(crate) fn check_match(
             .collect();
         match &kind {
             MatchKind::Variant => {
-                for witness in missing_patterns(&disc_ty, &unguarded, ctx) {
+                for witness in missing_patterns(disc_ty, &unguarded, ctx) {
                     ctx.errors.push(
                         CompileError::new(
                             "bynk.types.non_exhaustive_match",
@@ -2977,7 +3002,7 @@ pub(crate) fn check_match(
                             format!(
                                 "non-exhaustive `match` — variant `{}` of `{}` is not covered",
                                 witness,
-                                disc_ty.display()
+                                disc_ty.display(tys)
                             ),
                         )
                         .with_note("add a match arm for this variant, or use a wildcard `_` arm"),
@@ -2987,7 +3012,7 @@ pub(crate) fn check_match(
             // v0.130 (DECISION B): `Bool` is exhausted by `true` + `false`;
             // `Int`/`String` are unbounded and always need a wildcard.
             MatchKind::Literal(BaseType::Bool) => {
-                for witness in missing_patterns(&disc_ty, &unguarded, ctx) {
+                for witness in missing_patterns(disc_ty, &unguarded, ctx) {
                     ctx.errors.push(
                         CompileError::new(
                             "bynk.types.non_exhaustive_match",
@@ -3007,7 +3032,7 @@ pub(crate) fn check_match(
                         span,
                         format!(
                             "non-exhaustive `match` on `{}` — a literal match over an unbounded type can never be complete",
-                            disc_ty.display()
+                            disc_ty.display(tys)
                         ),
                     )
                     .with_note("add a wildcard `_` arm to cover the remaining values"),
@@ -3019,9 +3044,9 @@ pub(crate) fn check_match(
     if arm_types.is_empty() {
         return None;
     }
-    let mut acc = arm_types[0].0.clone();
+    let mut acc = arm_types[0].0;
     for (t, span) in arm_types.iter().skip(1) {
-        match join_ty(&acc, t) {
+        match join_ty(acc, *t, tys) {
             Some(joined) => acc = joined,
             None => {
                 ctx.errors.push(
@@ -3030,8 +3055,8 @@ pub(crate) fn check_match(
                         *span,
                         format!(
                             "match-arm body has type `{}`, but earlier arms have type `{}`",
-                            t.display(),
-                            acc.display()
+                            t.display(tys),
+                            acc.display(tys)
                         ),
                     )
                     .with_note(
@@ -3049,7 +3074,8 @@ pub(crate) fn check_match(
 /// scope and emitting diagnostics. Recurses through nested payload patterns
 /// (ADR 0169). Duplicate-arm and exhaustiveness are computed separately over
 /// the whole arm set; this is per-pattern validation + binding only.
-fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
+fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
+    let tys = ctx.tys;
     match pat {
         Pattern::Wildcard(_) => {}
         Pattern::Binding(id) => {
@@ -3064,7 +3090,7 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
             ctx.bind(id.name.clone(), ty.clone());
         }
         Pattern::Literal { value, span } => {
-            if let Some(base) = literal_base_of(ty) {
+            if let Some(base) = literal_base_of(ty, tys) {
                 let lit_base = literal_value_base(value);
                 if lit_base != base {
                     ctx.errors.push(CompileError::new(
@@ -3074,7 +3100,7 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                             "literal pattern `{}` has type `{}`, but the scrutinee is `{}`",
                             value.describe(),
                             lit_base.name(),
-                            ty.display()
+                            ty.display(tys)
                         ),
                     ));
                 }
@@ -3085,7 +3111,7 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                     format!(
                         "literal pattern `{}` cannot match a value of type `{}` — literal patterns match `Int`/`String`/`Bool` scrutinees",
                         value.describe(),
-                        ty.display()
+                        ty.display(tys)
                     ),
                 ));
             }
@@ -3101,7 +3127,7 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
             span,
         } => {
             check_pattern(inner, ty, ctx);
-            if let Some(base) = literal_base_of(ty) {
+            if let Some(base) = literal_base_of(ty, tys) {
                 check_refinement(base, *span, Some(predicate), ctx.errors);
             } else {
                 ctx.errors.push(CompileError::new(
@@ -3109,7 +3135,7 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                     *span,
                     format!(
                         "a refined pattern cannot match a value of type `{}` — refined patterns match `Int`/`String` scrutinees",
-                        ty.display()
+                        ty.display(tys)
                     ),
                 ));
             }
@@ -3121,14 +3147,14 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
             span: pat_span,
         } => {
             // A variant pattern is meaningful only over a variant-kind value.
-            let Some(expected_variants) = variants_of(ty, &ctx.input.types) else {
+            let Some(expected_variants) = variants_of(ty, &ctx.input.types, tys) else {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.pattern_type_mismatch",
                     *pat_span,
                     format!(
                         "variant pattern `{}` cannot match a value of type `{}`",
                         variant.name,
-                        ty.display()
+                        ty.display(tys)
                     ),
                 ));
                 return;
@@ -3139,8 +3165,8 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                 if ctx.input.types.contains_key(&tn.name) {
                     ctx.refs.record(tn.span, SymbolKind::Type, &tn.name);
                 }
-                if let Ty::Named { name, .. } = ty
-                    && &tn.name != name
+                if let Ty::Named { name, .. } = &*tys.get(ty)
+                    && tn.name != *name
                 {
                     ctx.errors.push(CompileError::new(
                         "bynk.types.pattern_type_mismatch",
@@ -3157,13 +3183,13 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.unknown_variant_in_pattern",
                     *pat_span,
-                    format!("type `{}` has no variant `{}`", ty.display(), variant.name),
+                    format!("type `{}` has no variant `{}`", ty.display(tys), variant.name),
                 ));
                 return;
             };
             // Clone the payload so the immutable borrow of `ctx.input` (via
             // `expected_variants`) is released before we recurse with `&mut ctx`.
-            let payload: Vec<(String, Ty)> = variant_info.payload.clone();
+            let payload: Vec<(String, TyId)> = variant_info.payload.clone();
             if bindings.is_empty() {
                 // Nullary pattern (or "don't bind the payload"): matches the tag.
                 return;
@@ -3201,7 +3227,7 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                                 ));
                                 continue;
                             };
-                            check_pattern(pattern, &field_ty, ctx);
+                            check_pattern(pattern, field_ty, ctx);
                         }
                         PatternBindingKind::Positional { .. } => {
                             ctx.errors.push(CompileError::new(
@@ -3226,7 +3252,7 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
             } else {
                 for (b, (_, field_ty)) in bindings.iter().zip(payload.iter()) {
                     let field_ty = field_ty.clone();
-                    check_pattern(b.pattern(), &field_ty, ctx);
+                    check_pattern(b.pattern(), field_ty, ctx);
                 }
             }
         }
@@ -3252,8 +3278,9 @@ fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
 /// `check_pattern`'s `Binding` arm has already populated for every bound
 /// identifier in each alternative.
 fn check_or_pattern_bindings(alts: &[Pattern], ctx: &mut Ctx) {
+    let tys = ctx.tys;
     let mut first_names: Option<Vec<String>> = None;
-    let mut first_types: HashMap<String, Ty> = HashMap::new();
+    let mut first_types: HashMap<String, TyId> = HashMap::new();
     for alt in alts {
         let mut names: Vec<String> = Vec::new();
         for id in alt.bound_names() {
@@ -3269,8 +3296,8 @@ fn check_or_pattern_bindings(alts: &[Pattern], ctx: &mut Ctx) {
                         format!(
                             "`{}` has type `{}` in this alternative, but `{}` in an earlier alternative of the same or-pattern",
                             id.name,
-                            bty.display(),
-                            existing.display()
+                            bty.display(tys),
+                            existing.display(tys)
                         ),
                     ).with_note("every alternative of an or-pattern must give a shared binding the same type, including refinement"));
                 }
@@ -3397,7 +3424,8 @@ fn describe_pattern(pat: &Pattern) -> String {
 /// exhaustive). Bounded by declared sum arity (ADR 0169 DECISION D): a
 /// single-field payload recurses; a multi-field refutable payload is
 /// conservatively reported uncovered unless a full (all-irrefutable) arm exists.
-fn missing_patterns(ty: &Ty, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
+fn missing_patterns(ty: TyId, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
+    let tys = ctx.tys;
     // #474: an or-pattern covers all its alternatives — flatten one level
     // before computing coverage, so `Held(...) | Confirmed(...)` contributes
     // as two separate witnesses. Applied here (rather than only at the
@@ -3413,7 +3441,7 @@ fn missing_patterns(ty: &Ty, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
     if pats.iter().any(|p| p.is_irrefutable()) {
         return Vec::new();
     }
-    if let Some(variants) = variants_of(ty, &ctx.input.types) {
+    if let Some(variants) = variants_of(ty, &ctx.input.types, tys) {
         let mut missing = Vec::new();
         for v in &variants {
             let matching: Vec<&Pattern> = pats
@@ -3450,7 +3478,7 @@ fn missing_patterns(ty: &Ty, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
                         _ => None,
                     })
                     .collect();
-                for inner in missing_patterns(field_ty, &sub, ctx) {
+                for inner in missing_patterns(*field_ty, &sub, ctx) {
                     missing.push(format!("{}({})", v.name, inner));
                 }
                 continue;
@@ -3460,7 +3488,7 @@ fn missing_patterns(ty: &Ty, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
         }
         return missing;
     }
-    if matches!(literal_base_of(ty), Some(BaseType::Bool)) {
+    if matches!(literal_base_of(ty, tys), Some(BaseType::Bool)) {
         let mut missing = Vec::new();
         for b in [true, false] {
             if !pats.iter().any(
@@ -3475,11 +3503,12 @@ fn missing_patterns(ty: &Ty, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
     vec!["_".to_string()]
 }
 
-pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut Ctx) -> Option<TyId> {
+    let tys = ctx.tys;
     let value_ty = type_of(value, None, ctx)?;
-    let variants = variants_of(&value_ty, &ctx.input.types);
-    check_is_pattern(pattern, &value_ty, &variants, ctx);
-    Some(Ty::Base(BaseType::Bool))
+    let variants = variants_of(value_ty, &ctx.input.types, tys);
+    check_is_pattern(pattern, value_ty, &variants, ctx);
+    Some(tys.intern(Ty::Base(BaseType::Bool)))
 }
 
 /// The per-pattern-kind body of `check_is` (#474: factored out so an
@@ -3488,10 +3517,11 @@ pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut C
 /// `variants`, computed once by the caller.
 fn check_is_pattern(
     pattern: &Pattern,
-    value_ty: &Ty,
+    value_ty: TyId,
     variants: &Option<Vec<VariantInfo>>,
     ctx: &mut Ctx,
 ) {
+    let tys = ctx.tys;
     match pattern {
         Pattern::Wildcard(_) => {
             // `_` matches anything, but is only meaningful over a sum today.
@@ -3501,7 +3531,7 @@ fn check_is_pattern(
                     pattern.span(),
                     format!(
                         "the `is` operator requires a sum, `Result`, or `Option` value, but got `{}`",
-                        value_ty.display()
+                        value_ty.display(tys)
                     ),
                 ));
             }
@@ -3515,7 +3545,7 @@ fn check_is_pattern(
                     pattern.span(),
                     format!(
                         "the `is` operator requires a sum, `Result`, or `Option` value, but got `{}`",
-                        value_ty.display()
+                        value_ty.display(tys)
                     ),
                 ));
             }
@@ -3581,7 +3611,7 @@ fn check_is_pattern(
                     && let Some(decl) = ctx.input.types.get(&variant.name)
                     && let TypeBody::Refined { base, .. } = &decl.body
                 {
-                    if compatible(value_ty, &Ty::Base(*base)) {
+                    if compatible(value_ty, tys.intern(Ty::Base(*base)), tys) {
                         // v0.25: `x is RefinedType` names the type.
                         ctx.refs
                             .record(variant.span, SymbolKind::Type, &variant.name);
@@ -3594,7 +3624,7 @@ fn check_is_pattern(
                             "`is {}` checks an `{}` value, but got `{}`",
                             variant.name,
                             base.name(),
-                            value_ty.display()
+                            value_ty.display(tys)
                         ),
                     ));
                     return;
@@ -3606,7 +3636,7 @@ fn check_is_pattern(
                         pattern.span(),
                         format!(
                             "the `is` operator requires a sum, `Result`, or `Option` value, but got `{}`",
-                            value_ty.display()
+                            value_ty.display(tys)
                         ),
                     ));
                 } else {
@@ -3615,7 +3645,7 @@ fn check_is_pattern(
                         variant.span,
                         format!(
                             "type `{}` has no variant `{}`",
-                            value_ty.display(),
+                            value_ty.display(tys),
                             variant.name
                         ),
                     ));
@@ -3668,10 +3698,10 @@ fn check_is_pattern(
             for alt in alts {
                 check_is_pattern(alt, value_ty, variants, ctx);
             }
-            let mut first: Option<Vec<(String, Ty)>> = None;
+            let mut first: Option<Vec<(String, TyId)>> = None;
             for alt in alts {
                 let mut out = Vec::new();
-                gather_pattern_bindings(value_ty, alt, &ctx.input.types, &mut out);
+                gather_pattern_bindings(value_ty, alt, &ctx.input.types, &mut out, tys);
                 out.sort_by(|a, b| a.0.cmp(&b.0));
                 match &first {
                     None => first = Some(out),
@@ -3698,8 +3728,8 @@ fn check_is_pattern(
                                         alt.span(),
                                         format!(
                                             "`{n}` has type `{}` in this alternative, but `{}` in an earlier alternative of the same or-pattern",
-                                            t.display(),
-                                            ft.display()
+                                            t.display(tys),
+                                            ft.display(tys)
                                         ),
                                     )
                                     .with_note("every alternative of an or-pattern must give a shared binding the same type, including refinement"),
@@ -3718,7 +3748,8 @@ fn check_is_pattern(
 /// `check_pattern`'s variant checks but **binds nothing** (a nested `is` payload
 /// only tests; depth-1 narrowing names are collected separately). Non-variant
 /// leaves (wildcard / name binding / literal) are inert here.
-fn validate_is_pattern(pattern: &Pattern, ty: &Ty, ctx: &mut Ctx) {
+fn validate_is_pattern(pattern: &Pattern, ty: TyId, ctx: &mut Ctx) {
+    let tys = ctx.tys;
     let Pattern::Variant {
         variant, bindings, ..
     } = pattern
@@ -3727,7 +3758,7 @@ fn validate_is_pattern(pattern: &Pattern, ty: &Ty, ctx: &mut Ctx) {
     };
     // `variants_of` returns an owned list, so no borrow of `ctx.input` is held
     // across the error pushes / recursion below.
-    let payload = match variants_of(ty, &ctx.input.types) {
+    let payload = match variants_of(ty, &ctx.input.types, tys) {
         None => {
             ctx.errors.push(CompileError::new(
                 "bynk.types.pattern_type_mismatch",
@@ -3735,7 +3766,7 @@ fn validate_is_pattern(pattern: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                 format!(
                     "variant pattern `{}` cannot match a value of type `{}`",
                     variant.name,
-                    ty.display()
+                    ty.display(tys)
                 ),
             ));
             return;
@@ -3746,7 +3777,7 @@ fn validate_is_pattern(pattern: &Pattern, ty: &Ty, ctx: &mut Ctx) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.unknown_variant_in_pattern",
                     pattern.span(),
-                    format!("type `{}` has no variant `{}`", ty.display(), variant.name),
+                    format!("type `{}` has no variant `{}`", ty.display(tys), variant.name),
                 ));
                 return;
             }
@@ -3760,7 +3791,7 @@ fn validate_is_pattern(pattern: &Pattern, ty: &Ty, ctx: &mut Ctx) {
 /// (wildcard / name) add no test and are skipped.
 fn validate_is_nested_payloads(
     bindings: &[PatternBinding],
-    payload: &[(String, Ty)],
+    payload: &[(String, TyId)],
     ctx: &mut Ctx,
 ) {
     for (i, b) in bindings.iter().enumerate() {
@@ -3776,7 +3807,7 @@ fn validate_is_nested_payloads(
             PatternBindingKind::Positional { .. } => payload.get(i).map(|(_, t)| t),
         };
         if let Some(ty) = field_ty.cloned() {
-            validate_is_pattern(sub, &ty, ctx);
+            validate_is_pattern(sub, ty, ctx);
         }
     }
 }
@@ -3786,7 +3817,7 @@ fn validate_is_nested_payloads(
 ///  - `expr is Pat`
 ///  - `lhs && rhs`        (recursive into both sides; later wins on collision)
 ///  - `(expr)` parens
-fn collect_is_bindings(expr: &Expr, ctx: &mut Ctx) -> Vec<(String, Ty)> {
+fn collect_is_bindings(expr: &Expr, ctx: &mut Ctx) -> Vec<(String, TyId)> {
     // Memoised per condition sub-expression span (see `Ctx::is_binding_cache`).
     // Without this, a left-nested `&&` chain re-walks each lhs subtree once per
     // enclosing node — O(N²) for an N-term chain. The collector is a pure read
@@ -3803,13 +3834,14 @@ fn collect_is_bindings(expr: &Expr, ctx: &mut Ctx) -> Vec<(String, Ty)> {
     out
 }
 
-fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, Ty)>) {
+fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, TyId)>) {
+    let tys = ctx.tys;
     match &expr.kind {
         ExprKind::Is { value, pattern } => {
             // Recompute value type from the expr_types side-table; this avoids
             // mutating type-checking state. If we don't have it, fall back to
             // recomputing.
-            let value_ty = ctx.expr_types.get(&value.id).map(|te| te.ty.clone());
+            let value_ty = ctx.expr_types.get(&value.id).map(|te| te.ty);
             if let Some(value_ty) = value_ty {
                 // v0.13 refinement narrowing: `ident is RefinedType` re-binds the
                 // identifier to the refined type in the narrowed branch.
@@ -3823,23 +3855,23 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
                     },
                 ) = (&value.kind, pattern.as_ref())
                     && bindings.is_empty()
-                    && variants_of(&value_ty, &ctx.input.types)
+                    && variants_of(value_ty, &ctx.input.types, tys)
                         .is_none_or(|vs| !vs.iter().any(|v| v.name == variant.name))
                     && let Some(decl) = ctx.input.types.get(&variant.name)
                     && let TypeBody::Refined { base, .. } = &decl.body
-                    && compatible(&value_ty, &Ty::Base(*base))
+                    && compatible(value_ty, tys.intern(Ty::Base(*base)), tys)
                 {
                     out.push((
                         id.name.clone(),
-                        Ty::Named {
+                        tys.intern(Ty::Named {
                             name: variant.name.clone(),
                             kind: NamedKind::Refined(*base),
                             args: Vec::new(),
-                        },
+                        }),
                     ));
                     return;
                 }
-                gather_pattern_bindings(&value_ty, pattern, &ctx.input.types, out);
+                gather_pattern_bindings(value_ty, pattern, &ctx.input.types, out, tys);
             }
         }
         ExprKind::BinOp(BinOp::And, lhs, rhs) => {
@@ -3852,10 +3884,11 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
 }
 
 fn gather_pattern_bindings(
-    value_ty: &Ty,
+    value_ty: TyId,
     pattern: &Pattern,
     types: &HashMap<String, Arc<TypeDecl>>,
-    out: &mut Vec<(String, Ty)>,
+    out: &mut Vec<(String, TyId)>,
+    tys: &Types,
 ) {
     // #474: when Rule 2 holds, every alternative gives a shared name the same
     // type, so the first alternative's mapping is representative — recurse
@@ -3869,7 +3902,7 @@ fn gather_pattern_bindings(
     // the negative fixtures deliberately exercise the disagreeing case.)
     if let Pattern::Or(alts, _) = pattern {
         if let Some(first) = alts.first() {
-            gather_pattern_bindings(value_ty, first, types, out);
+            gather_pattern_bindings(value_ty, first, types, out, tys);
         }
         return;
     }
@@ -3879,7 +3912,7 @@ fn gather_pattern_bindings(
     else {
         return;
     };
-    let Some(variants) = variants_of(value_ty, types) else {
+    let Some(variants) = variants_of(value_ty, types, tys) else {
         return;
     };
     let Some(info) = variants.iter().find(|v| v.name == variant.name) else {
@@ -3889,8 +3922,8 @@ fn gather_pattern_bindings(
         .iter()
         .any(|b| matches!(b.kind, PatternBindingKind::Named { .. }));
     if any_named {
-        let payload_map: HashMap<&str, &Ty> =
-            info.payload.iter().map(|(n, t)| (n.as_str(), t)).collect();
+        let payload_map: HashMap<&str, TyId> =
+            info.payload.iter().map(|(n, t)| (n.as_str(), *t)).collect();
         for b in bindings {
             if let PatternBindingKind::Named { field, pattern } = &b.kind
                 && let Pattern::Binding(name) = pattern
@@ -3910,51 +3943,57 @@ fn gather_pattern_bindings(
 
 #[cfg(test)]
 mod join_ty_tests {
-    use super::{BaseType, NamedKind, Ty, join_ty};
+    use super::{BaseType, NamedKind, Ty, TyId, Types, join_ty};
 
-    fn refined(name: &str, base: BaseType) -> Ty {
-        Ty::Named {
+    fn refined(tys: &Types, name: &str, base: BaseType) -> TyId {
+        tys.intern(Ty::Named {
             name: name.to_string(),
             kind: NamedKind::Refined(base),
             args: vec![],
-        }
+        })
     }
-    fn base(b: BaseType) -> Ty {
-        Ty::Base(b)
+    fn base(tys: &Types, b: BaseType) -> TyId {
+        tys.intern(Ty::Base(b))
     }
 
     /// #726: a refined type and its base join to the base, in either order
     /// (the reported `match r { Ok(e) => e, Err(m) => m }` shape).
     #[test]
     fn refined_and_its_base_widen_to_base() {
-        let email = refined("Email", BaseType::String);
-        let string = base(BaseType::String);
-        assert_eq!(join_ty(&email, &string), Some(string.clone()));
-        assert_eq!(join_ty(&string, &email), Some(string));
+        let tys = &Types::new();
+        let email = refined(tys, "Email", BaseType::String);
+        let string = base(tys, BaseType::String);
+        assert_eq!(join_ty(email, string, tys), Some(string));
+        assert_eq!(join_ty(string, email, tys), Some(string));
     }
 
     /// Two distinct refined types over the same base join to that base,
     /// regardless of fold order.
     #[test]
     fn two_refined_over_same_base_join_to_base() {
-        let email = refined("Email", BaseType::String);
-        let user = refined("Username", BaseType::String);
-        assert_eq!(join_ty(&email, &user), Some(base(BaseType::String)));
-        assert_eq!(join_ty(&user, &email), Some(base(BaseType::String)));
+        let tys = &Types::new();
+        let email = refined(tys, "Email", BaseType::String);
+        let user = refined(tys, "Username", BaseType::String);
+        assert_eq!(join_ty(email, user, tys), Some(base(tys, BaseType::String)));
+        assert_eq!(join_ty(user, email, tys), Some(base(tys, BaseType::String)));
     }
 
     /// Identical types join to themselves — no widening.
     #[test]
     fn identical_refined_types_are_preserved() {
-        let email = refined("Email", BaseType::String);
-        assert_eq!(join_ty(&email, &email), Some(email));
+        let tys = &Types::new();
+        let email = refined(tys, "Email", BaseType::String);
+        assert_eq!(join_ty(email, email, tys), Some(email));
     }
 
     /// Genuinely unrelated types have no join (still a branch-mismatch error).
     #[test]
     fn unrelated_types_have_no_join() {
-        assert!(join_ty(&base(BaseType::String), &base(BaseType::Int)).is_none());
-        let email = refined("Email", BaseType::String);
-        assert!(join_ty(&email, &base(BaseType::Int)).is_none());
+        let tys = &Types::new();
+        let string = base(tys, BaseType::String);
+        let int = base(tys, BaseType::Int);
+        assert!(join_ty(string, int, tys).is_none());
+        let email = refined(tys, "Email", BaseType::String);
+        assert!(join_ty(email, int, tys).is_none());
     }
 }
