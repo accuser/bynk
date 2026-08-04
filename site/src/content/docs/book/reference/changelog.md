@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.7** | The checker interns every `Ty` behind a `TyId` handle, making type identity a `u32` comparison rather than a recursive structural walk |
 | **v0.247.6** | The checker's debug-only expr-identity uniqueness check (finding #28) now also covers handler and test-case bodies, not only top-level functions; ADR 0313 is superseded |
 | **v0.247.5** | The phase-3 track (identity and totality) settles on ExprKey(Span) scaffolding before ExprId, and amends ADR 0309 with an LSP-surface-fixture requirement |
 | **v0.247.4** | A `?`'s propagating early return nested inside a short-circuited `&&`/`||`/`implies` right operand now correctly exits the enclosing function instead of only the operator's internal wrapper |
