@@ -3,7 +3,7 @@
 //! ceiling: in Analyse mode the checker's best-effort partial types are recorded
 //! even when the file has an error elsewhere, so completion works mid-edit.
 
-use bynk_check::checker::Ty;
+use bynk_check::checker::{Ty, TyId};
 use bynk_check::expr_types::type_at_offset;
 use bynkc::ast::BaseType;
 use bynkc::span::Span;
@@ -21,7 +21,7 @@ fn fixture_root(which: &str) -> PathBuf {
 fn types_for(
     result: &bynk_ide::ProjectDiagnostics,
     file: &str,
-) -> Option<(Vec<(Span, Ty)>, String)> {
+) -> Option<(Vec<(Span, TyId)>, String)> {
     let text = result
         .files
         .iter()
@@ -65,8 +65,10 @@ fn a_clean_file_records_its_receiver_types() {
     // The receiver-typing use case: `xs` in `xs.fold(…)` is `List[Int]`.
     let recv = text.find("xs.fold").expect("fixture has `xs.fold`");
     assert_eq!(
-        type_at_offset(&entries, recv),
-        Some(&Ty::List(Box::new(Ty::Base(BaseType::Int)))),
+        type_at_offset(&entries, recv)
+            .map(|t| result.ty_intern.get(t))
+            .as_deref(),
+        Some(&Ty::List(result.ty_intern.intern(Ty::Base(BaseType::Int)))),
         "the `.fold` receiver types as List[Int]"
     );
 }
@@ -93,7 +95,9 @@ fn an_erroring_file_still_records_its_well_typed_expressions() {
     // `Int` — so typing `n.` there would complete despite `bad` failing to check.
     let off = text.find("n * 2").expect("fixture has `n * 2` in `good`");
     assert_eq!(
-        type_at_offset(&entries, off),
+        type_at_offset(&entries, off)
+            .map(|t| result.ty_intern.get(t))
+            .as_deref(),
         Some(&Ty::Base(BaseType::Int)),
         "`good`'s expressions are typed even though `bad` errors"
     );
@@ -120,7 +124,9 @@ fn an_erroring_handler_body_records_its_well_typed_receivers() {
         .find("cents + true")
         .expect("fixture has `cents + true`");
     assert_eq!(
-        type_at_offset(&entries, off),
+        type_at_offset(&entries, off)
+            .map(|t| result.ty_intern.get(t))
+            .as_deref(),
         Some(&Ty::Base(BaseType::Int)),
         "the receiver `cents` types as Int even though the handler body errors"
     );

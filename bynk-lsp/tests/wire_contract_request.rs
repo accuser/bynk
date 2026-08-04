@@ -72,8 +72,16 @@ fn rate_limiter_http_boundary() {
     let context_count = real_context_count(&diag.boundary_info, &diag.unit_sources);
 
     let offset = find_offset(&text, "GET(\"/check/:client\")");
-    let model = wire_contract_at("ratelimit", &text, offset, info, expr_types, context_count)
-        .expect("a wire contract at the GET handler");
+    let model = wire_contract_at(
+        "ratelimit",
+        &text,
+        offset,
+        info,
+        expr_types,
+        &diag.ty_intern,
+        context_count,
+    )
+    .expect("a wire contract at the GET handler");
 
     assert_eq!(
         model.kind,
@@ -252,8 +260,16 @@ fn two_context_call_contract_form_and_hash() {
     let context_count = real_context_count(&diag.boundary_info, &diag.unit_sources);
 
     let offset = find_offset(&text, "on call(");
-    let model = wire_contract_at("billing", &text, offset, info, &[], context_count)
-        .expect("a wire contract at the `Pricing` handler");
+    let model = wire_contract_at(
+        "billing",
+        &text,
+        offset,
+        info,
+        &[],
+        &diag.ty_intern,
+        context_count,
+    )
+    .expect("a wire contract at the `Pricing` handler");
 
     assert_eq!(model.kind, BoundaryKind::Call);
     let params = match &model.envelope {

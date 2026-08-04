@@ -2274,16 +2274,21 @@ mod tests {
         assert!(value_receiver_rewrite("  email", 7).is_none());
     }
 
+    /// One table for every fixture in this module — `Types` is `Send + Sync`
+    /// (T3.6b), so a `LazyLock` static gives the `TyId`s below something to
+    /// resolve against without threading a value through each helper.
+    static TYS: std::sync::LazyLock<Types> = std::sync::LazyLock::new(Types::new);
+
     #[test]
     fn value_member_candidates_lists_kernel_methods() {
         use bynk_syntax::ast::BaseType;
-        let list = Ty::List(Box::new(Ty::Base(BaseType::Int)));
-        let items = value_member_candidates(&list, "context a.b\n", None);
+        let list = TYS.intern(Ty::List(TYS.intern(Ty::Base(BaseType::Int))));
+        let items = value_member_candidates(list, &TYS, "context a.b\n", None);
         assert!(find(&items, "fold", CompletionKind::Member).is_some());
         assert!(find(&items, "get", CompletionKind::Member).is_some());
 
-        let string = Ty::Base(BaseType::String);
-        let items = value_member_candidates(&string, "context a.b\n", None);
+        let string = TYS.intern(Ty::Base(BaseType::String));
+        let items = value_member_candidates(string, &TYS, "context a.b\n", None);
         assert!(find(&items, "split", CompletionKind::Member).is_some());
         assert!(find(&items, "trim", CompletionKind::Member).is_some());
     }
@@ -2294,13 +2299,14 @@ mod tests {
         // methods in `.`-member completion.
         use bynk_check::checker::NamedKind;
         use bynk_syntax::ast::BaseType;
-        let name = Ty::Named {
+        let name = TYS.intern(Ty::Named {
             name: "Name".to_string(),
             kind: NamedKind::Refined(BaseType::String),
             args: Vec::new(),
-        };
+        });
         let items = value_member_candidates(
-            &name,
+            name,
+            &TYS,
             "commons m {\n  type Name = String where NonEmpty\n}\n",
             None,
         );
@@ -2327,13 +2333,13 @@ mod tests {
     #[test]
     fn value_member_candidates_lists_record_fields() {
         use bynk_check::checker::NamedKind;
-        let order = Ty::Named {
+        let order = TYS.intern(Ty::Named {
             name: "Order".to_string(),
             kind: NamedKind::Record,
             args: Vec::new(),
-        };
+        });
         let doc = "commons m {\n  type Order = { id: Int, total: Int }\n}\n";
-        let items = value_member_candidates(&order, doc, None);
+        let items = value_member_candidates(order, &TYS, doc, None);
         assert!(
             find(&items, "id", CompletionKind::Field).is_some(),
             "{items:?}",
@@ -2629,18 +2635,18 @@ mod tests {
         // can't see them). This is what makes match-arm completion fire for a
         // Result/Option scrutinee at all.
         use bynk_syntax::ast::BaseType;
-        let result = Ty::Result(
-            Box::new(Ty::Base(BaseType::Int)),
-            Box::new(Ty::Base(BaseType::String)),
-        );
-        let got: Vec<String> = variants_for_ty(&result, "", None)
+        let result = TYS.intern(Ty::Result(
+            TYS.intern(Ty::Base(BaseType::Int)),
+            TYS.intern(Ty::Base(BaseType::String)),
+        ));
+        let got: Vec<String> = variants_for_ty(result, &TYS, "", None)
             .into_iter()
             .map(|c| c.label)
             .collect();
         assert_eq!(got, vec!["Ok".to_string(), "Err".to_string()]);
 
-        let option = Ty::Option(Box::new(Ty::Base(BaseType::Int)));
-        let got: Vec<String> = variants_for_ty(&option, "", None)
+        let option = TYS.intern(Ty::Option(TYS.intern(Ty::Base(BaseType::Int))));
+        let got: Vec<String> = variants_for_ty(option, &TYS, "", None)
             .into_iter()
             .map(|c| c.label)
             .collect();
@@ -2653,26 +2659,25 @@ mod tests {
         use bynk_syntax::ast::BaseType;
         // Built-in outer: `Some(‸)` on `Option[Result[Int, E]]` offers the
         // payload `Result`'s variants.
-        let scrut = Ty::Option(Box::new(Ty::Result(
-            Box::new(Ty::Base(BaseType::Int)),
-            Box::new(Ty::Named {
+        let payload = TYS.intern(Ty::Result(
+            TYS.intern(Ty::Base(BaseType::Int)),
+            TYS.intern(Ty::Named {
                 name: "E".to_string(),
                 kind: NamedKind::Sum,
                 args: Vec::new(),
             }),
-        )));
-        let got: Vec<String> = nested_variant_completions(&scrut, "Some", "", None)
+        ));
+        let scrut = TYS.intern(Ty::Option(payload));
+        let got: Vec<String> = nested_variant_completions(scrut, &TYS, "Some", "", None)
             .into_iter()
             .map(|c| c.label)
             .collect();
         assert_eq!(got, vec!["Ok".to_string(), "Err".to_string()]);
 
         // The other outer variant of a Result payload resolves the error arm.
-        let inner = Ty::Result(
-            Box::new(Ty::Base(BaseType::Int)),
-            Box::new(Ty::Option(Box::new(Ty::Base(BaseType::Int)))),
-        );
-        let got: Vec<String> = nested_variant_completions(&inner, "Err", "", None)
+        let opt_int = TYS.intern(Ty::Option(TYS.intern(Ty::Base(BaseType::Int))));
+        let inner = TYS.intern(Ty::Result(TYS.intern(Ty::Base(BaseType::Int)), opt_int));
+        let got: Vec<String> = nested_variant_completions(inner, &TYS, "Err", "", None)
             .into_iter()
             .map(|c| c.label)
             .collect();
@@ -2682,12 +2687,12 @@ mod tests {
         // type's variants, walked from source.
         let doc = "commons m {\n  type Inner = enum { A, B }\n  \
                    type Outer = | Wrap(inner: Inner) | Bare\n}\n";
-        let outer = Ty::Named {
+        let outer = TYS.intern(Ty::Named {
             name: "Outer".to_string(),
             kind: NamedKind::Sum,
             args: Vec::new(),
-        };
-        let got: Vec<String> = nested_variant_completions(&outer, "Wrap", doc, None)
+        });
+        let got: Vec<String> = nested_variant_completions(outer, &TYS, "Wrap", doc, None)
             .into_iter()
             .map(|c| c.label)
             .collect();

@@ -79,7 +79,7 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<TyId>, ctx: &mut Ctx) -> 
             let ret = resolve_type_ref(&fn_decl.return_type, &ctx.input.types, tys)?;
             return Some(tys.intern(Ty::Fn {
                 params: params?,
-                ret: ret,
+                ret,
             }));
         }
         // Bare reference outside a function-typed position: the original
@@ -364,7 +364,12 @@ const MOCK_DEPTH: u32 = 12;
 /// not carry a `Matches` predicate (no default), and sums/records must have
 /// every (first-variant / field) component recursively mockable within the
 /// depth cap.
-fn can_mock_bare(ty: TyId, types: &HashMap<String, Arc<TypeDecl>>, depth: u32, tys: &Types) -> bool {
+fn can_mock_bare(
+    ty: TyId,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    depth: u32,
+    tys: &Types,
+) -> bool {
     if depth == 0 {
         return false;
     }
@@ -510,7 +515,7 @@ pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) 
                 let mut scope: HashMap<String, TyId> = HashMap::new();
                 if let Some(info) = &op_info {
                     for (name, ty) in info.param_names.iter().zip(info.params.iter()) {
-                        scope.insert(name.clone(), ty.clone());
+                        scope.insert(name.clone(), *ty);
                     }
                 }
                 ctx.scopes.push(scope);
@@ -739,8 +744,12 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                 return match (op, lt_base, rt_base) {
                     (BinOp::Add, Some(Instant), Some(Duration))
                     | (BinOp::Add, Some(Duration), Some(Instant))
-                    | (BinOp::Sub, Some(Instant), Some(Duration)) => Some(tys.intern(Ty::Base(Instant))),
-                    (BinOp::Sub, Some(Instant), Some(Instant)) => Some(tys.intern(Ty::Base(Duration))),
+                    | (BinOp::Sub, Some(Instant), Some(Duration)) => {
+                        Some(tys.intern(Ty::Base(Instant)))
+                    }
+                    (BinOp::Sub, Some(Instant), Some(Instant)) => {
+                        Some(tys.intern(Ty::Base(Duration)))
+                    }
                     // Every other `Instant` combination is rejected (e.g.
                     // `Instant + Instant`, `Instant * Int`, `Instant ± Int`).
                     _ => {
@@ -761,7 +770,9 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                         Some(tys.intern(Ty::Base(Duration)))
                     }
                     (BinOp::Mul, Some(Duration), Some(Int))
-                    | (BinOp::Mul, Some(Int), Some(Duration)) => Some(tys.intern(Ty::Base(Duration))),
+                    | (BinOp::Mul, Some(Int), Some(Duration)) => {
+                        Some(tys.intern(Ty::Base(Duration)))
+                    }
                     // Every other `Duration` combination is rejected (e.g.
                     // `Duration + Int`, `Int + Duration`, `Duration * Duration`).
                     _ => {
@@ -773,8 +784,12 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             // v0.21: arithmetic is defined on `Int` and `Float`, never mixed
             // — there is no implicit numeric coercion (ADR 0041).
             match (lt_base, rt_base) {
-                (Some(BaseType::Int), Some(BaseType::Int)) => Some(tys.intern(Ty::Base(BaseType::Int))),
-                (Some(BaseType::Float), Some(BaseType::Float)) => Some(tys.intern(Ty::Base(BaseType::Float))),
+                (Some(BaseType::Int), Some(BaseType::Int)) => {
+                    Some(tys.intern(Ty::Base(BaseType::Int)))
+                }
+                (Some(BaseType::Float), Some(BaseType::Float)) => {
+                    Some(tys.intern(Ty::Base(BaseType::Float)))
+                }
                 (Some(BaseType::Int), Some(BaseType::Float))
                 | (Some(BaseType::Float), Some(BaseType::Int)) => {
                     push_no_numeric_coercion(op, span, lt, rt, ctx);
@@ -1007,12 +1022,13 @@ pub(crate) fn check_lambda(
                     // v0.27 (ADR 0056): a param typed from the expected fn
                     // type gets an inferred-type inlay hint at its name.
                     if p.name.name != "_" {
-                        ctx.hints.record(p.name.span, format!(": {}", ep.display(tys)));
+                        ctx.hints
+                            .record(p.name.span, format!(": {}", ep.display(tys)));
                     }
-                    ep.clone()
+                    *ep
                 }
             };
-            scope.insert(p.name.name.clone(), ty.clone());
+            scope.insert(p.name.name.clone(), ty);
             param_tys.push(ty);
         }
     } else {
@@ -1023,7 +1039,7 @@ pub(crate) fn check_lambda(
                     // #712: report an unknown annotation type instead of the
                     // bare `?` silently dropping the lambda in a handler body.
                     let ty = resolve_expr_type_ref(tr, ctx)?;
-                    scope.insert(p.name.name.clone(), ty.clone());
+                    scope.insert(p.name.name.clone(), ty);
                     param_tys.push(ty);
                 }
                 None => {
@@ -1084,13 +1100,13 @@ pub(crate) fn check_lambda(
     // Frame swap (save/restore — the capability map and given-tracking stay
     // shared so closures over capabilities work and count as uses).
     let saved_effectful = ctx.effectful;
-    let saved_return_ty = ctx.return_ty.clone();
+    let saved_return_ty = ctx.return_ty;
     let saved_return_ty_span = ctx.return_ty_span;
     let saved_agent_state_ty = ctx.agent_state_ty.take();
     let saved_commit_seen = ctx.commit_seen;
     ctx.effectful = body_effectful;
     ctx.return_ty = match &expected_fn {
-        Some((_, er)) if ret_constrained => er.clone(),
+        Some((_, er)) if ret_constrained => *er,
         // Placeholder: no diagnostic path can consult it — the pre-scan sets
         // `effectful` whenever a `<-` exists, so `bind_in_pure_context`'s
         // return-type label is unreachable here.
@@ -1100,7 +1116,7 @@ pub(crate) fn check_lambda(
     ctx.commit_seen = false;
 
     let body_expected = match &expected_fn {
-        Some((_, er)) if ret_constrained => Some(er.clone()),
+        Some((_, er)) if ret_constrained => Some(*er),
         _ => None,
     };
     let body_ty = type_of(&lambda.body, body_expected, ctx);
@@ -1122,17 +1138,13 @@ pub(crate) fn check_lambda(
             } else {
                 bt
             };
-            Some(tys.intern(Ty::Fn {
-                params: eps,
-                ret: ret,
-            }))
+            Some(tys.intern(Ty::Fn { params: eps, ret }))
         }
         Some((eps, er)) => {
             if let Some(bt) = body_ty.as_ref() {
                 // A pure body against an effectful expected return auto-lifts
                 // (the emitter's async arrow realises the lifted Promise).
-                let lifted =
-                    maybe_auto_lift(Some(bt.clone()), Some(er), tys).unwrap_or_else(|| bt.clone());
+                let lifted = maybe_auto_lift(Some(*bt), Some(er), tys).unwrap_or(*bt);
                 if !compatible(lifted, er, tys) {
                     ctx.errors.push(CompileError::new(
                         "bynk.types.lambda_mismatch",
@@ -1160,7 +1172,7 @@ pub(crate) fn check_lambda(
             };
             Some(tys.intern(Ty::Fn {
                 params: param_tys,
-                ret: ret,
+                ret,
             }))
         }
     }
@@ -1439,7 +1451,7 @@ pub(crate) fn check_variant_construction(
         let mut uninferable = Vec::new();
         for p in &owner.type_params {
             match subst.get(&p.name.name) {
-                Some(t) if !contains_var(*t, tys) => inferred.push(t.clone()),
+                Some(t) if !contains_var(*t, tys) => inferred.push(*t),
                 _ => uninferable.push(p.name.name.clone()),
             }
         }
@@ -1646,7 +1658,7 @@ pub(crate) fn check_ok(
     let in_http = expected
         .and_then(|t| peel_to_http_result(t, tys))
         .or_else(|| peel_to_http_result(ctx.return_ty, tys));
-    match (in_result.clone(), in_http.clone()) {
+    match (in_result, in_http) {
         (Some(_), Some(_)) => {
             ctx.errors.push(
                 CompileError::new(
@@ -1752,7 +1764,11 @@ pub(crate) fn check_queue_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx)?;
+            let arg_ty = type_of(
+                &args[0],
+                Some(tys.intern(Ty::Base(BaseType::String).clone())),
+                ctx,
+            )?;
             if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1810,7 +1826,7 @@ pub(crate) fn check_http_variant(
                 return None;
             }
             let arg_ty = type_of(&args[0], expected_t, ctx)?;
-            let t_ty = match (expected_t, arg_ty.clone()) {
+            let t_ty = match (expected_t, arg_ty) {
                 (Some(t), _) => {
                     if !compatible(arg_ty, t, tys) {
                         ctx.errors.push(CompileError::new(
@@ -1844,7 +1860,11 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx)?;
+            let arg_ty = type_of(
+                &args[0],
+                Some(tys.intern(Ty::Base(BaseType::String).clone())),
+                ctx,
+            )?;
             if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1876,7 +1896,11 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let arg_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx)?;
+            let arg_ty = type_of(
+                &args[0],
+                Some(tys.intern(Ty::Base(BaseType::String).clone())),
+                ctx,
+            )?;
             if !compatible(arg_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1944,7 +1968,11 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let body_ty = type_of(&args[0], Some(tys.intern(Ty::Base(BaseType::Bytes).clone())), ctx)?;
+            let body_ty = type_of(
+                &args[0],
+                Some(tys.intern(Ty::Base(BaseType::Bytes).clone())),
+                ctx,
+            )?;
             if !compatible(body_ty, tys.intern(Ty::Base(BaseType::Bytes)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -1957,7 +1985,11 @@ pub(crate) fn check_http_variant(
                 ));
                 return None;
             }
-            let ct_ty = type_of(&args[1], Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx)?;
+            let ct_ty = type_of(
+                &args[1],
+                Some(tys.intern(Ty::Base(BaseType::String).clone())),
+                ctx,
+            )?;
             if !compatible(ct_ty, tys.intern(Ty::Base(BaseType::String)), tys) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.argument_mismatch",
@@ -2000,7 +2032,7 @@ pub(crate) fn check_err(
 ) -> Option<TyId> {
     let tys = ctx.tys;
     let surrounding = surrounding_result(expected, ctx.return_ty, tys);
-    let expected_e = surrounding.as_ref().map(|(_, e)| e.clone());
+    let expected_e = surrounding.as_ref().map(|(_, e)| *e);
     let inner_ty = type_of(inner, expected_e, ctx)?;
     match surrounding {
         Some((t_ty, e_ty)) => {
@@ -2167,7 +2199,7 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
                     }
                 }
             }
-            return Some(t.clone());
+            return Some(*t);
         }
         ctx.errors.push(
             CompileError::new(
@@ -2203,7 +2235,7 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
             }
         }
     }
-    Some(t.clone())
+    Some(*t)
 }
 
 pub(crate) fn check_record_spread(
@@ -2276,7 +2308,13 @@ pub(crate) fn check_record_spread(
         // the declared field type, so an override on a generic record
         // (`{ ...p, items: [...] }` where `p: Paginated[String]`) is checked
         // against `List[String]`, not a `None`-resolving type variable.
-        let expected_ty = instantiate_field_ty(&decl, &base_args, &declared_field.type_ref, &ctx.input.types, tys);
+        let expected_ty = instantiate_field_ty(
+            &decl,
+            &base_args,
+            &declared_field.type_ref,
+            &ctx.input.types,
+            tys,
+        );
         let value_ty = match &f.value {
             Some(v) => type_of(v, expected_ty, ctx),
             None => ctx.lookup(&f.name.name),
@@ -2466,7 +2504,8 @@ pub(crate) fn check_record_construction(
                 SymbolKind::Field,
                 &format!("{}.{}", type_name.name, f.name.name),
             );
-            let pattern = resolve_type_ref_in(&declared_field.type_ref, &ctx.input.types, &vars, tys);
+            let pattern =
+                resolve_type_ref_in(&declared_field.type_ref, &ctx.input.types, &vars, tys);
             let expected_now = pattern.map(|p| substitute(p, &subst, tys));
             let value_ty = match &f.value {
                 Some(v) => type_of(v, expected_now, ctx),
@@ -2497,7 +2536,7 @@ pub(crate) fn check_record_construction(
         match subst.get(&p.name.name) {
             // #594: a rigid var (the enclosing method's own parameter) is a fully
             // determined argument here — `Box[U]` is ground inside `Box.map[U]`.
-            Some(t) if !contains_flexible_var(*t, &ctx.type_vars, tys) => args.push(t.clone()),
+            Some(t) if !contains_flexible_var(*t, &ctx.type_vars, tys) => args.push(*t),
             _ => uninferable.push(p.name.name.clone()),
         }
     }
@@ -2652,7 +2691,7 @@ pub(crate) fn check_field_access(
     // boundary-minted identity value. No other member is valid.
     if let Ty::Actor(identity) = &*tys.get(recv_ty) {
         if field.name == "identity" {
-            return Some(identity.clone());
+            return Some(*identity);
         }
         ctx.errors.push(CompileError::new(
             "bynk.types.unknown_field",
@@ -3086,8 +3125,8 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
             // expressions, so `Ident` has no `ExprId` and this is deliberately
             // `pattern_binding_types`, not `expr_types` (T3.4; see the field's
             // own doc comment on `Ctx`).
-            ctx.pattern_binding_types.insert(id.span, ty.clone());
-            ctx.bind(id.name.clone(), ty.clone());
+            ctx.pattern_binding_types.insert(id.span, ty);
+            ctx.bind(id.name.clone(), ty);
         }
         Pattern::Literal { value, span } => {
             if let Some(base) = literal_base_of(ty, tys) {
@@ -3183,7 +3222,11 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.unknown_variant_in_pattern",
                     *pat_span,
-                    format!("type `{}` has no variant `{}`", ty.display(tys), variant.name),
+                    format!(
+                        "type `{}` has no variant `{}`",
+                        ty.display(tys),
+                        variant.name
+                    ),
                 ));
                 return;
             };
@@ -3215,7 +3258,7 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                             let Some(field_ty) = payload
                                 .iter()
                                 .find(|(n, _)| n == &field.name)
-                                .map(|(_, t)| t.clone())
+                                .map(|(_, t)| *t)
                             else {
                                 ctx.errors.push(CompileError::new(
                                     "bynk.types.unknown_pattern_field",
@@ -3251,7 +3294,7 @@ fn check_pattern(pat: &Pattern, ty: TyId, ctx: &mut Ctx) {
                 ));
             } else {
                 for (b, (_, field_ty)) in bindings.iter().zip(payload.iter()) {
-                    let field_ty = field_ty.clone();
+                    let field_ty = *field_ty;
                     check_pattern(b.pattern(), field_ty, ctx);
                 }
             }
@@ -3503,7 +3546,12 @@ fn missing_patterns(ty: TyId, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
     vec!["_".to_string()]
 }
 
-pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut Ctx) -> Option<TyId> {
+pub(crate) fn check_is(
+    value: &Expr,
+    pattern: &Pattern,
+    _span: Span,
+    ctx: &mut Ctx,
+) -> Option<TyId> {
     let tys = ctx.tys;
     let value_ty = type_of(value, None, ctx)?;
     let variants = variants_of(value_ty, &ctx.input.types, tys);
@@ -3777,7 +3825,11 @@ fn validate_is_pattern(pattern: &Pattern, ty: TyId, ctx: &mut Ctx) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.unknown_variant_in_pattern",
                     pattern.span(),
-                    format!("type `{}` has no variant `{}`", ty.display(tys), variant.name),
+                    format!(
+                        "type `{}` has no variant `{}`",
+                        ty.display(tys),
+                        variant.name
+                    ),
                 ));
                 return;
             }
@@ -3929,13 +3981,13 @@ fn gather_pattern_bindings(
                 && let Pattern::Binding(name) = pattern
                 && let Some(ty) = payload_map.get(field.name.as_str())
             {
-                out.push((name.name.clone(), (*ty).clone()));
+                out.push((name.name.clone(), (*ty)));
             }
         }
     } else {
         for (b, (_, ty)) in bindings.iter().zip(info.payload.iter()) {
             if let Pattern::Binding(name) = b.pattern() {
-                out.push((name.name.clone(), ty.clone()));
+                out.push((name.name.clone(), *ty));
             }
         }
     }

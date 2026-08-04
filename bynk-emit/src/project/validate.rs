@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use super::*;
 use crate::emitter;
 use bynk_check::builtin_names::methods::{OF, UNSAFE};
 use bynk_check::checker::{TyId, Types};
+use std::sync::Arc;
 
 /// #926: build a checker-facing [`CapabilityOpInfo`] from a capability op's
 /// AST, with the op's own type parameters (if any) resolved as [`Ty::Var`]
@@ -1265,8 +1265,13 @@ pub(crate) fn check_context_declarations(
                         })
                         .collect(),
                     param_names: op.params.iter().map(|(n, _)| n.clone()).collect(),
-                    return_ty: checker::resolve_type_ref_in(&op.return_type, &typed.types, &vars, tys)
-                        .unwrap_or_else(|| tys.intern(Ty::Unit)),
+                    return_ty: checker::resolve_type_ref_in(
+                        &op.return_type,
+                        &typed.types,
+                        &vars,
+                        tys,
+                    )
+                    .unwrap_or_else(|| tys.intern(Ty::Unit)),
                 }
             })
             .collect();
@@ -1674,7 +1679,8 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>, ty
             // distinct types `type_refs_match`'s `_ => false` fallback
             // couldn't classify (List/Map/Query/…) as matching.
             let resolve_ty = |t: &TypeRef| {
-                checker::resolve_type_ref_in(t, &table.types, &HashSet::new(), tys).unwrap_or(tys.intern(Ty::Unit))
+                checker::resolve_type_ref_in(t, &table.types, &HashSet::new(), tys)
+                    .unwrap_or(tys.intern(Ty::Unit))
             };
             let messages: Vec<&Handler> = service
                 .handlers
@@ -2752,7 +2758,8 @@ fn check_service_decls(
                 ));
             }
             // v0.45: the `by`-bound actor identity, in scope for the body.
-            let actor_binding = handler_actor_binding(handler, &service.protocol, table, resolved, tys);
+            let actor_binding =
+                handler_actor_binding(handler, &service.protocol, table, resolved, tys);
             // v0.103 (real-time track slice 3): an `on open` handler receives a
             // fresh owned `Connection[out]` named `connection`. Inject it as a
             // synthetic first parameter so the body type-checks against it and
@@ -2888,7 +2895,12 @@ fn handler_actor_binding(
         tys.intern(checker::Ty::ActorSum(
             by.actors
                 .iter()
-                .map(|a| (a.name.clone(), actor_identity_ty(&a.name, table, resolved, tys)))
+                .map(|a| {
+                    (
+                        a.name.clone(),
+                        actor_identity_ty(&a.name, table, resolved, tys),
+                    )
+                })
                 .collect(),
         ))
     } else {
@@ -2950,7 +2962,9 @@ fn actor_identity_ty_guarded<'a>(
         };
     }
     match prelude_actor(actor_name).map(|c| c.identity) {
-        Some(Identity::CallerId) => tys.intern(checker::Ty::Base(bynk_syntax::ast::BaseType::String)),
+        Some(Identity::CallerId) => {
+            tys.intern(checker::Ty::Base(bynk_syntax::ast::BaseType::String))
+        }
         _ => tys.intern(checker::Ty::Unit),
     }
 }
@@ -3726,7 +3740,7 @@ fn check_agent_decls(
         // (implicit deref in read position); the `:=` write form is checked
         // separately against `store_cells`.
         for (name, ty) in &store_cells {
-            self_scope.insert(name.clone(), ty.clone());
+            self_scope.insert(name.clone(), *ty);
         }
         let _ = key_ty;
 
@@ -3735,25 +3749,24 @@ fn check_agent_decls(
         // so recombine them here rather than threading five parallel maps.
         let store_fields: HashMap<String, checker::StoreField> = store_cells
             .iter()
-            .map(|(name, t)| (name.clone(), checker::StoreField::Cell(t.clone())))
-            .chain(store_maps.iter().map(|(name, (k, v))| {
-                (name.clone(), checker::StoreField::Map(k.clone(), v.clone()))
-            }))
+            .map(|(name, t)| (name.clone(), checker::StoreField::Cell(*t)))
+            .chain(
+                store_maps
+                    .iter()
+                    .map(|(name, (k, v))| (name.clone(), checker::StoreField::Map(*k, *v))),
+            )
             .chain(
                 store_sets
                     .iter()
-                    .map(|(name, t)| (name.clone(), checker::StoreField::Set(t.clone()))),
+                    .map(|(name, t)| (name.clone(), checker::StoreField::Set(*t))),
             )
             .chain(store_caches.iter().map(|(name, (k, v, ttl))| {
-                (
-                    name.clone(),
-                    checker::StoreField::Cache(k.clone(), v.clone(), *ttl),
-                )
+                (name.clone(), checker::StoreField::Cache(*k, *v, *ttl))
             }))
             .chain(
                 store_logs
                     .iter()
-                    .map(|(name, t)| (name.clone(), checker::StoreField::Log(t.clone()))),
+                    .map(|(name, t)| (name.clone(), checker::StoreField::Log(*t))),
             )
             .collect();
 
@@ -4588,7 +4601,6 @@ fn validate_store_field_value_types(
     f: &StoreField,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
-    tys: &Arc<Types>,
 ) {
     let head = f.kind.head.name.as_str();
     let reject_held_storage = |span: Span, errors: &mut Vec<CompileError>| {
@@ -4609,19 +4621,19 @@ fn validate_store_field_value_types(
         // The value position(s) where a held resource is admitted.
         "Cell" => match f.kind.args.first() {
             Some(v) if type_ref_is_held(v) => {} // admitted
-            Some(v) => reject_fn_types(v, "an agent store field", types, errors, tys),
+            Some(v) => reject_fn_types(v, "an agent store field", types, errors),
             None => {}
         },
         "Map" => match f.kind.args.as_slice() {
             [k, v] => {
-                reject_fn_types(k, "an agent store field", types, errors, tys); // key
+                reject_fn_types(k, "an agent store field", types, errors); // key
                 if !type_ref_is_held(v) {
-                    reject_fn_types(v, "an agent store field", types, errors, tys);
+                    reject_fn_types(v, "an agent store field", types, errors);
                 }
             }
             args => {
                 for arg in args {
-                    reject_fn_types(arg, "an agent store field", types, errors, tys);
+                    reject_fn_types(arg, "an agent store field", types, errors);
                 }
             }
         },
@@ -4631,13 +4643,13 @@ fn validate_store_field_value_types(
                 if type_ref_is_held(arg) {
                     reject_held_storage(arg.span(), errors);
                 } else {
-                    reject_fn_types(arg, "an agent store field", types, errors, tys);
+                    reject_fn_types(arg, "an agent store field", types, errors);
                 }
             }
         }
         _ => {
             for arg in &f.kind.args {
-                reject_fn_types(arg, "an agent store field", types, errors, tys);
+                reject_fn_types(arg, "an agent store field", types, errors);
             }
         }
     }
@@ -4648,7 +4660,6 @@ fn reject_fn_types(
     what: &str,
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
-    tys: &Arc<Types>,
 ) {
     match r {
         TypeRef::Fn(_, _, span) => {
@@ -4718,13 +4729,13 @@ fn reject_fn_types(
         // v0.20b: the boundary rule looks through collections — a
         // `List[Int -> Int]` field is still `function_at_boundary`.
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
-            reject_fn_types(a, what, types, errors, tys);
-            reject_fn_types(b, what, types, errors, tys);
+            reject_fn_types(a, what, types, errors);
+            reject_fn_types(b, what, types, errors);
         }
         TypeRef::Option(a, _)
         | TypeRef::Effect(a, _)
         | TypeRef::HttpResult(a, _)
-        | TypeRef::List(a, _) => reject_fn_types(a, what, types, errors, tys),
+        | TypeRef::List(a, _) => reject_fn_types(a, what, types, errors),
         // v0.119: a `History[Agent]` reaching a declared position is already
         // reported by the resolver (`bynk.history.outside_property`); nothing to
         // add here.
@@ -4759,7 +4770,7 @@ fn reject_fn_types(
                 );
             }
             for a in args {
-                reject_fn_types(a, what, types, errors, tys);
+                reject_fn_types(a, what, types, errors);
             }
         }
         TypeRef::Base(..)
@@ -4784,7 +4795,6 @@ fn reject_fn_types(
 /// source.
 pub(crate) fn check_function_type_boundaries(
     parsed: &[ParsedFile],
-    tys: &Arc<Types>,
 ) -> Vec<(PathBuf, CompileError)> {
     // v0.174 (#592): the boundary check now also rejects a *recursive* generic
     // record (`reject_fn_types`' `App` arm), which needs the type declarations to
@@ -4794,7 +4804,7 @@ pub(crate) fn check_function_type_boundaries(
     let mut attributed: Vec<(PathBuf, CompileError)> = Vec::new();
     for pf in parsed {
         let mut file_errors: Vec<CompileError> = Vec::new();
-        check_function_type_boundary_items(pf.items(), &types, &mut file_errors, tys);
+        check_function_type_boundary_items(pf.items(), &types, &mut file_errors);
         attributed.extend(
             file_errors
                 .into_iter()
@@ -4835,7 +4845,6 @@ pub fn check_function_type_boundary_items(
     items: &[CommonsItem],
     types: &std::collections::HashMap<String, Arc<TypeDecl>>,
     errors: &mut Vec<CompileError>,
-    tys: &Arc<Types>,
 ) {
     {
         for item in items {
@@ -4843,7 +4852,7 @@ pub fn check_function_type_boundary_items(
                 CommonsItem::Type(t) => match &t.body {
                     TypeBody::Record(r) => {
                         for f in &r.fields {
-                            reject_fn_types(&f.type_ref, "a record field", types, errors, tys);
+                            reject_fn_types(&f.type_ref, "a record field", types, errors);
                         }
                     }
                     TypeBody::Sum(s) => {
@@ -4854,7 +4863,6 @@ pub fn check_function_type_boundary_items(
                                     "a sum-variant payload",
                                     types,
                                     errors,
-                                    tys,
                                 );
                             }
                         }
@@ -4866,7 +4874,7 @@ pub fn check_function_type_boundary_items(
                 // so the same record-field rule applies as for a `type`.
                 CommonsItem::Event(e) => {
                     for f in &e.body.fields {
-                        reject_fn_types(&f.type_ref, "an event field", types, errors, tys);
+                        reject_fn_types(&f.type_ref, "an event field", types, errors);
                     }
                 }
                 CommonsItem::Capability(c) => {
@@ -4877,7 +4885,6 @@ pub fn check_function_type_boundary_items(
                                 "a capability operation signature",
                                 types,
                                 errors,
-                                tys,
                             );
                         }
                         // v0.102 (§2.9.1): a capability operation may *produce* a
@@ -4889,7 +4896,6 @@ pub fn check_function_type_boundary_items(
                                 "a capability operation signature",
                                 types,
                                 errors,
-                                tys,
                             );
                         }
                     }
@@ -4907,7 +4913,6 @@ pub fn check_function_type_boundary_items(
                                     "a service handler signature",
                                     types,
                                     errors,
-                                    tys,
                                 );
                             }
                         }
@@ -4916,14 +4921,13 @@ pub fn check_function_type_boundary_items(
                             "a service handler signature",
                             types,
                             errors,
-                            tys,
                         );
                     }
                 }
                 CommonsItem::Agent(a) => {
-                    reject_fn_types(&a.key_type, "an agent key", types, errors, tys);
+                    reject_fn_types(&a.key_type, "an agent key", types, errors);
                     for f in &a.store_fields {
-                        validate_store_field_value_types(f, types, errors, tys);
+                        validate_store_field_value_types(f, types, errors);
                     }
                     for h in &a.handlers {
                         for p in &h.params {
@@ -4935,7 +4939,6 @@ pub fn check_function_type_boundary_items(
                                     "an agent handler signature",
                                     types,
                                     errors,
-                                    tys,
                                 );
                             }
                         }
@@ -4944,13 +4947,12 @@ pub fn check_function_type_boundary_items(
                             "an agent handler signature",
                             types,
                             errors,
-                            tys,
                         );
                     }
                 }
                 CommonsItem::Actor(a) => {
                     if let Some(id) = &a.identity {
-                        reject_fn_types(id, "an actor identity type", types, errors, tys);
+                        reject_fn_types(id, "an actor identity type", types, errors);
                     }
                 }
                 // slice 1: `MessageEntry.code`/`.template` are plain string

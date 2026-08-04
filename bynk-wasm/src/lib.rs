@@ -21,7 +21,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use bynk_check::checker::Ty;
 use bynk_check::expr_types::type_at_offset;
 use bynk_check::firstparty::Platform;
 use bynk_check::locals::locals_at;

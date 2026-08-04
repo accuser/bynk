@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use super::*;
 use crate::emitter::RuntimeUse;
 use crate::emitter::source_map::SourceMapBuilder;
-use bynk_check::checker::{Types};
+use bynk_check::checker::Types;
+use std::sync::Arc;
 
 /// Render a type-ref in the same form the user wrote it, for diagnostics.
 pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
@@ -638,6 +638,7 @@ pub(crate) fn process_integration_tests(
             unit_consumes,
             unit_tables,
             &case_inputs,
+            tys,
         ) {
             outputs.push(CompiledFile {
                 source_path: path.clone(),
@@ -704,6 +705,7 @@ struct SystemCaseInput<'a> {
 /// (`ctx.service(args)`) are therefore ordinary cross-context calls. The body
 /// has type `Effect[Result[(), ExpectationError]]` (modelled as
 /// `Effect[Result[(), ValidationError]]`, as in unit tests).
+#[allow(clippy::too_many_arguments)]
 fn check_integration_case_body(
     participants: &[String],
     uses_targets: &[String],
@@ -844,6 +846,7 @@ fn emit_integration_module(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
     cases: &[SystemCaseInput],
+    tys: &Arc<Types>,
 ) -> Option<(PathBuf, String, Option<String>, RunnableTest)> {
     // #914: the test-scaffold module's runtime import list is emitted below as a
     // fixed set, but the bodies spliced into it lower through the ordinary `Bytes`
@@ -933,7 +936,7 @@ fn emit_integration_module(
     }
 
     // One async function per case.
-    let mut typed = integration_typed_commons(uses_targets, participants, unit_tables);
+    let mut typed = integration_typed_commons(uses_targets, participants, unit_tables, tys);
     let mut case_runners: Vec<String> = Vec::new();
     let mut discovered: Vec<DiscoveredCase> = Vec::new();
     for input in cases {
@@ -1482,6 +1485,7 @@ fn integration_typed_commons(
     uses_targets: &[String],
     participants: &[String],
     unit_tables: &HashMap<String, UnitTable>,
+    tys: &Arc<checker::Types>,
 ) -> checker::TypedCommons {
     let mut types: HashMap<String, Arc<TypeDecl>> = HashMap::new();
     let mut fns: HashMap<String, Arc<FnDecl>> = HashMap::new();
@@ -1540,11 +1544,13 @@ fn integration_typed_commons(
         methods,
         expr_types: HashMap::new(),
         warnings: vec![],
-        // T3.6b (R4.1): a synthesised commons carries no checked expressions
-        // (`expr_types` is empty), so it owns a fresh table. Every `TyId` the
-        // emission of *this* commons mints comes from here, and none from a
-        // real unit's table is ever resolved against it.
-        ty_intern: std::sync::Arc::new(checker::Types::new()),
+        // T3.6b (R4.1): the *caller's* table, not a fresh one. A synthesised
+        // commons starts with an empty `expr_types`, but the case/property
+        // checks below fill it in — interning into the table they were handed
+        // — and the lowering then resolves those ids back through this field.
+        // A table of its own would make every one of those reads a
+        // wrong-table lookup.
+        ty_intern: Arc::clone(tys),
     }
 }
 
@@ -3696,7 +3702,8 @@ fn emit_test_module(
     // `module_smb` merge above, so it disturbs no earlier source-map offset.
     let json_codec_roots = runtime_use.take_json_codec_roots();
     if !json_codec_roots.is_empty() {
-        let synthetic = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+        let synthetic =
+            synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
         let (codec_names, codec_insts) = crate::emitter::serialisation::collect_codec_closure(
             &json_codec_roots,
             &synthetic.types,
@@ -3926,6 +3933,7 @@ fn stub_runtime_helpers() -> String {
 /// per overridden operation renders its clauses as a first-match-wins if-chain
 /// over the call's argument patterns; a matched clause returns its lowered
 /// value, throws an injected fault, or advances a per-call sequence cursor.
+#[allow(clippy::too_many_arguments)]
 fn emit_stub_class(
     rp: &ResolvedStub,
     target_name: &str,
@@ -4183,7 +4191,7 @@ fn lower_stub_value_block(
     tys: &Arc<Types>,
 ) -> String {
     let owning_unit = target_name.to_string();
-    let mut typed = synthetic_typed_commons_for_target(&owning_unit, unit_tables, unit_uses);
+    let mut typed = synthetic_typed_commons_for_target(&owning_unit, unit_tables, unit_uses, tys);
     let block = value_block(e);
     if let Some((resolved, _)) = build_privileged_resolved(
         &owning_unit,
@@ -4219,6 +4227,7 @@ fn synthetic_typed_commons_for_target(
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
+    tys: &Arc<checker::Types>,
 ) -> checker::TypedCommons {
     let table = unit_tables.get(target_name).cloned().unwrap_or_default();
     let mut types = table.types;
@@ -4289,11 +4298,13 @@ fn synthetic_typed_commons_for_target(
         methods,
         expr_types: HashMap::new(),
         warnings: vec![],
-        // T3.6b (R4.1): a synthesised commons carries no checked expressions
-        // (`expr_types` is empty), so it owns a fresh table. Every `TyId` the
-        // emission of *this* commons mints comes from here, and none from a
-        // real unit's table is ever resolved against it.
-        ty_intern: std::sync::Arc::new(checker::Types::new()),
+        // T3.6b (R4.1): the *caller's* table, not a fresh one. A synthesised
+        // commons starts with an empty `expr_types`, but the case/property
+        // checks below fill it in — interning into the table they were handed
+        // — and the lowering then resolves those ids back through this field.
+        // A table of its own would make every one of those reads a
+        // wrong-table lookup.
+        ty_intern: Arc::clone(tys),
     }
 }
 
@@ -4629,7 +4640,7 @@ fn emit_test_case_function(
         unit_consumes_aliases,
         block_uses_observation(&case.body),
     );
-    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
     // v0.117: re-type-check the case body (with the call-record types registered)
     // so the lowering has full expr types — collection kernels, notably a
     // `trace(Cap.op)` result's `List[…]` methods, dispatch on the checked type.
@@ -5068,7 +5079,11 @@ struct BindingGen {
 }
 
 /// Build the generator descriptor for a binding whose resolved type is `ty`.
-fn binding_gen(ty: checker::TyId, types: &HashMap<String, Arc<TypeDecl>>, tys: &Arc<Types>) -> BindingGen {
+fn binding_gen(
+    ty: checker::TyId,
+    types: &HashMap<String, Arc<TypeDecl>>,
+    tys: &Arc<Types>,
+) -> BindingGen {
     let gen_ts = gen_ts_for_ty(ty, types, PROP_GEN_DEPTH, tys);
     let (boundaries, shrink) = match &*tys.get(ty) {
         checker::Ty::Base(BaseType::Int) => {
@@ -5218,7 +5233,7 @@ fn emit_test_property_function(
     out.push_str("    ];\n");
 
     // The `where` filter and the predicate body, as closures over the tuple.
-    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
     let cross = bynk_check::resolver::CrossContextInfo::default();
     let binding_names: Vec<String> = prop
         .forall
@@ -5352,7 +5367,7 @@ fn emit_test_history_property_function(
     // The privileged view, plus the synthetic call/step/state types and the body's
     // expr types (with `run: List[Step]` in scope), so the lowering resolves the
     // predicate's `List` and value surface (`.call is …`, `.old`/`.new`, `.upTo`).
-    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
     let mut handler_descs: Vec<String> = Vec::new();
     if let Some((mut resolved, _)) = build_privileged_resolved(
         target_name,
@@ -5559,7 +5574,8 @@ fn emit_contract_attack_function(
         })
     });
     if let Some(w) = where_pred {
-        let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+        let mut typed =
+            synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses, tys);
         let cross = bynk_check::resolver::CrossContextInfo::default();
         let synth = Block {
             statements: Vec::new(),

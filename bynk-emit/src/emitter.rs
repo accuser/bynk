@@ -3894,7 +3894,13 @@ impl<'a> LowerCtx<'a> {
     /// recurse field-name resolution through nested payload patterns (ADR 0169).
     /// Precise for `Result`/`Option`/`HttpResult` and user sums; `None` otherwise
     /// (callers fall back to the single-field `"value"` name).
-    fn payload_field_ty(&self, ty: Option<TyId>, variant: &str, idx: usize, tys: &Arc<Types>) -> Option<TyId> {
+    fn payload_field_ty(
+        &self,
+        ty: Option<TyId>,
+        variant: &str,
+        idx: usize,
+        tys: &Arc<Types>,
+    ) -> Option<TyId> {
         match ty.map(|t| tys.get(t)).as_deref() {
             Some(Ty::Result(t, e)) => match (variant, idx) {
                 ("Ok", 0) => Some(*t),
@@ -3920,7 +3926,13 @@ impl<'a> LowerCtx<'a> {
                 // `variants_of` does. Plain resolve for a non-generic sum (empty
                 // `args`), so a nested positional binding recovers the real field
                 // name instead of falling back to the generic `"value"`.
-                bynk_check::checker::instantiate_field_ty(decl, args, &f.type_ref, &self.commons().types, tys)
+                bynk_check::checker::instantiate_field_ty(
+                    decl,
+                    args,
+                    &f.type_ref,
+                    &self.commons().types,
+                    tys,
+                )
             }
             _ => None,
         }

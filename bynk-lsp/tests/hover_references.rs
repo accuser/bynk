@@ -121,6 +121,7 @@ fn hover_at(
             snapshots: &snapshots,
             locals: &r.locals,
             expr_types: &r.expr_types,
+            tys: &r.ty_intern,
             rel,
             offset,
             project_root: root,

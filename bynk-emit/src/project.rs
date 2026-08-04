@@ -1505,7 +1505,6 @@ fn phase_group(
     consumes_cloudflare: bool,
     overlay: &HashMap<PathBuf, String>,
     errors: &mut ErrorSink,
-    tys: &Arc<Types>,
 ) -> (
     BTreeMap<String, Vec<usize>>,
     BTreeMap<String, UnitKind>,
@@ -1562,7 +1561,7 @@ fn phase_group(
     }
 
     // v0.20a: function types are confined to non-boundary positions.
-    for (path, err) in check_function_type_boundaries(parsed, tys) {
+    for (path, err) in check_function_type_boundaries(parsed) {
         errors.push_for(Some(&path), err);
     }
 
@@ -3380,7 +3379,8 @@ fn check_unit_files(
         // Run the context-specific checks: forbidden construction,
         // private-type references.
         if kind == UnitKind::Context {
-            let context_check_errs = check_context_constraints(&typed, consumed_types, local_names, tys);
+            let context_check_errs =
+                check_context_constraints(&typed, consumed_types, local_names, tys);
             if !context_check_errs.is_empty() {
                 errors.extend_for(Some(&pf.identity_path), context_check_errs);
                 if mode == Mode::Analyse {
@@ -3642,7 +3642,6 @@ fn run_checks(
         consumes_cloudflare,
         overlay,
         &mut errors,
-        tys,
     );
 
     // -- 4. Build per-unit combined symbol tables. --
@@ -5679,6 +5678,7 @@ mod tests {
             None,
             false,
             None,
+            &Arc::new(Types::new()),
         );
         let snapshots = match run {
             RunChecks::Bailed { snapshots, .. } => snapshots,
@@ -5820,6 +5820,7 @@ mod tests {
             None,
             false,
             None,
+            &Arc::new(Types::new()),
         );
         match run {
             RunChecks::Bailed { errors, .. } => errors.into_all(),
@@ -6110,7 +6111,10 @@ mod tests {
         );
         let offset = src.find("42").expect("source mentions 42");
         let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
-        assert_eq!(ty.map(Ty::display), Some("Int".to_string()));
+        assert_eq!(
+            ty.map(|t| t.display(&out.ty_intern)),
+            Some("Int".to_string())
+        );
     }
 
     #[test]
@@ -6133,7 +6137,7 @@ mod tests {
         let offset = src.find("42").expect("source mentions 42");
         let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
         assert_eq!(
-            ty.map(Ty::display),
+            ty.map(|t| t.display(&out.ty_intern)),
             Some("Int".to_string()),
             "the clean function's types must survive the sibling error"
         );
@@ -6175,7 +6179,7 @@ mod tests {
         let offset = src.find("[]").expect("source mentions []");
         let ty = bynk_check::expr_types::type_at_offset(&out.expr_types, offset);
         assert_eq!(
-            ty.map(Ty::display),
+            ty.map(|t| t.display(&out.ty_intern)),
             Some("<type error>".to_string()),
             "T3.3b: a diagnosed type_of failure must record Ty::Error, not leave the span \
              unrecorded — {:?}",
