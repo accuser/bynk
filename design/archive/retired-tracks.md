@@ -567,8 +567,8 @@ imposed; entries keep the order they were retired in.
   `compiler-architecture.md`'s own retirement: node identity independent of position (`ExprId`,
   `FileId`), every side table total (`Ty::Error`, `expr_types`), the checker's core type
   (`Ty`/`TyId`) interned and `Copy`-cheap, and the analysis/emission boundary a type
-  (`certify`/`CheckedProgram`) rather than a control-flow convention. Settled under a same-day
-  review (§3, seven design questions), with one direction reversed twice in the process — first
+  (`certify`/`CheckedProgram`) rather than a control-flow convention. Settled 3 August 2026 under a
+  same-day review (§3, seven design questions), with one direction reversed twice in the process — first
   toward an `ExprKey(Span)` scaffolding step, then away from it once implementation work on T3.1
   found `43abc242` (a commit predating this track) had already shipped and already rejected that
   exact newtype, on the same grounds. All nine slices shipped: **T3.0** — an existing debug-only
@@ -576,12 +576,14 @@ imposed; entries keep the order they were retired in.
   service/agent handler bodies and test-case bodies, which had no collision protection at all;
   **T3.3a** — `Ty::Error` a real variant, given deliberate semantics at every exhaustive match the
   compiler's own exhaustiveness check found (11 real sites, not the 900+ raw mentions a grep
-  count suggested); **T3.3b** — `expr_types` made total in full, at `type_of`/`type_of_block`'s
-  two actual write choke points rather than the ~81-function internal-recovery-convention rewrite
-  first estimated; **T3.4** — real `ExprId` allocated at parse (`Parser::alloc_expr_id`),
-  `expr_types` re-keyed by it, catching and fixing a genuine cross-file `ExprId` collision bug
-  (two independently-zero-based files colliding once `collect_unit_methods` merged their bodies)
-  before it ever shipped; **T3.5** — real `FileId` on `Span`, stamped at the lexer (the one place
+  count suggested); **T3.3b** — `expr_types` made total in full (**R4.3 closed**), at
+  `type_of`/`type_of_block`'s two actual write choke points rather than the ~81-function
+  internal-recovery-convention rewrite first estimated; **T3.4** — real `ExprId` allocated at parse
+  (`Parser::alloc_expr_id`), `expr_types` re-keyed by it (**R2.4 closed for expressions, R2.5/R4.9
+  functionally but not structurally** — `expr_types` is `HashMap<ExprId, TypedExpr>`, not the
+  `IndexVec<ExprId, TyId>` R2.5/R4.9 literally name; see the open question below), catching and
+  fixing a genuine cross-file `ExprId` collision bug (two independently-zero-based files colliding
+  once `collect_unit_methods` merged their bodies) before it ever shipped; **T3.5** — real `FileId` on `Span`, stamped at the lexer (the one place
   a `Span` is ever first minted from real bytes) rather than the 160-construction-site conversion
   first estimated, exposing and fixing a latent bug in the LSP rename validator's own span
   reconstruction; **T3.6a** — `Hash`/`Ord` on `Ty`/`NamedKind`/`BaseType`, a 3-line derive diff
@@ -621,9 +623,14 @@ imposed; entries keep the order they were retired in.
   even `t == t` must stay `false`). Both now pinned by regression tests; a debug-mode identity
   guard (each `Types` table draws a distinct tag, each `TyId` carries its table's, `resolve`
   compares them) catches a foreign-but-in-range `TyId` a bounds check alone would silently
-  mis-resolve. **No deferred follow-ons within this track's own scope** — §6's slice table has
-  nothing left unbuilt, unlike every other track retired above. What it opens: phase 4 (the
-  project model as its own crate, `bynk-project`) per
+  mis-resolve. **No unbuilt row in §6's slice table** — all nine named slices shipped, unlike every
+  other track retired above. **One open question §6's own completion probe left, named here rather
+  than silently dropped with the doc**: `expr_types` is `HashMap<ExprId, TypedExpr>`, functionally
+  total (T3.3b/T3.4) but not the `IndexVec<ExprId, TyId>` R2.5/R4.9's literal "IndexVec, i.e. total"
+  wording names — closing that structural gap was deliberately left as a question for whoever picks
+  the compiler back up next, not decided or filed as residue here, since (unlike T3.6b) nobody has
+  yet measured whether the `HashMap` shape is actually a problem worth an `IndexVec` migration to
+  fix. What this track opens: phase 4 (the project model as its own crate, `bynk-project`) per
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), entry-gated on this track's
   own probe (`span_keyed_maps`) reading zero — met, modulo the stated `Ctx::pattern_binding_types`
-  exclusion above.
+  exclusion above. Retired 4 August 2026.

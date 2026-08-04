@@ -91,9 +91,11 @@ internal architecture rather than language surface — as `crate-decomposition.m
 and `increment-allocation.md`, both retired, were before it.
 `identity-and-totality.md` (now retired) was the seventh, continuing
 `compiler-architecture.md`'s internal-architecture theme as phase 3 of the
-same trajectory — all nine of its slices shipped, closing R2.2, R2.4, R2.5,
-R3.10, R4.1, and R4.2 (see `retired-tracks.md`'s closing summary). Its
-retirement also closed a documentation gap `compiler-architecture.md`'s own
+same trajectory — all nine of its slices shipped, closing R2.2, R2.4
+(expressions), R3.10, R4.1, R4.2, and R4.3 in full, R2.5/R4.9 functionally but
+not structurally (see `retired-tracks.md`'s closing summary for the open
+question that leaves). Its retirement also closed a documentation gap
+`compiler-architecture.md`'s own
 retirement PR left open: that PR ([#996](https://github.com/accuser/bynk/issues/996)'s
 closing commit, `85bc851e`) removed the doc and appended its closing summary
 to `retired-tracks.md` but did not update this table or its "Retired tracks"
@@ -116,6 +118,17 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`identity-and-totality.md`** — phase 3 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
+  `compiler-architecture.md`'s retirement below: `ExprId`/`FileId` node identity, `Ty::Error` and
+  total `expr_types`, `Ty` interned behind `Copy`-cheap `TyId`, and `certify`/`CheckedProgram` as
+  the analysis/emission boundary. Settled 3 August 2026; all nine slices shipped (T3.0, T3.3a,
+  T3.3b, T3.4, T3.5, T3.6a, T3.7a, T3.7b, T3.6b), closing R2.2, R2.4 (expressions), R3.10, R4.1,
+  R4.2, and R4.3 — R2.5/R4.9 functionally but not structurally (`expr_types` stays a `HashMap`, not
+  the `IndexVec` those rules literally name; a named open question, not silent residue, per the full
+  closing summary). Decisions in ADRs
+  [0316](../decisions/0316-ty-interning-interior-mutability.md)–[0318](../decisions/0318-ty-interning-one-table-per-build.md).
+  Retired 4 August 2026. Opens phase 4 (`bynk-project`, per the trajectory).
 - **`compiler-architecture.md`** — phases 0–2 of
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): the compiler testable at crate
   granularity (phase 0, Seams), the named small defects closed with the registries single-sourced
@@ -130,7 +143,8 @@ decisions, the named follow-ons — is kept for the record in
   [0311](../decisions/0311-the-lowering-substrate.md), and
   [0312](../decisions/0312-narrow-bynkc-public-api.md). Opens directly into
   `identity-and-totality.md` above (phase 3, spine
-  [#1046](https://github.com/accuser/bynk/issues/1046)); three named residue items filed as
+  [#1046](https://github.com/accuser/bynk/issues/1046), now itself retired); three named residue
+  items filed as
   [#1047](https://github.com/accuser/bynk/issues/1047)–[#1049](https://github.com/accuser/bynk/issues/1049).
   Full closing summary in `../archive/retired-tracks.md`.
 - **`message-bundles.md`** — the `messages` construct, the checked catalogue,
@@ -197,11 +211,3 @@ decisions, the named follow-ons — is kept for the record in
 - **`lsp.md`** — the editor-experience connective plan; slices 0–7 + 9 shipped
   from v0.24 (ADRs 0093–0095), the feature spec living on in
   [`../bynk-lsp-spec.md`](../bynk-lsp-spec.md).
-- **`identity-and-totality.md`** — phase 3 of
-  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
-  `compiler-architecture.md`'s retirement: `ExprId`/`FileId` node identity, `Ty::Error` and total
-  `expr_types`, `Ty` interned behind `Copy`-cheap `TyId`, and `certify`/`CheckedProgram` as the
-  analysis/emission boundary. All nine slices shipped (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a,
-  T3.7a, T3.7b, T3.6b), closing R2.2, R2.4, R2.5, R3.10, R4.1, and R4.2 in full — decisions in
-  ADRs [0316](../decisions/0316-ty-interning-interior-mutability.md)–[0318](../decisions/0318-ty-interning-one-table-per-build.md).
-  Opens phase 4 (`bynk-project`, per the trajectory).
