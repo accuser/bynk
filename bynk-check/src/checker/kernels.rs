@@ -2279,7 +2279,7 @@ pub(crate) fn check_json_static(
             }
             check_arg(
                 &args[0],
-                tys.intern(Ty::Base(BaseType::String).clone()),
+                tys.intern(Ty::Base(BaseType::String)),
                 "the `Json.decode` input",
                 ctx,
             );
@@ -2382,7 +2382,7 @@ pub(crate) fn check_numeric_parse_static(
     }
     check_arg(
         &args[0],
-        tys.intern(Ty::Base(BaseType::String).clone()),
+        tys.intern(Ty::Base(BaseType::String)),
         &format!("the `{}.parse` argument", type_name.name),
         ctx,
     );

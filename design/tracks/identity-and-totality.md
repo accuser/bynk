@@ -457,12 +457,27 @@ it was not an oversight but a plausible-and-wrong argument, and the second occur
 after the first had already been fixed.
 
 What now catches it: `Types::get` fails by name (`"resolved against a table it was not interned
-into"`) with the table's length in the message, rather than as a bare index-out-of-bounds several
-frames below the real error — pinned by
+into"`), naming the id, the table, and what to check, rather than surfacing as a bare
+index-out-of-bounds several frames below the real error — pinned by
 `an_id_from_another_table_is_a_named_panic_not_a_silent_wrong_answer`. That is a runtime guard, not
 a static one; making it static would mean a lifetime-branded `TyId<'a>`, which was considered and
 rejected here as disproportionate — the wiring is compiler-internal, exercised on every test run,
 and both instances surfaced on the first full suite after they were written.
+
+**The guard's first version only made half the claim its own doc did.** Review of the slice
+(#1074) pointed out that a length check catches exactly the *shorter* wrong table — which is why
+both mistakes above tripped it, both being a freshly-minted, near-empty `Types`. The dangerous
+shape is the other one: a foreign id whose index happens to be *in range* resolved to a
+structurally unrelated `Ty` with no panic at all, leaving the caller to mis-diagnose or mis-emit in
+silence. Since `check_record` still mints a fresh table per invocation while `check_record_in`
+shares one per build, a future caller mixing the two paths could reach it. So in debug builds the
+check is now identity rather than length: each `Types` takes a distinct tag from a process-wide
+counter and each `TyId` carries its table's, compared on every resolve. Release builds keep the
+bounds check, which indexing would have cost anyway. The in-range case is pinned by
+`an_in_range_id_from_another_table_panics_rather_than_resolving_wrongly` — the sibling test that
+fails loudly where the original characterisation would have returned `Bool` for an id minted from
+`Int`. Recorded as its own consequence in the increment's ownership ADR, since the runtime guard is
+what stands in for the static one that was rejected.
 
 **A second-order note for anyone tempted by the obvious optimisation.** Interning makes `t == u`
 an O(1) proxy for structural equality, and `compatible` looks like it should short-circuit on it.

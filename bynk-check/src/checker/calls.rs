@@ -1326,9 +1326,9 @@ pub(crate) fn check_static_call(
             return None;
         }
         let arg = &args[0];
-        let expected = Ty::Base(base);
-        let arg_ty = type_of(arg, Some(tys.intern(expected.clone())), ctx)?;
-        if !compatible(arg_ty, tys.intern(expected), tys) {
+        let expected = tys.intern(Ty::Base(base));
+        let arg_ty = type_of(arg, Some(expected), ctx)?;
+        if !compatible(arg_ty, expected, tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.constructor_base_mismatch",
                 arg.span,
@@ -1386,9 +1386,9 @@ pub(crate) fn check_static_call(
             return None;
         }
         let arg = &args[0];
-        let expected = Ty::Base(*base);
-        let arg_ty = type_of(arg, Some(tys.intern(expected.clone())), ctx)?;
-        if !compatible(arg_ty, tys.intern(expected), tys) {
+        let expected = tys.intern(Ty::Base(*base));
+        let arg_ty = type_of(arg, Some(expected), ctx)?;
+        if !compatible(arg_ty, expected, tys) {
             ctx.errors.push(CompileError::new(
                 "bynk.types.constructor_base_mismatch",
                 arg.span,
@@ -1776,11 +1776,8 @@ pub(crate) fn check_store_log_op(
         true
     };
     let window_arg = |a: &Expr, what: &str, ctx: &mut Ctx| {
-        if let Some(at) = type_of(
-            a,
-            Some(tys.intern(Ty::Base(BaseType::Instant).clone())),
-            ctx,
-        ) && !compatible(at, tys.intern(Ty::Base(BaseType::Instant)), tys)
+        if let Some(at) = type_of(a, Some(tys.intern(Ty::Base(BaseType::Instant))), ctx)
+            && !compatible(at, tys.intern(Ty::Base(BaseType::Instant)), tys)
         {
             ctx.errors.push(CompileError::new(
                 "bynk.types.argument_mismatch",
@@ -1843,7 +1840,7 @@ pub(crate) fn check_store_log_op(
             }
             check_arg(
                 &args[0],
-                tys.intern(Ty::Base(BaseType::Int).clone()),
+                tys.intern(Ty::Base(BaseType::Int)),
                 "the `Log.recent` count",
                 ctx,
             );
@@ -3309,11 +3306,7 @@ fn check_address_args(
         // `type_of`, which would otherwise report the address-arg `Wire` as
         // misplaced.
         if let bynk_syntax::ast::ExprKind::Wire(inner) = &arg.kind {
-            let _ = type_of(
-                inner,
-                Some(tys.intern(Ty::Base(BaseType::String).clone())),
-                ctx,
-            );
+            let _ = type_of(inner, Some(tys.intern(Ty::Base(BaseType::String))), ctx);
             continue;
         }
         let expected = resolve_type_ref(&param.type_ref, &ctx.input.types, tys);

@@ -13,6 +13,8 @@
 //! - The built-in generic `Option[T]`.
 
 use std::collections::{HashMap, HashSet};
+#[cfg(debug_assertions)]
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::builtin_names::map_query;
@@ -73,9 +75,28 @@ pub use refinements::{locale_tag_accepts, locale_tag_pattern, zero_value_ts};
 /// `Send`. A non-atomic refcount is exactly what `Send` forbids, so the
 /// choice is made by the consumer, not by the compiler's own threading. The
 /// lock is uncontended in every current caller.
-#[derive(Default)]
 pub struct Types {
     inner: Mutex<TypesInner>,
+    /// Which table this is, so [`Types::get`] can reject a foreign `TyId`
+    /// whose index happens to be in range — see [`TyId`]'s own note.
+    #[cfg(debug_assertions)]
+    tag: u32,
+}
+
+/// Hands each [`Types`] a distinct [`Types::tag`]. Wrapping is not a
+/// correctness problem: it would take 2^32 tables in one process for two to
+/// collide, and the guard is a debug-build aid, not a soundness argument.
+#[cfg(debug_assertions)]
+static NEXT_TABLE_TAG: AtomicU32 = AtomicU32::new(0);
+
+impl Default for Types {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::default(),
+            #[cfg(debug_assertions)]
+            tag: NEXT_TABLE_TAG.fetch_add(1, Ordering::Relaxed),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -104,7 +125,11 @@ impl Types {
             return id;
         }
         let node = Arc::new(ty);
-        let id = TyId(inner.table.len() as u32);
+        let id = TyId {
+            idx: inner.table.len() as u32,
+            #[cfg(debug_assertions)]
+            tag: self.tag,
+        };
         inner.table.push(Arc::clone(&node));
         inner.index.insert(node, id);
         id
@@ -119,9 +144,25 @@ impl Types {
     /// worth the message: this fired twice while T3.6b was being built, both
     /// times a synthesised `TypedCommons` that had been given a table of its
     /// own while its `expr_types` was filled in from another.
+    ///
+    /// Both of those were the *shorter*-table shape, where a bounds check
+    /// alone catches it. The dangerous shape is the other one: a foreign id
+    /// that happens to be in range resolves to an unrelated `Ty` and the
+    /// caller mis-diagnoses or mis-emits in silence. So in debug builds the
+    /// check is identity, not length — [`TyId`] carries its table's tag and
+    /// this compares it. Release builds keep the bounds check only, which is
+    /// what indexing would have cost anyway.
     pub fn get(&self, id: TyId) -> Arc<Ty> {
+        #[cfg(debug_assertions)]
+        assert!(
+            id.tag == self.tag,
+            "bynk internal error (T3.6b, R4.1): {id:?} resolved against a table it was not \
+             interned into (this is table {}). A `TyId` is only meaningful in its own `Types` — \
+             check that whatever produced this id and whatever is reading it share one table",
+            self.tag
+        );
         let inner = self.lock();
-        match inner.table.get(id.0 as usize) {
+        match inner.table.get(id.idx as usize) {
             Some(node) => Arc::clone(node),
             None => panic!(
                 "bynk internal error (T3.6b, R4.1): {id:?} resolved against a table it was not \
@@ -168,8 +209,28 @@ impl std::fmt::Debug for Types {
 /// T3.6b (R4.1/R4.2): a `Ty`'s identity above the intern table — `Copy`,
 /// `Hash`, `Ord`, cheap to pass and compare. Resolved back to a `Ty` only
 /// via the [`Types`] table it was interned into (see that type's own doc).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TyId(u32);
+///
+/// In debug builds it also carries the tag of the table it came from, so
+/// [`Types::get`] can make good on its "interned into another table" promise
+/// for a foreign id whose index is merely *in range* — the case a bounds
+/// check cannot see, and the one that would otherwise resolve to an
+/// unrelated `Ty` in silence. `idx` is declared first so the derived `Ord`
+/// still orders by insertion within a table, exactly as it does in release.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TyId {
+    idx: u32,
+    #[cfg(debug_assertions)]
+    tag: u32,
+}
+
+impl std::fmt::Debug for TyId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[cfg(debug_assertions)]
+        return write!(f, "TyId({} of table {})", self.idx, self.tag);
+        #[cfg(not(debug_assertions))]
+        return write!(f, "TyId({})", self.idx);
+    }
+}
 
 impl TyId {
     /// The interned node, for the (many) sites that need to look at the
@@ -2816,11 +2877,7 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                         ),
                     );
                 }
-                let val_ty = type_of(
-                    &a.value,
-                    Some(tys.intern(Ty::Base(BaseType::Bool).clone())),
-                    ctx,
-                );
+                let val_ty = type_of(&a.value, Some(tys.intern(Ty::Base(BaseType::Bool))), ctx);
                 if let Some(actual) = val_ty
                     && !compatible(actual, tys.intern(Ty::Base(BaseType::Bool)), tys)
                 {
@@ -3475,11 +3532,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
         // inner and the `system` tier. Anywhere else it is an error. The inner is
         // still typed so a mistake inside it is reported too.
         ExprKind::Wire(inner) => {
-            let _ = type_of(
-                inner,
-                Some(tys.intern(Ty::Base(BaseType::String).clone())),
-                ctx,
-            );
+            let _ = type_of(inner, Some(tys.intern(Ty::Base(BaseType::String))), ctx);
             ctx.errors.push(
                 CompileError::new(
                     "bynk.test.wire_needs_system",
@@ -4232,12 +4285,36 @@ mod ty_hash_eq_ord_tests {
     /// new failure mode interning introduces. It fails loudly and by name;
     /// pinned so the diagnosis stays cheap for the next reader who wires two
     /// tables together by accident.
+    ///
+    /// This is the *shorter*-table shape, which both migration bugs had and
+    /// which a bounds check alone catches. Its sibling below is the shape
+    /// that actually needs the tag.
     #[test]
     #[should_panic(expected = "resolved against a table it was not interned into")]
     fn an_id_from_another_table_is_a_named_panic_not_a_silent_wrong_answer() {
         let a = Types::new();
         let b = Types::new();
         let id = a.intern(Ty::Base(BaseType::Int));
+        let _ = b.get(id);
+    }
+
+    /// The sharp edge of the same guard: a foreign id whose index is merely
+    /// *in range*. Before `TyId` carried its table's tag this returned an
+    /// unrelated `Ty` — here, `Bool` for an id minted from `Int` — and the
+    /// caller went on to mis-diagnose or mis-emit with no panic at all. The
+    /// bounds check cannot see this one, so it is the case worth pinning.
+    ///
+    /// Debug-only, because that is where the tag exists; a release build
+    /// still has the length check the sibling above covers.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "resolved against a table it was not interned into")]
+    fn an_in_range_id_from_another_table_panics_rather_than_resolving_wrongly() {
+        let a = Types::new();
+        let b = Types::new();
+        let id = a.intern(Ty::Base(BaseType::Int));
+        b.intern(Ty::Base(BaseType::Bool));
+        assert_eq!(a.len(), b.len(), "the index must be in range for b");
         let _ = b.get(id);
     }
 
