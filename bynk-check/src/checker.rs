@@ -45,6 +45,52 @@ pub use refinements::{locale_tag_accepts, locale_tag_pattern, zero_value_ts};
 
 // ==== Type representation ====
 
+/// T3.6b (R4.1): the intern table `TyId` is minted from. Owned per
+/// `check_record` invocation (design settled in the identity-and-totality
+/// track doc §9 before this slice started): created fresh at `check_record`'s
+/// entry, threaded through `Ctx`, carried out on `TypedCommons`/`RecordCheck`
+/// alongside `expr_types`, and forwarded across the `bynk-check`→`bynk-emit`
+/// boundary on `CheckedProgram` (T3.7a/T3.7b already built that seam).
+/// Confirmed safe by checking how cross-unit type references actually flow:
+/// `compose_unit_symbols` merges `TypeDecl` (immutable AST declarations)
+/// across units, never an already-interned `Ty`/`TyId` — every unit
+/// re-interns its own `Ty` graph from shared declarations, so `TyId`s are
+/// never compared across two different `check_record` invocations.
+#[derive(Debug, Default)]
+pub struct Types {
+    table: Vec<Ty>,
+    index: HashMap<Ty, TyId>,
+}
+
+impl Types {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Intern `ty`, returning its `TyId`. The same `Ty` value (by `Eq`)
+    /// always yields the same `TyId` — the property `ty_hash_eq_ord_tests`
+    /// (T3.6b's own settling-review prerequisite) pins directly.
+    pub fn intern(&mut self, ty: Ty) -> TyId {
+        if let Some(&id) = self.index.get(&ty) {
+            return id;
+        }
+        let id = TyId(self.table.len() as u32);
+        self.table.push(ty.clone());
+        self.index.insert(ty, id);
+        id
+    }
+
+    pub fn resolve(&self, id: TyId) -> &Ty {
+        &self.table[id.0 as usize]
+    }
+}
+
+/// T3.6b (R4.1/R4.2): a `Ty`'s identity above the intern table — `Copy`,
+/// `Hash`, `Ord`, cheap to pass and compare. Resolved back to a `&Ty` only
+/// via the `Types` table it was interned into (see `Types`'s own doc).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TyId(u32);
+
 /// A resolved type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Ty {
@@ -60,43 +106,43 @@ pub enum Ty {
     Named {
         name: String,
         kind: NamedKind,
-        args: Vec<Ty>,
+        args: Vec<TyId>,
     },
     /// `Result[T, E]`.
-    Result(Box<Ty>, Box<Ty>),
+    Result(TyId, TyId),
     /// `Option[T]`.
-    Option(Box<Ty>),
+    Option(TyId),
     /// `Effect[T]` (v0.5).
-    Effect(Box<Ty>),
+    Effect(TyId),
     /// `HttpResult[T]` (v0.9).
-    HttpResult(Box<Ty>),
+    HttpResult(TyId),
     /// `QueueResult` — the built-in queue verdict sum (v0.44). Non-generic.
     QueueResult,
     /// `List[T]` — built-in immutable list (v0.20b).
-    List(Box<Ty>),
+    List(TyId),
     /// `Map[K, V]` — built-in immutable map (v0.20b). The key type is
     /// confined to value-keyable types at TypeRef resolution.
-    Map(Box<Ty>, Box<Ty>),
+    Map(TyId, TyId),
     /// `Query[T]` — a lazy, by-reference description of a read over agent-local
     /// storage (v0.91, ADR 0115). The inner type is the element a terminal
     /// yields. Built by the lazy combinator vocabulary over a `store` field,
     /// executed by a terminal (`-> Effect[…]`). Non-storable, non-boundary, and
     /// not value-comparable — like `Effect`/`Fn` (ADRs 0031/0030).
-    Query(Box<Ty>),
+    Query(TyId),
     /// `Stream[T]` — a lazy, pull-shaped sequence of values produced over time
     /// (v0.100, real-time track slice 0). The inner type is the element a
     /// terminal yields. Built from a runtime source (`Stream.of` at v1),
     /// transformed by lazy builders (`map`/`take`), drained by a terminal
     /// (`collect -> Effect[List[T]]`). Non-storable, non-boundary, and not
     /// value-comparable — like `Query`/`Effect`/`Fn` (ADRs 0031/0030).
-    Stream(Box<Ty>),
+    Stream(TyId),
     /// `Connection[F]` — a held WebSocket connection (v0.102, real-time track
     /// slice 2). `F` is the server→client frame type. The one concrete instance
     /// of the closed `Held` kind (`is_held`). Governed by the linearity
     /// discipline (§2.9): single-owner, mandatory disposal. Non-serialisable,
     /// non-boundary, non-comparable; storable only in `Cell[Option[Connection]]`
     /// / `Map[K, Connection]`.
-    Connection(Box<Ty>),
+    Connection(TyId),
     /// `ValidationError` — built-in error type.
     ValidationError,
     /// `JsonError` — built-in JSON-decode error type (v0.22b). A uniform
@@ -107,17 +153,17 @@ pub enum Ty {
     /// v0.45: a verified actor binding (`by name: Actor`). The inner type is
     /// the actor's identity, read as `name.identity`. A boundary-minted, sealed
     /// value — only ever `.identity`-accessed, never constructed or passed.
-    Actor(Box<Ty>),
+    Actor(TyId),
     /// v0.52: a resolved multi-actor binding (`by who: A | B`) — an ordered sum
     /// of peer actors. Each member is `(actor name, identity ty)`; the body
     /// `match`es on the resolved actor, each non-unit member binding its
     /// identity directly. Like `Actor`, a sealed boundary value — only ever
     /// matched, never constructed or passed.
-    ActorSum(Vec<(String, Ty)>),
+    ActorSum(Vec<(String, TyId)>),
     /// `A -> B` — a function type (v0.20a). Effectful iff `ret` is
     /// `Effect[_]` (the structural rule); no separate flag, so there is a
     /// single source of truth.
-    Fn { params: Vec<Ty>, ret: Box<Ty> },
+    Fn { params: Vec<TyId>, ret: TyId },
     /// A function type parameter (v0.20a). Two lives: *rigid* while checking
     /// a generic function's own body (name-equality in `compatible`), and
     /// *flexible* during call-site instantiation, where it is matched by
