@@ -54,7 +54,7 @@ fn a_consumes_cycle_renders_with_ariadne_source_context() {
     );
 
     // Root the project exactly as every `check`/`compile` command does.
-    let opts = bynk_driver::project_options(&root.0);
+    let opts = bynk_driver::project_options(&root.0).expect("scratch project must be readable");
     let failure = match project::compile_project(&opts) {
         Err(f) => f,
         Ok(_) => panic!("a `consumes` cycle must fail the build"),
@@ -127,7 +127,7 @@ fn a_cross_file_kind_conflict_renders_the_other_file_as_a_note() {
         ],
     );
 
-    let opts = bynk_driver::project_options(&root.0);
+    let opts = bynk_driver::project_options(&root.0).expect("scratch project must be readable");
     let failure = match project::compile_project(&opts) {
         Err(f) => f,
         Ok(_) => panic!("a kind conflict must fail the build"),
@@ -176,5 +176,59 @@ fn a_cross_file_kind_conflict_renders_the_other_file_as_a_note() {
     assert!(
         rendered.contains(other),
         "the note must point at the *other* file (`{other}`), got:\n{rendered}",
+    );
+}
+
+/// #1081 review, finding 1: `project_options` populates `CompileOptions.sources`,
+/// which made `run_checks` take the `discovered: Some(...)` branch — and until
+/// `check_discovered_files` was pulled out to run unconditionally, that branch
+/// skipped `phase_discovery` (and therefore `bynk.project.no_sources`) entirely.
+/// An empty project compiled through the real CLI path must still report it.
+#[test]
+fn an_empty_project_still_reports_no_sources_through_the_cli_path() {
+    let root = scratch_project("no_sources", &[(".keep", "")]);
+
+    let opts = bynk_driver::project_options(&root.0).expect("scratch project must be readable");
+    let check = project::check_project(&opts);
+    assert!(
+        check
+            .errors
+            .iter()
+            .any(|e| e.error.category == "bynk.project.no_sources"),
+        "expected `bynk.project.no_sources`, got: {:?}",
+        check
+            .errors
+            .iter()
+            .map(|e| &e.error.category)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The `file_and_directory` counterpart to the test above: a project with both
+/// `x.bynk` and `x/` present must still be flagged through the CLI path, not
+/// only through the LSP's `discovered: None` walk.
+#[test]
+fn a_file_directory_ambiguity_still_reports_through_the_cli_path() {
+    let root = scratch_project(
+        "file_and_dir",
+        &[
+            ("src/thing.bynk", "context thing\n"),
+            ("src/thing/part.bynk", "context thing.part\n"),
+        ],
+    );
+
+    let opts = bynk_driver::project_options(&root.0).expect("scratch project must be readable");
+    let check = project::check_project(&opts);
+    assert!(
+        check
+            .errors
+            .iter()
+            .any(|e| e.error.category == "bynk.project.file_and_directory"),
+        "expected `bynk.project.file_and_directory`, got: {:?}",
+        check
+            .errors
+            .iter()
+            .map(|e| &e.error.category)
+            .collect::<Vec<_>>()
     );
 }

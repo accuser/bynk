@@ -71,6 +71,6 @@ pub use bynk_strip::{StripError, strip_project_to_js, strip_types};
 /// [`bynk_driver`]; these re-exports keep `bynkc`'s public API (and its
 /// callers) unchanged.
 pub use bynk_driver::{
-    print_project_failure, print_project_failure_short, print_project_warnings,
-    project_failure_short_lines,
+    ProjectOptionsError, print_project_failure, print_project_failure_short,
+    print_project_warnings, project_failure_short_lines,
 };

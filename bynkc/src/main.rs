@@ -19,7 +19,7 @@ use clap::Parser;
 ///
 /// A malformed `bynk.toml` fails loudly here rather than silently falling
 /// back to the conventional layout.
-fn try_project_options(input: &Path) -> Result<bynkc::CompileOptions, bynkc::ProjectPathsError> {
+fn try_project_options(input: &Path) -> Result<bynkc::CompileOptions, bynkc::ProjectOptionsError> {
     bynk_driver::try_project_options(input)
 }
 

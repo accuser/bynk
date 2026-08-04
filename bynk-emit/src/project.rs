@@ -223,7 +223,12 @@ impl Roots {
     /// trees walked for `.bynk` files. Most projects have a single root; a
     /// conventional `src/`+`tests/` layout yields two. A file's identity path is
     /// relative to the root that contains it.
-    fn resolve(&self) -> (PathBuf, PathBuf) {
+    ///
+    /// `pub` (#1077/#1081 review): `bynk-driver` needs this — and
+    /// [`Self::excludes`] — to walk exactly the tree `compile_project` would,
+    /// rather than a hand-duplicated copy that can silently drift from this
+    /// one.
+    pub fn resolve(&self) -> (PathBuf, PathBuf) {
         match self {
             Roots::Single(root) => (root.clone(), root.clone()),
             Roots::Split {
@@ -307,7 +312,9 @@ impl Roots {
     /// plus the tool's own build-output and dependency caches (`out`,
     /// `node_modules`), so a project whose `include` is the root does not sweep
     /// up generated or vendored files.
-    fn excludes(&self) -> Vec<PathBuf> {
+    ///
+    /// `pub` (#1077/#1081 review): see [`Self::resolve`]'s doc.
+    pub fn excludes(&self) -> Vec<PathBuf> {
         match self {
             Roots::Single(_) => Vec::new(),
             Roots::Split {
@@ -373,11 +380,18 @@ pub struct CompileOptions {
     /// falling back to the literal path when the file has no on-disk
     /// counterpart to canonicalise). Filesystem discovery is skipped entirely;
     /// `roots` still supplies `src_root`/`tests_root` and their prefixes, so a
-    /// `Roots::Split` project can drive both trees in-memory. Production
-    /// callers (`bynkc`, `bynk-driver`, the LSP) never set this — it exists so
-    /// `bynk-emit`'s own tests can exercise the full project pipeline
-    /// (cross-context `uses`, multi-file layouts, workers-mode emission, …)
-    /// without an on-disk fixture tree.
+    /// `Roots::Split` project can drive both trees in-memory.
+    ///
+    /// #1077/#1081: `bynk-driver`'s `project_options`/`try_project_options`
+    /// *do* set this now — the real CLI entry points walk and read every
+    /// project file themselves and hand the result here, so `bynk-emit`
+    /// itself no longer discovers or reads anything on disk for the CLI
+    /// path. `bynkc`/the LSP still don't: `bynkc` routes through
+    /// `bynk-driver`, and the LSP (`analyse_project_with`) has its own
+    /// open-buffer overlay and depends on the on-disk fallback for the rest
+    /// (#1079). `bynk-emit`'s own tests also set this, to exercise the full
+    /// project pipeline (cross-context `uses`, multi-file layouts,
+    /// workers-mode emission, …) without an on-disk fixture tree.
     pub sources: Option<HashMap<PathBuf, String>>,
     /// Events track, slice 3c (#980): read, reconcile, and (on a clean build)
     /// write `bynk.schema.lock` at the project root. **Off by default** —
@@ -467,6 +481,40 @@ impl CompileOptions {
     }
 }
 
+/// #57: turn `options.sources` into the `(overlay, discovered)` pair
+/// `run_checks` expects — the caller-supplied file list, partitioned across
+/// `src_root`/`tests_root` the same way a real walk would (single-tree: every
+/// file lands in the first/`src` list, matching `compile_in_memory`'s own
+/// convention). Shared by [`compile_project`] and [`check_project`] so the
+/// two can't drift on this.
+///
+/// #1077/#1081 review: sorts both partitions. `sources`'s own key order is a
+/// `HashMap`'s — unspecified, randomised per process — but `phase_parse`
+/// walks `src_files`/`tests_files` in order to assign sequential `FileId`s
+/// and `ExprId`s (embedded in emitted spans/source maps) and `run_checks`
+/// pushes diagnostics in file order, both of which a real disk walk already
+/// guaranteed via `discover_bynk_files`'s own `out.sort()`. Without this, a
+/// `sources`-driven compile (the CLI's own path as of #1081) would silently
+/// vary its diagnostic order and `FileId` assignment run to run.
+type Overlay = HashMap<PathBuf, String>;
+/// `(src_files, tests_files)` — the same shape `phase_discovery` and
+/// `run_checks`'s own `discovered` parameter already use.
+type Discovered = (Vec<PathBuf>, Vec<PathBuf>);
+
+fn sources_to_discovered(
+    sources: &HashMap<PathBuf, String>,
+    src_root: &Path,
+    tests_root: &Path,
+) -> (Overlay, Option<Discovered>) {
+    let (mut src_files, mut tests_files): (Vec<PathBuf>, Vec<PathBuf>) = sources
+        .keys()
+        .cloned()
+        .partition(|p| src_root == tests_root || p.starts_with(src_root));
+    src_files.sort();
+    tests_files.sort();
+    (sources.clone(), Some((src_files, tests_files)))
+}
+
 /// Compile a Bynk project, keeping error attribution + snapshots on failure
 /// (so the CLI can render project errors with source context, ADR 0052). Use
 /// `.map_err(ProjectFailure::flatten)` for the flattened `Vec<CompileError>`
@@ -478,19 +526,8 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
     let src_prefix = options.roots.src_prefix();
     let tests_prefix = options.roots.tests_prefix();
     let excludes = options.roots.excludes();
-    // #57: `options.sources` replaces the on-disk discovery walk with a
-    // caller-supplied file list, partitioned the same way a real walk would
-    // split across `src_root`/`tests_root` — for a single-tree project the
-    // two roots coincide, so every file lands in the first (`src`) list,
-    // matching `compile_in_memory`'s own convention.
     let (overlay, discovered) = match &options.sources {
-        Some(sources) => {
-            let (src_files, tests_files): (Vec<PathBuf>, Vec<PathBuf>) = sources
-                .keys()
-                .cloned()
-                .partition(|p| src_root == tests_root || p.starts_with(&src_root));
-            (sources.clone(), Some((src_files, tests_files)))
-        }
+        Some(sources) => sources_to_discovered(sources, &src_root, &tests_root),
         None => (HashMap::new(), None),
     };
     let schema_root_path = options
@@ -571,15 +608,8 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
     let src_prefix = options.roots.src_prefix();
     let tests_prefix = options.roots.tests_prefix();
     let excludes = options.roots.excludes();
-    // Mirrors `compile_project`'s own `options.sources` handling.
     let (overlay, discovered) = match &options.sources {
-        Some(sources) => {
-            let (src_files, tests_files): (Vec<PathBuf>, Vec<PathBuf>) = sources
-                .keys()
-                .cloned()
-                .partition(|p| src_root == tests_root || p.starts_with(&src_root));
-            (sources.clone(), Some((src_files, tests_files)))
-        }
+        Some(sources) => sources_to_discovered(sources, &src_root, &tests_root),
         None => (HashMap::new(), None),
     };
     let run = run_checks(
@@ -1137,10 +1167,17 @@ fn record_analyse_types(
 }
 
 /// Phase 1: discover the `.bynk` files under the source (and, in split mode,
-/// the tests) root, and run the file-vs-directory conflict checks. Pushes any
-/// discovery errors into `errors` and signals a pipeline bail via `Err(())`
-/// (the caller terminates with `finish`); otherwise returns the discovered
-/// `(src_files, tests_files)`.
+/// the tests) root by walking the filesystem. Pushes any discovery error into
+/// `errors` and signals a pipeline bail via `Err(())` (the caller terminates
+/// with `finish`); otherwise returns the discovered `(src_files, tests_files)`.
+///
+/// #1077/#1081 review: this is the on-disk half only — `no_sources`/
+/// `check_file_directory_conflicts` moved to [`check_discovered_files`], which
+/// `run_checks` calls on the result *either* this walk *or* a caller-supplied
+/// `discovered` list produces, so a `CompileOptions.sources`-driven compile
+/// (the CLI's own path as of #1081) still gets both checks — they are
+/// properties of "what files does this build have," not of having just
+/// walked the disk to find them.
 fn phase_discovery(
     src_root: &Path,
     tests_root: &Path,
@@ -1172,6 +1209,22 @@ fn phase_discovery(
     } else {
         Vec::new()
     };
+    Ok((src_files, tests_files))
+}
+
+/// The checks every `(src_files, tests_files)` pair must pass regardless of
+/// where it came from — a real disk walk ([`phase_discovery`]) or a
+/// caller-supplied `discovered`/`CompileOptions.sources` list (#1077/#1081
+/// review). An empty project (`bynk.project.no_sources`) signals a bail via
+/// `Err(())`; a file/directory name conflict is a non-fatal diagnostic.
+fn check_discovered_files(
+    src_root: &Path,
+    tests_root: &Path,
+    split_mode: bool,
+    src_files: &[PathBuf],
+    tests_files: &[PathBuf],
+    errors: &mut ErrorSink,
+) -> Result<(), ()> {
     if src_files.is_empty() && tests_files.is_empty() {
         errors.push_for(
             None,
@@ -1183,13 +1236,13 @@ fn phase_discovery(
         );
         return Err(());
     }
-    if let Err(e) = check_file_directory_conflicts(src_root, &src_files) {
+    if let Err(e) = check_file_directory_conflicts(src_root, src_files) {
         errors.extend_for(None, e);
     }
-    if split_mode && let Err(e) = check_file_directory_conflicts(tests_root, &tests_files) {
+    if split_mode && let Err(e) = check_file_directory_conflicts(tests_root, tests_files) {
         errors.extend_for(None, e);
     }
-    Ok((src_files, tests_files))
+    Ok(())
 }
 
 /// A memoized parse of one first-party synthetic source, keyed by the
@@ -3596,6 +3649,28 @@ fn run_checks(
             }
         },
     };
+    // #1077/#1081 review: `no_sources`/file-directory-conflict checks run on
+    // every `(src_files, tests_files)` regardless of provenance — see
+    // `check_discovered_files`'s own doc.
+    if check_discovered_files(
+        src_root,
+        tests_root,
+        split_mode,
+        &src_files,
+        &tests_files,
+        &mut errors,
+    )
+    .is_err()
+    {
+        return RunChecks::Bailed {
+            errors,
+            snapshots,
+            hints,
+            locals,
+            exprs,
+            requirements,
+        };
+    }
 
     // -- 2. Parse every file. --
     let (mut parsed, consumes_bynk, consumes_cloudflare) = match phase_parse(
