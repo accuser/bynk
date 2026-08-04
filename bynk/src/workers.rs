@@ -74,7 +74,7 @@ pub fn compile_once(
             return false;
         }
     };
-    if let Err(e) = bynk_emit::write_output(&output, build_dir) {
+    if let Err(e) = bynk_driver::write_output(&output, build_dir) {
         eprintln!(
             "bynk: could not write build output under `{}`: {e}",
             build_dir.display()

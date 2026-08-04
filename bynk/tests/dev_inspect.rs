@@ -59,7 +59,7 @@ fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
     let out = bynk_emit::project::compile_project(&opts)
         .map_err(bynk_emit::project::ProjectFailure::flatten)
         .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
-    bynk_emit::write_output(&out, &build).unwrap();
+    bynk_driver::write_output(&out, &build).unwrap();
     let worker_dir = build.join("workers").join("svc");
     assert!(
         worker_dir.join("handlers.ts.map").exists(),
