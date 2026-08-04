@@ -13,8 +13,8 @@ Formatting is fundamentally an AST walk, so this crate depends on the
 type checker or emitter. That keeps it small: downstream consumers (the
 [`bynkc-lsp`](https://crates.io/crates/bynk-lsp) language server and third-party
 tools) get the formatter without pulling in the whole compiler. The
-[`bynkc`](https://crates.io/crates/bynkc) compiler re-exports this crate as
-`bynkc::fmt` for its `bynkc fmt` command.
+[`bynkc`](https://crates.io/crates/bynkc) compiler's `bynkc fmt` command
+reaches it via `bynk-driver`, not a `bynkc::fmt` re-export.
 
 Most users format Bynk through the CLI (`bynkc fmt`) or format-on-save in the
 editor, rather than depending on this crate directly. See

@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use bynkc::keywords::KEYWORDS;
+use bynk_syntax::keywords::KEYWORDS;
 
 fn tmlanguage() -> (PathBuf, String) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

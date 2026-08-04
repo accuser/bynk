@@ -83,7 +83,7 @@ produces.
 
 ## The sibling tools
 
-- `bynk-fmt` re-exports `bynkc::fmt`, so the formatter has one implementation
-  shared by the CLI (`bynkc fmt`) and the LSP.
+- `bynk-fmt` is a leaf over `bynk-syntax`, so the formatter has one
+  implementation shared by the CLI (`bynkc fmt`) and the LSP.
 - `bynk-lsp` depends on `bynkc` for `diagnose` and on the formatter, adding the
   LSP protocol layer. See [`bynk-lsp`](/docs/tooling/bynk-lsp/).

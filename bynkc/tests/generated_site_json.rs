@@ -4,7 +4,7 @@
 //! rule to the diagnostics that constrain it, which the Astro/Starlight
 //! `{{#grammar-semantics}}` remark directive reads (documentation track, slice 2).
 //! It is the same render as the mdBook-facing `docs/grammar-semantics.json`
-//! ([`bynkc::diagnostics::render_grammar_semantics_json`]) — the site keeps its
+//! ([`bynk_syntax::diagnostics::render_grammar_semantics_json`]) — the site keeps its
 //! own committed copy so it does not read from `docs/` (which retires later). This
 //! test regenerates it and fails if the committed copy is stale.
 //!
@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use bynkc::diagnostics::render_grammar_semantics_json;
+use bynk_syntax::diagnostics::render_grammar_semantics_json;
 
 #[test]
 fn generated_site_grammar_semantics_json_is_up_to_date() {

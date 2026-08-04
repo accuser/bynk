@@ -5,8 +5,9 @@
 //! (resolver/checker/emitter). Slice 2 of the crate-decomposition track moved
 //! the implementation down here from `bynkc::fmt` and re-pointed it onto the
 //! `bynk-syntax` leaf, turning the former cosmetic façade into the home of the
-//! formatter itself. `bynkc` now depends on this crate and re-exports it as
-//! `bynkc::fmt` for its own `bynkc fmt` command.
+//! formatter itself. `bynkc`'s own `bynkc fmt` command reaches it via
+//! `bynk-driver::run_fmt` (R10.4 residue, #1048: `bynkc` no longer re-exports
+//! this crate as `bynkc::fmt`).
 
 mod config;
 mod fmt;

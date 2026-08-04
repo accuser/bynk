@@ -2,7 +2,7 @@
 //! reference page in lock-step.
 //!
 //! 1. Every `bynk.*` code used as a string literal in the compiler source must
-//!    appear in `bynkc::diagnostics::REGISTRY`, and vice versa. "Compiler
+//!    appear in `bynk_syntax::diagnostics::REGISTRY`, and vice versa. "Compiler
 //!    source" now spans two crates: `bynkc/src` and the `bynk-syntax/src` leaf
 //!    the syntax foundation (lexer/parser/diagnostics) was extracted into
 //!    (crate-decomposition slice 1) — the registry lives in `bynk-syntax`, but
@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use bynkc::diagnostics::{EXPLANATIONS, REGISTRY, render_markdown};
+use bynk_syntax::diagnostics::{EXPLANATIONS, REGISTRY, render_markdown};
 
 fn grammar_json() -> String {
     let path =
@@ -103,7 +103,7 @@ fn registry_matches_codes_used_in_source() {
 
     assert!(
         missing.is_empty(),
-        "codes emitted in source but missing from bynkc::diagnostics::REGISTRY: {missing:#?}\n\
+        "codes emitted in source but missing from bynk_syntax::diagnostics::REGISTRY: {missing:#?}\n\
          Add an entry for each in bynk-syntax/src/diagnostics.rs."
     );
     assert!(

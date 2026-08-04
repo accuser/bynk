@@ -2,7 +2,7 @@
 //! lock-step.
 //!
 //! 1. The alphabetic `#[token("…")]` keywords in `lexer.rs` must match exactly
-//!    `bynkc::keywords::KEYWORDS`.
+//!    `bynk_syntax::keywords::KEYWORDS`.
 //! 2. `site/src/content/docs/book/reference/keywords.md` must match what the
 //!    registry renders.
 //!
@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use bynkc::keywords::{BUILTIN_TYPE_NAMES, KEYWORDS, render_markdown};
+use bynk_syntax::keywords::{BUILTIN_TYPE_NAMES, KEYWORDS, render_markdown};
 
 /// Alphabetic keyword tokens declared in the lexer via `#[token("…")]`. The
 /// lexer now lives in the `bynk-syntax` leaf (crate-decomposition slice 1), so
@@ -99,7 +99,7 @@ fn registry_matches_lexer_tokens() {
 
     assert!(
         missing.is_empty(),
-        "keywords in lexer.rs but missing from bynkc::keywords::KEYWORDS: {missing:#?}"
+        "keywords in lexer.rs but missing from bynk_syntax::keywords::KEYWORDS: {missing:#?}"
     );
     assert!(
         extra.is_empty(),
