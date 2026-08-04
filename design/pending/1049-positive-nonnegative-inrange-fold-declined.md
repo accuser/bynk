@@ -55,7 +55,10 @@ not thread a `base: BaseType` parameter through it, `canon_refinement`, or `refi
 this alone. R12.2's Interval-domain table is not wrong as a *destination* — it is what the same
 document's R12.3 (entailment) would want to consume, so `InRange(5, ∞)` could be shown to entail
 `NonNegative` by interval containment instead of by name. But R12.3 has no implementation anywhere in
-the tree today (#1021's research), so there is no consumer for the normalised form yet, and picking
+the tree today — `#1021`'s research found none at v0.246-era `main`, and re-checked fresh here against
+this branch's base (`ff20783e`, 2026-08-04: `rg -n 'entail|⊨|fn .*subsumes|containment'` across
+`bynk-check`/`bynk-emit` returns only unrelated hits — a record-cycle graph, a substring search, a
+doc comment). So there is no consumer for the normalised form yet, and picking
 the `∞` representation and the `Float` bound reading in isolation — without the entailment code that
 would exercise them — is exactly the kind of speculative infrastructure this codebase's own review
 culture flags elsewhere. The right time to settle both is together, when R12.3 is actually built: the
