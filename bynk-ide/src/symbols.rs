@@ -2454,34 +2454,35 @@ mod tests {
     // the type from `expr_types` and un-synthesising the agent-self record.
     #[test]
     fn describe_self_renders_receiver_and_unwraps_agent() {
-        use bynk_check::checker::{NamedKind, Ty};
+        use bynk_check::checker::{NamedKind, Ty, Types};
         let text = "self";
+        let tys = &Types::new();
         let span = Span::new(0, 4);
         // A method receiver — a plain named type renders verbatim.
         let account = vec![(
             span,
-            Ty::Named {
+            tys.intern(Ty::Named {
                 name: "Account".into(),
                 kind: NamedKind::Record,
                 args: Vec::new(),
-            },
+            }),
         )];
         assert_eq!(
-            describe_self_at(text, 0, &account).as_deref(),
+            describe_self_at(text, 0, &account, tys).as_deref(),
             Some("```bynk\nself: Account\n```")
         );
         // An agent handler — the synthetic `__CounterSelf` record un-synthesises
         // to the agent name.
         let agent = vec![(
             span,
-            Ty::Named {
+            tys.intern(Ty::Named {
                 name: "__CounterSelf".into(),
                 kind: NamedKind::Record,
                 args: Vec::new(),
-            },
+            }),
         )];
         assert_eq!(
-            describe_self_at(text, 0, &agent).as_deref(),
+            describe_self_at(text, 0, &agent, tys).as_deref(),
             Some("```bynk\nself: Counter\n```")
         );
         // Not on the `self` keyword — a different token yields nothing, even
@@ -2493,12 +2494,13 @@ mod tests {
                 0,
                 &[(
                     Span::new(0, 5),
-                    Ty::Named {
+                    tys.intern(Ty::Named {
                         name: "Int".into(),
                         kind: NamedKind::Record,
                         args: Vec::new(),
-                    },
-                )]
+                    }),
+                )],
+                tys
             )
             .is_none()
         );

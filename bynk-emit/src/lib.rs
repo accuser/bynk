@@ -18,7 +18,6 @@ pub(crate) mod json;
 #[cfg(test)]
 pub(crate) mod testkit;
 
-use std::sync::Arc;
 use std::path::Path;
 
 use bynk_check::{checker, resolver};
@@ -51,11 +50,6 @@ pub fn compile(source: &str, filename: &str) -> Result<String, Vec<CompileError>
 /// The warning-preserving single-file compile behind [`compile`]. See [`Compiled`].
 pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, Vec<CompileError>> {
     let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
-    // T3.6b (R4.1): the boundary pre-pass below runs *before* `checker::check`
-    // mints the unit's own table, and only resolves `TypeRef`s to ask about
-    // their shape — so it interns into a throwaway table of its own. No `TyId`
-    // from here ever meets one from the checked program.
-    let tys = &Arc::new(checker::Types::new());
     // ADR 0117: parse-time warnings (orphan doc blocks) ride alongside the
     // AST — they surface with the build's warnings instead of failing it.
     let (commons, mut warnings) = parser::parse_with_warnings(&tokens, source)?;
@@ -67,7 +61,6 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
         &commons.items,
         &boundary_types,
         &mut boundary_errors,
-        tys,
     );
     if !boundary_errors.is_empty() {
         return Err(boundary_errors);

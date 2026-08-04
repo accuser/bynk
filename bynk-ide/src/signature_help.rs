@@ -420,21 +420,22 @@ mod tests {
 
     #[test]
     fn kernel_method_signature_lookup() {
-        use bynk_check::checker::Ty;
+        use bynk_check::checker::{Ty, Types};
         use bynk_syntax::ast::BaseType;
-        let list = Ty::List(Box::new(Ty::Base(BaseType::Int)));
+        let tys = &Types::new();
+        let list = tys.intern(Ty::List(tys.intern(Ty::Base(BaseType::Int))));
         assert!(
-            kernel_method_signature(&list, "fold")
+            kernel_method_signature(list, tys, "fold")
                 .unwrap()
                 .starts_with("fold(")
         );
-        let string = Ty::Base(BaseType::String);
+        let string = tys.intern(Ty::Base(BaseType::String));
         assert!(
-            kernel_method_signature(&string, "split")
+            kernel_method_signature(string, tys, "split")
                 .unwrap()
                 .starts_with("split(")
         );
-        assert!(kernel_method_signature(&string, "nope").is_none());
+        assert!(kernel_method_signature(string, tys, "nope").is_none());
     }
 
     #[test]

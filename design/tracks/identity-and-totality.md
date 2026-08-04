@@ -1,9 +1,9 @@
 # Identity and totality — migrating to the greenfield reference (phase 3)
 
-- **Status:** **Settled — Slicing.** §3's seven questions were argued under a same-day settling
+- **Status:** **Settled — Complete.** §3's seven questions were argued under a same-day settling
   review; Q1 was reversed once there (toward `ExprKey(Span)` scaffolding), then **reversed again**
   while slicing T3.1 (§1.1), once implementation work found the scaffolding had already been built —
-  and already rejected — by a commit that predates this track. Eight slices have shipped for real:
+  and already rejected — by a commit that predates this track. All nine slices have shipped:
   T3.0 (extending an existing debug-only check to handler bodies), T3.3a (`Ty::Error` as a real,
   correctly-handled variant), T3.3b (`expr_types` made total — **R4.3 closed in full**, at two
   write choke-points rather than the ~81-function conversion originally estimated), T3.4 (real
@@ -12,17 +12,17 @@
   stamped at the lexer — **R2.2 closed**, at one choke point rather than the 160-construction-site
   conversion originally estimated; see §9), T3.6a (`Hash`/`Ord` on `Ty`/`NamedKind`/`BaseType` —
   **half of R4.2 closed**, a 3-line derive diff touching zero call sites; the other half, real `TyId`
-  interning for `Copy`, is **not** a choke-point fix — split out as T3.6b, its own larger effort, see
-  §9), and T3.7a/T3.7b (`certify`/`CheckedProgram`, single-file then project/batch path — **R3.10
+  interning for `Copy`, is **not** a choke-point fix — split out as T3.6b, see §9),
+  T3.7a/T3.7b (`certify`/`CheckedProgram`, single-file then project/batch path — **R3.10
   fully closed**; T3.7a's own belief that the project/batch path needed a separate design pass on
   emission ordering was itself re-checked while implementing T3.7b and found to be a conflation, see
-  §9). `span_keyed_maps` is 3, down from 27 —
+  §9), and T3.6b (real `Ty` interning — `TyId` the currency above an intern table — **R4.1 and R4.2
+  closed in full**; the one slice whose large estimate held rather than shrinking, ~250 sites across
+  four crates, see §9). `span_keyed_maps` is 3, down from 27 —
   the remainder is `Ctx::pattern_binding_types`, a deliberate, principled exclusion (§6), not residue.
-  T3.6b (real `Ty` interning, confirmed genuinely large — see §9) is the only slice left unbuilt,
-  tracked as its own issue, [#1072](https://github.com/accuser/bynk/issues/1072), rather than folded
-  into this spine — a WIP branch (`slice/t3.6b-ty-interning`) has the enum conversion done, not yet
-  the ~20-23 functions and 149+ call sites it unblocks. Merging settled **direction**; it is not a
-  build authorisation.
+  Nothing in §6 is left unbuilt. T3.6b was tracked to completion as its own issue,
+  [#1072](https://github.com/accuser/bynk/issues/1072), from the `slice/t3.6b-ty-interning` WIP
+  branch that had the enum conversion done and nothing past it.
 - **Spine:** [#1046](https://github.com/accuser/bynk/issues/1046)
 - **Theme:** **Phase 3** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   node identity independent of position, every side table total, the editor consuming a program that
@@ -368,6 +368,7 @@ replaces it with the one real gap found while preparing it.
 | **T3.6a** | `Hash, PartialOrd, Ord` added to `Ty`, `NamedKind`, and `BaseType`'s derive lists. **Measured, not assumed** (see §9): unlike every prior slice, T3.6 as a whole (real `TyId` interning, R4.1's `Copy` requirement) genuinely has no choke point — `Ty` is minted at ~200+ scattered sites and recursively pattern-matched in ~25-30 functions across four crates, so the naive size estimate was, unusually, roughly *right* for that half. But R4.2's `Hash`/`Ord` half is unrelated to interning: `Ty`'s recursive fields (`Box<Ty>`, `Vec<Ty>`, `String`, tuples) already support derived `Hash`/`Ord` with zero manual trait impls to conflict with, so adding the derives is a 3-line diff touching zero of the workspace's 958 `Ty::` call sites. Exposed one unrelated, pre-existing `clippy::nonminimal_bool` warning in `bynk-emit/src/project/validate.rs` (`!opt.is_some_and(f)` → `opt.is_none_or(!f)`) that a full downstream rebuild surfaced for the first time; fixed alongside since it now blocks `-D warnings`. | R4.2 (half) | **Shipped** |
 | **T3.7a** | `CheckedProgram`/`certify` (`bynk-check/src/checker.rs`), scoped to the single-file compile path. `certify(program: TypedCommons, diagnostics: Vec<CompileError>) -> Result<CheckedProgram, Vec<CompileError>>` rejects on any error-severity diagnostic (reusing `bynk_syntax::partition_by_severity`, the same split `check_record` already applies) and otherwise wraps `program`; `CheckedProgram` has no public constructor and no way back to a bare `TypedCommons`, so the only way to obtain one is `certify`. `emitter::emit` (`bynk-emit/src/emitter.rs`) — confirmed, not assumed, to have exactly one production caller (`bynk-emit/src/lib.rs`'s `compile_with_warnings`) — now takes `&CheckedProgram` instead of `&TypedCommons`; `compile_with_warnings` calls `certify` right after `checker::check(...)?` and unwraps with a loud internal-error panic on the (structurally unreachable, since `check` already gated on hard errors) `Err` path, rather than silently trusting the caller not to skip the check. Originally scoped to exclude the project/batch path on the belief that its per-unit emission was too "speculative" to gate the same way — **that belief was itself re-checked and found wrong, see T3.7b below and §9.** | R3.10 (single-file half) | **Shipped** |
 | **T3.7b** | `CheckedProgram`/`certify` for the project/batch path. `bynk-emit/src/project.rs`'s `check_unit_files` loop already runs three per-unit gates before reaching emission (`check_record`'s `Ok`, `check_context_constraints`, `check_context_declarations`'s `blocks_emission`) — `certify` is called right after the last of them, wrapping the unit's `typed` before it's handed to `emit_unit`, whose `typed: &TypedCommons` parameter became `program: &CheckedProgram` (one `let typed = program.program();` line covers its two internal uses). **T3.7a's own stated reason for excluding this path turned out to be a conflation, caught by reading `check_unit_files`'s actual control flow rather than trusting the earlier summary** — see §9. `emit_unit` and `emitter::emit_project` each confirmed (by grep, not assumed) to have exactly one caller, so this is the same single-choke-point shape as T3.7a, not the multi-site sweep the original framing implied. Verified against the full multi-file/project test corpus, not just unit tests: `e2e.rs`'s `bless_positive_fixtures`/`positive_fixtures`/`negative_fixtures`, `multi_file_commons_barrel.rs`, `events_workers_wiring.rs`, and every other project-path integration test passed with zero hits on the internal-error panic guarding `certify`'s (structurally unreachable) `Err` arm. | R3.10 (project/batch half — **R3.10 fully closed**) | **Shipped** |
+| **T3.6b** | Real `Ty` interning. Every recursive field of `Ty` (`Result`/`Option`/`Effect`/`HttpResult`/`List`/`Map`/`Query`/`Stream`/`Connection`/`Actor`/`ActorSum`/`Named.args`/`Fn.params`/`Fn.ret`) holds a `TyId`, and `TyId` is the currency above the table — in `expr_types`, `Ctx`'s scopes/return type/pattern bindings, `StoreField`, `CapabilityOpInfo`, `HandlerBodyCheck`/`CheckSinks`, `FileExprTypes`, and the emitter's `ts_ty`/`ty_to_type_ref` family. Landed as the three-stage rewrite §6 predicted (`bynk-check` atomically, then `bynk-emit`, then `bynk-ide`/`bynk-lsp`), and for once the large estimate held rather than shrinking: ~250 sites across four crates. **Two design points the settling review never reached, both forced by the code rather than chosen:** (1) `intern` takes `&self`, not `&mut self` — the table is reached from `Ctx`, whose other fields are `&mut` and routinely live across an interning call, so a `&mut Types` would have made the borrow checker, not the type system, the thing all ~200 minting sites were written around; (2) the table is `Arc`/`Mutex`, not `Rc`/`RefCell` — it rides out to `bynk-lsp`, whose `tower-lsp` handlers are `async` and therefore require `Send`, which a non-atomic refcount forbids. The compiler itself is single-threaded, so this is the consumer's constraint, not the compiler's. **One ownership refinement to §9's settled answer:** "owned per `check_record` invocation" is right for a single unit but wrong for the project path, which runs `check_record` once per unit and funnels every unit's `expr_types` into one `ExprTypeSink` — per-unit ids are ambiguous there. `check_record_in` takes a caller-supplied table so the analysis and compile entry points mint one per *build*; that is strictly safer than the per-unit case §9 argued for, since ids remain comparable only within one table. | R4.1, R4.2 (remainder — **R4.1 and R4.2 fully closed**) | **Shipped** — full workspace `build` / `clippy -D warnings` / `fmt --check` / `doc` / `test` clean, including the byte-identical golden fixture corpus, the negative fixtures, and the `examples/` gate. See §9 for the two wrong-table mistakes the migration itself made, and what now catches them |
 
 **Why this closed in two edits, not ~81 functions and ~193 call sites — the estimate directly above
 this table (preserved, not deleted, as an example of the same "measure before trusting an estimate"
@@ -396,38 +397,21 @@ rather than renumbered, so every cross-reference to `T3.3`–`T3.7` elsewhere in
 
 ### Forward-referenced, not yet detailed — the actual remaining reference-shape work
 
-| Slice | What it names | Rules | Gated on |
-|---|---|---|---|
-| **T3.6b** | Real `Ty` interning: `TyId` as the only currency above the intern table, `Ty` values constructed only by the interner, `Copy`-cheap. A genuinely larger, multi-session effort — see §9's T3.6a/T3.6b split for why this one, unlike every other slice in this track, does not have a hidden choke point that shrinks it, and §9's settling-review addenda for the real decomposition (`bynk-check` first as one atomic PR — `Ty`'s field definition can't change gradually — then `bynk-emit`, then `bynk-ide`/`bynk-lsp`; `compatible`/`unify`/`substitute` alone are 149 call sites, confirmed contained to `bynk-check`), the resolved `Types`-table-ownership question (owned per `check_record` invocation, carried on `TypedCommons`/`CheckedProgram` — confirmed safe by checking how `compose_unit_symbols` actually merges cross-unit declarations, not assumed), the ruled-out per-variant shortcut (§9), and the one small, real prerequisite (`Ty`'s `Hash`/`Eq`/`Ord` test coverage) already closed alongside this review, not left as findings with no code to show for them. **Tracked as its own issue, [#1072](https://github.com/accuser/bynk/issues/1072)**, with a WIP branch (`slice/t3.6b-ty-interning`, not merged — the enum conversion is done, producing 370 real, measured compile errors in `checker.rs` alone, before its five submodules or the other three crates) as the concrete starting point for whoever picks this up | R4.1, R4.2 (`Copy` half) | independent — no scaffolding-first increment exists and the ownership design is now settled (investigated and resolved across five passes, see §9); ready to execute as the large, multi-crate rewrite tiers 1–3 describe, from a real starting point rather than a blank one |
-
-T3.6b above is not built (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a, T3.7a, T3.7b, above, are). Deliberately not decomposed to
-signature level, for the reason `compiler-architecture.md` §6's own forward references gave one phase
-up: "an unopened phase whose slices are already written is a wish list." Each exists so a proposal
-citing it is recognised as this track's future work, not unclaimed scope — none is a proposal itself,
-and (per §1.1's correction) none should be assumed still-accurate without re-measuring against the
-tree first — the same discipline that caught the `ExprKey(Span)` premise being stale, found T3.3a's
-real 11-site scope instead of trusting a 900+-mention grep count, found T3.3b closable in two edits
-instead of the ~81-function estimate, found and fixed a real cross-file collision bug in T3.4
-before it ever shipped, found T3.5 closable at one choke point (the lexer) instead of the
-160-construction-site conversion its own settling estimate called for, found — the discipline's first
-negative result — that T3.6's `Copy`-via-interning half genuinely has *no* choke point and is
-roughly as large as its own settling label already said, while still finding a real, small,
-independently-shippable slice (T3.6a) inside it that a same-sized-or-nothing framing would have
-missed, found T3.7's "gated on T3.6" itself was stale — a list-position artifact, not a
-re-derived dependency, once R3.10's actual rationale was read directly, and then — a second-order
-instance of the same discipline, this time applied to a conclusion this track had itself just
-written down — found that T3.7a's own reason for excluding the project/batch path (§9) was a
-conflation between per-unit certification and whole-build atomicity, letting T3.7b ship in the same
-session rather than waiting on a "design pass" that turned out not to be needed. See §9 for all of
-the above.
+**None. T3.6b — the last one — shipped; see the Landed table above.** This heading is kept rather
+than deleted because §6's framing turns on it: it existed so a proposal citing this track's future
+work was recognised as claimed scope rather than unclaimed. With every slice landed there is no such
+scope left, and a reader arriving from a cross-reference should find that stated, not find the
+heading gone and wonder which revision dropped it.
 
 **Completion probe:** `span_keyed_maps` = 3 (down from 27). `HashMap<Span` now appears only in
 `Ctx::pattern_binding_types`'s own type signature (3 sites, deliberately, per T3.4's row above) — not
 0, but the remaining 3 are a stated, principled exclusion, not residue. `IndexVec<ExprId, TyId>`
-(R2.5/R4.9's literal "IndexVec, i.e. total" wording) is not yet built — `expr_types` is
-`HashMap<ExprId, TypedExpr>` today, which T3.3b already made *functionally* total (every id anyone
-would query has an entry) without being an `IndexVec` structurally. Whether that gap is worth closing
-on its own is an open question for whoever picks this phase back up, not decided here.
+(R2.5/R4.9's literal "IndexVec, i.e. total" wording) is **half** built after T3.6b: the `TyId` that
+wording names now exists and is what `expr_types` stores (`TypedExpr { span, ty: TyId }`), but the
+container is still a `HashMap<ExprId, TypedExpr>`, which T3.3b already made *functionally* total
+(every id anyone would query has an entry) without being an `IndexVec` structurally. Whether that
+remaining structural gap is worth closing on its own is an open question for whoever picks this
+phase back up, not decided here.
 
 ---
 
@@ -458,6 +442,36 @@ Appendix D row).
 ---
 
 ## 9. Risks
+
+**T3.6b's own two mistakes, both the same shape, both caught by the test suite rather than by
+review — recorded because they are the failure mode interning *introduces*, and the one this
+track's own §6 row said nothing about.** A `TyId` means nothing except in the table it was minted
+from, and nothing in the type system says which table that is. Both mistakes were a synthesised
+`TypedCommons` (`tests_emit.rs`'s `integration_typed_commons` and
+`synthetic_typed_commons_for_target`) given a *fresh* table on the reasoning that it starts with an
+empty `expr_types` and therefore owns nothing — true at construction, false a few lines later, when
+the case/property checks fill that map in while interning into the table they were handed. The
+lowering then resolved those ids back through the struct's own field and read a table of length 0.
+The reasoning was written into a comment at the time, which is exactly why it is worth recording:
+it was not an oversight but a plausible-and-wrong argument, and the second occurrence was made
+after the first had already been fixed.
+
+What now catches it: `Types::get` fails by name (`"resolved against a table it was not interned
+into"`) with the table's length in the message, rather than as a bare index-out-of-bounds several
+frames below the real error — pinned by
+`an_id_from_another_table_is_a_named_panic_not_a_silent_wrong_answer`. That is a runtime guard, not
+a static one; making it static would mean a lifetime-branded `TyId<'a>`, which was considered and
+rejected here as disproportionate — the wiring is compiler-internal, exercised on every test run,
+and both instances surfaced on the first full suite after they were written.
+
+**A second-order note for anyone tempted by the obvious optimisation.** Interning makes `t == u`
+an O(1) proxy for structural equality, and `compatible` looks like it should short-circuit on it.
+It must not: `compatible` is *not* reflexive — `Actor`/`ActorSum` are sealed boundary values that
+fall through to the `false` arm even against themselves, because they are matched, never assigned.
+A fast path there would silently make them assignable. This was written, caught by reading the
+existing arms before running anything, and is now pinned by
+`compatible_is_not_reflexive_for_sealed_actor_types` so the next reader who has the same idea gets
+a failing test instead of a subtle admission bug.
 
 **T3.4 found a real, silently-miscompiling bug in itself, before it shipped — recorded here in full
 because catching it is the whole point of this phase, not a footnote to it.** Making `expr_types`

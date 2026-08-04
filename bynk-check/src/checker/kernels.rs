@@ -225,14 +225,14 @@ fn check_equi_join(
     };
     let left = check_kernel_fn_arg(
         &args[1],
-        vec![elem.clone()],
+        vec![elem],
         &format!("the `{kind}.{name}` left key"),
         ctx,
     )?;
     require_keyable(left, &format!("{kind}.{name}"), args[1].span, ctx);
     let right = check_kernel_fn_arg(
         &args[2],
-        vec![u.clone()],
+        vec![u],
         &format!("the `{kind}.{name}` right key"),
         ctx,
     )?;
@@ -254,7 +254,7 @@ fn check_equi_join(
     };
     let v = check_kernel_fn_arg(
         &args[3],
-        vec![elem.clone(), other_param],
+        vec![elem, other_param],
         &format!("the `{kind}.{name}` combiner"),
         ctx,
     )?;
@@ -289,13 +289,18 @@ fn check_pred_join(
         return None;
     };
     let on = Ty::Fn {
-        params: vec![elem.clone(), u.clone()],
+        params: vec![elem, u],
         ret: tys.intern(Ty::Base(BaseType::Bool)),
     };
-    check_arg(&args[1], tys.intern(on.clone()), &format!("the `{kind}.join` predicate"), ctx);
+    check_arg(
+        &args[1],
+        tys.intern(on.clone()),
+        &format!("the `{kind}.join` predicate"),
+        ctx,
+    );
     let v = check_kernel_fn_arg(
         &args[2],
-        vec![elem.clone(), u.clone()],
+        vec![elem, u],
         &format!("the `{kind}.join` combiner"),
         ctx,
     )?;
@@ -320,14 +325,14 @@ fn check_group_by(
     }
     let key = check_kernel_fn_arg(
         &args[0],
-        vec![elem.clone()],
+        vec![elem],
         &format!("the `{kind}.groupBy` key"),
         ctx,
     )?;
     require_keyable(key, &format!("{kind}.groupBy"), args[0].span, ctx);
     let v = check_kernel_fn_arg(
         &args[1],
-        vec![key.clone(), tys.intern(Ty::List(elem.clone()))],
+        vec![key, tys.intern(Ty::List(elem))],
         &format!("the `{kind}.groupBy` combiner"),
         ctx,
     )?;
@@ -381,14 +386,14 @@ pub(crate) fn check_list_kernel_method(
                 "the `List.get` index",
                 ctx,
             );
-            Some(tys.intern(Ty::Option(elem.clone())))
+            Some(tys.intern(Ty::Option(elem)))
         }
         "prepend" => {
             if !arity(1, ctx) {
                 return None;
             }
             check_arg(&args[0], elem, "the `List.prepend` element", ctx);
-            Some(tys.intern(Ty::List(elem.clone())))
+            Some(tys.intern(Ty::List(elem)))
         }
         "fold" => {
             if !arity(2, ctx) {
@@ -396,10 +401,15 @@ pub(crate) fn check_list_kernel_method(
             }
             let acc = type_of(&args[0], None, ctx)?;
             let step = Ty::Fn {
-                params: vec![acc.clone(), elem.clone()],
-                ret: acc.clone(),
+                params: vec![acc, elem],
+                ret: acc,
             };
-            check_arg(&args[1], tys.intern(step.clone()), "the `List.fold` step function", ctx);
+            check_arg(
+                &args[1],
+                tys.intern(step.clone()),
+                "the `List.fold` step function",
+                ctx,
+            );
             Some(acc)
         }
         FOLD_EFF => {
@@ -408,10 +418,15 @@ pub(crate) fn check_list_kernel_method(
             }
             let acc = type_of(&args[0], None, ctx)?;
             let step = Ty::Fn {
-                params: vec![acc.clone(), elem.clone()],
-                ret: tys.intern(Ty::Effect(acc.clone())),
+                params: vec![acc, elem],
+                ret: tys.intern(Ty::Effect(acc)),
             };
-            check_arg(&args[1], tys.intern(step.clone()), "the `List.foldEff` step function", ctx);
+            check_arg(
+                &args[1],
+                tys.intern(step.clone()),
+                "the `List.foldEff` step function",
+                ctx,
+            );
             // `foldEff` runs its effectful step function — like any
             // effectful function-value call, it is confined to effectful
             // contexts (0031).
@@ -441,7 +456,7 @@ pub(crate) fn check_list_kernel_method(
                 return None;
             }
             let f = Ty::Fn {
-                params: vec![elem.clone()],
+                params: vec![elem],
                 ret: tys.intern(Ty::Effect(tys.intern(Ty::Unit))),
             };
             check_arg(
@@ -480,7 +495,7 @@ pub(crate) fn check_list_kernel_method(
             }
             let ret = check_kernel_fn_arg(
                 &args[0],
-                vec![elem.clone()],
+                vec![elem],
                 &format!("the `List.{}` function", method.name),
                 ctx,
             )?;
@@ -560,10 +575,9 @@ pub(crate) fn check_list_kernel_method(
                     ),
                 );
             }
-            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(
-                tys.intern(Ty::List(ok_ty)),
-                err_ty,
-            )))))
+            Some(tys.intern(Ty::Effect(
+                tys.intern(Ty::Result(tys.intern(Ty::List(ok_ty)), err_ty)),
+            )))
         }
         // v0.88 (ADR 0116, query-algebra slice 1): the eager in-memory builder
         // and terminal vocabulary as kernel methods. Lazy storage queries reuse
@@ -573,8 +587,7 @@ pub(crate) fn check_list_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let ret =
-                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `List.map` function", ctx)?;
+            let ret = check_kernel_fn_arg(&args[0], vec![elem], "the `List.map` function", ctx)?;
             Some(tys.intern(Ty::List(ret)))
         }
         "filter" => {
@@ -582,22 +595,23 @@ pub(crate) fn check_list_kernel_method(
                 return None;
             }
             let p = Ty::Fn {
-                params: vec![elem.clone()],
+                params: vec![elem],
                 ret: tys.intern(Ty::Base(BaseType::Bool)),
             };
-            check_arg(&args[0], tys.intern(p.clone()), "the `List.filter` predicate", ctx);
-            Some(tys.intern(Ty::List(elem.clone())))
+            check_arg(
+                &args[0],
+                tys.intern(p.clone()),
+                "the `List.filter` predicate",
+                ctx,
+            );
+            Some(tys.intern(Ty::List(elem)))
         }
         "flatMap" => {
             if !arity(1, ctx) {
                 return None;
             }
-            let ret = check_kernel_fn_arg(
-                &args[0],
-                vec![elem.clone()],
-                "the `List.flatMap` function",
-                ctx,
-            )?;
+            let ret =
+                check_kernel_fn_arg(&args[0], vec![elem], "the `List.flatMap` function", ctx)?;
             match &*tys.get(ret) {
                 Ty::List(_) => Some(ret),
                 _ => {
@@ -623,7 +637,7 @@ pub(crate) fn check_list_kernel_method(
                 &format!("the `List.{}` count", method.name),
                 ctx,
             );
-            Some(tys.intern(Ty::List(elem.clone())))
+            Some(tys.intern(Ty::List(elem)))
         }
         "count" => {
             if !arity(0, ctx) {
@@ -636,7 +650,7 @@ pub(crate) fn check_list_kernel_method(
                 return None;
             }
             let p = Ty::Fn {
-                params: vec![elem.clone()],
+                params: vec![elem],
                 ret: tys.intern(Ty::Base(BaseType::Bool)),
             };
             check_arg(
@@ -651,14 +665,14 @@ pub(crate) fn check_list_kernel_method(
             if !arity(0, ctx) {
                 return None;
             }
-            Some(tys.intern(Ty::Option(elem.clone())))
+            Some(tys.intern(Ty::Option(elem)))
         }
         "firstOrElse" => {
             if !arity(1, ctx) {
                 return None;
             }
             check_arg(&args[0], elem, "the `List.firstOrElse` fallback", ctx);
-            Some(elem.clone())
+            Some(elem)
         }
         // v0.88 (ADR 0116 D2/D3/D4): ordering and aggregate vocabulary. The
         // key is the projection's return type; orderable/numeric widen through
@@ -669,36 +683,30 @@ pub(crate) fn check_list_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let key =
-                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `List.sortBy` key", ctx)?;
+            let key = check_kernel_fn_arg(&args[0], vec![elem], "the `List.sortBy` key", ctx)?;
             require_orderable(key, "List.sortBy", args[0].span, ctx);
-            Some(tys.intern(Ty::List(elem.clone())))
+            Some(tys.intern(Ty::List(elem)))
         }
         "distinct" => {
             if !arity(0, ctx) {
                 return None;
             }
             require_keyable(elem, "List.distinct", span, ctx);
-            Some(tys.intern(Ty::List(elem.clone())))
+            Some(tys.intern(Ty::List(elem)))
         }
         "distinctBy" => {
             if !arity(1, ctx) {
                 return None;
             }
-            let key = check_kernel_fn_arg(
-                &args[0],
-                vec![elem.clone()],
-                "the `List.distinctBy` key",
-                ctx,
-            )?;
+            let key = check_kernel_fn_arg(&args[0], vec![elem], "the `List.distinctBy` key", ctx)?;
             require_keyable(key, "List.distinctBy", args[0].span, ctx);
-            Some(tys.intern(Ty::List(elem.clone())))
+            Some(tys.intern(Ty::List(elem)))
         }
         "sum" => {
             if !arity(1, ctx) {
                 return None;
             }
-            let key = check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `List.sum` key", ctx)?;
+            let key = check_kernel_fn_arg(&args[0], vec![elem], "the `List.sum` key", ctx)?;
             require_numeric(key, "List.sum", args[0].span, ctx);
             Some(key)
         }
@@ -708,7 +716,7 @@ pub(crate) fn check_list_kernel_method(
             }
             let key = check_kernel_fn_arg(
                 &args[0],
-                vec![elem.clone()],
+                vec![elem],
                 &format!("the `List.{}` key", method.name),
                 ctx,
             )?;
@@ -719,8 +727,7 @@ pub(crate) fn check_list_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let key =
-                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `List.average` key", ctx)?;
+            let key = check_kernel_fn_arg(&args[0], vec![elem], "the `List.average` key", ctx)?;
             require_numeric(key, "List.average", args[0].span, ctx);
             // D3: average of a Duration is a Duration (integer-rounded millis);
             // average of Int/Float is a Float (no truncation).
@@ -738,12 +745,8 @@ pub(crate) fn check_list_kernel_method(
         "leftJoin" => Some(tys.intern(Ty::List(check_equi_join(
             args, elem, span, false, true, ctx,
         )?))),
-        "join" => Some(tys.intern(Ty::List(check_pred_join(
-            args, elem, span, false, ctx,
-        )?))),
-        "groupBy" => Some(tys.intern(Ty::List(check_group_by(
-            args, elem, span, false, ctx,
-        )?))),
+        "join" => Some(tys.intern(Ty::List(check_pred_join(args, elem, span, false, ctx)?))),
+        "groupBy" => Some(tys.intern(Ty::List(check_group_by(args, elem, span, false, ctx)?))),
         // v0.119 (ADR 0155, DECISION C-a): `run.upTo(step)` — the history strictly
         // before `step`. A history-scoped accessor: admitted only when the element
         // is a synthesised history `Step`, so it never leaks onto ordinary lists
@@ -757,7 +760,7 @@ pub(crate) fn check_list_kernel_method(
                 return None;
             }
             check_arg(&args[0], elem, "the `History.upTo` step", ctx);
-            Some(tys.intern(Ty::List(elem.clone())))
+            Some(tys.intern(Ty::List(elem)))
         }
         _ => {
             // Generated from `LIST_METHODS` (v0.30.2, ADR 0063) rather than
@@ -861,12 +864,7 @@ pub(crate) fn check_query_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let ret = check_kernel_fn_arg(
-                &args[0],
-                vec![elem.clone()],
-                "the `Query.map` function",
-                ctx,
-            )?;
+            let ret = check_kernel_fn_arg(&args[0], vec![elem], "the `Query.map` function", ctx)?;
             Some(query(ret))
         }
         "filter" => {
@@ -874,22 +872,23 @@ pub(crate) fn check_query_kernel_method(
                 return None;
             }
             let p = Ty::Fn {
-                params: vec![elem.clone()],
+                params: vec![elem],
                 ret: tys.intern(Ty::Base(BaseType::Bool)),
             };
-            check_arg(&args[0], tys.intern(p.clone()), "the `Query.filter` predicate", ctx);
+            check_arg(
+                &args[0],
+                tys.intern(p.clone()),
+                "the `Query.filter` predicate",
+                ctx,
+            );
             Some(query(elem))
         }
         "flatMap" => {
             if !arity(1, ctx) {
                 return None;
             }
-            let ret = check_kernel_fn_arg(
-                &args[0],
-                vec![elem.clone()],
-                "the `Query.flatMap` function",
-                ctx,
-            )?;
+            let ret =
+                check_kernel_fn_arg(&args[0], vec![elem], "the `Query.flatMap` function", ctx)?;
             match &*tys.get(ret) {
                 Ty::Query(_) => Some(ret),
                 _ => {
@@ -909,8 +908,7 @@ pub(crate) fn check_query_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let key =
-                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `Query.sortBy` key", ctx)?;
+            let key = check_kernel_fn_arg(&args[0], vec![elem], "the `Query.sortBy` key", ctx)?;
             require_orderable(key, "Query.sortBy", args[0].span, ctx);
             Some(query(elem))
         }
@@ -937,12 +935,7 @@ pub(crate) fn check_query_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let key = check_kernel_fn_arg(
-                &args[0],
-                vec![elem.clone()],
-                "the `Query.distinctBy` key",
-                ctx,
-            )?;
+            let key = check_kernel_fn_arg(&args[0], vec![elem], "the `Query.distinctBy` key", ctx)?;
             require_keyable(key, "Query.distinctBy", args[0].span, ctx);
             Some(query(elem))
         }
@@ -951,13 +944,13 @@ pub(crate) fn check_query_kernel_method(
             if !arity(0, ctx) {
                 return None;
             }
-            Some(eff(tys.intern(Ty::List(elem.clone()))))
+            Some(eff(tys.intern(Ty::List(elem))))
         }
         "first" => {
             if !arity(0, ctx) {
                 return None;
             }
-            Some(eff(tys.intern(Ty::Option(elem.clone()))))
+            Some(eff(tys.intern(Ty::Option(elem))))
         }
         "firstOrElse" => {
             if !arity(1, ctx) {
@@ -978,10 +971,15 @@ pub(crate) fn check_query_kernel_method(
             }
             let acc = type_of(&args[0], None, ctx)?;
             let step = Ty::Fn {
-                params: vec![acc.clone(), elem.clone()],
-                ret: acc.clone(),
+                params: vec![acc, elem],
+                ret: acc,
             };
-            check_arg(&args[1], tys.intern(step.clone()), "the `Query.fold` step function", ctx);
+            check_arg(
+                &args[1],
+                tys.intern(step.clone()),
+                "the `Query.fold` step function",
+                ctx,
+            );
             Some(eff(acc))
         }
         "any" | "all" => {
@@ -989,7 +987,7 @@ pub(crate) fn check_query_kernel_method(
                 return None;
             }
             let p = Ty::Fn {
-                params: vec![elem.clone()],
+                params: vec![elem],
                 ret: tys.intern(Ty::Base(BaseType::Bool)),
             };
             check_arg(
@@ -1004,8 +1002,7 @@ pub(crate) fn check_query_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let key =
-                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `Query.sum` key", ctx)?;
+            let key = check_kernel_fn_arg(&args[0], vec![elem], "the `Query.sum` key", ctx)?;
             require_numeric(key, "Query.sum", args[0].span, ctx);
             Some(eff(key))
         }
@@ -1015,7 +1012,7 @@ pub(crate) fn check_query_kernel_method(
             }
             let key = check_kernel_fn_arg(
                 &args[0],
-                vec![elem.clone()],
+                vec![elem],
                 &format!("the `Query.{}` key", method.name),
                 ctx,
             )?;
@@ -1026,8 +1023,7 @@ pub(crate) fn check_query_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let key =
-                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `Query.average` key", ctx)?;
+            let key = check_kernel_fn_arg(&args[0], vec![elem], "the `Query.average` key", ctx)?;
             require_numeric(key, "Query.average", args[0].span, ctx);
             let result = match key.base(tys) {
                 Some(BaseType::Duration) => Ty::Base(BaseType::Duration),
@@ -1044,7 +1040,7 @@ pub(crate) fn check_query_kernel_method(
                 return None;
             }
             let f = Ty::Fn {
-                params: vec![elem.clone()],
+                params: vec![elem],
                 ret: tys.intern(Ty::Effect(tys.intern(Ty::Unit))),
             };
             check_arg(
@@ -1067,7 +1063,7 @@ pub(crate) fn check_query_kernel_method(
             }
             let ret = check_kernel_fn_arg(
                 &args[0],
-                vec![elem.clone()],
+                vec![elem],
                 &format!("the `Query.{}` function", method.name),
                 ctx,
             )?;
@@ -1184,12 +1180,7 @@ pub(crate) fn check_stream_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let ret = check_kernel_fn_arg(
-                &args[0],
-                vec![elem.clone()],
-                "the `Stream.map` function",
-                ctx,
-            )?;
+            let ret = check_kernel_fn_arg(&args[0], vec![elem], "the `Stream.map` function", ctx)?;
             Some(stream(ret))
         }
         "take" => {
@@ -1209,7 +1200,7 @@ pub(crate) fn check_stream_kernel_method(
             if !arity(0, ctx) {
                 return None;
             }
-            Some(eff(tys.intern(Ty::List(elem.clone()))))
+            Some(eff(tys.intern(Ty::List(elem))))
         }
         _ => {
             ctx.errors.push(CompileError::new(
@@ -1364,7 +1355,10 @@ pub(crate) fn check_numeric_kernel_method(
         }
         (_, "abs") => Some((vec![], b.clone())),
         (_, "min" | "max") => Some((vec![tys.intern(b.clone())], b.clone())),
-        (_, "clamp") => Some((vec![tys.intern(b.clone()), tys.intern(b.clone())], b.clone())),
+        (_, "clamp") => Some((
+            vec![tys.intern(b.clone()), tys.intern(b.clone())],
+            b.clone(),
+        )),
         // v0.42 (ADR 0074): render a number as text — the missing direction
         // (`Int.parse` covers parsing). Total on both `Int` and `Float`.
         (_, "toString") => Some((vec![], Ty::Base(BaseType::String))),
@@ -1594,8 +1588,14 @@ pub(crate) fn check_string_kernel_method(
         "split" => Some((vec![tys.intern(s.clone())], strings.clone())),
         "trim" | "toUpper" | "toLower" => Some((vec![], s.clone())),
         "contains" | "startsWith" | "endsWith" => Some((vec![tys.intern(s.clone())], boolean)),
-        "replace" => Some((vec![tys.intern(s.clone()), tys.intern(s.clone())], s.clone())),
-        "slice" => Some((vec![tys.intern(int.clone()), tys.intern(int.clone())], s.clone())),
+        "replace" => Some((
+            vec![tys.intern(s.clone()), tys.intern(s.clone())],
+            s.clone(),
+        )),
+        "slice" => Some((
+            vec![tys.intern(int.clone()), tys.intern(int.clone())],
+            s.clone(),
+        )),
         "indexOf" => Some((vec![tys.intern(s.clone())], Ty::Option(tys.intern(int)))),
         "chars" => Some((vec![], strings)),
         "concat" => Some((vec![tys.intern(s.clone())], s.clone())),
@@ -1635,7 +1635,12 @@ pub(crate) fn check_string_kernel_method(
         return None;
     }
     for (a, p) in args.iter().zip(&params) {
-        check_arg(a, *p, &format!("the `String.{}` argument", method.name), ctx);
+        check_arg(
+            a,
+            *p,
+            &format!("the `String.{}` argument", method.name),
+            ctx,
+        );
     }
     Some(tys.intern(ret))
 }
@@ -1658,10 +1663,7 @@ fn check_kernel_fn_arg(arg: &Expr, params: Vec<TyId>, label: &str, ctx: &mut Ctx
         && let Some(ret) = subst.get(RET_VAR).cloned()
     {
         // `unify` is permissive ground-vs-ground; re-check the whole shape.
-        let want = Ty::Fn {
-            params,
-            ret: ret.clone(),
-        };
+        let want = Ty::Fn { params, ret };
         if compatible(actual, tys.intern(want), tys) {
             return Some(ret);
         }
@@ -1691,7 +1693,7 @@ fn check_try_fn_arg(
     let tys = ctx.tys;
     let ret = check_kernel_fn_arg(
         arg,
-        vec![elem.clone()],
+        vec![elem],
         &format!("the `{kind}.{method}` function"),
         ctx,
     )?;
@@ -1759,24 +1761,15 @@ pub(crate) fn check_option_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let ret = check_kernel_fn_arg(
-                &args[0],
-                vec![inner.clone()],
-                "the `Option.map` function",
-                ctx,
-            )?;
+            let ret = check_kernel_fn_arg(&args[0], vec![inner], "the `Option.map` function", ctx)?;
             Some(tys.intern(Ty::Option(ret)))
         }
         "andThen" => {
             if !arity(1, ctx) {
                 return None;
             }
-            let ret = check_kernel_fn_arg(
-                &args[0],
-                vec![inner.clone()],
-                "the `Option.andThen` function",
-                ctx,
-            )?;
+            let ret =
+                check_kernel_fn_arg(&args[0], vec![inner], "the `Option.andThen` function", ctx)?;
             match &*tys.get(ret) {
                 Ty::Option(_) => Some(ret),
                 _ => {
@@ -1797,7 +1790,7 @@ pub(crate) fn check_option_kernel_method(
                 return None;
             }
             check_arg(&args[0], inner, "the `Option.getOrElse` fallback", ctx);
-            Some(inner.clone())
+            Some(inner)
         }
         "isSome" => {
             if !arity(0, ctx) {
@@ -1810,7 +1803,7 @@ pub(crate) fn check_option_kernel_method(
                 return None;
             }
             let err = type_of(&args[0], None, ctx)?;
-            Some(tys.intern(Ty::Result(inner.clone(), err)))
+            Some(tys.intern(Ty::Result(inner, err)))
         }
         _ => {
             ctx.errors.push(CompileError::new(
@@ -1865,20 +1858,15 @@ pub(crate) fn check_result_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let ret =
-                check_kernel_fn_arg(&args[0], vec![ok.clone()], "the `Result.map` function", ctx)?;
-            Some(tys.intern(Ty::Result(ret, err.clone())))
+            let ret = check_kernel_fn_arg(&args[0], vec![ok], "the `Result.map` function", ctx)?;
+            Some(tys.intern(Ty::Result(ret, err)))
         }
         "andThen" => {
             if !arity(1, ctx) {
                 return None;
             }
-            let ret = check_kernel_fn_arg(
-                &args[0],
-                vec![ok.clone()],
-                "the `Result.andThen` function",
-                ctx,
-            )?;
+            let ret =
+                check_kernel_fn_arg(&args[0], vec![ok], "the `Result.andThen` function", ctx)?;
             match &*tys.get(ret) {
                 Ty::Result(b, e2) => {
                     let (b, e2) = (*b, *e2);
@@ -1894,7 +1882,7 @@ pub(crate) fn check_result_kernel_method(
                         ));
                         return None;
                     }
-                    Some(tys.intern(Ty::Result(b, err.clone())))
+                    Some(tys.intern(Ty::Result(b, err)))
                 }
                 _ => {
                     ctx.errors.push(CompileError::new(
@@ -1913,20 +1901,16 @@ pub(crate) fn check_result_kernel_method(
             if !arity(1, ctx) {
                 return None;
             }
-            let ret = check_kernel_fn_arg(
-                &args[0],
-                vec![err.clone()],
-                "the `Result.mapErr` function",
-                ctx,
-            )?;
-            Some(tys.intern(Ty::Result(ok.clone(), ret)))
+            let ret =
+                check_kernel_fn_arg(&args[0], vec![err], "the `Result.mapErr` function", ctx)?;
+            Some(tys.intern(Ty::Result(ok, ret)))
         }
         "getOrElse" => {
             if !arity(1, ctx) {
                 return None;
             }
             check_arg(&args[0], ok, "the `Result.getOrElse` fallback", ctx);
-            Some(ok.clone())
+            Some(ok)
         }
         "isOk" => {
             if !arity(0, ctx) {
@@ -2007,14 +1991,11 @@ pub(crate) fn check_effect_result_kernel_method(
             }
             let ret = check_kernel_fn_arg(
                 &args[0],
-                vec![ok.clone()],
+                vec![ok],
                 "the `Effect[Result].mapOk` function",
                 ctx,
             )?;
-            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(
-                ret,
-                err.clone(),
-            )))))
+            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(ret, err)))))
         }
         "mapErr" => {
             if !arity(1, ctx) {
@@ -2022,14 +2003,11 @@ pub(crate) fn check_effect_result_kernel_method(
             }
             let ret = check_kernel_fn_arg(
                 &args[0],
-                vec![err.clone()],
+                vec![err],
                 "the `Effect[Result].mapErr` function",
                 ctx,
             )?;
-            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(
-                ok.clone(),
-                ret,
-            )))))
+            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(ok, ret)))))
         }
         "flatMapOk" => {
             if !arity(1, ctx) {
@@ -2051,10 +2029,7 @@ pub(crate) fn check_effect_result_kernel_method(
                 ));
                 return None;
             }
-            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(
-                u,
-                err.clone(),
-            )))))
+            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(u, err)))))
         }
         "flatMapErr" => {
             if !arity(1, ctx) {
@@ -2075,10 +2050,7 @@ pub(crate) fn check_effect_result_kernel_method(
                 ));
                 return None;
             }
-            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(
-                ok.clone(),
-                f,
-            )))))
+            Some(tys.intern(Ty::Effect(tys.intern(Ty::Result(ok, f)))))
         }
         _ => {
             ctx.errors.push(CompileError::new(
@@ -2115,7 +2087,7 @@ fn check_effect_result_fn_arg(
     let tys = ctx.tys;
     let ret = check_kernel_fn_arg(
         arg,
-        vec![param.clone()],
+        vec![param],
         &format!("the `Effect[Result].{method}` function"),
         ctx,
     )?;
@@ -2216,9 +2188,7 @@ fn json_codable(t: TyId, tys: &Types) -> bool {
         // a `Query`, …) is the reason the instantiation is uncodable, mirroring
         // the container arms below. (ADR 0183 Decision C's non-boundary rule was
         // the previous, blanket rejection.)
-        Ty::Named { args, .. } if !args.is_empty() => {
-            args.iter().all(|a| json_codable(*a, tys))
-        }
+        Ty::Named { args, .. } if !args.is_empty() => args.iter().all(|a| json_codable(*a, tys)),
         Ty::Base(_) | Ty::Named { .. } | Ty::Unit => true,
         Ty::Result(a, b) => json_codable(*a, tys) && json_codable(*b, tys),
         Ty::Option(a) | Ty::List(a) => json_codable(*a, tys),
@@ -2513,7 +2483,10 @@ pub(crate) fn check_bytes_static(
     // (params, return) keyed on the static name; `None` = unknown (the
     // resolver owns the unknown-static diagnostic; don't double up).
     let sig: Option<(Vec<TyId>, Ty)> = match method.name.as_str() {
-        "fromUtf8" => Some((vec![tys.intern(Ty::Base(BaseType::String))], Ty::Base(BaseType::Bytes))),
+        "fromUtf8" => Some((
+            vec![tys.intern(Ty::Base(BaseType::String))],
+            Ty::Base(BaseType::Bytes),
+        )),
         "fromBase64" => Some((
             vec![tys.intern(Ty::Base(BaseType::String))],
             Ty::Option(tys.intern(Ty::Base(BaseType::Bytes))),
@@ -2590,21 +2563,21 @@ pub(crate) fn check_map_kernel_method(
             if !arity(0, ctx) {
                 return None;
             }
-            Some(tys.intern(Ty::List(key.clone())))
+            Some(tys.intern(Ty::List(key)))
         }
         // v0.149 (ADR 0173): the `keys` sibling — the values in key order.
         "values" => {
             if !arity(0, ctx) {
                 return None;
             }
-            Some(tys.intern(Ty::List(val.clone())))
+            Some(tys.intern(Ty::List(val)))
         }
         "get" => {
             if !arity(1, ctx) {
                 return None;
             }
             check_arg(&args[0], key, "the `Map.get` key", ctx);
-            Some(tys.intern(Ty::Option(val.clone())))
+            Some(tys.intern(Ty::Option(val)))
         }
         "insert" => {
             if !arity(2, ctx) {
@@ -2612,7 +2585,7 @@ pub(crate) fn check_map_kernel_method(
             }
             check_arg(&args[0], key, "the `Map.insert` key", ctx);
             check_arg(&args[1], val, "the `Map.insert` value", ctx);
-            Some(tys.intern(Ty::Map(key.clone(), val.clone())))
+            Some(tys.intern(Ty::Map(key, val)))
         }
         _ => {
             ctx.errors.push(CompileError::new(

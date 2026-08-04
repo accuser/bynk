@@ -134,6 +134,7 @@ pub fn extract_variable(
 /// [`FunctionSelection::Stmts`]) rather than one expression — free-variable
 /// synthesis is the same walk, just seeded from every selected statement's
 /// values (via [`statement_exprs`]) instead of a single expression.
+#[allow(clippy::too_many_arguments)]
 pub fn extract_function(
     text: &str,
     requested: Span,
@@ -1180,6 +1181,7 @@ mod tests {
                 requirements,
                 locals,
                 expr_types,
+                &TYS,
             )
         }
 
@@ -1204,11 +1206,19 @@ mod tests {
             }
         }
 
-        fn int_type(text: &str, needle: &str) -> (Span, Ty) {
+        use bynk_check::checker::Ty;
+
+        /// One table for every fixture in this module — `Types` is
+        /// `Send + Sync` (T3.6b), so a `LazyLock` static is the least
+        /// ceremonious way to give the `TyId`s below something to resolve
+        /// against.
+        static TYS: std::sync::LazyLock<Types> = std::sync::LazyLock::new(Types::new);
+
+        fn int_type(text: &str, needle: &str) -> (Span, TyId) {
             let start = text.find(needle).expect("needle present");
             (
                 Span::new(start, start + needle.len()),
-                Ty::Base(BaseType::Int),
+                TYS.intern(Ty::Base(BaseType::Int)),
             )
         }
 
@@ -1487,7 +1497,7 @@ mod tests {
                 let tail_val_b = nth_offset(src, "valB", 1); // skip `let valB`'s own def
                 let types = vec![(
                     Span::new(tail_val_b, tail_val_b + "valB".len()),
-                    Ty::Base(BaseType::Int),
+                    TYS.intern(Ty::Base(BaseType::Int)),
                 )];
                 let needle = "let valA = num * 2\n    let valB = valA + 1\n    valB";
                 let actions = function_actions_for(src, needle, &[], &locals, &types);
@@ -1513,7 +1523,7 @@ mod tests {
                 let end = start + "let a = num + 1\n  let valC = a * 2".len() - 1;
                 let requested = Span::new(start, end);
                 let uri = Url::parse("file:///a.bynk").unwrap();
-                let actions = extract_function(src, requested, &uri, Some(3), &[], &[], &[]);
+                let actions = extract_function(src, requested, &uri, Some(3), &[], &[], &[], &TYS);
                 assert!(actions.is_empty());
             }
 
@@ -1531,7 +1541,8 @@ mod tests {
                     let_binding(src, "valC", "Int"),
                 ];
                 let uri = Url::parse("file:///a.bynk").unwrap();
-                let actions = extract_function(src, requested, &uri, Some(3), &[], &locals, &[]);
+                let actions =
+                    extract_function(src, requested, &uri, Some(3), &[], &locals, &[], &TYS);
                 assert_eq!(actions.len(), 1);
                 let edits = sole_edit(&actions[0]);
                 assert_eq!(edits[1].new_text, "let _ = extractedFn(num)");

@@ -64,6 +64,7 @@ fn held_value(ty: TyId, tys: &Types) -> bool {
 
 /// Entry point: check the linearity discipline over `body`, seeding held
 /// handler/function parameters as owned bindings.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check(
     body: &Block,
     params: &[Param],

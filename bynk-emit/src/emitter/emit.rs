@@ -6,10 +6,10 @@
 //! `emitter.rs` (ADR 0060); the codec/reference/import/header helpers and the
 //! `ts_*`/`LowerCtx` core stay in the parent and are reached via `use super::*`.
 
-use std::sync::Arc;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
@@ -2776,7 +2776,11 @@ pub(crate) fn emit_agent(
                     format!("(() => {{ {} return {expr}; }})()", pre.stmts().join(" "))
                 }
             } else {
-                bynk_check::checker::zero_value_ts(&f.type_ref, f.refinement.as_ref(), &commons.types)
+                bynk_check::checker::zero_value_ts(
+                    &f.type_ref,
+                    f.refinement.as_ref(),
+                    &commons.types,
+                )
                 .unwrap_or_else(|| "undefined as never".to_string())
             };
             parts.push(format!("{}: {val}", f.name.name));

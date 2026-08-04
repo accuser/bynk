@@ -265,6 +265,7 @@ fn handler_at(handlers: &[Handler], offset: usize) -> Option<&Handler> {
 /// service is not (yet) in the retained table — a live-buffer/committed-round
 /// mismatch (the same class of staleness `sequence_model_at` accepts for
 /// `sequence_info`).
+#[allow(clippy::too_many_arguments)]
 pub fn wire_contract_for_service(
     unit: &str,
     text: &str,
@@ -690,6 +691,7 @@ service api from http {
             offset,
             info,
             &[],
+            &diag.ty_intern,
             real_context_count(&diag),
         )
         .expect("a wire contract at the GET handler's header");
@@ -784,6 +786,7 @@ service api from http {
             offset,
             info,
             expr_types,
+            &diag.ty_intern,
             real_context_count(&diag),
         )
         .expect("a wire contract at the GET handler's header");
@@ -866,6 +869,7 @@ service checkout {
             offset,
             info,
             &[],
+            &diag.ty_intern,
             real_context_count(&diag),
         )
         .expect("a wire contract at the `price` handler");
@@ -929,8 +933,16 @@ service Ping {
         let info = diag.boundary_info.get("solo").expect("entry");
 
         let offset = find_offset(src, "on call()");
-        let model = wire_contract_at("solo", src, offset, info, &[], real_context_count(&diag))
-            .expect("a wire contract at the `Ping` handler");
+        let model = wire_contract_at(
+            "solo",
+            src,
+            offset,
+            info,
+            &[],
+            &diag.ty_intern,
+            real_context_count(&diag),
+        )
+        .expect("a wire contract at the `Ping` handler");
 
         assert!(
             matches!(model.envelope, Envelope::Empty),
@@ -977,6 +989,7 @@ service api from http {
             offset,
             info,
             &[],
+            &diag.ty_intern,
             real_context_count(&diag),
         )
         .expect("a wire contract at the GET handler");

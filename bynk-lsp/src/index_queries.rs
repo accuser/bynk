@@ -1351,30 +1351,32 @@ mod tests {
 
     #[test]
     fn named_type_target_unwraps_single_param_containers() {
-        use bynk_check::checker::NamedKind;
+        use bynk_check::checker::{NamedKind, Types};
         use bynk_syntax::ast::BaseType;
-        let order = || Ty::Named {
-            name: "Order".into(),
-            kind: NamedKind::Record,
-            args: Vec::new(),
+        let tys = &Types::new();
+        let order = || {
+            tys.intern(Ty::Named {
+                name: "Order".into(),
+                kind: NamedKind::Record,
+                args: Vec::new(),
+            })
         };
-        assert_eq!(named_type_target(&order()), Some("Order"));
+        let target = |t| named_type_target(t, tys);
+        assert_eq!(target(order()).as_deref(), Some("Order"));
         assert_eq!(
-            named_type_target(&Ty::Option(Box::new(order()))),
+            target(tys.intern(Ty::Option(order()))).as_deref(),
             Some("Order")
         );
         // Nested single-param containers unwrap all the way.
+        let effect = tys.intern(Ty::Effect(order()));
         assert_eq!(
-            named_type_target(&Ty::List(Box::new(Ty::Effect(Box::new(order()))))),
+            target(tys.intern(Ty::List(effect))).as_deref(),
             Some("Order")
         );
         // Built-in, two-parameter, and unit types have no single target.
-        assert_eq!(named_type_target(&Ty::Base(BaseType::Int)), None);
-        assert_eq!(
-            named_type_target(&Ty::Result(Box::new(order()), Box::new(order()))),
-            None
-        );
-        assert_eq!(named_type_target(&Ty::Unit), None);
+        assert_eq!(target(tys.intern(Ty::Base(BaseType::Int))), None);
+        assert_eq!(target(tys.intern(Ty::Result(order(), order()))), None);
+        assert_eq!(target(tys.intern(Ty::Unit)), None);
     }
 
     #[test]

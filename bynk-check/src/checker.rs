@@ -110,11 +110,27 @@ impl Types {
         id
     }
 
-    /// The node `id` was interned from. Panics on a `TyId` minted by a
-    /// *different* table — see this type's doc for why that cannot happen
-    /// across `check_record` invocations.
+    /// The node `id` was interned from.
+    ///
+    /// Panics on a `TyId` minted by a *different* table. That is the one new
+    /// failure mode interning introduces, and it is a wiring bug in the
+    /// compiler, never something a Bynk program can provoke — so it fails
+    /// loudly and by name rather than as a bare index-out-of-bounds. It was
+    /// worth the message: this fired twice while T3.6b was being built, both
+    /// times a synthesised `TypedCommons` that had been given a table of its
+    /// own while its `expr_types` was filled in from another.
     pub fn get(&self, id: TyId) -> Arc<Ty> {
-        Arc::clone(&self.lock().table[id.0 as usize])
+        let inner = self.lock();
+        match inner.table.get(id.0 as usize) {
+            Some(node) => Arc::clone(node),
+            None => panic!(
+                "bynk internal error (T3.6b, R4.1): {id:?} resolved against a table it was not \
+                 interned into (this table holds {}). A `TyId` is only meaningful in its own \
+                 `Types` — check that whatever produced this id and whatever is reading it share \
+                 one table",
+                inner.table.len()
+            ),
+        }
     }
 
     /// [`Ty::display`] for an already-interned type.
@@ -1370,7 +1386,7 @@ pub fn check_contracts(
         // `ensures` scope = parameters + `result` (the return value; awaited for
         // an `Effect`). A parameter named `result` is shadowed by the binding.
         let mut scope = param_scope.clone();
-        scope.insert("result".to_string(), result_ty.clone());
+        scope.insert("result".to_string(), result_ty);
         check_clause(
             c,
             scope,
@@ -1440,8 +1456,8 @@ pub fn check_transitions(
 
     // Both `old` and `new` are in scope as the state record.
     let mut scope: HashMap<String, TyId> = HashMap::new();
-    scope.insert("old".to_string(), state_ty.clone());
-    scope.insert("new".to_string(), state_ty.clone());
+    scope.insert("old".to_string(), state_ty);
+    scope.insert("new".to_string(), state_ty);
 
     for tr in transitions {
         // Reject cross-agent references and impure constructs before type-checking,
@@ -2800,7 +2816,11 @@ pub(crate) fn type_of_block(block: &Block, expected: Option<TyId>, ctx: &mut Ctx
                         ),
                     );
                 }
-                let val_ty = type_of(&a.value, Some(tys.intern(Ty::Base(BaseType::Bool).clone())), ctx);
+                let val_ty = type_of(
+                    &a.value,
+                    Some(tys.intern(Ty::Base(BaseType::Bool).clone())),
+                    ctx,
+                );
                 if let Some(actual) = val_ty
                     && !compatible(actual, tys.intern(Ty::Base(BaseType::Bool)), tys)
                 {
@@ -3064,15 +3084,13 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
         ExprKind::IntLit { .. } => {
             admit_refined_literal(expr, expected, ctx).or(Some(tys.intern(Ty::Base(BaseType::Int))))
         }
-        ExprKind::FloatLit { .. } => {
-            admit_refined_literal(expr, expected, ctx).or(Some(tys.intern(Ty::Base(BaseType::Float))))
-        }
+        ExprKind::FloatLit { .. } => admit_refined_literal(expr, expected, ctx)
+            .or(Some(tys.intern(Ty::Base(BaseType::Float)))),
         // v0.86 (ADR 0112): a `Duration` literal always takes the base
         // `Duration` (no refined `Duration` types exist).
         ExprKind::DurationLit { .. } => Some(tys.intern(Ty::Base(BaseType::Duration))),
-        ExprKind::StrLit(_) => {
-            admit_refined_literal(expr, expected, ctx).or(Some(tys.intern(Ty::Base(BaseType::String))))
-        }
+        ExprKind::StrLit(_) => admit_refined_literal(expr, expected, ctx)
+            .or(Some(tys.intern(Ty::Base(BaseType::String)))),
         // An interpolated string (v0.43, ADR 0075). Each hole must type to a
         // base scalar (String/Int/Float/Bool) or a *refinement* of one — those
         // have a well-defined display form (Int/Float via the ADR 0074
@@ -3457,7 +3475,11 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
         // inner and the `system` tier. Anywhere else it is an error. The inner is
         // still typed so a mistake inside it is reported too.
         ExprKind::Wire(inner) => {
-            let _ = type_of(inner, Some(tys.intern(Ty::Base(BaseType::String).clone())), ctx);
+            let _ = type_of(
+                inner,
+                Some(tys.intern(Ty::Base(BaseType::String).clone())),
+                ctx,
+            );
             ctx.errors.push(
                 CompileError::new(
                     "bynk.test.wire_needs_system",
@@ -3581,7 +3603,7 @@ fn rebrand_return_type(
     tys: &Types,
 ) -> TyId {
     let node = tys.get(t);
-    let rebranded = match &*node {
+    match &*node {
         Ty::Named { name, kind, args } => {
             // If the caller's namespace has the same name, prefer the caller's
             // view (it carries the caller's brand at emission time). Otherwise
@@ -3622,13 +3644,12 @@ fn rebrand_return_type(
         | Ty::JsonError
         | Ty::Unit
         | Ty::Actor(_)
-        | Ty::ActorSum(_) => return t,
+        | Ty::ActorSum(_) => t,
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so a cross-context return can
         // never carry one; Vars never escape call checking.
-        Ty::Fn { .. } | Ty::Var(_) => return t,
-    };
-    rebranded
+        Ty::Fn { .. } | Ty::Var(_) => t,
+    }
 }
 
 /// Structural compatibility check for values crossing a context boundary
@@ -3642,14 +3663,7 @@ fn structurally_compatible(
     param_types: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,
 ) -> bool {
-    structurally_compatible_inner(
-        arg,
-        param,
-        arg_types,
-        param_types,
-        tys,
-        &mut HashSet::new(),
-    )
+    structurally_compatible_inner(arg, param, arg_types, param_types, tys, &mut HashSet::new())
 }
 
 fn structurally_compatible_inner(
@@ -3859,14 +3873,8 @@ fn structural_compare_named(
                     let (Some(at), Some(bt)) = (at, bt) else {
                         return false;
                     };
-                    if !structurally_compatible_inner(
-                        at,
-                        bt,
-                        arg_types,
-                        param_types,
-                        tys,
-                        visited,
-                    ) {
+                    if !structurally_compatible_inner(at, bt, arg_types, param_types, tys, visited)
+                    {
                         return false;
                     }
                 }
@@ -3942,9 +3950,7 @@ fn variants_of(
                                     // sum (empty `args`).
                                     let t =
                                         instantiate_field_ty(decl, args, &f.type_ref, types, tys)
-                                            .unwrap_or_else(|| {
-                                                tys.intern(Ty::Base(BaseType::Int))
-                                            });
+                                            .unwrap_or_else(|| tys.intern(Ty::Base(BaseType::Int)));
                                     (f.name.name.clone(), t)
                                 })
                                 .collect(),
@@ -4222,6 +4228,19 @@ mod ty_hash_eq_ord_tests {
         assert_eq!(&*tys.get(list), &Ty::List(int));
     }
 
+    /// A `TyId` is only meaningful in the table it was minted from — the one
+    /// new failure mode interning introduces. It fails loudly and by name;
+    /// pinned so the diagnosis stays cheap for the next reader who wires two
+    /// tables together by accident.
+    #[test]
+    #[should_panic(expected = "resolved against a table it was not interned into")]
+    fn an_id_from_another_table_is_a_named_panic_not_a_silent_wrong_answer() {
+        let a = Types::new();
+        let b = Types::new();
+        let id = a.intern(Ty::Base(BaseType::Int));
+        let _ = b.get(id);
+    }
+
     /// T3.6b's own soundness guard: `compatible` is deliberately **not**
     /// reflexive for the sealed boundary values, so interning must not be
     /// short-circuited on id equality. Pinned here because the fast path is
@@ -4367,7 +4386,12 @@ mod pure_helper_pins {
         // diagnostics post-substitution, not `unify`.
         let mut s = HashMap::new();
         assert!(unify(int(tys), string(tys), &mut s, tys));
-        assert!(unify(tys.intern(Ty::List(int(tys))), tys.intern(Ty::Option(int(tys))), &mut s, tys));
+        assert!(unify(
+            tys.intern(Ty::List(int(tys))),
+            tys.intern(Ty::Option(int(tys))),
+            &mut s,
+            tys
+        ));
         // The only false paths: a Var rebind conflict and an Fn arity mismatch.
         let mut s2 = HashMap::new();
         assert!(unify(var(tys, "A"), int(tys), &mut s2, tys));
@@ -4454,14 +4478,20 @@ mod pure_helper_pins {
     #[test]
     fn peel_to_option_matches_and_misses() {
         let tys = &Types::new();
-        assert_eq!(peel_to_option(tys.intern(Ty::Option(int(tys))), tys), Some(int(tys)));
+        assert_eq!(
+            peel_to_option(tys.intern(Ty::Option(int(tys))), tys),
+            Some(int(tys))
+        );
         assert_eq!(peel_to_option(int(tys), tys), None);
     }
 
     #[test]
     fn peel_to_list_matches_and_misses() {
         let tys = &Types::new();
-        assert_eq!(peel_to_list(tys.intern(Ty::List(string(tys))), tys), Some(string(tys)));
+        assert_eq!(
+            peel_to_list(tys.intern(Ty::List(string(tys))), tys),
+            Some(string(tys))
+        );
         assert_eq!(peel_to_list(int(tys), tys), None);
     }
 
@@ -4504,7 +4534,10 @@ mod pure_helper_pins {
             Some(tys.intern(Ty::Effect(int(tys)))),
         );
         // Expected not an Effect: untouched.
-        assert_eq!(maybe_auto_lift(Some(int(tys)), Some(int(tys)), tys), Some(int(tys)));
+        assert_eq!(
+            maybe_auto_lift(Some(int(tys)), Some(int(tys)), tys),
+            Some(int(tys))
+        );
         // None type: untouched.
         assert_eq!(maybe_auto_lift(None, Some(expected), tys), None);
     }
@@ -4513,7 +4546,6 @@ mod pure_helper_pins {
 
     #[test]
     fn const_literal_extracts_literals() {
-        let tys = &Types::new();
         assert!(matches!(
             const_literal(&expr(ExprKind::int_lit(7))),
             Some(ConstLit::Int(7)),
@@ -4543,7 +4575,6 @@ mod pure_helper_pins {
 
     #[test]
     fn const_literal_rejects_non_literals() {
-        let tys = &Types::new();
         assert!(const_literal(&expr(ExprKind::Ident(ident("x")))).is_none());
     }
 
@@ -4551,7 +4582,6 @@ mod pure_helper_pins {
 
     #[test]
     fn eval_predicate_int_and_float() {
-        let tys = &Types::new();
         assert!(eval_predicate(&PredKind::NonNegative, &ConstLit::Int(0)));
         assert!(!eval_predicate(&PredKind::NonNegative, &ConstLit::Int(-1)));
         assert!(eval_predicate(&PredKind::Positive, &ConstLit::Int(1)));
@@ -4562,7 +4592,6 @@ mod pure_helper_pins {
 
     #[test]
     fn eval_predicate_string() {
-        let tys = &Types::new();
         assert!(eval_predicate(
             &PredKind::MinLength(2),
             &ConstLit::Str("ab".into()),
@@ -4591,7 +4620,6 @@ mod pure_helper_pins {
 
     #[test]
     fn eval_predicate_base_mismatch_is_vacuously_true() {
-        let tys = &Types::new();
         // SURPRISING (pinned as-is): a predicate/literal base mismatch returns
         // `true` — base/predicate mismatch is a declaration-time error reported
         // elsewhere, not by construction-time eval.
@@ -4602,7 +4630,6 @@ mod pure_helper_pins {
 
     #[test]
     fn literal_matches_base_pairs() {
-        let tys = &Types::new();
         assert!(literal_matches_base(&ConstLit::Int(1), BaseType::Int));
         assert!(literal_matches_base(
             &ConstLit::Str("x".into()),
@@ -4616,7 +4643,6 @@ mod pure_helper_pins {
 
     #[test]
     fn type_decl_base_refined_vs_record() {
-        let tys = &Types::new();
         let refined = refined_decl("Age", BaseType::Int, None);
         assert_eq!(type_decl_base(&refined), Some(BaseType::Int));
         assert_eq!(type_decl_base(&record_decl("Pt")), None);
@@ -4624,7 +4650,6 @@ mod pure_helper_pins {
 
     #[test]
     fn type_decl_refinement_present_vs_absent() {
-        let tys = &Types::new();
         let with = refined_decl(
             "Age",
             BaseType::Int,
@@ -4640,7 +4665,6 @@ mod pure_helper_pins {
 
     #[test]
     fn int_refinement_consistency() {
-        let tys = &Types::new();
         // Consistent: 1..=10 with Positive — no error.
         let mut errs = vec![];
         check_int_refinement_consistency(
@@ -4657,7 +4681,6 @@ mod pure_helper_pins {
 
     #[test]
     fn float_refinement_consistency() {
-        let tys = &Types::new();
         // Consistent range.
         let mut errs = vec![];
         check_float_refinement_consistency(
@@ -4688,7 +4711,6 @@ mod pure_helper_pins {
 
     #[test]
     fn string_refinement_consistency() {
-        let tys = &Types::new();
         // Consistent: MinLength(1), MaxLength(10).
         let mut errs = vec![];
         check_string_refinement_consistency(
@@ -4726,7 +4748,6 @@ mod pure_helper_pins {
     /// this was `false`.
     #[test]
     fn refinements_match_treats_non_empty_and_min_length_one_as_equal() {
-        let tys = &Types::new();
         let a = refinement(vec![PredKind::NonEmpty]);
         let b = refinement(vec![PredKind::MinLength(1)]);
         assert!(refinements_match(Some(&a), Some(&b)));
@@ -4744,7 +4765,6 @@ mod pure_helper_pins {
 
     #[test]
     fn numeric_mix_int_float_pairs() {
-        let tys = &Types::new();
         assert!(numeric_mix(Some(BaseType::Int), Some(BaseType::Float)));
         assert!(numeric_mix(Some(BaseType::Float), Some(BaseType::Int)));
         assert!(!numeric_mix(Some(BaseType::Int), Some(BaseType::Int)));

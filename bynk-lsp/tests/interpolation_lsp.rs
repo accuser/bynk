@@ -111,9 +111,12 @@ fn hover_type_is_recorded_for_a_hole_expression() {
     let use_off = offset_of(SRC, "name", 1) + 1;
     let ty = bynk_check::expr_types::type_at_offset(entries, use_off)
         .expect("the hole expression `name` has a recorded type");
+    // T3.6b: `expr_types` hands out a `TyId` — resolve it through the round's
+    // intern table before asking what shape it is.
+    let display = ty.display(&result.ty_intern);
     assert!(
-        format!("{ty:?}").contains("String"),
-        "expected the hole use to type as String; got {ty:?}"
+        display.contains("String"),
+        "expected the hole use to type as String; got {display}"
     );
 }
 
