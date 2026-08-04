@@ -562,3 +562,68 @@ imposed; entries keep the order they were retired in.
   manual, handler-authored. A future track picking this up starts from the
   `predicate`-declaration gap named here, not from `Locale` itself (which is
   complete).
+- **`identity-and-totality.md`** — phase 3 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
+  `compiler-architecture.md`'s own retirement: node identity independent of position (`ExprId`,
+  `FileId`), every side table total (`Ty::Error`, `expr_types`), the checker's core type
+  (`Ty`/`TyId`) interned and `Copy`-cheap, and the analysis/emission boundary a type
+  (`certify`/`CheckedProgram`) rather than a control-flow convention. Settled under a same-day
+  review (§3, seven design questions), with one direction reversed twice in the process — first
+  toward an `ExprKey(Span)` scaffolding step, then away from it once implementation work on T3.1
+  found `43abc242` (a commit predating this track) had already shipped and already rejected that
+  exact newtype, on the same grounds. All nine slices shipped: **T3.0** — an existing debug-only
+  uniqueness check (finding #28) extended from `check_record`'s top-level-`fn` loop to
+  service/agent handler bodies and test-case bodies, which had no collision protection at all;
+  **T3.3a** — `Ty::Error` a real variant, given deliberate semantics at every exhaustive match the
+  compiler's own exhaustiveness check found (11 real sites, not the 900+ raw mentions a grep
+  count suggested); **T3.3b** — `expr_types` made total in full, at `type_of`/`type_of_block`'s
+  two actual write choke points rather than the ~81-function internal-recovery-convention rewrite
+  first estimated; **T3.4** — real `ExprId` allocated at parse (`Parser::alloc_expr_id`),
+  `expr_types` re-keyed by it, catching and fixing a genuine cross-file `ExprId` collision bug
+  (two independently-zero-based files colliding once `collect_unit_methods` merged their bodies)
+  before it ever shipped; **T3.5** — real `FileId` on `Span`, stamped at the lexer (the one place
+  a `Span` is ever first minted from real bytes) rather than the 160-construction-site conversion
+  first estimated, exposing and fixing a latent bug in the LSP rename validator's own span
+  reconstruction; **T3.6a** — `Hash`/`Ord` on `Ty`/`NamedKind`/`BaseType`, a 3-line derive diff
+  touching zero call sites, closing half of R4.2 without needing any of T3.6b's interning work;
+  **T3.7a/T3.7b** — `certify`/`CheckedProgram`, the single-file compile path then the
+  project/batch path, closing R3.10 in full; T3.7a's own stated reason for excluding the
+  project/batch path (that per-unit emission ran before that unit's build-wide gate was decided)
+  was itself re-checked while implementing T3.7b and found to conflate whole-build atomicity
+  (already correct, unconditional) with per-unit certification (the real, narrower thing R3.10
+  asks for); **T3.6b** — real `Ty` interning, `TyId` the only currency above the intern table,
+  landed as the three-stage rewrite (`bynk-check` atomically, then `bynk-emit`, then
+  `bynk-ide`/`bynk-lsp`) the settling review predicted — the one slice in the track whose large
+  estimate held rather than shrinking, ~250 sites across four crates, tracked to completion as
+  its own issue ([#1072](https://github.com/accuser/bynk/issues/1072)) from a WIP branch that had
+  the enum conversion done and nothing past it. `span_keyed_maps` reads 3, down from 27 — the
+  remainder is `Ctx::pattern_binding_types`, a deliberate exclusion (the `PatId`/`ExprId` split
+  the reference draws as out of scope on purpose, not residue left behind). Decisions in ADRs
+  [0316](../decisions/0316-ty-interning-interior-mutability.md) (`Types::intern` takes `&self` —
+  the table is reached from `Ctx`, whose other fields are `&mut` and routinely live across an
+  interning call; a `&mut Types` would have made the borrow checker, not the type system, the
+  thing every minting site was written around),
+  [0317](../decisions/0317-ty-interning-atomic-not-cell.md) (the table is `Arc`/`Mutex`, not
+  `Rc`/`RefCell` — the compiler itself is single-threaded, but the table rides out to
+  `bynk-lsp`'s `async` `tower-lsp` handlers, which require `Send`), and
+  [0318](../decisions/0318-ty-interning-one-table-per-build.md) (the table is owned per *build*,
+  not per `check_record` invocation — a refinement to the settling review's own answer, forced by
+  the project path funnelling every unit's `expr_types` into one shared sink, where per-unit ids
+  would have been ambiguous). Surface lives in `bynk-check/src/checker.rs` and its
+  `calls`/`expressions`/`kernels`/`linearity`/`refinements` submodules, `bynk-emit/src/emitter.rs`
+  and `project.rs`, and `bynk-ide`/`bynk-lsp`'s completion/hover/navigation surfaces.
+  **T3.6b's own two mistakes, both caught by the test suite rather than review, recorded because
+  they are the failure mode interning specifically introduces:** a synthesised `TypedCommons`
+  given a *fresh* interner table on the plausible-but-wrong reasoning that its `expr_types` starts
+  empty (true at construction, false once case/property checks filled it in against a *different*
+  table); and a `compatible` fast path on `TyId` equality that must not exist, since `compatible`
+  is not reflexive for sealed boundary values (`Actor`/`ActorSum` are matched, never assigned, so
+  even `t == t` must stay `false`). Both now pinned by regression tests; a debug-mode identity
+  guard (each `Types` table draws a distinct tag, each `TyId` carries its table's, `resolve`
+  compares them) catches a foreign-but-in-range `TyId` a bounds check alone would silently
+  mis-resolve. **No deferred follow-ons within this track's own scope** — §6's slice table has
+  nothing left unbuilt, unlike every other track retired above. What it opens: phase 4 (the
+  project model as its own crate, `bynk-project`) per
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), entry-gated on this track's
+  own probe (`span_keyed_maps`) reading zero — met, modulo the stated `Ctx::pattern_binding_types`
+  exclusion above.

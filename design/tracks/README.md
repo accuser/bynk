@@ -78,7 +78,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`identity-and-totality.md`](identity-and-totality.md) | [#1046](https://github.com/accuser/bynk/issues/1046) | Settling — draft track doc open; §3's design questions not yet closed under review | Phase 3 of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): node identity independent of position, total side tables, the editor consuming a program that does not compile. No language surface change |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -90,14 +89,16 @@ settling draft PR; `testing-the-boundary.md` (now retired) was the second;
 `compiler-architecture.md` (now retired) was the sixth, and its theme was
 internal architecture rather than language surface — as `crate-decomposition.md`
 and `increment-allocation.md`, both retired, were before it.
-`identity-and-totality.md` is the seventh, and continues
+`identity-and-totality.md` (now retired) was the seventh, continuing
 `compiler-architecture.md`'s internal-architecture theme as phase 3 of the
-same trajectory. **`compiler-architecture.md`'s retirement PR
-([#996](https://github.com/accuser/bynk/issues/996)'s closing commit,
-`85bc851e`) removed the doc and appended its closing summary to
-`retired-tracks.md` but did not update this table or its "Retired tracks"
-list below** — this row and bullet close that gap, a step late, alongside
-opening the phase-3 row above.
+same trajectory — all nine of its slices shipped, closing R2.2, R2.4, R2.5,
+R3.10, R4.1, and R4.2 (see `retired-tracks.md`'s closing summary). Its
+retirement also closed a documentation gap `compiler-architecture.md`'s own
+retirement PR left open: that PR ([#996](https://github.com/accuser/bynk/issues/996)'s
+closing commit, `85bc851e`) removed the doc and appended its closing summary
+to `retired-tracks.md` but did not update this table or its "Retired tracks"
+list below at the time — both were caught up alongside opening the phase-3
+row, which has itself now retired in turn.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
@@ -196,3 +197,11 @@ decisions, the named follow-ons — is kept for the record in
 - **`lsp.md`** — the editor-experience connective plan; slices 0–7 + 9 shipped
   from v0.24 (ADRs 0093–0095), the feature spec living on in
   [`../bynk-lsp-spec.md`](../bynk-lsp-spec.md).
+- **`identity-and-totality.md`** — phase 3 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
+  `compiler-architecture.md`'s retirement: `ExprId`/`FileId` node identity, `Ty::Error` and total
+  `expr_types`, `Ty` interned behind `Copy`-cheap `TyId`, and `certify`/`CheckedProgram` as the
+  analysis/emission boundary. All nine slices shipped (T3.0, T3.3a, T3.3b, T3.4, T3.5, T3.6a,
+  T3.7a, T3.7b, T3.6b), closing R2.2, R2.4, R2.5, R3.10, R4.1, and R4.2 in full — decisions in
+  ADRs [0316](../decisions/0316-ty-interning-interior-mutability.md)–[0318](../decisions/0318-ty-interning-one-table-per-build.md).
+  Opens phase 4 (`bynk-project`, per the trajectory).
