@@ -23,6 +23,11 @@ pub mod cli;
 // public API resolve unchanged.
 pub use bynk_driver::{coverage, test_json};
 
+// `write_output`/`write_compiled_file` moved down into `bynk-driver` (#1047,
+// R2.3/T0.7 residue) — every caller was already at driver level. Re-exported
+// here so `bynkc::write_output`/`bynkc::write_compiled_file` resolve unchanged.
+pub use bynk_driver::{write_compiled_file, write_output};
+
 // The syntax foundation now lives in the `bynk-syntax` leaf crate (slice 1 of
 // the crate-decomposition track). Re-export its modules at the crate root so
 // `bynkc`'s public API and every internal `crate::ast` / `crate::lexer` path is
@@ -54,9 +59,7 @@ pub use bynk_emit::project::{
     ImportExt, ProjectFailure, ProjectOutput, ProjectPaths, ProjectPathsError, Roots, TestLocation,
     compile_project, read_project_paths, try_read_project_paths,
 };
-pub use bynk_emit::{
-    Compiled, NODE_MAJOR_FLOOR, compile, compile_with_warnings, write_compiled_file, write_output,
-};
+pub use bynk_emit::{Compiled, NODE_MAJOR_FLOOR, compile, compile_with_warnings};
 
 // In-browser track (ADR 0137): strip-only TS→JS, re-exported so the CLI, the API,
 // and tests share one entry point. `strip_project_to_js` moved into `bynk-strip`

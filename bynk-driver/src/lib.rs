@@ -15,9 +15,12 @@ use bynk_emit::project::{
 use bynk_fmt::{FormatOptions, IndentStyle, format_source};
 
 pub mod coverage;
+pub mod output;
 pub mod probe;
 pub mod test_json;
 pub mod test_runner;
+
+pub use output::{write_compiled_file, write_output};
 
 /// Root a directory project the way every project command should (#46): a
 /// `bynk.toml` or a `src/` subdir selects **project** mode, whose flat
