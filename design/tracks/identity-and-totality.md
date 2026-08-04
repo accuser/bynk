@@ -803,6 +803,20 @@ settled design decision, not an open question — tier 1 (and 2, and 3) can be s
 confidence against it; implementing it is still the large, multi-function, multi-crate undertaking
 tiers 1–3 already describe, which is why it remains future work rather than attempted in this pass.
 
+**One more shortcut was checked and ruled out before concluding tier 1 has no smaller real slice:
+converting `Ty`'s recursive variants to `TyId` one at a time (`Ty::Option(Box<Ty>)` →
+`Ty::Option(TyId)` alone, say, leaving `Result`/`Effect`/`List`/etc. as `Box<Ty>`) does not shrink the
+dominant cost.** `compatible`, `unify`, `substitute`, `display`, and the other generic recursive
+functions each handle every `Ty` variant in one function body — Rust has no way to give a function a
+signature that only sometimes needs a `&Types` parameter depending on which variant a particular call
+happens to touch. The moment *any* variant's match arm needs to resolve a `TyId`, that function's
+*signature* changes, which cascades to all of its callers regardless of which variant they were
+matching — the same 149 call sites for `compatible`/`unify`/`substitute` alone that a full migration
+would touch. Per-variant migration only reduces the smaller cost (construction/match-site fixes for
+that one variant, real but not dominant); it does not reduce the threading cost, which is paid in full
+the moment the first variant converts. This rules out the one remaining idea for shrinking tier 1
+further — the size is real, not an artifact of how the prior measurements framed the question.
+
 The one real, small, immediately-shippable piece this review *did* find — closed in this same commit,
 not deferred as a bare finding — is test coverage for the specific failure mode unique to interning
 that nothing in the existing corpus covers: whether two `Ty` values built through different
