@@ -279,6 +279,15 @@ pub fn canon_predicate(p: &PredKind) -> String {
         PredKind::MinLength(n) => format!("MinLength({n})"),
         PredKind::MaxLength(n) => format!("MaxLength({n})"),
         PredKind::Length(n) => format!("Length({n})"),
+        // R12.2 names these as sugar for `InRange(0, ∞)`/`InRange(1, ∞)`, but the
+        // fold stays undone (#1049): neither base has a writable literal bound
+        // that stands for `∞` — the lexer rejects any float literal that would
+        // parse to infinity, and `Int`'s `i64::MAX` is a real, arbitrary finite
+        // bound, not the language's spelling of "unbounded". Folding onto an
+        // invented string nothing else can produce would only rename the
+        // literal, at the cost of a contract-hash change for every boundary
+        // type carrying one. Revisit alongside R12.3 (entailment), which is
+        // the actual consumer of a normalised Interval domain.
         PredKind::NonNegative => "NonNegative".to_string(),
         PredKind::Positive => "Positive".to_string(),
         // `NonEmpty` is sugar for `MinLength(1)` (R12.2) — folding it here makes
@@ -520,6 +529,17 @@ mod tests {
     #[test]
     fn non_empty_canonicalises_to_min_length_one() {
         assert_eq!(canon_predicate(&PredKind::NonEmpty), "MinLength(1)");
+    }
+
+    /// The counterpart to `non_empty_canonicalises_to_min_length_one`: the
+    /// `Positive`/`NonNegative` → `InRange` fold is **declined** (#1049) —
+    /// neither base has a writable bound standing for `∞`. Pinned so
+    /// reversing that decision trips a named test rather than a fixture
+    /// hash.
+    #[test]
+    fn positive_and_non_negative_stay_their_own_canonical_literals() {
+        assert_eq!(canon_predicate(&PredKind::Positive), "Positive");
+        assert_eq!(canon_predicate(&PredKind::NonNegative), "NonNegative");
     }
 
     /// The consequence that matters: two boundary types spelling the same
