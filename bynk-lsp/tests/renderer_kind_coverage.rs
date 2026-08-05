@@ -159,7 +159,11 @@ fn analysed(test_name: &str) -> (bynk_ide::ProjectDiagnostics, HashMap<PathBuf, 
     let bundle_dir = root.join("app");
     fs::create_dir_all(&bundle_dir).expect("create test root");
     fs::write(bundle_dir.join("bundle.bynk"), MESSAGES_BUNDLE).expect("write fixture");
-    let r = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let r = bynk_ide::diagnose_project(&root, &sources);
     let _ = fs::remove_dir_all(&root);
 
     let errors: Vec<_> = r

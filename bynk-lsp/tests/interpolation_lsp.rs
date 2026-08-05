@@ -5,7 +5,6 @@
 //! catch a future walker that stopped recursing into holes).
 
 use bynk_lsp::index_queries;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -56,7 +55,11 @@ fn offset_of(text: &str, needle: &str, n: usize) -> usize {
 #[test]
 fn go_to_definition_reaches_into_a_hole() {
     let root = setup_project("def", &[("demo/text.bynk", SRC)]);
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let index = &result.index;
     let path = PathBuf::from("demo/text.bynk");
 
@@ -76,7 +79,11 @@ fn go_to_definition_reaches_into_a_hole() {
 #[test]
 fn references_include_the_hole_call_site() {
     let root = setup_project("refs", &[("demo/text.bynk", SRC)]);
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let index = &result.index;
     let path = PathBuf::from("demo/text.bynk");
 
@@ -100,7 +107,11 @@ fn hover_type_is_recorded_for_a_hole_expression() {
     // each hole's expression (slice 1). The `name` use inside `\(shout(name))`
     // must carry its `String` type.
     let root = setup_project("hover", &[("demo/text.bynk", SRC)]);
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let rel = PathBuf::from("demo/text.bynk");
     let (_p, entries) = result
         .expr_types
@@ -123,7 +134,11 @@ fn hover_type_is_recorded_for_a_hole_expression() {
 #[test]
 fn semantic_tokens_cover_a_hole_symbol() {
     let root = setup_project("sem", &[("demo/text.bynk", SRC)]);
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let index = &result.index;
     let path = PathBuf::from("demo/text.bynk");
 

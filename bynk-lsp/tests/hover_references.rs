@@ -47,7 +47,11 @@ use tower_lsp::lsp_types::Url;
 /// doc-link's `file://` target.
 fn todos() -> (ProjectDiagnostics, PathBuf, String, PathBuf) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/todo/src");
-    let r = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let r = bynk_ide::diagnose_project(&root, &sources);
     let file = r
         .files
         .iter()
@@ -64,7 +68,11 @@ fn todos() -> (ProjectDiagnostics, PathBuf, String, PathBuf) {
 /// projects on disk, analysed the same way.
 fn analysed(rel: &str, file: &str) -> (ProjectDiagnostics, PathBuf, String, PathBuf) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let r = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let r = bynk_ide::diagnose_project(&root, &sources);
     let f = r
         .files
         .iter()

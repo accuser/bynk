@@ -27,10 +27,11 @@ fn workspace() -> PathBuf {
 }
 
 fn rel_files(root: &Path) -> Vec<String> {
-    let r = bynk_ide::diagnose_project_with(
-        &bynk_ide::AnalysisRoots::Project(root.to_path_buf()),
-        &HashMap::new(),
-    );
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let roots = bynk_ide::AnalysisRoots::Project(root.to_path_buf());
+    let sources = bynk_testkit::read_project_sources(&roots);
+    let r = bynk_ide::diagnose_project_with(&roots, &sources);
     let mut v: Vec<String> = r
         .files
         .iter()
@@ -300,10 +301,11 @@ fn the_vscode_fixture_workspace_layout() {
 #[test]
 fn every_path_a_round_produces_is_a_file_the_round_analysed() {
     let root = workspace().join("examples/todo");
-    let r = bynk_ide::diagnose_project_with(
-        &bynk_ide::AnalysisRoots::Project(root.clone()),
-        &HashMap::new(),
-    );
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let roots = bynk_ide::AnalysisRoots::Project(root.clone());
+    let sources = bynk_testkit::read_project_sources(&roots);
+    let r = bynk_ide::diagnose_project_with(&roots, &sources);
 
     let known: std::collections::BTreeSet<PathBuf> =
         r.files.iter().map(|f| f.source_path.clone()).collect();
@@ -385,10 +387,11 @@ fn single_tree_and_project_analysis_disagree_when_exclude_is_in_play() {
     );
 
     // The round: manifest-aware, `exclude` honoured.
-    let project = bynk_ide::diagnose_project_with(
-        &bynk_ide::AnalysisRoots::Project(s.0.clone()),
-        &HashMap::new(),
-    );
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let project_roots = bynk_ide::AnalysisRoots::Project(s.0.clone());
+    let project_sources = bynk_testkit::read_project_sources(&project_roots);
+    let project = bynk_ide::diagnose_project_with(&project_roots, &project_sources);
     let project_files: std::collections::BTreeSet<String> = project
         .files
         .iter()
@@ -396,7 +399,9 @@ fn single_tree_and_project_analysis_disagree_when_exclude_is_in_play() {
         .collect();
 
     // The straggler: `diagnose_project(project_root)` → single-tree, no exclude.
-    let single = bynk_ide::diagnose_project(&s.0, &HashMap::new());
+    let single_sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(s.0.clone()));
+    let single = bynk_ide::diagnose_project(&s.0, &single_sources);
     let single_files: std::collections::BTreeSet<String> = single
         .files
         .iter()

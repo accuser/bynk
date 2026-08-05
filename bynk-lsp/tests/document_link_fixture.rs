@@ -19,7 +19,6 @@
 //! Excluded from the published crate (`Cargo.toml`) — reads `../examples`,
 //! outside this crate's package, same as `hover_references.rs`.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use bynk_check::index::SiteRef;
@@ -29,7 +28,11 @@ use bynk_lsp::{index_queries, symbols};
 /// The analysed `examples/rate-limiter` project.
 fn rate_limiter() -> ProjectDiagnostics {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/rate-limiter/src");
-    bynk_ide::diagnose_project(&root, &HashMap::new())
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    bynk_ide::diagnose_project(&root, &sources)
 }
 
 fn file_text(r: &ProjectDiagnostics, name: &str) -> String {
