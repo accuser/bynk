@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolve #1049 — decline the Positive/NonNegative → InRange fold; neither base has a writable bound that could stand for infinity
----
+# 0319 — The `Positive`/`NonNegative` → `InRange` fold stays undone
 
-## ADR: positive-nonnegative-inrange-fold-declined
-title: The `Positive`/`NonNegative` → `InRange` fold stays undone
-summary: Neither `Int` nor `Float` has a writable literal an unbounded `InRange` could fold into, so the fold has no target and only a cost
+- **Status:** Accepted (v0.247.9)
 
 **Context.** `bynk-greenfield-compiler.md`'s R12.2 names `NonNegative ≡ InRange(0, ∞)` and
 `Positive ≡ InRange(1, ∞)` as the Interval domain's canonical form, alongside the

@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0319](0319-positive-nonnegative-inrange-fold-declined.md) | **The `Positive`/`NonNegative` → `InRange` fold stays undone** (v0.247.9) — Neither `Int` nor `Float` has a writable literal an unbounded `InRange` could fold into, so the fold has no target and only a cost | Accepted (v0.247.9) |
 | [0318](0318-ty-interning-one-table-per-build.md) | **The intern table is owned per build, not per `check_record` invocation** (v0.247.7) — A refinement to #1070's settled answer, forced by the project path funnelling every unit into one sink | Accepted (v0.247.7) |
 | [0317](0317-ty-interning-atomic-not-cell.md) | **The intern table is `Arc`/`Mutex`, not `Rc`/`RefCell`** (v0.247.7) — The table's threading requirement comes from its LSP consumer, not from the compiler | Accepted (v0.247.7) |
 | [0316](0316-ty-interning-interior-mutability.md) | **The intern table is shared by `&self`, not threaded as `&mut`** (v0.247.7) — Why `Types::intern` takes `&self`, so a `&Types` stays `Copy` alongside the checker's `&mut` state | Accepted (v0.247.7) |
