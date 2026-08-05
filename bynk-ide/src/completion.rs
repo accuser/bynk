@@ -2891,7 +2891,12 @@ mod tests {
         // parseable).
         let files = HashMap::from([(synthetic_path("broken"), "not bynk source {{{".to_string())]);
         let names = enumerated_units("context a.b\n", Some(&files));
-        // No panic; the embedded surface is still enumerated.
-        assert!(names.iter().any(|n| n == "bynk"), "{names:?}");
+        let baseline = enumerated_units("context a.b\n", None);
+        // No panic, and the broken file contributes nothing beyond the same
+        // embedded surface + buffer a project with no files at all yields —
+        // not just "the embedded surface is present somewhere", which would
+        // pass even if a future recovery-parse change made the broken
+        // content yield a spurious unit alongside it.
+        assert_eq!(names, baseline, "{names:?}");
     }
 }
