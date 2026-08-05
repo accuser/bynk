@@ -32,6 +32,7 @@ pub mod architecture_request;
 pub mod capability_fixes;
 pub mod code_actions;
 pub mod completion;
+mod content;
 mod document_symbols;
 pub mod documentation_request;
 mod extract;
@@ -825,6 +826,56 @@ impl Backend {
         .ok()
     }
 
+    /// Content-ownership track (#1086) slice 0+1: the owning project's
+    /// `.bynk` files as a pre-read `(path, content)` map — every open buffer's
+    /// **live** text, a real disk read for everything else
+    /// `bynk_ide::discover_files` names. `None` in single-file mode. Backs
+    /// the completion/signature-help unit enumeration `project_files`
+    /// (bare paths, still consumed by the still-path-based cross-file symbol
+    /// lookups) used to serve on its own, before this slice gave
+    /// `bynk-ide`'s `for_each_unit` a content-supplying seam instead of
+    /// letting it re-read every file itself
+    /// (`bynk-ide/src/completion.rs`'s `cached_project_unit`, pre-slice).
+    ///
+    /// Finding #62's exclusion carries over unchanged: the cursor's own file
+    /// is filtered out here, once, for every caller — `bynk-ide`'s completion
+    /// helpers already parse it fresh from the live buffer (`for_each_unit`'s
+    /// `doc_text`), so leaving it in the map would offer a second, stale
+    /// version of the same file alongside the live one.
+    async fn project_content(
+        &self,
+        uri: &Url,
+    ) -> Option<Arc<std::collections::HashMap<PathBuf, String>>> {
+        let roots = self.analysis_roots_for(uri).await?;
+        let current = uri
+            .to_file_path()
+            .ok()
+            .and_then(|p| std::fs::canonicalize(&p).ok());
+        let overlay = {
+            let state = self.state.read().await;
+            let mut ov = std::collections::HashMap::new();
+            for (u, doc) in &state.docs {
+                if let Ok(p) = u.to_file_path() {
+                    let canonical = p.canonicalize().unwrap_or(p);
+                    ov.insert(canonical, doc.text.clone());
+                }
+            }
+            ov
+        };
+        tokio::task::spawn_blocking(move || {
+            let mut content = crate::content::sweep_project_content(&roots, &overlay);
+            if let Some(current) = current {
+                content.remove(&current);
+            }
+            // `Arc`, not an owned map: a caller that needs to move this into
+            // its own `spawn_blocking` closure (signature help fires on every
+            // `(`/`,`) clones a refcount, not every project file's content.
+            Arc::new(content)
+        })
+        .await
+        .ok()
+    }
+
     /// v0.31: the def + use spans of the local under the cursor (def first), or
     /// `None` if the cursor is not on a local.
     fn local_sites(
@@ -927,7 +978,7 @@ impl Backend {
             .type_receiver(uri, rewritten.clone(), recv_offset)
             .await
         {
-            let files = self.project_files(uri).await;
+            let files = self.project_content(uri).await;
             items.extend(
                 completion::value_member_candidates(ty, &tys, text, files.as_deref())
                     .into_iter()
@@ -1013,7 +1064,7 @@ impl Backend {
         let Some((ty, tys)) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
-        let files = self.project_files(uri).await;
+        let files = self.project_content(uri).await;
         completion::variants_for_ty(ty, &tys, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
@@ -1038,7 +1089,7 @@ impl Backend {
         let Some((ty, tys)) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
-        let files = self.project_files(uri).await;
+        let files = self.project_content(uri).await;
         completion::nested_variant_completions(ty, &tys, &variant, text, files.as_deref())
             .into_iter()
             .map(to_completion_item)
@@ -2036,7 +2087,7 @@ impl LanguageServer for Backend {
         let doc = doc_text
             .as_deref()
             .and_then(|t| Some((t, crate::position::position_to_offset(t, pos)?)));
-        let files = self.project_files(&uri).await;
+        let files = self.project_content(&uri).await;
         let analysis = positioned
             .as_ref()
             .map(|(a, rel, offset)| crate::hover::HoverAnalysis {
@@ -2088,7 +2139,7 @@ impl LanguageServer for Backend {
         let Some(ctx) = crate::signature_help::call_context(&text, offset) else {
             return Ok(None);
         };
-        let files = self.project_files(&uri).await;
+        let files = self.project_content(&uri).await;
         // Name callees (free fns, statics, capability ops, of/unsafe) — lexical.
         // #733: `resolve_label` enumerates the project's units (file stats +
         // recovery parse of the cache-missed ones), so run it on the blocking
@@ -2483,7 +2534,7 @@ impl LanguageServer for Backend {
         // Derived from the converted offset (always a char boundary), not by
         // slicing the line at `pos.character` bytes.
         let line_prefix = text[..offset].rsplit('\n').next().unwrap_or("").to_string();
-        let files = self.project_files(&uri).await;
+        let files = self.project_content(&uri).await;
         // `complete()` enumerates the project's units — file stats and CPU-bound
         // recovery parsing (of the buffer, and any project file whose parse cache
         // missed). Run it on the blocking pool so a keystroke on a large project

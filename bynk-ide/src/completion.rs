@@ -40,7 +40,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::SystemTime;
 
 use bynk_check::checker::{NamedKind, Ty, TyId, Types};
 use bynk_check::kernel_methods;
@@ -104,7 +103,11 @@ impl Completion {
 
 /// Produce completions for the cursor, given the text of the line up to the
 /// cursor, the current document text, and the project source root (if any).
-pub fn complete(line_prefix: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+pub fn complete(
+    line_prefix: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Vec<Completion> {
     // 1. Inside `consumes U { … <cursor>` — the capabilities U exports.
     if let Some(unit) = consumes_brace_unit(line_prefix) {
         return capabilities_of_unit(&unit, doc_text, files)
@@ -734,7 +737,11 @@ pub fn contract_clause_kind(line: &str) -> Option<bool> {
 /// the live buffer *and* that same file's stale on-disk copy, and a name
 /// removed from the buffer's declaration must not resurface from the disk
 /// copy's fields.
-fn record_field_names(name: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+fn record_field_names(
+    name: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
     let mut found = false;
     for_each_unit(doc_text, files, |unit| {
@@ -774,7 +781,11 @@ fn record_field_names(name: &str, doc_text: &str, files: Option<&[PathBuf]>) -> 
 ///
 /// Finding #62: stops at the first unit declaring `name`, for the same
 /// buffer-vs-stale-disk-copy reason as `record_field_names` above.
-pub fn sum_type_variants(name: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+pub fn sum_type_variants(
+    name: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
     let mut found = false;
     for_each_unit(doc_text, files, |unit| {
@@ -817,7 +828,7 @@ pub fn variants_for_ty(
     ty: TyId,
     tys: &Types,
     doc_text: &str,
-    files: Option<&[PathBuf]>,
+    files: Option<&HashMap<PathBuf, String>>,
 ) -> Vec<Completion> {
     match &*tys.get(ty) {
         Ty::Named { name, .. } => sum_type_variants(name, doc_text, files),
@@ -839,7 +850,7 @@ pub fn nested_variant_completions(
     tys: &Types,
     outer_variant: &str,
     doc_text: &str,
-    files: Option<&[PathBuf]>,
+    files: Option<&HashMap<PathBuf, String>>,
 ) -> Vec<Completion> {
     match &*tys.get(ty) {
         Ty::Result(t, e) => match outer_variant {
@@ -880,7 +891,7 @@ fn payload_type_ref_variants(
     sum_name: &str,
     variant: &str,
     doc_text: &str,
-    files: Option<&[PathBuf]>,
+    files: Option<&HashMap<PathBuf, String>>,
 ) -> Vec<Completion> {
     let mut field_ty: Option<TypeRef> = None;
     for_each_unit(doc_text, files, |unit| {
@@ -912,7 +923,7 @@ fn payload_type_ref_variants(
 fn variants_for_type_ref(
     tr: &TypeRef,
     doc_text: &str,
-    files: Option<&[PathBuf]>,
+    files: Option<&HashMap<PathBuf, String>>,
 ) -> Vec<Completion> {
     match tr {
         TypeRef::Named(id) => sum_type_variants(&id.name, doc_text, files),
@@ -974,7 +985,7 @@ fn predicate_name_candidates() -> Vec<Completion> {
 }
 
 /// The project's `actor` names, offerable after `by`.
-fn actor_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+fn actor_candidates(doc_text: &str, files: Option<&HashMap<PathBuf, String>>) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for_each_unit(doc_text, files, |unit| {
@@ -1055,7 +1066,11 @@ fn builtin_sum_variants(receiver: &str) -> Vec<(String, String)> {
 /// variants, refined/opaque `of`/`unsafe`, or capability operations. Yields `[]`
 /// when the receiver resolves to none of these (e.g. a plain `type X = Int`
 /// alias or a record).
-fn member_candidates(receiver: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+fn member_candidates(
+    receiver: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Vec<Completion> {
     if let Some((_, statics)) = BUILTIN_STATICS.iter().find(|(name, _)| *name == receiver) {
         return statics
             .iter()
@@ -1270,7 +1285,10 @@ const CONSTRUCTORS: &[&str] = &["Ok", "Err", "Some", "None", "true", "false"];
 /// like `Order { … }`). In-scope values — locals/params, and from slice 3 free
 /// functions — are appended by the handler, which owns the analysis cache, so
 /// they are not produced here (ADR 0093 D3).
-fn expression_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+fn expression_candidates(
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Vec<Completion> {
     let mut out: Vec<Completion> = CONSTRUCTORS
         .iter()
         .map(|&name| {
@@ -1327,7 +1345,10 @@ fn free_fn_signature(name: &str, f: &bynk_syntax::ast::FnDecl) -> String {
 /// top-level `fn`s plus the free `fn`s of every `uses`-imported module (project
 /// commons and the embedded stdlib). Gated on the `uses` set so a combinator is
 /// offered only where it is actually in scope (ADR 0093 D3 / G5).
-fn free_function_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+fn free_function_candidates(
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Vec<Completion> {
     let Some(current) = current_unit_name(doc_text) else {
         return Vec::new();
     };
@@ -1400,7 +1421,7 @@ pub fn keyword_doc(word: &str) -> Option<&'static str> {
 /// Type-position candidates: built-in types (with registry docs), then every
 /// `type` declaration found in the project sources and the embedded `bynk`
 /// surface (so the transparent surface types `Uuid`/`Method`/… come for free).
-fn type_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+fn type_candidates(doc_text: &str, files: Option<&HashMap<PathBuf, String>>) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for &name in BUILTIN_TYPES {
@@ -1480,20 +1501,22 @@ static EMBEDDED_UNITS: LazyLock<Vec<Arc<SourceUnit>>> = LazyLock::new(|| {
         .collect()
 });
 
-/// A cached parse of one on-disk project file, tagged with the file identity
-/// (mtime + byte length) it was read at. A keystroke that does not save the
-/// file leaves both unchanged, so the parse is reused rather than re-read and
-/// re-parsed on every interactive request (#733).
+/// A cached parse of one project file's content, tagged with the exact
+/// content string it was parsed from. Content-ownership track (#1086) slice
+/// 0+1: `content` is supplied by the caller (`bynk-lsp`'s overlay-then-disk
+/// sweep, `bynk_lsp::content::sweep_project_content`) rather than read here —
+/// this cache no longer touches disk at all, so an open buffer's unsaved edit
+/// (which has no meaningful mtime) invalidates it exactly like a saved one.
 struct CachedUnit {
-    mtime: Option<SystemTime>,
-    len: u64,
+    content: Arc<str>,
     unit: Option<Arc<SourceUnit>>,
 }
 
 /// Per-file project-source parse cache, keyed by absolute path. Shared across
 /// requests and worker threads (completion/signature-help/hover all enumerate
 /// the same project sources). Keyed on the path so distinct fixtures/projects
-/// never collide, and invalidated by mtime+len so a saved edit is picked up.
+/// never collide, and invalidated by content equality so any change — saved
+/// or an unsaved buffer edit alike — is picked up.
 static PROJECT_UNIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedUnit>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -1506,27 +1529,21 @@ static PROJECT_UNIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedUnit>>> =
 /// trips it.
 const PROJECT_UNIT_CACHE_CAP: usize = 4096;
 
-/// The parsed unit for a project file, from the cache when its mtime and
-/// length are unchanged since the last read, else read + parse + store. A file
-/// that disappears or fails to read caches a `None` unit under its (now empty)
-/// identity, so a transient miss is not re-read on every request either.
-fn cached_project_unit(path: &Path) -> Option<Arc<SourceUnit>> {
-    let meta = std::fs::metadata(path).ok();
-    let mtime = meta.as_ref().and_then(|m| m.modified().ok());
-    let len = meta.as_ref().map_or(0, std::fs::Metadata::len);
+/// The parsed unit for a project file's already-read `content`, from the
+/// cache when `content` is byte-identical to what was last parsed for `path`,
+/// else parsed fresh and stored. A file whose content fails to parse caches a
+/// `None` unit under its (now current) content, so a transient parse failure
+/// is not retried on every request either.
+fn cached_project_unit(path: &Path, content: &str) -> Option<Arc<SourceUnit>> {
     {
         let cache = PROJECT_UNIT_CACHE.lock().unwrap();
         if let Some(entry) = cache.get(path)
-            && entry.mtime == mtime
-            && entry.len == len
+            && &*entry.content == content
         {
             return entry.unit.clone();
         }
     }
-    let unit = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| parse_source_unit(&s))
-        .map(Arc::new);
+    let unit = parse_source_unit(content).map(Arc::new);
     let mut cache = PROJECT_UNIT_CACHE.lock().unwrap();
     // Bound the cache: a fresh path past the cap clears it rather than growing
     // without limit (refreshing an existing entry never grows the map).
@@ -1536,8 +1553,7 @@ fn cached_project_unit(path: &Path) -> Option<Arc<SourceUnit>> {
     cache.insert(
         path.to_path_buf(),
         CachedUnit {
-            mtime,
-            len,
+            content: Arc::from(content),
             unit: unit.clone(),
         },
     );
@@ -1549,12 +1565,21 @@ fn cached_project_unit(path: &Path) -> Option<Arc<SourceUnit>> {
 /// for each. Recovery parsing tolerates the in-progress edit at the cursor.
 ///
 /// The embedded surface is parsed once (`EMBEDDED_UNITS`) and the project's
-/// on-disk files are served from a per-file parse cache
-/// (`cached_project_unit`); only `doc_text` — the buffer under the cursor,
-/// which changes per keystroke — is parsed fresh each call (#733). Ordering is
-/// preserved (embedded, then the buffer, then the other files) so a callback's
-/// first-name-wins dedup still prefers the live buffer over the disk copy.
-pub fn for_each_unit(doc_text: &str, files: Option<&[PathBuf]>, mut f: impl FnMut(&SourceUnit)) {
+/// other files are served from a per-file parse cache (`cached_project_unit`),
+/// keyed on content rather than disk metadata (content-ownership track,
+/// #1086, slice 0+1) — `files` is a pre-read `(path, content)` map the caller
+/// (`bynk-lsp`) built by overlaying every open buffer over a disk sweep, so
+/// an unsaved edit to file A is visible here exactly like a saved one. Only
+/// `doc_text` — the buffer under the cursor, which changes per keystroke — is
+/// parsed fresh each call (#733), never looked up in `files` (the caller
+/// excludes the cursor's own file from `files` for exactly this reason).
+/// Ordering is preserved (embedded, then the buffer, then the other files) so
+/// a callback's first-name-wins dedup still prefers the live buffer.
+pub fn for_each_unit(
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+    mut f: impl FnMut(&SourceUnit),
+) {
     for unit in EMBEDDED_UNITS.iter() {
         f(unit);
     }
@@ -1565,9 +1590,9 @@ pub fn for_each_unit(doc_text: &str, files: Option<&[PathBuf]>, mut f: impl FnMu
     // (`bynk_ide::discover_files`) — every `include` root, `exclude` honoured.
     // This used to walk a single directory by hand, so completion could not see
     // a second root and swept `out`/`node_modules` if they sat beneath it.
-    if let Some(paths) = files {
-        for path in paths {
-            if let Some(unit) = cached_project_unit(path) {
+    if let Some(content) = files {
+        for (path, text) in content {
+            if let Some(unit) = cached_project_unit(path, text) {
                 f(&unit);
             }
         }
@@ -1575,7 +1600,7 @@ pub fn for_each_unit(doc_text: &str, files: Option<&[PathBuf]>, mut f: impl FnMu
 }
 
 /// Consumable unit names: contexts and adapters (plus `bynk`), deduplicated.
-fn consumable_units(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+fn consumable_units(doc_text: &str, files: Option<&HashMap<PathBuf, String>>) -> Vec<Completion> {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut out: Vec<Completion> = Vec::new();
     for_each_unit(doc_text, files, |unit| {
@@ -1600,7 +1625,11 @@ fn consumable_units(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion
 /// Finding #62: a first-wins guard, for the same buffer-vs-stale-disk-copy
 /// reason as [`record_field_names`] — the `BTreeSet` still dedups a single
 /// matching unit's own (possibly repeated) export clauses.
-fn capabilities_of_unit(unit: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<String> {
+fn capabilities_of_unit(
+    unit: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     let mut found = false;
     for_each_unit(doc_text, files, |u| {
@@ -1630,7 +1659,10 @@ fn capabilities_of_unit(unit: &str, doc_text: &str, files: Option<&[PathBuf]>) -
 /// Capabilities in scope for a `given` clause in the current document: locally
 /// declared capabilities, bare names flattened by a braced `consumes`, and
 /// `U.Cap` for each whole-unit `consumes U`.
-fn in_scope_capabilities(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
+fn in_scope_capabilities(
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Vec<Completion> {
     let mut labels: BTreeSet<String> = BTreeSet::new();
     let Ok(tokens) = lexer::tokenize(doc_text) else {
         return Vec::new();
@@ -1737,7 +1769,7 @@ pub fn value_member_candidates(
     ty: TyId,
     tys: &Types,
     doc_text: &str,
-    files: Option<&[PathBuf]>,
+    files: Option<&HashMap<PathBuf, String>>,
 ) -> Vec<Completion> {
     let mut out: Vec<Completion> = kernel_methods::methods_for(ty, tys)
         .iter()
@@ -2715,30 +2747,34 @@ mod tests {
     // -- parse cache (#733) --
 
     /// Collect the enumerated unit names for a buffer + project file set.
-    fn enumerated_units(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<String> {
+    fn enumerated_units(doc_text: &str, files: Option<&HashMap<PathBuf, String>>) -> Vec<String> {
         let mut names = Vec::new();
         for_each_unit(doc_text, files, |u| names.push(u.name().joined()));
         names
     }
 
+    /// Content-ownership track (#1086) slice 0+1: `files` is now a pre-read
+    /// `(path, content)` map — the caller's job (`bynk-lsp`'s overlay-then-disk
+    /// sweep) — rather than a bare path list `cached_project_unit` used to
+    /// read from disk itself. These tests build that map directly; none of
+    /// them touch the real filesystem any more.
+    fn synthetic_path(name: &str) -> PathBuf {
+        PathBuf::from(format!("/synthetic/{name}.bynk"))
+    }
+
     #[test]
     fn for_each_unit_yields_embedded_buffer_and_project_files() {
-        let dir =
-            std::env::temp_dir().join(format!("bynk-lsp-cache-yields-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let sibling = dir.join("sibling.bynk");
-        std::fs::write(
-            &sibling,
-            "commons proj.sibling {\n  fn s() -> Int { 1 }\n}\n",
-        )
-        .unwrap();
+        let sibling = synthetic_path("sibling");
+        let files = HashMap::from([(
+            sibling,
+            "commons proj.sibling {\n  fn s() -> Int { 1 }\n}\n".to_string(),
+        )]);
 
         let names = enumerated_units(
             "commons proj.buffer {\n  fn b() -> Int { 1 }\n}\n",
-            Some(std::slice::from_ref(&sibling)),
+            Some(&files),
         );
-        // The embedded `bynk` surface, the live buffer, and the disk file all show.
+        // The embedded `bynk` surface, the live buffer, and the project file all show.
         assert!(names.iter().any(|n| n == "bynk"), "embedded: {names:?}");
         assert!(
             names.iter().any(|n| n == "proj.buffer"),
@@ -2750,34 +2786,28 @@ mod tests {
         );
     }
 
-    /// Finding #62: when the buffer and an on-disk file both declare a type
-    /// under the same name — the buffer's stale disk copy, or two distinct
-    /// files that happen to collide — `record_field_names` and
-    /// `sum_type_variants` must take the first match (the buffer, since
-    /// `for_each_unit` yields it before `files`) rather than unioning both,
-    /// so a field/variant removed from the live buffer does not resurface
-    /// from the stale copy.
+    /// Finding #62: when the buffer and a project file both declare a type
+    /// under the same name — the buffer's stale copy, or two distinct files
+    /// that happen to collide — `record_field_names` and `sum_type_variants`
+    /// must take the first match (the buffer, since `for_each_unit` yields it
+    /// before `files`) rather than unioning both, so a field/variant removed
+    /// from the live buffer does not resurface from the stale copy.
     #[test]
     fn same_named_declarations_do_not_union_across_units() {
-        let dir =
-            std::env::temp_dir().join(format!("bynk-lsp-dedup-first-wins-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let stale = dir.join("stale.bynk");
-        std::fs::write(
-            &stale,
+        let stale = HashMap::from([(
+            synthetic_path("stale"),
             "commons m {\n  \
              type Rec = { total: Int, old_field: Int }\n  \
              type Status = enum { Pending, Retired }\n\
-             }\n",
-        )
-        .unwrap();
+             }\n"
+            .to_string(),
+        )]);
 
         let buffer = "commons m {\n  \
                        type Rec = { total: Int }\n  \
                        type Status = enum { Pending, Shipped }\n\
                        }\n";
-        let files = Some(std::slice::from_ref(&stale));
+        let files = Some(&stale);
 
         let fields: Vec<String> = record_field_names("Rec", buffer, files)
             .into_iter()
@@ -2798,25 +2828,20 @@ mod tests {
 
     /// Finding #62: `capabilities_of_unit` takes the first unit named `unit`
     /// rather than unioning exports across every matching unit — the same
-    /// buffer-vs-stale-disk-copy reasoning as
+    /// buffer-vs-stale-copy reasoning as
     /// `same_named_declarations_do_not_union_across_units`.
     #[test]
     fn capabilities_of_unit_does_not_union_across_units() {
-        let dir =
-            std::env::temp_dir().join(format!("bynk-lsp-cap-first-wins-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let stale = dir.join("stale.bynk");
-        std::fs::write(
-            &stale,
+        let stale = HashMap::from([(
+            synthetic_path("stale"),
             "adapter tokens {\n  \
              exports capability { Jwt, Retired }\n\
-             }\n",
-        )
-        .unwrap();
+             }\n"
+            .to_string(),
+        )]);
 
         let buffer = "adapter tokens {\n  exports capability { Jwt }\n}\n";
-        let files = Some(std::slice::from_ref(&stale));
+        let files = Some(&stale);
 
         let caps = capabilities_of_unit("tokens", buffer, files);
         assert_eq!(caps, vec!["Jwt".to_string()], "{caps:?}");
@@ -2824,28 +2849,28 @@ mod tests {
 
     #[test]
     fn project_unit_cache_invalidates_on_change() {
-        let dir =
-            std::env::temp_dir().join(format!("bynk-lsp-cache-invalidate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("unit.bynk");
+        let path = synthetic_path("unit");
 
-        std::fs::write(&file, "commons proj.first {\n  fn a() -> Int { 1 }\n}\n").unwrap();
-        let first = enumerated_units("context a.b\n", Some(std::slice::from_ref(&file)));
+        let first_files = HashMap::from([(
+            path.clone(),
+            "commons proj.first {\n  fn a() -> Int { 1 }\n}\n".to_string(),
+        )]);
+        let first = enumerated_units("context a.b\n", Some(&first_files));
         assert!(
             first.iter().any(|n| n == "proj.first"),
             "first read: {first:?}"
         );
 
-        // Rewrite with a different name (and a different length, so the change is
-        // seen even where mtime resolution is coarse). The cache must serve the
-        // new parse, not the stale one.
-        std::fs::write(
-            &file,
-            "commons proj.second.longer {\n  fn a() -> Int { 1 }\n  fn c() -> Int { 3 }\n}\n",
-        )
-        .unwrap();
-        let second = enumerated_units("context a.b\n", Some(std::slice::from_ref(&file)));
+        // Same path, different content — the cache is keyed on content
+        // equality (not disk metadata, since content is supplied directly
+        // and an open-buffer overlay has no meaningful mtime at all), so it
+        // must serve the new parse, not the stale one.
+        let second_files = HashMap::from([(
+            path,
+            "commons proj.second.longer {\n  fn a() -> Int { 1 }\n  fn c() -> Int { 3 }\n}\n"
+                .to_string(),
+        )]);
+        let second = enumerated_units("context a.b\n", Some(&second_files));
         assert!(
             second.iter().any(|n| n == "proj.second.longer"),
             "after change: {second:?}"
@@ -2857,13 +2882,15 @@ mod tests {
     }
 
     #[test]
-    fn missing_project_file_is_skipped() {
-        let missing = std::env::temp_dir().join(format!(
-            "bynk-lsp-cache-missing-{}.bynk",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&missing);
-        let names = enumerated_units("context a.b\n", Some(&[missing]));
+    fn unparseable_project_file_is_skipped() {
+        // Content-ownership track (#1086) slice 0+1: `cached_project_unit` no
+        // longer reads disk itself, so there is no more "path doesn't exist on
+        // disk" case to skip — the equivalent today is content that fails to
+        // parse (the caller's sweep omits an unreadable file from the map
+        // entirely, so this covers the other unusable case: present but not
+        // parseable).
+        let files = HashMap::from([(synthetic_path("broken"), "not bynk source {{{".to_string())]);
+        let names = enumerated_units("context a.b\n", Some(&files));
         // No panic; the embedded surface is still enumerated.
         assert!(names.iter().any(|n| n == "bynk"), "{names:?}");
     }

@@ -14,6 +14,7 @@
 //! renderer hover uses — so the two never diverge.
 
 use bynk_syntax::ast::{BaseType, CommonsItem, FnName, SourceUnit, TypeBody};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::completion::{BUILTIN_STATICS, for_each_unit};
@@ -145,7 +146,11 @@ fn callee_before(s: &str) -> Option<String> {
 
 /// Render the signature *label* for a name callee — `name(p: T, …) -> R`.
 /// `None` if the callee can't be resolved (or is a value receiver — slice 2).
-pub fn resolve_label(callee: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Option<String> {
+pub fn resolve_label(
+    callee: &str,
+    doc_text: &str,
+    files: Option<&HashMap<PathBuf, String>>,
+) -> Option<String> {
     if let Some((recv, member)) = callee.rsplit_once('.') {
         // Built-in type statics — already display-ready signature strings.
         if let Some((_, statics)) = BUILTIN_STATICS.iter().find(|(n, _)| *n == recv)
@@ -201,7 +206,7 @@ fn resolve_qualified(
     recv: &str,
     member: &str,
     doc_text: &str,
-    files: Option<&[PathBuf]>,
+    files: Option<&HashMap<PathBuf, String>>,
 ) -> Option<String> {
     let mut out = None;
     for_each_unit(doc_text, files, |unit| {

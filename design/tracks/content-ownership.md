@@ -1,20 +1,21 @@
 # Project content ownership — `bynk-lsp` becomes the sole reader of `.bynk` source content
 
-- **Status:** Slicing readiness — settled, no slices shipped yet. This doc's
-  first pass merged still carrying every §3 question open (PR #1087, merged
-  as ready-for-review without the review actually testing that assertion —
-  exactly the failure mode `design/tracks/README.md`'s lifecycle step 2
-  warns about, so the doc's real phase stayed **Settling** past that merge).
-  This re-settling pass closes §3.1–§3.5 for real: §3.1 and §3.5 close
-  together (the seam type's `overlay` parameter is what makes §3.5's `bynk.toml`
-  read fall out naturally, confirming rather than just hypothesising the
-  original doc's own guess); §3.2 settles narrow; §3.3 settles the crate
-  boundary and defers the exact helper shape to slice 4, as originally
-  planned; §3.4 settles incremental with a structural CI guard. The three
-  front-loaded ADRs (§5) land in this same pass via
-  `design/pending/settle-content-ownership-track.md` (pre-stamp). Spine issue
-  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 0 is
-  cut as its own increment-proposal sub-issue once this pass merges.
+- **Status:** Slicing — slice 0 shipped (#1089). This doc's first pass merged
+  still carrying every §3 question open (PR #1087, merged as ready-for-review
+  without the review actually testing that assertion — exactly the failure
+  mode `design/tracks/README.md`'s lifecycle step 2 warns about, so the
+  doc's real phase stayed **Settling** past that merge). A re-settling pass
+  closed §3.1–§3.5 for real and front-loaded the three §5 ADRs (0322–0324).
+  Slice 0 (cut as #1089, citing ADR 0322) then found, under implementation,
+  that §3.1's `ProjectDirs`/`resolve_dirs` design wasn't needed —
+  `bynk_ide::discover_files` already closes the gap — and that a
+  scaffolding-only slice 0 doesn't independently ship in this repository
+  (`cargo clippy -D warnings`'s dead-code gate), so slices 0 and 1 merged
+  into one shipped slice; see the superseding ADR
+  (`design/pending/content-ownership-seam-simplification.md`, pre-stamp) and
+  §3.1/§4/§7 below, updated in place rather than rewritten. Spine issue
+  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 1
+  (renumbered, `symbols.rs`'s cross-file lookups) is next.
 - **Realises:** R2.3 (`../bynk-greenfield-compiler.md`, its rules table at
   line 2515) — *"no ambient filesystem or global state; `Sources` is
   constructed once, at the process edge, and is the compiler's only view of
@@ -88,10 +89,10 @@ snapshot), but here for file *content* rather than an analysis round.
 
 ## 2. Why a track (the ADR 0076 trigger)
 
-- **Multi-increment.** The production-code half (§4, slices 0–3: a new seam
-  type, `bynk-lsp`'s sweep, migrating ~13 call sites) and the test-harness half
-  (§4, slices 4–6: replacing the `diagnose_project(&root, &HashMap::new())`
-  convention across ~125 call sites, then deleting the fallback) are each too
+- **Multi-increment.** The production-code half (§4, slices 0–2: `bynk-lsp`'s
+  sweep, migrating ~13 call sites) and the test-harness half
+  (§4, slices 3–5: replacing the `diagnose_project(&root, &HashMap::new())`
+  convention across ~120 call sites, then deleting the fallback) are each too
   large for one delete-on-merge proposal — and the second cannot start until
   the first has shipped something for tests to call instead.
 - **Surface not settled at the doc's first merge — is now.** Five genuinely
@@ -110,56 +111,34 @@ snapshot), but here for file *content* rather than an analysis round.
 
 ## 3. Open design questions
 
-### 3.1 The `bynk-ide`-exposed seam shape — SETTLED
+### 3.1 The `bynk-ide`-exposed seam shape — SETTLED, then SUPERSEDED under implementation (slice 0, shipped)
 
-**Decision.** `bynk-ide` gains a new public type and method, alongside the
-existing `AnalysisRoots`/`lower()`/`discover_files()` (`bynk-ide/src/lib.rs:192-236`):
+**Originally settled, during this doc's re-settling pass.** `bynk-ide` would
+gain a new public type and method, `ProjectDirs`/`AnalysisRoots::resolve_dirs`
+— see [ADR 0322](../decisions/0322-content-ownership-seam-type.md) for the
+design as settled. Front-loaded as §5's first ADR.
 
-```rust
-/// Slice 0: the resolved include/exclude directories a project analysis
-/// walks, narrow enough for `bynk-lsp`'s own disk sweep without re-exporting
-/// `bynk_emit::project::Roots` — `bynk-ide` is itself one of the three
-/// `fs_below_driver`-probed crates, so re-exporting `Roots` would relocate
-/// the violation rather than close it.
-#[derive(Debug, Clone)]
-pub struct ProjectDirs {
-    pub project_root: PathBuf,
-    pub include: Vec<PathBuf>,
-    pub exclude: Vec<PathBuf>,
-}
+**Corrected under implementation (one real correction, the idempotency-capability
+track's own precedent for this: a settled design not surviving contact with
+the code, found only once building it).** `bynk-ide` already exposes `pub fn
+discover_files(roots: &AnalysisRoots) -> Vec<PathBuf>` (`bynk-ide/src/lib.rs:234`),
+which resolves `include`/`exclude` and enumerates a project's `.bynk` files
+with no `bynk-emit` type crossing into `bynk-lsp` — and was already in
+production use, by `Backend::project_files` (`bynk-lsp/src/lib.rs`), for
+exactly the enumeration `ProjectDirs` was designed to enable. `bynk-lsp`
+never needed *directories* to do its own walk; it needed *files*, and the
+function that already gives it that list was sitting unused for this
+purpose. No `ProjectDirs`/`resolve_dirs` were built. See
+[the superseding ADR](../pending/content-ownership-seam-simplification.md)
+(pre-stamp) for the full account, including why a scaffolding-only slice 0
+("land the map, no caller yet") was not independently shippable in this
+repository (`cargo clippy -D warnings`'s dead-code gate) and merged with
+slice 1 into one shipped slice — §4 reflects the merged decomposition.
 
-impl AnalysisRoots {
-    pub fn resolve_dirs(&self, overlay: &HashMap<PathBuf, String>) -> ProjectDirs { .. }
-}
-```
-
-`resolve_dirs` mirrors `lower()`'s match but threads `overlay` into
-`bynk_emit::project::try_read_project_paths_with(root, overlay)`
-(`bynk-emit/src/project/paths.rs:156`, already overlay-aware, already `pub`)
-instead of the disk-only `read_project_paths(root)` `lower()` calls today —
-this is what closes §3.5 in the same motion (below). For `SingleTree`,
-`include = [root]`, `exclude = []`; for `Project`, `include`/`exclude` come
-from the resolved `ProjectPaths`. `ProjectDirs` structurally mirrors
-`bynk_emit::project::ProjectPaths` but is a distinct, `bynk-ide`-owned type —
-a re-export would fail the same way re-exporting `Roots` would (`bynk-ide`'s
-own `fs_below_driver` exposure).
-
-`bynk-lsp`'s new sweep (slice 0) calls `AnalysisRoots::Project(root)
-.resolve_dirs(&overlay)`, walks `include` (honouring `exclude`) for
-`.bynk` files not already in the overlay, and reads them — giving `bynk-lsp`
-a complete `(path, content)` map without depending on `bynk-emit` at all,
-since `bynk-ide` (which `bynk-lsp` already depends on, per its
-`Cargo.toml`'s dependency comment block) is the crate doing the
-`bynk-emit`-facing work.
-
-**Loose end this decision surfaces, not introduces.** `bynk-ide/src/lib.rs:31`'s
-doc comment on `pub use bynk_emit::project::ContextSequenceInfo` already
-asserts "see `bynk-lsp/Cargo.toml`'s dependency comment" for the
-does-not-depend-on-`bynk-emit` rationale — no such comment exists there today
-(checked: `bynk-lsp/Cargo.toml`'s dependency block explains what each
-dependency is *for*, not what's deliberately excluded). Slice 0 adds that
-comment as part of landing `ProjectDirs`/`resolve_dirs`, making the existing
-cross-reference true instead of dangling.
+`bynk-lsp/Cargo.toml` still gains the dependency-exclusion comment
+`bynk-ide/src/lib.rs:31`'s doc comment already (until now, incorrectly)
+claimed existed — that part of the original design was right and ships
+unchanged.
 
 ### 3.2 Does enumeration count as "ambient filesystem" under R2.3? — SETTLED, narrow
 
@@ -325,72 +304,81 @@ runtime code path — so a straggler is a
 CI failure on the stalled PR, not a silent pass. `discovery.rs`'s fallback
 (slice 6) is deleted only once the probe reads zero.
 
-### 3.5 `AnalysisRoots::lower()`'s own `bynk.toml` read — SETTLED, confirmed (falls out of §3.1)
+### 3.5 `AnalysisRoots::lower()`'s own `bynk.toml` read — SETTLED
 
-**Decision.** Confirmed, not just hypothesised: `AnalysisRoots::resolve_dirs`
-(§3.1) already threads `overlay` into `try_read_project_paths_with` instead
-of the disk-only `read_project_paths`. Slice 3 (unchanged position in §4)
-applies the identical change to `lower()` itself — `fn lower(&self, overlay:
-&HashMap<PathBuf, String>) -> bynk_emit::project::Roots`, threading `overlay`
-the same way, with `diagnose_project_with` (`bynk-ide/src/lib.rs:266`, which
+**Decision.** Independent of §3.1's correction (below) — this fix stands on
+its own merits, not by "falling out of" a `ProjectDirs`/`resolve_dirs` type
+that turned out not to be built. `lower()` (`bynk-ide/src/lib.rs:211`)
+becomes `fn lower(&self, overlay: &HashMap<PathBuf, String>) ->
+bynk_emit::project::Roots`, threading `overlay` into the already-overlay-aware
+`bynk_emit::project::try_read_project_paths_with` (`bynk-emit/src/project/paths.rs:162`,
+already `pub`) instead of the disk-only `read_project_paths`, the same fix
+`343b2482` already applied on the CLI side. `lower()`'s only caller inside
+this crate is `diagnose_project_with` (`bynk-ide/src/lib.rs:266`, which
 already receives an `overlay` argument from every caller including
-`bynk-lsp`'s `run_project_diagnostics`) passing its own overlay through to
-the now-updated `lower()` call. `lower()`'s only caller inside this crate is
-`diagnose_project_with`, so the signature change is contained. Kept as its
-own slice (3, not folded into slice 0) because it changes the *already-shipped*,
-production-facing analysis path `diagnose_project_with` — proving the new
-type in isolation (slice 0) before touching that path (slice 3) is the lower-
-risk order.
+`bynk-lsp`'s `run_project_diagnostics`), so the signature change is
+contained. Kept as its own slice because it changes the *already-shipped*,
+production-facing analysis path `diagnose_project_with` — a smaller, more
+isolated change than the seam slice 0 shipped, and safer to land separately.
 
 ## 4. Candidate slice decomposition
 
-- **Slice 0 — the seam type + `bynk-lsp`'s disk sweep.** Land §3.1's narrow
-  directory type and a `bynk-lsp`-local walk that builds one complete
-  `(path, content)` map per analysis round: open-buffer overlay first, a real
-  disk read for everything else. No caller changes yet — this slice only
-  makes the map exist and gets exercised by a direct test of the sweep
-  itself.
-- **Slice 1 — `for_each_unit` takes content.**
-  `for_each_unit(doc_text: &str, files: Option<&[PathBuf]>, ...)`
-  (`bynk-ide/src/completion.rs:1557`) becomes content-supplying; its 11
-  call sites in `completion.rs` and 2 in `signature_help.rs` get content
-  through the slice-0 map instead of a bare path list. `cached_project_unit`'s
-  three `std::fs` references go away entirely.
-- **Slice 2 — `symbols.rs` cross-file lookups take content.**
+Renumbered after §3.1's implementation-time correction merged the original
+slices 0 and 1 (a scaffolding-only "land the map, no caller yet" slice was
+not independently shippable — see the superseding ADR,
+`design/pending/content-ownership-seam-simplification.md`, pre-stamp).
+Slices 2–6 keep their original substance, renumbered down by one.
+
+- **Slice 0 — `bynk-lsp`'s sweep + `for_each_unit` takes content. Shipped.**
+  `bynk-lsp/src/content.rs`'s `sweep_project_content`, built directly on the
+  already-public `bynk_ide::discover_files` (no new `bynk-ide` type — §3.1);
+  `Backend::project_content` (overlay-then-sweep, mirroring
+  `project_files`'s existing current-file exclusion). `bynk-ide/src/completion.rs`'s
+  `for_each_unit`/`cached_project_unit` become content-supplying (cache keyed
+  on content equality, not disk mtime/len); every `files: Option<&[PathBuf]>`
+  signature in `completion.rs`/`signature_help.rs` (11 call sites in
+  `completion.rs`, 2 in `signature_help.rs`) becomes `Option<&HashMap<PathBuf,
+  String>>`. `bynk-lsp/Cargo.toml` gains the dependency-exclusion comment
+  `bynk-ide/src/lib.rs:31` already claimed existed.
+- **Slice 1 — `symbols.rs` cross-file lookups take content.**
   `find_declaration_cross_file`/`describe_symbol_cross_file`
   (`bynk-ide/src/symbols.rs:1481,1507`) take pre-read `(path, content)` pairs
-  instead of re-reading inside their loops. `fs_below_driver`'s `bynk-ide`
-  count reaches 0.
-- **Slice 3 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay**
-  (§3.5), now that slice 0's complete map exists to draw from — mirrors
-  `343b2482`'s CLI-side fix on the LSP side.
-- **Slice 4 — `bynk-testkit`, proved narrow** (§3.3): the new dev-only crate
+  instead of re-reading inside their loops — `Backend::project_files`
+  (bare paths) becomes `Backend::project_content`'s job too, and the
+  path-only method retires. `fs_below_driver`'s `bynk-ide` count reaches 0.
+- **Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay**
+  (§3.5) — mirrors `343b2482`'s CLI-side fix on the LSP side.
+- **Slice 3 — `bynk-testkit`, proved narrow** (§3.3): the new dev-only crate
   and its `read_project_sources` helper, proved against a small
   representative sample of call sites (one from each of `bynk-ide`'s inline
   tests, `bynk-lsp/tests`, `bynkc/tests`'s `CompileOptions::single` use, and
   `::split` use) before committing to the full migration. The §3.4 CI guard
-  (the call-site-count probe) is added here too, so slice 5 has something to
+  (the call-site-count probe) is added here too, so slice 4 has something to
   fail against from its first sub-slice.
-- **Slice 5 — migrate the remaining ~140 test call sites, sub-sliced by
+- **Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by
   crate** (§3.4): `bynk-ide`'s inline tests, then `bynk-lsp/tests`, then
-  `bynkc/tests`/`bynk/tests`, each its own PR.
-- **Slice 6 — delete `discovery.rs`'s content-reading fallback branch**
+  `bynkc/tests`/`bynk/tests`/`bynk-emit`'s own `#[cfg(test)]` site, each its
+  own PR.
+- **Slice 5 — delete `discovery.rs`'s content-reading fallback branch**
   (§3.2, narrow: the enumeration walk and `project.rs`'s `use std::fs;` stay,
   serving `discover_bynk_files`). `fs_below_driver` reaches 0 for `bynk-ide`
-  (already true after slice 2) and reads 2 for `bynk-emit` — both
+  (already true after slice 1) and reads 2 for `bynk-emit` — both
   `discovery.rs`'s enumeration walk and `project.rs`'s import serving it —
   until the probe amendment named in §3.2 lands as its own follow-on.
 
 ## 5. Front-loaded ADR candidates — landed via `design/pending/settle-content-ownership-track.md`
 
-- **§3.1 — the `bynk-ide`-exposed seam type (`ProjectDirs`/`resolve_dirs`).**
-  Hard to reverse once `bynk-lsp`'s sweep and every migrated test call site
-  depend on its shape.
+- **§3.1 — the `bynk-ide`-exposed seam type.** [ADR 0322](../decisions/0322-content-ownership-seam-type.md)
+  settled `ProjectDirs`/`resolve_dirs`; superseded under implementation —
+  no new type was needed (see `design/pending/content-ownership-seam-simplification.md`,
+  pre-stamp). Recorded here rather than edited away: the front-load process
+  worked as intended (the hard-to-reverse call was made explicit before
+  slicing), even though the call itself needed a correction once built.
 - **§3.2 — R2.3's ambient-filesystem ban is content-scoped; enumeration stays
   below the driver.** Decides the track's actual production-code scope going
   in, and `fs_below_driver`'s achievable floor for `bynk-emit`.
 - **§3.3 — cross-crate test fixtures get a new `bynk-testkit` crate, built
-  on production discovery.** the ~125 call sites will depend on it once slice 5
+  on production discovery.** The ~120 call sites will depend on it once slice 4
   lands; changing the crate boundary afterward is another full migration.
 
 ## 6. Threat model
@@ -406,13 +394,14 @@ and when it's considered fresh.
 
 ## 7. Slice status
 
-- [ ] Slice 0 — the seam type + `bynk-lsp`'s disk sweep
-- [ ] Slice 1 — `for_each_unit` takes content
-- [ ] Slice 2 — `symbols.rs` cross-file lookups take content
-- [ ] Slice 3 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay
-- [ ] Slice 4 — `bynk-testkit`, proved narrow
-- [ ] Slice 5 — migrate the remaining ~120 test call sites, sub-sliced by crate
-- [ ] Slice 6 — delete `discovery.rs`'s content-reading fallback branch
+- [x] Slice 0 — `bynk-lsp`'s sweep + `for_each_unit` takes content (#1089;
+      merged from the original slices 0+1 under §3.1's implementation-time
+      correction)
+- [ ] Slice 1 — `symbols.rs` cross-file lookups take content
+- [ ] Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay
+- [ ] Slice 3 — `bynk-testkit`, proved narrow
+- [ ] Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by crate
+- [ ] Slice 5 — delete `discovery.rs`'s content-reading fallback branch
 
 ## 8. Done when
 
