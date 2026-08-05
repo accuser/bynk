@@ -158,6 +158,47 @@ fn explicit_two_root_include() {
     assert_eq!(rel_files(&s.0), vec!["lib/a.bynk", "spec/a.bynk"]);
 }
 
+/// Content-ownership track (#1086) slice 2: an unsaved edit to `bynk.toml`
+/// itself — not just to the `.bynk` sources it names — changes which trees
+/// `diagnose_project_with` walks, because `AnalysisRoots::lower()` now
+/// threads the overlay into `bynk.toml`'s own read. On disk, `bynk.toml`
+/// still declares only `include = ["src"]`; the overlay's (unsaved) version
+/// adds a second root, `alt`, and only the overlay's answer is the correct
+/// one for what the editor should show.
+#[test]
+fn an_unsaved_bynk_toml_edit_changes_the_resolved_roots() {
+    let s = scratch(
+        "toml_overlay",
+        &[
+            (
+                "bynk.toml",
+                "[project]\nname = \"m\"\n\n[paths]\ninclude = [\"src\"]\n",
+            ),
+            ("src/a.bynk", "context a\n"),
+            ("alt/b.bynk", "context b\n"),
+        ],
+    );
+    let toml_path = s.0.join("bynk.toml");
+    let mut overlay = HashMap::new();
+    overlay.insert(
+        toml_path.canonicalize().unwrap_or(toml_path),
+        "[project]\nname = \"m\"\n\n[paths]\ninclude = [\"src\", \"alt\"]\n".to_string(),
+    );
+    let r =
+        bynk_ide::diagnose_project_with(&bynk_ide::AnalysisRoots::Project(s.0.clone()), &overlay);
+    let mut files: Vec<String> = r
+        .files
+        .iter()
+        .map(|f| f.source_path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    files.sort();
+    assert_eq!(
+        files,
+        vec!["alt/b.bynk", "src/a.bynk"],
+        "the overlay's [paths] include, not the on-disk manifest's, must decide the roots"
+    );
+}
+
 /// A flat project: `.bynk` at the root, no `src/`. `conventional()` yields
 /// `include = ["."]`. The LSP used to look for a nonexistent `src/` and find
 /// nothing; ADR 0198 normalises the `.` so paths stay unprefixed.
