@@ -63,3 +63,6 @@ which.workspace = true
 # never called it — only `bynkc`'s own integration tests exercise it, so it
 # moves to a dev-dependency instead of shipping in the `bynkc` binary/library.
 bynk-ide.workspace = true
+# Content-ownership track (#1086) slice 3: the CompileOptions::single/::split
+# bare-call replacement for this crate's own integration-test fixtures.
+bynk-testkit.workspace = true

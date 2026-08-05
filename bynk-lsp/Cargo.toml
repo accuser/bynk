@@ -69,3 +69,10 @@ tracing-appender.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+# Content-ownership track (#1086) slice 3: the diagnose_project(&root,
+# &HashMap::new()) replacement for tests/*.rs's fixtures. Dev-only — this
+# crate's own production-code dependency-exclusion comment above is
+# unaffected.
+bynk-testkit.workspace = true
