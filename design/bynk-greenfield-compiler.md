@@ -2560,7 +2560,7 @@ revision is the proof.
 | R9.1 | `ReportKind::Warning` present ✅ **landed**, with a comment naming the old defect | none |
 | R9.4 | `groups`/`test_groups`/`kinds`/`integration_groups` are `BTreeMap` ✅ **landed**; `unit_info` ✅ **landed** (#952) | none |
 | R10.2 | `bynk-ide` → `bynk-emit` edge present, for `analyse_project` alone | medium — extract `bynk-project`, repoint |
-| R10.4 | `bynk-ide` demoted to a dev-dependency ✅; the 14 `bynk-check`/`bynk-emit` whole-module re-exports deleted ✅ | small — `bynk-syntax` (7 modules), `bynk-driver` (2), and `bynk_fmt as fmt` (the whole crate) remain re-exported whole from `bynkc/src/lib.rs` |
+| R10.4 | `bynk-ide` demoted to a dev-dependency ✅; the 14 `bynk-check`/`bynk-emit` whole-module re-exports deleted ✅; the remaining `bynk-syntax` (7 modules), `bynk-driver` (2), and `bynk_fmt as fmt` re-exports deleted ✅ (#1048) | none |
 | R10.5 | `run_test` in `bynkc/src/main.rs` | medium; the subprocess delegation is a documented trade-off |
 | R11.2 | 3 `expected_contains`, 2 `expected_absent`, 4 `expected_diagnostics` against **419** `expected_error` | **the format exists ✅; adoption is ~1%** |
 | R11.7 | conformance test is case-scoped to the type surface | **small — widen the corpus to totality** |

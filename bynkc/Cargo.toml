@@ -36,13 +36,16 @@ bynk-strip.workspace = true
 # The diagnostic renderers (ariadne human + short/json) — extracted in slice 6.
 # `bynkc` re-exports them; its ProjectFailure flatteners delegate to them.
 bynk-render.workspace = true
-# The formatter, now a real leaf over bynk-syntax (slice 2). `bynkc` depends on
-# it for the `bynkc fmt` command and re-exports it as `bynkc::fmt`.
-bynk-fmt.workspace = true
 clap.workspace = true
 
 [dev-dependencies]
 regex.workspace = true
+# The formatter, now a real leaf over bynk-syntax (slice 2). R10.4 residue
+# (#1048): `bynkc`'s own `bynkc fmt` command reaches it via `bynk-driver`, not
+# a `bynkc::fmt` re-export, so nothing in `bynkc/src/` needs it — only two
+# integration tests do (firstparty_sources.rs, suggestions.rs), same shape as
+# the `bynk-ide` dev-dependency below.
+bynk-fmt.workspace = true
 # The grammar reference (tests/grammar_reference.rs) is rendered by this crate.
 bynk-grammar.workspace = true
 # `test_json`/`coverage` moved down into `bynk-driver` (Wave 5 §5.4); the
