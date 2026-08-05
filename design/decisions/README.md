@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0321](0321-schema-lock-overlay-channel.md) | **`bynk.schema.lock` gets its own in/out channel, parallel to `sources`, not folded into it** (v0.247.12) — `CompileOptions::schema_registry` carries pre-read lock content in; `ProjectOutput::schema_lock` carries reconciled content out; `bynk-emit` touches no disk for either direction | Accepted (v0.247.12) |
 | [0320](0320-narrow-bynkc-syntax-driver-fmt-api.md) | **bynkc's published Rust API drops its remaining whole-module/whole-crate re-exports** (v0.247.10) — Three re-exports T-D1 didn't scope (bynk-syntax's 7 modules, bynk-driver's coverage/test_json, bynk-fmt as fmt) are deleted; bynkc keeps its item re-exports | Accepted (v0.247.10) |
 | [0319](0319-positive-nonnegative-inrange-fold-declined.md) | **The `Positive`/`NonNegative` → `InRange` fold stays undone** (v0.247.9) — Neither `Int` nor `Float` has a writable literal an unbounded `InRange` could fold into, so the fold has no target and only a cost | Accepted (v0.247.9) |
 | [0318](0318-ty-interning-one-table-per-build.md) | **The intern table is owned per build, not per `check_record` invocation** (v0.247.7) — A refinement to #1070's settled answer, forced by the project path funnelling every unit into one sink | Accepted (v0.247.7) |
