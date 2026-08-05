@@ -726,7 +726,6 @@ fn pattern_summary(pattern: &Pattern) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap as Map;
     use std::fs;
     use std::path::PathBuf;
 
@@ -817,7 +816,7 @@ service api from http {
     #[test]
     fn rate_limiter_get_check_client_classifies_capability_and_agent_and_gates_the_return() {
         let root = setup_project("ratelimit", &[("ratelimit.bynk", RATELIMIT_SRC)]);
-        let diag = crate::diagnose_project(&root, &Map::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = diag
             .sequence_info
             .get("ratelimit")
@@ -937,7 +936,7 @@ service api {
                 ("consumer.bynk", CONSUMER_SRC),
             ],
         );
-        let diag = crate::diagnose_project(&root, &Map::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = diag
             .sequence_info
             .get("consumer")
@@ -1019,7 +1018,7 @@ service nestedService {
     #[test]
     fn fire_and_forget_send_has_no_paired_return() {
         let root = setup_project("misc-send", &[("misc.bynk", MISC_SRC)]);
-        let diag = crate::diagnose_project(&root, &Map::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = misc_info(&diag);
 
         let ctx = parse_context(MISC_SRC);
@@ -1043,7 +1042,7 @@ service nestedService {
     #[test]
     fn degenerate_handler_with_only_local_calls_has_no_lifelines() {
         let root = setup_project("misc-local", &[("misc.bynk", MISC_SRC)]);
-        let diag = crate::diagnose_project(&root, &Map::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = misc_info(&diag);
 
         let ctx = parse_context(MISC_SRC);
@@ -1066,7 +1065,7 @@ service nestedService {
     #[test]
     fn nested_if_collapses_past_the_depth_budget() {
         let root = setup_project("misc-nested", &[("misc.bynk", MISC_SRC)]);
-        let diag = crate::diagnose_project(&root, &Map::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = misc_info(&diag);
 
         let ctx = parse_context(MISC_SRC);
@@ -1124,7 +1123,7 @@ service api from http by Visitor given Clock {
     #[test]
     fn service_level_given_default_is_inherited_by_a_handler_without_its_own() {
         let root = setup_project("svcgiven", &[("svcgiven.bynk", SERVICE_GIVEN_SRC)]);
-        let diag = crate::diagnose_project(&root, &Map::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = diag
             .sequence_info
             .get("svcgiven")

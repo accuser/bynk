@@ -257,7 +257,7 @@ mod tests {
     fn resolves_a_real_local_from_diagnose_project() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../bynkc/tests/fixtures/inlay/clean/src");
-        let r = crate::diagnose_project(&root, &std::collections::HashMap::new());
+        let r = crate::testkit::diagnose_project(&root);
         let file = r
             .files
             .iter()
@@ -286,7 +286,7 @@ mod tests {
     fn describe_local_renders_kind_and_type() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../bynkc/tests/fixtures/inlay/clean/src");
-        let r = crate::diagnose_project(&root, &std::collections::HashMap::new());
+        let r = crate::testkit::diagnose_project(&root);
         let file = r
             .files
             .iter()
@@ -348,7 +348,7 @@ fn greet(name: String) -> String {
         std::fs::write(&file, HOLE_SRC).expect("write fixture");
         let root = root.canonicalize().unwrap_or(root);
 
-        let r = crate::diagnose_project(&root, &std::collections::HashMap::new());
+        let r = crate::testkit::diagnose_project(&root);
         let text = r
             .files
             .iter()

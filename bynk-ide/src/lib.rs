@@ -340,3 +340,55 @@ pub fn diagnose_project_with(
         doc_scope,
     }
 }
+
+#[cfg(test)]
+mod testkit {
+    //! In-process test helpers for this crate's own inline `#[cfg(test)]`
+    //! modules (content-ownership track, #1086, slice 4).
+    //!
+    //! This crate cannot depend on the cross-crate `bynk-testkit` (that crate
+    //! depends on `bynk-ide`, so a dev-dependency back onto it would cycle —
+    //! Cargo would instantiate two separate copies of this very crate, making
+    //! `crate::AnalysisRoots` and `bynk_ide::AnalysisRoots` distinct,
+    //! non-interchangeable types; found the hard way in slice 3, not
+    //! foreseen). So this mirrors `bynk-testkit::read_project_sources`
+    //! directly against `crate::discover_files`, the same production
+    //! discovery both use.
+    //!
+    //! An inline module, not `bynk-ide/src/testkit.rs` as a separate
+    //! `#[cfg(test)]`-gated file: `fs_below_driver`'s probe
+    //! (`xtask/src/greenfield_status.rs`) only recognises an inline
+    //! `#[cfg(test)] mod name { … }` block as test-scope — a whole file gated
+    //! by its *declaration* (`#[cfg(test)] mod testkit;` in a different file)
+    //! isn't a pattern it looks for, so a separate file's `std::fs` calls read
+    //! as production usage and moved `fs_below_driver`'s `bynk-ide` count
+    //! from 0 back to 1 (found by running `cargo xtask greenfield-status`
+    //! after the first version of this module, not anticipated).
+
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    /// A complete `(path, content)` map for `roots` — the direct replacement
+    /// for `diagnose_project(&root, &HashMap::new())`'s reliance on
+    /// `bynk-emit`'s disk fallback. Keyed by the literal discovered path, not
+    /// canonicalised — matching `bynk-testkit`'s own convention, itself
+    /// matching `bynk-driver`'s production `sources_for_roots` (canonicalising
+    /// broke a project-consistency check the hard way in slice 3 — see
+    /// `bynk-testkit/src/lib.rs`'s doc).
+    pub(crate) fn read_project_sources(roots: &crate::AnalysisRoots) -> HashMap<PathBuf, String> {
+        crate::discover_files(roots)
+            .into_iter()
+            .filter_map(|p| {
+                let content = std::fs::read_to_string(&p).ok()?;
+                Some((p, content))
+            })
+            .collect()
+    }
+
+    /// `diagnose_project(root, &HashMap::new())`, with a complete sources map
+    /// instead of relying on `bynk-emit`'s disk fallback to fill it in.
+    pub(crate) fn diagnose_project(root: &Path) -> crate::ProjectDiagnostics {
+        let sources = read_project_sources(&crate::AnalysisRoots::SingleTree(root.to_path_buf()));
+        crate::diagnose_project(root, &sources)
+    }
+}
