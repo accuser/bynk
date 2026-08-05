@@ -17,8 +17,9 @@ use serde::Deserialize;
 
 /// Slice A: only the sections the **server** owns. `[paths]` is deliberately
 /// absent — the project's trees are the *compiler's* to resolve
-/// (`bynk_ide::AnalysisRoots::Project` → `read_project_paths`), and this file
-/// re-deriving them is precisely the defect slice A removes. `[project]` is
+/// (`bynk_ide::AnalysisRoots::Project`, overlay-aware since content-ownership
+/// track #1086 slice 2), and this file re-deriving them is precisely the
+/// defect slice A removes. `[project]` is
 /// absent because nothing read it. `[fmt]` is absent for the same shape of
 /// reason (#972): it belongs to `bynk-fmt`, which the CLI reads too.
 #[derive(Debug, Deserialize, Default)]
