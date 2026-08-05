@@ -76,12 +76,11 @@ pub struct HoverInput<'a> {
     /// document is not open — the index rungs still answer from the snapshot.
     pub doc: Option<(&'a str, usize)>,
     pub uri: &'a Url,
-    /// Content-ownership track (#1086) slice 0+1: a pre-read `(path, content)`
-    /// map for the project's `.bynk` files (the caller's overlay-then-disk
-    /// sweep) — was a bare path list the resolution rungs below read from
-    /// disk themselves. `describe_symbol_cross_file` (rung 9, still
-    /// path-based — its own migration is a later slice) derives its path list
-    /// from this map's keys rather than taking a second, separately-swept list.
+    /// Content-ownership track (#1086): a pre-read `(path, content)` map for
+    /// the project's `.bynk` files (the caller's overlay-then-disk sweep) —
+    /// was a bare path list the resolution rungs below read from disk
+    /// themselves. Every rung that reads project files (8's `resolve_label`,
+    /// 9's `describe_symbol_cross_file`) takes this map directly now.
     pub files: Option<&'a HashMap<PathBuf, String>>,
 }
 
@@ -232,12 +231,14 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
         // 9. A project-wide scan (v1.1), then 10. the embedded first-party
         //    sources (slice 9) — so `uses`/`consumes` names resolve across
         //    file boundaries (§3.4) and stdlib/surface symbols surface too.
+        //    Content-ownership track (#1086) slice 1: `describe_symbol_cross_file`
+        //    now takes `input.files`'s content map directly — no more deriving
+        //    a path list to hand it.
         .or_else(|| {
             input
                 .files
-                .map(|content| content.keys().cloned().collect::<Vec<_>>())
-                .and_then(|paths| {
-                    crate::symbols::describe_symbol_cross_file(&paths, input.uri, &name)
+                .and_then(|content| {
+                    crate::symbols::describe_symbol_cross_file(content, input.uri, &name)
                 })
                 .map(|(_other_uri, desc)| desc)
         })

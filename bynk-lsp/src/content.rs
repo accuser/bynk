@@ -1,23 +1,23 @@
-//! Content-ownership track (#1086), slice 0+1: a complete `(path, content)`
-//! map for a project's `.bynk` files — the open-buffer overlay first, a real
-//! disk read for everything else `bynk_ide::discover_files` names. Consumed
-//! by `Backend::project_content`, which feeds `bynk-ide`'s content-supplying
-//! `for_each_unit`/`resolve_label` (completion, signature help, the hover
-//! ladder's rung 8) — `cached_project_unit` (`bynk-ide/src/completion.rs`)
-//! no longer reads disk itself, so an unsaved edit to file A is now visible
-//! from file B's completion/hover, closing the staleness this track exists
-//! to fix. The still-path-based cross-file symbol lookups (hover rung 9,
-//! go-to-declaration) are `Backend::project_files`' own, separate scope
-//! (slice 2, not yet migrated).
+//! Content-ownership track (#1086): a complete `(path, content)` map for a
+//! project's `.bynk` files — the open-buffer overlay first, a real disk read
+//! for everything else `bynk_ide::discover_files` names. Consumed by
+//! `Backend::project_content`, the sole project-enumeration entry point
+//! (slice 0's `Backend::project_files`, bare paths, was deleted once slice 1
+//! migrated its last callers) — feeds `bynk-ide`'s content-supplying
+//! `for_each_unit`/`resolve_label`/cross-file symbol lookups (completion,
+//! signature help, hover rungs 8 and 9, go-to-declaration). No code in this
+//! crate reads a project file straight off disk itself any more; an unsaved
+//! edit to file A is visible from file B everywhere, closing the staleness
+//! this track exists to fix.
 //!
-//! Implementation note (found only here, not anticipated by the track doc's
-//! settling pass): `bynk_ide::discover_files` already resolves a project's
-//! `include`/`exclude` trees and enumerates its `.bynk` files with no
-//! `bynk-emit` type crossing into `bynk-lsp` — already in production use by
-//! `Backend::project_files`. No new `bynk-ide` type was needed to close this
-//! slice; see `design/pending/content-ownership-seam-simplification.md`
-//! (pre-stamp), which supersedes ADR 0322's `ProjectDirs`/`resolve_dirs`
-//! design.
+//! Implementation note (slice 0, found only under implementation, not
+//! anticipated by the track doc's settling pass): `bynk_ide::discover_files`
+//! already resolves a project's `include`/`exclude` trees and enumerates its
+//! `.bynk` files with no `bynk-emit` type crossing into `bynk-lsp` — already
+//! in production use by the since-deleted `Backend::project_files`. No new
+//! `bynk-ide` type was needed to close slice 0; see
+//! `design/decisions/0325-content-ownership-seam-simplification.md`, which
+//! supersedes ADR 0322's `ProjectDirs`/`resolve_dirs` design.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

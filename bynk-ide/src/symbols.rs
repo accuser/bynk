@@ -7,6 +7,7 @@
 //! because the name was imported via `uses` or made available via
 //! `consumes`).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bynk_syntax::ast::*;
@@ -1470,31 +1471,41 @@ pub struct CrossFileSymbol {
     pub source: String,
 }
 
+/// The project's files, in the same deterministic order
+/// `bynk_emit::project::discover_bynk_files` produces (sorted by path) —
+/// `HashMap` iteration order is unspecified, and "the first hit wins" only
+/// means something if that order is stable and reproducible.
+fn sorted_paths(files: &HashMap<PathBuf, String>) -> Vec<&PathBuf> {
+    let mut paths: Vec<&PathBuf> = files.keys().collect();
+    paths.sort();
+    paths
+}
+
 /// Find `name`'s declaration in any project file other than `current_path`.
-/// Walks `src_root` recursively, parses each `.bynk` file with recovery,
-/// and returns the first hit. Returns `None` if the name is not found
-/// anywhere in the project.
+/// Content-ownership track (#1086) slice 1: `files` is a pre-read
+/// `(path, content)` map (the caller's overlay-then-disk sweep) rather than
+/// bare paths this function used to read from disk itself. Returns the
+/// first hit, in path-sorted order (see `sorted_paths`); `None` if the name
+/// is not found anywhere in the project.
 ///
 /// Caller is responsible for trying the open file's local symbol table
 /// first; this function intentionally skips `current_path` so the local
 /// path remains the fast path.
 pub fn find_declaration_cross_file(
-    files: &[PathBuf],
+    files: &HashMap<PathBuf, String>,
     current_path: &Path,
     name: &str,
 ) -> Option<CrossFileSymbol> {
-    for path in files {
+    for path in sorted_paths(files) {
         if path.as_path() == current_path {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if let Some(span) = find_declaration_span(&source, name) {
+        let source = &files[path];
+        if let Some(span) = find_declaration_span(source, name) {
             return Some(CrossFileSymbol {
                 path: path.clone(),
                 span,
-                source,
+                source: source.clone(),
             });
         }
     }
@@ -1502,21 +1513,21 @@ pub fn find_declaration_cross_file(
 }
 
 /// Markdown hover content for `name` from any project file other than
-/// `current_path`, plus the path of the file that contributed it. Returns
-/// `None` if the name is not declared anywhere in the project.
+/// `current_path`, plus the path of the file that contributed it. See
+/// `find_declaration_cross_file`'s doc for the content-ownership-track
+/// shape of `files`. Returns `None` if the name is not declared anywhere in
+/// the project.
 pub fn describe_symbol_cross_file(
-    files: &[PathBuf],
+    files: &HashMap<PathBuf, String>,
     current_path: &Path,
     name: &str,
 ) -> Option<(PathBuf, String)> {
-    for path in files {
+    for path in sorted_paths(files) {
         if path.as_path() == current_path {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if let Some(desc) = describe_symbol(&source, name) {
+        let source = &files[path];
+        if let Some(desc) = describe_symbol(source, name) {
             return Some((path.clone(), desc));
         }
     }
@@ -1570,58 +1581,17 @@ pub fn type_ref_str(t: &TypeRef) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
-    /// Recursively collect every `.bynk` file under `root`. Returns an empty
-    /// vector if the root is missing or unreadable.
-    ///
-    /// Slice A: **no longer used to discover a project's files** — that is
-    /// `bynk_ide::discover_files`, which reads the manifest's `include` roots
-    /// and honours `exclude` plus the `out`/`node_modules` caches. This
-    /// hand-rolled walk saw one directory and no exclusions, which is the
-    /// same class of defect as the analysis root being wrong. Retained for
-    /// the tests below that enumerate a fixture tree directly — its only
-    /// remaining callers.
-    fn walk_bynk_files(root: &Path) -> Vec<PathBuf> {
-        let mut out = Vec::new();
-        let mut stack = vec![root.to_path_buf()];
-        while let Some(dir) = stack.pop() {
-            let Ok(rd) = fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    stack.push(p);
-                } else if p.extension().and_then(|e| e.to_str()) == Some("bynk") {
-                    out.push(p);
-                }
-            }
-        }
-        out.sort();
-        out
-    }
-
-    /// Build a temp directory unique to the test name, populate it with
-    /// `(relative_path, contents)` files, and return the root path. The
-    /// directory is left behind on the filesystem; callers can clean up
-    /// if they care.
-    fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "bynk-lsp-test-{}-{}",
-            test_name,
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).expect("create test root");
-        for (rel, contents) in files {
-            let p = root.join(rel);
-            if let Some(parent) = p.parent() {
-                fs::create_dir_all(parent).expect("create parent");
-            }
-            fs::write(&p, contents).expect("write file");
-        }
-        root
+    /// Content-ownership track (#1086) slice 1: `find_declaration_cross_file`/
+    /// `describe_symbol_cross_file` take a pre-read `(path, content)` map
+    /// rather than bare paths they used to read from disk themselves, so the
+    /// tests below build that map directly — a synthetic root plus a
+    /// `(relative_path, contents)` list, no real filesystem I/O needed at all.
+    fn project_files(root: &Path, files: &[(&str, &str)]) -> HashMap<PathBuf, String> {
+        files
+            .iter()
+            .map(|(rel, contents)| (root.join(rel), (*contents).to_string()))
+            .collect()
     }
 
     #[test]
@@ -1639,8 +1609,9 @@ mod tests {
 
     #[test]
     fn cross_file_definition_resolves_into_sibling_file() {
-        let root = setup_project(
-            "cross_file_definition",
+        let root = PathBuf::from("/synthetic/cross_file_definition");
+        let files = project_files(
+            &root,
             &[
                 (
                     "a.bynk",
@@ -1653,7 +1624,7 @@ mod tests {
             ],
         );
         let current = root.join("b.bynk");
-        let found = find_declaration_cross_file(&walk_bynk_files(&root), &current, "Foo")
+        let found = find_declaration_cross_file(&files, &current, "Foo")
             .expect("Foo should resolve into a.bynk");
         let expected = root.join("a.bynk");
         assert_eq!(found.path, expected);
@@ -1665,8 +1636,9 @@ mod tests {
 
     #[test]
     fn cross_file_definition_skips_current_file() {
-        let root = setup_project(
-            "cross_file_skip_current",
+        let root = PathBuf::from("/synthetic/cross_file_skip_current");
+        let files = project_files(
+            &root,
             &[(
                 "only.bynk",
                 "commons demo.only\n\ntype Foo = Int where Positive\n",
@@ -1674,13 +1646,14 @@ mod tests {
         );
         let current = root.join("only.bynk");
         // The only file containing Foo is current; cross-file must skip it.
-        assert!(find_declaration_cross_file(&walk_bynk_files(&root), &current, "Foo").is_none());
+        assert!(find_declaration_cross_file(&files, &current, "Foo").is_none());
     }
 
     #[test]
     fn cross_file_hover_returns_markdown_summary() {
-        let root = setup_project(
-            "cross_file_hover",
+        let root = PathBuf::from("/synthetic/cross_file_hover");
+        let files = project_files(
+            &root,
             &[
                 (
                     "money.bynk",
@@ -1697,9 +1670,8 @@ mod tests {
             ],
         );
         let current = root.join("orders.bynk");
-        let (other_path, desc) =
-            describe_symbol_cross_file(&walk_bynk_files(&root), &current, "Money")
-                .expect("Money should produce hover content");
+        let (other_path, desc) = describe_symbol_cross_file(&files, &current, "Money")
+            .expect("Money should produce hover content");
         assert_eq!(other_path, root.join("money.bynk"));
         assert!(desc.contains("type Money"));
         assert!(
@@ -1710,21 +1682,17 @@ mod tests {
 
     #[test]
     fn cross_file_returns_none_for_unknown_name() {
-        let root = setup_project(
-            "cross_file_none",
+        let root = PathBuf::from("/synthetic/cross_file_none");
+        let files = project_files(
+            &root,
             &[(
                 "a.bynk",
                 "commons demo.a\n\ntype Foo = Int where Positive\n",
             )],
         );
         let current = root.join("a.bynk");
-        assert!(
-            find_declaration_cross_file(&walk_bynk_files(&root), &current, "DoesNotExist")
-                .is_none()
-        );
-        assert!(
-            describe_symbol_cross_file(&walk_bynk_files(&root), &current, "DoesNotExist").is_none()
-        );
+        assert!(find_declaration_cross_file(&files, &current, "DoesNotExist").is_none());
+        assert!(describe_symbol_cross_file(&files, &current, "DoesNotExist").is_none());
     }
 
     #[test]

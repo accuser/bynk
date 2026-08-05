@@ -25,9 +25,11 @@ pub struct CrossFileSymbol {
 }
 
 /// Find `name`'s declaration in any project file other than `current_uri`.
-/// See `bynk_ide::symbols::find_declaration_cross_file` for the pure logic.
+/// `files` is a pre-read `(path, content)` map (content-ownership track,
+/// #1086, slice 1) — see `bynk_ide::symbols::find_declaration_cross_file`
+/// for the pure logic.
 pub fn find_declaration_cross_file(
-    files: &[PathBuf],
+    files: &HashMap<PathBuf, String>,
     current_uri: &Url,
     name: &str,
 ) -> Option<CrossFileSymbol> {
@@ -44,7 +46,7 @@ pub fn find_declaration_cross_file(
 /// `current_uri`, plus the URI of the file that contributed it. See
 /// `bynk_ide::symbols::describe_symbol_cross_file` for the pure logic.
 pub fn describe_symbol_cross_file(
-    files: &[PathBuf],
+    files: &HashMap<PathBuf, String>,
     current_uri: &Url,
     name: &str,
 ) -> Option<(Url, String)> {

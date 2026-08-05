@@ -793,55 +793,20 @@ impl Backend {
         ))
     }
 
-    /// The owning project's `.bynk` files, from the compiler's discovery —
-    /// `exclude` and the `out`/`node_modules` caches honoured. Backs the unit
-    /// enumeration completion does; `None` in single-file mode.
+    /// Content-ownership track (#1086): the owning project's `.bynk` files
+    /// as a pre-read `(path, content)` map — every open buffer's **live**
+    /// text, a real disk read for everything else `bynk_ide::discover_files`
+    /// names. `None` in single-file mode. Backs completion, signature help
+    /// (slice 0), and the cross-file symbol lookups (slice 1) — this is now
+    /// the sole enumeration entry point; the bare-paths `project_files` it
+    /// replaced (slice 0's `Backend::project_files`) was deleted once slice 1
+    /// migrated its last two callers.
     ///
-    /// Finding #62: the cursor's own file is filtered out here, once, for
-    /// every caller — `bynk-ide`'s completion helpers already parse it fresh
-    /// from the buffer (`for_each_unit`'s `doc_text`), so leaving it in
-    /// `files` would additionally read its stale on-disk copy, mirroring the
-    /// same skip `find_declaration_cross_file` already does for the same
-    /// reason.
-    async fn project_files(&self, uri: &Url) -> Option<Vec<PathBuf>> {
-        let roots = self.analysis_roots_for(uri).await?;
-        // `discover_files` walks from a canonicalised root (`root_for_uri`), so
-        // on Windows every entry carries the `\\?\` verbatim-path prefix
-        // `std::fs::canonicalize` adds. `uri.to_file_path()` does not add that
-        // prefix, so comparing it against `files` as-is never matches on
-        // Windows and this exclusion silently no-ops — canonicalise it the
-        // same way before comparing.
-        let current = uri
-            .to_file_path()
-            .ok()
-            .and_then(|p| std::fs::canonicalize(&p).ok());
-        tokio::task::spawn_blocking(move || {
-            let mut files = bynk_ide::discover_files(&roots);
-            if let Some(current) = current {
-                files.retain(|p| p != &current);
-            }
-            files
-        })
-        .await
-        .ok()
-    }
-
-    /// Content-ownership track (#1086) slice 0+1: the owning project's
-    /// `.bynk` files as a pre-read `(path, content)` map — every open buffer's
-    /// **live** text, a real disk read for everything else
-    /// `bynk_ide::discover_files` names. `None` in single-file mode. Backs
-    /// the completion/signature-help unit enumeration `project_files`
-    /// (bare paths, still consumed by the still-path-based cross-file symbol
-    /// lookups) used to serve on its own, before this slice gave
-    /// `bynk-ide`'s `for_each_unit` a content-supplying seam instead of
-    /// letting it re-read every file itself
-    /// (`bynk-ide/src/completion.rs`'s `cached_project_unit`, pre-slice).
-    ///
-    /// Finding #62's exclusion carries over unchanged: the cursor's own file
-    /// is filtered out here, once, for every caller — `bynk-ide`'s completion
-    /// helpers already parse it fresh from the live buffer (`for_each_unit`'s
-    /// `doc_text`), so leaving it in the map would offer a second, stale
-    /// version of the same file alongside the live one.
+    /// Finding #62's exclusion carries over unchanged from `project_files`:
+    /// the cursor's own file is filtered out here, once, for every caller —
+    /// `bynk-ide`'s completion helpers already parse it fresh from the live
+    /// buffer (`for_each_unit`'s `doc_text`), so leaving it in the map would
+    /// offer a second, stale version of the same file alongside the live one.
     async fn project_content(
         &self,
         uri: &Url,
@@ -2662,7 +2627,7 @@ impl LanguageServer for Backend {
             // blocking pool — completion-item resolve fires as the user arrows
             // through the completion list.
             None => {
-                let files = self.project_files(&uri).await;
+                let files = self.project_content(&uri).await;
                 let uri = uri.clone();
                 let label = item.label.clone();
                 match tokio::task::spawn_blocking(move || {
@@ -2747,7 +2712,7 @@ impl LanguageServer for Backend {
             })));
         }
         // Cross-file fallback (v1.1; LSP spec §3.4).
-        if let Some(files) = self.project_files(&uri).await
+        if let Some(files) = self.project_content(&uri).await
             && let Some(found) = crate::symbols::find_declaration_cross_file(&files, &uri, &name)
         {
             let range = crate::position::span_to_range(&found.source, found.span);
@@ -4497,12 +4462,13 @@ mod tests {
         }
     }
 
-    /// Finding #62: `project_files` must exclude the calling file's own path —
-    /// `bynk-ide`'s completion helpers already parse it fresh from the live
-    /// buffer, so leaving it in `files` would additionally serve its on-disk
-    /// copy (stale relative to any unsaved edit) alongside the buffer parse.
+    /// Finding #62: `project_content` must exclude the calling file's own
+    /// path — `bynk-ide`'s completion helpers already parse it fresh from the
+    /// live buffer, so leaving it in the map would additionally serve its
+    /// on-disk copy (stale relative to any unsaved edit) alongside the buffer
+    /// parse.
     #[tokio::test]
-    async fn project_files_excludes_the_calling_file() {
+    async fn project_content_excludes_the_calling_file() {
         let s = scratch_project(
             "self_excl",
             &[
@@ -4514,17 +4480,25 @@ mod tests {
         let backend = backend_at(&s.0).await;
         let abs = s.0.join("a.bynk");
         let uri = Url::from_file_path(abs.canonicalize().unwrap_or(abs)).unwrap();
-        let files = backend
-            .project_files(&uri)
+        let content = backend
+            .project_content(&uri)
             .await
-            .expect("a project root resolves to a file list");
+            .expect("a project root resolves to a content map");
         assert!(
-            !files.iter().any(|p| p.file_name().unwrap() == "a.bynk"),
-            "the calling file's own path must not be in its own project file list: {files:?}"
+            !content.keys().any(|p| p.file_name().unwrap() == "a.bynk"),
+            "the calling file's own path must not be in its own project content map: {content:?}"
         );
         assert!(
-            files.iter().any(|p| p.file_name().unwrap() == "b.bynk"),
-            "a sibling project file must still be present: {files:?}"
+            content.keys().any(|p| p.file_name().unwrap() == "b.bynk"),
+            "a sibling project file must still be present: {content:?}"
+        );
+        assert_eq!(
+            content
+                .iter()
+                .find(|(p, _)| p.file_name().unwrap() == "b.bynk")
+                .map(|(_, text)| text.as_str()),
+            Some("context b\n"),
+            "the sibling's content must be the real file content, not just its path"
         );
     }
 
