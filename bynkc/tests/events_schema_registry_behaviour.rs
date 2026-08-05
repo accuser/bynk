@@ -21,7 +21,7 @@
 //! (`events_schema_version_behaviour.rs` already covers the runtime wire
 //! value; this test is about the registry file, not the wire).
 
-use bynkc::{BuildTarget, CompileOptions};
+use bynkc::{BuildTarget, CompileOptions, SchemaLock};
 use std::fs;
 
 const SOURCE_V1: &str = r#"context commerce.order
@@ -119,10 +119,13 @@ fn schema_registry_baselines_bumps_and_blocks_non_additive_changes() {
 
     // -- 3. Third compile: a non-additive change must fail, and the
     //       registry on disk must be untouched by the failed attempt. -------
+    //       #1078: this is now a *structural* guarantee, not an incidental
+    //       one — `compile_project` returns `Err`, which carries no revised
+    //       lock content at all, so there is nothing for a caller to write.
     fs::write(&source_path, SOURCE_V3_NON_ADDITIVE).unwrap();
     let options = CompileOptions::single(tmp.join("proj"))
         .target(BuildTarget::Bundle)
-        .schema_registry(true);
+        .schema_registry(schema_lock_input(&tmp.join("proj")));
     match bynkc::compile_project(&options) {
         Ok(_) => panic!("a field added without a default must not compile"),
         Err(failure) => {
@@ -142,17 +145,36 @@ fn schema_registry_baselines_bumps_and_blocks_non_additive_changes() {
     let _ = fs::remove_dir_all(&tmp);
 }
 
+/// #1078: `bynk-emit` no longer reads `bynk.schema.lock` itself — pre-read it
+/// here exactly as `bynk-driver`'s two production wiring points
+/// (`bynk::workers::compile_once`, `bynkc::main::run_compile`) do.
+fn schema_lock_input(proj: &std::path::Path) -> SchemaLock {
+    let existing = bynk_driver::schema_lock::read(proj)
+        .expect("reading a scratch project's bynk.schema.lock must not fail");
+    SchemaLock::On { existing }
+}
+
+/// #1078: mirrors the production read-before/write-after shape — `bynk-emit`
+/// computes the reconciled content on `ProjectOutput::schema_lock`; this
+/// helper does the disk write a real caller would, so the test's own
+/// `fs::read_to_string(&lock_path)` assertions keep working unchanged.
 fn compile(tmp: &std::path::Path) -> bynkc::ProjectOutput {
-    let options = CompileOptions::single(tmp.join("proj"))
+    let proj = tmp.join("proj");
+    let options = CompileOptions::single(&proj)
         .target(BuildTarget::Bundle)
-        .schema_registry(true);
-    match bynkc::compile_project(&options) {
+        .schema_registry(schema_lock_input(&proj));
+    let out = match bynkc::compile_project(&options) {
         Ok(out) => out,
         Err(failure) => panic!(
             "compile the schema-registry project:\n{}",
             bynkc::render_project_errors(&failure.flatten())
         ),
+    };
+    if let Some(content) = &out.schema_lock {
+        bynk_driver::schema_lock::write(&proj, content)
+            .expect("writing a scratch project's bynk.schema.lock must not fail");
     }
+    out
 }
 
 fn emitted_ts(out: &bynkc::ProjectOutput) -> String {

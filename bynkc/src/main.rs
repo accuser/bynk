@@ -57,12 +57,29 @@ fn run_compile(
     emit: EmitFormat,
 ) -> ExitCode {
     if input.is_dir() {
+        // #1078: `bynk-emit` touches no disk for `bynk.schema.lock` — read
+        // its current content here (verified-absent `None` for a fresh
+        // project) and hand it in; write the reconciled content back after
+        // a clean compile, below.
+        let schema_lock = match bynk_driver::schema_lock::read(&input) {
+            Ok(existing) => bynkc::SchemaLock::On { existing },
+            Err(e) => {
+                eprintln!(
+                    "bynkc: could not read {}: {e}",
+                    bynk_driver::schema_lock::lock_path(&input).display()
+                );
+                return ExitCode::FAILURE;
+            }
+        };
         let options = match try_project_options(&input) {
             // Events track, slice 3c (#980): a real directory build reconciles
             // and writes `bynk.schema.lock` — the Cargo.lock model. Every
             // other `compile_project` caller (in-memory builds, `bynkc/
             // tests/e2e.rs`'s in-place fixtures, the LSP) leaves this off.
-            Ok(o) => o.target(target).platform(platform).schema_registry(true),
+            Ok(o) => o
+                .target(target)
+                .platform(platform)
+                .schema_registry(schema_lock),
             Err(e) => {
                 eprintln!("bynkc: {e}");
                 return ExitCode::FAILURE;
@@ -71,6 +88,18 @@ fn run_compile(
         // Multi-file project compile.
         match bynkc::compile_project(&options) {
             Ok(out) => {
+                // A write failure here is reported but does not fail the
+                // build — the same non-fatal handling this used to get
+                // (`schema_registry::write`'s own eprintln) when the write
+                // lived inside `compile_project` itself.
+                if let Some(content) = &out.schema_lock
+                    && let Err(e) = bynk_driver::schema_lock::write(&input, content)
+                {
+                    eprintln!(
+                        "bynkc: could not write {}: {e}",
+                        bynk_driver::schema_lock::lock_path(&input).display()
+                    );
+                }
                 // `--emit js` (the in-browser track, slice 1, ADR 0137): the
                 // emitter always produces TypeScript; a JS artefact is that same
                 // output with types stripped (the emitter is strip-only — ADR

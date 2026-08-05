@@ -118,6 +118,16 @@ pub struct ProjectOutput {
     /// reconciles cleanly against a later run's document (same suite name/kind,
     /// same case names). Ordered to match the runner (`emit_test_main`).
     pub discovered: Vec<DiscoveredSuite>,
+    /// #1078: the reconciled `bynk.schema.lock` content, `Some` whenever
+    /// `CompileOptions::schema_registry` was `SchemaLock::On` for this build
+    /// — `bynk-emit` computes it but never writes it; the caller (today,
+    /// `bynk-driver`'s two wiring points) persists it atomically, exactly
+    /// the discipline `schema_registry.rs` used to implement itself. `None`
+    /// when the registry was off, regardless of whether the content would
+    /// have changed — the unchanged-content no-op lives in the writer, not
+    /// here, so a caller that reconciles the same shape twice in a row still
+    /// gets `Some` both times.
+    pub schema_lock: Option<String>,
 }
 
 /// v0.67: a discovered test suite — one `test <target>` group (unit) or
@@ -244,18 +254,6 @@ impl Roots {
                     .unwrap_or_else(|| primary.clone());
                 (primary, secondary)
             }
-        }
-    }
-
-    /// Events track, slice 3c (#980): where `bynk.schema.lock` lives. Distinct
-    /// from [`Self::resolve`]'s `(src_root, tests_root)` — a `Split` layout's
-    /// roots are subdirectories of the project root, but the registry belongs
-    /// beside `bynk.toml`, one level up, the same place `bynk.deploy.lock`
-    /// lives.
-    fn project_root(&self) -> PathBuf {
-        match self {
-            Roots::Single(root) => root.clone(),
-            Roots::Split { project_root, .. } => project_root.clone(),
         }
     }
 
@@ -394,14 +392,47 @@ pub struct CompileOptions {
     /// project pipeline (cross-context `uses`, multi-file layouts,
     /// workers-mode emission, …) without an on-disk fixture tree.
     pub sources: Option<HashMap<PathBuf, String>>,
-    /// Events track, slice 3c (#980): read, reconcile, and (on a clean build)
-    /// write `bynk.schema.lock` at the project root. **Off by default** —
-    /// `bynkc compile`'s directory branch and `bynk`'s deploy/dev build turn
-    /// it on; every library/test caller (in-memory builds, `bynkc/tests/e2e.rs`'s
-    /// in-place fixture compiles, `bynk-emit`'s own `sources`-driven tests, the
-    /// LSP) leaves it off, so a compile never mutates a project tree it wasn't
-    /// asked to.
-    pub schema_registry: bool,
+    /// Events track, slice 3c (#980): reconcile against `bynk.schema.lock`.
+    /// **Off by default** — `bynkc compile`'s directory branch and `bynk`'s
+    /// deploy/dev build turn it on; every library/test caller (in-memory
+    /// builds, `bynkc/tests/e2e.rs`'s in-place fixture compiles, `bynk-emit`'s
+    /// own `sources`-driven tests, the LSP) leaves it off, so a compile never
+    /// mutates a project tree it wasn't asked to.
+    ///
+    /// #1078: this carries the lock's pre-read content, not just an on/off
+    /// switch — `bynk-emit` reads and writes no disk for this file (the same
+    /// move #1077/#1081 already made for `.bynk` source content). See
+    /// [`SchemaLock`]'s own doc for the read side; the reconciled content
+    /// comes back out on [`ProjectOutput::schema_lock`] for the caller to
+    /// persist.
+    pub schema_registry: SchemaLock,
+}
+
+/// [`CompileOptions::schema_registry`]'s value — whether this build
+/// reconciles `bynk.schema.lock`, and if so, its current content.
+///
+/// A plain `Option<String>` was rejected for this: "off" and "on, fresh
+/// project" would both spell `None`, and a future edit that lost the disk
+/// read (a real bug, not a hypothetical — see #1078's history) would still
+/// type-check as "on, fresh project" instead of failing to compile. The two
+/// states are kept structurally distinct instead.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SchemaLock {
+    /// Reconciliation is off for this build — `bynk-emit` never touches
+    /// `unit_tables`' event shapes against any registry, and emits each
+    /// event's `schemaVersion` straight from `EventDecl::schema_version()`.
+    #[default]
+    Off,
+    /// On. `existing` is `bynk.schema.lock`'s current content, pre-read by
+    /// the caller (never by `bynk-emit`). `None` means **verified absent** —
+    /// the caller checked and there is no lock file yet, so this is the
+    /// project's first-ever reconciliation and every event baselines
+    /// silently. It must not mean "content unavailable for some other
+    /// reason" (a permission error, a read that was skipped) — that would
+    /// silently re-baseline a real registry's history, exactly the
+    /// corruption `schema_registry::parse` exists to refuse when the content
+    /// *is* present but unparseable.
+    On { existing: Option<String> },
 }
 
 impl CompileOptions {
@@ -414,7 +445,7 @@ impl CompileOptions {
             import_ext: ImportExt::default(),
             contracts: false,
             sources: None,
-            schema_registry: false,
+            schema_registry: SchemaLock::Off,
         }
     }
 
@@ -432,7 +463,7 @@ impl CompileOptions {
             import_ext: ImportExt::default(),
             contracts: false,
             sources: None,
-            schema_registry: false,
+            schema_registry: SchemaLock::Off,
         }
     }
 
@@ -473,11 +504,13 @@ impl CompileOptions {
         self
     }
 
-    /// Events track, slice 3c (#980): turn on `bynk.schema.lock` read/write
-    /// for this build. See the field's own doc for who calls this and why
-    /// everyone else leaves it off.
-    pub fn schema_registry(mut self, on: bool) -> Self {
-        self.schema_registry = on;
+    /// Events track, slice 3c (#980): turn on `bynk.schema.lock`
+    /// reconciliation for this build, with its pre-read content (or
+    /// verified-absent `None`, for a fresh project). See [`SchemaLock`] and
+    /// the field's own doc for who calls this and why everyone else leaves
+    /// it off.
+    pub fn schema_registry(mut self, mode: SchemaLock) -> Self {
+        self.schema_registry = mode;
         self
     }
 }
@@ -531,9 +564,6 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         Some(sources) => sources_to_discovered(sources, &src_root, &tests_root),
         None => (HashMap::new(), None),
     };
-    let schema_root_path = options
-        .schema_registry
-        .then(|| options.roots.project_root());
     let run = run_checks(
         &src_root,
         &tests_root,
@@ -547,25 +577,18 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         &excludes,
         discovered,
         options.contracts,
-        schema_root_path.as_deref(),
+        &options.schema_registry,
         tys,
     );
-    // Events track, slice 3c (#980): only a fully clean build writes the
-    // registry — a build that fails for any reason (including a schema
-    // mismatch reconciliation itself just reported) must never perturb it.
-    if let RunChecks::Checked {
-        ref errors,
-        schema_registry: Some((ref path, ref reg)),
-        ..
-    } = run
-        && errors.is_empty()
-        && let Err(msg) = schema_registry::write(path, reg)
-    {
-        eprintln!(
-            "bynk: could not write {}: {msg}",
-            schema_registry::lock_path(path).display()
-        );
-    }
+    // #1078: `bynk-emit` no longer writes `bynk.schema.lock` itself — the
+    // reconciled content comes back on `ProjectOutput::schema_lock`
+    // (`finish_build` populates it from `RunChecks::Checked`, only ever
+    // constructed on the `Ok` path, i.e. only on a fully clean build — a
+    // build that fails for any reason, including a schema mismatch
+    // reconciliation itself just reported, produces `Err(ProjectFailure)`
+    // instead and has no revised content for a caller to persist). The
+    // caller (today, `bynk-driver`'s two wiring points) does the atomic
+    // write.
     finish_build(run, options.import_ext)
 }
 
@@ -626,7 +649,10 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         &excludes,
         discovered,
         options.contracts,
-        None,
+        // `bynk check` never reconciles the schema registry, regardless of
+        // `options.schema_registry` — pre-existing behaviour (finding #64's
+        // own era), preserved as-is by #1078, not introduced by it.
+        &SchemaLock::Off,
         tys,
     );
     match run {
@@ -681,7 +707,7 @@ pub fn compile_in_memory(
         &[],
         Some((vec![path], Vec::new())),
         false,
-        None,
+        &SchemaLock::Off,
         tys,
     );
     finish_build(run, ImportExt::Js)
@@ -751,7 +777,7 @@ pub fn analyse_in_memory_with_types(
         &[],
         Some((vec![path.clone()], Vec::new())),
         false,
-        None,
+        &SchemaLock::Off,
         tys,
     );
     match run {
@@ -839,6 +865,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             adapter_bindings,
             npm_deps,
             target,
+            schema_registry,
             ..
         } => {
             let mut out = build_output(
@@ -863,6 +890,9 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             // (errors is empty here — the guard arm above caught any).
             out.warnings = errors.into_warnings();
             out.snapshots = snapshots;
+            // #1078: the reconciled registry, if this build had one on —
+            // bynk-emit computes it, the caller persists it.
+            out.schema_lock = schema_registry.map(|reg| schema_registry::serialize(&reg));
             Ok(out)
         }
     }
@@ -938,7 +968,10 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
         &excludes,
         None,
         false,
-        None,
+        // The LSP never reconciles the schema registry (#1079's open scope
+        // covers the editor becoming a real file-content owner generally;
+        // this specific flag was already, and stays, hardcoded off).
+        &SchemaLock::Off,
         tys,
     ) {
         RunChecks::Bailed {
@@ -3577,11 +3610,11 @@ enum RunChecks {
         adapter_bindings: HashMap<String, AdapterBinding>,
         npm_deps: std::collections::BTreeMap<String, String>,
         target: BuildTarget,
-        // Events track, slice 3c (#980): the reconciled registry document
-        // ready to write, and the path to write it to. `None` when
-        // `schema_root` was `None` (registry off) — `compile_project` skips
-        // the write in that case.
-        schema_registry: Option<(PathBuf, schema_registry::SchemaRegistry)>,
+        // Events track, slice 3c (#980): the reconciled registry document,
+        // ready for `finish_build` to serialize onto
+        // `ProjectOutput::schema_lock`. `None` when `schema_registry` was
+        // `SchemaLock::Off` (#1078) — nothing for a caller to persist.
+        schema_registry: Option<schema_registry::SchemaRegistry>,
     },
 }
 
@@ -3609,10 +3642,11 @@ fn run_checks(
     discovered: Option<(Vec<PathBuf>, Vec<PathBuf>)>,
     // v0.115: emit the function-contract call-site guard (dev/test profile).
     contracts: bool,
-    // Events track, slice 3c (#980): `Some(project_root)` turns on
-    // `bynk.schema.lock` reconciliation; `None` (every in-memory/test/LSP
-    // caller) skips it entirely. See `CompileOptions::schema_registry`.
-    schema_root: Option<&Path>,
+    // Events track, slice 3c (#980): `On` turns on `bynk.schema.lock`
+    // reconciliation, with its pre-read content; `Off` (every in-memory/
+    // test/LSP caller) skips it entirely. See `CompileOptions::schema_registry`
+    // and `SchemaLock`. #1078: no disk access here — the caller pre-reads.
+    schema_registry: &SchemaLock,
     tys: &Arc<Types>,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
@@ -3866,27 +3900,28 @@ fn run_checks(
     phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors, tys);
 
     // -- 6d. Events track, slice 3c (#980): reconcile every event's shape
-    //        against the committed schema registry. `schema_root` is `None`
-    //        for every in-memory/test/LSP/fixture caller (opt-in — see
-    //        `CompileOptions::schema_registry`'s doc), in which case this is
-    //        a no-op and every event falls back to today's `@schema(N)`-or-`1`
-    //        behaviour. Must run before the per-unit loop below: `emit_unit`
-    //        needs `schema_effective_versions` to mint the right
-    //        `schemaVersion`, and by the time `RunChecks` reaches
-    //        `compile_project` the TypeScript is already emitted. Only the
-    //        *write* is deferred (to `compile_project`, gated on a fully
-    //        clean build) — reconciliation itself happens here.
+    //        against the committed schema registry. `schema_registry` is
+    //        `SchemaLock::Off` for every in-memory/test/LSP/fixture caller
+    //        (opt-in — see `CompileOptions::schema_registry`'s doc), in which
+    //        case this is a no-op and every event falls back to today's
+    //        `@schema(N)`-or-`1` behaviour. Must run before the per-unit loop
+    //        below: `emit_unit` needs `schema_effective_versions` to mint the
+    //        right `schemaVersion`, and by the time `RunChecks` reaches
+    //        `finish_build` the TypeScript is already emitted. Only the
+    //        *write* is deferred — to the caller, gated on a fully clean
+    //        build (#1078: `bynk-emit` computes, never writes) — reconciliation
+    //        itself happens here.
     let mut schema_effective_versions: HashMap<String, i64> = HashMap::new();
-    let mut schema_registry_doc: Option<(PathBuf, schema_registry::SchemaRegistry)> = None;
-    if let Some(root) = schema_root {
-        match schema_registry::read(root) {
-            Ok(existing) => {
+    let mut schema_registry_doc: Option<schema_registry::SchemaRegistry> = None;
+    if let SchemaLock::On { existing } = schema_registry {
+        match schema_registry::parse(existing.as_deref()) {
+            Ok(existing_reg) => {
                 let mut schema_errors: Vec<CompileError> = Vec::new();
                 let (updated, effective) =
-                    schema_registry::reconcile(&existing, &unit_tables, &mut schema_errors);
+                    schema_registry::reconcile(&existing_reg, &unit_tables, &mut schema_errors);
                 errors.extend_for(None, schema_errors);
                 schema_effective_versions = effective;
-                schema_registry_doc = Some((root.to_path_buf(), updated));
+                schema_registry_doc = Some(updated);
             }
             Err(msg) => {
                 errors.push_for(
@@ -4537,6 +4572,8 @@ fn build_output(
         // Populated by `finish_build` from the same `RunChecks::Checked` this
         // whole `ProjectOutput` was built from.
         snapshots: Vec::new(),
+        // Likewise (#1078) — `Some` only when the registry was on.
+        schema_lock: None,
     }
 }
 
@@ -5753,7 +5790,7 @@ mod tests {
             &roots.excludes(),
             None,
             false,
-            None,
+            &SchemaLock::Off,
             &Arc::new(Types::new()),
         );
         let snapshots = match run {
@@ -5895,7 +5932,7 @@ mod tests {
             &roots.excludes(),
             None,
             false,
-            None,
+            &SchemaLock::Off,
             &Arc::new(Types::new()),
         );
         match run {

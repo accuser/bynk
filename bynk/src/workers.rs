@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use bynk_emit::project::BuildTarget;
+use bynk_emit::project::{BuildTarget, SchemaLock};
 
 use crate::compiler::Compiler;
 use crate::probe::Provenance;
@@ -55,10 +55,25 @@ pub fn compile_once(
             }
         };
     }
+    // #1078: `bynk-emit` touches no disk for `bynk.schema.lock` — read its
+    // current content here (verified-absent `None` for a fresh project) and
+    // hand it in; write the reconciled content back after a clean compile.
+    let schema_lock = if schema_registry {
+        match bynk_driver::schema_lock::read(project_root) {
+            Ok(existing) => SchemaLock::On { existing },
+            Err(e) => {
+                eprintln!(
+                    "bynk: could not read {}: {e}",
+                    bynk_driver::schema_lock::lock_path(project_root).display()
+                );
+                return false;
+            }
+        }
+    } else {
+        SchemaLock::Off
+    };
     let options = match bynk_driver::try_project_options(project_root) {
-        Ok(o) => o
-            .target(BuildTarget::Workers)
-            .schema_registry(schema_registry),
+        Ok(o) => o.target(BuildTarget::Workers).schema_registry(schema_lock),
         Err(e) => {
             eprintln!("bynk: {e}");
             return false;
@@ -74,6 +89,17 @@ pub fn compile_once(
             return false;
         }
     };
+    // A write failure here is reported but does not fail the build — the
+    // same non-fatal handling `schema_registry::write`'s own eprintln used
+    // to give it when this lived inside `compile_project`.
+    if let Some(content) = &output.schema_lock
+        && let Err(e) = bynk_driver::schema_lock::write(project_root, content)
+    {
+        eprintln!(
+            "bynk: could not write {}: {e}",
+            bynk_driver::schema_lock::lock_path(project_root).display()
+        );
+    }
     if let Err(e) = bynk_driver::write_output(&output, build_dir) {
         eprintln!(
             "bynk: could not write build output under `{}`: {e}",

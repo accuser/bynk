@@ -14,11 +14,16 @@
 //! `project.rs`'s `compile_project`/`run_checks` for why: fixtures and
 //! in-memory builds must never touch a project tree as a side effect of
 //! compiling.
+//!
+//! #1078: this module touches no disk. `parse`/`serialize` are pure —
+//! `bynk.schema.lock`'s content comes in through
+//! `CompileOptions::schema_registry`'s `SchemaLock::On { existing }` and goes
+//! out through `ProjectOutput::schema_lock`; `bynk-driver`'s `schema_lock`
+//! module owns the actual read/atomic-write, ported verbatim (including the
+//! unchanged-content no-op and the directory fsync) from what used to live
+//! here.
 
 use std::collections::BTreeMap;
-use std::io::{self, Write};
-use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -26,14 +31,6 @@ use bynk_syntax::ast::{EventDecl, TypeRef};
 use bynk_syntax::error::CompileError;
 
 use super::UnitTable;
-
-const LOCK_FILE: &str = "bynk.schema.lock";
-
-/// Where the registry lives for a given project root — exposed so callers
-/// reporting a write failure can name the actual file, not just the root.
-pub(crate) fn lock_path(project_root: &Path) -> std::path::PathBuf {
-    project_root.join(LOCK_FILE)
-}
 
 fn lock_version() -> u32 {
     1
@@ -391,31 +388,34 @@ fn non_additive_error(
     )
 }
 
-/// Read `bynk.schema.lock` from `project_root`. A missing file is a fresh
-/// project (empty registry, no error) — the analogous first-ever
-/// `bynk.deploy.lock` read. A present-but-unparseable or empty file is
+/// Parse `bynk.schema.lock`'s content. `existing: None` means the project
+/// has no lock file yet — a fresh project's first reconciliation, baselined
+/// rather than compared, exactly as a missing file always meant back when
+/// this function read the file itself. It must mean *verified absent*, never
+/// "content unavailable" for some other reason — see
+/// `CompileOptions`' `SchemaLock::On` doc comment, which states that
+/// invariant on the type the caller constructs.
+///
+/// `Some(text)` that is empty/unparseable/a different lock version is
 /// corruption, not a fresh project, and fails hard (`ledger.rs`'s own
-/// argument for the identical case).
-pub(crate) fn read(project_root: &Path) -> Result<SchemaRegistry, String> {
-    let path = project_root.join(LOCK_FILE);
-    if !path.exists() {
+/// argument for the identical case) — never silently re-baselines.
+pub(crate) fn parse(existing: Option<&str>) -> Result<SchemaRegistry, String> {
+    let Some(text) = existing else {
         return Ok(SchemaRegistry {
             version: lock_version(),
             events: BTreeMap::new(),
         });
-    }
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    };
     if text.trim().is_empty() {
-        return Err(format!(
-            "schema registry `{}` is empty or truncated (corrupt); refusing \
-             to treat it as a fresh project — restore it from version control",
-            path.display()
-        ));
+        return Err(
+            "schema registry `bynk.schema.lock` is empty or truncated (corrupt); refusing \
+             to treat it as a fresh project — restore it from version control"
+                .to_string(),
+        );
     }
-    let reg: SchemaRegistry = toml::from_str(&text).map_err(|e| {
+    let reg: SchemaRegistry = toml::from_str(text).map_err(|e| {
         format!(
-            "schema registry `{}` is corrupt ({e}) — restore it from version control",
-            path.display()
+            "schema registry `bynk.schema.lock` is corrupt ({e}) — restore it from version control"
         )
     })?;
     if reg.version != lock_version() {
@@ -427,54 +427,14 @@ pub(crate) fn read(project_root: &Path) -> Result<SchemaRegistry, String> {
     Ok(reg)
 }
 
-static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Write `bynk.schema.lock` to `project_root`, atomically (temp file +
-/// `sync_all` + rename + best-effort directory fsync — `ledger.rs`'s own
-/// discipline, so a crash mid-write can only leave the intact old file or the
-/// intact new one). A no-op when the serialised content is byte-identical to
-/// what is already on disk, so a clean rebuild never touches the file's
-/// mtime or produces a spurious `git diff`.
-pub(crate) fn write(project_root: &Path, reg: &SchemaRegistry) -> Result<(), String> {
-    let path = project_root.join(LOCK_FILE);
-    let body = toml::to_string_pretty(reg).map_err(|e| e.to_string())?;
-    if let Ok(existing) = std::fs::read_to_string(&path)
-        && existing == body
-    {
-        return Ok(());
-    }
-
-    let dir = project_root;
-    let (tmp, mut file) = loop {
-        let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = dir.join(format!(".{LOCK_FILE}.{}.{n}.tmp", std::process::id()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(f) => break (candidate, f),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e.to_string()),
-        }
-    };
-
-    let write_then_sync = file
-        .write_all(body.as_bytes())
-        .and_then(|()| file.sync_all());
-    if let Err(e) = write_then_sync {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    drop(file);
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    if let Ok(dir_handle) = std::fs::File::open(dir) {
-        let _ = dir_handle.sync_all();
-    }
-    Ok(())
+/// Serialize a reconciled registry to `bynk.schema.lock`'s TOML form —
+/// what `bynk-driver` writes to disk, atomically, only on a fully clean
+/// build (`compile_project`'s own gate). No disk access here; see this
+/// module's doc comment for why. Cannot fail for this data shape (string
+/// keys, no floats) — `toml::to_string_pretty` only errors on inputs this
+/// struct never produces.
+pub(crate) fn serialize(reg: &SchemaRegistry) -> String {
+    toml::to_string_pretty(reg).expect("SchemaRegistry always serializes")
 }
 
 #[cfg(test)]
@@ -885,28 +845,21 @@ mod tests {
         );
     }
 
-    // -- read/write round-trip -------------------------------------------
-
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "bynk-schema-registry-test-{tag}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    // -- parse/serialize ---------------------------------------------------
+    //
+    // #1078: `read`/`write`'s actual disk I/O (and the tests pinning its
+    // crash-safety — the unchanged-content no-op, the round-trip) moved to
+    // `bynk-driver`'s `schema_lock` module. What's left here is pure parsing,
+    // covered directly with no disk needed at all.
 
     #[test]
-    fn read_of_an_absent_file_is_an_empty_registry() {
-        let dir = temp_dir("absent");
-        let reg = read(&dir).unwrap();
+    fn parse_of_absent_content_is_an_empty_registry() {
+        let reg = parse(None).unwrap();
         assert!(reg.events.is_empty());
     }
 
     #[test]
-    fn write_then_read_round_trips() {
-        let dir = temp_dir("roundtrip");
+    fn parse_round_trips_serialized_content() {
         let mut events = BTreeMap::new();
         events.insert(
             "commerce.order.PaymentConfirmed".to_string(),
@@ -919,48 +872,19 @@ mod tests {
             version: lock_version(),
             events,
         };
-        write(&dir, &reg).unwrap();
-        let read_back = read(&dir).unwrap();
-        assert_eq!(read_back, reg);
-    }
-
-    #[test]
-    fn write_is_a_no_op_when_content_is_unchanged() {
-        let dir = temp_dir("noop-write");
-        let reg = SchemaRegistry {
-            version: lock_version(),
-            events: BTreeMap::new(),
-        };
-        write(&dir, &reg).unwrap();
-        let mtime_before = std::fs::metadata(lock_path(&dir))
-            .unwrap()
-            .modified()
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        write(&dir, &reg).unwrap();
-        let mtime_after = std::fs::metadata(lock_path(&dir))
-            .unwrap()
-            .modified()
-            .unwrap();
-        assert_eq!(
-            mtime_before, mtime_after,
-            "unchanged content must not rewrite the file"
-        );
+        let body = serialize(&reg);
+        assert_eq!(parse(Some(&body)).unwrap(), reg);
     }
 
     #[test]
     fn a_truncated_file_is_corruption_not_a_fresh_project() {
-        let dir = temp_dir("truncated");
-        std::fs::write(lock_path(&dir), "   \n").unwrap();
-        let err = read(&dir).unwrap_err();
+        let err = parse(Some("   \n")).unwrap_err();
         assert!(err.contains("restore it from version control"));
     }
 
     #[test]
     fn an_unparseable_file_is_corruption() {
-        let dir = temp_dir("unparseable");
-        std::fs::write(lock_path(&dir), "not valid toml {{{").unwrap();
-        let err = read(&dir).unwrap_err();
+        let err = parse(Some("not valid toml {{{")).unwrap_err();
         assert!(err.contains("corrupt"));
     }
 }
