@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Resolve #1078 — bynk.schema.lock read/write moves to bynk-driver; bynk-emit only ever sees pre-read content and hands back what to write
----
+# 0321 — `bynk.schema.lock` gets its own in/out channel, parallel to `sources`, not folded into it
 
-## ADR: schema-lock-overlay-channel
-title: `bynk.schema.lock` gets its own in/out channel, parallel to `sources`, not folded into it
-summary: `CompileOptions::schema_registry` carries pre-read lock content in; `ProjectOutput::schema_lock` carries reconciled content out; `bynk-emit` touches no disk for either direction
+- **Status:** Accepted (v0.247.12)
 
 **Context.** #1006's Decision C (carried through #1047 into #1078) identified `bynk-emit/src/project/schema_registry.rs` as the one `fs_below_driver` site that couldn't close by relocation alone: unlike `.bynk` source content (`CompileOptions::sources`, #1077/#1081), the schema registry is mid-pipeline, bidirectional, persisted state — read during `run_checks` (its result feeds `emit_unit`'s `schemaVersion`, so it can't simply move to a point after compilation) and written only on a fully clean build. `Sources`/R2.3 as specified (`design/bynk-greenfield-compiler.md`) is scoped to "the compiler's only view of file **contents**" — `.bynk` text specifically — and ADR 0299 (Decision 3) already named the write's atomic-write discipline as a third copy of one pattern in the repo, extraction into a shared helper "not possible without a new crate below `bynk-emit`," and left it as follow-up debt.
 
