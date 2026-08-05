@@ -237,12 +237,15 @@ fn a_file_directory_ambiguity_still_reports_through_the_cli_path() {
 /// through their own overlay ([`manifest_overlay`]) rather than `bynk-emit`'s
 /// disk fallback (`discovery::read_source`'s `fs::read_to_string` miss path) —
 /// see that function's doc comment for why the CLI path silently depended on
-/// it even after #1081. A non-conventional `[paths]` — no `src`/`tests` at
-/// all, one `include` root the conventional default would never guess, and an
-/// `exclude` under it — only comes out right if the overlay is genuinely
-/// wired in: a mis-keyed overlay falls through to `ProjectPaths::conventional`,
-/// which (finding neither `src` nor `tests` here) walks the whole project root
-/// with no exclude at all, picking up the file this test expects excluded.
+/// it even after #1081. This is a real regression test for `[paths]` parsing
+/// reaching `project_options` correctly through that new overlay-based read —
+/// a non-conventional `[paths]` (no `src`/`tests` at all, one `include` root
+/// the conventional default would never guess, and an `exclude` under it) —
+/// but it does **not** by itself prove the overlay is load-bearing:
+/// `read_source`'s disk fallback is still present, so a mis-keyed overlay
+/// would silently miss and re-read the same on-disk `bynk.toml`, giving an
+/// identical (still-passing) result. `manifest_overlay_keys_and_reads_a_real_bynk_toml`
+/// (`bynk-driver/src/lib.rs`) is the test that actually pins the key match.
 #[test]
 fn a_non_conventional_manifest_include_and_exclude_are_honoured() {
     let root = scratch_project(

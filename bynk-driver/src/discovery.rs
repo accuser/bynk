@@ -15,7 +15,12 @@
 //! `bynk-emit`'s own text, not who calls into it. Both entry points now read
 //! `bynk.toml` themselves (`manifest_overlay`) and hand it to
 //! `try_read_project_paths_with`'s overlay instead, so that read genuinely
-//! moves above `bynk-emit`.
+//! moves above `bynk-emit` **when `bynk.toml` exists**. A conventional
+//! project with no manifest at all still reaches `try_read_project_paths_with`
+//! with an empty overlay, which still tries (and fails to find) `bynk.toml`
+//! via `read_source`'s own `fs::read_to_string` before falling back to
+//! `ProjectPaths::conventional` — a real, if harmless (the read fails and is
+//! discarded), disk touch still inside `bynk-emit` for that case.
 //!
 //! `bynk-emit`'s own on-disk discovery (`project::discover_bynk_files`) and
 //! `read_source`'s overlay-miss fallback are **not** removed, and can't be

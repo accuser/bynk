@@ -56,8 +56,7 @@ pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::Discov
 /// plainly exist on disk.
 pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectOptionsError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        let paths = try_read_project_paths_with(input, &manifest_overlay(input))
-            .map_err(ProjectOptionsError::Paths)?;
+        let paths = try_read_project_paths_with(input, &manifest_overlay(input))?;
         Ok(options_for_split(input, paths)?)
     } else {
         let sources = discovery::read_bynk_tree_single(input)?;
@@ -1035,5 +1034,32 @@ mod tests {
     fn manifest_overlay_is_empty_with_no_bynk_toml() {
         let dir = scratch_dir("manifest_overlay_missing");
         assert!(manifest_overlay(&dir.0).is_empty());
+    }
+
+    /// Review of #1084: `ProjectOptionsError::Paths` had no test anywhere in
+    /// the repo, despite being the one arm where an overlay/disk divergence
+    /// in the manifest read would actually be observable — everywhere else,
+    /// `read_source`'s still-present disk fallback quietly reproduces the
+    /// same result either way. This also re-pins that `?`'s automatic
+    /// `From<ProjectPathsError>` conversion (not an explicit `map_err`) still
+    /// reaches the caller correctly.
+    #[test]
+    fn try_project_options_surfaces_an_unknown_paths_key() {
+        let dir = scratch_dir("try_project_options_unknown_key");
+        fs::write(dir.0.join("bynk.toml"), "[paths]\ninculde = [\"src\"]\n").unwrap();
+        fs::create_dir_all(dir.0.join("src")).unwrap();
+        fs::write(dir.0.join("src/thing.bynk"), "context thing\n").unwrap();
+
+        let err = match try_project_options(&dir.0) {
+            Err(e) => e,
+            Ok(_) => panic!("an unrecognised [paths] key must be reported, not silently ignored"),
+        };
+        assert!(
+            matches!(
+                &err,
+                ProjectOptionsError::Paths(ProjectPathsError::UnknownKey(k)) if k == "inculde"
+            ),
+            "expected Paths(UnknownKey(\"inculde\")), got: {err:?}"
+        );
     }
 }
