@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.17** | content-ownership track slice 3 (#1086, #1096) — a new dev-only bynk-testkit crate, built directly on production discovery, replaces diagnose_project(&root, &HashMap::new()) and bare CompileOptions::single/::split in three representative test fixtures, ahead of the full ~120-site migration (slice 4) |
 | **v0.247.16** | content-ownership track slice 2 (#1086, #1094) — AnalysisRoots::lower()'s bynk.toml read joins the overlay, so an unsaved edit to bynk.toml itself changes the resolved [paths] include/exclude, mirroring 343b2482's CLI-side fix |
 | **v0.247.15** | content-ownership track slice 1 (#1086, #1092) — bynk-ide's cross-file symbol lookups (go-to-declaration, hover's cross-file fallback) take pre-read content instead of reading disk themselves; Backend::project_files retires, fs_below_driver reaches 0 for bynk-ide |
 | **v0.247.14** | Slice 0+1 of the content-ownership track (#1086) ships — `bynk-lsp`'s completion, signature help, and hover no longer read project files from disk themselves; ADR 0322's `ProjectDirs`/`resolve_dirs` design is superseded, unneeded once implementation found `bynk_ide::discover_files` already closes the gap |
