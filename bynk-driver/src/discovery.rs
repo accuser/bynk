@@ -3,20 +3,38 @@
 //!
 //! The real CLI entry points (`project_options`/`try_project_options` below)
 //! now walk and read every file up front, via this module, and hand the
-//! result to `CompileOptions::sources` — the CLI path no longer implicitly
-//! relies on `bynk-emit` reading anything itself.
+//! result to `CompileOptions::sources`.
+//!
+//! #1077 review: this module's own original doc claimed the CLI path was
+//! already fully independent of `bynk-emit`'s disk reads — false as written.
+//! `project_options`/`try_project_options` still read `bynk.toml` itself via
+//! `read_project_paths`/`try_read_project_paths`, which reach
+//! `discovery::read_source`'s overlay-miss fallback (`fs::read_to_string`)
+//! with an always-empty overlay — one real disk read inside `bynk-emit` on
+//! every real CLI invocation, unnoticed because `fs_below_driver` scans
+//! `bynk-emit`'s own text, not who calls into it. Both entry points now read
+//! `bynk.toml` themselves (`manifest_overlay`) and hand it to
+//! `try_read_project_paths_with`'s overlay instead, so that read genuinely
+//! moves above `bynk-emit`.
 //!
 //! `bynk-emit`'s own on-disk discovery (`project::discover_bynk_files`) and
 //! `read_source`'s overlay-miss fallback are **not** removed, and can't be
 //! yet: `analyse_project_with` (the LSP's own analysis path,
 //! `bynk-emit/src/project.rs`) hardcodes `discovered: None` and passes an
 //! overlay that deliberately covers only open editor buffers — it depends on
-//! that exact fallback to see every other project file. Closing it fully is
-//! #1079's scope (`bynk-lsp` becoming the sole file-content owner: the
-//! open-buffer overlay *and* a full on-disk sweep for the rest), not this
-//! module's. So `fs_below_driver` does not move for `bynk-emit` from this
-//! alone — `discovery.rs` stays flagged until #1079 lands too. What *does*
-//! move: the CLI/test compile path is now verifiably fallback-free.
+//! that exact fallback to see every other project file, including its own
+//! `bynk.toml` read (`AnalysisRoots::lower`, `bynk-ide/src/lib.rs`, has the
+//! same gap this module just closed for the CLI, unclosed). `#1079`'s issue
+//! text scopes only `bynk-ide`'s `completion.rs`/`symbols.rs` — it does not
+//! mention `analyse_project_with` or the `diagnose_project(&root,
+//! &HashMap::new())` pattern that is `bynk-ide`'s (and `bynkc`'s test suite's)
+//! dominant way of exercising this whole analysis path (100+ call sites
+//! spanning `bynk-ide`'s own inline test modules, `bynk-lsp/tests`, and
+//! `bynkc/tests`) — every one depends on `read_source`'s fallback today.
+//! Closing `discovery.rs` for good needs all of that migrated first, which is
+//! bigger than either #1077 or #1079's issue text currently describes; #1077
+//! stays open pending that combined, design-reviewed effort. `fs_below_driver`
+//! does not move for `bynk-emit` from this module alone.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

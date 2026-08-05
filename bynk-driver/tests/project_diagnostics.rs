@@ -232,3 +232,45 @@ fn a_file_directory_ambiguity_still_reports_through_the_cli_path() {
             .collect::<Vec<_>>()
     );
 }
+
+/// #1077 review: `project_options`/`try_project_options` now read `bynk.toml`
+/// through their own overlay ([`manifest_overlay`]) rather than `bynk-emit`'s
+/// disk fallback (`discovery::read_source`'s `fs::read_to_string` miss path) —
+/// see that function's doc comment for why the CLI path silently depended on
+/// it even after #1081. A non-conventional `[paths]` — no `src`/`tests` at
+/// all, one `include` root the conventional default would never guess, and an
+/// `exclude` under it — only comes out right if the overlay is genuinely
+/// wired in: a mis-keyed overlay falls through to `ProjectPaths::conventional`,
+/// which (finding neither `src` nor `tests` here) walks the whole project root
+/// with no exclude at all, picking up the file this test expects excluded.
+#[test]
+fn a_non_conventional_manifest_include_and_exclude_are_honoured() {
+    let root = scratch_project(
+        "manifest_overlay",
+        &[
+            (
+                "bynk.toml",
+                "[paths]\ninclude = [\"lib\"]\nexclude = [\"lib/vendor\"]\n",
+            ),
+            ("lib/thing.bynk", "context thing\n"),
+            ("lib/vendor/thing.bynk", "context thing\n"),
+        ],
+    );
+
+    let opts = bynk_driver::project_options(&root.0).expect("scratch project must be readable");
+    let sources = opts
+        .sources
+        .as_ref()
+        .expect("project_options always populates sources (#1077/#1081)");
+
+    assert!(
+        sources.keys().any(|p| p.ends_with("lib/thing.bynk")),
+        "expected the declared `include` root to be walked, got: {:?}",
+        sources.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !sources.keys().any(|p| p.ends_with("lib/vendor/thing.bynk")),
+        "expected the declared `exclude` to be honoured, got: {:?}",
+        sources.keys().collect::<Vec<_>>()
+    );
+}
