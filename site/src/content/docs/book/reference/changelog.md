@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.13** | Settle the content-ownership track's remaining design questions (#1086) and front-load three ADRs — bynk-ide's `ProjectDirs` seam type, R2.3's content-only enumeration scope, and the `bynk-testkit` crate convention |
 | **v0.247.12** | Resolve #1078 — bynk.schema.lock read/write moves to bynk-driver; bynk-emit only ever sees pre-read content and hands back what to write |
 | **v0.247.11** | bynk-driver reads bynk.toml through its own overlay instead of bynk-emit's disk fallback, closing a gap #1081 (#1077) left uncaught |
 | **v0.247.10** | **Breaking (Rust API, not language surface):** `bynkc` no longer re-exports `bynk-syntax`'s `ast`/`diagnostics`/`error`/`keywords`/`lexer`/`parser`/`span` modules, `bynk-driver`'s `coverage`/`test_json` modules, or the whole `bynk-fmt` crate as `bynkc::fmt` (only `bynkc`'s item re-exports, `CompileError`, `CompileOptions`, `compile_project`, and others, remain public) |
