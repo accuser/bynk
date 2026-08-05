@@ -83,13 +83,14 @@ this decision does not foreclose it, it just declines to bundle it into
 
 ## ADR: content-ownership-testkit-crate
 title: Cross-crate test fixtures get a new `bynk-testkit` crate, built on production discovery
-summary: A dev-only crate over `bynk_ide::discover_files` replaces the ~142-site `diagnose_project(&root, &HashMap::new())`/`CompileOptions::single`/`::split` convention, instead of extending `bynk-emit`'s existing crate-private testkit
+summary: A dev-only crate over `bynk_ide::discover_files` replaces the ~125-site `diagnose_project(&root, &HashMap::new())`/`CompileOptions::single`/`::split` convention, instead of extending `bynk-emit`'s existing crate-private testkit
 
 **Context.** `bynk-emit/src/lib.rs` already gates a `#[cfg(test)]
 pub(crate) mod testkit` (`bynk-emit/src/testkit.rs`) with two helpers used
 only by `bynk-emit`'s own tests. The content-ownership track (#1086) needs an
-equivalent for ~142 call sites across `bynk-ide`'s inline tests,
-`bynk-lsp/tests`, and `bynkc/tests`, that today rely on
+equivalent for ~125 call sites across `bynk-ide`'s inline tests,
+`bynk-lsp/tests`, `bynkc/tests`/`bynk/tests`, and one of `bynk-emit`'s own
+`#[cfg(test)]` sites, that today rely on
 `bynk-emit/src/project/discovery.rs`'s disk fallback via
 `diagnose_project(&root, &HashMap::new())` or `CompileOptions::single`/`::split`
 with no `.sources(...)` chained. Extending `bynk-emit`'s testkit was

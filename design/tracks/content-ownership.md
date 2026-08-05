@@ -23,7 +23,7 @@
   (#1006/#1012).
 - **Posture:** Feature track per
   [ADR 0076](../decisions/0076-feature-track-posture.md). Qualifies on two
-  axes (§2): it is multi-increment (production-code seam, then a ~145-site
+  axes (§2): it is multi-increment (production-code seam, then a ~125-site
   test-harness migration that depends on it), and its surface is not yet
   settled (the new `bynk-ide`-exposed seam type, whether directory
   *enumeration* is in scope alongside content, and the test-harness
@@ -35,7 +35,7 @@
   each investigated closing it and found the true scope larger than the issue
   text in front of them. #1084's finding is why this doc exists: `bynk-emit`'s
   `discovery.rs` fallback cannot be deleted by fixing `completion.rs`/
-  `symbols.rs` alone, because ~145 test call sites across `bynk-ide`,
+  `symbols.rs` alone, because ~125 test call sites across `bynk-ide`,
   `bynk-lsp/tests`, and `bynkc/tests` depend on that same fallback existing.
   #1077's own remaining scope (the CLI-path manifest read) was closed directly
   (`343b2482`, 5 August 2026) and the issue closed as completed; what's left —
@@ -91,14 +91,14 @@ snapshot), but here for file *content* rather than an analysis round.
 - **Multi-increment.** The production-code half (§4, slices 0–3: a new seam
   type, `bynk-lsp`'s sweep, migrating ~13 call sites) and the test-harness half
   (§4, slices 4–6: replacing the `diagnose_project(&root, &HashMap::new())`
-  convention across ~145 call sites, then deleting the fallback) are each too
+  convention across ~125 call sites, then deleting the fallback) are each too
   large for one delete-on-merge proposal — and the second cannot start until
   the first has shipped something for tests to call instead.
 - **Surface not settled at the doc's first merge — is now.** Five genuinely
   open questions (§3), all closed by this re-settling pass: the shape of the
   new `bynk-ide`-exposed seam (§3.1, settled: `ProjectDirs`/`resolve_dirs`);
   whether R2.3's "no ambient filesystem" also bans directory *enumeration*,
-  not just content reads (§3.2, settled narrow); what replaces a ~142-site
+  not just content reads (§3.2, settled narrow); what replaces a ~125-site
   test convention without turning every test file into boilerplate (§3.3,
   settled: a new `bynk-testkit` crate, exact helper shape deferred to slice
   4); migration order and mixed-state safety (§3.4, settled incremental with
@@ -202,19 +202,47 @@ collapses to the narrow branch throughout.
 
 `diagnose_project(&root, &HashMap::new())` (or a small partial overlay) and
 `CompileOptions::single(root)`/`::split(root, paths)` are today's "just walk
-this directory, I trust the fallback for the rest" test idiom — measured
-current counts (§7 of the investigation this doc is built from, re-verified
-under review): 75 bare `diagnose_project` calls plus 10 `diagnose_project_with`
-calls (85 total, **all test-only**, none in production — confirmed against
-each hit's enclosing `#[cfg(test)]` boundary) across `bynk-ide`'s inline
-`#[cfg(test)]` modules, `bynk-lsp/tests`, and `bynkc/tests`; separately, 57
-`CompileOptions::single`/`::split` call sites across 39 files in
-`bynkc/tests`/`bynk/tests` (`bynk-driver/src/lib.rs` and
-`bynk-emit/src/project.rs`'s own three production-scope constructions are
-excluded — they already chain `.sources(...)` post-`343b2482` and are not
-part of this migration). Deleting `discovery.rs`'s fallback means every one of
-those 142 sites must supply a *complete* sources map instead of relying on it
-silently filling gaps.
+this directory, I trust the fallback for the rest" test idiom. **Re-counted
+under this pass** with a paren-balancing scan (not a single-line grep, which
+is what produced the previous, wrong counts below) — figures are still
+hand-derived and approximate, not xtask-verified, which is itself evidence
+for §3.4's decision to make the real count a CI-checked probe rather than a
+number asserted in prose:
+
+- `diagnose_project`/`diagnose_project_with` called with an empty/absent
+  overlay (`&HashMap::new()`, a local `HashMap`-aliased `&Map::new()` in two
+  `#[cfg(test)]` modules, or the turbofish `&HashMap::<PathBuf, String>::new()`
+  spelling): **~72 call sites across 28 files**, all genuinely test-only.
+  `diagnose_project_with` itself is **not** test-only, though — it is called
+  3 times from production (`bynk-lsp/src/lib.rs:627,1103,3179`, each with a
+  real overlay) plus once more internally by `diagnose_project`'s own
+  single-tree wrapper (`bynk-ide/src/lib.rs:257`) — only 4 of its 8 real call
+  sites are the test empty-overlay idiom this migration targets. The
+  originally-recorded "75 bare + 10 `diagnose_project_with` = 85, all
+  test-only" figure this doc previously carried was wrong on both counts: the
+  bare figure undercounted (missed the `Map`-alias and turbofish spellings),
+  and "all test-only" is false for `diagnose_project_with` as a function,
+  true only for the specific empty-overlay call shape.
+- `CompileOptions::single`/`::split` with no `.sources(...)` anywhere in the
+  chained call: **53 call sites across 40 files**. 57 total call sites exist
+  project-wide; 4 already chain `.sources(...)` and are out of scope —
+  `bynk-driver/src/lib.rs`'s 3 production constructions (`:49,64,103`,
+  confirmed chaining `.sources(...)` post-`343b2482`), and **one** site inside
+  `bynk-emit/src/project.rs`'s own `#[cfg(test)]` module (line 5858). The
+  previously-recorded claim that "`bynk-emit/src/project.rs`'s own three
+  production-scope constructions are excluded" was wrong: `project.rs` has no
+  three production sites (that count is `bynk-driver`'s, not `project.rs`'s);
+  `project.rs` has exactly two test-only sites of its own, and only one of
+  them (5858) already chains `.sources(...)`. The other, line 5742
+  (`CompileOptions::split(root.to_path_buf(), read_project_paths(&root))`,
+  no `.sources(...)`), was wrongly swept into "excluded, already fixed" and is
+  actually in scope, in the 53 above and the 40-file count (the 39 files in
+  `bynkc/tests`/`bynk/tests` this doc previously named, plus `project.rs`
+  itself).
+
+Deleting `discovery.rs`'s fallback means every one of those **~125** sites
+(72 + 53 — not the previously-claimed 142) must supply a *complete* sources
+map instead of relying on it silently filling gaps.
 
 **Decision.** A new dev-only workspace crate, `bynk-testkit`, not an
 extension of `bynk-emit/src/testkit.rs`'s existing `#[cfg(test)]
@@ -266,25 +294,34 @@ their final signatures.
 
 ### 3.4 Migration order and mixed-state safety — SETTLED, incremental
 
-**Decision.** Incremental, sub-sliced by crate in the order the 142 sites
+**Decision.** Incremental, sub-sliced by crate in the order the ~125 sites
 naturally group: `bynk-ide`'s inline `#[cfg(test)]` modules, then
-`bynk-lsp/tests`, then `bynkc/tests`/`bynk/tests` — each its own PR (§4's
-slice 5 becomes several, resolving its own open sub-question). This matches
-the repo's existing review culture (a 142-site all-at-once diff is far
-outside the norm evidenced by every other slice in this doc's own §4) and
-gives earlier signal per straggler.
+`bynk-lsp/tests`, then `bynkc/tests`/`bynk/tests`/`bynk-emit`'s own
+`#[cfg(test)]` module — each its own PR (§4's slice 5 becomes several,
+resolving its own open sub-question). This matches the repo's existing
+review culture (a 125-site all-at-once diff is far outside the norm
+evidenced by every other slice in this doc's own §4) and gives earlier
+signal per straggler.
 
 Rather than a runtime hard-error in `discovery.rs` (impossible to scope
 correctly — the fallback can't tell a "not yet migrated" caller from a
 legitimate one without call-site-level plumbing that doesn't exist), the
-loud-failure mechanism is a **structural CI guard**: an `xtask` probe,
-added alongside slice 4, that counts remaining
+loud-failure mechanism is a **structural CI guard** shaped exactly like the
+existing `fs_below_driver` probe (`design/greenfield-status.md`): an `xtask`
+probe, added alongside slice 4, that counts remaining
 `diagnose_project(&root, &HashMap::new())`/`diagnose_project_with(_, &HashMap::new())`/
 bare `CompileOptions::single`/`::split` (no `.sources(...)` chained) call
-sites outside `bynk-testkit` itself, and fails CI if that count doesn't
-strictly decrease once slice 5 begins. This is the same idiom
-`fs_below_driver` and `decisions_index` already use in this repo — a
-structural drift guard, not a new runtime code path — so a straggler is a
+sites outside `bynk-testkit` itself, checked in as an expected value the same
+way `fs_below_driver`'s "4 files (bynk-emit=2, bynk-ide=2, bynk-fmt=0)" is —
+CI fails on *any* disagreement between a fresh count and the checked-in
+figure (not specifically a "must decrease" comparison, which would need an
+undefined baseline to compare against), and each migrating PR updates the
+checked-in figure downward via the probe's own `--apply`, the same motion
+`fs_below_driver` already uses. This is the same idiom this repo already
+runs, verified against `design/greenfield-status.md`'s own generated header
+("a disagreement between this file and a fresh run fails
+`greenfield_status_table_is_current`") — a structural drift guard, not a new
+runtime code path — so a straggler is a
 CI failure on the stalled PR, not a silent pass. `discovery.rs`'s fallback
 (slice 6) is deleted only once the probe reads zero.
 
@@ -353,7 +390,7 @@ risk order.
   below the driver.** Decides the track's actual production-code scope going
   in, and `fs_below_driver`'s achievable floor for `bynk-emit`.
 - **§3.3 — cross-crate test fixtures get a new `bynk-testkit` crate, built
-  on production discovery.** 142 call sites will depend on it once slice 5
+  on production discovery.** the ~125 call sites will depend on it once slice 5
   lands; changing the crate boundary afterward is another full migration.
 
 ## 6. Threat model
@@ -373,9 +410,9 @@ and when it's considered fresh.
 - [ ] Slice 1 — `for_each_unit` takes content
 - [ ] Slice 2 — `symbols.rs` cross-file lookups take content
 - [ ] Slice 3 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay
-- [ ] Slice 4 — the test-harness replacement helper, proved narrow
-- [ ] Slice 5 — migrate the remaining ~140 test call sites
-- [ ] Slice 6 — delete `discovery.rs`'s content fallback
+- [ ] Slice 4 — `bynk-testkit`, proved narrow
+- [ ] Slice 5 — migrate the remaining ~120 test call sites, sub-sliced by crate
+- [ ] Slice 6 — delete `discovery.rs`'s content-reading fallback branch
 
 ## 8. Done when
 
