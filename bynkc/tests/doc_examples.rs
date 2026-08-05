@@ -130,7 +130,7 @@ fn compile_context(body: &str, idx: usize) -> Result<(), String> {
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     fs::write(&file, body).unwrap();
 
-    let result = bynkc::compile_project(&bynkc::CompileOptions::single(root.clone()))
+    let result = bynkc::compile_project(&bynk_testkit::compile_options_single(root.clone()))
         .map_err(bynkc::ProjectFailure::flatten)
         .map(|_| ())
         .map_err(|errs| {

@@ -218,7 +218,7 @@ fn http_security_contract_runs_on_workers_entry() {
     let fixture: PathBuf =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/positive/299_http_security/src");
     let out = bynkc::compile_project(
-        &bynkc::CompileOptions::single(fixture).target(bynkc::BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(fixture).target(bynkc::BuildTarget::Workers),
     )
     .map_err(bynkc::ProjectFailure::flatten)
     .expect("the security fixture must compile");

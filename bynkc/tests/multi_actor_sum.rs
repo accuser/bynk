@@ -11,7 +11,7 @@
 //! Skips loudly without a toolchain; `BYNK_REQUIRE_TSC=1` turns the skip into a
 //! failure.
 
-use bynkc::{BuildTarget, CompileOptions};
+use bynkc::BuildTarget;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -212,14 +212,15 @@ fn multi_actor_sum_resolves_first_wins_and_fails_closed() {
     fs::create_dir_all(&proj).unwrap();
     fs::write(proj.join("api.bynk"), SOURCE).unwrap();
 
-    let out =
-        match bynkc::compile_project(&CompileOptions::single(&proj).target(BuildTarget::Workers)) {
-            Ok(o) => o,
-            Err(failure) => panic!(
-                "compile the multi-actor sum project to Workers:\n{}",
-                bynkc::render_project_errors(&failure.flatten())
-            ),
-        };
+    let out = match bynkc::compile_project(
+        &bynk_testkit::compile_options_single(&proj).target(BuildTarget::Workers),
+    ) {
+        Ok(o) => o,
+        Err(failure) => panic!(
+            "compile the multi-actor sum project to Workers:\n{}",
+            bynkc::render_project_errors(&failure.flatten())
+        ),
+    };
 
     let run_dir = tmp.join("run");
     for file in &out.files {

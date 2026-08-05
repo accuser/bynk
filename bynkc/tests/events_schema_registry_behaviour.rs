@@ -21,7 +21,7 @@
 //! (`events_schema_version_behaviour.rs` already covers the runtime wire
 //! value; this test is about the registry file, not the wire).
 
-use bynkc::{BuildTarget, CompileOptions, SchemaLock};
+use bynkc::{BuildTarget, SchemaLock};
 use std::fs;
 
 const SOURCE_V1: &str = r#"context commerce.order
@@ -123,7 +123,7 @@ fn schema_registry_baselines_bumps_and_blocks_non_additive_changes() {
     //       one — `compile_project` returns `Err`, which carries no revised
     //       lock content at all, so there is nothing for a caller to write.
     fs::write(&source_path, SOURCE_V3_NON_ADDITIVE).unwrap();
-    let options = CompileOptions::single(tmp.join("proj"))
+    let options = bynk_testkit::compile_options_single(tmp.join("proj"))
         .target(BuildTarget::Bundle)
         .schema_registry(schema_lock_input(&tmp.join("proj")));
     match bynkc::compile_project(&options) {
@@ -160,7 +160,7 @@ fn schema_lock_input(proj: &std::path::Path) -> SchemaLock {
 /// `fs::read_to_string(&lock_path)` assertions keep working unchanged.
 fn compile(tmp: &std::path::Path) -> bynkc::ProjectOutput {
     let proj = tmp.join("proj");
-    let options = CompileOptions::single(&proj)
+    let options = bynk_testkit::compile_options_single(&proj)
         .target(BuildTarget::Bundle)
         .schema_registry(schema_lock_input(&proj));
     let out = match bynkc::compile_project(&options) {

@@ -138,14 +138,14 @@ fn compile_fixture(
     if bynk_toml.exists() {
         let paths = bynkc::read_project_paths(fixture_root);
         bynkc::compile_project(
-            &bynkc::CompileOptions::split(fixture_root.to_path_buf(), paths).target(target),
+            &bynk_testkit::compile_options_split(fixture_root.to_path_buf(), paths).target(target),
         )
         .map_err(bynkc::ProjectFailure::flatten)
     } else {
         let src_dir = fixture_root.join("src");
         let platform = fixture_platform(fixture_root);
         bynkc::compile_project(
-            &bynkc::CompileOptions::single(src_dir)
+            &bynk_testkit::compile_options_single(src_dir)
                 .target(target)
                 .platform(platform),
         )

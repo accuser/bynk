@@ -3,7 +3,6 @@
 //! orthogonal) and the tokens-only `foreign_refs` side table routing
 //! first-party references that `symbols` deliberately drops.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bynk_check::index::{SymbolKind, SymbolModifiers};
@@ -25,7 +24,12 @@ fn modifiers_of(result: &bynk_ide::ProjectDiagnostics, name: &str) -> SymbolModi
 
 #[test]
 fn type_modifiers_follow_the_declaration() {
-    let result = bynk_ide::diagnose_project(&fixture_root(), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root(),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root()).to_path_buf(),
+        )),
+    );
 
     let m = |refined, opaque| SymbolModifiers {
         refined,
@@ -42,7 +46,12 @@ fn type_modifiers_follow_the_declaration() {
 
 #[test]
 fn first_party_references_land_in_the_side_table() {
-    let result = bynk_ide::diagnose_project(&fixture_root(), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root(),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root()).to_path_buf(),
+        )),
+    );
 
     // The `Kv` references in cache/store.bynk (`consumes` clause, `given`
     // clause, `Kv.get`/`Kv.put` call sites) are dropped from `symbols`

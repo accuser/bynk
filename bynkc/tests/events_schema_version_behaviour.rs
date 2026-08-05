@@ -15,7 +15,7 @@
 //! into a failure (CI), matching every other toolchain-driving test in this
 //! suite.
 
-use bynkc::{BuildTarget, CompileOptions};
+use bynkc::BuildTarget;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -214,7 +214,7 @@ fn bundle_events_schema_version_reflects_the_declared_annotation_or_defaults_to_
     fs::write(proj.join("notifications.bynk"), SOURCE_NOTIFICATIONS).unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Bundle),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Bundle),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(

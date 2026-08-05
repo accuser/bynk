@@ -21,7 +21,7 @@ fn compile(fixture: &str) -> bynkc::ProjectOutput {
         .join(fixture)
         .join("src");
     bynkc::compile_project(
-        &bynkc::CompileOptions::single(src)
+        &bynk_testkit::compile_options_single(src)
             .target(bynkc::BuildTarget::Bundle)
             .platform(bynkc::Platform::Cloudflare),
     )
