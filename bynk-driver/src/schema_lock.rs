@@ -29,14 +29,23 @@ pub fn lock_path(project_root: &Path) -> PathBuf {
 /// thing `CompileOptions`' `SchemaLock::On { existing: None }` is allowed to
 /// mean (see that type's own doc). A present-but-unreadable file is a real
 /// `io::Error`, not folded into `None` — silently treating a permission
-/// error as "fresh project" would risk re-baselining a real registry's
-/// history exactly as wrongly as never reading it at all.
+/// error, a non-traversable ancestor, or any other stat/read failure as
+/// "fresh project" would risk re-baselining a real registry's history
+/// exactly as wrongly as never reading it at all.
+///
+/// #1085 review: a prior version checked `path.exists()` first and only then
+/// read — `exists()` maps *every* metadata error to `false`, not just
+/// "not found," so a non-`ENOENT` stat failure (or a dangling symlink, or a
+/// race with another process between the two calls) would have silently
+/// produced `Ok(None)` here. Reading directly and matching on
+/// `ErrorKind::NotFound` is both narrower (only the one error kind degrades)
+/// and race-free (one syscall, not two).
 pub fn read(project_root: &Path) -> io::Result<Option<String>> {
-    let path = lock_path(project_root);
-    if !path.exists() {
-        return Ok(None);
+    match std::fs::read_to_string(lock_path(project_root)) {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
     }
-    Ok(Some(std::fs::read_to_string(&path)?))
 }
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -116,6 +125,33 @@ mod tests {
     fn read_of_an_absent_file_is_verified_absent() {
         let dir = scratch_dir("absent");
         assert_eq!(read(&dir.0).unwrap(), None);
+    }
+
+    /// #1085 review: the property `SchemaLock`'s `On { existing }` exists to
+    /// protect — a present-but-unreadable lock file must be a real error, not
+    /// silently degrade to "verified absent" (which would re-baseline a real
+    /// registry's history). Unix-only: `chmod`-based permission denial has no
+    /// portable Windows equivalent, and this crate's other permission-style
+    /// tests are unix-gated the same way.
+    #[cfg(unix)]
+    #[test]
+    fn read_of_an_unreadable_present_file_is_a_real_error_not_absent() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch_dir("unreadable");
+        std::fs::write(lock_path(&dir.0), "version = 1\n").unwrap();
+        std::fs::set_permissions(lock_path(&dir.0), std::fs::Permissions::from_mode(0o000))
+            .unwrap();
+
+        // Skip if the test runs as root (or another privileged context) where
+        // permission bits don't actually block the read.
+        if std::fs::read_to_string(lock_path(&dir.0)).is_ok() {
+            return;
+        }
+        assert!(
+            read(&dir.0).is_err(),
+            "an unreadable-but-present file must not be reported as absent"
+        );
     }
 
     #[test]

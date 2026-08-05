@@ -257,6 +257,23 @@ impl Roots {
         }
     }
 
+    /// Where `bynk.schema.lock` lives — distinct from [`Self::resolve`]'s
+    /// `(src_root, tests_root)`, since a `Split` layout's roots are
+    /// subdirectories of the project root, but the registry belongs beside
+    /// `bynk.toml`, one level up, the same place `bynk.deploy.lock` lives.
+    ///
+    /// #1085 review: used only to give `schema_registry::parse`'s corruption
+    /// diagnostic a real location again — #1078 made `bynk-emit` disk-free
+    /// for this file, which cost the absolute path the old message carried.
+    /// Never used for I/O; `bynk-driver`'s own `schema_lock::lock_path` is
+    /// the one that actually names the file for its own error messages.
+    fn project_root(&self) -> &Path {
+        match self {
+            Roots::Single(root) => root,
+            Roots::Split { project_root, .. } => project_root,
+        }
+    }
+
     /// Slice 0: the project-root-relative prefix of the **primary** `include`
     /// root — the counterpart to [`Self::tests_prefix`]. Joined onto that
     /// tree's (root-relative) `source_path` to build each file's
@@ -578,6 +595,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         discovered,
         options.contracts,
         &options.schema_registry,
+        options.roots.project_root(),
         tys,
     );
     // #1078: `bynk-emit` no longer writes `bynk.schema.lock` itself — the
@@ -653,6 +671,7 @@ pub fn check_project(options: &CompileOptions) -> ProjectCheck {
         // `options.schema_registry` — pre-existing behaviour (finding #64's
         // own era), preserved as-is by #1078, not introduced by it.
         &SchemaLock::Off,
+        options.roots.project_root(),
         tys,
     );
     match run {
@@ -708,6 +727,7 @@ pub fn compile_in_memory(
         Some((vec![path], Vec::new())),
         false,
         &SchemaLock::Off,
+        &root,
         tys,
     );
     finish_build(run, ImportExt::Js)
@@ -778,6 +798,7 @@ pub fn analyse_in_memory_with_types(
         Some((vec![path.clone()], Vec::new())),
         false,
         &SchemaLock::Off,
+        &root,
         tys,
     );
     match run {
@@ -972,6 +993,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
         // covers the editor becoming a real file-content owner generally;
         // this specific flag was already, and stays, hardcoded off).
         &SchemaLock::Off,
+        roots.project_root(),
         tys,
     ) {
         RunChecks::Bailed {
@@ -3647,6 +3669,10 @@ fn run_checks(
     // test/LSP caller) skips it entirely. See `CompileOptions::schema_registry`
     // and `SchemaLock`. #1078: no disk access here — the caller pre-reads.
     schema_registry: &SchemaLock,
+    // #1085 review: only for `schema_registry::parse`'s corruption message —
+    // naming *which* project's lock file is corrupt, now that #1078 made
+    // `bynk-emit` disk-free (and so path-blind) for this file.
+    project_root: &Path,
     tys: &Arc<Types>,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
@@ -3914,7 +3940,7 @@ fn run_checks(
     let mut schema_effective_versions: HashMap<String, i64> = HashMap::new();
     let mut schema_registry_doc: Option<schema_registry::SchemaRegistry> = None;
     if let SchemaLock::On { existing } = schema_registry {
-        match schema_registry::parse(existing.as_deref()) {
+        match schema_registry::parse(existing.as_deref(), project_root) {
             Ok(existing_reg) => {
                 let mut schema_errors: Vec<CompileError> = Vec::new();
                 let (updated, effective) =
@@ -5791,6 +5817,7 @@ mod tests {
             None,
             false,
             &SchemaLock::Off,
+            roots.project_root(),
             &Arc::new(Types::new()),
         );
         let snapshots = match run {
@@ -5933,6 +5960,7 @@ mod tests {
             None,
             false,
             &SchemaLock::Off,
+            roots.project_root(),
             &Arc::new(Types::new()),
         );
         match run {

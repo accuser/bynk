@@ -21,9 +21,11 @@
 //! out through `ProjectOutput::schema_lock`; `bynk-driver`'s `schema_lock`
 //! module owns the actual read/atomic-write, ported verbatim (including the
 //! unchanged-content no-op and the directory fsync) from what used to live
-//! here.
+//! here. `parse` takes a `project_root: &Path` (#1085 review) purely to name
+//! the file in a corruption message — never for I/O.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -399,29 +401,37 @@ fn non_additive_error(
 /// `Some(text)` that is empty/unparseable/a different lock version is
 /// corruption, not a fresh project, and fails hard (`ledger.rs`'s own
 /// argument for the identical case) — never silently re-baselines.
-pub(crate) fn parse(existing: Option<&str>) -> Result<SchemaRegistry, String> {
+///
+/// `project_root` is used only to name the file in an error message — #1078
+/// made this function disk-free (and so path-blind) for the content itself;
+/// #1085 review restored the location context a corruption diagnostic lost
+/// as a result, without reintroducing any `fs`/`Path` I/O here.
+pub(crate) fn parse(existing: Option<&str>, project_root: &Path) -> Result<SchemaRegistry, String> {
     let Some(text) = existing else {
         return Ok(SchemaRegistry {
             version: lock_version(),
             events: BTreeMap::new(),
         });
     };
+    let path = project_root.join("bynk.schema.lock");
     if text.trim().is_empty() {
-        return Err(
-            "schema registry `bynk.schema.lock` is empty or truncated (corrupt); refusing \
-             to treat it as a fresh project — restore it from version control"
-                .to_string(),
-        );
+        return Err(format!(
+            "schema registry `{}` is empty or truncated (corrupt); refusing \
+             to treat it as a fresh project — restore it from version control",
+            path.display()
+        ));
     }
     let reg: SchemaRegistry = toml::from_str(text).map_err(|e| {
         format!(
-            "schema registry `bynk.schema.lock` is corrupt ({e}) — restore it from version control"
+            "schema registry `{}` is corrupt ({e}) — restore it from version control",
+            path.display()
         )
     })?;
     if reg.version != lock_version() {
         return Err(format!(
-            "unsupported schema registry version {}",
-            reg.version
+            "unsupported schema registry version {} (`{}`)",
+            reg.version,
+            path.display()
         ));
     }
     Ok(reg)
@@ -852,9 +862,13 @@ mod tests {
     // `bynk-driver`'s `schema_lock` module. What's left here is pure parsing,
     // covered directly with no disk needed at all.
 
+    fn test_root() -> &'static Path {
+        Path::new("/project")
+    }
+
     #[test]
     fn parse_of_absent_content_is_an_empty_registry() {
-        let reg = parse(None).unwrap();
+        let reg = parse(None, test_root()).unwrap();
         assert!(reg.events.is_empty());
     }
 
@@ -873,18 +887,20 @@ mod tests {
             events,
         };
         let body = serialize(&reg);
-        assert_eq!(parse(Some(&body)).unwrap(), reg);
+        assert_eq!(parse(Some(&body), test_root()).unwrap(), reg);
     }
 
     #[test]
     fn a_truncated_file_is_corruption_not_a_fresh_project() {
-        let err = parse(Some("   \n")).unwrap_err();
+        let err = parse(Some("   \n"), test_root()).unwrap_err();
         assert!(err.contains("restore it from version control"));
+        assert!(err.contains("/project/bynk.schema.lock"));
     }
 
     #[test]
     fn an_unparseable_file_is_corruption() {
-        let err = parse(Some("not valid toml {{{")).unwrap_err();
+        let err = parse(Some("not valid toml {{{"), test_root()).unwrap_err();
         assert!(err.contains("corrupt"));
+        assert!(err.contains("/project/bynk.schema.lock"));
     }
 }

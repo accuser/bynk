@@ -29,14 +29,13 @@ fn grammar_json() -> String {
 
 /// String literals that happen to share the two-dot `"bynk.x.y"` shape this
 /// regex uses as its heuristic for a diagnostic code, but are not one — a
-/// firstparty commons name (`firstparty.rs`'s `LOCALE_TYPES_UNIT`). Excluded
-/// by value rather than by skipping their whole file, since that file also
-/// contains genuine diagnostic emissions that must still be counted.
-///
-/// #1078: `schema_registry.rs`'s `LOCK_FILE` filename literal used to need an
-/// entry here too — it moved to `bynk-driver`'s `schema_lock` module (a crate
-/// this scan doesn't cover), so the entry is gone, not just vestigial.
-const NON_DIAGNOSTIC_LOOKALIKES: &[&str] = &["bynk.locale.types"];
+/// firstparty commons name (`firstparty.rs`'s `LOCALE_TYPES_UNIT`) or a
+/// filename (`schema_registry.rs`'s `parse`, #1085 review — named in a
+/// corruption message, not a `LOCK_FILE` constant as before #1078, but still
+/// the literal filename). Excluded by value rather than by skipping their
+/// whole file, since that file also contains genuine diagnostic emissions
+/// that must still be counted.
+const NON_DIAGNOSTIC_LOOKALIKES: &[&str] = &["bynk.locale.types", "bynk.schema.lock"];
 
 /// Collect every `"bynk.x.y"` string literal across the compiler source,
 /// excluding the registry module itself. Scans every compiler crate, since the
