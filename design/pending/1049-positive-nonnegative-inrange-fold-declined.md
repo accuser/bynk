@@ -25,7 +25,8 @@ string. That is what made the `NonEmpty` fold real: `MinLength(1)` is a spelling
 writes, and after the fold `String where NonEmpty` and `String where MinLength(1)` hash and match
 identically (pinned by `1021_refined_sugar_equivalence_cross_context`).
 
-`Positive`/`NonNegative` have no such counterpart, on either base:
+`Positive`/`NonNegative` have no counterpart the naming fold alone would collapse onto, on either
+base:
 
 - **`Float`.** `InRangeF`'s bounds are parsed `f64` literals, and the lexer rejects any literal that
   would parse to infinity outright — `bynk.lex.float_literal_overflow` fires whenever
@@ -43,7 +44,16 @@ identically (pinned by `1021_refined_sugar_equivalence_cross_context`).
   InRange(1, 9223372036854775807)` the same boundary type by coincidence of `i64`'s width, not by
   anything the two spellings actually assert in common.
 
-So neither base has a real second spelling for the fold to land on. Implementing it anyway means
+This is narrower than "no writable spelling ever collides with `Positive`/`NonNegative` today" — it
+does not follow. `Int where InRange(1, 100), Positive` and `Int where InRange(1, 100)` denote the same
+value set (`Positive` adds nothing once `InRange(1, 100)` already excludes 0 and below) but hash
+differently, both before this decision and after: naming-only folding turns the first into
+`"InRange(1, 100), InRange(1, inf)"`, still ≠ `"InRange(1, 100)"`. Collapsing that pair needs interval
+*merging* — checking whether one bound is redundant given another — which is R12.3's entailment work,
+not a by-product of renaming `Positive` to an `InRange`-shaped string. So this case is real, and it is
+inherited by R12.3 rather than fixed here.
+
+So neither base has a real second spelling naming alone would land the fold on. Implementing it anyway means
 `canon_predicate` inventing a synthetic string (`"InRange(1, inf)"` or similar) that nothing else can
 ever produce — observably identical to leaving `Positive` as its own literal, just with a different
 label. The one measurable effect is cost: every boundary type carrying a transparent
@@ -58,7 +68,9 @@ document's R12.3 (entailment) would want to consume, so `InRange(5, ∞)` could 
 the tree today — `#1021`'s research found none at v0.246-era `main`, and re-checked fresh here against
 this branch's base (`ff20783e`, 2026-08-04: `rg -n 'entail|⊨|fn .*subsumes|containment'` across
 `bynk-check`/`bynk-emit` returns only unrelated hits — a record-cycle graph, a substring search, a
-doc comment). So there is no consumer for the normalised form yet, and picking
+doc comment). `service_contract_hash` already consumes `canon_predicate`'s output on every emit, but
+nothing consumes the *Interval-domain* normal form specifically — the `[lo, hi]` shape R12.2 wants for
+containment checks. So there is no consumer for that shape yet, and picking
 the `∞` representation and the `Float` bound reading in isolation — without the entailment code that
 would exercise them — is exactly the kind of speculative infrastructure this codebase's own review
 culture flags elsewhere. The right time to settle both is together, when R12.3 is actually built: the
@@ -70,9 +82,12 @@ independently. The checker's existing split reading — `Int` `Positive` closed 
 `Positive` open at `(0, ∞)` — is internally consistent runtime behaviour, unaffected by this
 decision, and stays exactly as shipped.
 
-**Consequences.** #1049 closes with no code change. Appendix D's R12.2 row is updated to record the
-fold as declined-not-open, with the trigger for revisiting named as R12.3 landing. A future PR
-building entailment settles the `∞` representation as part of that work, not before it; if it turns
-out interval-arithmetic entailment does not need `Positive`/`NonNegative` folded into `InRange` at
-all (e.g. it dispatches per-predicate-name instead), this decision needs no reversal — it already
-does nothing today.
+**Consequences.** #1049 closes with no behaviour change (a pinning test now asserts the declined
+form directly, alongside the accepted `NonEmpty` fold's own pin). Appendix D's R12.2 row is updated
+to record the fold as declined-not-open, with the trigger for revisiting named as R12.3 landing. A
+future PR building entailment settles the `∞` representation as part of that work, not before it; it
+also inherits the redundant-conjunction case named above (`InRange(1, 100), Positive` still hashing
+differently from `InRange(1, 100)`) as a concrete example to check against, so it isn't rediscovered.
+If it turns out interval-arithmetic entailment does not need `Positive`/`NonNegative` folded into
+`InRange` at all (e.g. it dispatches per-predicate-name instead), this decision needs no reversal —
+it already does nothing today.
