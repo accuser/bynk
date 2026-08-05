@@ -53,7 +53,11 @@ fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
 #[test]
 fn rate_limiter_http_boundary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/rate-limiter/src");
-    let diag = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let diag = bynk_ide::diagnose_project(&root, &sources);
     let file = diag
         .files
         .iter()
@@ -246,7 +250,11 @@ fn two_context_call_contract_form_and_hash() {
             ("storefront.bynk", CONSUMER_SRC),
         ],
     );
-    let diag = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let diag = bynk_ide::diagnose_project(&root, &sources);
     let file = diag
         .files
         .iter()

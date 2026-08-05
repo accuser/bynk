@@ -1,7 +1,7 @@
 # Project content ownership — `bynk-lsp` becomes the sole reader of `.bynk` source content
 
 - **Status:** Slicing — slices 0–3 shipped (#1089, #1092, #1094, #1096);
-  slice 4 in progress (#1098, sub-slice 1/3). This doc's
+  slice 4 in progress (#1098, sub-slices 1–2/3). This doc's
   first pass merged still carrying every §3 question open (PR #1087, merged
   as ready-for-review without the review actually testing that assertion —
   exactly the failure mode `design/tracks/README.md`'s lifecycle step 2 warns
@@ -28,10 +28,12 @@
   underway: sub-slice 1 migrated `bynk-ide`'s own 18 inline-test sites via an
   in-crate `testkit` module — a second real correction found here too (an
   inline `#[cfg(test)] mod` block, not a separate file, or `fs_below_driver`
-  regresses; see §4). Spine issue
+  regresses; see §4). Sub-slice 2 migrated all 25 `bynk-lsp/tests` sites via
+  `bynk-testkit` (21 bare `diagnose_project` + 4 `diagnose_project_with` —
+  the latter including `project_model.rs`'s shared `rel_files` helper, whose
+  single conversion fixed 8 further tests indirectly). Spine issue
   [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 4's
-  remaining sub-slices (`bynk-lsp/tests`, then `bynkc/tests`/`bynk/tests`)
-  are next.
+  last sub-slice (`bynkc/tests`/`bynk/tests`) is next.
 - **Realises:** R2.3 (`../bynk-greenfield-compiler.md`, its rules table at
   line 2515) — *"no ambient filesystem or global state; `Sources` is
   constructed once, at the process edge, and is the compiler's only view of
@@ -408,10 +410,18 @@ Slices 2–6 keep their original substance, renumbered down by one.
   `bynk-ide/src/testkit.rs` file and moved `fs_below_driver`'s `bynk-ide`
   count from 0 back to 1: the probe only recognises an inline `#[cfg(test)]
   mod name { … }` block as test-scope, not a whole file gated by its
-  *declaration* in a different file. Fixed by inlining. Remaining
-  sub-slices: `bynk-lsp/tests`, then `bynkc/tests`/`bynk/tests`/`bynk-emit`'s
-  own `#[cfg(test)]` site, each via `bynk-testkit`. The §3.4 CI guard lands
-  with a later sub-slice, once "a remaining bare call site" is proven against
+  *declaration* in a different file. Fixed by inlining. **Sub-slice 2
+  shipped** — all 25 `bynk-lsp/tests` sites (21 bare `diagnose_project`
+  across `architecture_request.rs`, `code_actions.rs` ×9, `document_link_fixture.rs`,
+  `hover_references.rs` ×2, `interpolation_lsp.rs` ×4, `project_model.rs`,
+  `renderer_kind_coverage.rs`, `wire_contract_request.rs` ×2; 4
+  `diagnose_project_with` across `project_model.rs` ×3 —
+  including its shared `rel_files` helper, whose single conversion fixed 8
+  further tests indirectly, higher leverage than the per-site count alone
+  suggests — and `sequence_request.rs` ×1) via `bynk-testkit`. Remaining
+  sub-slice: `bynkc/tests`/`bynk/tests`/`bynk-emit`'s own `#[cfg(test)]` site.
+  The §3.4 CI guard lands with that final sub-slice, once "a remaining bare
+  call site" is proven against
   real migrations rather than designed in the abstract.
 - **Slice 5 — delete `discovery.rs`'s content-reading fallback branch**
   (§3.2, narrow: the enumeration walk and `project.rs`'s `use std::fs;` stay,
@@ -457,8 +467,8 @@ and when it's considered fresh.
       (#1094)
 - [x] Slice 3 — `bynk-testkit`, proved narrow (#1096)
 - [ ] Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by
-      crate (#1098) — sub-slice 1/3 shipped (`bynk-ide`'s own inline tests,
-      18 sites)
+      crate (#1098) — sub-slices 1–2/3 shipped (`bynk-ide`'s own inline
+      tests, 18 sites; `bynk-lsp/tests`, 25 sites)
 - [ ] Slice 5 — delete `discovery.rs`'s content-reading fallback branch
 
 ## 8. Done when

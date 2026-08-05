@@ -84,7 +84,11 @@ fn apply_text_edits(text: &str, edits: &[OneOf<TextEdit, AnnotatedTextEdit>]) ->
 #[test]
 fn unused_capability_quick_fix_round_trips() {
     let root = setup_project("unused", &[("billing/charge.bynk", UNUSED_CAP)]);
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let file = result
         .files
         .iter()
@@ -140,7 +144,11 @@ fn unused_capability_quick_fix_round_trips() {
 #[test]
 fn range_away_from_the_diagnostic_offers_nothing() {
     let root = setup_project("away", &[("billing/charge.bynk", UNUSED_CAP)]);
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let file = result
         .files
         .iter()
@@ -262,7 +270,11 @@ fn auto_uses_brings_a_commons_type_into_scope() {
             ("app/use.bynk", use_src.as_str()),
         ],
     );
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let (text, actions) =
         header_actions_for(&result, "app/use.bynk", "bynk.resolve.unknown_type", &root);
     assert_eq!(actions.len(), 1, "one candidate commons → one `uses` fix");
@@ -290,7 +302,11 @@ fn auto_uses_offers_one_action_per_ambiguous_candidate() {
             ),
         ],
     );
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let (_text, actions) =
         header_actions_for(&result, "app/use.bynk", "bynk.resolve.unknown_type", &root);
     let mut titles: Vec<String> = actions.iter().map(|a| action_parts(a).0).collect();
@@ -315,7 +331,11 @@ fn add_consumes_repairs_an_unconsumed_cross_context_call() {
             ("app/call.bynk", call.as_str()),
         ],
     );
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let (text, actions) = header_actions_for(
         &result,
         "app/call.bynk",
@@ -341,7 +361,11 @@ fn add_consumes_builtin_capability_then_given_reaches_clean() {
         "context app.relay\n\nservice relay {\n  on call() -> Effect[Int] {\n    let _ <- Logger.info(\"hi\")\n    1\n  }\n}\n",
     );
     let root = setup_project("builtincap", &[("app/relay.bynk", relay.as_str())]);
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let (text, actions) = header_actions_for(
         &result,
         "app/relay.bynk",
@@ -405,7 +429,11 @@ fn add_consumes_capability_extends_an_existing_braced_clause() {
             "context app.relay\n\nconsumes bynk { Logger }\n\nservice relay {\n  on call() -> Effect[Int] given Logger {\n    let r <- Fetch.send(\"u\")\n    1\n  }\n}\n",
         )],
     );
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let (text, actions) = header_actions_for(
         &result,
         "app/relay.bynk",
@@ -437,7 +465,11 @@ fn add_consumes_into_an_empty_braced_clause_is_canonical() {
             "context app.relay\n\nconsumes bynk {  }\n\nservice relay {\n  on call() -> Effect[Int] given Logger {\n    let _ <- Logger.info(\"hi\")\n    1\n  }\n}\n",
         )],
     );
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let (text, actions) = header_actions_for(
         &result,
         "app/relay.bynk",
@@ -462,7 +494,11 @@ fn bynk_list_deprecation_quick_fix_rewrites_to_method() {
     // machine-applicable rewrite to the method form. Project mode (the only
     // place `uses bynk.list` resolves).
     let root = setup_project("bynklist", &[("demo/demo.bynk", BYNK_LIST_DEPRECATED)]);
-    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let result = bynk_ide::diagnose_project(&root, &sources);
     let file = result
         .files
         .iter()

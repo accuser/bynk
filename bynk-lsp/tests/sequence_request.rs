@@ -8,7 +8,6 @@
 //! `Backend`, for the same reason `project_model.rs` does — a hermetic,
 //! scratch-project fixture rather than a live server session.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 struct Scratch(PathBuf);
@@ -76,10 +75,11 @@ service api from http {
 #[test]
 fn sequence_model_at_resolves_for_a_cursor_anywhere_in_the_handler_body() {
     let root = scratch("cursor_anywhere", &[("ratelimit.bynk", RATELIMIT_SRC)]);
-    let diag = bynk_ide::diagnose_project_with(
-        &bynk_ide::AnalysisRoots::SingleTree(root.0.clone()),
-        &HashMap::new(),
-    );
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let roots = bynk_ide::AnalysisRoots::SingleTree(root.0.clone());
+    let sources = bynk_testkit::read_project_sources(&roots);
+    let diag = bynk_ide::diagnose_project_with(&roots, &sources);
     let info = diag
         .sequence_info
         .get("ratelimit")

@@ -18,7 +18,12 @@ use bynk_ide::architecture::{CapabilityOrigin, NodeKind};
 use bynk_lsp::architecture_request;
 
 fn diagnose(root: &Path) -> ProjectDiagnostics {
-    bynk_ide::diagnose_project(root, &HashMap::new())
+    // Content-ownership track (#1086) slice 4: bynk-testkit's complete
+    // sources map instead of relying on bynk-emit's disk fallback.
+    let sources = bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+        root.to_path_buf(),
+    ));
+    bynk_ide::diagnose_project(root, &sources)
 }
 
 fn snapshots(diag: &ProjectDiagnostics) -> HashMap<PathBuf, String> {
