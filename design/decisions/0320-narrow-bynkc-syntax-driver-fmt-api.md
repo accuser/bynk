@@ -1,12 +1,6 @@
----
-level: patch
-changelog: **Breaking (Rust API, not language surface):** `bynkc` no longer re-exports `bynk-syntax`'s `ast`/`diagnostics`/`error`/`keywords`/`lexer`/`parser`/`span` modules, `bynk-driver`'s `coverage`/`test_json` modules, or the whole `bynk-fmt` crate as `bynkc::fmt` (only `bynkc`'s item re-exports, `CompileError`, `CompileOptions`, `compile_project`, and others, remain public)
-closes_rule: R10.4
----
+# 0320 — bynkc's published Rust API drops its remaining whole-module/whole-crate re-exports
 
-## ADR: narrow-bynkc-syntax-driver-fmt-api
-title: bynkc's published Rust API drops its remaining whole-module/whole-crate re-exports
-summary: Three re-exports T-D1 didn't scope (bynk-syntax's 7 modules, bynk-driver's coverage/test_json, bynk-fmt as fmt) are deleted; bynkc keeps its item re-exports
+- **Status:** Accepted (v0.247.10)
 
 **Context.** [ADR 0312](../decisions/0312-narrow-bynkc-public-api.md) (T-D1)
 deleted fourteen whole-module re-exports from `bynkc/src/lib.rs` — the ones

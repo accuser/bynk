@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.10** | **Breaking (Rust API, not language surface):** `bynkc` no longer re-exports `bynk-syntax`'s `ast`/`diagnostics`/`error`/`keywords`/`lexer`/`parser`/`span` modules, `bynk-driver`'s `coverage`/`test_json` modules, or the whole `bynk-fmt` crate as `bynkc::fmt` (only `bynkc`'s item re-exports, `CompileError`, `CompileOptions`, `compile_project`, and others, remain public) |
 | **v0.247.9** | Resolve #1049 — decline the Positive/NonNegative → InRange fold; neither base has a writable bound that could stand for infinity |
 | **v0.247.8** | "`bynk-driver`'s CLI-path project discovery (#1081) no longer silently skips the `no_sources`/`file_and_directory` project checks, panics on a missing `include` root, or produces nondeterministic build/diagnostic order" |
 | **v0.247.7** | The checker interns every `Ty` behind a `TyId` handle, making type identity a `u32` comparison rather than a recursive structural walk |
