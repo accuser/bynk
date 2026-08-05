@@ -1,6 +1,6 @@
 # Project content ownership — `bynk-lsp` becomes the sole reader of `.bynk` source content
 
-- **Status:** Slicing — slices 0–2 shipped (#1089, #1092, #1094). This doc's
+- **Status:** Slicing — slices 0–3 shipped (#1089, #1092, #1094, #1096). This doc's
   first pass merged still carrying every §3 question open (PR #1087, merged
   as ready-for-review without the review actually testing that assertion —
   exactly the failure mode `design/tracks/README.md`'s lifecycle step 2 warns
@@ -18,9 +18,14 @@
   `project_content`'s last remaining caller migration: `fs_below_driver`
   reaches 0 for `bynk-ide`. Slice 2 (`AnalysisRoots::lower()`'s `bynk.toml`
   read, #1094) shipped next — §3.5's settled fix, unchanged by slice 0's
-  correction (it never depended on `ProjectDirs`). Spine issue
-  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 3
-  (`bynk-testkit`) is next.
+  correction (it never depended on `ProjectDirs`). Slice 3 (`bynk-testkit`,
+  #1096) shipped next, proved on three of its four planned call-site
+  groups — `bynk-ide`'s own inline tests turned out to be a fourth group
+  this crate structurally cannot serve (§3.3's correction) — and found a
+  real bug (canonicalised sources-map keys breaking a project-consistency
+  check) before it could reach the full migration. Spine issue
+  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 4
+  (migrate the remaining ~120 test call sites) is next.
 - **Realises:** R2.3 (`../bynk-greenfield-compiler.md`, its rules table at
   line 2515) — *"no ambient filesystem or global state; `Sources` is
   constructed once, at the process edge, and is the compiler's only view of
@@ -182,7 +187,7 @@ only, per the original decomposition's narrow-reading bullet — the
 conditional "under the broad/under the narrow reading" framing in §4 and §8
 collapses to the narrow branch throughout.
 
-### 3.3 The test-harness replacement convention — SETTLED (crate boundary), shape deferred to slice 4
+### 3.3 The test-harness replacement convention — SETTLED, SHIPPED (slice 3, #1096)
 
 `diagnose_project(&root, &HashMap::new())` (or a small partial overlay) and
 `CompileOptions::single(root)`/`::split(root, paths)` are today's "just walk
@@ -261,20 +266,33 @@ This closes the doc's own named drift risk (a test silently missing files
 because the helper's walk resolves include/exclude differently from
 `discover_bynk_files`) **structurally**, not by proof alone: there is no
 second walk implementation to drift from the first, because there is only
-one. `bynk-testkit` becomes a dev-dependency of `bynk-ide`, `bynk-lsp`, and
-`bynkc` (which already dev-depends on `bynk-ide` for its integration tests,
-`bynkc/Cargo.toml:60-64` — so the crate-boundary shape has direct precedent).
+one. `bynk-testkit` became a dev-dependency of `bynk-lsp` and `bynkc` (which
+already dev-depends on `bynk-ide` for its integration tests,
+`bynkc/Cargo.toml:60-64` — so the crate-boundary shape has direct precedent)
+— **not** `bynk-ide` itself: making `bynk-ide`'s own inline tests dev-depend
+on a crate that depends on `bynk-ide` is a cyclic dev-dependency, and Cargo
+instantiates two separate copies of the `bynk_ide` crate for it (a real
+`E0308` — `crate::AnalysisRoots` and `bynk_ide::AnalysisRoots` become
+distinct types — found on the first attempt, not foreseen when this section
+was settled). `bynk-ide`'s own inline tests don't need a separate crate at
+all — they already have `crate::`-level access to `discover_files`, so their
+slice-4 migration writes a tiny private in-crate helper instead.
 
-**Deferred to slice 4, as originally planned.** The exact call-site-facing
-shape — a `read_project_sources`-style helper for the 85
-`diagnose_project(&root, &HashMap::new())`/`diagnose_project_with` sites vs.
-a `CompileOptions`-returning helper (needs `bynk-testkit` to also dev-depend
-on `bynk-emit`, itself unproblematic for a dev-only crate) for the 57
-`CompileOptions::single`/`::split` sites — is proven against one
-representative call site from each of the four groups named in §4 before the
-full migration. That proof pass is what slice 4 is *for*; this decision only
-settles that both helpers live in one new crate built the stated way, not
-their final signatures.
+Proven against one representative call site from three of the four groups
+named in §4 (`bynk-lsp/tests`, `bynkc/tests`'s `CompileOptions::single` and
+`::split` — the fourth, `bynk-ide`'s own inline tests, is out of scope for
+this crate per the paragraph above) before the full migration. That proof
+pass — including finding and fixing a real bug: an early version
+canonicalised the sources map's keys, which broke
+`bynk.project.inconsistent_commons_name`'s path-shape check the moment it
+ran against a real multi-root example, because `CompileOptions.sources`
+skips filesystem discovery entirely once populated, so the keys' shape
+*is* what downstream identity checks see. Fixed to match
+`bynk-driver/src/discovery.rs`'s own `sources_for_roots`/`read_bynk_tree`
+convention (the proven production populator, #1077/#1081): the literal
+discovered path, never canonicalised — is slice 3 (#1096); the full ~120-site
+migration is slice 4, and the §3.4 CI guard (originally planned as part of
+this slice) moves there too, since slice 4 is what actually needs it.
 
 ### 3.4 Migration order and mixed-state safety — SETTLED, incremental
 
@@ -366,17 +384,19 @@ Slices 2–6 keep their original substance, renumbered down by one.
   Shipped (#1094).** (§3.5) — mirrors `343b2482`'s CLI-side fix on the LSP
   side; `discover_files`'s own call to `lower()` passes an empty overlay,
   unchanged behaviour (§3.5's correction).
-- **Slice 3 — `bynk-testkit`, proved narrow** (§3.3): the new dev-only crate
-  and its `read_project_sources` helper, proved against a small
-  representative sample of call sites (one from each of `bynk-ide`'s inline
-  tests, `bynk-lsp/tests`, `bynkc/tests`'s `CompileOptions::single` use, and
-  `::split` use) before committing to the full migration. The §3.4 CI guard
-  (the call-site-count probe) is added here too, so slice 4 has something to
-  fail against from its first sub-slice.
+- **Slice 3 — `bynk-testkit`, proved narrow. Shipped (#1096).** The new
+  dev-only crate (`bynk-lsp`/`bynkc` dev-dependency, not `bynk-ide` — §3.3's
+  correction) and its `read_project_sources`/`compile_options_single`/
+  `compile_options_split` helpers, proved against one representative call
+  site each in `bynk-lsp/tests`, `bynkc/tests`'s `CompileOptions::single` use,
+  and `::split` use. The §3.4 CI guard (the call-site-count probe) moves to
+  slice 4 — this slice's job was proving the crate, not enforcing the
+  migration yet.
 - **Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by
-  crate** (§3.4): `bynk-ide`'s inline tests, then `bynk-lsp/tests`, then
+  crate** (§3.4): `bynk-ide`'s inline tests (its own private in-crate helper,
+  not `bynk-testkit` — §3.3's correction), then `bynk-lsp/tests`, then
   `bynkc/tests`/`bynk/tests`/`bynk-emit`'s own `#[cfg(test)]` site, each its
-  own PR.
+  own PR. The §3.4 CI guard lands with this slice's first sub-slice.
 - **Slice 5 — delete `discovery.rs`'s content-reading fallback branch**
   (§3.2, narrow: the enumeration walk and `project.rs`'s `use std::fs;` stay,
   serving `discover_bynk_files`). `fs_below_driver` reaches 0 for `bynk-ide`
@@ -419,7 +439,7 @@ and when it's considered fresh.
       `Backend::project_files` retired)
 - [x] Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay
       (#1094)
-- [ ] Slice 3 — `bynk-testkit`, proved narrow
+- [x] Slice 3 — `bynk-testkit`, proved narrow (#1096)
 - [ ] Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by crate
 - [ ] Slice 5 — delete `discovery.rs`'s content-reading fallback branch
 

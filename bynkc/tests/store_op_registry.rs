@@ -23,7 +23,7 @@ use std::fs;
 use bynk_check::store_ops::{
     CELL_STORE_OPS, LOG_STORE_OPS, MAP_STORE_OPS, SET_STORE_OPS, StoreOp, ops_for,
 };
-use bynkc::{CompileOptions, ProjectFailure, compile_project};
+use bynkc::{ProjectFailure, compile_project};
 
 /// `(store field declaration, receiver name, ops)` — one `store` field per
 /// dispatched storage kind. `Cache` shares `MAP_STORE_OPS` and is covered by the
@@ -61,7 +61,10 @@ fn probe_codes(tag: &str, calls: &[(&str, &str)]) -> Vec<String> {
     let dir = root.join("src");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("probe.bynk"), &src).unwrap();
-    let out = match compile_project(&CompileOptions::single(dir)) {
+    // Content-ownership track (#1086) slice 3: bynk-testkit's complete
+    // sources map, proved here as one of the representative call sites,
+    // instead of relying on bynk-emit's disk fallback.
+    let out = match compile_project(&bynk_testkit::compile_options_single(dir)) {
         Ok(_) => Vec::new(),
         Err(f) => ProjectFailure::flatten(f)
             .iter()

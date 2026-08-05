@@ -31,14 +31,18 @@
 //! requires these to read real output, and a skip could pass vacuously in-repo.
 
 use bynk_lsp::symbols;
-use std::collections::HashMap;
 use std::path::Path;
 
 /// The analysed text of `file` under `<crate>/{rel}` — real project output, so
 /// a fixture that stopped analysing cannot quietly pass these as empty text.
 fn analysed(rel: &str, file: &str) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let r = bynk_ide::diagnose_project(&root, &HashMap::new());
+    // Content-ownership track (#1086) slice 3: bynk-testkit's complete
+    // sources map, proved here as one of the representative call sites,
+    // instead of relying on bynk-emit's disk fallback.
+    let sources =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    let r = bynk_ide::diagnose_project(&root, &sources);
     let f = r
         .files
         .iter()

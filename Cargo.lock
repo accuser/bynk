@@ -243,6 +243,7 @@ dependencies = [
  "bynk-fmt",
  "bynk-ide",
  "bynk-syntax",
+ "bynk-testkit",
  "serde",
  "serde_json",
  "tokio",
@@ -279,6 +280,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bynk-testkit"
+version = "0.247.16"
+dependencies = [
+ "bynk-emit",
+ "bynk-ide",
+]
+
+[[package]]
 name = "bynk-wasm"
 version = "0.247.16"
 dependencies = [
@@ -306,6 +315,7 @@ dependencies = [
  "bynk-render",
  "bynk-strip",
  "bynk-syntax",
+ "bynk-testkit",
  "clap",
  "regex",
  "serde",

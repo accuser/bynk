@@ -1,0 +1,16 @@
+[package]
+name = "bynk-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Content-ownership track (#1086) slice 3: cross-crate test fixtures built directly on bynk-ide's production discovery (bynk_ide::discover_files), so a test's complete sources map can never resolve include/exclude differently from what actually gets compiled or analysed. Not a product crate: dev-only, unpublished, kept off the release workflows' crate list."
+
+[dependencies]
+bynk-ide.workspace = true
+bynk-emit.workspace = true
+
+[lib]
+path = "src/lib.rs"

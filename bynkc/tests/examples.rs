@@ -34,8 +34,12 @@ fn every_example_builds_for_workers() {
     for name in EXAMPLES {
         let root = example_root(name);
         let paths = bynkc::read_project_paths(&root);
+        // Content-ownership track (#1086) slice 3: bynk-testkit's complete
+        // sources map, proved here as one of the representative call sites,
+        // instead of relying on bynk-emit's disk fallback.
         bynkc::compile_project(
-            &bynkc::CompileOptions::split(root.clone(), paths).target(bynkc::BuildTarget::Workers),
+            &bynk_testkit::compile_options_split(root.clone(), paths)
+                .target(bynkc::BuildTarget::Workers),
         )
         .unwrap_or_else(|failure| {
             panic!(
