@@ -1,6 +1,12 @@
 # 0322 — `bynk-ide` exposes `ProjectDirs`, a narrow resolved-directories type, instead of `Roots`
 
-- **Status:** Accepted (v0.247.13)
+- **Status:** Accepted (v0.247.13). **Superseded by
+  [ADR 0325](0325-content-ownership-seam-simplification.md)** (v0.247.14):
+  implementing content-ownership.md's slice 0 found this type unnecessary —
+  `bynk-ide` already exposed `pub fn discover_files(roots: &AnalysisRoots) ->
+  Vec<PathBuf>`, already in production use by `Backend::project_files`, which
+  closes the gap this decision built a new type for. No `ProjectDirs`/
+  `resolve_dirs` were built.
 
 **Context.** `bynk-lsp` needs resolved include/exclude directories to do its
 own disk sweep for the content-ownership track
