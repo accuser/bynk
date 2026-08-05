@@ -1,6 +1,6 @@
 # Project content ownership — `bynk-lsp` becomes the sole reader of `.bynk` source content
 
-- **Status:** Slicing — slices 0 and 1 shipped (#1089, #1092). This doc's
+- **Status:** Slicing — slices 0–2 shipped (#1089, #1092, #1094). This doc's
   first pass merged still carrying every §3 question open (PR #1087, merged
   as ready-for-review without the review actually testing that assertion —
   exactly the failure mode `design/tracks/README.md`'s lifecycle step 2 warns
@@ -16,9 +16,11 @@
   rewritten. Slice 1 (renumbered — `symbols.rs`'s cross-file lookups, #1092)
   shipped next, and retired `Backend::project_files` entirely once it was
   `project_content`'s last remaining caller migration: `fs_below_driver`
-  reaches 0 for `bynk-ide`. Spine issue
-  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 2
-  (`AnalysisRoots::lower()`'s `bynk.toml` read) is next.
+  reaches 0 for `bynk-ide`. Slice 2 (`AnalysisRoots::lower()`'s `bynk.toml`
+  read, #1094) shipped next — §3.5's settled fix, unchanged by slice 0's
+  correction (it never depended on `ProjectDirs`). Spine issue
+  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 3
+  (`bynk-testkit`) is next.
 - **Realises:** R2.3 (`../bynk-greenfield-compiler.md`, its rules table at
   line 2515) — *"no ambient filesystem or global state; `Sources` is
   constructed once, at the process edge, and is the compiler's only view of
@@ -307,7 +309,7 @@ runtime code path — so a straggler is a
 CI failure on the stalled PR, not a silent pass. `discovery.rs`'s fallback
 (slice 6) is deleted only once the probe reads zero.
 
-### 3.5 `AnalysisRoots::lower()`'s own `bynk.toml` read — SETTLED
+### 3.5 `AnalysisRoots::lower()`'s own `bynk.toml` read — SETTLED, SHIPPED (slice 2, #1094)
 
 **Decision.** Independent of §3.1's correction (below) — this fix stands on
 its own merits, not by "falling out of" a `ProjectDirs`/`resolve_dirs` type
@@ -316,11 +318,18 @@ becomes `fn lower(&self, overlay: &HashMap<PathBuf, String>) ->
 bynk_emit::project::Roots`, threading `overlay` into the already-overlay-aware
 `bynk_emit::project::try_read_project_paths_with` (`bynk-emit/src/project/paths.rs:162`,
 already `pub`) instead of the disk-only `read_project_paths`, the same fix
-`343b2482` already applied on the CLI side. `lower()`'s only caller inside
-this crate is `diagnose_project_with` (`bynk-ide/src/lib.rs:266`, which
-already receives an `overlay` argument from every caller including
-`bynk-lsp`'s `run_project_diagnostics`), so the signature change is
-contained. Kept as its own slice because it changes the *already-shipped*,
+`343b2482` already applied on the CLI side.
+
+**Correction found under implementation:** this section's original text
+claimed "`lower()`'s only caller inside this crate is `diagnose_project_with`"
+— wrong, `discover_files` (`bynk-ide/src/lib.rs:234`) calls it too, with no
+overlay of its own to give. Slice 2 ships `discover_files` passing an empty
+overlay at its call site (`&HashMap::new()`) — its own `bynk.toml` freshness
+is unchanged (still disk-only, per §3.2's enumeration-stays-out-of-scope
+reading); only `diagnose_project_with` (`bynk-ide/src/lib.rs:266`, which
+already receives a real `overlay` from every caller, including `bynk-lsp`'s
+`run_project_diagnostics`) actually changes behaviour. Kept as its own slice
+because it changes the *already-shipped*,
 production-facing analysis path `diagnose_project_with` — a smaller, more
 isolated change than the seam slice 0 shipped, and safer to land separately.
 
@@ -353,8 +362,10 @@ Slices 2–6 keep their original substance, renumbered down by one.
   last remaining caller) is deleted entirely — `Backend::project_content`
   (slice 0) is now the sole project-enumeration entry point.
   `fs_below_driver`'s `bynk-ide` count reaches 0.
-- **Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay**
-  (§3.5) — mirrors `343b2482`'s CLI-side fix on the LSP side.
+- **Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay.
+  Shipped (#1094).** (§3.5) — mirrors `343b2482`'s CLI-side fix on the LSP
+  side; `discover_files`'s own call to `lower()` passes an empty overlay,
+  unchanged behaviour (§3.5's correction).
 - **Slice 3 — `bynk-testkit`, proved narrow** (§3.3): the new dev-only crate
   and its `read_project_sources` helper, proved against a small
   representative sample of call sites (one from each of `bynk-ide`'s inline
@@ -406,7 +417,8 @@ and when it's considered fresh.
       correction)
 - [x] Slice 1 — `symbols.rs` cross-file lookups take content (#1092;
       `Backend::project_files` retired)
-- [ ] Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay
+- [x] Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay
+      (#1094)
 - [ ] Slice 3 — `bynk-testkit`, proved narrow
 - [ ] Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by crate
 - [ ] Slice 5 — delete `discovery.rs`'s content-reading fallback branch

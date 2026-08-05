@@ -208,12 +208,25 @@ pub enum AnalysisRoots {
 }
 
 impl AnalysisRoots {
-    fn lower(&self) -> bynk_emit::project::Roots {
+    /// Content-ownership track (#1086) slice 2: `overlay` threads into
+    /// `try_read_project_paths_with` (already overlay-aware, already `pub`)
+    /// instead of the disk-only `read_project_paths`, so an unsaved edit to
+    /// `bynk.toml` itself — not just to the `.bynk` sources it names — is
+    /// visible to the `Project` variant's manifest read. Mirrors `343b2482`'s
+    /// CLI-side fix (`bynk-driver`'s `project_options`) on the LSP side.
+    ///
+    /// `discover_files` (below) has no overlay of its own to give (it takes
+    /// none), so it passes an empty one — its enumeration stays exactly as
+    /// disk-only as before; only `diagnose_project_with`'s real overlay
+    /// (threaded from every caller, including `bynk-lsp`'s
+    /// `run_project_diagnostics`) actually changes behaviour here.
+    fn lower(&self, overlay: &HashMap<PathBuf, String>) -> bynk_emit::project::Roots {
         match self {
             AnalysisRoots::SingleTree(root) => bynk_emit::project::Roots::Single(root.clone()),
             AnalysisRoots::Project(root) => bynk_emit::project::Roots::Split {
                 project_root: root.clone(),
-                paths: bynk_emit::project::read_project_paths(root),
+                paths: bynk_emit::project::try_read_project_paths_with(root, overlay)
+                    .unwrap_or_else(|_| bynk_emit::project::ProjectPaths::conventional(root)),
             },
         }
     }
@@ -232,7 +245,7 @@ impl AnalysisRoots {
 /// `compile_project` performs, `exclude` and the `out`/`node_modules` caches
 /// honoured. For enumerating a project's units without analysing it.
 pub fn discover_files(roots: &AnalysisRoots) -> Vec<PathBuf> {
-    bynk_emit::project::discover_project_files(&roots.lower())
+    bynk_emit::project::discover_project_files(&roots.lower(&HashMap::new()))
 }
 
 /// #302: the qualified name a file moved from `old_rel` to `new_rel` should
@@ -286,7 +299,7 @@ pub fn diagnose_project_with(
         sequence_info,
         boundary_info,
         doc_scope,
-    } = bynk_emit::project::analyse_project_with(&roots.lower(), overlay);
+    } = bynk_emit::project::analyse_project_with(&roots.lower(overlay), overlay);
     let mut by_file: HashMap<PathBuf, Vec<Diagnostic>> = HashMap::new();
     let mut unattributed = Vec::new();
     for ae in errors {
