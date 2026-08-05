@@ -418,7 +418,7 @@ service api from http {
     #[test]
     fn single_context_binds_a_builtin_capability_with_no_dangling_edge() {
         let root = setup_project("ratelimit", &[("ratelimit.bynk", RATELIMIT_SRC)]);
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let model = build_model(&diag);
 
         assert_eq!(
@@ -494,7 +494,7 @@ service run {
                 ("jobs.bynk", CONSUMER_SRC),
             ],
         );
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let model = build_model(&diag);
 
         let names: Vec<&str> = model.nodes.iter().map(|n| n.name.as_str()).collect();
@@ -590,7 +590,7 @@ consumes platformtime { Ping }
                 ("ops/jobs/b.bynk", CONSUMER_FILE_B),
             ],
         );
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let model = build_model(&diag);
 
         assert_eq!(
@@ -647,7 +647,7 @@ service api {
                 ("consumer.bynk", CONSUMER_SRC),
             ],
         );
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let model = build_model(&diag);
 
         assert_eq!(model.edges.len(), 1);

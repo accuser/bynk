@@ -678,7 +678,7 @@ service api from http {
     #[test]
     fn rate_limiter_get_check_client_is_a_bare_envelope_with_a_revalidated_client_id() {
         let root = setup_project("ratelimit", &[("ratelimit.bynk", RATELIMIT_SRC)]);
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = diag
             .boundary_info
             .get("ratelimit")
@@ -758,7 +758,7 @@ service api from http {
     #[test]
     fn rate_limiter_response_set_has_declared_constructed_and_boundary_implicit() {
         let root = setup_project("ratelimit-responses", &[("ratelimit.bynk", RATELIMIT_SRC)]);
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = diag.boundary_info.get("ratelimit").expect("entry");
 
         // Drive with the round's own retained `expr_types` for this file —
@@ -856,7 +856,7 @@ service checkout {
                 ("storefront.bynk", CONSUMER_SRC),
             ],
         );
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = diag
             .boundary_info
             .get("billing")
@@ -929,7 +929,7 @@ service Ping {
 }
 "#;
         let root = setup_project("zero-param", &[("solo.bynk", src)]);
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = diag.boundary_info.get("solo").expect("entry");
 
         let offset = find_offset(src, "on call()");
@@ -973,7 +973,7 @@ service api from http {
 }
 "#;
         let root = setup_project("ident-collision", &[("oddnames.bynk", SRC)]);
-        let diag = crate::diagnose_project(&root, &HashMap::new());
+        let diag = crate::testkit::diagnose_project(&root);
         let info = diag
             .boundary_info
             .get("oddnames")

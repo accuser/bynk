@@ -1,6 +1,7 @@
 # Project content ownership — `bynk-lsp` becomes the sole reader of `.bynk` source content
 
-- **Status:** Slicing — slices 0–3 shipped (#1089, #1092, #1094, #1096). This doc's
+- **Status:** Slicing — slices 0–3 shipped (#1089, #1092, #1094, #1096);
+  slice 4 in progress (#1098, sub-slice 1/3). This doc's
   first pass merged still carrying every §3 question open (PR #1087, merged
   as ready-for-review without the review actually testing that assertion —
   exactly the failure mode `design/tracks/README.md`'s lifecycle step 2 warns
@@ -23,9 +24,14 @@
   groups — `bynk-ide`'s own inline tests turned out to be a fourth group
   this crate structurally cannot serve (§3.3's correction) — and found a
   real bug (canonicalised sources-map keys breaking a project-consistency
-  check) before it could reach the full migration. Spine issue
-  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 4
-  (migrate the remaining ~120 test call sites) is next.
+  check) before it could reach the full migration. Slice 4 (#1098) is
+  underway: sub-slice 1 migrated `bynk-ide`'s own 18 inline-test sites via an
+  in-crate `testkit` module — a second real correction found here too (an
+  inline `#[cfg(test)] mod` block, not a separate file, or `fs_below_driver`
+  regresses; see §4). Spine issue
+  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 4's
+  remaining sub-slices (`bynk-lsp/tests`, then `bynkc/tests`/`bynk/tests`)
+  are next.
 - **Realises:** R2.3 (`../bynk-greenfield-compiler.md`, its rules table at
   line 2515) — *"no ambient filesystem or global state; `Sources` is
   constructed once, at the process edge, and is the compiler's only view of
@@ -393,10 +399,20 @@ Slices 2–6 keep their original substance, renumbered down by one.
   slice 4 — this slice's job was proving the crate, not enforcing the
   migration yet.
 - **Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by
-  crate** (§3.4): `bynk-ide`'s inline tests (its own private in-crate helper,
-  not `bynk-testkit` — §3.3's correction), then `bynk-lsp/tests`, then
-  `bynkc/tests`/`bynk/tests`/`bynk-emit`'s own `#[cfg(test)]` site, each its
-  own PR. The §3.4 CI guard lands with this slice's first sub-slice.
+  crate** (§3.4, spine sub-issue #1098, itself parenting one sub-issue per
+  crate): **sub-slice 1 shipped** — `bynk-ide`'s own 18 inline-test sites
+  (`architecture.rs`, `locals_nav.rs`, `sequence.rs`, `wire_contract.rs`),
+  via an inline `#[cfg(test)] mod testkit { … }` block at the end of
+  `lib.rs` — not a separate file, and not `bynk-testkit` (§3.3's cyclic-
+  dependency correction). A first attempt used a separate
+  `bynk-ide/src/testkit.rs` file and moved `fs_below_driver`'s `bynk-ide`
+  count from 0 back to 1: the probe only recognises an inline `#[cfg(test)]
+  mod name { … }` block as test-scope, not a whole file gated by its
+  *declaration* in a different file. Fixed by inlining. Remaining
+  sub-slices: `bynk-lsp/tests`, then `bynkc/tests`/`bynk/tests`/`bynk-emit`'s
+  own `#[cfg(test)]` site, each via `bynk-testkit`. The §3.4 CI guard lands
+  with a later sub-slice, once "a remaining bare call site" is proven against
+  real migrations rather than designed in the abstract.
 - **Slice 5 — delete `discovery.rs`'s content-reading fallback branch**
   (§3.2, narrow: the enumeration walk and `project.rs`'s `use std::fs;` stay,
   serving `discover_bynk_files`). `fs_below_driver` reaches 0 for `bynk-ide`
@@ -440,7 +456,9 @@ and when it's considered fresh.
 - [x] Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay
       (#1094)
 - [x] Slice 3 — `bynk-testkit`, proved narrow (#1096)
-- [ ] Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by crate
+- [ ] Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by
+      crate (#1098) — sub-slice 1/3 shipped (`bynk-ide`'s own inline tests,
+      18 sites)
 - [ ] Slice 5 — delete `discovery.rs`'s content-reading fallback branch
 
 ## 8. Done when
