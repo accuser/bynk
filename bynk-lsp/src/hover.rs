@@ -76,10 +76,13 @@ pub struct HoverInput<'a> {
     /// document is not open — the index rungs still answer from the snapshot.
     pub doc: Option<(&'a str, usize)>,
     pub uri: &'a Url,
-    /// Slice A: the project's `.bynk` files from the compiler's discovery —
-    /// every `include` root, `exclude` honoured. Was a single source root the
-    /// hover ladder hand-walked.
-    pub files: Option<&'a [PathBuf]>,
+    /// Content-ownership track (#1086) slice 0+1: a pre-read `(path, content)`
+    /// map for the project's `.bynk` files (the caller's overlay-then-disk
+    /// sweep) — was a bare path list the resolution rungs below read from
+    /// disk themselves. `describe_symbol_cross_file` (rung 9, still
+    /// path-based — its own migration is a later slice) derives its path list
+    /// from this map's keys rather than taking a second, separately-swept list.
+    pub files: Option<&'a HashMap<PathBuf, String>>,
 }
 
 /// The hover Markdown for the cursor, or `None` when no rung resolves it.
@@ -232,7 +235,10 @@ pub fn hover_content(input: &HoverInput<'_>) -> Option<String> {
         .or_else(|| {
             input
                 .files
-                .and_then(|root| crate::symbols::describe_symbol_cross_file(root, input.uri, &name))
+                .map(|content| content.keys().cloned().collect::<Vec<_>>())
+                .and_then(|paths| {
+                    crate::symbols::describe_symbol_cross_file(&paths, input.uri, &name)
+                })
                 .map(|(_other_uri, desc)| desc)
         })
         .or_else(|| crate::symbols::describe_firstparty_symbol(&name))
