@@ -894,13 +894,15 @@ mod tests {
     fn a_truncated_file_is_corruption_not_a_fresh_project() {
         let err = parse(Some("   \n"), test_root()).unwrap_err();
         assert!(err.contains("restore it from version control"));
-        assert!(err.contains("/project/bynk.schema.lock"));
+        // Not a full path match (`\` vs `/` makes that Windows-fragile) —
+        // just proving the filename made it into the message at all.
+        assert!(err.contains("bynk.schema.lock"));
     }
 
     #[test]
     fn an_unparseable_file_is_corruption() {
         let err = parse(Some("not valid toml {{{"), test_root()).unwrap_err();
         assert!(err.contains("corrupt"));
-        assert!(err.contains("/project/bynk.schema.lock"));
+        assert!(err.contains("bynk.schema.lock"));
     }
 }
