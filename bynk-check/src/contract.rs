@@ -531,6 +531,17 @@ mod tests {
         assert_eq!(canon_predicate(&PredKind::NonEmpty), "MinLength(1)");
     }
 
+    /// The counterpart to `non_empty_canonicalises_to_min_length_one`: the
+    /// `Positive`/`NonNegative` → `InRange` fold is **declined** (#1049) —
+    /// neither base has a writable bound standing for `∞`. Pinned so
+    /// reversing that decision trips a named test rather than a fixture
+    /// hash.
+    #[test]
+    fn positive_and_non_negative_stay_their_own_canonical_literals() {
+        assert_eq!(canon_predicate(&PredKind::Positive), "Positive");
+        assert_eq!(canon_predicate(&PredKind::NonNegative), "NonNegative");
+    }
+
     /// The consequence that matters: two boundary types spelling the same
     /// refinement differently must hash identically, or two contexts that
     /// agree perfectly 409 each other.
