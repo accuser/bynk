@@ -1,11 +1,6 @@
----
-level: patch
-changelog: Slice 0+1 of the content-ownership track (#1086) ships — `bynk-lsp`'s completion, signature help, and hover no longer read project files from disk themselves; ADR 0322's `ProjectDirs`/`resolve_dirs` design is superseded, unneeded once implementation found `bynk_ide::discover_files` already closes the gap
----
+# 0325 — ADR 0322 is superseded — no `ProjectDirs`/`resolve_dirs`; `bynk_ide::discover_files` already closes the seam
 
-## ADR: content-ownership-seam-simplification
-title: ADR 0322 is superseded — no `ProjectDirs`/`resolve_dirs`; `bynk_ide::discover_files` already closes the seam
-summary: Implementation found the seam ADR 0322 designed already exists as a public, already-used function; slice 0 merges with slice 1 since a scaffolding-only slice has no legitimate caller here
+- **Status:** Accepted (v0.247.14)
 
 **Context.** [ADR 0322](0322-content-ownership-seam-type.md) designed a new
 `bynk-ide` type, `ProjectDirs`, and a new method,

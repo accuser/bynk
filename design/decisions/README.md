@@ -17,6 +17,7 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 
 | # | Decision | Status |
 |---|---|---|
+| [0325](0325-content-ownership-seam-simplification.md) | **ADR 0322 is superseded — no `ProjectDirs`/`resolve_dirs`; `bynk_ide::discover_files` already closes the seam** (v0.247.14) — Implementation found the seam ADR 0322 designed already exists as a public, already-used function; slice 0 merges with slice 1 since a scaffolding-only slice has no legitimate caller here | Accepted (v0.247.14) |
 | [0324](0324-content-ownership-testkit-crate.md) | **Cross-crate test fixtures get a new `bynk-testkit` crate, built on production discovery** (v0.247.13) — A dev-only crate over `bynk_ide::discover_files` replaces the ~125-site `diagnose_project(&root, &HashMap::new())`/`CompileOptions::single`/`::split` convention, instead of extending `bynk-emit`'s existing crate-private testkit | Accepted (v0.247.13) |
 | [0323](0323-content-ownership-enumeration-scope.md) | **R2.3's ambient-filesystem ban is scoped to file contents, not directory enumeration** (v0.247.13) — `discover_bynk_files`'s `fs::read_dir` walk stays below the driver; only `read_source`'s content fallback is in the content-ownership track's scope | Accepted (v0.247.13) |
 | [0322](0322-content-ownership-seam-type.md) | **`bynk-ide` exposes `ProjectDirs`, a narrow resolved-directories type, instead of `Roots`** (v0.247.13) — The seam `bynk-lsp`'s disk sweep and `AnalysisRoots::lower()` both build from, without re-exporting `bynk-emit`'s `Roots` | Accepted (v0.247.13) |
