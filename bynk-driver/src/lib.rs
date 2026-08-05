@@ -6,12 +6,12 @@
 //! only by comments and a skip-able parity test. The single implementation
 //! lives here, parameterised by the program name that prefixes messages.
 
+use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use bynk_emit::project::{
-    self, CompileOptions, ProjectPathsError, read_project_paths, try_read_project_paths,
-};
+use bynk_emit::project::{self, CompileOptions, ProjectPathsError, try_read_project_paths_with};
 use bynk_fmt::{FormatOptions, IndentStyle, format_source};
 
 pub mod coverage;
@@ -40,7 +40,8 @@ pub use output::{write_compiled_file, write_output};
 /// directory) — [`discovery::DiscoveryError`], not a panic.
 pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::DiscoveryError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        let paths = read_project_paths(input);
+        let paths = try_read_project_paths_with(input, &manifest_overlay(input))
+            .unwrap_or_else(|_| project::ProjectPaths::conventional(input));
         options_for_split(input, paths)
     } else {
         let sources = discovery::read_bynk_tree_single(input)?;
@@ -55,11 +56,33 @@ pub fn project_options(input: &Path) -> Result<CompileOptions, discovery::Discov
 /// plainly exist on disk.
 pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectOptionsError> {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        let paths = try_read_project_paths(input)?;
+        let paths = try_read_project_paths_with(input, &manifest_overlay(input))
+            .map_err(ProjectOptionsError::Paths)?;
         Ok(options_for_split(input, paths)?)
     } else {
         let sources = discovery::read_bynk_tree_single(input)?;
         Ok(CompileOptions::single(input.to_path_buf()).sources(sources))
+    }
+}
+
+/// `bynk.toml`'s own content, keyed exactly as [`try_read_project_paths_with`]
+/// looks it up (`project_root.join("bynk.toml")`, unmodified — the literal-path
+/// branch of `discovery::read_source`'s overlay lookup, so this never needs to
+/// match a canonicalised key).
+///
+/// #1077 review: without this, both entry points above read `bynk.toml`
+/// through `bynk-emit`'s own disk-fallback (`read_source`'s `fs::read_to_string`
+/// on an overlay miss) — the one on-disk read #1081 left the CLI path still
+/// implicitly depending on `bynk-emit` for, despite that PR's claim of a fully
+/// fallback-free CLI path. A missing/unreadable `bynk.toml` yields an empty
+/// overlay, which `try_read_project_paths_with` already treats as "no
+/// manifest" (falls back to the conventional layout) — the same degrade
+/// `read_project_paths`/`try_read_project_paths` used to provide.
+fn manifest_overlay(input: &Path) -> HashMap<PathBuf, String> {
+    let toml_path = input.join("bynk.toml");
+    match fs::read_to_string(&toml_path) {
+        Ok(text) => HashMap::from([(toml_path, text)]),
+        Err(_) => HashMap::new(),
     }
 }
 
@@ -963,5 +986,54 @@ mod tests {
             args.apply_to(FormatOptions::default()).expect("valid"),
             FormatOptions::default()
         );
+    }
+
+    /// A throwaway on-disk directory, removed on drop (including on panic) —
+    /// mirrors `bynk-driver/tests/project_diagnostics.rs`'s own `Scratch`.
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scratch_dir(tag: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "bynk_1077_{tag}_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        Scratch(dir)
+    }
+
+    /// #1077 review: `manifest_overlay` keys its entry exactly as
+    /// `try_read_project_paths_with` looks it up — `root.join("bynk.toml")`,
+    /// literal, no canonicalisation — and reads `bynk.toml`'s real content.
+    /// This is what stops that lookup from falling through to `bynk-emit`'s
+    /// own disk fallback; a mismatched key would silently degrade to the
+    /// conventional layout instead of surfacing as a test failure here, so
+    /// this asserts the map entry directly rather than only the end-to-end
+    /// behaviour (which the integration test in `project_diagnostics.rs`
+    /// covers).
+    #[test]
+    fn manifest_overlay_keys_and_reads_a_real_bynk_toml() {
+        let dir = scratch_dir("manifest_overlay");
+        let toml = "[paths]\ninclude = [\"lib\"]\n";
+        fs::write(dir.0.join("bynk.toml"), toml).unwrap();
+
+        let overlay = manifest_overlay(&dir.0);
+
+        assert_eq!(
+            overlay.get(&dir.0.join("bynk.toml")).map(String::as_str),
+            Some(toml)
+        );
+    }
+
+    #[test]
+    fn manifest_overlay_is_empty_with_no_bynk_toml() {
+        let dir = scratch_dir("manifest_overlay_missing");
+        assert!(manifest_overlay(&dir.0).is_empty());
     }
 }

@@ -68,8 +68,9 @@ pub use diagnostics::{
     AttributedError, ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure,
 };
 pub use paths::{
-    ProjectPaths, ProjectPathsError, read_project_paths, try_read_project_paths, worker_dir_name,
-    worker_handlers_output_path, worker_handlers_source_path,
+    ProjectPaths, ProjectPathsError, read_project_paths, try_read_project_paths,
+    try_read_project_paths_with, worker_dir_name, worker_handlers_output_path,
+    worker_handlers_source_path,
 };
 pub use symbols::{FileDeclIndex, UnitTable};
 pub use validate::check_function_type_boundary_items;
