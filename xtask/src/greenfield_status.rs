@@ -241,9 +241,14 @@ fn fs_below_driver(root: &Path) -> Probe {
         let flagged = production_std_fs_files(&files);
         let count = flagged.len();
         total += count;
+        let facts: Vec<FsImportFacts> = files.iter().map(|(_, s)| fs_import_facts(s)).collect();
+        let parents: Vec<Option<usize>> = files
+            .iter()
+            .map(|(p, _)| module_parent(p, &files))
+            .collect();
         let floor = flagged
             .iter()
-            .filter(|&&i| file_is_named_fs_floor(krate, &files, i))
+            .filter(|&&i| file_is_named_fs_floor(krate, &files, &facts, &parents, i))
             .count();
         total_floor += floor;
         let residual = count - floor;
@@ -287,29 +292,51 @@ const NAMED_FS_EXCEPTIONS: &[(&str, &str, &str)] = &[
 /// Is flagged file `files[i]` (already known, by [`production_std_fs_files`], to touch
 /// `std::fs` in production scope) a **named floor** file — every production-scope touch
 /// it has is either inside a [`NAMED_FS_EXCEPTIONS`] function for this exact
-/// `(krate, file)`, or outside any fn entirely (a bare import declaration, which reads
-/// but performs no filesystem operation by itself)? A single disallowed touch — inside
-/// an unlisted fn, or inside a listed fn's *file* but wrong *name* — makes the whole
-/// file residual: partial credit isn't meaningful here, since the point is "can a
-/// reader stop cross-referencing track docs for this file," not a ratio.
-fn file_is_named_fs_floor(krate: &str, files: &[(PathBuf, String)], i: usize) -> bool {
+/// `(krate, file)`, or a bare `use` import declaration (which reads but performs no
+/// filesystem operation by itself, unlike a module-scope `static`/`const` initialiser or
+/// macro invocation that might)? `facts`/`parents` are the caller's already-computed
+/// [`fs_import_facts`]/[`module_parent`] vectors for `files`, threaded through rather
+/// than recomputed per flagged file.
+///
+/// A single disallowed touch — inside an unlisted fn, inside a listed fn's *file* but
+/// wrong *name*, or outside every fn and not a plain import — makes the whole file
+/// residual: partial credit isn't meaningful here, since the point is "can a reader stop
+/// cross-referencing track docs for this file," not a ratio. Likewise, a file this
+/// function attributes *no* touch line to at all (despite the caller already knowing it's
+/// flagged — [`line_touches_std_fs`]'s re-implementation of the file-level detection
+/// disagreeing with it) reads as residual, not floor: an unattributable touch means this
+/// classifier doesn't understand the file, which must fail loud, not quiet.
+fn file_is_named_fs_floor(
+    krate: &str,
+    files: &[(PathBuf, String)],
+    facts: &[FsImportFacts],
+    parents: &[Option<usize>],
+    i: usize,
+) -> bool {
     let (path, _) = &files[i];
     let rel = path.to_string_lossy().replace('\\', "/");
-    let facts: Vec<FsImportFacts> = files.iter().map(|(_, s)| fs_import_facts(s)).collect();
-    let parents: Vec<Option<usize>> = files.iter().map(|(p, _)| module_parent(p, files)).collect();
     let lines: Vec<&str> = files[i].1.lines().collect();
     let ranges = test_mod_ranges(&lines);
     let fn_ranges = production_fn_ranges(&lines, &ranges);
 
+    let mut saw_touch = false;
     for (li, line) in lines.iter().enumerate() {
         if in_test_range(li, &ranges) {
             continue;
         }
-        if !line_touches_std_fs(i, line, &facts, &parents, files) {
+        if !line_touches_std_fs(i, line, facts, parents, files) {
             continue;
         }
+        saw_touch = true;
         let Some(fn_name) = enclosing_fn(li, &fn_ranges) else {
-            continue; // a bare import declaration — never itself a violation
+            // No enclosing fn is harmless only when the line is literally an import
+            // declaration. A module-scope `static`/`const` initialiser, a macro
+            // invocation, or a fn shape `fn_name_on_line` can't parse (`extern "C" fn`)
+            // does real I/O outside every known range and must read as residual.
+            if use_declaration(line).is_some() {
+                continue;
+            }
+            return false;
         };
         let named = NAMED_FS_EXCEPTIONS
             .iter()
@@ -318,7 +345,7 @@ fn file_is_named_fs_floor(krate: &str, files: &[(PathBuf, String)], i: usize) ->
             return false;
         }
     }
-    true
+    saw_touch
 }
 
 /// Does `line` (already known to be production-scope) itself touch `std::fs` — by the
@@ -2238,6 +2265,16 @@ commons app.demo {
         );
     }
 
+    /// Build the `facts`/`parents` vectors [`file_is_named_fs_floor`] now takes as
+    /// caller-supplied arguments, the same way [`fs_below_driver`] does, so each test
+    /// below reads as "classify this file" rather than repeating the setup.
+    fn classify(krate: &str, files: &[(PathBuf, String)], i: usize) -> bool {
+        let facts: Vec<FsImportFacts> = files.iter().map(|(_, s)| fs_import_facts(s)).collect();
+        let parents: Vec<Option<usize>> =
+            files.iter().map(|(p, _)| module_parent(p, files)).collect();
+        file_is_named_fs_floor(krate, files, &facts, &parents, i)
+    }
+
     /// The concrete #1104 shape, in miniature: `project.rs`'s bare `use std::fs;` (no
     /// enclosing fn — never itself a violation) plus `discovery.rs`'s two named-exception
     /// functions. The whole file must read as a named floor, not residual.
@@ -2253,7 +2290,7 @@ commons app.demo {
                 "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n\npub(crate) fn read_adapter_binding(path: &Path) -> std::io::Result<String> {\n    fs::read_to_string(path)\n}\n".to_string(),
             ),
         ];
-        assert!(file_is_named_fs_floor("bynk-emit", &files, 1));
+        assert!(classify("bynk-emit", &files, 1));
     }
 
     /// A new, unlisted fn touching `std::fs` in the *same file* as two named exceptions
@@ -2271,7 +2308,7 @@ commons app.demo {
                 "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n\nfn some_new_helper() {\n    let _ = fs::write(\"x\", \"y\");\n}\n".to_string(),
             ),
         ];
-        assert!(!file_is_named_fs_floor("bynk-emit", &files, 1));
+        assert!(!classify("bynk-emit", &files, 1));
     }
 
     /// A file whose only production-scope touch is a bare `use std::fs;` import — no
@@ -2283,7 +2320,7 @@ commons app.demo {
             PathBuf::from("project.rs"),
             "use std::fs;\n\nmod discovery;\n".to_string(),
         )];
-        assert!(file_is_named_fs_floor("bynk-emit", &files, 0));
+        assert!(classify("bynk-emit", &files, 0));
     }
 
     /// The same `discovery.rs` shape under the wrong crate label must not read as a
@@ -2302,7 +2339,35 @@ commons app.demo {
                 "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n".to_string(),
             ),
         ];
-        assert!(!file_is_named_fs_floor("bynk-ide", &files, 1));
+        assert!(!classify("bynk-ide", &files, 1));
+    }
+
+    /// Review finding (#1106): a module-scope `std::fs` touch that isn't an import
+    /// declaration — a `static` initialiser doing real I/O — has no enclosing fn either,
+    /// but is a genuine R2.3 violation and must not be waved through as a floor just
+    /// because it sits outside every known fn range.
+    #[test]
+    fn file_is_named_fs_floor_false_for_a_module_scope_static_that_reads() {
+        let files = [(
+            PathBuf::from("project.rs"),
+            "use std::fs;\n\nstatic ROOT: once_cell::sync::Lazy<String> = once_cell::sync::Lazy::new(|| fs::read_to_string(\"x\").unwrap());\n"
+                .to_string(),
+        )];
+        assert!(!classify("bynk-emit", &files, 0));
+    }
+
+    /// Same review finding, the [`fn_name_on_line`] half: an `extern "C" fn` (a modifier
+    /// combination the parser doesn't strip) produces no [`production_fn_ranges`] entry
+    /// at all, so its whole body would fall into the "no enclosing fn" branch. It must
+    /// still read as residual, not floor, once it touches `std::fs`.
+    #[test]
+    fn file_is_named_fs_floor_false_for_an_unparsed_extern_fn_body() {
+        let files = [(
+            PathBuf::from("project.rs"),
+            "use std::fs;\n\nextern \"C\" fn callback() {\n    let _ = fs::read_dir(\".\");\n}\n"
+                .to_string(),
+        )];
+        assert!(!classify("bynk-emit", &files, 0));
     }
 
     // --- emit_abi_shapes (#999 Decision E) ----------------------------------
