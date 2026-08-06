@@ -203,12 +203,30 @@ function needing a `bynk-project` type's privates — which is the direction thi
 
 The same question needed asking of `diagnostics.rs`, which the first pass never assigned a home at all.
 Of its seven top-level items, four are pure bookkeeping (`Mode`, `AttributedError`, `ProjectFailure`, plus
-the crate-private `ErrorSink`) — no `bynk_check` anywhere. The other three are checking results in
-substance: `ProjectAnalysis` carries `pub ty_intern: Arc<bynk_check::checker::Types>` plus `ProjectIndex`,
-`FileHints`, `FileExprTypes`, `FileLocals`, `FileRequirements` — every field a checker output;
-`ContextSequenceInfo` carries `resolver::CrossContextInfo`; `ContextBoundaryInfo` is AST-typed but built
-during `run_checks`'s `Checked` arm from `combined_types_for`/`unit_tables`, the same checking pass, not
-during discovery.
+the crate-private `ErrorSink`) — no `bynk_check` anywhere. `ContextSequenceInfo` carries
+`resolver::CrossContextInfo`, a clean checker output. `ContextBoundaryInfo` is AST-typed but built during
+`run_checks`'s `Checked` arm from `combined_types_for`/`unit_tables`, the same checking pass, not
+discovery.
+
+`ProjectAnalysis` is not the same shape as those two, and an earlier pass of this section overstated it as
+one: it has twelve fields, not the six enumerated here on a first read (`snapshots`, `errors`, `index`,
+`hints`, `expr_types`, `ty_intern`, `locals`, `requirements`, `unit_sources`, `sequence_info`,
+`boundary_info`, `doc_scope`), and "every field a checker output" is false of it. `index` (`ProjectIndex`),
+`hints`, `expr_types`, `ty_intern` (`Arc<bynk_check::checker::Types>`), `locals` and `requirements` are
+checker outputs, cleanly. But `snapshots: Vec<(PathBuf, String)>` is, by its own doc comment,
+"`(project-relative source path, analysed text)` for every file read, including clean files" — a
+discovery-and-read output, produced whether or not checking ran, and the single most project-model-shaped
+field on the struct. `errors: Vec<AttributedError>` holds the exact type this same section sends to
+`bynk-project` two paragraphs up as plain bookkeeping. `unit_sources` is a qualified-unit-name → source-file
+map "in discovery order" — R3.7's territory. `doc_scope` is assembled from the `uses`/`consumes` edges,
+unit-graph facts. `ProjectAnalysis` is a *composite*: some fields are checker outputs, some are project-model
+facts that happen to be populated in the same pass today. It stays on the checking side not because every
+field demands it, but because only something sitting above both `bynk-project` and `bynk-check` — §3.3(a)'s
+new entry point — can assemble a value with both kinds of field in it. That's a real shape constraint on
+P4.1, not just a placement one: the entry point's return type has to surface `bynk-project`-shaped
+discovery data (`snapshots`, `unit_sources`) alongside `bynk-check`-shaped checking data, not just the
+latter, which "the analogue of `ProjectAnalysis`" (§3.3(a)) was already committing to without saying so
+explicitly.
 
 Being `bynk_check`-free isn't the whole test, though, and `Mode` shows the other way it can fail. Its use
 sites split across two functions, not one: `check_unit_files` (`project.rs:3210`), which takes
@@ -270,6 +288,14 @@ orchestrator wouldn't survive its own phase.
 today and would have to become a real `bynk-project` API (or gain a builder) once the struct moves without
 it. (a)–(c) all screen what the moving item needs; (d) is the direction that bites when something *staying
 behind* needs the moving item's insides.
+
+A fifth thing this list still doesn't say, because (a)–(d) all assume the item being tested is
+homogeneous: **a composite item — part project fact, part checker output, like `ProjectAnalysis` — doesn't
+split field-by-field and doesn't stay whole on either side. It resolves upward**, to whatever sits above
+both `bynk-project` and `bynk-check`, which for `ProjectAnalysis` is §3.3(a)'s new entry point. (a)–(d)
+decide where a *homogeneous* item's line is; a composite's line is "wherever both its parts are already
+in scope," which is a different question and needs asking explicitly rather than answered by running (a)
+on a struct and stopping at the first field that fails it.
 
 Public surface: `bynk-project` exports only what its real consumers use (mirroring R10.4's existing
 discipline), not a blanket glob. The exact enumerated list is P4.0's job, not a design question — reviewed
@@ -474,9 +500,11 @@ reviewer watches for it, not because this phase can prevent it — phase 5 is th
 conflated.** `bynk-driver/src/discovery.rs`'s "100+ call sites" names the `diagnose_project(&root,
 &HashMap::new())` pattern, not `analyse_project_with` specifically — verified: `analyse_project_with` has
 exactly one production caller outside `bynk-emit`, `bynk-ide/src/lib.rs:320`, inside `diagnose_project_with`,
-which `diagnose_project` (`bynk-ide/src/lib.rs:287`) wraps. 87 `diagnose_project(` call sites exist across
-the tree, all reaching `analyse_project_with` indirectly through that one wrapper — none of them is
-something P4.2 edits. P4.2's actual edit surface is the wrapper's one call. What the 100+ figure is
+which `diagnose_project` (`bynk-ide/src/lib.rs:287`) wraps. 85 `diagnose_project(` call sites exist across
+the tree (87 raw text matches include the function's own two definitions — `bynk-ide/src/lib.rs:287` and
+a same-named `:410` test-module helper that itself calls the public one), all reaching
+`analyse_project_with` indirectly through that one wrapper — none of them is something P4.2 edits. P4.2's
+actual edit surface is the wrapper's one call. What the 100+ figure is
 genuine evidence for is different and stronger stated correctly: that many tests exercise this analysis
 path *without naming it*, so they'll catch behavioural drift from P4.1's relocation without failing on the
 repoint itself — which is exactly the gap §4's LSP-surface-fixture requirement exists to close, not a
@@ -523,12 +551,15 @@ this doc refers to them by letter until they exist — the pattern `compiler-arc
 - **ADR-A — phase 4 extracts today's name-keyed project-model logic into `bynk-project`; it does not
   build the reference's typed `ProjectGraph`/`UnitId`/`ContractHash` struct, which is phase 8's.** §3.1
   (Q1), §3.4 (Q4).
-- **ADR-B — `bynk-project`'s module boundary is a four-part test, not "no literal `bynk_check` import."**
-  Excludes `symbols.rs` in full, `schema_registry.rs`'s `reconcile` (but not its `parse`/`serialize`), and
-  `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` (but not its
-  `AttributedError`/`ErrorSink`/`ProjectFailure`) as `bynk-check`-owned concerns reached through
-  unqualified, glob-sourced names a literal-string grep misses. Also excludes `Mode` — `bynk_check`-free,
-  but consumed only by `run_checks`/`check_unit_files`, which stay in `bynk-emit` — and flags two
+- **ADR-B — `bynk-project`'s module boundary is a four-part test plus a fifth rule for composites, not
+  "no literal `bynk_check` import."** Excludes `symbols.rs` in full and `schema_registry.rs`'s `reconcile`
+  (but not its `parse`/`serialize`) as `bynk-check`-owned concerns reached through unqualified,
+  glob-sourced names a literal-string grep misses. Excludes `ContextSequenceInfo`/`ContextBoundaryInfo` on
+  the same ground, and `ProjectAnalysis` on a different one — it's a composite of discovery and checker
+  outputs, not a homogeneous checker-output struct, and resolves upward to §3.3(a)'s new entry point
+  rather than splitting or moving whole (but not `diagnostics.rs`'s `AttributedError`/`ErrorSink`/
+  `ProjectFailure`, which are plain bookkeeping). Also excludes `Mode` — `bynk_check`-free, but consumed
+  only by `run_checks`/`check_unit_files`, which stay in `bynk-emit` — and flags two
   boundary-crossing costs a same-crate view hides: `paths.rs`'s dependency on `bynk-emit`'s own
   `json_string`, and `schema_registry.rs`'s private-field construction, which `reconcile` needs from the
   checking side once `SchemaRegistry` moves. §3.2 (Q2).
@@ -538,7 +569,7 @@ this doc refers to them by letter until they exist — the pattern `compiler-arc
   load-bearing and hardest-to-reverse of the three: it fixes the shape `bynk-ide`'s live analysis path
   takes for the phase-4-to-phase-5 window. Its direct edit surface is one call site
   (`bynk-ide/src/lib.rs:320`, behind the stable `diagnose_project`/`diagnose_project_with` wrapper); its
-  coverage surface is wider — the 87 `diagnose_project(` call sites across the tree exercise this path
+  coverage surface is wider — 85 `diagnose_project(` call sites across the tree exercise this path
   without naming it, catching behavioural drift without gating the repoint itself.
 
 Lands as `design/pending/project-model-settling.md`.
