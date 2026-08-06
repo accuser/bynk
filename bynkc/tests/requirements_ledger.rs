@@ -3,9 +3,7 @@
 //! the *source*, never from the capability. These tests drive `diagnose_project`
 //! over one-file projects and inspect `ProjectDiagnostics::requirements`.
 
-use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
 
 use bynk_check::requirements::{Requirement, RequirementSource};
 use bynk_ide::diagnose_project;
@@ -17,7 +15,12 @@ fn requirements_for(tag: &str, bynk: &str) -> Vec<Requirement> {
     let src = root.join("src");
     fs::create_dir_all(&src).unwrap();
     fs::write(src.join("shop.bynk"), bynk).unwrap();
-    let result = diagnose_project(&src, &HashMap::<PathBuf, String>::new());
+    let result = diagnose_project(
+        &src,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (src).to_path_buf(),
+        )),
+    );
     let reqs: Vec<Requirement> = result
         .requirements
         .values()

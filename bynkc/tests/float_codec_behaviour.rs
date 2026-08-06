@@ -154,7 +154,7 @@ fn float_boundary_codec_behaviour() {
     let fixture: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/positive/207_workers_float_boundary/src");
     let out = bynkc::compile_project(
-        &bynkc::CompileOptions::single(fixture)
+        &bynk_testkit::compile_options_single(fixture)
             .target(bynkc::BuildTarget::Workers)
             .platform(bynkc::Platform::Cloudflare),
     )

@@ -60,7 +60,7 @@ fn hello_world_builds_on_both_targets() {
     let paths = bynkc::read_project_paths(&root);
     for target in [bynkc::BuildTarget::Bundle, bynkc::BuildTarget::Workers] {
         let out = bynkc::compile_project(
-            &bynkc::CompileOptions::split(root.clone(), paths.clone()).target(target),
+            &bynk_testkit::compile_options_split(root.clone(), paths.clone()).target(target),
         )
         .unwrap_or_else(|failure| {
             panic!(
@@ -76,7 +76,7 @@ fn hello_world_builds_on_both_targets() {
     }
     // The workers build must produce the deployable Worker directory.
     let workers = bynkc::compile_project(
-        &bynkc::CompileOptions::split(root, paths).target(bynkc::BuildTarget::Workers),
+        &bynk_testkit::compile_options_split(root, paths).target(bynkc::BuildTarget::Workers),
     )
     .unwrap_or_else(|_| panic!("workers build failed"));
     for needed in [
@@ -126,7 +126,7 @@ fn every_example_output_passes_tsc_strict() {
         // split-paths form additionally emits test-runner modules, whose
         // staging layout is `bynkc test`'s concern, not this gate's.
         let out = bynkc::compile_project(
-            &bynkc::CompileOptions::single(example_root(name).join("src"))
+            &bynk_testkit::compile_options_single(example_root(name).join("src"))
                 .target(bynkc::BuildTarget::Workers),
         )
         .unwrap_or_else(|_| panic!("examples/{name} failed to compile"));

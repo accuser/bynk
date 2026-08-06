@@ -83,7 +83,7 @@ fn hello_world_serves_on_workerd() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/hello-world");
     let paths = bynkc::read_project_paths(&root);
     let out = bynkc::compile_project(
-        &bynkc::CompileOptions::split(root, paths).target(bynkc::BuildTarget::Workers),
+        &bynk_testkit::compile_options_split(root, paths).target(bynkc::BuildTarget::Workers),
     )
     .map_err(bynkc::ProjectFailure::flatten)
     .expect("hello-world compiles for Workers");

@@ -10,7 +10,7 @@
 
 use std::fs;
 
-use bynkc::{CompileOptions, ProjectFailure, compile_project};
+use bynkc::{ProjectFailure, compile_project};
 
 /// Compile `bynk` as a one-file `context shop` and return its diagnostic
 /// category codes (empty on success).
@@ -19,7 +19,7 @@ fn codes(tag: &str, bynk: &str) -> Vec<String> {
     let src = root.join("src");
     fs::create_dir_all(&src).unwrap();
     fs::write(src.join("shop.bynk"), bynk).unwrap();
-    let out = match compile_project(&CompileOptions::single(src.clone())) {
+    let out = match compile_project(&bynk_testkit::compile_options_single(src.clone())) {
         Ok(_) => Vec::new(),
         Err(f) => ProjectFailure::flatten(f)
             .iter()

@@ -13,7 +13,12 @@ fn fixture_root() -> PathBuf {
 
 #[test]
 fn context_diagnostic_is_attributed_to_its_file() {
-    let result = bynk_ide::diagnose_project(&fixture_root(), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root(),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root()).to_path_buf(),
+        )),
+    );
 
     // Every discovered file appears, clean ones with an empty list.
     let by_path: HashMap<_, _> = result
@@ -145,7 +150,12 @@ fn multi_file_commons_src_tree_analyses_clean() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/positive/252_multi_file_commons_dotted_test/src");
 
-    let result = bynk_ide::diagnose_project(&src, &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &src,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (src).to_path_buf(),
+        )),
+    );
 
     // Both sibling files are discovered and analysed.
     let seen: Vec<String> = result

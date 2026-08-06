@@ -4,7 +4,6 @@
 //! under nesting and shadowing.
 
 use bynk_check::locals::{LocalBinding, locals_at};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn fixture_root(which: &str) -> PathBuf {
@@ -40,7 +39,12 @@ fn names_at(locals: &[LocalBinding], offset: usize) -> Vec<String> {
 
 #[test]
 fn every_binding_kind_is_recorded() {
-    let result = bynk_ide::diagnose_project(&fixture_root("inlay/clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root("inlay/clean"),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root("inlay/clean")).to_path_buf(),
+        )),
+    );
     let (locals, _) = locals_for(&result, "shop/util.bynk");
     let names: std::collections::HashSet<&str> = locals.iter().map(|b| b.name.as_str()).collect();
     for want in ["n", "xs", "total", "first", "f", "twice", "acc", "x"] {
@@ -52,7 +56,12 @@ fn every_binding_kind_is_recorded() {
 
 #[test]
 fn nested_block_bindings_are_scoped_to_their_block() {
-    let result = bynk_ide::diagnose_project(&fixture_root("locals"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root("locals"),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root("locals")).to_path_buf(),
+        )),
+    );
     let (locals, text) = locals_for(&result, "m.bynk");
 
     // Inside the `if`-then block, `inner` is in scope (with the param `n`).
@@ -76,7 +85,12 @@ fn nested_block_bindings_are_scoped_to_their_block() {
 
 #[test]
 fn shadowing_resolves_to_the_latest_binding() {
-    let result = bynk_ide::diagnose_project(&fixture_root("locals"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root("locals"),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root("locals")).to_path_buf(),
+        )),
+    );
     let (locals, text) = locals_for(&result, "m.bynk");
 
     // `let x = n` then `let x = x + 1`; at the tail, exactly one `x` is in

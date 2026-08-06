@@ -12,7 +12,7 @@
 //! it does not itself `consumes` (the direction an ordinary `consumes` edge
 //! never wires).
 
-use bynkc::{BuildTarget, CompileOptions};
+use bynkc::BuildTarget;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -131,7 +131,7 @@ fn workers_events_fanout_do_and_wrangler_wiring() {
     fs::write(proj.join("notifications.bynk"), SOURCE_NOTIFICATIONS).unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(
@@ -304,7 +304,7 @@ fn workers_events_pattern_leaves_fanout_routing_unchanged() {
     .unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(
@@ -436,7 +436,7 @@ fn workers_events_envelope_param_type_checks_and_leaves_fanout_unchanged() {
     .unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(
@@ -588,7 +588,7 @@ fn workers_events_nested_payload_field_gets_a_transitive_codec() {
     fs::write(proj.join("notifications.bynk"), SOURCE_NOTIFICATIONS).unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(

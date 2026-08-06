@@ -61,7 +61,7 @@
 //! SIGKILL. Both wrangler children are stopped from a `Drop` impl so a
 //! panicking assertion still tears them down.
 
-use bynkc::{BuildTarget, CompileOptions};
+use bynkc::BuildTarget;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -420,7 +420,7 @@ fn per_publisher_fifo_on_workerd() {
     fs::write(proj.join("subscriber.bynk"), SOURCE_SUBSCRIBER).unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(

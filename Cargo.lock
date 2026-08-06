@@ -169,6 +169,7 @@ dependencies = [
  "bynk-fmt",
  "bynk-render",
  "bynk-syntax",
+ "bynk-testkit",
  "clap",
  "serde",
  "serde_json",

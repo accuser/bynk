@@ -162,7 +162,7 @@ fn websocket_chatroom_runs_on_bundle() {
     let fixture: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/positive/236_websocket_chatroom/src");
     let out = bynkc::compile_project(
-        &bynkc::CompileOptions::single(fixture).target(bynkc::BuildTarget::Bundle),
+        &bynk_testkit::compile_options_single(fixture).target(bynkc::BuildTarget::Bundle),
     )
     .map_err(bynkc::ProjectFailure::flatten)
     .expect("the chat-room bundle fixture must compile");

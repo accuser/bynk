@@ -825,7 +825,7 @@ fn verify(tag: &str, source: &str, driver: &str) {
     let src = tmp.join("src");
     fs::create_dir_all(&src).unwrap();
     fs::write(src.join("shop.bynk"), source).unwrap();
-    let out = bynkc::compile_project(&bynkc::CompileOptions::single(src.clone()))
+    let out = bynkc::compile_project(&bynk_testkit::compile_options_single(src.clone()))
         .map_err(bynkc::ProjectFailure::flatten)
         .expect("the store agent must compile");
 

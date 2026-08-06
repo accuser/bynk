@@ -247,7 +247,12 @@ fn add_cross_context_capability_synthesises_an_absent_clause() {
 
 #[test]
 fn baseline_fixtures_carry_no_diagnostics() {
-    let result = bynk_ide::diagnose_project(&fixture_root(), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root(),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root()).to_path_buf(),
+        )),
+    );
     for f in &result.files {
         assert!(
             f.diagnostics.is_empty(),

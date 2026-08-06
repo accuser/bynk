@@ -35,8 +35,8 @@ fn deleting_a_unit_prunes_its_stale_emitted_output() {
 
     let compile = || {
         let paths = bynkc::read_project_paths(&root);
-        bynkc::compile_project(&bynkc::CompileOptions::split(root.clone(), paths)).unwrap_or_else(
-            |f| {
+        bynkc::compile_project(&bynk_testkit::compile_options_split(root.clone(), paths))
+            .unwrap_or_else(|f| {
                 panic!(
                     "compile failed: {:?}",
                     f.errors
@@ -44,8 +44,7 @@ fn deleting_a_unit_prunes_its_stale_emitted_output() {
                         .map(|e| (&e.source_path, e.error.category, &e.error.message))
                         .collect::<Vec<_>>()
                 )
-            },
-        )
+            })
     };
 
     let out = compile();
@@ -106,8 +105,8 @@ fn a_node_modules_subtree_is_never_descended_into() {
         "commons only\n\nfn f() -> Int {\n  1\n}\n",
     );
     let paths = bynkc::read_project_paths(&root);
-    let out =
-        bynkc::compile_project(&bynkc::CompileOptions::split(root, paths)).unwrap_or_else(|f| {
+    let out = bynkc::compile_project(&bynk_testkit::compile_options_split(root, paths))
+        .unwrap_or_else(|f| {
             panic!(
                 "compile failed: {:?}",
                 f.errors

@@ -14,7 +14,7 @@
 //! Both skip loudly without a toolchain; `BYNK_REQUIRE_TSC=1` turns the skip
 //! into a failure.
 
-use bynkc::{BuildTarget, CompileOptions};
+use bynkc::BuildTarget;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -332,7 +332,7 @@ fn cross_context_caller_reads_live_id_and_fails_closed() {
     fs::write(proj.join("b.bynk"), SOURCE_B).unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(
@@ -426,7 +426,7 @@ fn bundle_cross_context_caller_reads_the_consuming_context_name() {
     fs::write(proj.join("d.bynk"), SOURCE_D).unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Bundle),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Bundle),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(
@@ -498,7 +498,7 @@ fn cross_context_caller_side_codec_round_trips_a_user_payload() {
     fs::write(proj.join("b.bynk"), SOURCE_CODEC_B).unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(

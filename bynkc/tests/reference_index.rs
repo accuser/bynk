@@ -18,7 +18,12 @@ fn smoke_root() -> PathBuf {
 }
 
 fn analyse(root: &Path) -> (ProjectIndex, HashMap<String, String>) {
-    let result = bynk_ide::diagnose_project(root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        root,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (root).to_path_buf(),
+        )),
+    );
     for f in &result.files {
         assert!(
             f.diagnostics.is_empty(),

@@ -6,7 +6,6 @@
 //! The fixture (`134_url_shortener`) declares two `String`-refined types in one
 //! commons — `ShortCode` and `LongUrl` — a family of two over `String`.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bynk_check::index::{ProjectIndex, SymbolKey, SymbolKind};
@@ -16,7 +15,12 @@ fn fixture_root() -> PathBuf {
 }
 
 fn analyse(root: &Path) -> ProjectIndex {
-    let result = bynk_ide::diagnose_project(root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        root,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (root).to_path_buf(),
+        )),
+    );
     for f in &result.files {
         assert!(
             f.diagnostics.is_empty(),

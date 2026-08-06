@@ -46,7 +46,7 @@ fn compile_fixture(id: &str, source: &str) -> Result<(), Vec<CompileError>> {
         let file = root.join(&rel);
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, source).unwrap();
-        let result = bynkc::compile_project(&bynkc::CompileOptions::single(root.clone()))
+        let result = bynkc::compile_project(&bynk_testkit::compile_options_single(root.clone()))
             .map_err(bynkc::ProjectFailure::flatten)
             .map(|_| ());
         let _ = fs::remove_dir_all(&root);

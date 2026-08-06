@@ -21,7 +21,7 @@ fn compile_reps(source: &str) -> (String, String) {
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("reps.bynk"), source).unwrap();
 
-    let out = bynkc::compile_project(&bynkc::CompileOptions::single(src.clone()))
+    let out = bynkc::compile_project(&bynk_testkit::compile_options_single(src.clone()))
         .map_err(bynkc::ProjectFailure::flatten)
         .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
 

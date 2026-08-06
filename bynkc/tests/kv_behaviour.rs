@@ -207,7 +207,7 @@ fn kv_adapter_behaviour() {
     let fixture: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/positive/214_kv_list_bundle/src");
     let out = bynkc::compile_project(
-        &bynkc::CompileOptions::single(fixture)
+        &bynk_testkit::compile_options_single(fixture)
             .target(bynkc::BuildTarget::Bundle)
             .platform(bynkc::Platform::Cloudflare),
     )

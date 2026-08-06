@@ -41,7 +41,7 @@
 //! is compiled (so its worker directory exists) but never run, since nothing
 //! here exercises emission or fan-out.
 
-use bynkc::{BuildTarget, CompileOptions};
+use bynkc::BuildTarget;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -302,7 +302,7 @@ fn events_boundary_rejects_malformed_payload_and_envelope_on_workerd() {
     fs::write(proj.join("probe.bynk"), SOURCE).unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(tmp.join("proj")).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(tmp.join("proj")).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(
@@ -465,7 +465,7 @@ fn events_boundary_field_default_cross_context_on_workerd() {
     .unwrap();
 
     let out = match bynkc::compile_project(
-        &CompileOptions::single(proj.clone()).target(BuildTarget::Workers),
+        &bynk_testkit::compile_options_single(proj.clone()).target(BuildTarget::Workers),
     ) {
         Ok(o) => o,
         Err(failure) => panic!(

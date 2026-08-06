@@ -144,17 +144,16 @@ fn starter_renders_compiles_and_is_fmt_clean() {
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join(format!("{name}.bynk")), &rendered).unwrap();
 
-    let result = bynk_emit::project::compile_project(&bynk_emit::project::CompileOptions::single(
-        root.clone(),
-    ))
-    .map(|_| ())
-    .map_err(|f| {
-        bynk_emit::project::ProjectFailure::flatten(f)
-            .iter()
-            .map(|e| format!("{}: {}", e.category, e.message))
-            .collect::<Vec<_>>()
-            .join("; ")
-    });
+    let result =
+        bynk_emit::project::compile_project(&bynk_testkit::compile_options_single(root.clone()))
+            .map(|_| ())
+            .map_err(|f| {
+                bynk_emit::project::ProjectFailure::flatten(f)
+                    .iter()
+                    .map(|e| format!("{}: {}", e.category, e.message))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            });
     let _ = fs::remove_dir_all(&root);
     result.expect("the scaffolded starter must compile");
 }

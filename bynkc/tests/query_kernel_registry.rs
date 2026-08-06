@@ -28,7 +28,7 @@ use std::fs;
 use bynk_check::builtin_names::methods as builtin_methods;
 use bynk_check::kernel_methods::{KernelMethod, QUERY_METHODS};
 use bynk_check::store_ops::MAP_QUERY_ACCESSORS;
-use bynkc::{CompileOptions, ProjectFailure, compile_project};
+use bynkc::{ProjectFailure, compile_project};
 
 /// Compile a probe agent with `store items: Map[String, Int]` whose handler
 /// evaluates each given expression (a `<recv>.<member>` access), and return
@@ -47,7 +47,7 @@ fn probe_codes(tag: &str, exprs: &[String]) -> Vec<String> {
     let dir = root.join("src");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("probe.bynk"), &src).unwrap();
-    let out = match compile_project(&CompileOptions::single(dir)) {
+    let out = match compile_project(&bynk_testkit::compile_options_single(dir)) {
         Ok(_) => Vec::new(),
         Err(f) => ProjectFailure::flatten(f)
             .iter()

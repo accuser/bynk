@@ -1,7 +1,7 @@
 # Project content ownership — `bynk-lsp` becomes the sole reader of `.bynk` source content
 
-- **Status:** Slicing — slices 0–3 shipped (#1089, #1092, #1094, #1096);
-  slice 4 in progress (#1098, sub-slices 1–2/3). This doc's
+- **Status:** Slicing — slices 0–4 shipped (#1089, #1092, #1094, #1096,
+  #1098). This doc's
   first pass merged still carrying every §3 question open (PR #1087, merged
   as ready-for-review without the review actually testing that assertion —
   exactly the failure mode `design/tracks/README.md`'s lifecycle step 2 warns
@@ -31,9 +31,15 @@
   regresses; see §4). Sub-slice 2 migrated all 25 `bynk-lsp/tests` sites via
   `bynk-testkit` (21 bare `diagnose_project` + 4 `diagnose_project_with` —
   the latter including `project_model.rs`'s shared `rel_files` helper, whose
-  single conversion fixed 8 further tests indirectly). Spine issue
-  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 4's
-  last sub-slice (`bynkc/tests`/`bynk/tests`) is next.
+  single conversion fixed 8 further tests indirectly). Sub-slice 3 migrated
+  the remaining 78 sites — 27 `diagnose_project` in `bynkc/tests`, 50
+  `CompileOptions::single`/`::split` in `bynkc/tests`/`bynk/tests`, and
+  `bynk-emit/src/project.rs`'s own 1 site — completing the migration. No
+  separate §3.4 CI guard was built: slice 5's own fallback deletion turned
+  out to already be the loud-failure mechanism the guard was meant to add
+  (§3.4's final correction). Spine issue
+  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 5
+  (delete `discovery.rs`'s content-reading fallback) is next.
 - **Realises:** R2.3 (`../bynk-greenfield-compiler.md`, its rules table at
   line 2515) — *"no ambient filesystem or global state; `Sources` is
   constructed once, at the process edge, and is the compiler's only view of
@@ -313,27 +319,32 @@ review culture (a 125-site all-at-once diff is far outside the norm
 evidenced by every other slice in this doc's own §4) and gives earlier
 signal per straggler.
 
-Rather than a runtime hard-error in `discovery.rs` (impossible to scope
-correctly — the fallback can't tell a "not yet migrated" caller from a
-legitimate one without call-site-level plumbing that doesn't exist), the
-loud-failure mechanism is a **structural CI guard** shaped exactly like the
-existing `fs_below_driver` probe (`design/greenfield-status.md`): an `xtask`
-probe, added alongside slice 4, that counts remaining
-`diagnose_project(&root, &HashMap::new())`/`diagnose_project_with(_, &HashMap::new())`/
-bare `CompileOptions::single`/`::split` (no `.sources(...)` chained) call
-sites outside `bynk-testkit` itself, checked in as an expected value the same
-way `fs_below_driver`'s "4 files (bynk-emit=2, bynk-ide=2, bynk-fmt=0)" is —
-CI fails on *any* disagreement between a fresh count and the checked-in
-figure (not specifically a "must decrease" comparison, which would need an
-undefined baseline to compare against), and each migrating PR updates the
-checked-in figure downward via the probe's own `--apply`, the same motion
-`fs_below_driver` already uses. This is the same idiom this repo already
-runs, verified against `design/greenfield-status.md`'s own generated header
-("a disagreement between this file and a fresh run fails
-`greenfield_status_table_is_current`") — a structural drift guard, not a new
-runtime code path — so a straggler is a
-CI failure on the stalled PR, not a silent pass. `discovery.rs`'s fallback
-(slice 6) is deleted only once the probe reads zero.
+**Final correction, settled at slice 4's actual completion (not designed in
+advance):** no separate `xtask` CI-guard probe was built. The originally
+planned mechanism — a `fs_below_driver`-shaped probe counting remaining bare
+call sites, checked in as an expected value — would have meant adding a 14th
+probe to `xtask/src/greenfield_status.rs`, a module whose own doc scopes it
+to "measuring the tree against `design/bynk-greenfield-compiler.md`" — a
+different design doc, for a different, already-closed set of R2.x rules.
+Bolting a content-ownership-specific, one-time migration-completion check
+onto that module would have been exactly the kind of speculative,
+purpose-mismatched infrastructure this repo's own review culture flags
+elsewhere ([ADR 0319](../decisions/0319-positive-nonnegative-inrange-fold-declined.md)).
+
+More importantly, it turned out to be unnecessary: once slice 5 deletes
+`discovery.rs`'s content-reading fallback, a straggler bare call site stops
+being a *silent* problem on its own — with no fallback left to fill an
+empty/incomplete sources map, `read_source` has only the overlay to answer
+from, so a missed conversion fails its own test loudly (empty or missing
+file content breaks the test's assertions) the moment slice 5 ships. Slice
+5's own deletion **is** the loud-failure mechanism the original design
+question was solving for; a separate static-analysis probe would have been
+redundant defence-in-depth for a migration that, by the time slice 4
+actually finished (all identified sites converted across `bynk-ide`,
+`bynk-lsp/tests`, `bynkc/tests`/`bynk/tests`, and `bynk-emit`'s own
+`#[cfg(test)]` module), had nothing left for a probe to guard against.
+`discovery.rs`'s fallback (slice 5) is deleted now that migration is
+complete.
 
 ### 3.5 `AnalysisRoots::lower()`'s own `bynk.toml` read — SETTLED, SHIPPED (slice 2, #1094)
 
@@ -418,11 +429,16 @@ Slices 2–6 keep their original substance, renumbered down by one.
   `diagnose_project_with` across `project_model.rs` ×3 —
   including its shared `rel_files` helper, whose single conversion fixed 8
   further tests indirectly, higher leverage than the per-site count alone
-  suggests — and `sequence_request.rs` ×1) via `bynk-testkit`. Remaining
-  sub-slice: `bynkc/tests`/`bynk/tests`/`bynk-emit`'s own `#[cfg(test)]` site.
-  The §3.4 CI guard lands with that final sub-slice, once "a remaining bare
-  call site" is proven against
-  real migrations rather than designed in the abstract.
+  suggests — and `sequence_request.rs` ×1) via `bynk-testkit`. **Sub-slice 3
+  shipped** — the remaining 78 sites: 27 `diagnose_project` sites across 13
+  `bynkc/tests` files, 50 `CompileOptions::single`/`::split` sites across 38
+  files in `bynkc/tests`/`bynk/tests` (via `bynk-testkit`, now also a
+  dev-dependency of `bynk`), and `bynk-emit/src/project.rs`'s own one bare
+  `CompileOptions::split` site, via a private in-crate helper mirroring
+  `bynk-ide`'s (§3.3's cyclic-dependency correction applies here too —
+  `bynk-emit`'s own `#[cfg(test)]` module can't depend on `bynk-testkit`
+  either) added inside its existing inline `mod tests { … }` block. No
+  separate §3.4 CI guard was built in the end — see §3.4's final correction.
 - **Slice 5 — delete `discovery.rs`'s content-reading fallback branch**
   (§3.2, narrow: the enumeration walk and `project.rs`'s `use std::fs;` stay,
   serving `discover_bynk_files`). `fs_below_driver` reaches 0 for `bynk-ide`
@@ -466,9 +482,10 @@ and when it's considered fresh.
 - [x] Slice 2 — `AnalysisRoots::lower()`'s `bynk.toml` read joins the overlay
       (#1094)
 - [x] Slice 3 — `bynk-testkit`, proved narrow (#1096)
-- [ ] Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by
-      crate (#1098) — sub-slices 1–2/3 shipped (`bynk-ide`'s own inline
-      tests, 18 sites; `bynk-lsp/tests`, 25 sites)
+- [x] Slice 4 — migrate the remaining ~120 test call sites, sub-sliced by
+      crate (#1098) — all 3 sub-slices shipped (`bynk-ide`'s own inline
+      tests, 18 sites; `bynk-lsp/tests`, 25 sites; `bynkc/tests`/`bynk/tests`/
+      `bynk-emit`, 78 sites; 121 total)
 - [ ] Slice 5 — delete `discovery.rs`'s content-reading fallback branch
 
 ## 8. Done when

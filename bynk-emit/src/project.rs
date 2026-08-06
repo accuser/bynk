@@ -5661,6 +5661,34 @@ fn own_contract_hashes(
 mod tests {
     use super::*;
 
+    /// Content-ownership track (#1086) slice 4: this crate's own
+    /// `#[cfg(test)]` module can't depend on the cross-crate `bynk-testkit`
+    /// (that crate depends on `bynk-emit` — a cyclic dev-dependency, the
+    /// same class of issue slice 3 found for `bynk-ide`). Mirrors
+    /// `bynk-testkit::compile_options_split` in-crate instead, directly
+    /// against this crate's own `Roots`/`discover_project_files` — no second
+    /// resolution to drift from the first. Keyed by the literal discovered
+    /// path, not canonicalised, matching `bynk-testkit`'s own convention
+    /// (canonicalising broke a project-consistency check the hard way in
+    /// slice 3).
+    fn compile_options_split_with_sources(
+        project_root: PathBuf,
+        paths: ProjectPaths,
+    ) -> CompileOptions {
+        let roots = Roots::Split {
+            project_root: project_root.clone(),
+            paths: paths.clone(),
+        };
+        let sources: HashMap<PathBuf, String> = discover_project_files(&roots)
+            .into_iter()
+            .filter_map(|p| {
+                let content = std::fs::read_to_string(&p).ok()?;
+                Some((p, content))
+            })
+            .collect();
+        CompileOptions::split(project_root, paths).sources(sources)
+    }
+
     // -- Finding #55/#65: memoized first-party parse must not leak gating ----
 
     /// The first-party parse cache (`firstparty_parsed`) is keyed per-source,
@@ -5739,7 +5767,8 @@ mod tests {
                 ),
             ],
         );
-        let options = CompileOptions::split(root.to_path_buf(), read_project_paths(&root));
+        let options =
+            compile_options_split_with_sources(root.to_path_buf(), read_project_paths(&root));
 
         let check = check_project(&options);
         assert!(check.has_errors());

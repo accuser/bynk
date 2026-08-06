@@ -37,3 +37,6 @@ toml.workspace = true
 [dev-dependencies]
 # (bynk-fmt is a normal dependency as of v0.133 — `bynk fmt` and the `new`
 # starter-rot test both use it.)
+# Content-ownership track (#1086) slice 4: the CompileOptions::single/::split
+# bare-call replacement for this crate's own integration-test fixtures.
+bynk-testkit.workspace = true

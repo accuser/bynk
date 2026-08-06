@@ -7,7 +7,6 @@ use bynk_check::checker::{Ty, TyId};
 use bynk_check::expr_types::type_at_offset;
 use bynk_syntax::ast::BaseType;
 use bynk_syntax::span::Span;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn fixture_root(which: &str) -> PathBuf {
@@ -40,7 +39,12 @@ fn types_for(
 fn unit_sources_maps_project_units_excluding_synthetic() {
     // ADR 0095: the analysis exposes a unit→source map. The clean fixture has a
     // `commons shop.util` and a `context billing.charge`.
-    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root("clean"),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root("clean")).to_path_buf(),
+        )),
+    );
     let rel = |unit: &str| -> String {
         result.unit_sources[unit][0]
             .to_string_lossy()
@@ -58,7 +62,12 @@ fn unit_sources_maps_project_units_excluding_synthetic() {
 
 #[test]
 fn a_clean_file_records_its_receiver_types() {
-    let result = bynk_ide::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root("clean"),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root("clean")).to_path_buf(),
+        )),
+    );
     let (entries, text) = types_for(&result, "shop/util.bynk").expect("clean file recorded");
     assert!(!entries.is_empty(), "clean file has expression types");
 
@@ -80,7 +89,12 @@ fn an_erroring_file_still_records_its_well_typed_expressions() {
     // expressions elsewhere (`good`'s `n * 2`) are still captured in Analyse mode,
     // so `.`-member completion / signature help work on a buffer with an unrelated
     // error. The diagnostic is still reported.
-    let result = bynk_ide::diagnose_project(&fixture_root("broken"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root("broken"),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root("broken")).to_path_buf(),
+        )),
+    );
     assert!(
         result
             .files
@@ -109,7 +123,12 @@ fn an_erroring_handler_body_records_its_well_typed_receivers() {
     // exit than `check_record`. Here `check_record` is clean (no top-level fns)
     // but the handler errors (`cents + true`); the receiver `cents` still types as
     // `Int`, recorded at the declaration-check exit.
-    let result = bynk_ide::diagnose_project(&fixture_root("broken_handler"), &HashMap::new());
+    let result = bynk_ide::diagnose_project(
+        &fixture_root("broken_handler"),
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+            (fixture_root("broken_handler")).to_path_buf(),
+        )),
+    );
     assert!(
         result
             .files
