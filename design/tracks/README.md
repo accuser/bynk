@@ -78,6 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
+| [`project-model.md`](project-model.md) | [#1107](https://github.com/accuser/bynk/issues/1107) | Opening → Settling | Phase 4 of the compiler trajectory — `bynk-project` as its own crate below both check and emit; `bynk-ide` drops its `bynk-emit` edge |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -105,6 +106,11 @@ row, which has itself now retired in turn.
 internal-architecture theme rather than language surface, same as
 `compiler-architecture.md`/`identity-and-totality.md` before it — realising
 R2.3 for `bynk-emit`/`bynk-ide`, open since T0.7.
+`project-model.md` is the ninth, continuing the same internal-architecture
+theme as phase 4 of the same trajectory, entry-gated on
+`identity-and-totality.md`'s own retirement note. Its settling PR opens with
+all six of its design questions stated open — no settling review has
+happened yet.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this

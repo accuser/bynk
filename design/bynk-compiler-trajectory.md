@@ -330,7 +330,7 @@ and tightly coupled — 0 enables both, 1 is independent, 2 needs only 0 — so 
 |---|---|---|
 | 0, 1, 2 | *(retired)* | **Retired 3 August 2026** (spine [#996](https://github.com/accuser/bynk/issues/996), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). Tier B's probe (`hoist_sinks`) reads 0; three Tier A slices carry named, separately-filed residue rather than blocking retirement |
 | 3 | *(retired)* | **Retired 4 August 2026** (settled 3 August 2026; spine [#1046](https://github.com/accuser/bynk/issues/1046), closing summary in [`archive/retired-tracks.md`](archive/retired-tracks.md)). All nine slices shipped, closing R2.2, R2.4 (expressions), R3.10, R4.1, R4.2, and R4.3 in full; R2.5/R4.9 functionally but not structurally (`expr_types` stays a `HashMap`, not the `IndexVec` those rules literally name — a named open question, not silent residue). `span_keyed_maps` reads 3, down from 27 — the remainder (`Ctx::pattern_binding_types`) is a deliberate exclusion, not residue |
-| 4 | *(to be opened)* | — |
+| 4 | [`project-model.md`](tracks/project-model.md) | Opening → Settling. Spine [#1107](https://github.com/accuser/bynk/issues/1107); settling draft PR open with all six design questions stated open — no settling review has happened yet |
 | 5 | *(to be opened)* | — |
 | 6 | *(to be opened)* | — |
 | 7 | *(to be opened)* | — |
