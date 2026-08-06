@@ -1,0 +1,98 @@
+---
+level: patch
+changelog: Settle phase 4 of the compiler trajectory (`design/tracks/project-model.md`) — `bynk-project` extracts today's project-model logic below both `bynk-check` and `bynk-emit`; contract hashing and the typed `ProjectGraph` defer to phase 8; a new `bynk-check` analysis entry point closes R10.2 without moving `run_checks` early
+---
+
+## ADR: project-model-phase4-scope
+title: Phase 4 extracts today's project-model shape; the typed `ProjectGraph` and contract hashing defer to phase 8
+summary: `bynk-project` carries today's name-keyed discovery/graph/paths/schema-registry logic, not the reference's `IndexVec<UnitId,...>` struct or a `ContractHash` field
+
+**Context.** The reference (`design/bynk-greenfield-compiler.md` §3.2) specifies a typed
+`ProjectGraph { units: IndexVec<UnitId, Unit>, files: IndexVec<FileId, UnitId>, edges: Vec<(UnitId,
+UnitId, EdgeKind)>, contract: IndexVec<UnitId, ContractHash> }` as part of "the project model." Phase 4
+of the compiler trajectory (`design/bynk-compiler-trajectory.md`) needs to decide how much of that shape
+it commits to.
+
+No `UnitId`, `ProjectGraph`, or `IndexVec`-keyed graph exists anywhere in the tree today. What exists is
+`bynk-emit/src/project/graph.rs`'s cycle detection, keyed by plain unit-name strings in a `HashMap`. The
+only `ContractHash`-shaped type in the tree, `bynk-check/src/contract.rs` (ADR 0200's cross-context
+wire-contract hash), is necessarily downstream of type-checking — it canonicalises resolved types — which
+conflicts with a project-model layer meant to sit below both `bynk-check` and `bynk-emit`.
+
+Phase 4's own reference-rule list (R3.7, R3.8, R3.9, R3.11, R10.2) never cites R3.2, the rule that defines
+`ProjectGraph`. Neither does phase 5's, 6's, or 7's rule list. Only phase 8's rules (R3.13–R3.15, query
+granularity) name the kind of stable per-unit identity `ProjectGraph`/`UnitId` would provide, and the
+trajectory's own phase-8 description names `UnitSignature(UnitId)` and `ProjectGraph` together as that
+phase's machinery. The trajectory's own aside about phase 8 — "ADR 0200's contract hash is already
+`UnitSignature`'s identity function pointed at a different problem" — reads as a direct statement that the
+`contract` field belongs to phase 8's `UnitSignature` concept, not phase 4's.
+
+**Decision.** Phase 4 extracts today's name-keyed discovery, unit-graph, manifest-parsing and
+schema-registry logic into a new `bynk-project` crate, relocated with minimal reshaping. It does not build
+the reference's typed `ProjectGraph` struct, `UnitId`, or any `ContractHash`-bearing field. That full
+shape is phase 8's, gated on phase 8 opening in turn.
+
+**Consequences.** Phase 4's own completion probe (`bynk-ide` → `bynk-emit` edge absent) is achievable
+without designing a pre-resolution contract hash or committing to an `IndexVec`-keyed graph now. Phase 8,
+when it opens, inherits the full `ProjectGraph`/`UnitId`/`ContractHash` design work in one place rather
+than finding half of it already built to a shape phase 8's own query-granularity needs might not have
+chosen. If a later phase finds it needs typed unit identity before phase 8 opens, that is grounds to
+revisit this decision under its own review, not to have silently pre-built it here.
+
+## ADR: project-model-symbols-boundary
+title: `bynk-project` excludes `ProjectIndex` assembly, which stays a `bynk-check`-owned concern
+summary: `symbols.rs`'s `assemble_index` builds a `bynk-check` type and belongs with it, not in the project-model crate
+
+**Context.** Phase 4 needs to decide which of `bynk-emit/src/project.rs`'s eight sibling modules
+(`discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`, `consistency.rs`, `symbols.rs`, plus
+`validate.rs` and `tests_emit.rs`, excluded on other grounds) move into the new `bynk-project` crate.
+
+`bynk-check/src/index.rs` already defines `ProjectIndex` (line 302) and `IndexBuilder` (line 430) — both
+`bynk-check`-owned types, not `bynk-emit`'s. `bynk-emit/src/project/symbols.rs::assemble_index` imports
+both from `bynk_check::index` and exists only to walk parsed files and populate that checker-owned type.
+`bynk-ide` carries the result directly (`pub index: index::ProjectIndex`, `bynk-ide/src/lib.rs:156`).
+`discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs` and `consistency.rs` import neither
+`bynk_check` nor the emitter — verified directly, zero hits across all five files.
+
+**Decision.** `bynk-project` receives `discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`,
+`consistency.rs`, and the project-model types they depend on. `symbols.rs`'s `ProjectIndex`-assembly logic
+does not move into `bynk-project` — building a `bynk-check`-owned type is `bynk-check`'s concern once
+`bynk-project` exists for it to depend on.
+
+**Consequences.** `bynk-project` has no dependency on `bynk-check`, preserving the "below both check and
+emit" invariant this phase exists to establish. `ProjectIndex` assembly relocates alongside the rest of
+the checking pipeline this phase's companion ADR (`project-model-analysis-entry-point`) moves into
+`bynk-check`, rather than needing a second, separate migration later.
+
+## ADR: project-model-analysis-entry-point
+title: A new `bynk-check` analysis entry point closes R10.2 without moving `run_checks` or checking itself
+summary: `bynk-ide` gets a narrow `bynk-project` + `bynk-check`-only analysis path; `run_checks` stays in `bynk-emit`, serving compilation/emission alone, with the resulting duplication named as phase 5's to remove
+
+**Context.** `bynk-ide/Cargo.toml`'s own comment names the reason it depends on `bynk-emit`:
+`analyse_project`, "the non-bailing project analysis," lives there. Tracing `analyse_project_with`
+(`bynk-emit/src/project.rs:970`) found it calls `run_checks` (`:3644`, private to `bynk-emit::project`) —
+the same function `compile_project` (`:573`) calls for the CLI/emission path (`:584`). `run_checks` is
+~2,200 lines performing discovery, parsing, resolution *and* checking as one sequence; there is no
+existing seam inside it separating "project model" from "checking" at the granularity phase 4 needs.
+`bynk-ide`'s real dependency on `bynk-emit` is therefore not a dependency on a relocatable discovery
+function — it is a dependency on a function that also checks, which the new `bynk-project` crate (sitting
+below `bynk-check`) cannot absorb without breaking the layering phase 4 exists to establish, and which
+moving to `bynk-check` in full is phase 5's job (R3.5), not phase 4's, and larger than phase 4's review
+budget.
+
+**Decision.** Phase 4 does not move `run_checks`. It adds one narrow entry point in `bynk-check` —
+`bynk-check`'s natural long-term home under R3.5 regardless — performing the same
+discovery(`bynk-project`)→parse→resolve→check(`bynk-check`, already local) sequence `run_checks`'s
+`Mode::Analyse` arm performs today, returning what `bynk-ide` needs in place of today's `ProjectAnalysis`.
+`bynk-ide` calls this instead of `bynk-emit::analyse_project`. `run_checks` stays in `bynk-emit`,
+unchanged, serving `compile_project`/emission alone.
+
+**Consequences.** This is a deliberate, temporary duplication: the new `bynk-check` entry point and
+`run_checks`'s `Mode::Analyse` arm do overlapping work until phase 5 centralises checking in `bynk-check`,
+at which point `bynk-emit`'s CLI path calls the same entry point and `run_checks`'s checking half is
+deleted rather than ported. The alternative — doing phase 5's centralisation now to avoid the duplication —
+is explicitly out of phase 4's scope and would decide `validate.rs`'s new home under a much smaller
+review budget than that decision deserves. The duplication is named here specifically so phase 5 inherits
+it as known, bounded debt rather than rediscovering it as a surprise. This is the most load-bearing and
+hardest-to-reverse of this settling pass's three decisions: it fixes the shape `bynk-ide`'s live analysis
+path takes, across 100+ existing call sites, for the phase-4-to-phase-5 window.
