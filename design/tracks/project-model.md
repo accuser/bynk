@@ -341,18 +341,25 @@ already found nothing in §6 builds `ProjectGraph` at all, this doesn't even nee
 Verified: `bynkc/src/main.rs:64-100` shows the CLI's schema-lock round trip fully wired —
 `bynk_driver::schema_lock::read` → `CompileOptions::schema_registry` (`SchemaLock::On { existing }`) →
 `bynk_driver::schema_lock::write` on the output. `run_checks` (`bynk-emit/src/project.rs:3644`) has seven
-call sites total: five in production code — one `Mode::Build` (`compile_project`, `:584`) and four
-non-build (`check_project` `:657`, `compile_in_memory` `:716`, `analyse_in_memory_with_types` `:787`,
-`analyse_project_with` `:979`) — plus two more inside the file's own `#[cfg(test)]` module (`:5844`,
-`:5988`). Every one of the six non-build call sites passes an explicit `&SchemaLock::Off` — `:673`, `:729`,
-`:800`, `:995` in production, `:5857` and `:6001` in tests — not an ambient read, six independent explicit
-values at six independent call sites, all agreeing. `:3638`'s own comment attributes the `None`-when-`Off`
-shape to #1078. The LSP path (`analyse_project_with`) does non-bailing live analysis, not a build; it has
-no business persisting a build lockfile, so `Off` is correct-by-design there, not a defect — and the same
-holds for the other five non-build call sites on the same evidence. (`:6330`'s comment — "rather than drift
-into a second, independently-maintained `run_checks` call" — is itself a sign the test suite already
-treats a stray extra call site as a known risk worth pinning against, which the two test-module calls
-above are not instances of: both delegate through the same `run_checks`, not a copy of it.)
+call sites total: five in production code — **two** `Mode::Build` (`compile_project` `:584`,
+`compile_in_memory` `:716` — not four non-build as an earlier pass of this section had it, since
+`compile_in_memory` passes `Mode::Build` at `:724`) and three non-build (`check_project` `:657`,
+`analyse_in_memory_with_types` `:787`, `analyse_project_with` `:979`) — plus two more inside the file's own
+`#[cfg(test)]` module (`:5844`, `:5988`, both `Mode::Analyse`). Every one of the six *non-`compile_project`*
+call sites passes an explicit `&SchemaLock::Off` — `:673`, `:729`, `:800`, `:995` in production, `:5857`
+and `:6001` in tests — not an ambient read. `:3638`'s own comment attributes the `None`-when-`Off` shape to
+#1078. But "not a build" only justifies five of those six: the LSP path (`analyse_project_with`) and the
+other two non-build entry points genuinely aren't builds, so `Off` is correct-by-design for them — a build
+with no business persisting a lockfile doesn't exist to persist one. `compile_in_memory` *is* a build
+(`Mode::Build`), and its `Off` needs the other reason, which lives at `bynkc/src/main.rs:75-78`'s own
+comment: "Every other `compile_project` caller (in-memory builds, `bynkc/tests/e2e.rs`'s in-place
+fixtures, the LSP) leaves this off" — an in-memory build has no `bynk.schema.lock` on disk to reconcile
+against in the first place, not "isn't a build." Both reasons land on the same conclusion (explicit, not
+ambient), which is what R3.11 asks for, but they're different reasons and this section's original wording
+collapsed them into one. (`:6330`'s comment — "rather than drift into a second, independently-maintained
+`run_checks` call" — is itself a sign the test suite already treats a stray extra call site as a known
+risk worth pinning against, which the two test-module calls above are not instances of: both delegate
+through the same `run_checks`, not a copy of it.)
 
 **Decision:** the Appendix D row ("schema registry read/written ambiently … thread two values") is closed
 by paydown that postdates whenever that row was last verified — corrected directly in
@@ -463,10 +470,17 @@ analysis paths (`bynk-emit::run_checks`'s `Mode::Analyse` arm, kept for now, and
 point) can drift if a fix lands in one and not the other before phase 5 deletes the first. Named here so a
 reviewer watches for it, not because this phase can prevent it — phase 5 is the actual fix.
 
-**Relocating `analyse_project`'s pipeline (P4.1) still touches real call-site surface.** `bynk-driver/src/discovery.rs`'s
-own count puts `analyse_project_with`'s callers at 100+ across `bynk-ide`'s inline tests, `bynk-lsp/tests`
-and `bynkc/tests`. Even with behaviour unchanged, a relocation this wide needs the LSP-surface-fixture
-coverage §4 commits to, not just a byte-identical-output check.
+**P4.2's mechanical repoint is small; P4.1's relocation is what actually needs coverage, and the two were
+conflated.** `bynk-driver/src/discovery.rs`'s "100+ call sites" names the `diagnose_project(&root,
+&HashMap::new())` pattern, not `analyse_project_with` specifically — verified: `analyse_project_with` has
+exactly one production caller outside `bynk-emit`, `bynk-ide/src/lib.rs:320`, inside `diagnose_project_with`,
+which `diagnose_project` (`bynk-ide/src/lib.rs:287`) wraps. 87 `diagnose_project(` call sites exist across
+the tree, all reaching `analyse_project_with` indirectly through that one wrapper — none of them is
+something P4.2 edits. P4.2's actual edit surface is the wrapper's one call. What the 100+ figure is
+genuine evidence for is different and stronger stated correctly: that many tests exercise this analysis
+path *without naming it*, so they'll catch behavioural drift from P4.1's relocation without failing on the
+repoint itself — which is exactly the gap §4's LSP-surface-fixture requirement exists to close, not a
+statement about how many call sites change.
 
 **A naive "no literal `bynk_check` import" test is not a reliable module-boundary check, and P4.0 is where
 this bites again if it's forgotten.** §3.2's own history is the evidence, and it took three review passes,
@@ -522,7 +536,10 @@ this doc refers to them by letter until they exist — the pattern `compiler-arc
   doing phase 5's checking-centralisation early; the resulting duplication with `run_checks`'s
   `Mode::Analyse` arm is deliberate, temporary, and phase 5's to remove.** §3.3(a) (Q3). The most
   load-bearing and hardest-to-reverse of the three: it fixes the shape `bynk-ide`'s live analysis path
-  takes for the phase-4-to-phase-5 window, across 100+ existing call sites.
+  takes for the phase-4-to-phase-5 window. Its direct edit surface is one call site
+  (`bynk-ide/src/lib.rs:320`, behind the stable `diagnose_project`/`diagnose_project_with` wrapper); its
+  coverage surface is wider — the 87 `diagnose_project(` call sites across the tree exercise this path
+  without naming it, catching behavioural drift without gating the repoint itself.
 
 Lands as `design/pending/project-model-settling.md`.
 
