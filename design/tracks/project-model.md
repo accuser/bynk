@@ -28,14 +28,14 @@
   (`span_keyed_maps`) reading zero — met, modulo the stated `Ctx::pattern_binding_types` exclusion."
   `project-model.md` is the ninth track to run the ADR 0167 flow from the start, after
   `compiler-architecture.md` (sixth), `identity-and-totality.md` (seventh) and `content-ownership.md`
-  (eighth) — the third in a row on the internal-architecture theme rather than language surface.
+  (eighth) — the fourth in a row on the internal-architecture theme rather than language surface.
 
 ### ADR 0076 trigger check
 
 | Trigger | Met? |
 |---|---|
 | Spans several increments | **Yes, if narrowly** — trajectory §5 rates this phase relative size 3 (medium confidence); §6 below names three slices, one (P4.1) larger than the original draft anticipated per Q3's finding |
-| Surface not yet settled | **No** — the destination (reference §3.2, R3.7–R3.11) is specified; what was open was which parts of today's ~21.5k-line `bynk-emit/src/project.rs` module tree are "the project model" versus checking orchestration that only phase 5 can resolve, which §3 now closes |
+| Surface not yet settled | **No** — the destination (reference R3.7, R3.8, R3.9, R3.11, R10.2) is specified; what was open was which parts of today's ~21.5k-line `bynk-emit/src/project.rs` module tree are "the project model" versus checking orchestration that only phase 5 can resolve, which §3 now closes |
 | Security/safety boundary | **No** — this phase moves data-shape and crate-boundary code; it touches no capability gate the way phases 0–2's `ResolvedCommons` did |
 
 **One of three, same count as `compiler-architecture.md` and `identity-and-totality.md` before it, same
@@ -183,10 +183,20 @@ substance: `ProjectAnalysis` carries `pub ty_intern: Arc<bynk_check::checker::Ty
 during `run_checks`'s `Checked` arm from `combined_types_for`/`unit_tables`, the same checking pass, not
 during discovery.
 
+Being `bynk_check`-free isn't the whole test, though, and `Mode` shows the other way it can fail: every use
+site — `run_checks`'s own parameter and match arms (`project.rs:3230,3476,3495,3539,3556,3654,3961`), and
+its six callers (`:592,665,724,795,987`, plus two in tests) — is inside `project.rs` itself. None of
+`discovery.rs`/`graph.rs`/`paths.rs`/`consistency.rs` reference it, and §3.3(a)'s new `bynk-check` entry
+point is scoped to `Mode::Analyse`'s behaviour specifically, so it has no branch to take and no reason to
+carry the enum either. `Mode` is a statement about how `run_checks` is driven, not a fact about the
+project — the checking-coupling test screens out items reaching *up* into `bynk-check`, but says nothing
+about an item that belongs with its one orchestrator regardless of which crate that orchestrator is in.
+
 **Decision:** `bynk-project` receives `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs`;
 `schema_registry.rs`'s `SchemaRegistry` type plus `parse`/`serialize` only (not `reconcile`); and
-`diagnostics.rs`'s `Mode`, `AttributedError`, `ErrorSink`, `ProjectFailure` — plus the project-model types
-declared directly in `project.rs` these depend on (`UnitKind`, `Roots`, `ProjectPaths`, the
+`diagnostics.rs`'s `AttributedError`, `ErrorSink`, `ProjectFailure` (not `Mode`, which stays with
+`run_checks` in `bynk-emit` — its only consumer) — plus the project-model types declared directly in
+`project.rs` these depend on (`UnitKind`, `Roots`, `ProjectPaths`, the
 `CompileOptions::schema_registry`/`SchemaLock` shape). Staying on the checking side, to become part of
 §3.3's new `bynk-check` entry point rather than `bynk-project`: `symbols.rs` in full, `schema_registry.rs`'s
 `reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`, `ContextSequenceInfo`, `ContextBoundaryInfo` — every
@@ -196,11 +206,15 @@ this just makes it explicit rather than leaving it unassigned. `project.rs`'s or
 `compile_project`) does not move as a body; it becomes a caller of `bynk-project`'s functions instead of
 owning that logic inline.
 
-The rule this leaves, stated once so P4.0 doesn't have to rediscover it per file: a type or function moves
-to `bynk-project` only if it needs nothing that exists solely as an output of resolution or checking
-(`UnitTable`, `Ty`/`TyId`, `ResolverMethodTable`, anything under `bynk_check::`, however it's named at the
-use site) — not "no literal `bynk_check` import," which this section's own first pass shows is too weak a
-test on its own.
+The rule this leaves, stated once so P4.0 doesn't have to rediscover it per file, is two-sided — one
+direction catches `schema_registry.rs`/`diagnostics.rs`'s checking coupling, the other catches `Mode`'s: a
+type or function moves to `bynk-project` only if (a) it needs nothing that exists solely as an output of
+resolution or checking (`UnitTable`, `Ty`/`TyId`, `ResolverMethodTable`, anything under `bynk_check::`,
+however it's named at the use site — not "no literal `bynk_check` import," which this section's own first
+pass shows is too weak on its own), **and** (b) something below `run_checks` actually consumes it — not
+merely "nothing above `run_checks` needs it to stay," which is a test `Mode` passes for the wrong reason:
+it's `bynk_check`-free, but it's also a fact about how `run_checks` is driven, not a fact about the
+project, and its only readers are `run_checks` itself.
 
 Public surface: `bynk-project` exports only what its real consumers use (mirroring R10.4's existing
 discipline), not a blanket glob. The exact enumerated list is P4.0's job, not a design question — reviewed
@@ -335,7 +349,7 @@ actual approval to build it, per this doc's own Status block.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P4.0** | `bynk-project` crate skeleton; `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs` relocated with minimal reshaping, plus `schema_registry.rs`'s `SchemaRegistry`/`parse`/`serialize` (not `reconcile`) and `diagnostics.rs`'s `Mode`/`AttributedError`/`ErrorSink`/`ProjectFailure` (not `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`), plus the project-model types they need (`UnitKind`, `Roots`, `ProjectPaths`, the `SchemaLock` shape); public surface enumerated and reviewed (R10.4-style) as part of this slice, per §3.2 | R3.7, R3.8, R3.9 | §3 settled |
+| **P4.0** | `bynk-project` crate skeleton; `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs` relocated with minimal reshaping, plus `schema_registry.rs`'s `SchemaRegistry`/`parse`/`serialize` (not `reconcile`) and `diagnostics.rs`'s `AttributedError`/`ErrorSink`/`ProjectFailure` (not `Mode` — stays with `run_checks` in `bynk-emit`; not `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`), plus the project-model types they need (`UnitKind`, `Roots`, `ProjectPaths`, the `SchemaLock` shape); public surface enumerated and reviewed (R10.4-style) as part of this slice, per §3.2 | R3.7, R3.8, R3.9 | §3 settled |
 | **P4.1** | The new `bynk-check` analysis entry point (§3.3(a)): discovery via `bynk-project`, resolve/check via `bynk-check`'s existing resolver/checker; `symbols.rs` (all of it), `schema_registry.rs`'s `reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` relocate here, alongside the entry point itself, per §3.2's corrected boundary. `run_checks` in `bynk-emit` is untouched. The file-reading asymmetry (§3.3(b)) carries over unchanged, not fixed here | R3.7, R10.2 (partial) | P4.0 |
 | **P4.2** | `bynk-ide` repoints at the new `bynk-check` entry point instead of `bynk-emit::analyse_project`; `bynk-emit` dependency and its justifying Cargo.toml comment deleted; CI dependency-graph gate added | R10.2 | P4.1 |
 
