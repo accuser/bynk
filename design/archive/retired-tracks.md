@@ -634,3 +634,54 @@ imposed; entries keep the order they were retired in.
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), entry-gated on this track's
   own probe (`span_keyed_maps`) reading zero — met, modulo the stated `Ctx::pattern_binding_types`
   exclusion above. Retired 4 August 2026.
+- **`content-ownership.md`** — `bynk-lsp` becomes the sole reader of `.bynk`
+  project source content, so an unsaved editor buffer is visible everywhere in
+  the IDE surface (completion, hover, signature help, go-to-declaration, and
+  the published diagnostics round) instead of some paths silently reading
+  stale on-disk content via `bynk-emit`'s `read_source` disk-read fallback —
+  realising R2.3 for `bynk-emit`/`bynk-ide`, open since T0.7
+  ([#1006](https://github.com/accuser/bynk/issues/1006)/[#1012](https://github.com/accuser/bynk/pull/1012)).
+  Settled via a re-settling pass (the doc's first merge, #1087, left every §3
+  question open despite being merged ready-for-review) that closed §3.1–§3.5
+  for real and front-loaded three ADRs (0322–0324). All six slices shipped:
+  **0** — `bynk-lsp`'s disk sweep + `for_each_unit` takes content
+  ([#1089](https://github.com/accuser/bynk/issues/1089)) — merged from the
+  original slices 0+1 under an implementation-time correction: §3.1's
+  `ProjectDirs`/`resolve_dirs` design wasn't needed (`bynk_ide::discover_files`
+  already closed the gap), recorded as
+  [ADR 0325](../decisions/0325-content-ownership-seam-simplification.md),
+  superseding [ADR 0322](../decisions/0322-content-ownership-seam-type.md);
+  **1** — `symbols.rs`'s cross-file lookups take content, `Backend::project_files`
+  retired ([#1092](https://github.com/accuser/bynk/issues/1092)), reaching
+  `fs_below_driver=0` for `bynk-ide`; **2** — `AnalysisRoots::lower`'s own
+  `bynk.toml` read joins the overlay
+  ([#1094](https://github.com/accuser/bynk/issues/1094)); **3** —
+  `bynk-testkit`, the cross-crate test-fixture replacement, proved on three of
+  its four planned call-site groups
+  ([#1096](https://github.com/accuser/bynk/issues/1096)); **4** — the
+  remaining ~120 test call sites migrated, sub-sliced by crate across three
+  PRs ([#1098](https://github.com/accuser/bynk/issues/1098)); **5** — the
+  fallback itself deleted
+  ([#1102](https://github.com/accuser/bynk/issues/1102)), surfacing three
+  further real dependencies on it beyond what slice 4's migration covered
+  (two production `bynk-lsp` request paths built their overlay from open
+  buffers only; `AnalysisRoots::lower`/`discover_files`'s own manifest read
+  had the identical gap for every manifest-backed caller, moved to callers
+  above the driver per R2.3 rather than fixed inside `bynk-ide`; and a
+  narrow, permanent, deliberate carve-out for adapter `.binding.ts` reads,
+  whose path is only known post-parse and so can never be pre-enumerated the
+  way `.bynk` files are) — each fixed in the same PR rather than shipped as
+  silent breakage, with a real `Backend`-driven behaviour test
+  (`an_unsaved_edit_in_one_file_is_visible_to_completion_in_another`,
+  `type_receivers_slow_path_sees_a_closed_files_disk_content`) proving the
+  property this track exists for. `fs_below_driver` reads 0 for `bynk-ide`,
+  3 for `bynk-emit` (the enumeration walk, the adapter-binding carve-out, and
+  the manifest-read carve-out — all now named-and-intentional rather than
+  residual, though the probe itself doesn't yet say so structurally; filed as
+  [#1104](https://github.com/accuser/bynk/issues/1104), a probe-precision
+  follow-on, not reopening any of the three decisions). No new ADR beyond
+  0325 above — every other correction found under implementation was
+  recorded in the doc and in each slice's own PR, not elevated to a design
+  decision. Surface lives in `bynk-emit/src/project/discovery.rs` and
+  `paths.rs`, `bynk-ide/src/lib.rs`, `bynk-lsp/src/content.rs` and `lib.rs`,
+  and the new `bynk-testkit` crate. Retired 6 August 2026.

@@ -78,7 +78,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`content-ownership.md`](content-ownership.md) | [#1086](https://github.com/accuser/bynk/issues/1086) | All slices shipped (#1089/#1092/#1094/#1096/#1098/#1102) — retiring | `bynk-lsp` becomes the sole reader of `.bynk` source content — realises R2.3's `fs_below_driver` probe for `bynk-emit`/`bynk-ide` |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -102,6 +101,10 @@ closing commit, `85bc851e`) removed the doc and appended its closing summary
 to `retired-tracks.md` but did not update this table or its "Retired tracks"
 list below at the time — both were caught up alongside opening the phase-3
 row, which has itself now retired in turn.
+`content-ownership.md` (now retired) was the eighth, continuing the
+internal-architecture theme rather than language surface, same as
+`compiler-architecture.md`/`identity-and-totality.md` before it — realising
+R2.3 for `bynk-emit`/`bynk-ide`, open since T0.7.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
@@ -119,6 +122,16 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`content-ownership.md`** — `bynk-lsp` becomes the sole reader of `.bynk`
+  project source content, realising R2.3 for `bynk-emit`/`bynk-ide`. All six
+  slices shipped (0–5); `fs_below_driver` reads 0 for `bynk-ide`, 3 for
+  `bynk-emit` (an enumeration walk plus two deliberate, permanent carve-outs
+  — adapter `.binding.ts` reads and the plain manifest reader's own
+  `bynk.toml` read — filed as [#1104](https://github.com/accuser/bynk/issues/1104),
+  a probe-precision follow-on, not reopening either decision). One new ADR,
+  [0325](../decisions/0325-content-ownership-seam-simplification.md),
+  superseding [0322](../decisions/0322-content-ownership-seam-type.md).
+  Retired 6 August 2026.
 - **`identity-and-totality.md`** — phase 3 of
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
   `compiler-architecture.md`'s retirement below: `ExprId`/`FileId` node identity, `Ty::Error` and
