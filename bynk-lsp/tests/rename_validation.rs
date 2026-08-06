@@ -123,7 +123,10 @@ fn fee(m: Money) -> Int {
 #[test]
 fn happy_path_rename_edits_def_and_all_references() {
     let root = setup_project("happy", &[("demo/util.bynk", UTIL), ("demo/app.bynk", APP)]);
-    let pre = analyse(&root, &HashMap::new());
+    let pre = analyse(
+        &root,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone())),
+    );
     assert!(pre.diags.is_empty(), "fixture clean: {:?}", pre.diags);
 
     // Rename `Money` from its *reference* in app.bynk.
@@ -141,7 +144,10 @@ fn colliding_rename_is_refused_by_reanalysis() {
         "collide",
         &[("demo/util.bynk", UTIL), ("demo/app.bynk", APP)],
     );
-    let pre = analyse(&root, &HashMap::new());
+    let pre = analyse(
+        &root,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone())),
+    );
 
     // `helper` → `Money` collides with the type declared in the same unit.
     let at = offset_of(&pre.snapshots, "demo/util.bynk", "helper", 0);
@@ -171,7 +177,10 @@ fn use_local(shadow: Int -> Int, y: Int) -> Int {
 }
 ";
     let root = setup_project("capture", &[("demo/cap.bynk", cap)]);
-    let pre = analyse(&root, &HashMap::new());
+    let pre = analyse(
+        &root,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone())),
+    );
     assert!(pre.diags.is_empty(), "fixture clean: {:?}", pre.diags);
 
     let at = offset_of(&pre.snapshots, "demo/cap.bynk", "helper", 0);
@@ -186,7 +195,10 @@ fn use_local(shadow: Int -> Int, y: Int) -> Int {
 #[test]
 fn prepare_rename_refuses_locals_and_invalid_names_refuse() {
     let root = setup_project("locals", &[("demo/util.bynk", UTIL)]);
-    let pre = analyse(&root, &HashMap::new());
+    let pre = analyse(
+        &root,
+        &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone())),
+    );
 
     // The parameter `x` is a local binding — not in the index, refused.
     let at = offset_of(&pre.snapshots, "demo/util.bynk", "x: Int", 0);

@@ -4,7 +4,6 @@
 //! only positions (and add-to-existing / synthesise-absent) — fix
 //! *correctness* is pinned here in `bynkc`, with no LSP involved.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bynk_syntax::error::{Applicability, Suggestion};
@@ -61,12 +60,17 @@ service handlers {{
 
 /// Diagnose the project with `text` overlaid on `file`, returning that
 /// file's diagnostics.
+///
+/// Content-ownership track (#1086) slice 5: a cross-context fixture needs
+/// its *other* files readable too — `bynk-emit`'s disk-read fallback used
+/// to fill those in silently; the base sources map must be complete before
+/// `file`'s overlaid content lands on top.
 fn diagnose_with(file: &str, text: &str) -> Vec<bynk_ide::Diagnostic> {
-    let abs = fixture_root().join(file);
-    let canonical = abs.canonicalize().unwrap_or(abs);
-    let mut overlay = HashMap::new();
-    overlay.insert(canonical, text.to_string());
-    let result = bynk_ide::diagnose_project(&fixture_root(), &overlay);
+    let root = fixture_root();
+    let mut overlay =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
+    overlay.insert(root.join(file), text.to_string());
+    let result = bynk_ide::diagnose_project(&root, &overlay);
     result
         .files
         .iter()

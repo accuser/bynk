@@ -180,11 +180,16 @@ fn an_unsaved_bynk_toml_edit_changes_the_resolved_roots() {
         ],
     );
     let toml_path = s.0.join("bynk.toml");
+    // Content-ownership track (#1086) slice 5: the `.bynk` sources
+    // themselves must be readable too — `bynk-emit`'s disk-read fallback
+    // used to fill these in silently; the overlay must be complete now.
     let mut overlay = HashMap::new();
     overlay.insert(
         toml_path.canonicalize().unwrap_or(toml_path),
         "[project]\nname = \"m\"\n\n[paths]\ninclude = [\"src\", \"alt\"]\n".to_string(),
     );
+    overlay.insert(s.0.join("src/a.bynk"), "context a\n".to_string());
+    overlay.insert(s.0.join("alt/b.bynk"), "context b\n".to_string());
     let r =
         bynk_ide::diagnose_project_with(&bynk_ide::AnalysisRoots::Project(s.0.clone()), &overlay);
     let mut files: Vec<String> = r

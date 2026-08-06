@@ -232,7 +232,6 @@ pub fn to_wire(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap as Map;
     use std::fs;
 
     fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
@@ -301,7 +300,10 @@ service run {
                 ("jobs.bynk", CONSUMER_SRC),
             ],
         );
-        let diag = bynk_ide::diagnose_project(&root, &Map::new());
+        let diag = bynk_ide::diagnose_project(
+            &root,
+            &bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone())),
+        );
         let snapshots: HashMap<PathBuf, String> = diag
             .files
             .iter()

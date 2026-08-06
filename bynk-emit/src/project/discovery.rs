@@ -16,9 +16,12 @@ pub(crate) fn suite_effective_tier_is_system(suite: &SuiteDecl) -> bool {
         || suite.cases.iter().any(|c| c.tier == Some(TestTier::System))
 }
 
-/// Read a source file, honouring the overlay (keyed by canonicalised
-/// absolute path; falls back to the literal path so a not-yet-created
-/// overlay entry still matches).
+/// Read a source file from the overlay (keyed by canonicalised absolute
+/// path; falls back to the literal path so a not-yet-created overlay entry
+/// still matches). Every caller into this module now supplies a complete
+/// overlay — content-ownership track (#1086) slice 5 removed the disk-read
+/// fallback this used to have on a miss, so an incomplete overlay is a real
+/// `NotFound` error here, not a silent disk read.
 ///
 /// Finding #55/#65: tries the literal path first, `canonicalize()` only on a
 /// miss — an in-memory/wasm project's synthetic overlay keys never exist on
@@ -26,6 +29,34 @@ pub(crate) fn suite_effective_tier_is_system(suite: &SuiteDecl) -> bool {
 /// every such file, for no benefit (the literal-path lookup below already
 /// finds the same entry).
 pub(crate) fn read_source(
+    path: &Path,
+    overlay: &HashMap<PathBuf, String>,
+) -> std::io::Result<String> {
+    if let Some(text) = overlay.get(path) {
+        return Ok(text.clone());
+    }
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let Some(text) = overlay.get(&canonical) {
+        return Ok(text.clone());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("no overlay entry for `{}`", path.display()),
+    ))
+}
+
+/// An adapter's `.binding.ts` module: overlay-first (an open, unsaved
+/// binding buffer), else a real disk read. Content-ownership track (#1086)
+/// scope note, found under slice 5's implementation: unlike a project's
+/// `.bynk` sources — enumerable ahead of time by extension, and this
+/// track's actual charter — a binding module's *path* is only known once
+/// its declaring adapter has been parsed (`adapter … { binding: "…" }`), so
+/// no discovery walk (`bynk-testkit`, `bynk-driver::discovery`) can
+/// pre-populate it into a sources map the way `.bynk` files are. Keeping a
+/// disk-read fallback here — the CLI's real production path has always
+/// worked exactly this way, `#1077`/`#1081` notwithstanding — is a
+/// deliberate, narrow carve-out, not a straggler.
+pub(crate) fn read_adapter_binding(
     path: &Path,
     overlay: &HashMap<PathBuf, String>,
 ) -> std::io::Result<String> {
@@ -389,5 +420,27 @@ mod tests {
         overlay.insert(path.clone(), "context t\n".to_string());
         let got = read_source(&path, &overlay).expect("the overlay entry must be found");
         assert_eq!(got, "context t\n");
+    }
+
+    /// Content-ownership track (#1086) slice 5: a real on-disk file with no
+    /// overlay entry must now error, never silently fall back to reading it
+    /// off disk — the disk-read fallback this test guards the absence of was
+    /// deleted in this slice; every caller supplies a complete overlay.
+    #[test]
+    fn read_source_errors_on_a_real_file_with_no_overlay_entry_rather_than_reading_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "bynk-emit-discovery-fallback-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let path = dir.join("t.bynk");
+        std::fs::write(&path, "context t\n").expect("write real file");
+        let got = read_source(&path, &HashMap::new());
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            got.is_err(),
+            "a real file with no overlay entry must not be silently read from disk"
+        );
+        assert_eq!(got.unwrap_err().kind(), std::io::ErrorKind::NotFound);
     }
 }

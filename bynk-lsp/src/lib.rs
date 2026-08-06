@@ -624,9 +624,15 @@ impl Backend {
 
         // Slice A: manifest-aware, multi-root — the same trees `bynkc` compiles.
         let roots = bynk_ide::AnalysisRoots::Project(root.clone());
-        let Ok(result) =
-            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project_with(&roots, &overlay))
-                .await
+        // Content-ownership track (#1086) slice 5: `overlay` above is only the
+        // open buffers — with `discovery.rs`'s disk fallback gone, a project's
+        // closed files need `sweep_project_content`'s full disk sweep too, or
+        // every one of them fails `bynk.project.read_failed` on every round.
+        let Ok(result) = tokio::task::spawn_blocking(move || {
+            let content = crate::content::sweep_project_content(&roots, &overlay);
+            bynk_ide::diagnose_project_with(&roots, &content)
+        })
+        .await
         else {
             return;
         };
@@ -1115,10 +1121,15 @@ impl Backend {
             return bynk_check::expr_types::type_at_offset(entries, recv_offset)
                 .map(|t| (t, std::sync::Arc::clone(&analysis.ty_intern)));
         }
-        let result =
-            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project_with(&roots, &overlay))
-                .await
-                .ok()?;
+        // Content-ownership track (#1086) slice 5: same complete-content
+        // requirement as `run_project_diagnostics` — `overlay` here is only
+        // the open buffers, and `discovery.rs`'s disk fallback is gone.
+        let result = tokio::task::spawn_blocking(move || {
+            let content = crate::content::sweep_project_content(&roots, &overlay);
+            bynk_ide::diagnose_project_with(&roots, &content)
+        })
+        .await
+        .ok()?;
         let (_, entries) = result.expr_types.iter().find(|(p, _)| **p == rel)?;
         bynk_check::expr_types::type_at_offset(entries, recv_offset)
             .map(|t| (t, std::sync::Arc::clone(&result.ty_intern)))
@@ -5257,7 +5268,13 @@ mod tests {
         let (root, _config) = Backend::resolve_root(&make).expect("implicit project");
         assert_eq!(root, src.parent().expect("src has a parent"));
 
-        let found = bynk_ide::discover_files(&bynk_ide::AnalysisRoots::Project(root.clone()));
+        // No `bynk.toml` in this fixture (the test is exactly about the
+        // absent-manifest → conventional-layout path), so an empty overlay
+        // is correct here, not a stand-in for a real manifest read.
+        let found = bynk_ide::discover_files(
+            &bynk_ide::AnalysisRoots::Project(root.clone()),
+            &std::collections::HashMap::new(),
+        );
         let make_canon = make.canonicalize().unwrap_or(make.clone());
         assert!(
             found
@@ -6397,6 +6414,122 @@ mod tests {
         assert!(
             labels.contains(&"entries".to_string()),
             "Map query accessors must survive an unrelated resolve failure: {labels:?}"
+        );
+    }
+
+    /// Content-ownership track (#1086) §8's "done when": an unsaved edit in
+    /// file A is visible to a completion triggered from file B — driven
+    /// through a real `Backend` (`did_open`/`did_change` → `completion`),
+    /// not the pure `bynk_ide` helpers directly. `shared/widget.bynk`
+    /// declares `Widget` with one field on disk; opening it and editing its
+    /// buffer (never saved) to add a second field must be visible to
+    /// `app/use.bynk`'s cross-file record-construction completion
+    /// (`Widget { <cursor>`, via `record_field_names`/`project_content`) in
+    /// the very same round. This exercises the sweep both files' rounds
+    /// share, not `type_receiver` specifically — see
+    /// `type_receivers_slow_path_sees_a_closed_files_disk_content` below for
+    /// that path's own dedicated coverage (a review of this PR found this
+    /// test alone doesn't reach it).
+    #[tokio::test]
+    async fn an_unsaved_edit_in_one_file_is_visible_to_completion_in_another() {
+        let widget_v1 = "commons shared.widget\n\ntype Widget = { size: Int }\n";
+        let widget_v2 = "commons shared.widget\n\ntype Widget = { size: Int, weight: Int }\n";
+        let use_src =
+            "commons app.use\n\nuses shared.widget\n\nfn make() -> Widget {\n  Widget { \n}\n";
+        let s = scratch_project(
+            "cross_file_unsaved",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"cross\"\n\n[paths]\ninclude = [\"shared\", \"app\"]\n",
+                ),
+                ("shared/widget.bynk", widget_v1),
+                ("app/use.bynk", use_src),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let widget_uri = file_uri(&s.0, "shared/widget.bynk");
+        let use_uri = file_uri(&s.0, "app/use.bynk");
+        open(&backend, &widget_uri, widget_v1).await;
+        open(&backend, &use_uri, use_src).await;
+        backend.run_round().await;
+
+        // Precondition: before the edit, only the on-disk field completes.
+        let before = complete_at(&backend, &use_uri, use_src, "  Widget { ").await;
+        assert!(before.contains(&"size".to_string()), "{before:?}");
+        assert!(
+            !before.contains(&"weight".to_string()),
+            "the fixture must not already have `weight` on disk: {before:?}"
+        );
+
+        // Edit `widget.bynk`'s buffer — never saved to disk — to add `weight`.
+        backend
+            .did_change(DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    uri: widget_uri.clone(),
+                    version: 2,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: widget_v2.to_string(),
+                }],
+            })
+            .await;
+
+        let after = complete_at(&backend, &use_uri, use_src, "  Widget { ").await;
+        assert!(
+            after.contains(&"weight".to_string()),
+            "an unsaved edit to `widget.bynk` must be visible to `use.bynk`'s \
+             cross-file completion in the same round: {after:?}"
+        );
+        assert!(after.contains(&"size".to_string()), "{after:?}");
+
+        // On-disk content is untouched — the visibility came from the buffer.
+        assert_eq!(
+            std::fs::read_to_string(s.0.join("shared/widget.bynk")).unwrap(),
+            widget_v1,
+            "the edit must never have been saved to disk"
+        );
+    }
+
+    /// Content-ownership track (#1086) slice 5: dedicated coverage for
+    /// `type_receiver`'s slow path specifically (the fix a PR review found
+    /// the test above doesn't reach — `Widget { ` completion never calls
+    /// `type_receiver` at all, it's pure syntax via `record_field_names`).
+    /// `widget.bynk` is **never opened** — closed, on-disk only — so its
+    /// content can only reach `w.`'s value-member completion in
+    /// `use.bynk` through `type_receiver`'s own `sweep_project_content`
+    /// call, not through any open-buffer overlay. No round runs before the
+    /// request either, so `project_analysis_for`'s fast-path cache is empty
+    /// and `type_receiver` must take its slow, re-analysing path — the one
+    /// this slice fixed.
+    #[tokio::test]
+    async fn type_receivers_slow_path_sees_a_closed_files_disk_content() {
+        let widget_src = "commons shared.widget\n\ntype Widget = { size: Int }\n";
+        let use_src =
+            "commons app.use\n\nuses shared.widget\n\nfn area(w: Widget) -> Int {\n  w.\n}\n";
+        let s = scratch_project(
+            "type_receiver_slow_path",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"cross\"\n\n[paths]\ninclude = [\"shared\", \"app\"]\n",
+                ),
+                ("shared/widget.bynk", widget_src),
+                ("app/use.bynk", use_src),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let use_uri = file_uri(&s.0, "app/use.bynk");
+        // `widget.bynk` is deliberately never opened — no did_open, no round.
+        open(&backend, &use_uri, use_src).await;
+
+        let labels = complete_at(&backend, &use_uri, use_src, "  w.").await;
+        assert!(
+            labels.contains(&"size".to_string()),
+            "type_receiver's slow path must resolve `w: Widget` off the \
+             closed widget.bynk's real disk content: {labels:?}"
         );
     }
 }

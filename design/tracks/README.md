@@ -78,7 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`content-ownership.md`](content-ownership.md) | [#1086](https://github.com/accuser/bynk/issues/1086) | Slicing (slices 0–4 shipped, #1089/#1092/#1094/#1096/#1098) | `bynk-lsp` becomes the sole reader of `.bynk` source content — realises R2.3's `fs_below_driver` probe for `bynk-emit`/`bynk-ide` |
+| [`content-ownership.md`](content-ownership.md) | [#1086](https://github.com/accuser/bynk/issues/1086) | All slices shipped (#1089/#1092/#1094/#1096/#1098/#1102) — retiring | `bynk-lsp` becomes the sole reader of `.bynk` source content — realises R2.3's `fs_below_driver` probe for `bynk-emit`/`bynk-ide` |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue

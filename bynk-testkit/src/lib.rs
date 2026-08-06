@@ -44,8 +44,34 @@ fn read_all(paths: Vec<PathBuf>) -> HashMap<PathBuf, String> {
 /// direct replacement for `diagnose_project(&root, &HashMap::new())`'s
 /// reliance on `bynk-emit`'s disk fallback filling in what the (empty)
 /// overlay doesn't cover.
+///
+/// Content-ownership track (#1086) slice 5 correction: for
+/// [`bynk_ide::AnalysisRoots::Project`], also reads `roots`'s own
+/// `bynk.toml` and includes it in the returned map — `bynk_ide::discover_files`
+/// needs it to resolve a non-conventional `[paths] include`/`exclude`, and a
+/// caller re-lowering `roots` against this map (e.g. a subsequent
+/// `diagnose_project_with`) needs it too. `bynk-ide` can no longer fall back
+/// to a disk read for a miss itself (R2.3), so this crate — a dev-only test
+/// seam, not gated by R2.3 at all — is where that real read belongs.
 pub fn read_project_sources(roots: &bynk_ide::AnalysisRoots) -> HashMap<PathBuf, String> {
-    read_all(bynk_ide::discover_files(roots))
+    let overlay = manifest_overlay(roots);
+    let mut sources = read_all(bynk_ide::discover_files(roots, &overlay));
+    sources.extend(overlay);
+    sources
+}
+
+/// `bynk.toml`'s real on-disk content for [`bynk_ide::AnalysisRoots::Project`],
+/// as a one-entry map — empty for `SingleTree` (no manifest consulted) or an
+/// unreadable/absent manifest, both already-handled "no manifest" cases.
+fn manifest_overlay(roots: &bynk_ide::AnalysisRoots) -> HashMap<PathBuf, String> {
+    let bynk_ide::AnalysisRoots::Project(root) = roots else {
+        return HashMap::new();
+    };
+    let toml_path = root.join("bynk.toml");
+    match std::fs::read_to_string(&toml_path) {
+        Ok(text) => HashMap::from([(toml_path, text)]),
+        Err(_) => HashMap::new(),
+    }
 }
 
 /// `CompileOptions::single(root)`, with every source pre-read — the direct

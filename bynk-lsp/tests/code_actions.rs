@@ -202,11 +202,18 @@ fn action_parts(a: &CodeActionOrCommand) -> (String, Vec<OneOf<TextEdit, Annotat
 
 /// Overlay `fixed` on `rel` and assert the whole project re-diagnoses clean,
 /// and that the fixed buffer round-trips through `fmt` (#852's acceptance).
+///
+/// Content-ownership track (#1086) slice 5: every *other* file the project
+/// touches (a `uses`d commons, a consumed context) must still be readable —
+/// `bynk-emit`'s disk-read fallback used to fill those in silently; now the
+/// base sources map (literal, non-canonicalised keys, matching what
+/// `discover_project_files` names) must be complete before `rel`'s fixed
+/// content overlays on top.
 fn assert_project_clean(root: &Path, rel: &str, fixed: &str) {
-    let abs = root.join(rel);
-    let canonical = abs.canonicalize().unwrap_or(abs);
-    let mut overlay = HashMap::new();
-    overlay.insert(canonical, fixed.to_string());
+    let mut overlay = bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(
+        root.to_path_buf(),
+    ));
+    overlay.insert(root.join(rel), fixed.to_string());
     let post = bynk_ide::diagnose_project(root, &overlay);
     assert!(
         post.files.iter().all(|f| f.diagnostics.is_empty()),

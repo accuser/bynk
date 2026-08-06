@@ -153,8 +153,27 @@ impl std::fmt::Display for ProjectPathsError {
 /// failure, an unrecognised `[paths]` key, or an `include` list longer than
 /// `Roots` supports — as an error instead of silently falling back to the
 /// conventional layout.
+///
+/// Content-ownership track (#1086) slice 5 correction (found only under
+/// implementation): used to delegate to [`try_read_project_paths_with`] with
+/// an empty overlay, relying on `discovery::read_source`'s disk-read
+/// fallback to still reach the real `bynk.toml` on the (guaranteed) miss.
+/// Slice 5 deleted that fallback, so every real caller of *this* function —
+/// `bynk dev`, `bynk-driver::discovery`, and every test that wants "just
+/// read the manifest off disk" — would otherwise silently degrade to
+/// [`ProjectPaths::conventional`] for any project with a real manifest. This
+/// reads `bynk.toml` itself and hands it in as the overlay, restoring the
+/// plain-disk-read contract this function has always documented, without
+/// reintroducing a general fallback into `read_source` (whose real callers —
+/// `bynk-ide`'s `AnalysisRoots::lower`, `bynk-driver`'s `project_options` —
+/// already supply their own real-or-overlaid manifest content).
 pub fn try_read_project_paths(project_root: &Path) -> Result<ProjectPaths, ProjectPathsError> {
-    try_read_project_paths_with(project_root, &HashMap::new())
+    let toml_path = project_root.join("bynk.toml");
+    let overlay = match fs::read_to_string(&toml_path) {
+        Ok(text) => HashMap::from([(toml_path, text)]),
+        Err(_) => HashMap::new(),
+    };
+    try_read_project_paths_with(project_root, &overlay)
 }
 
 /// Like [`try_read_project_paths`], but honours `overlay` for `bynk.toml`
