@@ -40,8 +40,8 @@ chosen. If a later phase finds it needs typed unit identity before phase 8 opens
 revisit this decision under its own review, not to have silently pre-built it here.
 
 ## ADR: project-model-symbols-boundary
-title: `bynk-project`'s module boundary is a four-part test, not "no literal `bynk_check` import"
-summary: `symbols.rs`, `schema_registry.rs`'s `reconcile` and `diagnostics.rs`'s checking-result types fail on checking coupling; `Mode` and `paths.rs`'s `json_string` pass that test but fail a different one
+title: `bynk-project`'s module boundary is a four-part test plus a fifth rule for composites, not "no literal `bynk_check` import"
+summary: `symbols.rs` and `schema_registry.rs`'s `reconcile` fail on checking coupling; `Mode` and `paths.rs`'s `json_string` pass that test but fail a different one; `ProjectAnalysis` is a composite that resolves upward rather than failing any single test
 
 **Context.** Phase 4 needs to decide which of `bynk-emit/src/project.rs`'s nine sibling modules
 (`consistency.rs`, `diagnostics.rs`, `discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`,
@@ -65,11 +65,26 @@ check out clean on the same closer read; so does `discovery.rs`.
 
 `diagnostics.rs` was never assigned a home by the first pass at all. Of its seven top-level items,
 `Mode`, `AttributedError`, `ErrorSink` and `ProjectFailure` are plain bookkeeping with no `bynk_check`
-anywhere. `ProjectAnalysis` carries `pub ty_intern: Arc<bynk_check::checker::Types>` plus `ProjectIndex`,
-`FileHints`, `FileExprTypes`, `FileLocals`, `FileRequirements` — every field a checker output.
-`ContextSequenceInfo` carries `resolver::CrossContextInfo`. `ContextBoundaryInfo` is AST-typed but built
-during `run_checks`'s `Checked` arm from `combined_types_for`/`unit_tables`, the same checking pass, not
-discovery. Being `bynk_check`-free isn't the whole test, though: `Mode`'s use sites split across
+anywhere. `ContextSequenceInfo` carries `resolver::CrossContextInfo`, a clean checker output.
+`ContextBoundaryInfo` is AST-typed but built during `run_checks`'s `Checked` arm from
+`combined_types_for`/`unit_tables`, the same checking pass, not discovery.
+
+`ProjectAnalysis` is not the same shape as those two. It has twelve fields, not the six an earlier pass of
+this doc enumerated before generalising "every field a checker output" — false as stated. `index`, `hints`,
+`expr_types`, `ty_intern` (`Arc<bynk_check::checker::Types>`), `locals` and `requirements` are checker
+outputs. But `snapshots: Vec<(PathBuf, String)>` is, by its own doc comment, "for every file read,
+including clean files" — a discovery output, not a checking one. `errors: Vec<AttributedError>` holds the
+exact type this ADR sends to `bynk-project` as bookkeeping. `unit_sources` is a unit→file map "in discovery
+order" (R3.7's territory); `doc_scope` is built from the `uses`/`consumes` edges. `ProjectAnalysis` is a
+composite of project facts and checker outputs, not a homogeneous checker-output struct — it stays on the
+checking side because only something above both `bynk-project` and `bynk-check` (the companion
+`project-model-analysis-entry-point` ADR's new entry point) can assemble a value with both kinds of field,
+not because every field independently demands it. That composite shape is itself a constraint on the new
+entry point's return type, not just on where `ProjectAnalysis` the type lives: it has to surface
+`bynk-project`-shaped data (`snapshots`, `unit_sources`) alongside `bynk-check`-shaped data, which
+"the analogue of `ProjectAnalysis`" was already committing to without saying so.
+
+Being `bynk_check`-free isn't the whole test, though: `Mode`'s use sites split across
 `check_unit_files` (`project.rs:3210`, param `:3230`, branches `:3476,3495,3539,3556`) and `run_checks`
 (`:3644`, param `:3654`, branch `:3961`) — `run_checks` calls `check_unit_files`, threading `mode` down
 into the per-unit check-and-emit loop, not just the top-level orchestrator. None of
@@ -131,7 +146,12 @@ budget.
 discovery(`bynk-project`)→parse→resolve→check(`bynk-check`, already local) sequence `run_checks`'s
 `Mode::Analyse` arm performs today, returning what `bynk-ide` needs in place of today's `ProjectAnalysis`.
 `bynk-ide` calls this instead of `bynk-emit::analyse_project`. `run_checks` stays in `bynk-emit`,
-unchanged, serving `compile_project`/emission alone.
+unchanged, serving `compile_project`/emission alone. `ProjectAnalysis` itself is a composite of discovery
+outputs (`snapshots`, `unit_sources`, `doc_scope`) and checker outputs (`index`, `hints`, `expr_types`,
+`ty_intern`, `locals`, `requirements`, `sequence_info`, `boundary_info`) — see the companion
+`project-model-symbols-boundary` ADR — so this entry point's return type has to surface both kinds, not
+just checker output; "the analogue of `ProjectAnalysis`" means composing `bynk-project`-sourced data with
+`bynk-check`-sourced data, not producing a purely `bynk-check`-shaped value.
 
 **Consequences.** This is a deliberate, temporary duplication: the new `bynk-check` entry point and
 `run_checks`'s `Mode::Analyse` arm do overlapping work until phase 5 centralises checking in `bynk-check`,
@@ -142,6 +162,7 @@ review budget than that decision deserves. The duplication is named here specifi
 it as known, bounded debt rather than rediscovering it as a surprise. This is the most load-bearing and
 hardest-to-reverse of this settling pass's three decisions: it fixes the shape `bynk-ide`'s live analysis
 path takes for the phase-4-to-phase-5 window. The direct edit is one call site
-(`bynk-ide/src/lib.rs:320`, behind the stable `diagnose_project`/`diagnose_project_with` wrapper); the 87
-`diagnose_project(` call sites across the tree exercise this path without naming it, which is a coverage
-argument for the relocation, not a statement that 100+ sites need editing.
+(`bynk-ide/src/lib.rs:320`, behind the stable `diagnose_project`/`diagnose_project_with` wrapper); 85
+`diagnose_project(` call sites across the tree (87 raw matches include the function's own two definitions)
+exercise this path without naming it, which is a coverage argument for the relocation, not a statement
+that 85+ sites need editing.
