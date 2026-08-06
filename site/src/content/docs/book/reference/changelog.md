@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.20** | content-ownership track slice 4 sub-slice 3 (#1086, #1098) — the remaining 78 diagnose_project/CompileOptions::single/::split call sites in bynkc/tests, bynk/tests, and bynk-emit's own #[cfg(test)] module migrate to complete sources maps, finishing slice 4's ~120-site migration; no separate CI guard was needed in the end (slice 5's own fallback deletion is the loud-failure mechanism) |
 | **v0.247.19** | content-ownership track slice 4 sub-slice 2 (#1086, #1098) — all 25 bynk-lsp/tests diagnose_project(&root, &HashMap::new())/diagnose_project_with call sites migrate to bynk-testkit's complete sources map, including project_model.rs's shared rel_files helper (fixing 8 further tests indirectly) |
 | **v0.247.18** | content-ownership track slice 4 sub-slice 1 (#1086, #1098) — bynk-ide's own 18 inline-test diagnose_project(&root, &HashMap::new()) call sites migrate to an in-crate testkit module built on production discovery; fs_below_driver stays at bynk-ide=0 |
 | **v0.247.17** | content-ownership track slice 3 (#1086, #1096) — a new dev-only bynk-testkit crate, built directly on production discovery, replaces diagnose_project(&root, &HashMap::new()) and bare CompileOptions::single/::split in three representative test fixtures, ahead of the full ~120-site migration (slice 4) |
