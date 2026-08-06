@@ -2512,7 +2512,7 @@ revision is the proof.
 | Rule | Measured state | Cost to close |
 |---|---|---|
 | R2.2 | `Span { start: usize, end: usize }` — no `FileId` | large — touches every span construction |
-| R2.3 | `CompileOptions.sources` ✅ and `testkit.rs` ✅ **landed**; but `std::fs` still in `bynk-emit` (4 files), `bynk-ide` (5), `bynk-fmt` (1) | medium — `bynk-ide` has two unrelated reasons, not one: `completion.rs`'s `cached_project_unit` path, and `symbols.rs`'s cross-file lookups, which bypass that cache entirely |
+| R2.3 | `CompileOptions.sources` ✅ and `testkit.rs` ✅ **landed**; content-ownership track (#1086, retired 6 Aug 2026) closed `bynk-ide` (0) and `bynk-fmt` (0). `bynk-emit`: 3, all named exceptions — the enumeration walk (`discover_bynk_files`), the adapter-binding carve-out (`read_adapter_binding`), and the manifest-read carve-out (`try_read_project_paths`), each a documented, permanent floor rather than residual migration debt (`design/greenfield-status.md`'s `fs_below_driver`, precision landed per #1104) | none — the residual `bynk-emit` count is a named floor, not open work; closing any of the three would reopen a decision `design/tracks/content-ownership.md` §3.2 (retired) settled as permanent |
 | R2.4 | `HashMap<Span` = **27** | large; the review kills the full `NodeId` retrofit — use parallel-data migration |
 | R2.6 | correct already (`documentation` beside `trivia`) | none |
 | R2.8 | `is_fully_drained` present (5 sites) ✅ **landed**; the 34-field drain itself remains | medium |
