@@ -211,10 +211,24 @@ fn workspace_lints(root: &Path) -> Probe {
 /// spelling `std::fs` itself. The literal text scan alone missed exactly that file,
 /// so a probe reading `bynk-emit=0` would have asserted R2.3 closed on a false
 /// premise (#1013).
+///
+/// #1104 (a content-ownership (#1086) probe-precision follow-on): a flagged *count*
+/// alone can't tell a residual R2.3 violation from a documented, permanent exception —
+/// `bynk-emit`'s 3 have read that way since the track's retirement (`design/archive/
+/// retired-tracks.md`'s closing summary), each named in [`NAMED_FS_EXCEPTIONS`]. So
+/// each flagged file is additionally classified as a **named floor** file — every
+/// production-scope touch it has is either inside one of those named functions, or is
+/// a bare import declaration (no fn encloses it — [`enclosing_fn`] returns `None`) that
+/// performs no I/O of its own, existing only so a *descendant* module's bare `fs::`
+/// call can resolve (exactly `project.rs`'s `use std::fs;`, which `discovery.rs` and
+/// `paths.rs` glob-import via `use super::*;`) — or a **residual** file: any other file
+/// touching `std::fs` in production scope, which still reads as a real R2.3 violation
+/// ([`file_is_named_fs_floor`]).
 fn fs_below_driver(root: &Path) -> Probe {
     let crates = ["bynk-emit", "bynk-ide", "bynk-fmt"];
     let mut per_crate = Vec::new();
     let mut total = 0usize;
+    let mut total_floor = 0usize;
     for krate in crates {
         let dir = root.join(krate).join("src");
         let files: Vec<(PathBuf, String)> = rust_files(&dir)
@@ -224,15 +238,210 @@ fn fs_below_driver(root: &Path) -> Probe {
                 (rel, contents)
             })
             .collect();
-        let count = production_std_fs_files(&files).len();
+        let flagged = production_std_fs_files(&files);
+        let count = flagged.len();
         total += count;
-        per_crate.push(format!("{krate}={count}"));
+        let floor = flagged
+            .iter()
+            .filter(|&&i| file_is_named_fs_floor(krate, &files, i))
+            .count();
+        total_floor += floor;
+        let residual = count - floor;
+        per_crate.push(if floor > 0 {
+            format!("{krate}={count} ({floor} named floor, {residual} residual)")
+        } else {
+            format!("{krate}={count}")
+        });
     }
     Probe {
         name: "fs_below_driver",
         gated: true,
-        reads: format!("{total} files ({})", per_crate.join(", ")),
+        reads: format!(
+            "{total} files ({}) — {total_floor} named floor, {} residual total",
+            per_crate.join(", "),
+            total - total_floor
+        ),
     }
+}
+
+/// #1104: the specific, permanently-carved-out production functions whose
+/// `std::fs` touch is a *named* exception, not evidence of unfinished R2.3
+/// migration — settled in `design/tracks/content-ownership.md` §3.2 (retired) and
+/// its closing summary in `design/archive/retired-tracks.md`. `(crate, file path
+/// relative to that crate's `src/`, enclosing production fn name)`. A future
+/// carve-out decided the same deliberate way joins this list; anything touching
+/// `std::fs` in production scope that isn't listed here reads as a residual R2.3
+/// violation, per [`file_is_named_fs_floor`].
+const NAMED_FS_EXCEPTIONS: &[(&str, &str, &str)] = &[
+    // The bare enumeration walk — no content read, no overlay parameter at all.
+    ("bynk-emit", "project/discovery.rs", "discover_bynk_files"),
+    // An adapter's `.binding.ts` path is only known post-parse, so no discovery walk
+    // can pre-populate it into a caller-supplied overlay the way `.bynk` files are.
+    ("bynk-emit", "project/discovery.rs", "read_adapter_binding"),
+    // The plain, no-overlay manifest reader's contract has always been "read the real
+    // file"; nothing above it in the call chain can supply this for a caller that
+    // doesn't build its own overlay.
+    ("bynk-emit", "project/paths.rs", "try_read_project_paths"),
+];
+
+/// Is flagged file `files[i]` (already known, by [`production_std_fs_files`], to touch
+/// `std::fs` in production scope) a **named floor** file — every production-scope touch
+/// it has is either inside a [`NAMED_FS_EXCEPTIONS`] function for this exact
+/// `(krate, file)`, or outside any fn entirely (a bare import declaration, which reads
+/// but performs no filesystem operation by itself)? A single disallowed touch — inside
+/// an unlisted fn, or inside a listed fn's *file* but wrong *name* — makes the whole
+/// file residual: partial credit isn't meaningful here, since the point is "can a
+/// reader stop cross-referencing track docs for this file," not a ratio.
+fn file_is_named_fs_floor(krate: &str, files: &[(PathBuf, String)], i: usize) -> bool {
+    let (path, _) = &files[i];
+    let rel = path.to_string_lossy().replace('\\', "/");
+    let facts: Vec<FsImportFacts> = files.iter().map(|(_, s)| fs_import_facts(s)).collect();
+    let parents: Vec<Option<usize>> = files.iter().map(|(p, _)| module_parent(p, files)).collect();
+    let lines: Vec<&str> = files[i].1.lines().collect();
+    let ranges = test_mod_ranges(&lines);
+    let fn_ranges = production_fn_ranges(&lines, &ranges);
+
+    for (li, line) in lines.iter().enumerate() {
+        if in_test_range(li, &ranges) {
+            continue;
+        }
+        if !line_touches_std_fs(i, line, &facts, &parents, files) {
+            continue;
+        }
+        let Some(fn_name) = enclosing_fn(li, &fn_ranges) else {
+            continue; // a bare import declaration — never itself a violation
+        };
+        let named = NAMED_FS_EXCEPTIONS
+            .iter()
+            .any(|&(c, f, func)| c == krate && f == rel && func == fn_name);
+        if !named {
+            return false;
+        }
+    }
+    true
+}
+
+/// Does `line` (already known to be production-scope) itself touch `std::fs` — by the
+/// same two means [`production_std_fs_files`] checks at file granularity, applied here
+/// to one line: a literal `std::fs` substring, or a bare/qualified path this line spells
+/// that resolves to `std::fs` through file `i`'s visible import bindings.
+fn line_touches_std_fs(
+    i: usize,
+    line: &str,
+    facts: &[FsImportFacts],
+    parents: &[Option<usize>],
+    files: &[(PathBuf, String)],
+) -> bool {
+    if line.contains("std::fs") {
+        return true;
+    }
+    let mut roots = BTreeSet::new();
+    collect_bare_path_roots(line, &mut roots);
+    if roots.iter().any(|name| {
+        matches!(
+            resolve_name_in_module(i, name, facts, parents),
+            NameResolution::StdFs
+        )
+    }) {
+        return true;
+    }
+    let mut chains = BTreeSet::new();
+    collect_qualified_paths(line, &mut chains);
+    chains
+        .iter()
+        .any(|chain| qualified_chain_reaches_std_fs(chain, i, facts, parents, files))
+}
+
+/// The name and inclusive body line-range of every production-scope `fn` in `lines`
+/// (`test_ranges` excluded, same as everywhere else in this probe) — used by
+/// [`file_is_named_fs_floor`] to attribute a flagged touch line to its enclosing
+/// function. A wrapped signature (the `{` arriving lines after the `fn` line, past a
+/// multi-line parameter list) is handled the same way [`test_mod_ranges`] handles a
+/// `mod` line: brace depth is tracked starting at the `fn` line itself, but a parameter
+/// list has no `{`/`}` in it, so `started` only flips true once the real body-opening
+/// brace arrives, however many lines later.
+fn production_fn_ranges(
+    lines: &[&str],
+    test_ranges: &[(usize, usize)],
+) -> Vec<(String, usize, usize)> {
+    let mut out = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if in_test_range(i, test_ranges) {
+            continue;
+        }
+        let Some(name) = fn_name_on_line(line) else {
+            continue;
+        };
+        let mut state = BraceScanState::Normal;
+        let mut depth = 0i32;
+        let mut started = false;
+        let mut end = lines.len() - 1;
+        for (j, l) in lines[i..].iter().enumerate() {
+            let (delta, new_state) = brace_delta(l, state);
+            state = new_state;
+            depth += delta;
+            if depth != 0 {
+                started = true;
+            }
+            if started && depth == 0 {
+                end = i + j;
+                break;
+            }
+        }
+        out.push((name, i, end));
+    }
+    out
+}
+
+/// The leading `fn NAME` on `line`, past an optional `pub`/`pub(...)`, `async`,
+/// `unsafe`, `const` modifier run (in any order/repetition, mirroring
+/// [`collect_declared_type_name`]'s `pub`-stripping) — `None` if `line` doesn't open a
+/// function at all (a call site, a doc comment mentioning "fn", a closure). Doesn't
+/// require a trailing `{` or even `(` on this same line — a wrapped signature's `fn`
+/// line can end right at the name.
+fn fn_name_on_line(line: &str) -> Option<String> {
+    let mut t = line.trim();
+    loop {
+        if let Some(rest) = t.strip_prefix("pub") {
+            let rest = rest.trim_start();
+            t = if let Some(after_paren) = rest.strip_prefix('(') {
+                after_paren.split_once(')')?.1.trim_start()
+            } else {
+                rest
+            };
+            continue;
+        }
+        let mut advanced = false;
+        for kw in ["async ", "unsafe ", "const "] {
+            if let Some(rest) = t.strip_prefix(kw) {
+                t = rest.trim_start();
+                advanced = true;
+                break;
+            }
+        }
+        if !advanced {
+            break;
+        }
+    }
+    let rest = t.strip_prefix("fn ")?;
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    Some(rest[..end].to_string())
+}
+
+/// The innermost [`production_fn_ranges`] entry containing `line_idx`, by name — `None`
+/// if `line_idx` sits outside every production fn (module scope: a `use` declaration,
+/// a `const`/`static`, or a `struct`/`enum` body).
+fn enclosing_fn(line_idx: usize, fn_ranges: &[(String, usize, usize)]) -> Option<String> {
+    fn_ranges
+        .iter()
+        .filter(|(_, start, end)| line_idx >= *start && line_idx <= *end)
+        .min_by_key(|(_, start, end)| end - start)
+        .map(|(name, _, _)| name.clone())
 }
 
 /// The literal text component of [`fs_below_driver`]: some production-scope line names
@@ -1987,6 +2196,113 @@ commons app.demo {
             ),
         ];
         assert_eq!(flagged(&files), Vec::<String>::new());
+    }
+
+    // --- fs_below_driver: named-floor classification (#1104) -----------------
+
+    #[test]
+    fn fn_name_on_line_strips_modifiers() {
+        assert_eq!(fn_name_on_line("fn foo() {"), Some("foo".to_string()));
+        assert_eq!(
+            fn_name_on_line("pub(crate) fn read_adapter_binding("),
+            Some("read_adapter_binding".to_string())
+        );
+        assert_eq!(
+            fn_name_on_line("pub async unsafe fn go() {"),
+            Some("go".to_string())
+        );
+    }
+
+    #[test]
+    fn fn_name_on_line_ignores_non_fn_lines() {
+        assert_eq!(fn_name_on_line("    let f = foo();"), None);
+        assert_eq!(fn_name_on_line("/// calls fn bar somewhere"), None);
+    }
+
+    /// A signature whose `{` arrives lines after the `fn` line — `read_adapter_binding`'s
+    /// own real shape — must still resolve to the correct body range: `started` can't
+    /// flip true on the parameter list, which has no braces of its own.
+    #[test]
+    fn production_fn_ranges_handles_a_wrapped_signature() {
+        let src = "pub(crate) fn read_adapter_binding(\n    path: &Path,\n) -> std::io::Result<String> {\n    fs::read_to_string(path)\n}\n";
+        let lines: Vec<&str> = src.lines().collect();
+        let ranges = production_fn_ranges(&lines, &[]);
+        assert_eq!(ranges.len(), 1);
+        let (name, start, end) = &ranges[0];
+        assert_eq!(name, "read_adapter_binding");
+        assert_eq!(*start, 0);
+        assert_eq!(*end, lines.len() - 1);
+        assert_eq!(
+            enclosing_fn(3, &ranges),
+            Some("read_adapter_binding".to_string())
+        );
+    }
+
+    /// The concrete #1104 shape, in miniature: `project.rs`'s bare `use std::fs;` (no
+    /// enclosing fn — never itself a violation) plus `discovery.rs`'s two named-exception
+    /// functions. The whole file must read as a named floor, not residual.
+    #[test]
+    fn file_is_named_fs_floor_true_for_the_real_discovery_rs_shape() {
+        let files = [
+            (
+                PathBuf::from("project.rs"),
+                "use std::fs;\n\nmod discovery;\n".to_string(),
+            ),
+            (
+                PathBuf::from("project/discovery.rs"),
+                "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n\npub(crate) fn read_adapter_binding(path: &Path) -> std::io::Result<String> {\n    fs::read_to_string(path)\n}\n".to_string(),
+            ),
+        ];
+        assert!(file_is_named_fs_floor("bynk-emit", &files, 1));
+    }
+
+    /// A new, unlisted fn touching `std::fs` in the *same file* as two named exceptions
+    /// must flip the whole file to residual — no partial credit, since "named floor"
+    /// must mean every touch is accounted for, not most of them.
+    #[test]
+    fn file_is_named_fs_floor_false_when_an_unnamed_fn_also_touches_fs() {
+        let files = [
+            (
+                PathBuf::from("project.rs"),
+                "use std::fs;\n\nmod discovery;\n".to_string(),
+            ),
+            (
+                PathBuf::from("project/discovery.rs"),
+                "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n\nfn some_new_helper() {\n    let _ = fs::write(\"x\", \"y\");\n}\n".to_string(),
+            ),
+        ];
+        assert!(!file_is_named_fs_floor("bynk-emit", &files, 1));
+    }
+
+    /// A file whose only production-scope touch is a bare `use std::fs;` import — no
+    /// enclosing fn at all — is trivially a named floor: the import performs no I/O by
+    /// itself, and the descendant it enables is checked (and named) separately.
+    #[test]
+    fn file_is_named_fs_floor_true_for_an_import_only_file() {
+        let files = [(
+            PathBuf::from("project.rs"),
+            "use std::fs;\n\nmod discovery;\n".to_string(),
+        )];
+        assert!(file_is_named_fs_floor("bynk-emit", &files, 0));
+    }
+
+    /// The same `discovery.rs` shape under the wrong crate label must not read as a
+    /// floor — [`NAMED_FS_EXCEPTIONS`] is keyed on `(crate, file, fn)`, not `(file, fn)`
+    /// alone, so a same-named file/fn pair in a different crate isn't accidentally
+    /// covered.
+    #[test]
+    fn file_is_named_fs_floor_false_under_the_wrong_crate() {
+        let files = [
+            (
+                PathBuf::from("project.rs"),
+                "use std::fs;\n\nmod discovery;\n".to_string(),
+            ),
+            (
+                PathBuf::from("project/discovery.rs"),
+                "use super::*;\n\npub(crate) fn discover_bynk_files() {\n    let _ = fs::read_dir(\".\");\n}\n".to_string(),
+            ),
+        ];
+        assert!(!file_is_named_fs_floor("bynk-ide", &files, 1));
     }
 
     // --- emit_abi_shapes (#999 Decision E) ----------------------------------
