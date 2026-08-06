@@ -73,8 +73,11 @@ model was, and the project model was in the emitter because emission needed it f
 `bynk-project` as its own phase *below* both check and emit is what makes phase 5 the only place context
 checking can live." `bynk-emit/src/project.rs`'s own top-of-file doc confirms the entanglement it names:
 discovery, resolution, checking and emission are one two-pass pipeline by design ("Resolve, type-check,
-and emit each unit" — one pass), and the file imports `crate::emitter` and calls three `validate::`
-functions directly at its own top level. Phase 4 is the phase that has to pull the *model* out of that
+and emit each unit" — one pass), and the file imports `crate::emitter` and glob-imports `validate::*`
+(plus two named re-exports, `check_function_type_boundary_items` and `collect_type_decls`/
+`type_ref_is_held`) at its own top level — a stronger coupling than naming a handful of call sites, since
+it means the hub's dependence on `validate.rs` isn't enumerable from a short symbol list. Phase 4 is the
+phase that has to pull the *model* out of that
 pipeline without also, incidentally, dragging the *checking* out with it — that second move is phase 5's,
 named already so it isn't repeated.
 
@@ -147,13 +150,14 @@ upgrade a named forward reference the way phase 3 named `ExprId`-at-parse before
 
 ### 3.2 Q2 — Module boundary: what actually moves, and what does `bynk-project` export?
 
-`bynk-emit/src/project.rs` and its eight submodules total 21,985 lines. Excluding `validate.rs` (5,019,
-phase 5's) and `tests_emit.rs` (5,922, phase 0's), the candidate surface is `project.rs` itself (6,369),
-`discovery.rs` (446), `graph.rs` (325), `paths.rs` (634), `schema_registry.rs` (908), `consistency.rs`
-(178), `symbols.rs` (1,472) and `diagnostics.rs` (202) — roughly 10.5k lines. But `project.rs` is not a
-clean project-model file: it imports `crate::emitter`, calls `validate::` directly, and is the hub every
-submodule and `validate.rs` alike reach through via `use super::*` — there is no existing internal
-boundary between "project-model fact" and "orchestration that also drives checking and emission."
+`bynk-emit/src/project.rs` and its nine submodules total 21,475 lines (`wc -l bynk-emit/src/project.rs
+bynk-emit/src/project/*.rs`). Excluding `validate.rs` (5,019, phase 5's) and `tests_emit.rs` (5,922, phase
+0's), the candidate surface is `project.rs` itself (6,369), `discovery.rs` (446), `graph.rs` (325),
+`paths.rs` (634), `schema_registry.rs` (908), `consistency.rs` (178), `symbols.rs` (1,472) and
+`diagnostics.rs` (202) — 10,534 lines, roughly 10.5k. But `project.rs` is not a clean project-model file:
+it imports `crate::emitter`, glob-imports `validate::*`, and is the hub every submodule and `validate.rs`
+alike reach through via `use super::*` — there is no existing internal boundary between "project-model
+fact" and "orchestration that also drives checking and emission."
 
 Two sub-questions this needs to answer together:
 
@@ -320,7 +324,7 @@ have misplaced this field. If reading 3 (§3.4) is correct, this phase's rule co
 smaller than the reference's struct literally suggests, and phase 8's scope is correspondingly larger than
 trajectory §5 currently prices it at.
 
-**`project.rs` is the hub, not a leaf.** Q2's finding — `use crate::emitter`, direct `validate::` calls,
+**`project.rs` is the hub, not a leaf.** Q2's finding — `use crate::emitter`, a `validate::*` glob import,
 `use super::*` reached by every sibling and by `validate.rs` itself — means this is not a
 move-the-files exercise. The trajectory's "cheap" sizing may hold for the `bynk-ide` repoint (§6's P4.5)
 while understating P4.0–P4.2's actual design cost, the same shape of miscalibration `identity-and-totality.md`
@@ -361,4 +365,4 @@ that closes its question is ready to merge.
 
 Mirrors every prior track on this trajectory: retires when §6's probe (`ide_emit_edge`) reads absent and
 every slice named to reach it has landed. The retirement PR removes this doc, appends its closing summary
-to `../archive/retired-tracks.md`, and closes the spine issue once one exists.
+to `../archive/retired-tracks.md`, and closes the spine issue ([#1107](https://github.com/accuser/bynk/issues/1107)).
