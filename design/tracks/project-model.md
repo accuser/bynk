@@ -127,7 +127,13 @@ this phase needs.
 > Q2's investigation surfaced a smaller version of the same shape: `symbols.rs`'s `ProjectIndex` and
 > `IndexBuilder` are not `bynk-emit` types at all — they're defined in `bynk-check/src/index.rs`. This
 > resolved Q2 by removing an option the question posed (`symbols.rs` moving into `bynk-project`), rather
-> than by choosing among the options it posed.
+> than by choosing among the options it posed. A second review pass found the same shape had been missed
+> twice more, both times because a literal `grep bynk_check` is the wrong test: `schema_registry.rs`
+> reaches `UnitTable` (itself `bynk_check`-coupled) via an unqualified `use super::UnitTable`, and
+> `diagnostics.rs` — never assigned a home at all in the first pass — is split three checking-result types
+> (`ProjectAnalysis`, `ContextSequenceInfo`, `ContextBoundaryInfo`) from four plain bookkeeping ones. §3.2
+> now states the real test this doc should have used from the start: needs nothing that is an *output* of
+> resolution or checking, not "no literal `bynk_check` import."
 >
 > Q1 and Q4 turned out to be one decision, not two: once contract hashing is confirmed out of scope
 > (Q4), the reference's `ProjectGraph` struct has no field this phase needs, so Q1's "extract today's
@@ -151,19 +157,48 @@ discipline phase 3 used for `ExprId`-at-parse before committing to it.
 Verified directly: `bynk-check/src/index.rs:302` defines `ProjectIndex`; `:430` defines `IndexBuilder`.
 `bynk-emit/src/project/symbols.rs::assemble_index` imports both from `bynk_check::index` and exists only
 to walk `ParsedFile`s and populate that checker-owned type — `bynk-ide/src/lib.rs:156` carries the result
-directly (`pub index: index::ProjectIndex`). `discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`
-and `consistency.rs` import neither `bynk_check` nor `crate::emitter` (checked directly: zero hits across
-all five files) — clean candidates. `symbols.rs` is the opposite: it is a `bynk-check`-type builder that
-happens to live in `bynk-emit`.
+directly (`pub index: index::ProjectIndex`). `symbols.rs` is a `bynk-check`-type builder that happens to
+live in `bynk-emit`.
 
-**Decision: `bynk-project` receives `discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`,
-`consistency.rs`, and the project-model types today declared directly in `project.rs` that these depend
-on (`UnitKind`, `Roots`, `ProjectPaths`, the `CompileOptions::schema_registry`/`SchemaLock` shape — all
-themselves already `bynk_check`/`crate::emitter`-free). `symbols.rs` does not move into `bynk-project` —
-building a `bynk-check`-owned type is `bynk-check`'s concern, not the project model's, once `bynk-project`
-exists for it to depend on (§3.3 gives this the same treatment for the rest of `analyse_project`'s
-pipeline). `project.rs`'s orchestration (`run_checks`, `compile_project`) does not move as a body; it
-becomes a caller of `bynk-project`'s functions instead of owning that logic inline.**
+A first pass checked `discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs` and `consistency.rs` for
+a literal `bynk_check` import and found none — but that grep is too coarse, and review caught it:
+`schema_registry.rs:35` reads `use super::UnitTable;`, and `reconcile` (`:228-230`) takes
+`unit_tables: &HashMap<String, UnitTable>`. `UnitTable` (`symbols.rs:284`) is itself `bynk_check`-coupled
+— its `methods` field is `HashMap<String, ResolverMethodTable>`, an alias for `bynk_check::resolver::MethodTable`
+(`project.rs:38`). The coupling arrives through an unqualified, glob-sourced name, which is exactly what a
+literal-string grep for `bynk_check` misses. `schema_registry.rs`'s other two public functions, `parse`
+(`:409`) and `serialize` (`:446`), take no `UnitTable` and stay clean — this is the module's own documented
+seam ("this module touches no disk … `parse`/`serialize` are pure"), and it turns out to also be the seam
+between what's project-model and what isn't. `graph.rs` and `consistency.rs` check out clean on re-read —
+their `use super::*` only resolves to `ParsedFile`/`CompileError`/`Span`/`HashMap`.
+
+The same question needed asking of `diagnostics.rs`, which the first pass never assigned a home at all.
+Of its seven top-level items, three are pure bookkeeping (`Mode`, `AttributedError`, `ProjectFailure`, plus
+the crate-private `ErrorSink`) — no `bynk_check` anywhere. The other three are checking results in
+substance: `ProjectAnalysis` carries `pub ty_intern: Arc<bynk_check::checker::Types>` plus `ProjectIndex`,
+`FileHints`, `FileExprTypes`, `FileLocals`, `FileRequirements` — every field a checker output;
+`ContextSequenceInfo` carries `resolver::CrossContextInfo`; `ContextBoundaryInfo` is AST-typed but built
+during `run_checks`'s `Checked` arm from `combined_types_for`/`unit_tables`, the same checking pass, not
+during discovery.
+
+**Decision:** `bynk-project` receives `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs`;
+`schema_registry.rs`'s `SchemaRegistry` type plus `parse`/`serialize` only (not `reconcile`); and
+`diagnostics.rs`'s `Mode`, `AttributedError`, `ErrorSink`, `ProjectFailure` — plus the project-model types
+declared directly in `project.rs` these depend on (`UnitKind`, `Roots`, `ProjectPaths`, the
+`CompileOptions::schema_registry`/`SchemaLock` shape). Staying on the checking side, to become part of
+§3.3's new `bynk-check` entry point rather than `bynk-project`: `symbols.rs` in full, `schema_registry.rs`'s
+`reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`, `ContextSequenceInfo`, `ContextBoundaryInfo` — every
+one of them either builds or is a checker-output type. `ProjectAnalysis` in particular is the return type
+§3.3(a)'s entry point already commits to producing "the analogue of," so its new home was already implied;
+this just makes it explicit rather than leaving it unassigned. `project.rs`'s orchestration (`run_checks`,
+`compile_project`) does not move as a body; it becomes a caller of `bynk-project`'s functions instead of
+owning that logic inline.
+
+The rule this leaves, stated once so P4.0 doesn't have to rediscover it per file: a type or function moves
+to `bynk-project` only if it needs nothing that exists solely as an output of resolution or checking
+(`UnitTable`, `Ty`/`TyId`, `ResolverMethodTable`, anything under `bynk_check::`, however it's named at the
+use site) — not "no literal `bynk_check` import," which this section's own first pass shows is too weak a
+test on its own.
 
 Public surface: `bynk-project` exports only what its real consumers use (mirroring R10.4's existing
 discipline), not a blanket glob. The exact enumerated list is P4.0's job, not a design question — reviewed
@@ -214,7 +249,7 @@ discipline content-ownership used for its own three exceptions. Unification rema
 work (§7), gated on an actual trigger (an observed CLI/LSP divergence, not appetite), consistent with how
 every track on this trajectory opens.
 
-### 3.4 Q4 — Where does `ProjectGraph.contract: IndexVec<UnitId, ContractHash>` actually come from? **Settled — reading 3.**
+### 3.4 Q4 — Where does `ProjectGraph.contract: IndexVec<UnitId, ContractHash>` actually come from? **Settled — deferred to phase 8.**
 
 The only `ContractHash`-shaped type in the tree, `bynk-check/src/contract.rs` (ADR 0200's cross-context
 wire-contract hash), is necessarily downstream of type-checking — it canonicalises resolved types via
@@ -234,10 +269,14 @@ already found nothing in §6 builds `ProjectGraph` at all, this doesn't even nee
 
 Verified: `bynkc/src/main.rs:64-100` shows the CLI's schema-lock round trip fully wired —
 `bynk_driver::schema_lock::read` → `CompileOptions::schema_registry` (`SchemaLock::On { existing }`) →
-`bynk_driver::schema_lock::write` on the output. `analyse_project_with`'s every call into `run_checks`
-hardcodes `&SchemaLock::Off` (`bynk-emit/src/project.rs:673,729,800,995`) — an explicit, deliberate value,
-not an ambient read. The LSP does non-bailing live analysis, not a build; it has no business persisting a
-build lockfile, so `Off` is correct-by-design, not a defect.
+`bynk_driver::schema_lock::write` on the output. `run_checks` (`bynk-emit/src/project.rs:3644`) has five
+callers, one `Mode::Build` (`compile_project`, `:584`) and four non-build: `check_project` (`:657`),
+`compile_in_memory` (`:716`), `analyse_in_memory_with_types` (`:787`) and `analyse_project_with` (`:979`).
+Every one of the four non-build callers passes an explicit `&SchemaLock::Off` (`:673`, `:729`, `:800`,
+`:995` respectively) — not an ambient read, four independent explicit values at four independent call
+sites, all agreeing. The LSP path (`analyse_project_with`) does non-bailing live analysis, not a build; it
+has no business persisting a build lockfile, so `Off` is correct-by-design there, not a defect — and the
+same holds for the other three non-build entry points on the same evidence.
 
 **Decision:** the Appendix D row ("schema registry read/written ambiently … thread two values") appears to
 already be closed by paydown that postdates whenever that row was last verified. Flagged here for
@@ -281,12 +320,14 @@ R10.2 asks for (a CI gate on the dependency graph, not just a probe reading zero
 
 ## 6. Slice decomposition
 
-§3 is settled; all three slices below are accepted, buildable, not forward references.
+§3 is settled; all three slices below are scoped and buildable as drafted, not forward references — each
+still becomes its own increment proposal, and `accepted` on that sub-issue (not this doc settling) is the
+actual approval to build it, per this doc's own Status block.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P4.0** | `bynk-project` crate skeleton; `discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`, `consistency.rs` relocated with minimal reshaping, plus the project-model types they need (`UnitKind`, `Roots`, `ProjectPaths`, the `SchemaLock` shape); public surface enumerated and reviewed (R10.4-style) as part of this slice, per §3.2 | R3.7, R3.8, R3.9, R3.11 | §3 settled |
-| **P4.1** | The new `bynk-check` analysis entry point (§3.3(a)): discovery via `bynk-project`, resolve/check via `bynk-check`'s existing resolver/checker, `assemble_index`-equivalent construction of `ProjectIndex` staying in `bynk-check` where it already belongs (§3.2). `run_checks` in `bynk-emit` is untouched. The file-reading asymmetry (§3.3(b)) carries over unchanged, not fixed here | R3.7, R10.2 (partial) | P4.0 |
+| **P4.0** | `bynk-project` crate skeleton; `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs` relocated with minimal reshaping, plus `schema_registry.rs`'s `SchemaRegistry`/`parse`/`serialize` (not `reconcile`) and `diagnostics.rs`'s `Mode`/`AttributedError`/`ErrorSink`/`ProjectFailure` (not `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`), plus the project-model types they need (`UnitKind`, `Roots`, `ProjectPaths`, the `SchemaLock` shape); public surface enumerated and reviewed (R10.4-style) as part of this slice, per §3.2 | R3.7, R3.8, R3.9, R3.11 | §3 settled |
+| **P4.1** | The new `bynk-check` analysis entry point (§3.3(a)): discovery via `bynk-project`, resolve/check via `bynk-check`'s existing resolver/checker; `symbols.rs` (all of it), `schema_registry.rs`'s `reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` relocate here, alongside the entry point itself, per §3.2's corrected boundary. `run_checks` in `bynk-emit` is untouched. The file-reading asymmetry (§3.3(b)) carries over unchanged, not fixed here | R3.7, R10.2 (partial) | P4.0 |
 | **P4.2** | `bynk-ide` repoints at the new `bynk-check` entry point instead of `bynk-emit::analyse_project`; `bynk-emit` dependency and its justifying Cargo.toml comment deleted; CI dependency-graph gate added | R10.2 | P4.1 |
 
 **Completion probe:** `ide_emit_edge` = absent. Already built (T0.0's probe harness, `xtask
@@ -336,6 +377,14 @@ own count puts `analyse_project_with`'s callers at 100+ across `bynk-ide`'s inli
 and `bynkc/tests`. Even with behaviour unchanged, a relocation this wide needs the LSP-surface-fixture
 coverage §4 commits to, not just a byte-identical-output check.
 
+**A naive "no literal `bynk_check` import" test is not a reliable module-boundary check, and P4.0 is where
+this bites again if it's forgotten.** §3.2's own history is the evidence: it took two review passes to find
+`schema_registry.rs`'s and `diagnostics.rs`'s real coupling, both hidden behind unqualified,
+glob-sourced names (`super::UnitTable`, a bare `Arc<bynk_check::checker::Types>` field with no re-export
+trail to grep for). P4.0's implementer needs the test §3.2 states explicitly — no dependency on anything
+that is an *output* of resolution or checking — applied per function and per field, not per file, or the
+same class of mistake ships as code instead of being caught in review.
+
 **The evidence ages.** Every fact, line number and quotation in this doc was measured against the tree on
 6 August 2026, on branch `track/project-model-settling`. Re-check before a slice proposal cites one, per
 every prior track's own §9.
@@ -364,8 +413,12 @@ this doc refers to them by letter until they exist — the pattern `compiler-arc
 - **ADR-A — phase 4 extracts today's name-keyed project-model logic into `bynk-project`; it does not
   build the reference's typed `ProjectGraph`/`UnitId`/`ContractHash` struct, which is phase 8's.** §3.1
   (Q1), §3.4 (Q4).
-- **ADR-B — `bynk-project`'s module boundary excludes `symbols.rs`'s `ProjectIndex` assembly, which stays
-  a `bynk-check`-owned concern.** §3.2 (Q2).
+- **ADR-B — `bynk-project`'s module boundary is "needs nothing that is an output of resolution or
+  checking," not "no literal `bynk_check` import."** Excludes `symbols.rs` in full, `schema_registry.rs`'s
+  `reconcile` (but not its `parse`/`serialize`), and `diagnostics.rs`'s `ProjectAnalysis`/
+  `ContextSequenceInfo`/`ContextBoundaryInfo` (but not its `Mode`/`AttributedError`/`ErrorSink`/
+  `ProjectFailure`) — all `bynk-check`-owned concerns reached through unqualified, glob-sourced names a
+  literal-string grep misses. §3.2 (Q2).
 - **ADR-C — a new, narrow `bynk-check` analysis entry point closes R10.2 without moving `run_checks` or
   doing phase 5's checking-centralisation early; the resulting duplication with `run_checks`'s
   `Mode::Analyse` arm is deliberate, temporary, and phase 5's to remove.** §3.3(a) (Q3). The most

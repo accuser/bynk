@@ -40,29 +40,53 @@ chosen. If a later phase finds it needs typed unit identity before phase 8 opens
 revisit this decision under its own review, not to have silently pre-built it here.
 
 ## ADR: project-model-symbols-boundary
-title: `bynk-project` excludes `ProjectIndex` assembly, which stays a `bynk-check`-owned concern
-summary: `symbols.rs`'s `assemble_index` builds a `bynk-check` type and belongs with it, not in the project-model crate
+title: `bynk-project`'s module boundary is "needs no output of resolution or checking," not "no literal `bynk_check` import"
+summary: `symbols.rs`, `schema_registry.rs`'s `reconcile`, and three of `diagnostics.rs`'s seven items are `bynk-check`-owned concerns reached through unqualified names a naive import grep misses
 
-**Context.** Phase 4 needs to decide which of `bynk-emit/src/project.rs`'s eight sibling modules
-(`discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`, `consistency.rs`, `symbols.rs`, plus
-`validate.rs` and `tests_emit.rs`, excluded on other grounds) move into the new `bynk-project` crate.
+**Context.** Phase 4 needs to decide which of `bynk-emit/src/project.rs`'s nine sibling modules
+(`consistency.rs`, `diagnostics.rs`, `discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`,
+`symbols.rs`, plus `validate.rs` and `tests_emit.rs`, excluded on other grounds) move into the new
+`bynk-project` crate.
 
 `bynk-check/src/index.rs` already defines `ProjectIndex` (line 302) and `IndexBuilder` (line 430) — both
 `bynk-check`-owned types, not `bynk-emit`'s. `bynk-emit/src/project/symbols.rs::assemble_index` imports
 both from `bynk_check::index` and exists only to walk parsed files and populate that checker-owned type.
 `bynk-ide` carries the result directly (`pub index: index::ProjectIndex`, `bynk-ide/src/lib.rs:156`).
-`discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs` and `consistency.rs` import neither
-`bynk_check` nor the emitter — verified directly, zero hits across all five files.
 
-**Decision.** `bynk-project` receives `discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs`,
-`consistency.rs`, and the project-model types they depend on. `symbols.rs`'s `ProjectIndex`-assembly logic
-does not move into `bynk-project` — building a `bynk-check`-owned type is `bynk-check`'s concern once
-`bynk-project` exists for it to depend on.
+A first pass tested the remaining modules for a literal `bynk_check` import and found none in
+`discovery.rs`, `graph.rs`, `paths.rs`, `schema_registry.rs` or `consistency.rs`. That test is too weak:
+`schema_registry.rs:35` reads `use super::UnitTable;`, and `reconcile` (`:228-230`) takes
+`unit_tables: &HashMap<String, UnitTable>`. `UnitTable` (`symbols.rs:284`) is itself `bynk_check`-coupled
+via `methods: HashMap<String, ResolverMethodTable>`, an alias (`project.rs:38`) for
+`bynk_check::resolver::MethodTable` — the coupling arrives through an unqualified, glob-sourced name, which
+a literal-string grep for `bynk_check` cannot see. `schema_registry.rs`'s other two functions, `parse`
+(`:409`) and `serialize` (`:446`), take no `UnitTable` and stay clean. `graph.rs` and `consistency.rs`
+check out clean on the same closer read.
+
+`diagnostics.rs` was never assigned a home by the first pass at all. Of its seven top-level items,
+`Mode`, `AttributedError`, `ErrorSink` and `ProjectFailure` are plain bookkeeping with no `bynk_check`
+anywhere. `ProjectAnalysis` carries `pub ty_intern: Arc<bynk_check::checker::Types>` plus `ProjectIndex`,
+`FileHints`, `FileExprTypes`, `FileLocals`, `FileRequirements` — every field a checker output.
+`ContextSequenceInfo` carries `resolver::CrossContextInfo`. `ContextBoundaryInfo` is AST-typed but built
+during `run_checks`'s `Checked` arm from `combined_types_for`/`unit_tables`, the same checking pass, not
+discovery.
+
+**Decision.** `bynk-project` receives `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs`;
+`schema_registry.rs`'s `SchemaRegistry` type plus `parse`/`serialize` only; and `diagnostics.rs`'s `Mode`,
+`AttributedError`, `ErrorSink`, `ProjectFailure` — plus the project-model types these depend on. Staying on
+the checking side, to become part of the companion `project-model-analysis-entry-point` ADR's new
+`bynk-check` entry point rather than `bynk-project`: `symbols.rs` in full, `schema_registry.rs`'s
+`reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`. The test
+going forward: a type or function moves to `bynk-project` only if it needs nothing that exists solely as
+an output of resolution or checking, however that output is named at the use site — not "no literal
+`bynk_check` import."
 
 **Consequences.** `bynk-project` has no dependency on `bynk-check`, preserving the "below both check and
-emit" invariant this phase exists to establish. `ProjectIndex` assembly relocates alongside the rest of
-the checking pipeline this phase's companion ADR (`project-model-analysis-entry-point`) moves into
-`bynk-check`, rather than needing a second, separate migration later.
+emit" invariant this phase exists to establish. Every checking-coupled item — `symbols.rs`,
+`schema_registry.rs::reconcile`, and `diagnostics.rs`'s three checking-result types — relocates alongside
+the rest of the checking pipeline the companion ADR moves into `bynk-check`, rather than needing a second,
+separate migration later. `ProjectAnalysis` in particular is already the return type that ADR commits the
+new entry point to producing "the analogue of," so this assignment was implied before it was explicit.
 
 ## ADR: project-model-analysis-entry-point
 title: A new `bynk-check` analysis entry point closes R10.2 without moving `run_checks` or checking itself
