@@ -7,9 +7,11 @@
   sub-issue is the approval to build.
 - **Spine:** [#1107](https://github.com/accuser/bynk/issues/1107)
 - **Theme:** **Phase 4** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
-  discovery, the unit graph, contract hashes and the schema registry live below both `bynk-check` and
-  `bynk-emit`, in their own crate; `bynk-ide` repoints at it and drops its `bynk-emit` edge. The
-  trajectory's endpoint is the current compiler rebuilt on
+  discovery, the unit graph and the schema registry live below both `bynk-check` and `bynk-emit`, in
+  their own crate; `bynk-ide` repoints at it and drops its `bynk-emit` edge via a new `bynk-check`
+  analysis entry point. (The trajectory's own phase-4 section named contract hashes here too; §3.4
+  below settles that as phase 8's, and the trajectory doc is corrected to match.) The trajectory's
+  endpoint is the current compiler rebuilt on
   [`../bynk-greenfield-compiler.md`](../bynk-greenfield-compiler.md); this track walks phase 4 of it.
 - **Phase boundaries are safe stopping points** (trajectory §2). Phase 3 is retired
   ([#1046](https://github.com/accuser/bynk/issues/1046)) and leaves a coherent compiler regardless of
@@ -60,7 +62,7 @@ is "met, modulo" it.
 | R3.7 | no `bynk-project` crate | medium |
 | R3.8 | `read_project_paths` still total | small |
 | R3.9 | `Roots` still models the removed role split | small |
-| R3.11 | schema registry read/written ambiently | small — thread two values *(§3.5: this row is stale — see below)* |
+| R3.11 | ~~schema registry read/written ambiently~~ *(§3.5: corrected — already closed by prior paydown, #1078)* | none |
 | R10.2 | `bynk-ide` → `bynk-emit` edge present, for `analyse_project` alone | medium — extract `bynk-project`, repoint |
 
 Confirmed live: `bynk-ide/Cargo.toml`'s own comment states the dependency's whole reason — `"analyse_project
@@ -173,7 +175,7 @@ between what's project-model and what isn't. `graph.rs` and `consistency.rs` che
 their `use super::*` only resolves to `ParsedFile`/`CompileError`/`Span`/`HashMap`.
 
 The same question needed asking of `diagnostics.rs`, which the first pass never assigned a home at all.
-Of its seven top-level items, three are pure bookkeeping (`Mode`, `AttributedError`, `ProjectFailure`, plus
+Of its seven top-level items, four are pure bookkeeping (`Mode`, `AttributedError`, `ProjectFailure`, plus
 the crate-private `ErrorSink`) — no `bynk_check` anywhere. The other three are checking results in
 substance: `ProjectAnalysis` carries `pub ty_intern: Arc<bynk_check::checker::Types>` plus `ProjectIndex`,
 `FileHints`, `FileExprTypes`, `FileLocals`, `FileRequirements` — every field a checker output;
@@ -265,25 +267,32 @@ identity/signature is consumed. Contract hashing, in any form, is out of this ph
 already found nothing in §6 builds `ProjectGraph` at all, this doesn't even need a stub — there is no
 `contract` field to defer, because there is no struct.
 
-### 3.5 Q5 — Is R3.11's remaining distance the same defect as Q3? **Settled — folded in; the appendix row reads stale.**
+### 3.5 Q5 — Is R3.11's remaining distance the same defect as Q3? **Settled — folded in; R3.11 is already closed, appendix corrected.**
 
 Verified: `bynkc/src/main.rs:64-100` shows the CLI's schema-lock round trip fully wired —
 `bynk_driver::schema_lock::read` → `CompileOptions::schema_registry` (`SchemaLock::On { existing }`) →
-`bynk_driver::schema_lock::write` on the output. `run_checks` (`bynk-emit/src/project.rs:3644`) has five
-callers, one `Mode::Build` (`compile_project`, `:584`) and four non-build: `check_project` (`:657`),
-`compile_in_memory` (`:716`), `analyse_in_memory_with_types` (`:787`) and `analyse_project_with` (`:979`).
-Every one of the four non-build callers passes an explicit `&SchemaLock::Off` (`:673`, `:729`, `:800`,
-`:995` respectively) — not an ambient read, four independent explicit values at four independent call
-sites, all agreeing. The LSP path (`analyse_project_with`) does non-bailing live analysis, not a build; it
-has no business persisting a build lockfile, so `Off` is correct-by-design there, not a defect — and the
-same holds for the other three non-build entry points on the same evidence.
+`bynk_driver::schema_lock::write` on the output. `run_checks` (`bynk-emit/src/project.rs:3644`) has seven
+call sites total: five in production code — one `Mode::Build` (`compile_project`, `:584`) and four
+non-build (`check_project` `:657`, `compile_in_memory` `:716`, `analyse_in_memory_with_types` `:787`,
+`analyse_project_with` `:979`) — plus two more inside the file's own `#[cfg(test)]` module (`:5844`,
+`:5988`). Every one of the six non-build call sites passes an explicit `&SchemaLock::Off` — `:673`, `:729`,
+`:800`, `:995` in production, `:5857` and `:6001` in tests — not an ambient read, six independent explicit
+values at six independent call sites, all agreeing. `:3638`'s own comment attributes the `None`-when-`Off`
+shape to #1078. The LSP path (`analyse_project_with`) does non-bailing live analysis, not a build; it has
+no business persisting a build lockfile, so `Off` is correct-by-design there, not a defect — and the same
+holds for the other five non-build call sites on the same evidence. (`:6330`'s comment — "rather than drift
+into a second, independently-maintained `run_checks` call" — is itself a sign the test suite already
+treats a stray extra call site as a known risk worth pinning against, which the two test-module calls
+above are not instances of: both delegate through the same `run_checks`, not a copy of it.)
 
-**Decision:** the Appendix D row ("schema registry read/written ambiently … thread two values") appears to
-already be closed by paydown that postdates whenever that row was last verified. Flagged here for
-correction upstream rather than treated as this phase's open work. §3.3's new `bynk-check` entry point
-carries the same explicit-`Off` behaviour forward (nothing about relocation changes it); if a
-re-verification of the appendix disagrees, that is grounds to reopen this question with the specific gap
-named, not evidence this settling pass got it wrong without one.
+**Decision:** the Appendix D row ("schema registry read/written ambiently … thread two values") is closed
+by paydown that postdates whenever that row was last verified — corrected directly in
+`bynk-greenfield-compiler.md` as part of this settling pass rather than left flagged with no landing
+place, since the fix is a one-line edit and this settling review is the review that would otherwise have
+had to name a follow-up owner for it. §3.3's new `bynk-check` entry point carries the same explicit-`Off`
+behaviour forward (nothing about relocation changes it). Because R3.11 is now closed rather than merely
+"appears closed," P4.0 (§6) does not cite it as a rule it closes — relocating `schema_registry.rs`'s
+`parse`/`serialize` doesn't close an open rule, since none was open by the time P4.0 lands.
 
 ### 3.6 Q6 — Freeze scope. **Settled.**
 
@@ -326,9 +335,12 @@ actual approval to build it, per this doc's own Status block.
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P4.0** | `bynk-project` crate skeleton; `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs` relocated with minimal reshaping, plus `schema_registry.rs`'s `SchemaRegistry`/`parse`/`serialize` (not `reconcile`) and `diagnostics.rs`'s `Mode`/`AttributedError`/`ErrorSink`/`ProjectFailure` (not `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`), plus the project-model types they need (`UnitKind`, `Roots`, `ProjectPaths`, the `SchemaLock` shape); public surface enumerated and reviewed (R10.4-style) as part of this slice, per §3.2 | R3.7, R3.8, R3.9, R3.11 | §3 settled |
+| **P4.0** | `bynk-project` crate skeleton; `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs` relocated with minimal reshaping, plus `schema_registry.rs`'s `SchemaRegistry`/`parse`/`serialize` (not `reconcile`) and `diagnostics.rs`'s `Mode`/`AttributedError`/`ErrorSink`/`ProjectFailure` (not `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`), plus the project-model types they need (`UnitKind`, `Roots`, `ProjectPaths`, the `SchemaLock` shape); public surface enumerated and reviewed (R10.4-style) as part of this slice, per §3.2 | R3.7, R3.8, R3.9 | §3 settled |
 | **P4.1** | The new `bynk-check` analysis entry point (§3.3(a)): discovery via `bynk-project`, resolve/check via `bynk-check`'s existing resolver/checker; `symbols.rs` (all of it), `schema_registry.rs`'s `reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` relocate here, alongside the entry point itself, per §3.2's corrected boundary. `run_checks` in `bynk-emit` is untouched. The file-reading asymmetry (§3.3(b)) carries over unchanged, not fixed here | R3.7, R10.2 (partial) | P4.0 |
 | **P4.2** | `bynk-ide` repoints at the new `bynk-check` entry point instead of `bynk-emit::analyse_project`; `bynk-emit` dependency and its justifying Cargo.toml comment deleted; CI dependency-graph gate added | R10.2 | P4.1 |
+
+No slice cites `R3.11`: §3.5 found it already closed by prior paydown (#1078), corrected directly in
+`bynk-greenfield-compiler.md` by this settling pass, so there is no open rule left for a slice to close.
 
 **Completion probe:** `ide_emit_edge` = absent. Already built (T0.0's probe harness, `xtask
 greenfield-status`) and CI-gated (`greenfield_status_table_is_current`); reads **present** as of this
@@ -353,9 +365,9 @@ settling pass.
 
 No new probe infrastructure is needed for this phase's gate — `ide_emit_edge` already exists, already
 runs in CI (`greenfield_status_table_is_current`), and already reads the value this track needs to flip.
-Two additions worth raising under review, not yet decided: a probe for `bynk-project` crate existence
-itself, and — per §3.5 — a re-verification pass over Appendix D's R3.11 row before this track cites it
-again.
+§3.5's Appendix D correction (R3.11) is applied directly in this settling pass, not left as a follow-up.
+One addition worth raising under review, not yet decided: a probe for `bynk-project` crate existence
+itself.
 
 ---
 
