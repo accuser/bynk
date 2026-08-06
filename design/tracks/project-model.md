@@ -252,7 +252,7 @@ it threads down into the per-unit check-and-emit loop underneath it. Its seven c
 plus two in tests) are all `run_checks`'s, and all inside `project.rs`.
 
 `ErrorSink` (`diagnostics.rs`) is the collection-point sink `run_checks`/`check_unit_files` thread through
-essentially every internal function that can raise a diagnostic — 18 `errors: &mut ErrorSink` parameters
+essentially every internal function that can raise a diagnostic — 15 `errors: &mut ErrorSink` parameters
 in `project.rs` alone, another 7 in `validate.rs` — and it appears in exactly three files:
 `diagnostics.rs` (its own definition), `project.rs`, `validate.rs`. (`bynk-check/src/index.rs`'s own two
 "`ErrorSink` analogue" mentions are a doc comment pointing at this type by name for a reader's context, not

@@ -68,7 +68,7 @@ have no `bynk_check` anywhere (`Mode`, `AttributedError`, `ErrorSink`, `ProjectF
 grouped all four as "plain bookkeeping" on that ground alone, which a third pass found three-quarters
 wrong: `bynk_check`-free is necessary but not sufficient, and only `AttributedError` actually needs to
 move. `ErrorSink` is the collection-point sink `run_checks`/`check_unit_files` thread through nearly every
-internal function that can raise a diagnostic (18 `errors: &mut ErrorSink` parameters in `project.rs`
+internal function that can raise a diagnostic (15 `errors: &mut ErrorSink` parameters in `project.rs`
 alone, 7 more in `validate.rs`) and appears in exactly three files: its own definition, `project.rs`,
 `validate.rs` — every reader stays behind, the same as `Mode`. `ProjectFailure` is `compile_project`'s own
 failure-return type, consumed only by callers *above* `bynk-emit` (`bynk-driver`'s
