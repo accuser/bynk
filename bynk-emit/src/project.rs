@@ -1757,7 +1757,7 @@ fn phase_group(
         let adapter_dir = pf.source_path.parent().unwrap_or(Path::new(""));
         let out_rel = normalize_rel(&adapter_dir.join(&b.module));
         let src_abs = src_root.join(&out_rel);
-        match read_source(&src_abs, overlay) {
+        match read_adapter_binding(&src_abs, overlay) {
             Ok(content) => {
                 adapter_bindings.insert(
                     a.name.joined(),
@@ -5671,6 +5671,20 @@ mod tests {
     /// path, not canonicalised, matching `bynk-testkit`'s own convention
     /// (canonicalising broke a project-consistency check the hard way in
     /// slice 3).
+    /// Content-ownership track (#1086) slice 5: this crate's own tests can't
+    /// depend on `bynk-testkit` (cyclic — `bynk-testkit` depends on
+    /// `bynk-emit`), so its handful of sites that build a `Roots` and need
+    /// real disk content for it mirror `bynk-testkit`'s own read, in-crate.
+    fn read_disk_sources(roots: &Roots) -> HashMap<PathBuf, String> {
+        discover_project_files(roots)
+            .into_iter()
+            .filter_map(|p| {
+                let content = std::fs::read_to_string(&p).ok()?;
+                Some((p, content))
+            })
+            .collect()
+    }
+
     fn compile_options_split_with_sources(
         project_root: PathBuf,
         paths: ProjectPaths,
@@ -5679,13 +5693,7 @@ mod tests {
             project_root: project_root.clone(),
             paths: paths.clone(),
         };
-        let sources: HashMap<PathBuf, String> = discover_project_files(&roots)
-            .into_iter()
-            .filter_map(|p| {
-                let content = std::fs::read_to_string(&p).ok()?;
-                Some((p, content))
-            })
-            .collect();
+        let sources = read_disk_sources(&roots);
         CompileOptions::split(project_root, paths).sources(sources)
     }
 
@@ -5832,6 +5840,7 @@ mod tests {
             "the fixture must actually be two-rooted"
         );
         let (src_root, tests_root) = roots.resolve();
+        let sources = read_disk_sources(&roots);
         let run = run_checks(
             &src_root,
             &tests_root,
@@ -5841,7 +5850,7 @@ mod tests {
             Platform::default(),
             ImportExt::Js,
             Mode::Analyse,
-            &HashMap::new(),
+            &sources,
             &roots.excludes(),
             None,
             false,
@@ -5975,6 +5984,7 @@ mod tests {
             paths: read_project_paths(root),
         };
         let (src_root, tests_root) = roots.resolve();
+        let sources = read_disk_sources(&roots);
         let run = run_checks(
             &src_root,
             &tests_root,
@@ -5984,7 +5994,7 @@ mod tests {
             Platform::default(),
             ImportExt::Js,
             Mode::Analyse,
-            &HashMap::new(),
+            &sources,
             &roots.excludes(),
             None,
             false,

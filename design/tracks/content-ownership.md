@@ -1,7 +1,7 @@
 # Project content ownership — `bynk-lsp` becomes the sole reader of `.bynk` source content
 
-- **Status:** Slicing — slices 0–4 shipped (#1089, #1092, #1094, #1096,
-  #1098). This doc's
+- **Status:** All slices shipped (#1089, #1092, #1094, #1096, #1098, #1102);
+  this doc retires next (§4, §7, §8). This doc's
   first pass merged still carrying every §3 question open (PR #1087, merged
   as ready-for-review without the review actually testing that assertion —
   exactly the failure mode `design/tracks/README.md`'s lifecycle step 2 warns
@@ -37,9 +37,33 @@
   `bynk-emit/src/project.rs`'s own 1 site — completing the migration. No
   separate §3.4 CI guard was built: slice 5's own fallback deletion turned
   out to already be the loud-failure mechanism the guard was meant to add
-  (§3.4's final correction). Spine issue
-  [#1086](https://github.com/accuser/bynk/issues/1086) stays open; slice 5
-  (delete `discovery.rs`'s content-reading fallback) is next.
+  (§3.4's final correction). Slice 5 (#1102) shipped last, deleting
+  `read_source`'s content-reading fallback — and, driven entirely by what
+  that deletion surfaced under implementation (no test suite green until
+  each was found and fixed), three corrections beyond the doc's own
+  "narrow" scope:
+  (a) two production `bynk-lsp` paths — `run_project_diagnostics` (the
+  published diagnostics round) and `type_receiver`'s slow-path
+  re-analysis — built their overlay from open buffers only, silently
+  depending on the fallback to read every closed file; both now sweep full
+  content first, the same way `Backend::project_content` already did;
+  (b) `AnalysisRoots::lower`/`discover_files`'s own `bynk.toml` read had the
+  identical dependency for *every* manifest-backed caller, not just an
+  unsaved-edit one — R2.3 forbids fixing this inside `bynk-ide` itself, so
+  the real disk read moved out to the callers already above the driver
+  boundary (`bynk-lsp`'s content sweep, `bynk-testkit`'s test seam),
+  `discover_files` gaining an explicit overlay parameter to carry it;
+  (c) an adapter's `.binding.ts` module — a distinct concern from `.bynk`
+  project sources, since its *path* is only known once its declaring
+  adapter is parsed, so no discovery walk can pre-populate it — keeps a
+  narrow, dedicated disk-read helper (`read_adapter_binding`), never folded
+  into the general `.bynk`-content fallback that was actually this track's
+  target. `fs_below_driver` now reads 3 for `bynk-emit` (discovery.rs's
+  enumeration walk and adapter-binding read, plus `paths.rs`'s own
+  `bynk.toml` read for the same reason as (b) above, all above what a caller
+  can pre-supply), 0 for `bynk-ide`; see §8. Spine issue
+  [#1086](https://github.com/accuser/bynk/issues/1086) stays open until this
+  doc's retirement PR closes it.
 - **Realises:** R2.3 (`../bynk-greenfield-compiler.md`, its rules table at
   line 2515) — *"no ambient filesystem or global state; `Sources` is
   constructed once, at the process edge, and is the compiler's only view of
@@ -176,6 +200,26 @@ left), to stop flagging pure-enumeration functions once slice 6 lands — so
 `bynk-emit` reads 2 (both `discovery.rs` and `project.rs`'s `use std::fs;`
 serving it, per §1) until the probe amendment, then a defined non-zero-by-design
 floor, not 0.
+
+**Slice 5 correction (found only under implementation): a second, narrower
+carve-out.** `read_source` served two genuinely different reads —
+`.bynk` project source content (this track's actual target) and an
+adapter's `.binding.ts` module content (`project.rs`'s adapter-binding
+resolution). The latter's *path* is only known once its declaring adapter
+has been parsed (`adapter … { binding: "…" }`), so no discovery walk —
+`bynk-testkit`, `bynk-driver::discovery`, or any future replacement — can
+enumerate it ahead of time the way `.bynk` files are enumerated by
+extension. Deleting the fallback outright broke every real adapter-binding
+fixture (`bynk.adapter.no_binding` on every one). Fixed by giving this read
+its own dedicated helper (`read_adapter_binding`, still in `discovery.rs`,
+still overlay-first) that keeps a disk-read fallback — a deliberate,
+narrow, permanent carve-out, not a straggler this track failed to close.
+Likewise, `try_read_project_paths`/`read_project_paths` (the plain,
+no-overlay manifest readers `bynk dev` and `bynk-driver::discovery` call
+directly) turned out to depend on the same fallback for `bynk.toml` itself;
+fixed with a real disk read in `paths.rs`, for the identical "not every
+caller can pre-supply this" reason. `bynk-emit` reads **3** as of this
+slice, not 2 — see §8.
 
 **Why not broad.** R2.3's own wording — "the compiler's only view of file
 *contents*" — is content-scoped on its face; broad is an extension, not the
@@ -486,19 +530,32 @@ and when it's considered fresh.
       crate (#1098) — all 3 sub-slices shipped (`bynk-ide`'s own inline
       tests, 18 sites; `bynk-lsp/tests`, 25 sites; `bynkc/tests`/`bynk/tests`/
       `bynk-emit`, 78 sites; 121 total)
-- [ ] Slice 5 — delete `discovery.rs`'s content-reading fallback branch
+- [x] Slice 5 — delete `discovery.rs`'s content-reading fallback branch
+      (#1102) — plus three corrections found only under implementation:
+      `run_project_diagnostics`/`type_receiver`'s open-buffers-only overlay
+      (production, not test — the loudest of the three), `discover_files`/
+      `AnalysisRoots::lower`'s `bynk.toml` read moving to callers above the
+      driver (R2.3), and a deliberate, documented carve-out for adapter
+      `.binding.ts` reads (never this track's target; see §1, §3.2).
 
 ## 8. Done when
 
 `cargo xtask greenfield-status`'s `fs_below_driver` reads 0 for `bynk-ide`
-(`bynk-fmt` is already 0); for `bynk-emit` it reads 2
-(`discovery.rs`'s enumeration walk, `project.rs`'s import serving it) until
-the §3.2 probe-precision follow-on lands and the floor becomes named-and-
-intentional rather than a residual count. `bynk-emit/src/project/discovery.rs`
-has no content-reading disk fallback left; a
-behaviour-driven test — mirroring ADR 0202's
-"drive a real `Backend` through `didChange` → request" style, not a static
-shape assertion — demonstrates that an unsaved edit in file A is visible to a
-completion/hover/go-to-declaration triggered from file B. #1077 and #1079
-close as part of the slice that lands each half; this doc retires once §4's
-slices have all shipped.
+(`bynk-fmt` is already 0); for `bynk-emit` it reads 3 — `discovery.rs`'s
+enumeration walk and its (newly-carved-out, deliberate) adapter-binding
+read, plus `paths.rs`'s own `bynk.toml` disk read (the same "R2.3 forbids
+fixing this below the driver, so the read moves to/above the process edge"
+reasoning as `discover_files`'s, for `read_project_paths`'s non-overlay
+callers) — until the §3.2 probe-precision follow-on lands and the floor
+becomes named-and-intentional rather than a residual count.
+`bynk-emit/src/project/discovery.rs` has no content-reading disk fallback
+left for `.bynk` project sources. A behaviour-driven test — mirroring ADR
+0202's "drive a real `Backend` through `didChange` → request" style, not a
+static shape assertion — demonstrates that an unsaved edit in file A is
+visible to a completion triggered from file B
+(`an_unsaved_edit_in_one_file_is_visible_to_completion_in_another`,
+`bynk-lsp/src/lib.rs`). #1077 and #1079 closed directly on `main` before
+this track's spine even opened (see #1077's own closing comment); their
+remaining scope became this track's actual charter, re-verified against
+current `main` rather than their original text (§1). This doc retires next
+— the retirement PR closes spine issue #1086.

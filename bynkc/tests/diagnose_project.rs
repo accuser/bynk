@@ -106,10 +106,10 @@ fn analysis_does_not_bail_at_the_first_failure() {
     // in the other. The old compile_project contract reports only the first
     // phase's failure; diagnose_project must report both, each attributed.
     let root = fixture_root();
-    let mut overlay = HashMap::new();
-    let util = root.join("shop/util.bynk");
+    let mut overlay =
+        bynk_testkit::read_project_sources(&bynk_ide::AnalysisRoots::SingleTree(root.clone()));
     overlay.insert(
-        util.canonicalize().unwrap_or(util),
+        root.join("shop/util.bynk"),
         "commons shop.util\n\nfn broken( -> Int {\n  1\n}\n".to_string(),
     );
 

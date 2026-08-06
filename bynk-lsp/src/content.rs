@@ -31,12 +31,37 @@ use bynk_ide::AnalysisRoots;
 /// file that fails to read (deleted between discovery and read, a permission
 /// error) is silently omitted — the same behaviour `bynk-emit`'s own
 /// `read_source` fallback has today for an unreadable path.
+///
+/// Content-ownership track (#1086) slice 5 correction: also resolves
+/// `roots`'s own `bynk.toml` (`overlay`'s entry if present — an unsaved
+/// manifest edit — else a real disk read) and includes it in the returned
+/// map. `bynk-ide` can no longer do this itself (R2.3 forbids `std::fs`
+/// below the driver, and slice 5 deleted `bynk-emit`'s disk-read fallback
+/// that used to paper over this), so the caller — this crate, above the
+/// driver boundary — is where `Sources` gets constructed, manifest
+/// included, exactly as R2.3 intends. Without this, both this sweep's own
+/// enumeration *and* any later `diagnose_project_with(&roots, &content)`
+/// call over the returned map would silently degrade to
+/// `ProjectPaths::conventional` for a non-conventional project.
 pub(crate) fn sweep_project_content(
     roots: &AnalysisRoots,
     overlay: &HashMap<PathBuf, String>,
 ) -> HashMap<PathBuf, String> {
     let mut content = overlay.clone();
-    for path in bynk_ide::discover_files(roots) {
+    if let AnalysisRoots::Project(root) = roots {
+        let toml_path = root.join("bynk.toml");
+        if !content.contains_key(&toml_path) {
+            let canonical = toml_path
+                .canonicalize()
+                .unwrap_or_else(|_| toml_path.clone());
+            if !content.contains_key(&canonical)
+                && let Ok(text) = std::fs::read_to_string(&toml_path)
+            {
+                content.insert(toml_path, text);
+            }
+        }
+    }
+    for path in bynk_ide::discover_files(roots, &content) {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         if content.contains_key(&canonical) {
             continue;

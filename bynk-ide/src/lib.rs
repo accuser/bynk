@@ -215,11 +215,22 @@ impl AnalysisRoots {
     /// visible to the `Project` variant's manifest read. Mirrors `343b2482`'s
     /// CLI-side fix (`bynk-driver`'s `project_options`) on the LSP side.
     ///
-    /// `discover_files` (below) has no overlay of its own to give (it takes
-    /// none), so it passes an empty one — its enumeration stays exactly as
-    /// disk-only as before; only `diagnose_project_with`'s real overlay
-    /// (threaded from every caller, including `bynk-lsp`'s
-    /// `run_project_diagnostics`) actually changes behaviour here.
+    /// `discover_files` (below) threads `overlay` straight through now (slice
+    /// 5 correction, below) — both it and `diagnose_project_with` need the
+    /// same real-or-overlaid `bynk.toml` content to resolve the same roots.
+    ///
+    /// Content-ownership track (#1086) slice 5 correction (found only under
+    /// implementation): reading `bynk.toml` through `overlay` alone used to
+    /// still reach the real on-disk manifest on a miss, because `bynk-emit`'s
+    /// `read_source` fell back to a real disk read. Slice 5 deleted that
+    /// fallback — but R2.3 forbids this crate from touching the filesystem
+    /// itself to restore it here, so it does **not** grow a fallback of its
+    /// own; every caller (`bynk-lsp`'s `sweep_project_content`,
+    /// `bynk-testkit::read_project_sources`) now reads `bynk.toml` itself,
+    /// above the driver boundary, and includes it in the `overlay`/content
+    /// map it hands in — the same "process edge constructs `Sources`" R2.3
+    /// already requires of every `.bynk` file. `lower` stays exactly what its
+    /// slice-2 doc above describes: caller's overlay, nothing else.
     fn lower(&self, overlay: &HashMap<PathBuf, String>) -> bynk_emit::project::Roots {
         match self {
             AnalysisRoots::SingleTree(root) => bynk_emit::project::Roots::Single(root.clone()),
@@ -244,8 +255,15 @@ impl AnalysisRoots {
 /// Slice A: the `.bynk` files these roots contain — the same discovery
 /// `compile_project` performs, `exclude` and the `out`/`node_modules` caches
 /// honoured. For enumerating a project's units without analysing it.
-pub fn discover_files(roots: &AnalysisRoots) -> Vec<PathBuf> {
-    bynk_emit::project::discover_project_files(&roots.lower(&HashMap::new()))
+///
+/// `overlay` is consulted only for `bynk.toml` itself (via `lower`) — an
+/// `AnalysisRoots::Project`'s `[paths] include`/`exclude` decide what gets
+/// walked, so the caller must include a real-or-overlaid manifest entry for
+/// a non-conventional layout to enumerate correctly (content-ownership
+/// track (#1086) slice 5: this crate stays disk-free per R2.3, so it cannot
+/// fall back to reading `bynk.toml` itself on a miss).
+pub fn discover_files(roots: &AnalysisRoots, overlay: &HashMap<PathBuf, String>) -> Vec<PathBuf> {
+    bynk_emit::project::discover_project_files(&roots.lower(overlay))
 }
 
 /// #302: the qualified name a file moved from `old_rel` to `new_rel` should
@@ -376,7 +394,9 @@ mod testkit {
     /// broke a project-consistency check the hard way in slice 3 — see
     /// `bynk-testkit/src/lib.rs`'s doc).
     pub(crate) fn read_project_sources(roots: &crate::AnalysisRoots) -> HashMap<PathBuf, String> {
-        crate::discover_files(roots)
+        // Only ever called with `SingleTree` (below), which consults no
+        // manifest — an empty overlay is correct, not a stand-in fallback.
+        crate::discover_files(roots, &HashMap::new())
             .into_iter()
             .filter_map(|p| {
                 let content = std::fs::read_to_string(&p).ok()?;
