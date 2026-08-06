@@ -6423,11 +6423,13 @@ mod tests {
     /// not the pure `bynk_ide` helpers directly. `shared/widget.bynk`
     /// declares `Widget` with one field on disk; opening it and editing its
     /// buffer (never saved) to add a second field must be visible to
-    /// `app/use.bynk`'s cross-file `w.` completion in the very same round —
-    /// proving `type_receiver`'s slow path (fixed in slice 5 to sweep full
-    /// content, not just open buffers) actually closes the staleness this
-    /// track exists to fix, not just the narrower cases its own unit tests
-    /// already covered.
+    /// `app/use.bynk`'s cross-file record-construction completion
+    /// (`Widget { <cursor>`, via `record_field_names`/`project_content`) in
+    /// the very same round. This exercises the sweep both files' rounds
+    /// share, not `type_receiver` specifically — see
+    /// `type_receivers_slow_path_sees_a_closed_files_disk_content` below for
+    /// that path's own dedicated coverage (a review of this PR found this
+    /// test alone doesn't reach it).
     #[tokio::test]
     async fn an_unsaved_edit_in_one_file_is_visible_to_completion_in_another() {
         let widget_v1 = "commons shared.widget\n\ntype Widget = { size: Int }\n";
@@ -6488,6 +6490,46 @@ mod tests {
             std::fs::read_to_string(s.0.join("shared/widget.bynk")).unwrap(),
             widget_v1,
             "the edit must never have been saved to disk"
+        );
+    }
+
+    /// Content-ownership track (#1086) slice 5: dedicated coverage for
+    /// `type_receiver`'s slow path specifically (the fix a PR review found
+    /// the test above doesn't reach — `Widget { ` completion never calls
+    /// `type_receiver` at all, it's pure syntax via `record_field_names`).
+    /// `widget.bynk` is **never opened** — closed, on-disk only — so its
+    /// content can only reach `w.`'s value-member completion in
+    /// `use.bynk` through `type_receiver`'s own `sweep_project_content`
+    /// call, not through any open-buffer overlay. No round runs before the
+    /// request either, so `project_analysis_for`'s fast-path cache is empty
+    /// and `type_receiver` must take its slow, re-analysing path — the one
+    /// this slice fixed.
+    #[tokio::test]
+    async fn type_receivers_slow_path_sees_a_closed_files_disk_content() {
+        let widget_src = "commons shared.widget\n\ntype Widget = { size: Int }\n";
+        let use_src =
+            "commons app.use\n\nuses shared.widget\n\nfn area(w: Widget) -> Int {\n  w.\n}\n";
+        let s = scratch_project(
+            "type_receiver_slow_path",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"cross\"\n\n[paths]\ninclude = [\"shared\", \"app\"]\n",
+                ),
+                ("shared/widget.bynk", widget_src),
+                ("app/use.bynk", use_src),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let use_uri = file_uri(&s.0, "app/use.bynk");
+        // `widget.bynk` is deliberately never opened — no did_open, no round.
+        open(&backend, &use_uri, use_src).await;
+
+        let labels = complete_at(&backend, &use_uri, use_src, "  w.").await;
+        assert!(
+            labels.contains(&"size".to_string()),
+            "type_receiver's slow path must resolve `w: Widget` off the \
+             closed widget.bynk's real disk content: {labels:?}"
         );
     }
 }
