@@ -141,4 +141,7 @@ is explicitly out of phase 4's scope and would decide `validate.rs`'s new home u
 review budget than that decision deserves. The duplication is named here specifically so phase 5 inherits
 it as known, bounded debt rather than rediscovering it as a surprise. This is the most load-bearing and
 hardest-to-reverse of this settling pass's three decisions: it fixes the shape `bynk-ide`'s live analysis
-path takes, across 100+ existing call sites, for the phase-4-to-phase-5 window.
+path takes for the phase-4-to-phase-5 window. The direct edit is one call site
+(`bynk-ide/src/lib.rs:320`, behind the stable `diagnose_project`/`diagnose_project_with` wrapper); the 87
+`diagnose_project(` call sites across the tree exercise this path without naming it, which is a coverage
+argument for the relocation, not a statement that 100+ sites need editing.
