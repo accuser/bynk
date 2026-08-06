@@ -147,11 +147,18 @@ editor never calls `certify`.
 
 ### Phase 4 — The project model as a phase
 
-*Discovery, the unit graph, contract hashes and the schema registry live below both check and emit.*
+*Discovery, the unit graph and the schema registry live below both check and emit.* Contract hashing
+was named here too when this section was first drafted; `project-model.md` §3.4 settled it as phase 8's
+`UnitSignature` concept instead, once the tree turned up no `ContractHash`-shaped type this phase's own
+reference rules actually need.
 
-`bynk-project` becomes a crate. `bynk-ide` repoints at it and drops its `bynk-emit` edge — which is
-one function's worth of work, not `validate.rs`'s: `bynk-ide/Cargo.toml` states the whole reason for
-the dependency, "`analyse_project` (the non-bailing project analysis) lives in the project driver."
+`bynk-project` becomes a crate. `bynk-ide` repoints at it and drops its `bynk-emit` edge —
+`bynk-ide/Cargo.toml` states the whole reason for the dependency, "`analyse_project` (the non-bailing
+project analysis) lives in the project driver." That repoint turned out not to be one function's worth
+of work as first estimated here: `project-model.md` §3.3(a) found `analyse_project` calls the same
+checking-and-discovery orchestration function (`run_checks`) the CLI path does, with no seam at
+project-model granularity — closing the edge needs a new `bynk-check`-side analysis entry point, not a
+relocation.
 
 Cheap, and it is the *cause* the next phase treats. Context semantics live in the emitter because the
 project model does.
