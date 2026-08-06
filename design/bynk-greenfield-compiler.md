@@ -2509,6 +2509,11 @@ closed rather than deleted, because "this was a finding and it is no longer" is 
 T0.0). Hand maintenance is the failure mode Appendix B's own discipline warns about, and this
 revision is the proof.
 
+**One row is a hand exception, and it says so.** R3.11 was corrected 6 August 2026 by
+`design/tracks/project-model.md` §3.5, ahead of the generator this section asks for — a genuine
+instance of the failure mode named above, accepted because the fix was one self-contained line. The
+table otherwise reflects the 30 July measurement date; that one row does not.
+
 | Rule | Measured state | Cost to close |
 |---|---|---|
 | R2.2 | `Span { start: usize, end: usize }` — no `FileId` | large — touches every span construction |
