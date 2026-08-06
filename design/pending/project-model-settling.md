@@ -102,9 +102,10 @@ summary: `bynk-ide` gets a narrow `bynk-project` + `bynk-check`-only analysis pa
 **Context.** `bynk-ide/Cargo.toml`'s own comment names the reason it depends on `bynk-emit`:
 `analyse_project`, "the non-bailing project analysis," lives there. Tracing `analyse_project_with`
 (`bynk-emit/src/project.rs:970`) found it calls `run_checks` (`:3644`, private to `bynk-emit::project`) —
-the same function `compile_project` (`:573`) calls for the CLI/emission path (`:584`). `run_checks` is
-~2,200 lines performing discovery, parsing, resolution *and* checking as one sequence; there is no
-existing seam inside it separating "project model" from "checking" at the granularity phase 4 needs.
+the same function `compile_project` (`:573`) calls for the CLI/emission path (`:584`). `run_checks`
+(`:3644-4206`, ~560 lines) performs discovery, parsing, resolution *and* checking as one sequence; there is
+no existing seam inside it separating "project model" from "checking" at the granularity phase 4 needs —
+a structural fact independent of the function's size.
 `bynk-ide`'s real dependency on `bynk-emit` is therefore not a dependency on a relocatable discovery
 function — it is a dependency on a function that also checks, which the new `bynk-project` crate (sitting
 below `bynk-check`) cannot absorb without breaking the layering phase 4 exists to establish, and which

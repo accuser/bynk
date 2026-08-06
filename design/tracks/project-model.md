@@ -78,10 +78,11 @@ discovery, resolution, checking and emission are one two-pass pipeline by design
 `crate::emitter` and glob-imports `validate::*` at its own top level. Phase 4 pulls the *model* out of that
 pipeline without dragging the *checking* out with it — that second move is phase 5's, named already so it
 isn't repeated. §3.3's finding sharpens exactly how tight that entanglement is: `run_checks`
-(`bynk-emit/src/project.rs:3644`), the ~2,200-line function both `compile_project` (line 584) and
+(`bynk-emit/src/project.rs:3644-4206`, ~560 lines), the function both `compile_project` (line 584) and
 `analyse_project_with` (line 979) call, does discovery, parsing, resolution *and* checking as one
 sequence — there is no seam inside it that separates "project model" from "checking" at the granularity
-this phase needs.
+this phase needs. (Size isn't the argument — the structural fact is: whatever `run_checks`'s length,
+nothing inside it stops at project-model granularity.)
 
 ---
 
@@ -117,7 +118,7 @@ this phase needs.
 > and as anticipated (§3.4). The actual surprise was underneath Q3. The draft framed Q3 narrowly, around
 > `bynk-driver/src/discovery.rs`'s own doc comment naming a file-*reading* seam split between the CLI and
 > LSP paths. Tracing `analyse_project_with` fully (not just the fragment the draft's Q5 already looked at)
-> found something bigger: it calls `run_checks` — the same ~2,200-line function `compile_project` calls —
+> found something bigger: it calls `run_checks` — the same function `compile_project` calls —
 > which performs discovery, parsing, resolution *and* checking as one sequence. There is no existing
 > boundary inside it at "project model" granularity. `bynk-ide`'s dependency on `bynk-emit` is not, as the
 > draft assumed, a dependency on a *discovery* function this phase can cleanly relocate — it is a
@@ -168,10 +169,12 @@ a literal `bynk_check` import and found none — but that grep is too coarse, an
 `unit_tables: &HashMap<String, UnitTable>`. `UnitTable` (`symbols.rs:284`) is itself `bynk_check`-coupled
 — its `methods` field is `HashMap<String, ResolverMethodTable>`, an alias for `bynk_check::resolver::MethodTable`
 (`project.rs:38`). The coupling arrives through an unqualified, glob-sourced name, which is exactly what a
-literal-string grep for `bynk_check` misses. `schema_registry.rs`'s other two public functions, `parse`
-(`:409`) and `serialize` (`:446`), take no `UnitTable` and stay clean — this is the module's own documented
-seam ("this module touches no disk … `parse`/`serialize` are pure"), and it turns out to also be the seam
-between what's project-model and what isn't. `graph.rs` and `consistency.rs` check out clean on re-read —
+literal-string grep for `bynk_check` misses. `schema_registry.rs`'s other two functions, `parse` (`:409`)
+and `serialize` (`:446`) — `pub(crate)` today, like `reconcile`, so none of the three has a public surface
+yet; P4.0 gives whichever half moves a real one — take no `UnitTable` and stay clean, which is the
+module's own documented seam ("this module touches no disk … `parse`/`serialize` are pure") turning out to
+also be the seam between what's project-model and what isn't. `graph.rs` and `consistency.rs` check out
+clean on re-read —
 their `use super::*` only resolves to `ParsedFile`/`CompileError`/`Span`/`HashMap`.
 
 The same question needed asking of `diagnostics.rs`, which the first pass never assigned a home at all.
@@ -185,7 +188,7 @@ during discovery.
 
 Being `bynk_check`-free isn't the whole test, though, and `Mode` shows the other way it can fail: every use
 site — `run_checks`'s own parameter and match arms (`project.rs:3230,3476,3495,3539,3556,3654,3961`), and
-its six callers (`:592,665,724,795,987`, plus two in tests) — is inside `project.rs` itself. None of
+its seven callers (`:592,665,724,795,987`, plus two in tests) — is inside `project.rs` itself. None of
 `discovery.rs`/`graph.rs`/`paths.rs`/`consistency.rs` reference it, and §3.3(a)'s new `bynk-check` entry
 point is scoped to `Mode::Analyse`'s behaviour specifically, so it has no branch to take and no reason to
 carry the enum either. `Mode` is a statement about how `run_checks` is driven, not a fact about the
@@ -211,10 +214,13 @@ direction catches `schema_registry.rs`/`diagnostics.rs`'s checking coupling, the
 type or function moves to `bynk-project` only if (a) it needs nothing that exists solely as an output of
 resolution or checking (`UnitTable`, `Ty`/`TyId`, `ResolverMethodTable`, anything under `bynk_check::`,
 however it's named at the use site — not "no literal `bynk_check` import," which this section's own first
-pass shows is too weak on its own), **and** (b) something below `run_checks` actually consumes it — not
-merely "nothing above `run_checks` needs it to stay," which is a test `Mode` passes for the wrong reason:
-it's `bynk_check`-free, but it's also a fact about how `run_checks` is driven, not a fact about the
-project, and its only readers are `run_checks` itself.
+pass shows is too weak on its own), **and** (b) it is a fact *about the project* — not merely "nothing
+above `run_checks` needs it to stay," a test `Mode` passes for the wrong reason: it's `bynk_check`-free,
+but it's a fact about how `run_checks` (today's orchestrator) is driven, not about the project itself, and
+its only readers are `run_checks`. Phrasing (b) this way rather than as "consumed below `run_checks`"
+specifically is deliberate: `run_checks` is exactly what phases 4→5 dissolve — once P4.1's entry point
+exists there are two orchestrators, and once phase 5 lands there may be neither, so a rule anchored to
+today's one orchestrator wouldn't survive its own phase.
 
 Public surface: `bynk-project` exports only what its real consumers use (mirroring R10.4's existing
 discipline), not a blanket glob. The exact enumerated list is P4.0's job, not a design question — reviewed
@@ -307,6 +313,16 @@ had to name a follow-up owner for it. §3.3's new `bynk-check` entry point carri
 behaviour forward (nothing about relocation changes it). Because R3.11 is now closed rather than merely
 "appears closed," P4.0 (§6) does not cite it as a rule it closes — relocating `schema_registry.rs`'s
 `parse`/`serialize` doesn't close an open rule, since none was open by the time P4.0 lands.
+
+Naming the method plainly, since the appendix's own preamble argues against it in general: this is a hand
+edit to a table that preamble says "must be generated" by `cargo xtask greenfield-status`, and hand
+maintenance is the exact failure mode it warns about. It's made here anyway because the fix is one line
+and self-contained, not because the general objection doesn't apply. Other rows this same PR's own
+evidence could update — the trajectory §7 phase-3 row already says `span_keyed_maps` "reads 3, down from
+27" and R3.10/R4.1/R4.2/R4.3 closed, yet Appendix D still carries `R2.4 | … = 27 | large` and those four
+rules at their pre-retirement distances — are deliberately left alone: this settling pass corrects the one
+row its own investigation produced new evidence for, not every row a closer read would also update. If
+that's the wrong line to draw, the fix is to extend the standard, not to have applied it nowhere.
 
 ### 3.6 Q6 — Freeze scope. **Settled.**
 
