@@ -108,9 +108,9 @@ internal-architecture theme rather than language surface, same as
 R2.3 for `bynk-emit`/`bynk-ide`, open since T0.7.
 `project-model.md` is the ninth, continuing the same internal-architecture
 theme as phase 4 of the same trajectory, entry-gated on
-`identity-and-totality.md`'s own retirement note. Its settling PR opens with
-all six of its design questions stated open — no settling review has
-happened yet.
+`identity-and-totality.md`'s own retirement note. Its settling PR
+([#1108](https://github.com/accuser/bynk/pull/1108)) opens with all six of
+its design questions stated open — no settling review has happened yet.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this

@@ -1,10 +1,9 @@
 # The project model as a phase — migrating to the greenfield reference (phase 4)
 
-- **Status:** **Draft — Settling.** Spine open. This file exists locally as the track doc but is not
-  yet committed via a settling draft PR (tracks/README.md step 2). Nothing here is decided — every
-  question in §3 is open, each with the investigation it needs, not yet argued under review. Opening
-  a draft PR that adds this file (referencing the spine, "Part of #1107") is the next step; marking it
-  ready for review asserts §3's six questions are closed.
+- **Status:** **Draft — Settling.** Spine open, settling draft PR open
+  ([#1108](https://github.com/accuser/bynk/pull/1108)). Nothing here is decided — every question in §3
+  is open, each with the investigation it needs, not yet argued under review. Marking the PR ready for
+  review asserts §3's six questions are closed; merging settles direction only, not build authorisation.
 - **Spine:** [#1107](https://github.com/accuser/bynk/issues/1107)
 - **Theme:** **Phase 4** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   discovery, the unit graph, contract hashes and the schema registry live below both `bynk-check` and
