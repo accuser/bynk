@@ -2528,7 +2528,7 @@ revision is the proof.
 | R3.8 | `read_project_paths` still total | small |
 | R3.9 | `Roots` still models the removed role split | small |
 | R3.10 | `certify` = 0; `RecordCheck::partial_expr_types` exists as the seam | small — the shape is there, it needs to be the only path |
-| R3.11 | `CompileOptions::schema_registry` threaded end-to-end (`bynkc/src/main.rs`'s `schema_lock::read`/`write` round trip); every non-`Build` `run_checks` caller passes an explicit `SchemaLock::Off` (#1078), not an ambient read — closed by prior paydown, corrected here per `design/tracks/project-model.md` §3.5 | none |
+| R3.11 | `CompileOptions::schema_registry` threaded end-to-end (`bynkc/src/main.rs`'s `schema_lock::read`/`write` round trip); every non-`Build` `run_checks` caller passes an explicit `SchemaLock::Off` (#1078), not an ambient read ✅ **landed** — closed by prior paydown, not this row's original 30 July 2026 measurement; corrected 6 August 2026 per `design/tracks/project-model.md` §3.5 | none |
 | R3.12 | no editor-query table | small to write, valuable immediately |
 | R3.13/R3.14 | no query decomposition; no `UnitSignature` | phase 8 |
 | R4.1/R4.2 | `Ty` is `Box`-recursive, not interned, no `Hash` | medium |

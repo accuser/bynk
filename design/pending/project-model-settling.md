@@ -69,17 +69,24 @@ anywhere. `ProjectAnalysis` carries `pub ty_intern: Arc<bynk_check::checker::Typ
 `FileHints`, `FileExprTypes`, `FileLocals`, `FileRequirements` — every field a checker output.
 `ContextSequenceInfo` carries `resolver::CrossContextInfo`. `ContextBoundaryInfo` is AST-typed but built
 during `run_checks`'s `Checked` arm from `combined_types_for`/`unit_tables`, the same checking pass, not
-discovery.
+discovery. Being `bynk_check`-free isn't the whole test, though: `Mode`'s every use site — `run_checks`'s
+own parameter and match arms, and all of its callers — is inside `project.rs` itself; none of
+`discovery.rs`/`graph.rs`/`paths.rs`/`consistency.rs` reference it, and the new `bynk-check` entry point
+(below) is scoped to `Mode::Analyse`'s behaviour specifically, so it has no branch to take either. `Mode` is
+a statement about how `run_checks` is driven, not a fact about the project.
 
 **Decision.** `bynk-project` receives `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs`;
-`schema_registry.rs`'s `SchemaRegistry` type plus `parse`/`serialize` only; and `diagnostics.rs`'s `Mode`,
-`AttributedError`, `ErrorSink`, `ProjectFailure` — plus the project-model types these depend on. Staying on
-the checking side, to become part of the companion `project-model-analysis-entry-point` ADR's new
-`bynk-check` entry point rather than `bynk-project`: `symbols.rs` in full, `schema_registry.rs`'s
-`reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`. The test
-going forward: a type or function moves to `bynk-project` only if it needs nothing that exists solely as
-an output of resolution or checking, however that output is named at the use site — not "no literal
-`bynk_check` import."
+`schema_registry.rs`'s `SchemaRegistry` type plus `parse`/`serialize` only; and `diagnostics.rs`'s
+`AttributedError`, `ErrorSink`, `ProjectFailure` — plus the project-model types these depend on. `Mode`
+stays with `run_checks` in `bynk-emit`, its only consumer. Staying on the checking side, to become part of
+the companion `project-model-analysis-entry-point` ADR's new `bynk-check` entry point rather than
+`bynk-project`: `symbols.rs` in full, `schema_registry.rs`'s `reconcile`, and `diagnostics.rs`'s
+`ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`. The test going forward is two-sided: a type
+or function moves to `bynk-project` only if (a) it needs nothing that exists solely as an output of
+resolution or checking, however that output is named at the use site — not "no literal `bynk_check`
+import," which misses coupling reached through an unqualified name — and (b) something below `run_checks`
+actually consumes it, not merely "nothing above `run_checks` needs it to stay," which `Mode` would
+otherwise pass for the wrong reason.
 
 **Consequences.** `bynk-project` has no dependency on `bynk-check`, preserving the "below both check and
 emit" invariant this phase exists to establish. Every checking-coupled item — `symbols.rs`,
