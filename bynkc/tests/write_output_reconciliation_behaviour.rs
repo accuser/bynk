@@ -34,7 +34,7 @@ fn deleting_a_unit_prunes_its_stale_emitted_output() {
     );
 
     let compile = || {
-        let paths = bynkc::read_project_paths(&root);
+        let paths = bynkc::try_read_project_paths(&root).expect("well-formed fixture manifest");
         bynkc::compile_project(&bynk_testkit::compile_options_split(root.clone(), paths))
             .unwrap_or_else(|f| {
                 panic!(
@@ -104,7 +104,7 @@ fn a_node_modules_subtree_is_never_descended_into() {
         &root.join("src/only.bynk"),
         "commons only\n\nfn f() -> Int {\n  1\n}\n",
     );
-    let paths = bynkc::read_project_paths(&root);
+    let paths = bynkc::try_read_project_paths(&root).expect("well-formed fixture manifest");
     let out = bynkc::compile_project(&bynk_testkit::compile_options_split(root, paths))
         .unwrap_or_else(|f| {
             panic!(

@@ -1,0 +1,5 @@
+suite demo
+
+case "f returns one" {
+  expect demo.f() == 1
+}

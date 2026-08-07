@@ -21,3 +21,7 @@ serde.workspace = true
 # The layers this orchestrates: syntax (AST/spans) and the checked program.
 bynk-syntax.workspace = true
 bynk-check.workspace = true
+# P4.0 (#1113): the project model (discovery, graph, paths, consistency,
+# schema-registry read/write) — this crate now depends on it rather than
+# owning it directly.
+bynk-project.workspace = true

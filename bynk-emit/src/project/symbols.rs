@@ -18,15 +18,15 @@ pub(crate) fn assemble_index(
     builder.set_uses(uses);
     builder.set_consumes(unit_consumes.clone());
     for pf in parsed {
-        if matches!(pf.kind, UnitKind::Test | UnitKind::Integration) {
+        if matches!(pf.kind(), UnitKind::Test | UnitKind::Integration) {
             continue;
         }
-        let unit = pf.unit.name().joined();
+        let unit = pf.unit().name().joined();
         // v0.28 (ADR 0057): synthetic first-party units stay out of
         // `symbols` (their defs point at files not on disk — the v0.25
         // rule), but their declarations register for the second
         // qualification pass so references to them colour as tokens.
-        if pf.synthetic {
+        if pf.is_synthetic() {
             for item in pf.items() {
                 let (kind, name, modifiers) = match item {
                     CommonsItem::Type(t) => (
@@ -84,7 +84,7 @@ pub(crate) fn assemble_index(
             continue;
         }
         let site = |id: &Ident| SiteRef {
-            path: pf.identity_path.clone(),
+            path: pf.identity_path().clone(),
             span: id.span,
         };
         for item in pf.items() {
@@ -156,7 +156,7 @@ pub(crate) fn assemble_index(
                         // v0.36 (ADR 0069): a method is a first-class symbol
                         // keyed by the compound `"Type.method"` name, and (as
                         // before) an attribution owner for call-hierarchy.
-                        builder.add_owner(&unit, &f.name.display(), &pf.identity_path);
+                        builder.add_owner(&unit, &f.name.display(), &pf.identity_path());
                         builder.add_def(
                             &unit,
                             SymbolKind::Method,
@@ -246,7 +246,7 @@ pub(crate) fn assemble_index(
                         SymbolKind::Messages,
                         &m.tag,
                         SiteRef {
-                            path: pf.identity_path.clone(),
+                            path: pf.identity_path().clone(),
                             span: m.tag_span,
                         },
                         symbol_modifiers(&unit, None),
@@ -315,7 +315,7 @@ pub struct UnitTable {
 /// #696: each table-construction diagnostic is attributed to the project-relative
 /// `identity_path` of the file whose item produced it. Every error-producing loop
 /// below iterates `for &i in indices`, so it shadows a local `errors` vec and
-/// drains it into `out`, tagged with `parsed[i].identity_path`, at the end of each
+/// drains it into `out`, tagged with `parsed[i].identity_path()`, at the end of each
 /// file's pass — leaving the many inner `errors.push(…)` sites untouched.
 pub(crate) fn build_unit_table(
     _name: &str,
@@ -377,7 +377,7 @@ pub(crate) fn build_unit_table(
         out.extend(
             errors
                 .into_iter()
-                .map(|e| (parsed[i].identity_path.clone(), e)),
+                .map(|e| (parsed[i].identity_path().clone(), e)),
         );
     }
     // v0.15: collect the names a context exports as capabilities.
@@ -559,7 +559,7 @@ pub(crate) fn build_unit_table(
         out.extend(
             errors
                 .into_iter()
-                .map(|e| (parsed[i].identity_path.clone(), e)),
+                .map(|e| (parsed[i].identity_path().clone(), e)),
         );
     }
     for &i in indices {
@@ -640,7 +640,7 @@ pub(crate) fn build_unit_table(
         out.extend(
             errors
                 .into_iter()
-                .map(|e| (parsed[i].identity_path.clone(), e)),
+                .map(|e| (parsed[i].identity_path().clone(), e)),
         );
     }
     // message-bundles slice 1 (#859): a commons declaring at least one
@@ -667,7 +667,7 @@ pub(crate) fn build_unit_table(
     {
         if let Some(prev) = table.fns.get("render") {
             out.push((
-                parsed[indices[0]].identity_path.clone(),
+                parsed[indices[0]].identity_path(),
                 CompileError::new(
                     "bynk.resolve.duplicate_fn",
                     m.span,
@@ -768,7 +768,7 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
         methods: HashMap::new(),
     };
     for &i in indices {
-        let path = parsed[i].source_path.clone();
+        let path = parsed[i].source_path().clone();
         for item in parsed[i].items() {
             match item {
                 CommonsItem::Type(t) => {
@@ -1166,7 +1166,7 @@ pub(crate) fn detect_context_message_bundle(
             if has_reference {
                 found.push(MessageBundleInfo {
                     commons: target.clone(),
-                    source_path: parsed[i].source_path.clone(),
+                    source_path: parsed[i].source_path().clone(),
                 });
                 break;
             }
@@ -1220,12 +1220,12 @@ mod detect_context_message_bundle_tests {
             span: Span::default(),
             trivia: Trivia::default(),
         };
-        ParsedFile {
-            source_path: PathBuf::from(format!("{}.bynk", name.replace('.', "/"))),
-            identity_path: PathBuf::from(format!("src/{}.bynk", name.replace('.', "/"))),
-            abs_path: None,
-            source: String::new(),
-            unit: SourceUnit::Commons(Commons {
+        ParsedFile::new(
+            PathBuf::from(format!("{}.bynk", name.replace('.', "/"))),
+            PathBuf::from(format!("src/{}.bynk", name.replace('.', "/"))),
+            None,
+            String::new(),
+            SourceUnit::Commons(Commons {
                 name: qualified(name),
                 items: vec![CommonsItem::Messages(messages)],
                 uses: Vec::new(),
@@ -1235,20 +1235,20 @@ mod detect_context_message_bundle_tests {
                 trivia: Trivia::default(),
                 trailing_comments: Vec::new(),
             }),
-            kind: UnitKind::Commons,
-            synthetic: false,
-        }
+            UnitKind::Commons,
+            false,
+        )
     }
 
     /// A minimal context `ParsedFile` with no items of its own — only its
     /// `uses` list matters for this function.
     fn context_using(name: &str, targets: &[&str]) -> ParsedFile {
-        ParsedFile {
-            source_path: PathBuf::from(format!("{}.bynk", name.replace('.', "/"))),
-            identity_path: PathBuf::from(format!("src/{}.bynk", name.replace('.', "/"))),
-            abs_path: None,
-            source: String::new(),
-            unit: SourceUnit::Context(Context {
+        ParsedFile::new(
+            PathBuf::from(format!("{}.bynk", name.replace('.', "/"))),
+            PathBuf::from(format!("src/{}.bynk", name.replace('.', "/"))),
+            None,
+            String::new(),
+            SourceUnit::Context(Context {
                 name: qualified(name),
                 uses: targets
                     .iter()
@@ -1267,9 +1267,9 @@ mod detect_context_message_bundle_tests {
                 trivia: Trivia::default(),
                 trailing_comments: Vec::new(),
             }),
-            kind: UnitKind::Context,
-            synthetic: false,
-        }
+            UnitKind::Context,
+            false,
+        )
     }
 
     /// The four tables `detect_context_message_bundle`'s real callers
@@ -1409,7 +1409,7 @@ mod detect_context_message_bundle_tests {
         // `uses` *resolution* (does app.web's own direct list reach the
         // bundle) matters, and app.web's own list never names `app.msgs`
         // directly, so the unit kind of the intermediate is irrelevant.
-        mid.kind = UnitKind::Commons;
+        mid.set_kind(UnitKind::Commons);
         let Scenario {
             mut parsed,
             mut groups,

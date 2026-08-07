@@ -165,7 +165,7 @@ fn compile_fixture(
             "{}: platform.txt is not supported in bynk.toml fixtures",
             fixture_root.display()
         );
-        let paths = bynkc::read_project_paths(fixture_root);
+        let paths = bynkc::try_read_project_paths(fixture_root).expect("well-formed fixture manifest");
         bynkc::compile_project(
             &bynk_testkit::compile_options_split(fixture_root.to_path_buf(), paths).target(target),
         )

@@ -48,7 +48,7 @@ pub use bynk_check::firstparty::Platform;
 pub use bynk_emit::project::{
     AttributedError, BuildTarget, CompileOptions, CompiledFile, DiscoveredCase, DiscoveredSuite,
     ImportExt, ProjectFailure, ProjectOutput, ProjectPaths, ProjectPathsError, Roots, SchemaLock,
-    TestLocation, compile_project, read_project_paths, try_read_project_paths,
+    TestLocation, compile_project, try_read_project_paths,
 };
 pub use bynk_emit::{Compiled, NODE_MAJOR_FLOOR, compile, compile_with_warnings};
 

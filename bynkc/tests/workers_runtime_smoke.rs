@@ -81,7 +81,7 @@ fn hello_world_serves_on_workerd() {
     // Compile the example for Workers and strip to the JS artefact — the
     // form `wrangler dev` runs directly, no tsc in the loop (ADR 0137).
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/hello-world");
-    let paths = bynkc::read_project_paths(&root);
+    let paths = bynkc::try_read_project_paths(&root).expect("well-formed fixture manifest");
     let out = bynkc::compile_project(
         &bynk_testkit::compile_options_split(root, paths).target(bynkc::BuildTarget::Workers),
     )

@@ -740,9 +740,9 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
             out.push(',');
         }
         first = false;
-        out.push_str(&crate::json::json_string(k));
+        out.push_str(&bynk_project::json_string(k));
         out.push(':');
-        out.push_str(&crate::json::json_string(v));
+        out.push_str(&bynk_project::json_string(v));
     }
     out.push('}');
     Some(out)

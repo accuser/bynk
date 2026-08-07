@@ -21,7 +21,6 @@
 //!      declarative mixin.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -43,35 +42,36 @@ use bynk_syntax::lexer;
 use bynk_syntax::parser;
 use bynk_syntax::span::Span;
 
-mod consistency;
+// P4.0 (#1113): discovery, the unit graph, path resolution, and cross-unit
+// consistency checks moved to `bynk-project` — this crate is now a
+// dependent, not an owner, of that code (`design/tracks/project-model.md`
+// §6 row P4.0). `bynk_check`-coupled code (`symbols`'s `UnitTable`,
+// `validate`, `tests_emit`) and pipeline-driving types (`diagnostics`'s
+// `Mode`/`ErrorSink`/`ProjectAnalysis`/`ProjectFailure`, the reconciliation
+// half of `schema_registry`) stay here.
 mod diagnostics;
-mod discovery;
-mod graph;
-mod paths;
 mod schema_registry;
 pub(crate) mod symbols;
 mod tests_emit;
 mod validate;
 
-use consistency::*;
+use bynk_project::consistency::*;
+use bynk_project::discovery::*;
+use bynk_project::graph::*;
+use bynk_project::paths::*;
 use diagnostics::*;
-use discovery::*;
-use graph::*;
-use paths::*;
 use symbols::*;
 use tests_emit::*;
 use validate::*;
 
 // External facade: items referenced as `crate::project::X` from outside this
 // module (emitter, main, lib) must stay reachable at that path.
-pub use diagnostics::{
-    AttributedError, ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure,
+pub use bynk_project::{
+    AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind,
+    try_read_project_paths, try_read_project_paths_with, worker_dir_name,
+    worker_handlers_output_path, worker_handlers_source_path,
 };
-pub use paths::{
-    ProjectPaths, ProjectPathsError, read_project_paths, try_read_project_paths,
-    try_read_project_paths_with, worker_dir_name, worker_handlers_output_path,
-    worker_handlers_source_path,
-};
+pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
 pub use symbols::{FileDeclIndex, UnitTable};
 pub use validate::check_function_type_boundary_items;
 pub(crate) use validate::{collect_type_decls, type_ref_is_held};
@@ -188,166 +188,6 @@ pub enum BuildTarget {
     Workers,
 }
 
-/// Distinguishes a commons from a context (and from a test) in the project
-/// graph. Tests are a third kind in v0.7.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum UnitKind {
-    Commons,
-    Context,
-    Test,
-    /// v0.16: a `test integration` multi-Worker integration test.
-    Integration,
-    /// v0.17: an `adapter` — the host boundary (capability contract + binding).
-    Adapter,
-}
-
-impl UnitKind {
-    pub fn display(self) -> &'static str {
-        match self {
-            UnitKind::Commons => "commons",
-            UnitKind::Context => "context",
-            UnitKind::Test => "test",
-            UnitKind::Integration => "integration test",
-            UnitKind::Adapter => "adapter",
-        }
-    }
-}
-
-/// Where a project's `.bynk` files live.
-#[derive(Clone)]
-pub enum Roots {
-    /// A single tree walked as one root (in-memory builds and legacy
-    /// single-file/single-tree inputs).
-    Single(PathBuf),
-    /// v0.113 (DECISION S): a project rooted at `project_root`, with a flat
-    /// `include`/`exclude` layout (`ProjectPaths`). Test-ness is structural (a
-    /// `suite` declaration), so there is no source/test role split — the tree is
-    /// walked for `.bynk` files and each declaration is partitioned by kind.
-    Split {
-        project_root: PathBuf,
-        paths: ProjectPaths,
-    },
-}
-
-impl Roots {
-    /// Resolve to `(primary_root, secondary_root)` — the up-to-two `include`
-    /// trees walked for `.bynk` files. Most projects have a single root; a
-    /// conventional `src/`+`tests/` layout yields two. A file's identity path is
-    /// relative to the root that contains it.
-    ///
-    /// `pub` (#1077/#1081 review): `bynk-driver` needs this — and
-    /// [`Self::excludes`] — to walk exactly the tree `compile_project` would,
-    /// rather than a hand-duplicated copy that can silently drift from this
-    /// one.
-    pub fn resolve(&self) -> (PathBuf, PathBuf) {
-        match self {
-            Roots::Single(root) => (root.clone(), root.clone()),
-            Roots::Split {
-                project_root,
-                paths,
-            } => {
-                let primary = project_root.join(paths.include.first().cloned().unwrap_or_default());
-                let secondary = paths
-                    .include
-                    .get(1)
-                    .map(|p| project_root.join(p))
-                    .unwrap_or_else(|| primary.clone());
-                (primary, secondary)
-            }
-        }
-    }
-
-    /// Where `bynk.schema.lock` lives — distinct from [`Self::resolve`]'s
-    /// `(src_root, tests_root)`, since a `Split` layout's roots are
-    /// subdirectories of the project root, but the registry belongs beside
-    /// `bynk.toml`, one level up, the same place `bynk.deploy.lock` lives.
-    ///
-    /// #1085 review: used only to give `schema_registry::parse`'s corruption
-    /// diagnostic a real location again — #1078 made `bynk-emit` disk-free
-    /// for this file, which cost the absolute path the old message carried.
-    /// Never used for I/O; `bynk-driver`'s own `schema_lock::lock_path` is
-    /// the one that actually names the file for its own error messages.
-    fn project_root(&self) -> &Path {
-        match self {
-            Roots::Single(root) => root,
-            Roots::Split { project_root, .. } => project_root,
-        }
-    }
-
-    /// Slice 0: the project-root-relative prefix of the **primary** `include`
-    /// root — the counterpart to [`Self::tests_prefix`]. Joined onto that
-    /// tree's (root-relative) `source_path` to build each file's
-    /// `identity_path`, so a file is named uniquely across `include` roots.
-    ///
-    /// **Which projects this moves.** Empty only for [`Roots::Single`] — the
-    /// legacy single-tree mode, reached when there is no `bynk.toml` *and* no
-    /// `src/` (`bynk-driver`'s `project_options`) — and for in-memory builds.
-    /// Every [`Roots::Split`] project re-bases: a conventional `src/`-only
-    /// project has **one** `include` root and still moves `math.bynk` to
-    /// `src/math.bynk`, because one root is not the same thing as
-    /// `Roots::Single`. No fixture observes this (`expected_error.txt` asserts
-    /// categories, never paths), which is why the suite does not move — not
-    /// because the paths do not.
-    fn src_prefix(&self) -> PathBuf {
-        self.prefix_at(0)
-    }
-
-    /// The project-root-relative prefix of the **secondary** `include` root,
-    /// prepended to that tree's files' (root-relative) `source_path` so an
-    /// `expect`'s emitted `path:line:col` resolves from the project root (for
-    /// `--format json` click-through). Empty when there is a single root.
-    ///
-    /// Slice 0 also joins it onto that tree's `identity_path` (see
-    /// [`Self::src_prefix`]) — the same prefix, now serving both the emitted
-    /// test path and the file's identity.
-    fn tests_prefix(&self) -> PathBuf {
-        self.prefix_at(1)
-    }
-
-    /// Slice 0: the `include` entry at `i` as a *join-safe* prefix.
-    ///
-    /// `.` normalises to empty. [`ProjectPaths::conventional`] pushes `"."` for
-    /// the documented flat layout (`.bynk` at the root, no `src/`), and
-    /// `bynk-driver` selects [`Roots::Split`] whenever a `bynk.toml` exists — so
-    /// a flat project *with* a manifest reaches here with `include = ["."]`.
-    /// `Path::new(".").join("x.bynk")` is `./x.bynk`, which is **not** equal to
-    /// `x.bynk` (`Components` keeps the leading `CurDir`), so it would leak a
-    /// `./` into every snapshot key and every reported path. An empty prefix is
-    /// a join identity; `.` only looks like one.
-    fn prefix_at(&self, i: usize) -> PathBuf {
-        match self {
-            Roots::Single(_) => PathBuf::new(),
-            Roots::Split { paths, .. } => match paths.include.get(i) {
-                Some(p) if p != Path::new(".") => p.clone(),
-                _ => PathBuf::new(),
-            },
-        }
-    }
-
-    /// Absolute subtrees to skip during discovery: the author's `exclude` list
-    /// plus the tool's own build-output and dependency caches (`out`,
-    /// `node_modules`), so a project whose `include` is the root does not sweep
-    /// up generated or vendored files.
-    ///
-    /// `pub` (#1077/#1081 review): see [`Self::resolve`]'s doc.
-    pub fn excludes(&self) -> Vec<PathBuf> {
-        match self {
-            Roots::Single(_) => Vec::new(),
-            Roots::Split {
-                project_root,
-                paths,
-            } => {
-                let mut ex: Vec<PathBuf> =
-                    paths.exclude.iter().map(|p| project_root.join(p)).collect();
-                for cache in ["out", "node_modules"] {
-                    ex.push(project_root.join(cache));
-                }
-                ex
-            }
-        }
-    }
-}
-
 /// The extension emitted import specifiers use (`import … from "./x.<ext>"`).
 ///
 /// `Js` is the default and the only shape for normal builds: NodeNext resolution
@@ -423,33 +263,6 @@ pub struct CompileOptions {
     /// comes back out on [`ProjectOutput::schema_lock`] for the caller to
     /// persist.
     pub schema_registry: SchemaLock,
-}
-
-/// [`CompileOptions::schema_registry`]'s value — whether this build
-/// reconciles `bynk.schema.lock`, and if so, its current content.
-///
-/// A plain `Option<String>` was rejected for this: "off" and "on, fresh
-/// project" would both spell `None`, and a future edit that lost the disk
-/// read (a real bug, not a hypothetical — see #1078's history) would still
-/// type-check as "on, fresh project" instead of failing to compile. The two
-/// states are kept structurally distinct instead.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum SchemaLock {
-    /// Reconciliation is off for this build — `bynk-emit` never touches
-    /// `unit_tables`' event shapes against any registry, and emits each
-    /// event's `schemaVersion` straight from `EventDecl::schema_version()`.
-    #[default]
-    Off,
-    /// On. `existing` is `bynk.schema.lock`'s current content, pre-read by
-    /// the caller (never by `bynk-emit`). `None` means **verified absent** —
-    /// the caller checked and there is no lock file yet, so this is the
-    /// project's first-ever reconciliation and every event baselines
-    /// silently. It must not mean "content unavailable for some other
-    /// reason" (a permission error, a read that was skipped) — that would
-    /// silently re-baseline a real registry's history, exactly the
-    /// corruption `schema_registry::parse` exists to refuse when the content
-    /// *is* present but unparseable.
-    On { existing: Option<String> },
 }
 
 impl CompileOptions {
@@ -534,36 +347,44 @@ impl CompileOptions {
 
 /// #57: turn `options.sources` into the `(overlay, discovered)` pair
 /// `run_checks` expects — the caller-supplied file list, partitioned across
-/// `src_root`/`tests_root` the same way a real walk would (single-tree: every
-/// file lands in the first/`src` list, matching `compile_in_memory`'s own
-/// convention). Shared by [`compile_project`] and [`check_project`] so the
-/// two can't drift on this.
+/// `trees` the same way a real walk would (single-tree: every file lands in
+/// the first tree's list, matching `compile_in_memory`'s own convention).
+/// Shared by [`compile_project`] and [`check_project`] so the two can't drift
+/// on this.
 ///
-/// #1077/#1081 review: sorts both partitions. `sources`'s own key order is a
+/// #1077/#1081 review: sorts every partition. `sources`'s own key order is a
 /// `HashMap`'s — unspecified, randomised per process — but `phase_parse`
-/// walks `src_files`/`tests_files` in order to assign sequential `FileId`s
-/// and `ExprId`s (embedded in emitted spans/source maps) and `run_checks`
-/// pushes diagnostics in file order, both of which a real disk walk already
+/// walks each tree's file list in order to assign sequential `FileId`s and
+/// `ExprId`s (embedded in emitted spans/source maps) and `run_checks` pushes
+/// diagnostics in file order, both of which a real disk walk already
 /// guaranteed via `discover_bynk_files`'s own `out.sort()`. Without this, a
 /// `sources`-driven compile (the CLI's own path as of #1081) would silently
 /// vary its diagnostic order and `FileId` assignment run to run.
+///
+/// R3.9 (#1113): partitions across every `trees` entry, not a hardcoded
+/// primary/secondary pair — a path that doesn't start with any tree's root
+/// (shouldn't happen for a well-formed `sources` map) falls back to the
+/// first tree, matching the old single-tree convention.
 type Overlay = HashMap<PathBuf, String>;
-/// `(src_files, tests_files)` — the same shape `phase_discovery` and
+/// One file list per `trees` entry — the same shape `phase_discovery` and
 /// `run_checks`'s own `discovered` parameter already use.
-type Discovered = (Vec<PathBuf>, Vec<PathBuf>);
+type Discovered = Vec<Vec<PathBuf>>;
 
 fn sources_to_discovered(
     sources: &HashMap<PathBuf, String>,
-    src_root: &Path,
-    tests_root: &Path,
+    trees: &[(PathBuf, PathBuf)],
 ) -> (Overlay, Option<Discovered>) {
-    let (mut src_files, mut tests_files): (Vec<PathBuf>, Vec<PathBuf>) = sources
-        .keys()
-        .cloned()
-        .partition(|p| src_root == tests_root || p.starts_with(src_root));
-    src_files.sort();
-    tests_files.sort();
-    (sources.clone(), Some((src_files, tests_files)))
+    let mut buckets: Vec<Vec<PathBuf>> = vec![Vec::new(); trees.len()];
+    let mut keys: Vec<PathBuf> = sources.keys().cloned().collect();
+    keys.sort();
+    for p in keys {
+        let idx = trees
+            .iter()
+            .position(|(root, _)| p.starts_with(root))
+            .unwrap_or(0);
+        buckets[idx].push(p);
+    }
+    (sources.clone(), Some(buckets))
 }
 
 /// Compile a Bynk project, keeping error attribution + snapshots on failure
@@ -573,19 +394,14 @@ fn sources_to_discovered(
 pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, ProjectFailure> {
     // T3.6b (R4.1): one table per build, shared across every unit compiled.
     let tys = &Arc::new(Types::new());
-    let (src_root, tests_root) = options.roots.resolve();
-    let src_prefix = options.roots.src_prefix();
-    let tests_prefix = options.roots.tests_prefix();
+    let trees = options.roots.trees();
     let excludes = options.roots.excludes();
     let (overlay, discovered) = match &options.sources {
-        Some(sources) => sources_to_discovered(sources, &src_root, &tests_root),
+        Some(sources) => sources_to_discovered(sources, &trees),
         None => (HashMap::new(), None),
     };
     let run = run_checks(
-        &src_root,
-        &tests_root,
-        &src_prefix,
-        &tests_prefix,
+        &trees,
         options.target,
         options.platform,
         options.import_ext,
@@ -646,19 +462,14 @@ impl ProjectCheck {
 pub fn check_project(options: &CompileOptions) -> ProjectCheck {
     // T3.6b (R4.1): one table per check, shared across every unit.
     let tys = &Arc::new(Types::new());
-    let (src_root, tests_root) = options.roots.resolve();
-    let src_prefix = options.roots.src_prefix();
-    let tests_prefix = options.roots.tests_prefix();
+    let trees = options.roots.trees();
     let excludes = options.roots.excludes();
     let (overlay, discovered) = match &options.sources {
-        Some(sources) => sources_to_discovered(sources, &src_root, &tests_root),
+        Some(sources) => sources_to_discovered(sources, &trees),
         None => (HashMap::new(), None),
     };
     let run = run_checks(
-        &src_root,
-        &tests_root,
-        &src_prefix,
-        &tests_prefix,
+        &trees,
         options.target,
         options.platform,
         options.import_ext,
@@ -713,18 +524,16 @@ pub fn compile_in_memory(
     let path = in_memory_logical_path(source);
     let mut overlay = HashMap::new();
     overlay.insert(path.clone(), source.to_string());
+    let trees = vec![(root.clone(), PathBuf::new())];
     let run = run_checks(
-        &root,
-        &root,
-        Path::new(""),
-        &root,
+        &trees,
         target,
         platform,
         ImportExt::Js,
         Mode::Build,
         &overlay,
         &[],
-        Some((vec![path], Vec::new())),
+        Some(vec![vec![path]]),
         false,
         &SchemaLock::Off,
         &root,
@@ -784,18 +593,16 @@ pub fn analyse_in_memory_with_types(
     let path = in_memory_logical_path(source);
     let mut overlay = HashMap::new();
     overlay.insert(path.clone(), source.to_string());
+    let trees = vec![(root.clone(), PathBuf::new())];
     let run = run_checks(
-        &root,
-        &root,
-        Path::new(""),
-        &root,
+        &trees,
         target,
         platform,
         ImportExt::Js,
         Mode::Analyse,
         &overlay,
         &[],
-        Some((vec![path.clone()], Vec::new())),
+        Some(vec![vec![path.clone()]]),
         false,
         &SchemaLock::Off,
         &root,
@@ -928,13 +735,16 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
 /// of a single directory with no excludes, which is the same class of defect as
 /// the analysis root itself being wrong.
 pub fn discover_project_files(roots: &Roots) -> Vec<PathBuf> {
-    let (src_root, tests_root) = roots.resolve();
+    let trees = roots.trees();
     let excludes = roots.excludes();
-    let mut out = discover_bynk_files(&src_root, &excludes).unwrap_or_default();
-    // The secondary tree is optional, and equals the primary when `include` has
-    // one entry — in which case `run_checks` walks once and so must this.
-    if src_root != tests_root && tests_root.exists() {
-        out.extend(discover_bynk_files(&tests_root, &excludes).unwrap_or_default());
+    let mut out = Vec::new();
+    for (i, (root, _prefix)) in trees.iter().enumerate() {
+        // Every tree past the first is optional — a project may simply have
+        // no such subtree (R3.9, #1113: every `include` entry is walked, not
+        // just the first two).
+        if i == 0 || root.exists() {
+            out.extend(discover_bynk_files(root, &excludes).unwrap_or_default());
+        }
     }
     out.sort();
     out.dedup();
@@ -947,7 +757,7 @@ pub fn discover_project_files(roots: &Roots) -> Vec<PathBuf> {
 /// `old_name`. Exposed so the LSP's `workspace/willRenameFiles` handler
 /// reuses the compiler's own path↔name rules instead of re-deriving them.
 pub fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Option<String> {
-    paths::renamed_unit_name(old_rel, old_name, new_rel)
+    bynk_project::paths::renamed_unit_name(old_rel, old_name, new_rel)
 }
 
 /// v0.24: analyse a project without building — non-bailing, overlay-aware,
@@ -972,15 +782,10 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
     // analysis, shared by every unit, carried out on the result.
     let tys = &Arc::new(Types::new());
     // Resolved exactly as `compile_project` does — one project model, not two.
-    let (src_root, tests_root) = roots.resolve();
-    let src_prefix = roots.src_prefix();
-    let tests_prefix = roots.tests_prefix();
+    let trees = roots.trees();
     let excludes = roots.excludes();
     match run_checks(
-        &src_root,
-        &tests_root,
-        &src_prefix,
-        &tests_prefix,
+        &trees,
         BuildTarget::Bundle,
         Platform::default(),
         ImportExt::Js,
@@ -1051,13 +856,13 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
             // units have no openable file and are excluded.
             let mut unit_sources: HashMap<String, Vec<PathBuf>> = HashMap::new();
             for pf in &parsed {
-                if pf.synthetic {
+                if pf.is_synthetic() {
                     continue;
                 }
                 unit_sources
-                    .entry(pf.unit.name().joined())
+                    .entry(pf.unit().name().joined())
                     .or_default()
-                    .push(pf.identity_path.clone());
+                    .push(pf.identity_path().clone());
             }
             // #846: qualified context/adapter unit name → the cross-context +
             // agent tables the sequence-diagram classifier needs. Rebuilt from
@@ -1153,7 +958,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
 /// an error-path wrinkle noted in the ADR; the happy path is clean).
 fn normalize_service_defaults(parsed: &mut [ParsedFile]) {
     for pf in parsed.iter_mut() {
-        let items = match &mut pf.unit {
+        let items = match pf.unit_mut() {
             SourceUnit::Commons(c) => &mut c.items,
             SourceUnit::Context(c) => &mut c.items,
             SourceUnit::Adapter(a) => &mut a.items,
@@ -1234,69 +1039,61 @@ fn record_analyse_types(
 /// (the CLI's own path as of #1081) still gets both checks — they are
 /// properties of "what files does this build have," not of having just
 /// walked the disk to find them.
+/// R3.9 (#1113): walks every `(root, prefix)` tree `Roots::trees` resolves
+/// to, not a hardcoded primary/secondary pair — `trees[0]` is the mandatory
+/// tree (a missing directory is a real error, via `discover_bynk_files`
+/// itself); every later tree is optional, same as the old secondary tree
+/// always was (a project may simply have no such subtree).
 fn phase_discovery(
-    src_root: &Path,
-    tests_root: &Path,
-    split_mode: bool,
+    trees: &[(PathBuf, PathBuf)],
     excludes: &[PathBuf],
     errors: &mut ErrorSink,
-) -> Result<(Vec<PathBuf>, Vec<PathBuf>), ()> {
-    let src_files = match discover_bynk_files(src_root, excludes) {
-        Ok(f) => f,
-        Err(e) => {
-            errors.push_for(None, e);
-            return Err(());
+) -> Result<Vec<Vec<PathBuf>>, ()> {
+    let mut out = Vec::with_capacity(trees.len());
+    for (i, (root, _prefix)) in trees.iter().enumerate() {
+        if i > 0 && !root.exists() {
+            out.push(Vec::new());
+            continue;
         }
-    };
-    let tests_files = if split_mode {
-        // The secondary `include` root is optional — a project may have no such
-        // tree. A missing directory is not an error.
-        if tests_root.exists() {
-            match discover_bynk_files(tests_root, excludes) {
-                Ok(f) => f,
-                Err(e) => {
-                    errors.push_for(None, e);
-                    return Err(());
-                }
+        match discover_bynk_files(root, excludes) {
+            Ok(f) => out.push(f),
+            Err(e) => {
+                errors.push_for(None, e);
+                return Err(());
             }
-        } else {
-            Vec::new()
         }
-    } else {
-        Vec::new()
-    };
-    Ok((src_files, tests_files))
+    }
+    Ok(out)
 }
 
-/// The checks every `(src_files, tests_files)` pair must pass regardless of
-/// where it came from — a real disk walk ([`phase_discovery`]) or a
-/// caller-supplied `discovered`/`CompileOptions.sources` list (#1077/#1081
-/// review). An empty project (`bynk.project.no_sources`) signals a bail via
-/// `Err(())`; a file/directory name conflict is a non-fatal diagnostic.
+/// The checks every tree's file list must pass regardless of where it came
+/// from — a real disk walk ([`phase_discovery`]) or a caller-supplied
+/// `discovered`/`CompileOptions.sources` list (#1077/#1081 review). An empty
+/// project (`bynk.project.no_sources`) signals a bail via `Err(())`; a
+/// file/directory name conflict is a non-fatal diagnostic.
 fn check_discovered_files(
-    src_root: &Path,
-    tests_root: &Path,
-    split_mode: bool,
-    src_files: &[PathBuf],
-    tests_files: &[PathBuf],
+    trees: &[(PathBuf, PathBuf)],
+    file_lists: &[Vec<PathBuf>],
     errors: &mut ErrorSink,
 ) -> Result<(), ()> {
-    if src_files.is_empty() && tests_files.is_empty() {
+    if file_lists.iter().all(|f| f.is_empty()) {
         errors.push_for(
             None,
             CompileError::new(
                 "bynk.project.no_sources",
                 Span::default(),
-                format!("no `.bynk` source files found under {}", src_root.display()),
+                format!(
+                    "no `.bynk` source files found under {}",
+                    trees[0].0.display()
+                ),
             ),
         );
         return Err(());
     }
-    if let Err(e) = check_file_directory_conflicts(src_root, src_files) {
-        errors.extend_for(None, e);
-    }
-    if split_mode && let Err(e) = check_file_directory_conflicts(tests_root, tests_files) {
-        errors.extend_for(None, e);
+    for ((root, _prefix), files) in trees.iter().zip(file_lists.iter()) {
+        if let Err(e) = check_file_directory_conflicts(root, files) {
+            errors.extend_for(None, e);
+        }
     }
     Ok(())
 }
@@ -1341,14 +1138,14 @@ fn firstparty_parsed(
                     parser::parse_unit_with_warnings_from(&toks, src, &mut { id_base })
                         .map(|(unit, _warnings)| unit)
                 })
-                .map(|unit| ParsedFile {
-                    identity_path: PathBuf::from(identity_path),
-                    source_path: PathBuf::from(identity_path),
-                    abs_path: None,
-                    source: src.to_string(),
-                    unit,
-                    kind,
-                    synthetic: true,
+                .map(|unit| {
+                    ParsedFile::synthetic(
+                        PathBuf::from(identity_path),
+                        PathBuf::from(identity_path),
+                        src.to_string(),
+                        unit,
+                        kind,
+                    )
                 })
         })
         .clone()
@@ -1363,25 +1160,19 @@ fn firstparty_parsed(
 /// `Err(())` when parsing produced errors and yielded no units at all.
 #[allow(clippy::too_many_arguments)]
 fn phase_parse(
-    src_root: &Path,
-    tests_root: &Path,
-    // Slice 0: each tree's project-root-relative `include` prefix, empty for a
-    // single-root project. Builds `identity_path`; `source_path` stays
-    // tree-relative for unit validation. See `ParsedFile`.
-    src_prefix: &Path,
-    tests_prefix: &Path,
-    split_mode: bool,
-    src_files: &[PathBuf],
-    tests_files: &[PathBuf],
+    // R3.9 (#1113): one `(root, prefix)` pair per `Roots::trees` entry, not a
+    // hardcoded primary/secondary pair — every `include` tree is walked.
+    trees: &[(PathBuf, PathBuf)],
+    file_lists: &[Vec<PathBuf>],
     overlay: &HashMap<PathBuf, String>,
     errors: &mut ErrorSink,
     snapshots: &mut Vec<(PathBuf, String)>,
 ) -> Result<(Vec<ParsedFile>, bool, bool), ()> {
     let mut parsed: Vec<ParsedFile> = Vec::new();
     // T3.4 (R2.4): one `ExprId` counter across every file this project parse
-    // touches (both trees, in split mode) — see `parse_sources`'s own doc
-    // comment for why a per-file counter would collide once
-    // `collect_unit_methods` merges sibling files' methods together.
+    // touches (every tree) — see `parse_sources`'s own doc comment for why a
+    // per-file counter would collide once `collect_unit_methods` merges
+    // sibling files' methods together.
     let mut next_expr_id: u32 = 0;
     // T3.5 (R2.2): one `FileId` counter across every file this project parse
     // touches, mirroring `next_expr_id` above — see `parse_sources`'s own doc
@@ -1427,21 +1218,11 @@ fn phase_parse(
             }
         }
     };
-    parse_tree(
-        src_root,
-        src_prefix,
-        src_files,
-        &mut parsed,
-        errors,
-        snapshots,
-        &mut next_expr_id,
-        &mut next_file_id,
-    );
-    if split_mode {
+    for ((root, prefix), files) in trees.iter().zip(file_lists.iter()) {
         parse_tree(
-            tests_root,
-            tests_prefix,
-            tests_files,
+            root,
+            prefix,
+            files,
             &mut parsed,
             errors,
             snapshots,
@@ -1632,14 +1413,14 @@ fn phase_group(
     // unit tests — their `name()` is the synthetic `integration <suite>`.
     let mut integration_groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, pf) in parsed.iter().enumerate() {
-        let name = pf.unit.name().joined();
-        if pf.kind == UnitKind::Integration {
+        let name = pf.unit().name().joined();
+        if pf.kind() == UnitKind::Integration {
             integration_groups.entry(name).or_default().push(i);
-        } else if pf.kind == UnitKind::Test {
+        } else if pf.kind() == UnitKind::Test {
             test_groups.entry(name).or_default().push(i);
         } else {
             groups.entry(name.clone()).or_default().push(i);
-            kinds.entry(name).or_insert(pf.kind);
+            kinds.entry(name).or_insert(pf.kind());
         }
     }
     // #696: the consistency checks pair each error with the project-relative
@@ -1677,12 +1458,12 @@ fn phase_group(
     // v0.17: the `bynk` root namespace is reserved for the toolchain. No user
     // unit of any kind may be named `bynk` or `bynk.*` (§3.4).
     for pf in parsed {
-        if pf.synthetic {
+        if pf.is_synthetic() {
             continue;
         }
-        let qn = pf.unit.name();
+        let qn = pf.unit().name();
         if qn.parts.first().is_some_and(|p| p.name == "bynk") {
-            errors.push_for(Some(&pf.identity_path),
+            errors.push_for(Some(&pf.identity_path()),
                 CompileError::new(
                     "bynk.namespace.reserved",
                     qn.span,
@@ -1700,7 +1481,7 @@ fn phase_group(
     // `binding` module to supply the implementation symbols (§3.5). First-party
     // (synthetic) adapters omit the clause — the toolchain supplies the binding.
     for pf in parsed {
-        if pf.synthetic {
+        if pf.is_synthetic() {
             continue;
         }
         if let Some(a) = pf.adapter() {
@@ -1709,7 +1490,7 @@ fn phase_group(
                 .iter()
                 .any(|it| matches!(it, CommonsItem::Provider(p) if p.external));
             if has_external && a.binding.is_none() {
-                errors.push_for(Some(&pf.identity_path),
+                errors.push_for(Some(&pf.identity_path()),
                     CompileError::new(
                         "bynk.adapter.no_binding",
                         a.span,
@@ -1754,7 +1535,8 @@ fn phase_group(
     for pf in parsed {
         let Some(a) = pf.adapter() else { continue };
         let Some(b) = &a.binding else { continue };
-        let adapter_dir = pf.source_path.parent().unwrap_or(Path::new(""));
+        let pf_source_path = pf.source_path();
+        let adapter_dir = pf_source_path.parent().unwrap_or(Path::new(""));
         let out_rel = normalize_rel(&adapter_dir.join(&b.module));
         let src_abs = src_root.join(&out_rel);
         match read_adapter_binding(&src_abs, overlay) {
@@ -1768,7 +1550,7 @@ fn phase_group(
                 );
             }
             Err(e) => {
-                errors.push_for(Some(&pf.identity_path),
+                errors.push_for(Some(&pf.identity_path()),
                     CompileError::new(
                         "bynk.adapter.no_binding",
                         b.module_span,
@@ -1795,7 +1577,7 @@ fn phase_group(
         let Some(b) = &a.binding else { continue };
         for dep in &b.requires {
             if is_unpinned_range(&dep.range) {
-                errors.push_for(Some(&pf.identity_path),
+                errors.push_for(Some(&pf.identity_path()),
                     CompileError::new(
                         "bynk.requires.unpinned_dependency",
                         dep.span,
@@ -1864,7 +1646,7 @@ fn phase_resolve_uses(
                 let target = u.target.joined();
                 if !unit_tables.contains_key(&target) {
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.uses.unknown_commons",
                             u.span,
@@ -1878,7 +1660,7 @@ fn phase_resolve_uses(
                 }
                 let target_kind = *kinds.get(&target).unwrap();
                 if target_kind != UnitKind::Commons {
-                    errors.push_for(Some(&parsed[i].identity_path),
+                    errors.push_for(Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.uses.target_is_context",
                             u.span,
@@ -1894,7 +1676,7 @@ fn phase_resolve_uses(
                 }
                 if target == *name {
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.uses.self_reference",
                             u.span,
@@ -1943,11 +1725,11 @@ fn phase_resolve_consumes(
             .map(|t| t.capabilities.keys().cloned().collect())
             .unwrap_or_default();
         for &i in indices {
-            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path(), name, parsed[i].is_synthetic());
             for c in parsed[i].consumes() {
                 let target = c.target.joined();
                 if kind != UnitKind::Context && kind != UnitKind::Adapter {
-                    errors.push_for(Some(&parsed[i].identity_path),
+                    errors.push_for(Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.consumes.in_commons",
                             c.span,
@@ -1965,7 +1747,7 @@ fn phase_resolve_consumes(
                 // form only — an adapter has no services to RPC-call, so the
                 // whole-unit and `as Alias` forms are meaningless inside one.
                 if kind == UnitKind::Adapter && c.selected.is_none() {
-                    errors.push_for(Some(&parsed[i].identity_path),
+                    errors.push_for(Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.adapter.consumes_requires_selection",
                             c.span,
@@ -1981,7 +1763,7 @@ fn phase_resolve_consumes(
                 }
                 if !unit_tables.contains_key(&target) {
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.consumes.unknown_context",
                             c.span,
@@ -1997,7 +1779,7 @@ fn phase_resolve_consumes(
                 // v0.17: `consumes` may target a context or an adapter (the host
                 // boundary). It may not target a commons (use `uses` for that).
                 if target_kind != UnitKind::Context && target_kind != UnitKind::Adapter {
-                    errors.push_for(Some(&parsed[i].identity_path),
+                    errors.push_for(Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.consumes.target_is_commons",
                             c.span,
@@ -2015,7 +1797,7 @@ fn phase_resolve_consumes(
                 // an adapter consuming a *context* would pull service logic into
                 // the host boundary.
                 if kind == UnitKind::Adapter && target_kind == UnitKind::Context {
-                    errors.push_for(Some(&parsed[i].identity_path),
+                    errors.push_for(Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.adapter.consumes_context",
                             c.span,
@@ -2036,7 +1818,7 @@ fn phase_resolve_consumes(
                         "context"
                     };
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.consumes.self_reference",
                             c.span,
@@ -2057,7 +1839,7 @@ fn phase_resolve_consumes(
                     for cap in names {
                         if !exported.contains(&cap.name) {
                             errors.push_for(
-                                Some(&parsed[i].identity_path),
+                                Some(&parsed[i].identity_path()),
                                 CompileError::new(
                                     "bynk.given.cross_context_unknown_capability",
                                     cap.span,
@@ -2070,7 +1852,7 @@ fn phase_resolve_consumes(
                             continue;
                         }
                         if local_caps.contains(&cap.name) {
-                            errors.push_for(Some(&parsed[i].identity_path), CompileError::new(
+                            errors.push_for(Some(&parsed[i].identity_path()), CompileError::new(
                                 "bynk.consumes.capability_name_clash",
                                 cap.span,
                                 format!(
@@ -2081,7 +1863,7 @@ fn phase_resolve_consumes(
                             continue;
                         }
                         if let Some(prev) = flattened.get(&cap.name) {
-                            errors.push_for(Some(&parsed[i].identity_path), CompileError::new(
+                            errors.push_for(Some(&parsed[i].identity_path()), CompileError::new(
                                 "bynk.consumes.capability_name_clash",
                                 cap.span,
                                 format!(
@@ -2136,7 +1918,7 @@ fn phase_consumes_aliases(
                     continue;
                 }
                 if let Some(prev_span) = alias_spans.get(&alias.name) {
-                    errors.push_for(Some(&parsed[i].identity_path),
+                    errors.push_for(Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.consumes.alias_conflict",
                             alias.span,
@@ -2168,7 +1950,7 @@ fn phase_consumes_aliases(
         for alias in aliases.keys() {
             let alias_site = parsed_alias_span(parsed, &groups[name], alias);
             let alias_span = alias_site.map(|(_, s)| s).unwrap_or_default();
-            let alias_file = alias_site.map(|(i, _)| parsed[i].identity_path.clone());
+            let alias_file = alias_site.map(|(i, _)| parsed[i].identity_path().clone());
             let conflict_kind = if local.types.contains_key(alias) {
                 Some("type")
             } else if local.fns.contains_key(alias) {
@@ -2223,7 +2005,7 @@ fn phase_uses_name_conflicts(
                 if let Some(prev) = imported.get(type_name) {
                     let site = uses_span_of(parsed, &groups[name], t);
                     let span = site.map(|(_, s)| s).unwrap_or_default();
-                    let file = site.map(|(i, _)| parsed[i].identity_path.clone());
+                    let file = site.map(|(i, _)| parsed[i].identity_path().clone());
                     errors.push_for(file.as_deref(),
                         CompileError::new(
                             "bynk.uses.name_conflict",
@@ -2247,7 +2029,7 @@ fn phase_uses_name_conflicts(
                 if let Some(prev) = imported.get(fn_name) {
                     let site = uses_span_of(parsed, &groups[name], t);
                     let span = site.map(|(_, s)| s).unwrap_or_default();
-                    let file = site.map(|(i, _)| parsed[i].identity_path.clone());
+                    let file = site.map(|(i, _)| parsed[i].identity_path().clone());
                     errors.push_for(file.as_deref(),
                         CompileError::new(
                             "bynk.uses.name_conflict",
@@ -2292,7 +2074,7 @@ fn phase_validate_type_exports(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, (Visibility, Span)> = HashMap::new();
         for &i in indices {
-            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path(), name, parsed[i].is_synthetic());
             for clause in parsed[i].exports() {
                 // v0.15: `exports capability { ... }` clauses are validated
                 // separately (§4.1); 6b handles only type exports.
@@ -2303,7 +2085,7 @@ fn phase_validate_type_exports(
                 for n in &clause.names {
                     if let Some(prev) = within.get(&n.name) {
                         errors.push_for(
-                            Some(&parsed[i].identity_path),
+                            Some(&parsed[i].identity_path()),
                             CompileError::new(
                                 "bynk.exports.duplicate_in_clause",
                                 n.span,
@@ -2319,7 +2101,7 @@ fn phase_validate_type_exports(
                     within.insert(n.name.clone(), n.span);
 
                     if !local.types.contains_key(&n.name) {
-                        errors.push_for(Some(&parsed[i].identity_path),
+                        errors.push_for(Some(&parsed[i].identity_path()),
                             CompileError::new(
                                 "bynk.exports.undeclared_type",
                                 n.span,
@@ -2340,7 +2122,7 @@ fn phase_validate_type_exports(
                     if let Some((prev_vis, prev_span)) = seen.get(&n.name) {
                         if *prev_vis == clause_vis {
                             errors.push_for(
-                                Some(&parsed[i].identity_path),
+                                Some(&parsed[i].identity_path()),
                                 CompileError::new(
                                     "bynk.exports.duplicate_export",
                                     n.span,
@@ -2349,7 +2131,7 @@ fn phase_validate_type_exports(
                                 .with_label(*prev_span, "previously exported here"),
                             );
                         } else {
-                            errors.push_for(Some(&parsed[i].identity_path),
+                            errors.push_for(Some(&parsed[i].identity_path()),
                                 CompileError::new(
                                     "bynk.exports.conflicting_visibility",
                                     n.span,
@@ -2397,7 +2179,7 @@ fn phase_validate_capability_exports(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, Span> = HashMap::new();
         for &i in indices {
-            refs.enter_file(&parsed[i].identity_path, name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path(), name, parsed[i].is_synthetic());
             for clause in parsed[i].exports() {
                 if !matches!(clause.kind, ExportKind::Capability) {
                     continue;
@@ -2405,7 +2187,7 @@ fn phase_validate_capability_exports(
                 for n in &clause.names {
                     if let Some(prev) = seen.get(&n.name) {
                         errors.push_for(
-                            Some(&parsed[i].identity_path),
+                            Some(&parsed[i].identity_path()),
                             CompileError::new(
                                 "bynk.exports.duplicate_export",
                                 n.span,
@@ -2422,7 +2204,7 @@ fn phase_validate_capability_exports(
                         refs.record(n.span, SymbolKind::Capability, &n.name);
                     }
                     if !local.capabilities.contains_key(&n.name) {
-                        errors.push_for(Some(&parsed[i].identity_path),
+                        errors.push_for(Some(&parsed[i].identity_path()),
                             CompileError::new(
                                 "bynk.exports.undeclared_capability",
                                 n.span,
@@ -2438,7 +2220,7 @@ fn phase_validate_capability_exports(
                         continue;
                     }
                     if !local.providers.contains_key(&n.name) {
-                        errors.push_for(Some(&parsed[i].identity_path),
+                        errors.push_for(Some(&parsed[i].identity_path()),
                             CompileError::new(
                                 "bynk.exports.capability_not_provided",
                                 n.span,
@@ -2476,17 +2258,16 @@ fn phase_validate_providers(
         // Map each provided capability to the project-relative path of the file
         // that declares its provider — every diagnostic below carries a span into
         // that file.
-        let provider_files: HashMap<&str, &Path> = groups
+        let provider_files: HashMap<&str, PathBuf> = groups
             .get(name)
             .map(|indices| {
                 indices
                     .iter()
                     .flat_map(|&i| {
                         parsed[i].items().iter().filter_map(move |item| match item {
-                            CommonsItem::Provider(p) => Some((
-                                p.capability.name.as_str(),
-                                parsed[i].identity_path.as_path(),
-                            )),
+                            CommonsItem::Provider(p) => {
+                                Some((p.capability.name.as_str(), parsed[i].identity_path()))
+                            }
                             _ => None,
                         })
                     })
@@ -2494,7 +2275,7 @@ fn phase_validate_providers(
             })
             .unwrap_or_default();
         for (cap_name, provider) in &table.providers {
-            let provider_file = provider_files.get(cap_name.as_str()).copied();
+            let provider_file = provider_files.get(cap_name.as_str()).map(|p| p.as_path());
             // v0.17: an external provider has no Bynk body to match against the
             // capability — its implementation is the binding, checked by `tsc`.
             if provider.external {
@@ -2786,7 +2567,7 @@ fn merge_consumed_exports(
                 // Name conflict between local/uses and consumed export.
                 let consumes_site = consumes_span_of(parsed, &unit_info[name].files, t);
                 let consumes_span = consumes_site.map(|(_, s)| s).unwrap_or_default();
-                let consumes_file = consumes_site.map(|(i, _)| parsed[i].identity_path.clone());
+                let consumes_file = consumes_site.map(|(i, _)| parsed[i].identity_path().clone());
                 errors.push_for(consumes_file.as_deref(),
                     CompileError::new(
                         "bynk.consumes.name_conflict",
@@ -3076,7 +2857,7 @@ fn emit_unit(
     let emit_source_path = if workers_mode && kind == UnitKind::Context {
         worker_handlers_source_path(name)
     } else {
-        pf.source_path.clone()
+        pf.source_path().clone()
     };
 
     // message-bundles slice 1 (#859): a `messages` block's generated `render`
@@ -3184,17 +2965,17 @@ fn emit_unit(
     // path the debugger loads (project-relative would resolve against the output
     // `.ts`'s directory — the wrong place). Synthetic units fall back to relative.
     let source_name = pf.map_source_name();
-    let (ts, source_map) = emitter::emit_project(typed, &emit_ctx, &pf.source, &source_name);
+    let (ts, source_map) = emitter::emit_project(typed, &emit_ctx, pf.source(), &source_name);
     // Slice 3: the handler-label sidecar for this unit (ADR 0105) — names stack
     // frames by their Bynk operation. `None` for units with no handlers.
     let debug_metadata = emitter::collect_handler_labels(typed);
     let output_path = if workers_mode && kind == UnitKind::Context {
         worker_handlers_output_path(name)
     } else {
-        ts_output_path(&pf.source_path)
+        ts_output_path(&pf.source_path())
     };
     compiled.push(CompiledFile {
-        source_path: pf.source_path.clone(),
+        source_path: pf.source_path().clone(),
         output_path,
         typescript: ts,
         source_map,
@@ -3436,24 +3217,24 @@ fn check_unit_files(
             kind == UnitKind::Context,
             uses_commons_type_names.clone(),
         );
-        refs.enter_file(&pf.identity_path, name, pf.synthetic);
+        refs.enter_file(&pf.identity_path(), name, pf.is_synthetic());
         // v0.27: synthetic and test/integration files record no hints —
         // neither surfaces in an editor (the `assemble_index` rule).
         hints.enter_file(
-            &pf.identity_path,
-            pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
+            &pf.identity_path(),
+            pf.is_synthetic() || matches!(pf.kind(), UnitKind::Test | UnitKind::Integration),
         );
         // v0.31: locals serve completion/navigation in test files too — only
         // synthetic (toolchain-injected) files are muted.
-        locals.enter_file(&pf.identity_path, pf.synthetic);
+        locals.enter_file(&pf.identity_path(), pf.is_synthetic());
         // v0.99: capability requirements follow the inlay-hint muting rule —
         // synthetic and test/integration files surface none in an editor.
         requirements.enter_file(
-            &pf.identity_path,
-            pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
+            &pf.identity_path(),
+            pf.is_synthetic() || matches!(pf.kind(), UnitKind::Test | UnitKind::Integration),
         );
         if let Err(errs) = resolver::resolve_file_record(&resolved, refs) {
-            errors.extend_for(Some(&pf.identity_path), errs);
+            errors.extend_for(Some(&pf.identity_path()), errs);
             continue;
         }
         let rc = checker::check_record_in(resolved, tys, refs, hints, locals, requirements);
@@ -3463,12 +3244,12 @@ fn check_unit_files(
                 // non-failing warnings — push them into the (severity-aware)
                 // sink, where they are classified as warnings and never gate.
                 if !t.warnings.is_empty() {
-                    errors.extend_for(Some(&pf.identity_path), t.warnings.clone());
+                    errors.extend_for(Some(&pf.identity_path()), t.warnings.clone());
                 }
                 t
             }
             Err(errs) => {
-                errors.extend_for(Some(&pf.identity_path), errs);
+                errors.extend_for(Some(&pf.identity_path()), errs);
                 // ADR 0094: in Analyse mode, surface the best-effort partial types
                 // the checker computed so `.`-member completion / signature help
                 // work on a buffer with an unrelated error. Build bails (no
@@ -3476,8 +3257,8 @@ fn check_unit_files(
                 if mode == Mode::Analyse {
                     record_analyse_types(
                         exprs,
-                        &pf.identity_path,
-                        pf.synthetic,
+                        &pf.identity_path(),
+                        pf.is_synthetic(),
                         &rc.partial_expr_types,
                     );
                 }
@@ -3491,9 +3272,9 @@ fn check_unit_files(
             let context_check_errs =
                 check_context_constraints(&typed, consumed_types, local_names, tys);
             if !context_check_errs.is_empty() {
-                errors.extend_for(Some(&pf.identity_path), context_check_errs);
+                errors.extend_for(Some(&pf.identity_path()), context_check_errs);
                 if mode == Mode::Analyse {
-                    record_analyse_types(exprs, &pf.identity_path, pf.synthetic, &typed.expr_types);
+                    record_analyse_types(exprs, &pf.identity_path(), pf.is_synthetic(), &typed.expr_types);
                 }
                 continue;
             }
@@ -3531,7 +3312,7 @@ fn check_unit_files(
                         bynk_syntax::Severity::Error
                     )
                 });
-                errors.extend_for(Some(&pf.identity_path), decl_errs);
+                errors.extend_for(Some(&pf.identity_path()), decl_errs);
                 if blocks_emission {
                     // ADR 0094: handler bodies are typed here — surface their
                     // best-effort types in Analyse mode even when a declaration check
@@ -3539,8 +3320,8 @@ fn check_unit_files(
                     if mode == Mode::Analyse {
                         record_analyse_types(
                             exprs,
-                            &pf.identity_path,
-                            pf.synthetic,
+                            &pf.identity_path(),
+                            pf.is_synthetic(),
                             &typed.expr_types,
                         );
                     }
@@ -3554,7 +3335,7 @@ fn check_unit_files(
         // file's expression types on the way out (Ok path only — this point is
         // past every per-file error `continue`), for `.`-member completion.
         if mode == Mode::Analyse {
-            record_analyse_types(exprs, &pf.identity_path, pf.synthetic, &typed.expr_types);
+            record_analyse_types(exprs, &pf.identity_path(), pf.is_synthetic(), &typed.expr_types);
             continue;
         }
         // T3.7b (R3.10): every per-unit gate above already ran (check_record's
@@ -3642,12 +3423,10 @@ enum RunChecks {
 
 #[allow(clippy::too_many_arguments)]
 fn run_checks(
-    src_root: &Path,
-    tests_root: &Path,
-    // Slice 0: the primary tree's project-root-relative `include` prefix, empty
-    // for a single root — builds `identity_path` alongside `tests_prefix`.
-    src_prefix: &Path,
-    tests_prefix: &Path,
+    // R3.9 (#1113): one `(root, prefix)` pair per `Roots::trees` entry, not a
+    // hardcoded primary/secondary pair — every `include` tree is walked, not
+    // just the first one or two.
+    trees: &[(PathBuf, PathBuf)],
     target: BuildTarget,
     platform: Platform,
     import_ext: ImportExt,
@@ -3657,11 +3436,11 @@ fn run_checks(
     // the tool's `out`/`node_modules` caches). Empty for in-memory builds.
     excludes: &[PathBuf],
     // v0.108 (in-browser track, slice 3): when `Some`, the source files are
-    // supplied directly — `(src_files, tests_files)` — and filesystem discovery
-    // is skipped. The wasm/REPL entry feeds an in-memory single-module project
-    // this way (the source itself rides in `overlay`); `None` keeps the on-disk
-    // discovery walk for the CLI and the LSP.
-    discovered: Option<(Vec<PathBuf>, Vec<PathBuf>)>,
+    // supplied directly, one file list per `trees` entry — and filesystem
+    // discovery is skipped. The wasm/REPL entry feeds an in-memory
+    // single-module project this way (the source itself rides in `overlay`);
+    // `None` keeps the on-disk discovery walk for the CLI and the LSP.
+    discovered: Option<Vec<Vec<PathBuf>>>,
     // v0.115: emit the function-contract call-site guard (dev/test profile).
     contracts: bool,
     // Events track, slice 3c (#980): `On` turns on `bynk.schema.lock`
@@ -3691,12 +3470,11 @@ fn run_checks(
     // `.`-member completion can type a receiver. Carried like `hints`.
     let mut exprs = ExprTypeSink::new();
     let mut snapshots: Vec<(PathBuf, String)> = Vec::new();
-    let split_mode = src_root != tests_root;
 
     // -- 1. Discovery (skipped when sources are supplied in memory). --
-    let (src_files, tests_files) = match discovered {
+    let file_lists = match discovered {
         Some(files) => files,
-        None => match phase_discovery(src_root, tests_root, split_mode, excludes, &mut errors) {
+        None => match phase_discovery(trees, excludes, &mut errors) {
             Ok(files) => files,
             Err(()) => {
                 return RunChecks::Bailed {
@@ -3711,18 +3489,9 @@ fn run_checks(
         },
     };
     // #1077/#1081 review: `no_sources`/file-directory-conflict checks run on
-    // every `(src_files, tests_files)` regardless of provenance — see
+    // every tree's file list regardless of provenance — see
     // `check_discovered_files`'s own doc.
-    if check_discovered_files(
-        src_root,
-        tests_root,
-        split_mode,
-        &src_files,
-        &tests_files,
-        &mut errors,
-    )
-    .is_err()
-    {
+    if check_discovered_files(trees, &file_lists, &mut errors).is_err() {
         return RunChecks::Bailed {
             errors,
             snapshots,
@@ -3735,13 +3504,8 @@ fn run_checks(
 
     // -- 2. Parse every file. --
     let (mut parsed, consumes_bynk, consumes_cloudflare) = match phase_parse(
-        src_root,
-        tests_root,
-        src_prefix,
-        tests_prefix,
-        split_mode,
-        &src_files,
-        &tests_files,
+        trees,
+        &file_lists,
         overlay,
         &mut errors,
         &mut snapshots,
@@ -3772,7 +3536,7 @@ fn run_checks(
     // -- 3. Group by (name, kind) and validate per-directory consistency. --
     let (groups, kinds, test_groups, integration_groups, adapter_bindings, npm_deps) = phase_group(
         &parsed,
-        src_root,
+        &trees[0].0,
         platform,
         consumes_bynk,
         consumes_cloudflare,
@@ -3825,7 +3589,7 @@ fn run_checks(
                 continue;
             };
             for &i in indices {
-                let bynk_syntax::ast::SourceUnit::Context(ctx) = &parsed[i].unit else {
+                let bynk_syntax::ast::SourceUnit::Context(ctx) = &parsed[i].unit() else {
                     continue;
                 };
                 let handlers = ctx.items.iter().filter_map(|item| match item {
@@ -3834,7 +3598,7 @@ fn run_checks(
                 });
                 let (_, warnings) =
                     crate::emitter::secrets::secret_reads_of(handlers.flatten(), flattened);
-                let rel = parsed[i].identity_path.clone();
+                let rel = parsed[i].identity_path().clone();
                 errors.extend_for(Some(&rel), warnings);
             }
         }
@@ -3849,13 +3613,13 @@ fn run_checks(
     let mut consumes_sites: HashMap<(String, String), (PathBuf, Span)> = HashMap::new();
     for (name, indices) in &groups {
         for &i in indices {
-            if parsed[i].synthetic {
+            if parsed[i].is_synthetic() {
                 continue;
             }
             for c in parsed[i].consumes() {
                 consumes_sites
                     .entry((name.clone(), c.target.joined()))
-                    .or_insert_with(|| (parsed[i].identity_path.clone(), c.span));
+                    .or_insert_with(|| (parsed[i].identity_path().clone(), c.span));
             }
         }
     }
@@ -4096,6 +3860,14 @@ fn run_checks(
     // integration-test passes so a multi-file commons imported by both is
     // aggregated into `out/<name>.ts` exactly once.
     let mut emitted_barrels: HashSet<PathBuf> = HashSet::new();
+    // Test-output paths key off the second `include` tree by convention
+    // (the `tests/` role) — orthogonal to R3.9's `Roots::trees` fix, which is
+    // about *discovery* walking every tree, not about renaming this
+    // longstanding output-path convention.
+    let tests_prefix: &Path = trees
+        .get(1)
+        .map(|(_, prefix)| prefix.as_path())
+        .unwrap_or(Path::new(""));
     let (test_outputs, runnable_tests) = process_tests(
         &test_groups,
         &parsed,
@@ -5660,6 +5432,7 @@ fn own_contract_hashes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     /// Content-ownership track (#1086) slice 4: this crate's own
     /// `#[cfg(test)]` module can't depend on the cross-crate `bynk-testkit`
@@ -5775,8 +5548,10 @@ mod tests {
                 ),
             ],
         );
-        let options =
-            compile_options_split_with_sources(root.to_path_buf(), read_project_paths(&root));
+        let options = compile_options_split_with_sources(
+            root.to_path_buf(),
+            try_read_project_paths(&root).expect("well-formed fixture manifest"),
+        );
 
         let check = check_project(&options);
         assert!(check.has_errors());
@@ -5832,20 +5607,20 @@ mod tests {
         );
         let roots = Roots::Split {
             project_root: root.to_path_buf(),
-            paths: read_project_paths(&root),
+            paths: try_read_project_paths(&root).expect("well-formed fixture manifest"),
         };
+        let trees = roots.trees();
         assert_eq!(
-            roots.src_prefix().join("x"),
-            PathBuf::from("src/x"),
+            trees,
+            vec![
+                (root.join("src"), PathBuf::from("src")),
+                (root.join("tests"), PathBuf::from("tests")),
+            ],
             "the fixture must actually be two-rooted"
         );
-        let (src_root, tests_root) = roots.resolve();
         let sources = read_disk_sources(&roots);
         let run = run_checks(
-            &src_root,
-            &tests_root,
-            &roots.src_prefix(),
-            &roots.tests_prefix(),
+            &trees,
             BuildTarget::Bundle,
             Platform::default(),
             ImportExt::Js,
@@ -5981,15 +5756,12 @@ mod tests {
     fn analyse_split(root: &Path) -> Vec<AttributedError> {
         let roots = Roots::Split {
             project_root: root.to_path_buf(),
-            paths: read_project_paths(root),
+            paths: try_read_project_paths(root).expect("well-formed fixture manifest"),
         };
-        let (src_root, tests_root) = roots.resolve();
+        let trees = roots.trees();
         let sources = read_disk_sources(&roots);
         let run = run_checks(
-            &src_root,
-            &tests_root,
-            &roots.src_prefix(),
-            &roots.tests_prefix(),
+            &trees,
             BuildTarget::Bundle,
             Platform::default(),
             ImportExt::Js,
@@ -6080,54 +5852,6 @@ mod tests {
         );
     }
 
-    /// The prefix is the whole mechanism, and it is empty for a single root —
-    /// which is *why* every existing single-root project's diagnostic paths are
-    /// unchanged by construction rather than by care.
-    #[test]
-    fn single_root_prefixes_are_empty_so_identity_equals_source_path() {
-        let single = Roots::Single(PathBuf::from("/p"));
-        assert_eq!(single.src_prefix(), PathBuf::new());
-        assert_eq!(single.tests_prefix(), PathBuf::new());
-        // An empty prefix is a join identity: `"".join(rel) == rel`.
-        assert_eq!(
-            single.src_prefix().join("a/b.bynk"),
-            PathBuf::from("a/b.bynk")
-        );
-    }
-
-    /// The flat layout: `.bynk` at the project root, no `src/`, plus a
-    /// `bynk.toml`. `ProjectPaths::conventional` yields `include = ["."]` and
-    /// `bynk-driver` still selects `Roots::Split` (a manifest exists), so `.`
-    /// reaches the prefix. It must normalise to empty: `Path::new(".")` only
-    /// *looks* like a join identity — `".".join("x")` is `./x`, which is not
-    /// equal to `x`, and would leak a `./` into every key and reported path.
-    #[test]
-    fn a_dot_include_normalises_to_an_empty_prefix() {
-        // The premise, pinned: `.` is not a join identity but empty is.
-        assert_ne!(
-            PathBuf::from(".").join("thing.bynk"),
-            PathBuf::from("thing.bynk")
-        );
-        assert_eq!(
-            PathBuf::new().join("thing.bynk"),
-            PathBuf::from("thing.bynk")
-        );
-
-        let roots = Roots::Split {
-            project_root: PathBuf::from("/p"),
-            paths: ProjectPaths {
-                include: vec![PathBuf::from(".")],
-                exclude: Vec::new(),
-            },
-        };
-        assert_eq!(roots.src_prefix(), PathBuf::new(), "`.` must not leak in");
-        assert_eq!(
-            roots.src_prefix().join("thing.bynk"),
-            PathBuf::from("thing.bynk"),
-            "a flat project's identity is the bare path, never `./thing.bynk`"
-        );
-    }
-
     /// End-to-end over the flat layout `conventional()` actually produces, so
     /// the normalisation is pinned where it is reachable and not only on the
     /// accessor. No e2e fixture has this layout.
@@ -6141,7 +5865,8 @@ mod tests {
                 ("thing.bynk", "context thing\n\nfn {{{ \n"),
             ],
         );
-        let paths = read_project_paths(&root);
+        let paths =
+            try_read_project_paths(&root).expect("well-formed fixture manifest");
         assert_eq!(
             paths.include,
             vec![PathBuf::from(".")],
@@ -6163,37 +5888,6 @@ mod tests {
             "a flat project's diagnostics must report `thing.bynk`, never \
              `./thing.bynk` — got {attributed:?}",
         );
-    }
-
-    /// A split project's prefixes are its `include` entries, in order.
-    #[test]
-    fn split_root_prefixes_are_the_include_entries() {
-        let roots = Roots::Split {
-            project_root: PathBuf::from("/p"),
-            paths: ProjectPaths {
-                include: vec![PathBuf::from("lib"), PathBuf::from("spec")],
-                exclude: Vec::new(),
-            },
-        };
-        assert_eq!(roots.src_prefix(), PathBuf::from("lib"));
-        assert_eq!(roots.tests_prefix(), PathBuf::from("spec"));
-    }
-
-    /// A single-entry `include` collapses to one walk (`split_mode` is
-    /// `src_root != tests_root`), so the secondary prefix must not invent a
-    /// second tree — it mirrors the primary.
-    #[test]
-    fn single_include_entry_resolves_both_roots_to_the_same_tree() {
-        let roots = Roots::Split {
-            project_root: PathBuf::from("/p"),
-            paths: ProjectPaths {
-                include: vec![PathBuf::from("src")],
-                exclude: Vec::new(),
-            },
-        };
-        let (src_root, tests_root) = roots.resolve();
-        assert_eq!(src_root, tests_root, "one include entry is one tree");
-        assert_eq!(roots.src_prefix(), PathBuf::from("src"));
     }
 
     /// v0.29.4: assembly yields exactly one `UnitInfo` per group, every facet

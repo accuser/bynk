@@ -296,14 +296,14 @@ fn resolve_stubs(
         let Some(t) = parsed[i].test() else { continue };
         for case in &t.cases {
             for pc in &case.stubs {
-                collected.push((pc.clone(), parsed[i].identity_path.clone()));
+                collected.push((pc.clone(), parsed[i].identity_path().clone()));
             }
         }
     }
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
         for pc in &t.stubs {
-            collected.push((pc.clone(), parsed[i].identity_path.clone()));
+            collected.push((pc.clone(), parsed[i].identity_path().clone()));
         }
     }
 
@@ -549,7 +549,7 @@ pub(crate) fn process_integration_tests(
             let Some(d) = parsed[i].integration() else {
                 continue;
             };
-            refs.enter_file(&parsed[i].identity_path, &harness_name, parsed[i].synthetic);
+            refs.enter_file(&parsed[i].identity_path(), &harness_name, parsed[i].is_synthetic());
             for case in &d.cases {
                 check_integration_case_body(
                     &participants,
@@ -566,7 +566,7 @@ pub(crate) fn process_integration_tests(
                 // about, so lowering it would silently pass raw text to a direct
                 // in-process handler call. Reject it at the tier where it is known.
                 if !matches!(
-                    super::discovery::case_effective_tier(case, d),
+                    super::case_effective_tier(case, d),
                     bynk_syntax::ast::TestTier::System
                 ) && block_uses_wire(&case.body)
                 {
@@ -585,7 +585,7 @@ pub(crate) fn process_integration_tests(
                 // (the 401 path), which exists only at `system`; at a lower tier
                 // the handler just runs with no identity, silently not a 401.
                 if !matches!(
-                    super::discovery::case_effective_tier(case, d),
+                    super::case_effective_tier(case, d),
                     bynk_syntax::ast::TestTier::System
                 ) && block_uses_nobody(&case.body)
                 {
@@ -617,14 +617,14 @@ pub(crate) fn process_integration_tests(
                 continue;
             };
             let rel_path = tests_prefix
-                .join(&parsed[i].source_path)
+                .join(parsed[i].source_path())
                 .to_string_lossy()
                 .into_owned();
             let map_source = parsed[i].map_source_name();
             for case in &d.cases {
                 case_inputs.push(SystemCaseInput {
                     case,
-                    source: &parsed[i].source,
+                    source: parsed[i].source(),
                     rel_path: rel_path.clone(),
                     map_source: map_source.clone(),
                 });
@@ -1712,7 +1712,7 @@ fn check_test_bodies(
         };
         // v0.25: test-case edges record in the test file, resolving bare
         // names through the *target* unit's namespace.
-        refs.enter_file(&parsed[i].identity_path, target_name, parsed[i].synthetic);
+        refs.enter_file(&parsed[i].identity_path(), target_name, parsed[i].is_synthetic());
         for case in &test_decl.cases {
             check_test_case_body(
                 target_name,
@@ -3531,13 +3531,13 @@ fn emit_test_module(
         let Some(test_decl) = parsed[i].test() else {
             continue;
         };
-        let rel_path = tests_prefix.join(&parsed[i].source_path);
+        let rel_path = tests_prefix.join(parsed[i].source_path());
         let rel_path = rel_path.to_string_lossy();
         for case in &test_decl.cases {
             discovered.push(DiscoveredCase {
                 name: case.name.clone(),
                 location: Some(discovered_location(
-                    &parsed[i].source,
+                    parsed[i].source(),
                     &rel_path,
                     case.name_span,
                 )),
@@ -3549,7 +3549,7 @@ fn emit_test_module(
             // in-process harness; the tier rides the emitted module for reporting.
             out.push_str(&format!(
                 "// case tier: {}\n",
-                super::discovery::case_effective_tier(case, test_decl).as_str()
+                super::case_effective_tier(case, test_decl).as_str()
             ));
             let (case_text, case_smb) = emit_test_case_function(
                 &runner_name,
@@ -3561,7 +3561,7 @@ fn emit_test_module(
                 unit_uses,
                 unit_consumes,
                 unit_consumes_aliases,
-                &parsed[i].source,
+                parsed[i].source(),
                 &rel_path,
                 &runtime_use,
                 tys,
@@ -3577,7 +3577,7 @@ fn emit_test_module(
             // the emitted `.ts`'s dir) so an editor breakpoint on the real
             // `.bynk` test file binds.
             let src_id =
-                module_smb.add_source(parsed[i].map_source_name(), parsed[i].source.clone());
+                module_smb.add_source(parsed[i].map_source_name(), parsed[i].source().to_string());
             module_smb.merge(&case_smb, &case_text, &out, base, src_id);
             out.push('\n');
         }
@@ -3591,13 +3591,13 @@ fn emit_test_module(
         let Some(test_decl) = parsed[i].test() else {
             continue;
         };
-        let rel_path = tests_prefix.join(&parsed[i].source_path);
+        let rel_path = tests_prefix.join(parsed[i].source_path());
         let rel_path = rel_path.to_string_lossy();
         for prop in &test_decl.properties {
             discovered.push(DiscoveredCase {
                 name: prop.name.clone(),
                 location: Some(discovered_location(
-                    &parsed[i].source,
+                    parsed[i].source(),
                     &rel_path,
                     prop.name_span,
                 )),
@@ -3619,7 +3619,7 @@ fn emit_test_module(
                     unit_uses,
                     unit_consumes,
                     unit_consumes_aliases,
-                    &parsed[i].source,
+                    parsed[i].source(),
                     &rel_path,
                     &runtime_use,
                     tys,
@@ -3635,7 +3635,7 @@ fn emit_test_module(
                     unit_uses,
                     unit_consumes,
                     unit_consumes_aliases,
-                    &parsed[i].source,
+                    parsed[i].source(),
                     &rel_path,
                     &runtime_use,
                     tys,
@@ -3655,7 +3655,7 @@ fn emit_test_module(
         .find_map(|&i| {
             parsed[i].test().map(|_| {
                 tests_prefix
-                    .join(&parsed[i].source_path)
+                    .join(parsed[i].source_path())
                     .to_string_lossy()
                     .into_owned()
             })
@@ -3856,7 +3856,7 @@ fn emit_commons_barrel(
     if indices.is_empty()
         || !indices
             .iter()
-            .all(|&i| is_multi_file_layout(&parsed[i].source_path, name))
+            .all(|&i| is_multi_file_layout(&parsed[i].source_path(), name))
     {
         return None;
     }
@@ -3873,7 +3873,7 @@ fn emit_commons_barrel(
     let barrel_loc = commons_dir_for(name);
     let mut files: Vec<PathBuf> = indices
         .iter()
-        .map(|&i| parsed[i].source_path.clone())
+        .map(|&i| parsed[i].source_path().clone())
         .collect();
     files.sort();
     files.dedup();

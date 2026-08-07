@@ -1,19 +1,27 @@
-//! The one JSON string escaper for every manifest this crate hand-renders.
+//! The one JSON string escaper for every manifest `bynk-emit` hand-renders.
 //!
-//! Several build outputs are JSON that this crate writes by hand rather than via
-//! serde (`bynk-contracts.json`, `bynk-secrets.json`, `package.json`, the source
-//! map): the shapes are a handful of fields each, and staying serde-free keeps
-//! the dependency footprint honest. What they must share is the escaping — every
-//! one of them interpolates text that originated in Bynk source (a secret name
-//! from a `StrLit`, an adapter's npm package name, a file path), so as far as the
-//! renderer is concerned the input is arbitrary.
+//! Several build outputs are JSON that `bynk-emit` writes by hand rather than
+//! via serde (`bynk-contracts.json`, `bynk-secrets.json`, `package.json`, the
+//! source map): the shapes are a handful of fields each, and staying
+//! serde-free keeps the dependency footprint honest. What they must share is
+//! the escaping — every one of them interpolates text that originated in
+//! Bynk source (a secret name from a `StrLit`, an adapter's npm package
+//! name, a file path), so as far as the renderer is concerned the input is
+//! arbitrary.
 //!
-//! This lived as four near-copies, one per rendering module. Three agreed; the
-//! `package.json` one escaped only `"` and `\`, so an adapter-declared package
-//! name or version range carrying a control character emitted a literal control
-//! character inside a JSON string — a parse error, i.e. an invalid `package.json`
-//! in the build output. One definition means a fix like that cannot land in three
-//! places and miss the fourth.
+//! This lived as four near-copies, one per rendering module. Three agreed;
+//! the `package.json` one escaped only `"` and `\`, so an adapter-declared
+//! package name or version range carrying a control character emitted a
+//! literal control character inside a JSON string — a parse error, i.e. an
+//! invalid `package.json` in the build output. One definition means a fix
+//! like that cannot land in three places and miss the fourth.
+//!
+//! P4.0 (#1113, [DECISION C]): moved here from `bynk-emit/src/json.rs` so
+//! `bynk-project`'s own `paths::render_package_json` (its sole in-crate use)
+//! doesn't need a dependency back on `bynk-emit`; `bynk-emit`'s four other
+//! call sites (`secrets.rs`, `contracts.rs`, `source_map.rs`, `emit.rs`) now
+//! depend on this copy instead of a crate-local one, one definition either
+//! way.
 
 use std::fmt::Write as _;
 
@@ -25,7 +33,7 @@ use std::fmt::Write as _;
 /// difference between a manifest that parses and one that merely usually
 /// parses. Characters at or above U+0020 pass through as-is — the output is
 /// UTF-8 JSON, so there is no reason to `\u`-escape non-ASCII.
-pub(crate) fn json_string(s: &str) -> String {
+pub fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {

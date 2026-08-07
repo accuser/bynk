@@ -14,7 +14,6 @@
 pub mod emitter;
 pub mod project;
 
-pub(crate) mod json;
 #[cfg(test)]
 pub(crate) mod testkit;
 

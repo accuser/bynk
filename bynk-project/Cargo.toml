@@ -1,0 +1,22 @@
+[package]
+name = "bynk-project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Bynk's project model: discovery, the unit dependency graph, path resolution, cross-unit consistency checks, and the schema-registry document (read/write)."
+keywords = ["compiler", "dsl", "language"]
+categories = ["compilers"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# #521/#980: `bynk.toml` and `bynk.schema.lock` are both TOML; (de)serialising
+# the schema registry document.
+toml.workspace = true
+serde.workspace = true
+# The lowest leaf this sits on: AST/spans/CompileError, and the diagnostic
+# severity classification `AttributedError`'s sink needs.
+bynk-syntax.workspace = true

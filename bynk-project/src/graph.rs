@@ -1,4 +1,9 @@
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+
+use bynk_syntax::ast::ProviderDecl;
+use bynk_syntax::error::CompileError;
+use bynk_syntax::span::Span;
 
 /// #696: `sites` maps a `(consumer, target)` edge to the project-relative
 /// `identity_path` and span of the `consumes` clause that declares it. When a
@@ -6,7 +11,7 @@ use super::*;
 /// real span in a real file) so the CLI renders ariadne source context; an edge
 /// absent from `sites` (e.g. a synthetic adapter's) yields an unattributed,
 /// spanless diagnostic as before.
-pub(crate) fn detect_consumes_cycles(
+pub fn detect_consumes_cycles(
     consumes: &HashMap<String, Vec<String>>,
     sites: &HashMap<(String, String), (PathBuf, Span)>,
     errors: &mut Vec<(Option<PathBuf>, CompileError)>,
@@ -119,7 +124,7 @@ fn canonicalise_cycle(cycle: &[String]) -> Vec<String> {
 /// cycle means the composition root cannot order instantiation. Emits
 /// `bynk.provider.dependency_cycle` on every provider that participates in a
 /// cycle. `providers` is keyed by capability name.
-pub(crate) fn detect_provider_dependency_cycles(
+pub fn detect_provider_dependency_cycles(
     providers: &HashMap<String, ProviderDecl>,
     errors: &mut Vec<CompileError>,
 ) {
@@ -207,6 +212,7 @@ pub(crate) fn detect_provider_dependency_cycles(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::path::Path;
 
     fn strs(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| (*x).to_string()).collect()

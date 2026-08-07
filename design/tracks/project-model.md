@@ -59,9 +59,9 @@ is "met, modulo" it.
 
 | Rule | Reads | Distance |
 |---|---|---|
-| R3.7 | no `bynk-project` crate | medium |
-| R3.8 | `read_project_paths` still total | small |
-| R3.9 | `Roots` still models the removed role split | small |
+| R3.7 | ~~no `bynk-project` crate~~ *(P4.0, #1113: closed — the crate exists)* | none |
+| R3.8 | ~~`read_project_paths` still total~~ *(P4.0, #1113: closed — deleted, all callers on `try_read_project_paths`)* | none |
+| R3.9 | ~~`Roots` still models the removed role split~~ *(P4.0, #1113: closed — `Roots::trees` walks every `include` entry)* | none |
 | R3.11 | ~~schema registry read/written ambiently~~ *(§3.5: corrected — already closed by prior paydown, #1078)* | none |
 | R10.2 | `bynk-ide` → `bynk-emit` edge present, for `analyse_project` alone | medium — extract `bynk-project`, repoint |
 

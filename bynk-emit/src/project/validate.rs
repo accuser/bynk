@@ -238,7 +238,7 @@ pub(crate) fn check_messages_bundles(
                 }
                 if kinds.get(name) != Some(&UnitKind::Commons) {
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.messages.outside_commons",
                             m.span,
@@ -256,7 +256,7 @@ pub(crate) fn check_messages_bundles(
                 if !bynk_check::checker::locale_tag_accepts(&m.tag) {
                     let pattern = bynk_check::checker::locale_tag_pattern().unwrap_or("");
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.messages.invalid_locale_tag",
                             m.tag_span,
@@ -277,7 +277,7 @@ pub(crate) fn check_messages_bundles(
                 // against the original, not the second.
                 if let Some(&(_, prev)) = by_tag.get(m.tag.as_str()) {
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.resolve.duplicate_message_locale",
                             m.tag_span,
@@ -298,7 +298,7 @@ pub(crate) fn check_messages_bundles(
                 for entry in &m.entries {
                     if let Some(prev) = seen.get(entry.code.as_str()) {
                         errors.push_for(
-                            Some(&parsed[i].identity_path),
+                            Some(&parsed[i].identity_path()),
                             CompileError::new(
                                 "bynk.resolve.duplicate_message_code",
                                 entry.code_span,
@@ -316,7 +316,7 @@ pub(crate) fn check_messages_bundles(
                     // once per entry, regardless of `@reference` cardinality
                     // — malformed ICU syntax shouldn't wait on cardinality
                     // being resolved first.
-                    check_entry_icu_syntax(entry, Some(&parsed[i].identity_path), errors);
+                    check_entry_icu_syntax(entry, Some(&parsed[i].identity_path()), errors);
                 }
             }
         }
@@ -331,7 +331,7 @@ pub(crate) fn check_messages_bundles(
         match reference_sites.len() {
             0 => {
                 errors.push_for(
-                    Some(&parsed[first_i].identity_path),
+                    Some(&parsed[first_i].identity_path()),
                     CompileError::new(
                         "bynk.messages.missing_reference",
                         first_span,
@@ -360,7 +360,7 @@ pub(crate) fn check_messages_bundles(
                             locale_m.entries.iter().find(|e| e.code == ref_entry.code)
                         else {
                             errors.push_for(
-                                Some(&parsed[locale_i].identity_path),
+                                Some(&parsed[locale_i].identity_path()),
                                 CompileError::new(
                                     "bynk.messages.incomplete",
                                     locale_m.span,
@@ -376,7 +376,7 @@ pub(crate) fn check_messages_bundles(
                         let locale_names = emitter::placeholder_names(&locale_entry.template);
                         if ref_names != locale_names {
                             errors.push_for(
-                                Some(&parsed[locale_i].identity_path),
+                                Some(&parsed[locale_i].identity_path()),
                                 CompileError::new(
                                     "bynk.messages.placeholder_mismatch",
                                     locale_entry.template_span,
@@ -404,7 +404,7 @@ pub(crate) fn check_messages_bundles(
                             };
                             if locale_kind != ref_kind {
                                 errors.push_for(
-                                    Some(&parsed[locale_i].identity_path),
+                                    Some(&parsed[locale_i].identity_path()),
                                     CompileError::new(
                                         "bynk.messages.format_mismatch",
                                         locale_entry.template_span,
@@ -426,7 +426,7 @@ pub(crate) fn check_messages_bundles(
                 let (_, first_ref_span) = reference_sites[0];
                 for &(i, span) in &reference_sites[1..] {
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.messages.multiple_reference",
                             span,
@@ -464,7 +464,7 @@ pub(crate) fn check_messages_bundles(
                 (true, true) => unreachable!("at least one of the two is missing here"),
             };
             errors.push_for(
-                Some(&parsed[first_i].identity_path),
+                Some(&parsed[first_i].identity_path()),
                 CompileError::new(
                     "bynk.messages.missing_locale_dependency",
                     first_span,
@@ -531,7 +531,7 @@ pub(crate) fn check_locale_bundle_ambiguity(
                         }
                     }
                 }
-                errors.push_for(Some(&parsed[i].identity_path), err);
+                errors.push_for(Some(&parsed[i].identity_path()), err);
             }
         }
     }
@@ -577,7 +577,7 @@ pub(crate) fn check_event_subscriptions(
                 // (unlike the payload pattern below), so it's checked
                 // independently of whether the subscription even resolves.
                 if let Some(dispatch) = schema_dispatch {
-                    check_schema_dispatch(dispatch, &parsed[i].identity_path, errors);
+                    check_schema_dispatch(dispatch, &parsed[i].identity_path(), errors);
                 }
                 let TypeRef::Named(id) = event_type else {
                     continue;
@@ -596,7 +596,7 @@ pub(crate) fn check_event_subscriptions(
                     .or(owner_consumed.map(String::as_str));
                 let Some(owner) = owner else {
                     errors.push_for(
-                        Some(&parsed[i].identity_path),
+                        Some(&parsed[i].identity_path()),
                         CompileError::new(
                             "bynk.event.unknown_subscription",
                             id.span,
@@ -628,7 +628,7 @@ pub(crate) fn check_event_subscriptions(
                     owner,
                     unit_tables,
                     unit_uses,
-                    &parsed[i].identity_path,
+                    &parsed[i].identity_path(),
                     errors,
                 );
             }
@@ -4808,7 +4808,7 @@ pub(crate) fn check_function_type_boundaries(
         attributed.extend(
             file_errors
                 .into_iter()
-                .map(|e| (pf.identity_path.clone(), e)),
+                .map(|e| (pf.identity_path().clone(), e)),
         );
     }
     attributed

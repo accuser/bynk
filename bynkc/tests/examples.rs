@@ -33,7 +33,7 @@ fn example_root(name: &str) -> PathBuf {
 fn every_example_builds_for_workers() {
     for name in EXAMPLES {
         let root = example_root(name);
-        let paths = bynkc::read_project_paths(&root);
+        let paths = bynkc::try_read_project_paths(&root).expect("well-formed fixture manifest");
         // Content-ownership track (#1086) slice 3: bynk-testkit's complete
         // sources map, proved here as one of the representative call sites,
         // instead of relying on bynk-emit's disk fallback.
@@ -57,7 +57,7 @@ fn every_example_builds_for_workers() {
 #[test]
 fn hello_world_builds_on_both_targets() {
     let root = example_root("hello-world");
-    let paths = bynkc::read_project_paths(&root);
+    let paths = bynkc::try_read_project_paths(&root).expect("well-formed fixture manifest");
     for target in [bynkc::BuildTarget::Bundle, bynkc::BuildTarget::Workers] {
         let out = bynkc::compile_project(
             &bynk_testkit::compile_options_split(root.clone(), paths.clone()).target(target),

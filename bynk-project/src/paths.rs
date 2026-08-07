@@ -1,12 +1,15 @@
-use super::*;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Component, Path, PathBuf};
 
+use crate::discovery::read_source;
 use crate::json::json_string;
 
 /// v0.17 [DECISION L] stub: a version range is *unpinned* — and rejected — when
 /// it is empty, `*`/`x`/`latest`, or otherwise carries no concrete version
 /// number. A pinned range names at least one digit (`^5`, `~1.2`, `1.2.3`,
 /// `>=1.0 <2`). No allow-list or registry check yet.
-pub(crate) fn is_unpinned_range(range: &str) -> bool {
+pub fn is_unpinned_range(range: &str) -> bool {
     let r = range.trim();
     if r.is_empty() || r == "*" || r.eq_ignore_ascii_case("x") || r.eq_ignore_ascii_case("latest") {
         return true;
@@ -15,7 +18,7 @@ pub(crate) fn is_unpinned_range(range: &str) -> bool {
 }
 
 /// Render a minimal `package.json` carrying the adapter-declared dependencies.
-pub(crate) fn render_package_json(deps: &std::collections::BTreeMap<String, String>) -> String {
+pub fn render_package_json(deps: &std::collections::BTreeMap<String, String>) -> String {
     let mut out = String::from("{\n  \"dependencies\": {\n");
     let entries: Vec<String> = deps
         .iter()
@@ -29,7 +32,7 @@ pub(crate) fn render_package_json(deps: &std::collections::BTreeMap<String, Stri
 /// Normalise a relative path by resolving `.` and `..` components, so a binding
 /// clause like `./tokens.binding.ts` beside `src/tokens.bynk` yields the output
 /// path `tokens.binding.ts`.
-pub(crate) fn normalize_rel(p: &Path) -> PathBuf {
+pub fn normalize_rel(p: &Path) -> PathBuf {
     let mut out: Vec<std::ffi::OsString> = Vec::new();
     for c in p.components() {
         match c {
@@ -84,20 +87,8 @@ impl ProjectPaths {
     }
 }
 
-/// v0.113: read `bynk.toml` from `project_root`. Returns the conventional layout
-/// (see [`ProjectPaths::conventional`]) if the file is missing, malformed, or
-/// declares no `[paths] include`. Honours `include` / `exclude` under
-/// `[paths]`, each an array of path strings (a bare string is tolerated as a
-/// one-element list); anything else is ignored. #521: parsed with the `toml`
-/// crate — the previous hand-rolled line scanner mis-read multi-line arrays
-/// and quoted edge cases.
-pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
-    try_read_project_paths(project_root)
-        .unwrap_or_else(|_| ProjectPaths::conventional(project_root))
-}
-
-/// Like [`read_project_paths`], but honours `overlay` for `bynk.toml` itself
-/// — the in-memory test seam's (#57) one remaining disk read outside
+/// Like [`try_read_project_paths`], but honours `overlay` for `bynk.toml`
+/// itself — the in-memory test seam's (#57) one remaining disk read outside
 /// `discovery::read_source`, now routed through the same helper so a test
 /// can supply a virtual `bynk.toml` with no on-disk file at all. `#[cfg(test)]`
 /// because that's its only consumer today; drop the gate if a non-test caller
@@ -113,11 +104,8 @@ pub(crate) fn read_project_paths_with(
         .unwrap_or_else(|_| ProjectPaths::conventional(project_root))
 }
 
-/// A problem in `bynk.toml` that [`read_project_paths`] silently papers over
-/// by falling back to the conventional layout — a hand-edited config the user
-/// gets no diagnostic for, after which the cascade of `bynk.uses.unknown_target`
-/// errors points at units that plainly exist on disk. Surfaced here so a CLI
-/// entry point can fail loudly instead.
+/// A problem in `bynk.toml` that [`try_read_project_paths`] surfaces instead
+/// of silently falling back to the conventional layout.
 #[derive(Debug)]
 pub enum ProjectPathsError {
     /// `bynk.toml` exists but does not parse as TOML (e.g. a trailing comma).
@@ -125,10 +113,6 @@ pub enum ProjectPathsError {
     /// `[paths]` has a key other than `include`/`exclude` — most likely a typo
     /// (`inculde`) that was silently read as "no include list".
     UnknownKey(String),
-    /// `[paths] include` names more than the one or two trees `Roots::resolve`
-    /// (a fixed primary/secondary pair, v0.113's residual src/tests split)
-    /// actually walks — any further tree is silently never discovered.
-    TooManyIncludeRoots(usize),
 }
 
 impl std::fmt::Display for ProjectPathsError {
@@ -141,32 +125,19 @@ impl std::fmt::Display for ProjectPathsError {
                     "`[paths]` has no key named `{k}` — did you mean `include` or `exclude`?"
                 )
             }
-            ProjectPathsError::TooManyIncludeRoots(n) => write!(
-                f,
-                "`[paths] include` names {n} trees, but only one or two are supported"
-            ),
         }
     }
 }
 
-/// Like [`read_project_paths`], but surfaces a malformed `bynk.toml` — a parse
-/// failure, an unrecognised `[paths]` key, or an `include` list longer than
-/// `Roots` supports — as an error instead of silently falling back to the
-/// conventional layout.
+/// Read `bynk.toml`'s `[paths]` section, surfacing a malformed manifest — a
+/// parse failure or an unrecognised `[paths]` key — as an error instead of
+/// silently falling back to the conventional layout (the previous
+/// `read_project_paths` total form's behaviour, R3.8 — deleted in favour of
+/// this at all 18 of its callers, #1113).
 ///
-/// Content-ownership track (#1086) slice 5 correction (found only under
-/// implementation): used to delegate to [`try_read_project_paths_with`] with
-/// an empty overlay, relying on `discovery::read_source`'s disk-read
-/// fallback to still reach the real `bynk.toml` on the (guaranteed) miss.
-/// Slice 5 deleted that fallback, so every real caller of *this* function —
-/// `bynk dev`, `bynk-driver::discovery`, and every test that wants "just
-/// read the manifest off disk" — would otherwise silently degrade to
-/// [`ProjectPaths::conventional`] for any project with a real manifest. This
-/// reads `bynk.toml` itself and hands it in as the overlay, restoring the
-/// plain-disk-read contract this function has always documented, without
-/// reintroducing a general fallback into `read_source` (whose real callers —
-/// `bynk-ide`'s `AnalysisRoots::lower`, `bynk-driver`'s `project_options` —
-/// already supply their own real-or-overlaid manifest content).
+/// R3.9 (#1113): `[paths] include` is no longer capped at one or two trees —
+/// [`crate::roots::Roots::trees`] walks every entry, so this no longer rejects
+/// a longer list.
 pub fn try_read_project_paths(project_root: &Path) -> Result<ProjectPaths, ProjectPathsError> {
     let toml_path = project_root.join("bynk.toml");
     let overlay = match fs::read_to_string(&toml_path) {
@@ -213,13 +184,10 @@ pub fn try_read_project_paths_with(
     if include.is_empty() {
         include = ProjectPaths::conventional(project_root).include;
     }
-    if include.len() > 2 {
-        return Err(ProjectPathsError::TooManyIncludeRoots(include.len()));
-    }
     Ok(ProjectPaths { include, exclude })
 }
 
-pub(crate) fn commons_dir_for(name: &str) -> PathBuf {
+pub fn commons_dir_for(name: &str) -> PathBuf {
     let parts: Vec<&str> = name.split('.').collect();
     let mut p = PathBuf::new();
     for part in parts {
@@ -228,7 +196,7 @@ pub(crate) fn commons_dir_for(name: &str) -> PathBuf {
     p
 }
 
-pub(crate) fn ts_output_path(source: &Path) -> PathBuf {
+pub fn ts_output_path(source: &Path) -> PathBuf {
     let mut out = source.to_path_buf();
     out.set_extension("ts");
     out
@@ -276,7 +244,7 @@ fn stem_parts(rel_path: &Path) -> Vec<String> {
 /// the directory layout `<name>/*.bynk` (`multi_file_match`: parent-dir parts ==
 /// name parts). These two branches are the single source of truth the v0.132
 /// barrel trigger reads via [`is_multi_file_layout`].
-pub(crate) fn unit_path_matches(rel_path: &Path, qualified_name: &str) -> bool {
+pub fn unit_path_matches(rel_path: &Path, qualified_name: &str) -> bool {
     let name_parts: Vec<&str> = qualified_name.split('.').collect();
     let stem_parts = stem_parts(rel_path);
     let single_file_match = stem_parts.len() == name_parts.len()
@@ -310,7 +278,7 @@ fn is_multi_file_parts(stem_parts: &[String], name_parts: &[&str]) -> bool {
 /// "./<name>.js"` dangles and needs an aggregating barrel. A single-file commons
 /// (`<name>.bynk`) already owns `out/<name>.ts` and returns false, so a barrel
 /// keyed on this predicate can never collide with it.
-pub(crate) fn is_multi_file_layout(rel_path: &Path, qualified_name: &str) -> bool {
+pub fn is_multi_file_layout(rel_path: &Path, qualified_name: &str) -> bool {
     let name_parts: Vec<&str> = qualified_name.split('.').collect();
     is_multi_file_parts(&stem_parts(rel_path), &name_parts)
 }
@@ -329,7 +297,7 @@ pub(crate) fn is_multi_file_layout(rel_path: &Path, qualified_name: &str) -> boo
 /// name never mentions. Whatever prefix length that suffix match implies for
 /// `old_rel` is applied unchanged to `new_rel` — correct as long as the file
 /// stays under the same `include` root, which a rename/move normally does.
-pub(crate) fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Option<String> {
+pub fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Option<String> {
     let name_parts: Vec<&str> = old_name.split('.').collect();
     let old_stem = stem_parts(old_rel);
     let new_stem = stem_parts(new_rel);
@@ -407,12 +375,33 @@ mod tests {
     #[test]
     fn read_project_paths_with_falls_back_to_conventional_with_no_overlay_entry() {
         // No overlay entry and no real file at this (nonexistent) root — same
-        // fallback `read_project_paths` gives a missing on-disk `bynk.toml`.
+        // fallback a missing on-disk `bynk.toml` gives.
         let root = PathBuf::from("/nonexistent-bynk-test-root-57-empty");
         let paths = read_project_paths_with(&root, &HashMap::new());
         let conventional = ProjectPaths::conventional(&root);
         assert_eq!(paths.include, conventional.include);
         assert_eq!(paths.exclude, conventional.exclude);
+    }
+
+    /// R3.9 (#1113): three or more `[paths] include` entries all round-trip —
+    /// `try_read_project_paths_with` no longer caps the list at two.
+    #[test]
+    fn read_project_paths_with_honours_three_or_more_include_entries() {
+        let root = PathBuf::from("/nonexistent-bynk-test-root-1113-many-includes");
+        let mut overlay = HashMap::new();
+        overlay.insert(
+            root.join("bynk.toml"),
+            "[paths]\ninclude = [\"src\", \"tests\", \"examples\"]\n".to_string(),
+        );
+        let paths = try_read_project_paths_with(&root, &overlay).expect("must parse");
+        assert_eq!(
+            paths.include,
+            vec![
+                PathBuf::from("src"),
+                PathBuf::from("tests"),
+                PathBuf::from("examples"),
+            ]
+        );
     }
 
     // -- render_package_json --------------------------------------------------
