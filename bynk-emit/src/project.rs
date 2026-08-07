@@ -3274,7 +3274,12 @@ fn check_unit_files(
             if !context_check_errs.is_empty() {
                 errors.extend_for(Some(&pf.identity_path()), context_check_errs);
                 if mode == Mode::Analyse {
-                    record_analyse_types(exprs, &pf.identity_path(), pf.is_synthetic(), &typed.expr_types);
+                    record_analyse_types(
+                        exprs,
+                        &pf.identity_path(),
+                        pf.is_synthetic(),
+                        &typed.expr_types,
+                    );
                 }
                 continue;
             }
@@ -3335,7 +3340,12 @@ fn check_unit_files(
         // file's expression types on the way out (Ok path only — this point is
         // past every per-file error `continue`), for `.`-member completion.
         if mode == Mode::Analyse {
-            record_analyse_types(exprs, &pf.identity_path(), pf.is_synthetic(), &typed.expr_types);
+            record_analyse_types(
+                exprs,
+                &pf.identity_path(),
+                pf.is_synthetic(),
+                &typed.expr_types,
+            );
             continue;
         }
         // T3.7b (R3.10): every per-unit gate above already ran (check_record's
@@ -3503,25 +3513,20 @@ fn run_checks(
     }
 
     // -- 2. Parse every file. --
-    let (mut parsed, consumes_bynk, consumes_cloudflare) = match phase_parse(
-        trees,
-        &file_lists,
-        overlay,
-        &mut errors,
-        &mut snapshots,
-    ) {
-        Ok(out) => out,
-        Err(()) => {
-            return RunChecks::Bailed {
-                errors,
-                snapshots,
-                hints,
-                locals,
-                exprs,
-                requirements,
-            };
-        }
-    };
+    let (mut parsed, consumes_bynk, consumes_cloudflare) =
+        match phase_parse(trees, &file_lists, overlay, &mut errors, &mut snapshots) {
+            Ok(out) => out,
+            Err(()) => {
+                return RunChecks::Bailed {
+                    errors,
+                    snapshots,
+                    hints,
+                    locals,
+                    exprs,
+                    requirements,
+                };
+            }
+        };
 
     // -- 2b. Normalize service-level `by`/`given` defaults (v0.155). A service
     //        header default is injected into every handler that omits its own
@@ -5865,8 +5870,7 @@ mod tests {
                 ("thing.bynk", "context thing\n\nfn {{{ \n"),
             ],
         );
-        let paths =
-            try_read_project_paths(&root).expect("well-formed fixture manifest");
+        let paths = try_read_project_paths(&root).expect("well-formed fixture manifest");
         assert_eq!(
             paths.include,
             vec![PathBuf::from(".")],

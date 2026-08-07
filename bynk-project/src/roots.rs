@@ -123,9 +123,8 @@ impl Roots {
     }
 }
 
-/// [`crate::CompileOptions`]-equivalent's `schema_registry` value in
-/// `bynk-emit` — whether a build reconciles `bynk.schema.lock`, and if so,
-/// its current content.
+/// `bynk-emit`'s `CompileOptions::schema_registry` value — whether a build
+/// reconciles `bynk.schema.lock`, and if so, its current content.
 ///
 /// A plain `Option<String>` was rejected for this: "off" and "on, fresh
 /// project" would both spell `None`, and a future edit that lost the disk

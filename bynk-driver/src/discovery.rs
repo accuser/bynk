@@ -283,7 +283,12 @@ mod tests {
             paths,
         };
         let found = sources_for_roots(&roots).expect("a well-formed project must not error");
-        assert_eq!(found.len(), 3, "found: {:?}", found.keys().collect::<Vec<_>>());
+        assert_eq!(
+            found.len(),
+            3,
+            "found: {:?}",
+            found.keys().collect::<Vec<_>>()
+        );
         assert!(found.contains_key(&root.0.join("src/a.bynk")));
         assert!(found.contains_key(&root.0.join("tests/a.bynk")));
         assert!(found.contains_key(&root.0.join("examples/e.bynk")));

@@ -17,9 +17,11 @@ fn tmp(tag: &str) -> PathBuf {
 }
 
 fn debug_meta(dir: &Path, suffix: &str) -> String {
-    let opts =
-        bynk_testkit::compile_options_split(dir.to_path_buf(), bynkc::try_read_project_paths(dir).expect("well-formed fixture manifest"))
-            .target(bynkc::BuildTarget::Workers);
+    let opts = bynk_testkit::compile_options_split(
+        dir.to_path_buf(),
+        bynkc::try_read_project_paths(dir).expect("well-formed fixture manifest"),
+    )
+    .target(bynkc::BuildTarget::Workers);
     let out = bynkc::compile_project(&opts)
         .map_err(bynkc::ProjectFailure::flatten)
         .unwrap_or_else(|e| panic!("compile failed: {e:?}"));

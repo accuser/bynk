@@ -136,7 +136,8 @@ fn compile_fixture(
 ) -> Result<bynkc::ProjectOutput, Vec<bynkc::CompileError>> {
     let bynk_toml = fixture_root.join("bynk.toml");
     if bynk_toml.exists() {
-        let paths = bynkc::try_read_project_paths(fixture_root).expect("well-formed fixture manifest");
+        let paths =
+            bynkc::try_read_project_paths(fixture_root).expect("well-formed fixture manifest");
         bynkc::compile_project(
             &bynk_testkit::compile_options_split(fixture_root.to_path_buf(), paths).target(target),
         )
