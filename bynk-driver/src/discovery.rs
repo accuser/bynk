@@ -138,6 +138,15 @@ pub fn read_bynk_tree_single(root: &Path) -> Result<HashMap<PathBuf, String>, Di
 /// `read_bynk_tree` itself (a `fs::read_dir`) and its `NotFound` caught for
 /// an optional tree, rather than a `root.exists()` pre-check, which would
 /// cost a redundant `stat()` per optional tree for the same answer.
+///
+/// Only a `NotFound` reported *for the root itself* is tolerated — matched by
+/// `e.path == *root`, true only for the walk's very first `fs::read_dir`
+/// call. A `NotFound` for anything deeper (a dangling symlink, a
+/// subdirectory removed mid-walk) means the tree exists and had real files;
+/// swallowing that would silently discard everything `read_bynk_tree` had
+/// already collected for it, with no diagnostic — a review-caught defect in
+/// an earlier cut of this fix, which matched on the error's `io::ErrorKind`
+/// alone regardless of which path it named.
 pub fn read_bynk_tree_split(
     trees: &[PathBuf],
     excludes: &[PathBuf],
@@ -146,7 +155,8 @@ pub fn read_bynk_tree_split(
     for (i, root) in trees.iter().enumerate() {
         match read_bynk_tree(root, excludes) {
             Ok(files) => out.extend(files),
-            Err(e) if i > 0 && e.source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e)
+                if i > 0 && &e.path == root && e.source.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e),
         }
     }
@@ -261,6 +271,38 @@ mod tests {
         let missing_primary = root.0.join("does-not-exist");
         read_bynk_tree_split(&[missing_primary, root.0.join("tests")], &[])
             .expect_err("a missing primary root must error, not panic");
+    }
+
+    /// Regression (code review of the #1114 fix itself): an earlier cut of
+    /// the optional-tree `NotFound` tolerance matched on `io::ErrorKind`
+    /// alone, regardless of *which path* the error named — so a `NotFound`
+    /// anywhere inside an *existing* optional tree's walk (a dangling
+    /// symlink, a subdirectory removed mid-walk) was silently treated the
+    /// same as the tree itself being absent, discarding every real file
+    /// `read_bynk_tree` had already collected for it with no diagnostic.
+    /// Only a `NotFound` for the root itself should be tolerated.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_deep_in_an_optional_tree_is_a_real_error_not_a_silent_drop() {
+        let root = scratch(
+            "split_dangling_symlink",
+            &[("src/a.bynk", "context a\n"), ("tests/b.bynk", "suite a\n")],
+        );
+        // The tree itself (`tests/`) exists and has a real `.bynk` file
+        // already collected by the time the walk reaches this dangling
+        // entry — `NotFound` here must not look like "no such optional
+        // tree."
+        std::os::unix::fs::symlink(
+            root.0.join("tests/does-not-exist.bynk"),
+            root.0.join("tests/dangling.bynk"),
+        )
+        .expect("symlink creation must succeed on unix");
+        let err = read_bynk_tree_split(&[root.0.join("src"), root.0.join("tests")], &[])
+            .expect_err("a NotFound deep in an existing optional tree's walk must still error");
+        assert!(
+            err.to_string().contains("dangling.bynk"),
+            "the error must name the file that actually failed: {err}"
+        );
     }
 
     /// R3.9 (#1113): three or more `include` roots are all merged — not just
