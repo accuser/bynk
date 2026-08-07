@@ -253,15 +253,19 @@ plus two in tests) are all `run_checks`'s, and all inside `project.rs`.
 
 `ErrorSink` (`diagnostics.rs`) is the collection-point sink `run_checks`/`check_unit_files` thread through
 essentially every internal function that can raise a diagnostic — 15 `errors: &mut ErrorSink` parameters
-in `project.rs` alone, another 7 in `validate.rs` — and it appears in exactly three files:
-`diagnostics.rs` (its own definition), `project.rs`, `validate.rs`. (`bynk-check/src/index.rs`'s own two
-"`ErrorSink` analogue" mentions are a doc comment pointing at this type by name for a reader's context, not
-an import — `bynk-check` has its own, separate collection-point sink.) Every one of `ErrorSink`'s readers
-stays behind, exactly like `Mode`.
+in `project.rs` alone, another 7 in `validate.rs` — and it appears by name in five files, only three of them
+imports: `diagnostics.rs` (its own definition), `project.rs`, `validate.rs`. The other two are prose, not
+imports — `bynk-check/src/index.rs`'s own two "`ErrorSink` analogue" mentions are a doc comment pointing at
+this type by name for a reader's context (`bynk-check` has its own, separate collection-point sink), and
+`bynkc/tests/deterministic_diagnostic_order_behaviour.rs:6`'s own doc comment names it the same way
+(`//! \`ErrorSink\` depended on \`HashMap\`'s randomised iteration order…`). Every one of `ErrorSink`'s
+readers stays behind, exactly like `Mode`.
 
-`ProjectFailure` is `compile_project`'s own failure-return type — `bynk-driver/src/lib.rs`'s
-`print_project_failure`/`print_project_failure_short` and `bynkc`'s test suite consume it, all of them
-callers *above* `bynk-emit`, none of them below it. Nothing under `run_checks` produces or reads a
+`ProjectFailure` is `compile_project`'s own failure-return type, and no consumer of it sits below
+`bynk-emit`: `bynk-driver/src/lib.rs`'s `print_project_failure`/`print_project_failure_short`, `bynkc`'s own
+re-export and flattener comment (`bynkc/src/lib.rs:37,50`), and the `bynkc`/`bynk` test suites (including
+`bynk/tests/new.rs`, `bynk/tests/dev_inspect.rs`) all read it — every one of them a caller *above*
+`bynk-emit`. Nothing under `run_checks` produces or reads a
 `ProjectFailure`; it's assembled once, at the top, on the bail path. It fails the same test `Mode` and
 `ErrorSink` do, for a related but distinct reason: not "belongs with its orchestrator" but "is consumed
 only by callers above the crate it's already in," which never gave it a reason to move down in the first
@@ -294,7 +298,7 @@ with `run_checks`/`check_unit_files`, their only consumers; `ProjectFailure` bec
 on (`UnitKind`, `Roots`, `ParsedFile`, `ProjectPaths`, the
 `CompileOptions::schema_registry`/`SchemaLock` shape). `ParsedFile` (`discovery.rs:80`) carries the same
 (d)-shaped cost `SchemaRegistry` does, at larger scale: its fields are `pub(crate)`, and both `symbols.rs`
-(eight `pf.identity_path` sites alone) and `validate.rs` (dozens of field accesses) stay on the checking
+(seven `.identity_path` reads, three through `pf`) and `validate.rs` (dozens of field accesses) stay on the checking
 side and read them directly — once `discovery.rs` moves, those reads cross the crate boundary the same way
 `reconcile`'s do, and P4.0 needs the same either/or: keep the fields `pub(crate)`-visible-enough for
 `bynk-check` to reach (which `pub(crate)` alone won't do across a crate boundary — it needs `pub`, or an
@@ -503,10 +507,11 @@ PR per slice; no per-increment ADRs beyond what §11 front-loads; every slice ci
 
 Same principle as every prior track on this trajectory: a slice is complete when the old path is
 **deleted**, not when the new crate merely exists alongside it. Here: `bynk-ide/Cargo.toml`'s `bynk-emit`
-dependency line — and the comment justifying it — are gone, `bynk-project` is a real workspace member, the
-new `bynk-check` analysis entry point is what `bynk-ide` actually calls, and the manifest-level check
-R10.2 asks for (a CI gate on the dependency graph, not just a probe reading zero once) exists. One
-deliberate exception to "deleted": `run_checks`'s `Mode::Analyse` arm is not deleted by this track — §3.3(a)
+dependency line — and the comment justifying it — are gone, `bynk-project` is a real workspace member, and
+the new `bynk-check` analysis entry point is what `bynk-ide` actually calls. The manifest-level check R10.2
+asks for (a CI gate on the dependency graph, not just a probe reading zero once) is not something this
+phase has to build — `ide_emit_edge` already is that gate (§8) and already runs continuously in CI; once
+the dependency line above is gone it simply reads absent. One deliberate exception to "deleted": `run_checks`'s `Mode::Analyse` arm is not deleted by this track — §3.3(a)
 keeps it, duplicated with the new entry point, as named debt for phase 5 to remove. This phase's own old
 path (`bynk-ide` reaching `bynk-emit`) is fully deleted; the old *arm* inside `run_checks` is phase 5's
 deletion, not this one's, and completion here doesn't wait on it.
@@ -522,8 +527,8 @@ actual approval to build it, per this doc's own Status block.
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
 | **P4.0** | `bynk-project` crate skeleton; `discovery.rs` (plus `ParsedFile`'s private-field question resolved, per §3.2's (d)), `graph.rs`, `paths.rs` (plus `json_string`, moved/duplicated/inlined), `consistency.rs` relocated with minimal reshaping, plus `schema_registry.rs`'s `SchemaRegistry`/`parse`/`serialize` (not `reconcile`; its own private-field question resolved too) and, from `diagnostics.rs`, only `AttributedError` (not `Mode`/`ErrorSink`/`ProjectFailure`, which all stay in `bynk-emit`; not `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`), plus the project-model types they need (`UnitKind`, `Roots`, `ParsedFile`, `ProjectPaths`, the `SchemaLock` shape); public surface enumerated and reviewed (R10.4-style) as part of this slice, per §3.2 | R3.7, R3.8, R3.9 | §3 settled |
-| **P4.1** | The new `bynk-check` analysis entry point (§3.3(a)): discovery via `bynk-project`, resolve/check via `bynk-check`'s existing resolver/checker; `symbols.rs` (all of it), `schema_registry.rs`'s `reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` relocate here, alongside the entry point itself, per §3.2's corrected boundary. `run_checks` in `bynk-emit` is untouched. The file-reading asymmetry (§3.3(b)) carries over unchanged, not fixed here | R3.7, R10.2 (partial) | P4.0 |
-| **P4.2** | `bynk-ide` repoints at the new `bynk-check` entry point instead of `bynk-emit::analyse_project`; `bynk-emit` dependency and its justifying Cargo.toml comment deleted; CI dependency-graph gate added | R10.2 | P4.1 |
+| **P4.1** | The new `bynk-check` analysis entry point (§3.3(a)): discovery via `bynk-project`, resolve/check via `bynk-check`'s existing resolver/checker; `symbols.rs` (all of it), `schema_registry.rs`'s `reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` relocate here, alongside the entry point itself, per §3.2's corrected boundary. `run_checks` in `bynk-emit` is untouched. The file-reading asymmetry (§3.3(b)) carries over unchanged, not fixed here. Per §9's drift risk, this slice should also carry a differential fixture comparing this entry point's diagnostics against `run_checks`'s `Mode::Analyse` arm, or state why one isn't feasible | R3.7, R10.2 (partial) | P4.0 |
+| **P4.2** | `bynk-ide` repoints at the new `bynk-check` entry point instead of `bynk-emit::analyse_project`; `bynk-emit` dependency and its justifying Cargo.toml comment deleted, flipping the existing `ide_emit_edge` CI gate (§8) to absent — no new gate is built | R10.2 | P4.1 |
 
 No slice cites `R3.11`: §3.5 found it already closed by prior paydown (#1078), corrected directly in
 `bynk-greenfield-compiler.md` by this settling pass, so there is no open rule left for a slice to close.
@@ -565,10 +570,18 @@ discovery function. The trajectory's relative-size-3 rating may understate this 
 shape is known — the same kind of recalibration `identity-and-totality.md` §9 found in the July review's
 "three consumer crates" undercount for its own phase, caught here before slicing rather than during it.
 
-**The temporary duplication §3.3(a) accepts is itself a risk if phase 5 doesn't land promptly.** Two
-analysis paths (`bynk-emit::run_checks`'s `Mode::Analyse` arm, kept for now, and the new `bynk-check` entry
-point) can drift if a fix lands in one and not the other before phase 5 deletes the first. Named here so a
-reviewer watches for it, not because this phase can prevent it — phase 5 is the actual fix.
+**The temporary duplication §3.3(a) accepts is itself a risk if phase 5 doesn't land promptly, and it is
+currently unmitigated.** Two analysis paths (`bynk-emit::run_checks`'s `Mode::Analyse` arm, kept for now,
+and the new `bynk-check` entry point) can drift if a fix lands in one and not the other before phase 5
+deletes the first, and the drift is silent: the two paths diverge in diagnostics the LSP shows vs. what
+`bynkc` reports, which no existing test compares. `:6330`'s own comment — "rather than drift into a second,
+independently-maintained `run_checks` call" — already treats a milder version of exactly this failure as a
+known risk worth pinning a test against; the direct analogue here is a differential fixture: run a project
+through both `bynk-emit::analyse_project_with` and the new `bynk-check` entry point and assert identical
+diagnostics, self-deleting when phase 5 removes `run_checks`'s `Mode::Analyse` arm alongside it. P4.1 (§6)
+should carry this fixture, or state why it isn't feasible (for instance if the return types deliberately
+differ, per §3.2's composite finding) — left as a question for that slice, not decided by this settling
+pass. Named here so a reviewer watches for it either way — phase 5 landing promptly is the actual fix.
 
 **P4.2's mechanical repoint is small; P4.1's relocation is what actually needs coverage, and the two were
 conflated.** `bynk-driver/src/discovery.rs`'s "100+ call sites" names the `diagnose_project(&root,

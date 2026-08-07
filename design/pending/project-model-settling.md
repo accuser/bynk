@@ -69,11 +69,13 @@ grouped all four as "plain bookkeeping" on that ground alone, which a third pass
 wrong: `bynk_check`-free is necessary but not sufficient, and only `AttributedError` actually needs to
 move. `ErrorSink` is the collection-point sink `run_checks`/`check_unit_files` thread through nearly every
 internal function that can raise a diagnostic (15 `errors: &mut ErrorSink` parameters in `project.rs`
-alone, 7 more in `validate.rs`) and appears in exactly three files: its own definition, `project.rs`,
-`validate.rs` — every reader stays behind, the same as `Mode`. `ProjectFailure` is `compile_project`'s own
-failure-return type, consumed only by callers *above* `bynk-emit` (`bynk-driver`'s
-`print_project_failure`/`print_project_failure_short`, `bynkc`'s tests) — `bynk-render/src/lib.rs`'s own
-doc comment states `AttributedError`/`ProjectFailure` "live in `bynk-emit`" and that `bynk-render` "must
+alone, 7 more in `validate.rs`) and appears by name in five files, only three of them imports: its own
+definition, `project.rs`, `validate.rs` — the other two (`bynk-check/src/index.rs`, `bynkc/tests/
+deterministic_diagnostic_order_behaviour.rs`) are prose mentions, not imports — every reader stays behind,
+the same as `Mode`. `ProjectFailure` is `compile_project`'s own failure-return type, consumed only by
+callers *above* `bynk-emit` (`bynk-driver`'s `print_project_failure`/`print_project_failure_short`,
+`bynkc`'s own re-export and flattener comment, and the `bynkc`/`bynk` test suites) — `bynk-render/src/lib.rs`'s
+own doc comment states `AttributedError`/`ProjectFailure` "live in `bynk-emit`" and that `bynk-render` "must
 never see" them, further evidence `ProjectFailure` belongs exactly where it is. `AttributedError` is the
 one that moves, and not because it's bookkeeping: the companion `project-model-analysis-entry-point` ADR's
 new entry point returns "the analogue of `ProjectAnalysis`," whose `errors` field is
@@ -120,8 +122,8 @@ reverse direction: `SchemaRegistry`'s fields (`version`, `events`), `EventEntry`
 `SchemaRegistry` directly through them — once `reconcile` stays on the checking side and
 `SchemaRegistry`/`parse`/`serialize` move, either those privates become real `bynk-project` API or
 `bynk-project` grows a builder surface for `reconcile` to use instead. `ParsedFile` (`discovery.rs:80`) has
-the same cost at larger scale: `pub(crate)` fields, read directly by `symbols.rs` (eight
-`pf.identity_path` sites alone) and `validate.rs` (dozens of field accesses), both staying behind — the
+the same cost at larger scale: `pub(crate)` fields, read directly by `symbols.rs` (seven `.identity_path`
+reads, three through `pf`) and `validate.rs` (dozens of field accesses), both staying behind — the
 same either/or `schema_registry.rs` needs, across two files instead of one function.
 
 **Decision.** `bynk-project` receives `discovery.rs` (plus `ParsedFile`'s private-field question resolved
