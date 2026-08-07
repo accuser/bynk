@@ -4284,19 +4284,12 @@ pub(crate) fn ts_ident(name: &str) -> String {
     }
 }
 
+/// Delegates to `bynk_check::wire_default::escape_ts_literal` — the two
+/// splice into generated TypeScript from opposite sides (real emission here,
+/// event-field wire defaults there), so a correction to the escaping rules
+/// must land once, not drift between two copies.
 pub(crate) fn escape_ts_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            '\r' => out.push_str("\\r"),
-            c => out.push(c),
-        }
-    }
-    out
+    bynk_check::wire_default::escape_ts_literal(s)
 }
 
 /// #661 (Decision D)/#70 review: the one `PredKind` → runtime-check mapping,

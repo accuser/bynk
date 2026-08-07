@@ -12,9 +12,10 @@
 //! ## The residual gap
 //!
 //! This entry point is diagnostically faithful to
-//! `bynk-emit`'s `run_checks`'s `Mode::Analyse` arm **minus** six categories
-//! of whole-project checking, deliberately not ported here (recorded on the
-//! tracking issue's own scope-correction comments, not silently assumed):
+//! `bynk-emit`'s `run_checks`'s `Mode::Analyse` arm **minus** seven
+//! categories of whole-project checking, deliberately not ported here
+//! (recorded on the tracking issue's own scope-correction comments, not
+//! silently assumed):
 //!
 //! 1. **Schema-registry reconciliation** (`schema_registry::reconcile`) —
 //!    unreachable from the `Mode::Analyse` path today anyway (it only runs
@@ -29,15 +30,34 @@
 //!    calls [`crate::project_model::phase_group`] with `None` for that
 //!    phase's optional boundary-check hook, so the check genuinely doesn't
 //!    run rather than being duplicated with a different diagnostic order.
+//! 7. **Test/integration-suite processing**
+//!    (`process_tests`/`process_integration_tests`) — unlike categories 2-6,
+//!    these run *unconditionally* in `run_checks`, in `Mode::Analyse` too,
+//!    and push into the same shared error sink (`bynk-emit`'s own
+//!    `check_project_reports_a_test_body_error_past_an_earlier_structural_error`
+//!    pins a `bynk.types.let_annotation_mismatch` originating inside a
+//!    `suite`/`test integration` body). This entry point reports none of it:
+//!    the two functions are emission-coupled (`CompiledFile`, `RunnableTest`,
+//!    `ImportExt`, `contracts`, a shared `emitted_barrels` set) deeply enough
+//!    that porting them here would mean porting a slice of emission into an
+//!    entry point defined by never emitting — out of proportion with this
+//!    slice. A second, non-diagnostic consequence rides along: both
+//!    functions take `&mut RefSink`, so every binding edge inside a `.bynk`
+//!    suite file is also absent from [`ProjectAnalysis::index`] here. After
+//!    P4.2 repoints `bynk-ide` at this entry point, go-to-definition inside a
+//!    test file stops working with no diagnostic to explain why, until this
+//!    category closes.
 //!
-//! Also out of scope, orthogonally: test/integration-test processing
-//! (`process_tests`/`process_integration_tests`) and emission itself — this
-//! entry point never emits, by construction (it has no `BuildTarget`/
-//! `ImportExt`/`contracts` concept at all).
+//! Emission itself is orthogonal rather than a gap: this entry point never
+//! emits, by construction (it has no `BuildTarget`/`ImportExt`/`contracts`
+//! concept at all), so there is no diagnostic-agreement question to ask of it.
 //!
-//! A fixture that exercises none of the six categories above sees identical
+//! A fixture that exercises none of the seven categories above sees identical
 //! diagnostics from this entry point and from `analyse_project_with` — that
-//! is exactly what the differential fixture asserts.
+//! is what the differential fixture's two clean/broken cases assert. A third
+//! case (`new_entry_point_omits_test_body_diagnostics`) pins category 7's
+//! divergence itself, so it is visible in the fixture rather than merely
+//! documented here.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
