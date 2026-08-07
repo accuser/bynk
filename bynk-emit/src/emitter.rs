@@ -143,19 +143,6 @@ const TSCONFIG_JSON: &str = r#"{
 }
 "#;
 
-/// message-bundles slice 3 (#878): a message template's placeholders and
-/// their ICU format kind (`"plain"`/`"plural"`/`"select"`/`"number"`/`"date"`),
-/// sorted by placeholder name — for hover (`bynk-ide::symbols::describe_messages`).
-/// A narrow, purpose-built public surface rather than exposing the internal
-/// `icu` module's `FormatKind`/`IcuPlaceholder` types themselves, which stay
-/// crate-private.
-pub fn message_template_placeholder_summary(template: &str) -> Vec<(String, &'static str)> {
-    icu::template_format_kinds(template)
-        .into_iter()
-        .map(|(name, kind)| (name.to_string(), kind.as_str()))
-        .collect()
-}
-
 /// Compute the runtime import specifier for a module at `from_source`. For a
 /// file at `commerce/payment.ts` the runtime sits two levels up, so this
 /// returns `../runtime.js`; for a top-level file it returns `./runtime.js`.

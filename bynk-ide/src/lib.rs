@@ -6,11 +6,13 @@
 //! types ([`Diagnostic`], [`FileDiagnostics`], [`ProjectDiagnostics`]). These
 //! are *queries* over the captured tables produced during analysis (the binding
 //! index, inlay hints, expression types, locals — all in `bynk-check`); the
-//! project analysis itself ([`bynk_emit::project::analyse_project`]) is the
+//! project analysis itself ([`bynk_check::analysis::analyse_project`]) is the
 //! non-bailing counterpart to `compile_project`.
 //!
 //! Extracted from `bynkc` as slice 5 of the crate-decomposition track over
-//! `bynk-syntax` + `bynk-check` + `bynk-emit`. Behaviour is unchanged; the
+//! `bynk-syntax` + `bynk-check` + `bynk-emit` (P4.2, #1122: this crate no
+//! longer depends on `bynk-emit` at all — it reaches `bynk-check` and
+//! `bynk-project` directly). Behaviour is unchanged; the
 //! language server (`bynk-lsp`) depends on this crate directly instead of the
 //! whole `bynkc` compiler crate, and `bynkc` re-exports these items so its own
 //! tests and public API are unchanged.
@@ -25,15 +27,15 @@ use bynk_syntax::{ast, lexer, parser};
 /// #855: same rationale as [`ContextSequenceInfo`] above — a plain
 /// re-export, since `ContextBoundaryInfo`'s fields are already
 /// IDE-appropriate as-is.
-pub use bynk_emit::project::ContextBoundaryInfo;
-/// #846: re-exported rather than left as a raw `bynk_emit::project` path —
+pub use bynk_check::analysis::ContextBoundaryInfo;
+/// #846: re-exported rather than left as a raw `bynk_check::analysis` path —
 /// `bynk-lsp` links `bynk-ide`/`bynk-check`/`bynk-syntax` directly and
 /// deliberately does not depend on `bynk-emit` (the whole-compiler crate);
 /// see `bynk-lsp/Cargo.toml`'s dependency comment. Unlike `Roots`/
 /// `AnalysisRoots` (which the IDE layer re-shapes because the raw type
 /// carries build-only concerns), `ContextSequenceInfo`'s fields are already
 /// IDE-appropriate as-is, so this is a plain re-export rather than a lowering.
-pub use bynk_emit::project::ContextSequenceInfo;
+pub use bynk_check::analysis::ContextSequenceInfo;
 
 pub mod architecture;
 pub mod completion;
@@ -176,22 +178,22 @@ pub struct ProjectDiagnostics {
     pub unit_sources: HashMap<String, Vec<PathBuf>>,
     /// #846: qualified context/adapter unit name → the cross-context/agent
     /// tables the sequence-diagram query classifies handler calls against.
-    /// See `bynk_emit::project::ProjectAnalysis::sequence_info`.
+    /// See `bynk_check::analysis::ProjectAnalysis::sequence_info`.
     pub sequence_info: HashMap<String, ContextSequenceInfo>,
     /// #855: qualified context/adapter unit name → the combined type table
     /// and service/agent tables the wire-contract peek resolves a handler's
     /// boundary shape and cross-context hash against.
-    /// See `bynk_emit::project::ProjectAnalysis::boundary_info`.
+    /// See `bynk_check::analysis::ProjectAnalysis::boundary_info`.
     pub boundary_info: HashMap<String, ContextBoundaryInfo>,
     /// #848: qualified unit name → its doc-comment intra-doc-link search
     /// order — itself first, then its `uses` targets, then its `consumes`
-    /// targets. See `bynk_emit::project::diagnostics::ProjectAnalysis::doc_scope`.
+    /// targets. See `bynk_check::analysis::ProjectAnalysis::doc_scope`.
     pub doc_scope: HashMap<String, Vec<String>>,
 }
 
 /// Slice A: which trees a project's analysis walks.
 ///
-/// `bynk-ide` owns this rather than re-exporting `bynk_emit::project::Roots`:
+/// `bynk-ide` owns this rather than re-exporting `bynk_project::Roots`:
 /// this crate is the IDE-facing published surface, and `Roots` carries
 /// `tests_prefix` semantics an IDE caller has no business knowing. The lowering
 /// is a few lines and it is the seam where the LSP's needs and the compiler's
@@ -231,13 +233,13 @@ impl AnalysisRoots {
     /// map it hands in — the same "process edge constructs `Sources`" R2.3
     /// already requires of every `.bynk` file. `lower` stays exactly what its
     /// slice-2 doc above describes: caller's overlay, nothing else.
-    fn lower(&self, overlay: &HashMap<PathBuf, String>) -> bynk_emit::project::Roots {
+    fn lower(&self, overlay: &HashMap<PathBuf, String>) -> bynk_project::Roots {
         match self {
-            AnalysisRoots::SingleTree(root) => bynk_emit::project::Roots::Single(root.clone()),
-            AnalysisRoots::Project(root) => bynk_emit::project::Roots::Split {
+            AnalysisRoots::SingleTree(root) => bynk_project::Roots::Single(root.clone()),
+            AnalysisRoots::Project(root) => bynk_project::Roots::Split {
                 project_root: root.clone(),
-                paths: bynk_emit::project::try_read_project_paths_with(root, overlay)
-                    .unwrap_or_else(|_| bynk_emit::project::ProjectPaths::conventional(root)),
+                paths: bynk_project::try_read_project_paths_with(root, overlay)
+                    .unwrap_or_else(|_| bynk_project::ProjectPaths::conventional(root)),
             },
         }
     }
@@ -263,7 +265,7 @@ impl AnalysisRoots {
 /// track (#1086) slice 5: this crate stays disk-free per R2.3, so it cannot
 /// fall back to reading `bynk.toml` itself on a miss).
 pub fn discover_files(roots: &AnalysisRoots, overlay: &HashMap<PathBuf, String>) -> Vec<PathBuf> {
-    bynk_emit::project::discover_project_files(&roots.lower(overlay))
+    bynk_project::discover_project_files(&roots.lower(overlay))
 }
 
 /// #302: the qualified name a file moved from `old_rel` to `new_rel` should
@@ -271,7 +273,7 @@ pub fn discover_files(roots: &AnalysisRoots, overlay: &HashMap<PathBuf, String>)
 /// `old_rel` used to satisfy against `old_name` — for the LSP's
 /// `workspace/willRenameFiles` handler.
 pub fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Option<String> {
-    bynk_emit::project::renamed_unit_name(old_rel, old_name, new_rel)
+    bynk_project::renamed_unit_name(old_rel, old_name, new_rel)
 }
 
 /// v0.24 (ADR 0052): non-bailing, overlay-aware, file-attributed project
@@ -304,7 +306,7 @@ pub fn diagnose_project_with(
     // stale `ProjectDiagnostics` — the fields below are one-for-one
     // identical between the two types precisely because this site can't
     // forget one.
-    let bynk_emit::project::ProjectAnalysis {
+    let bynk_check::analysis::ProjectAnalysis {
         snapshots,
         errors,
         index,
@@ -317,7 +319,7 @@ pub fn diagnose_project_with(
         sequence_info,
         boundary_info,
         doc_scope,
-    } = bynk_emit::project::analyse_project_with(&roots.lower(overlay), overlay);
+    } = bynk_check::analysis::analyse_project(&roots.lower(overlay), overlay);
     let mut by_file: HashMap<PathBuf, Vec<Diagnostic>> = HashMap::new();
     let mut unattributed = Vec::new();
     for ae in errors {

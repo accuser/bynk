@@ -94,6 +94,28 @@ The reserved namespace `karn` is renamed to **`bynk`**. Update your sources:
 - The internal HTTP dispatch prefix `/_karn/` is now **`/_bynk/`** and the
   cross-context caller header `X-Karn-Caller` is now **`X-Bynk-Caller`**.
 
+### Language server
+
+- The editor's project analysis (`bynkc-lsp`, backing diagnostics,
+  go-to-definition, and completion) now silently omits six categories of
+  whole-project checking it previously reported (P4.2, #1122 — `bynk-ide`
+  now reaches `bynk-check`/`bynk-project` directly instead of `bynk-emit`,
+  and the new entry point does not yet port these six): `messages`-bundle
+  validation, locale-bundle ambiguity, event-subscription validation,
+  platform-lock enforcement, function-type-boundary checks, and everything
+  inside a `suite`/`test integration` body (diagnostics *and* the binding
+  index, so go-to-definition/find-references/completion for a test-only
+  binding regress too). This is accepted, tracked debt
+  (`design/tracks/project-model.md` §3.3(a)), closed when phase 5 of that
+  track ports the six checks into `bynk-check`'s analysis entry point — run
+  `bynkc build`/`bynkc test` (or the CI build) to see these diagnostics in
+  the meantime. Schema-registry reconciliation and platform-lock enforcement
+  are **not** newly affected — both were already unreachable from the
+  editor's analysis before this change (the editor never reconciles the
+  schema registry, and always analyses as the default Cloudflare
+  platform/Bundle target, under which platform-lock can never fire since
+  Cloudflare is the only platform-native unit that exists today).
+
 ### Migrating a project
 
 1. Rename `karn.toml` → `bynk.toml` and every `*.karn` source → `*.bynk`.

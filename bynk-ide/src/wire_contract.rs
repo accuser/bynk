@@ -34,11 +34,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use bynk_check::analysis::ContextBoundaryInfo;
 use bynk_check::checker::{Ty, TyId, Types};
 use bynk_check::contract;
 use bynk_check::resolver::CrossContextService;
 use bynk_check::wire::{self, WireModel, WireRef};
-use bynk_emit::project::ContextBoundaryInfo;
 use bynk_syntax::ast::*;
 use bynk_syntax::span::Span;
 

@@ -36,7 +36,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use bynk_emit::project::ContextSequenceInfo;
+use bynk_check::analysis::ContextSequenceInfo;
 use bynk_syntax::ast::*;
 use bynk_syntax::span::Span;
 

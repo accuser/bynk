@@ -1265,12 +1265,12 @@ pub(crate) fn describe_messages(m: &MessagesDecl) -> String {
         // select/number/date) placeholders inline, so an author can tell
         // at a glance which codes carry ICU dispatch without expanding the
         // (elided) template text itself.
-        let icu_kinds: Vec<String> =
-            bynk_emit::emitter::message_template_placeholder_summary(&entry.template)
-                .into_iter()
-                .filter(|(_, kind)| *kind != "plain")
-                .map(|(name, kind)| format!("{name}: {kind}"))
-                .collect();
+        let icu_kinds: Vec<String> = bynk_check::icu::template_format_kinds(&entry.template)
+            .into_iter()
+            .map(|(name, kind)| (name.to_string(), kind.as_str()))
+            .filter(|(_, kind)| *kind != "plain")
+            .map(|(name, kind)| format!("{name}: {kind}"))
+            .collect();
         if icu_kinds.is_empty() {
             out.push_str(&format!("\t\"{}\" => …\n", entry.code));
         } else {
@@ -1472,7 +1472,7 @@ pub struct CrossFileSymbol {
 }
 
 /// The project's files, in the same deterministic order
-/// `bynk_emit::project::discover_bynk_files` produces (sorted by path) —
+/// `bynk_project::discover_bynk_files` produces (sorted by path) —
 /// `HashMap` iteration order is unspecified, and "the first hit wins" only
 /// means something if that order is stable and reproducible.
 fn sorted_paths(files: &HashMap<PathBuf, String>) -> Vec<&PathBuf> {
