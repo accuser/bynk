@@ -2,8 +2,61 @@ use super::*;
 use crate::emitter::RuntimeUse;
 use crate::emitter::source_map::SourceMapBuilder;
 use bynk_check::checker::Types;
-use bynk_check::context_checks::ts_type_ref_display;
 use std::sync::Arc;
+
+/// Render a type-ref in the same form the user wrote it, for diagnostics.
+pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
+    match r {
+        TypeRef::Base(b, _) => b.name().to_string(),
+        TypeRef::Named(id) => id.name.clone(),
+        TypeRef::Result(t, e, _) => format!(
+            "Result[{}, {}]",
+            ts_type_ref_display(t),
+            ts_type_ref_display(e)
+        ),
+        TypeRef::Option(t, _) => format!("Option[{}]", ts_type_ref_display(t)),
+        TypeRef::Effect(t, _) => format!("Effect[{}]", ts_type_ref_display(t)),
+        TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", ts_type_ref_display(t)),
+        TypeRef::QueueResult(_) => "QueueResult".to_string(),
+        TypeRef::List(t, _) => format!("List[{}]", ts_type_ref_display(t)),
+        TypeRef::Query(t, _) => format!("Query[{}]", ts_type_ref_display(t)),
+        TypeRef::Stream(t, _) => format!("Stream[{}]", ts_type_ref_display(t)),
+        TypeRef::Connection(t, _) => format!("Connection[{}]", ts_type_ref_display(t)),
+        TypeRef::History(t, _) => format!("History[{}]", ts_type_ref_display(t)),
+        TypeRef::Map(k, v, _) => format!(
+            "Map[{}, {}]",
+            ts_type_ref_display(k),
+            ts_type_ref_display(v)
+        ),
+        TypeRef::ValidationError(_) => "ValidationError".to_string(),
+        TypeRef::JsonError(_) => "JsonError".to_string(),
+        TypeRef::Unit(_) => "()".to_string(),
+        // v0.157 (ADR 0183): render a generic-type application as written.
+        TypeRef::App { name, args, .. } => format!(
+            "{}[{}]",
+            name.name,
+            args.iter()
+                .map(ts_type_ref_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        TypeRef::Fn(params, ret, _) => {
+            let lhs = match params.len() {
+                0 => "()".to_string(),
+                1 if !matches!(params[0], TypeRef::Fn(..)) => ts_type_ref_display(&params[0]),
+                _ => format!(
+                    "({})",
+                    params
+                        .iter()
+                        .map(ts_type_ref_display)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            format!("{lhs} -> {}", ts_type_ref_display(ret))
+        }
+    }
+}
 
 // -- v0.7 / v0.118: test declaration processing --
 

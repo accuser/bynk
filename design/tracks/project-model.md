@@ -88,19 +88,11 @@ nothing inside it stops at project-model granularity.)
 
 ## 2. What this track is not
 
-- **Not phase 5's semantics extraction, in the main.** `validate.rs` (5,019 lines, the context-level checks
-  R3.5 moves to `bynk-check`) was meant to be untouched here. Moving it before `bynk-project` exists would
-  mean moving it twice — the trajectory's own "4 before 5" ordering argument (§4 of the trajectory doc).
-  §3.3's new `bynk-check`-side analysis entry point (below) is a narrow, named exception to this line, not a
-  reversal of it — see §3.3 for why it's necessary and why it doesn't grow into phase 5's move. **Correction
-  (P4.1, #1115):** the exception turned out wider than "narrow" implied — `check_context_constraints`/
-  `check_context_declarations` and their transitive closure (~3,800 of `validate.rs`'s ~5,000 lines, the
-  bulk of what `run_checks`'s per-file loop actually calls beyond `resolver`/`checker`) had to move too, or
-  the new entry point's diagnostics would fall far short of `run_checks`'s own. `validate.rs`'s remaining
-  ~1,200 lines — the five *project-wide* checks (`check_platform_lock`, `check_messages_bundles`,
-  `check_locale_bundle_ambiguity`, `check_event_subscriptions`, `check_function_type_boundaries`) — are what
-  actually stayed, and are phase 5's remaining semantics-extraction surface, not this whole file. See
-  §3.3(a)'s implementation note for the full accounting.
+- **Not phase 5's semantics extraction.** `validate.rs` (5,019 lines, the context-level checks R3.5
+  moves to `bynk-check`) is untouched here. Moving it before `bynk-project` exists would mean moving it
+  twice — the trajectory's own "4 before 5" ordering argument (§4 of the trajectory doc). §3.3's new
+  `bynk-check`-side analysis entry point (below) is a narrow, named exception to this line, not a reversal
+  of it — see §3.3 for why it's necessary and why it doesn't grow into phase 5's move.
 - **Not the fixture-format work `tests_emit.rs` (5,922 lines) implies.** Its residence and shape are
   phase 0/seams territory (broad fixture-kind adoption), not this phase's.
 - **Not the full `R3.2` `ProjectGraph { units, files, edges, contract }` struct.** §3.1/§3.4 settle this:
@@ -415,35 +407,6 @@ phase adds, and `run_checks`'s `Mode::Analyse` arm — and eventually all of `ru
 is deleted rather than ported. Naming the debt here is what keeps phase 5 from rediscovering it as a
 surprise the way this phase just rediscovered `bynk-ide`'s real dependency shape.
 
-**Implementation note (P4.1, #1115) — two further scope corrections found while building the above,
-recorded per this track's own settling discipline rather than silently absorbed.** First: `run_checks`'s
-per-file body (`check_unit_files`) doesn't only call `resolver`/`checker` (already local to `bynk-check`,
-as this section assumed) — for a `context`/`adapter` file it also calls `check_context_constraints`/
-`check_context_declarations` (`validate.rs`), whose transitive closure (capability/provider/service/agent/
-actor/store/index/handler-annotation checks, ~3,800 of `validate.rs`'s ~5,000 lines) is most of what
-`Mode::Analyse` actually reports for those units. Without it the new entry point's diagnostics would fall
-far short of `run_checks`'s, breaking this section's own "returns the analogue of today's `ProjectAnalysis`"
-claim. **Decision: this subset relocates to `bynk-check/src/context_checks.rs` as part of P4.1**, not
-deferred to phase 5 — `validate.rs`'s remaining project-wide checks (`check_platform_lock`,
-`check_messages_bundles`, `check_locale_bundle_ambiguity`, `check_event_subscriptions`,
-`check_function_type_boundaries`) stay in `bynk-emit`, named as the new entry point's documented residual
-gap rather than silently assumed complete.
-
-Second: building the new entry point's discovery→group→resolve step surfaced that `run_checks`'s own
-orchestration — grouping units, resolving `uses`/`consumes`, building per-unit `UnitInfo`
-(`phase_discovery` through `compose_unit_symbols`, ~2,070 lines across ~19 private functions) — never
-moved either; a literal no-indirection entry point needs it too. **Decision: this orchestration relocates
-to `bynk-check/src/project_model.rs`** (alongside `BuildTarget`/`AdapterBinding`, the two supporting types
-`phase_group` needs), and the identical-for-both-modes half of `check_unit_files`'s per-file resolve+check
-core relocates to `bynk-check/src/check_pipeline.rs` — `run_checks`/`check_unit_files` become callers of
-both instead of owning this logic inline, the same "extract, don't duplicate" move already applied to
-`lower_field_default_wire`/`build_capability_op_info` earlier in this design track. This is real edit
-surface inside `bynk-emit/src/project.rs` itself (not the "`run_checks` itself stays in `bynk-emit`,
-unchanged" this section originally said) — `run_checks`'s own *behaviour* is unchanged (pinned by the full
-test suite plus `bynk-check/tests/differential_analysis.rs`), but its body is now ~2,500 lines shorter,
-calling `bynk_check::project_model`/`bynk_check::check_pipeline` instead. §6's P4.1 row and §9's risk note
-are corrected to match.
-
 **(b) The file-reading seam split — the draft's original framing, now the smaller of the two.**
 `bynk-driver/src/discovery.rs`'s own doc comment names this directly: the CLI reads every file up front
 (`CompileOptions.sources`, seamed above `bynk-emit` since #1077) while the LSP path depends on
@@ -564,7 +527,7 @@ actual approval to build it, per this doc's own Status block.
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
 | **P4.0** | `bynk-project` crate skeleton; `discovery.rs` (plus `ParsedFile`'s private-field question resolved, per §3.2's (d)), `graph.rs`, `paths.rs` (plus `json_string`, moved/duplicated/inlined), `consistency.rs` relocated with minimal reshaping, plus `schema_registry.rs`'s `SchemaRegistry`/`parse`/`serialize` (not `reconcile`; its own private-field question resolved too) and, from `diagnostics.rs`, only `AttributedError` (not `Mode`/`ErrorSink`/`ProjectFailure`, which all stay in `bynk-emit`; not `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`), plus the project-model types they need (`UnitKind`, `Roots`, `ParsedFile`, `ProjectPaths`, the `SchemaLock` shape); public surface enumerated and reviewed (R10.4-style) as part of this slice, per §3.2 | R3.7, R3.8, R3.9 | §3 settled |
-| **P4.1** (delivered shape, #1115 — see §3.3(a)'s implementation note) | The new `bynk-check` analysis entry point (`bynk_check::analysis::analyse_project`): discovery via `bynk-project`, resolve/check via `bynk-check`. `symbols.rs` (all of it) and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` relocate to `bynk-check`, per §3.2's corrected boundary. `schema_registry.rs`'s `reconcile` does **not** relocate ([DECISION A] on the tracking issue — unreachable from the `Mode::Analyse` path today, `analyse_project_with` always passes `SchemaLock::Off`) — it stays in `bynk-emit`, importing `UnitTable` from its new `bynk-check` home. Two scope corrections beyond the original draft (both recorded inline above, not deferred): the per-file `check_context_constraints`/`check_context_declarations` transitive closure (`validate.rs`'s context-checks subset, ~3,800 lines) relocates to `bynk-check/src/context_checks.rs`; `run_checks`'s own discovery→group→resolve orchestration (`phase_discovery` through `assemble_unit_info`/`compose_unit_symbols`, ~2,070 lines) relocates to `bynk-check/src/project_model.rs`, with the per-file resolve+check core shared via `bynk-check/src/check_pipeline.rs`. `run_checks`/`check_unit_files` in `bynk-emit` become callers of both instead of owning the logic — behaviourally unchanged (full test suite), not untouched. The file-reading asymmetry (§3.3(b)) carries over unchanged, not fixed here. The differential fixture (`bynk-check/tests/differential_analysis.rs`) compares this entry point's diagnostics against `run_checks`'s `Mode::Analyse` arm on a fixture that avoids the six residual-gap categories the entry point's own doc comment names | R3.7, R10.2 (partial) | P4.0 |
+| **P4.1** | The new `bynk-check` analysis entry point (§3.3(a)): discovery via `bynk-project`, resolve/check via `bynk-check`'s existing resolver/checker; `symbols.rs` (all of it), `schema_registry.rs`'s `reconcile`, and `diagnostics.rs`'s `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` relocate here, alongside the entry point itself, per §3.2's corrected boundary. `run_checks` in `bynk-emit` is untouched. The file-reading asymmetry (§3.3(b)) carries over unchanged, not fixed here. Per §9's drift risk, this slice should also carry a differential fixture comparing this entry point's diagnostics against `run_checks`'s `Mode::Analyse` arm, or state why one isn't feasible | R3.7, R10.2 (partial) | P4.0 |
 | **P4.2** | `bynk-ide` repoints at the new `bynk-check` entry point instead of `bynk-emit::analyse_project`; `bynk-emit` dependency and its justifying Cargo.toml comment deleted, flipping the existing `ide_emit_edge` CI gate (§8) to absent — no new gate is built | R10.2 | P4.1 |
 
 No slice cites `R3.11`: §3.5 found it already closed by prior paydown (#1078), corrected directly in
@@ -619,16 +582,6 @@ diagnostics, self-deleting when phase 5 removes `run_checks`'s `Mode::Analyse` a
 should carry this fixture, or state why it isn't feasible (for instance if the return types deliberately
 differ, per §3.2's composite finding) — left as a question for that slice, not decided by this settling
 pass. Named here so a reviewer watches for it either way — phase 5 landing promptly is the actual fix.
-
-**Resolved by delivery (#1115).** P4.1 shipped `bynk-check/tests/differential_analysis.rs`: two fixtures
-(one clean, one with a deliberate semantic error) run through both `bynk_emit::project::analyse_project_with`
-and `bynk_check::analysis::analyse_project`, asserting identical rendered diagnostics. The fixture is scoped
-to avoid the new entry point's six documented residual-gap categories (named on `analyse_project`'s own doc
-comment) — a fixture that tripped one of those would show a *legitimate* divergence, not the drift this test
-guards against. §3.3(a)'s "P4.1 is larger than the draft's original sizing assumed" risk (above) was also
-realized as delivered, not just as a sizing worry: the two further scope corrections recorded in §3.3(a)'s
-implementation note (the `context_checks.rs` relocation and the `project_model.rs`/`check_pipeline.rs`
-orchestration split) are exactly the larger-than-drafted surface this risk predicted.
 
 **P4.2's mechanical repoint is small; P4.1's relocation is what actually needs coverage, and the two were
 conflated.** `bynk-driver/src/discovery.rs`'s "100+ call sites" names the `diagnose_project(&root,

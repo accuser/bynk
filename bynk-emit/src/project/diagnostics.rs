@@ -1,25 +1,6 @@
 use super::*;
 use bynk_project::AttributedError;
 
-// P4.1 (#1115): `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo`
-// relocated verbatim (Decision C) to `bynk-check/src/analysis.rs`, alongside
-// the new `bynk-check`-native analysis entry point that also needs to build
-// one. Re-exported here so `crate::project::{ProjectAnalysis, ...}` (this
-// module's own `pub use` chain, `project.rs:80`) — and every downstream
-// caller, including `bynk-ide`'s `bynk_emit::project::ProjectAnalysis`
-// import — keeps resolving unchanged. `Mode`/`ErrorSink`/`ProjectFailure`
-// below are unaffected: `Mode` and `ProjectFailure` are pipeline-driving
-// facts specific to `bynk-emit`'s two callers (`compile_project`/
-// `analyse_project_with`), not project-model or checker output.
-pub use bynk_check::analysis::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis};
-// `ErrorSink` relocated to `bynk-check::project_model` too — every
-// `phase_*` function it moved alongside takes `&mut ErrorSink`, so the type
-// had to travel with them (the same "shared logic pulls its own types down
-// with it" reasoning `UnitTable`/`ConsumedType` already went through when
-// `symbols.rs` moved). Re-exported at this crate-private path so every
-// existing `bynk-emit`-internal call site is unchanged.
-pub(crate) use bynk_check::project_model::ErrorSink;
-
 /// Internal: do the work, given a source root (for commons/contexts) and a
 /// test root (for test units). When both roots are the same path the
 /// behaviour is identical to the v0.4+ single-tree layout. When they differ
@@ -33,6 +14,167 @@ pub(crate) use bynk_check::project_model::ErrorSink;
 pub(crate) enum Mode {
     Build,
     Analyse,
+}
+
+/// Collection-point error sink (ADR 0052). Helpers keep their plain
+/// `&mut Vec<CompileError>` signatures; call sites attribute via
+/// `extend_for` with the file in scope at that point.
+pub(crate) struct ErrorSink {
+    entries: Vec<AttributedError>,
+    /// v0.89 (ADR 0117): non-failing warnings, classified on push by
+    /// `Severity::for_error`. Kept apart so `is_empty`/`len` — the build-failure
+    /// gates — stay errors-only, while every warning source (commons-fn checks,
+    /// service/agent handler validation, parser) is captured uniformly.
+    warnings: Vec<AttributedError>,
+}
+
+impl ErrorSink {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+    pub(crate) fn push_for(&mut self, file: Option<&Path>, error: CompileError) {
+        let attributed = AttributedError {
+            source_path: file.map(Path::to_path_buf),
+            error,
+        };
+        match bynk_syntax::Severity::for_error(&attributed.error) {
+            bynk_syntax::Severity::Warning => self.warnings.push(attributed),
+            bynk_syntax::Severity::Error => self.entries.push(attributed),
+        }
+    }
+    pub(crate) fn extend_for(
+        &mut self,
+        file: Option<&Path>,
+        errs: impl IntoIterator<Item = CompileError>,
+    ) {
+        for e in errs {
+            self.push_for(file, e);
+        }
+    }
+    /// True when no **error-severity** diagnostic has been collected — the
+    /// build-failure gate. Warnings do not count (ADR 0117).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    /// Consume the sink, yielding the non-failing **warnings** (ADR 0117).
+    pub(crate) fn into_warnings(self) -> Vec<AttributedError> {
+        self.warnings
+    }
+    /// Consume the sink, yielding errors then warnings — the full diagnostic
+    /// list the LSP and a failed build render together.
+    pub(crate) fn into_all(self) -> Vec<AttributedError> {
+        let mut all = self.entries;
+        all.extend(self.warnings);
+        all
+    }
+    /// The count of **error-severity** diagnostics.
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+/// v0.24: the analyse-mode result — every discovered file's analysed text
+/// snapshot (positions must convert against the text that was analysed,
+/// not a newer buffer) plus the attributed diagnostics.
+pub struct ProjectAnalysis {
+    /// `(project-relative source path, analysed text)` for every file read,
+    /// including clean files (the LSP needs them to clear diagnostics).
+    ///
+    /// Slice 0: this is genuinely project-relative now — it keys on
+    /// `ParsedFile::identity_path`, so `src/todos.bynk` and `tests/todos.bynk`
+    /// are distinct entries. Before slice 0 the path was relative to each
+    /// `include` root, so those two collided on `todos.bynk` and a consumer
+    /// mapping by this key silently dropped one; this comment described the
+    /// intent rather than the behaviour, which is why it went unnoticed.
+    pub snapshots: Vec<(PathBuf, String)>,
+    pub errors: Vec<AttributedError>,
+    /// v0.25 (ADR 0053): the project-wide binding index. Empty when the
+    /// pipeline bails before resolution (discovery/parse failures).
+    pub index: ProjectIndex,
+    /// v0.27 (ADR 0056): per-file inferred-type inlay hints — `(binding-name
+    /// span, label)`, span-ordered, harvested from the checker's binding
+    /// sites. Empty for files the pipeline never type-checked.
+    pub hints: FileHints,
+    /// v0.30.2 (ADR 0063): per-file expression types — `(expr span, Ty)`,
+    /// captured on the Ok path (a file that checks clean), for `.`-member
+    /// completion's receiver typing. Empty for files with errors (the
+    /// clean-file ceiling) and for synthetic files.
+    pub expr_types: FileExprTypes,
+    /// T3.6b (R4.1): the intern table every `TyId` in `expr_types` resolves
+    /// against — one table shared across the whole analysis (see
+    /// `checker::check_record_in`), so ids drawn from different units are
+    /// still comparable and resolvable through this one handle.
+    pub ty_intern: std::sync::Arc<bynk_check::checker::Types>,
+    /// v0.31 (ADR 0064): per-file local bindings with their scope ranges —
+    /// `let`/`let <-`, fn/handler/lambda params — for the scope-at-offset
+    /// query backing locals completion + navigation. Synthetic files muted.
+    pub locals: FileLocals,
+    /// v0.99: per-file capability-requirement ledger — every capability-consuming
+    /// site (direct call, store op), covered or not, with its provenance. Drives
+    /// the ghost `given` inlay hint and capability hover. Empty for files the
+    /// pipeline never type-checked, and for synthetic/test files (muted).
+    pub requirements: FileRequirements,
+    /// Slice 6b (ADR 0095): qualified unit name → the project source file(s)
+    /// that comprise it, in discovery order — the unit→file map backing document
+    /// links and consumed-context navigation. Excludes synthetic (toolchain-
+    /// injected) units; empty when the pipeline bails before the checker.
+    pub unit_sources: HashMap<String, Vec<PathBuf>>,
+    /// #846: qualified context/adapter unit name → the cross-context and agent
+    /// tables needed to classify a handler call as a lifeline (consumed
+    /// capability, consumed-context call, or agent) for the sequence-diagram
+    /// query. Reconstructed from the same retained per-project tables
+    /// (`unit_uses`/`unit_consumes`/`unit_tables`) the per-file checking pass
+    /// builds its own transient `ResolvedCommons.cross_context` from — that
+    /// transient value is never itself retained, so this is a deliberately
+    /// lean re-derivation (not the full `ResolvedCommons`: no `types`/`fns`/
+    /// `methods`, which the classifier never needs). Only contexts/adapters
+    /// have an entry; empty when the pipeline bails before the checker.
+    pub sequence_info: HashMap<String, ContextSequenceInfo>,
+    /// #855: qualified context/adapter unit name → the combined type table
+    /// and per-context service/agent tables the wire-contract peek needs to
+    /// resolve a handler's boundary shape and cross-context hash, retained
+    /// the same way `sequence_info` is — see [`ContextBoundaryInfo`]. Only
+    /// contexts/adapters have an entry; empty when the pipeline bails before
+    /// the checker.
+    pub boundary_info: HashMap<String, ContextBoundaryInfo>,
+    /// #848: qualified unit name → its doc-comment intra-doc-link search
+    /// order — itself first, then its `uses` targets, then its `consumes`
+    /// targets, in that order (mirrors `IndexBuilder::qualify_with`'s
+    /// bare-name qualification, `bynk-check/src/index.rs` — the index itself
+    /// retains no scope past assembly, so this is assembled here from the
+    /// same `unit_uses`/`unit_consumes` phase outputs `unit_sources` is built
+    /// alongside). A synthetic unit never owns a doc comment, so it's never a
+    /// key here, though it may still appear as a scope target; empty when the
+    /// pipeline bails before the checker.
+    pub doc_scope: HashMap<String, Vec<String>>,
+}
+
+/// #846: the per-unit slice of resolution the sequence-diagram classifier
+/// needs — see [`ProjectAnalysis::sequence_info`].
+#[derive(Debug, Clone, Default)]
+pub struct ContextSequenceInfo {
+    pub cross_context: resolver::CrossContextInfo,
+    pub agents: HashMap<String, AgentDecl>,
+}
+
+/// #855: the per-unit slice of resolution the wire-contract peek needs —
+/// see [`ProjectAnalysis::boundary_info`]. A sibling of
+/// [`ContextSequenceInfo`], not a field on it: that struct is named and
+/// documented for #846, and this is a separate retained table serving a
+/// separate query (hover/panel over a single handler's boundary, not the
+/// sequence-diagram classifier).
+#[derive(Debug, Clone, Default)]
+pub struct ContextBoundaryInfo {
+    /// `combined_types_for`: the unit's own declared types plus the types of
+    /// every commons it `uses` — the same table `own_contract_hashes` hashes
+    /// through, so the peek's hash and the emitted `X-Bynk-Contract` constant
+    /// cannot disagree.
+    pub types: HashMap<String, Arc<TypeDecl>>,
+    pub services: HashMap<String, ServiceDecl>,
+    pub agents: HashMap<String, AgentDecl>,
 }
 
 /// v0.24: a failed build with its attribution and snapshots intact — what
