@@ -17,8 +17,8 @@ use crate::emitter::{
     BOUNDARY_CODEC_RUNTIME_IMPORTS, BYTES_RUNTIME_IMPORTS, JSON_CODEC_RUNTIME_IMPORTS, RuntimeUse,
     inject_runtime_imports,
 };
-use crate::project::symbols::MessageBundleInfo;
 use crate::project::{ImportExt, LocaleNegotiationArgs, UnitTable, unit_table_uses_emit};
+use bynk_check::symbols::MessageBundleInfo;
 use bynk_syntax::ast::*;
 
 /// Where `compose.ts` imports the runtime from — it sits two levels below the

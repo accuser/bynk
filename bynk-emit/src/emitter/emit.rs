@@ -2409,7 +2409,7 @@ pub(crate) fn agent_has_held_storage(a: &AgentDecl) -> bool {
 fn is_held_map_field(f: &StoreField) -> bool {
     f.kind.head.name == "Map"
         && f.kind.args.len() == 2
-        && crate::project::type_ref_is_held(&f.kind.args[1])
+        && bynk_check::context_checks::type_ref_is_held(&f.kind.args[1])
 }
 
 /// The agent's `store Map[K, V]` fields whose value is a held `Connection`, as

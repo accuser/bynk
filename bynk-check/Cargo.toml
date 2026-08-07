@@ -15,5 +15,16 @@ path = "src/lib.rs"
 [dependencies]
 # The syntax foundation this layer analyses.
 bynk-syntax.workspace = true
+# Discovery, the unit graph, and manifest/schema-registry document shapes —
+# P4.1 (#1115): the new project-level analysis entry point discovers via this
+# crate and resolves/checks via this crate's own already-local modules.
+bynk-project.workspace = true
 # Refinement-predicate validation in the checker.
 regress.workspace = true
+
+[dev-dependencies]
+# P4.1 (#1115): the differential fixture compares this crate's new analysis
+# entry point against bynk-emit's `analyse_project_with`. A dev-dependency
+# only (excluded from library builds), so this doesn't invert the real
+# bynk-emit -> bynk-check dependency edge.
+bynk-emit.workspace = true

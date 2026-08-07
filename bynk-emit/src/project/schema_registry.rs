@@ -43,7 +43,7 @@ pub(crate) use bynk_project::schema_registry::{
     EventEntry, FieldShape, SchemaRegistry, parse, serialize,
 };
 
-use super::UnitTable;
+use bynk_check::symbols::UnitTable;
 
 /// A shallow, per-field snapshot of an event's current shape — deliberately
 /// **not** `bynk-check/src/contract.rs`'s `canon_named_in`: that renders a

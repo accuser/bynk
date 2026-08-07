@@ -1,12 +1,25 @@
-use super::*;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::Arc;
+
+use crate::checker::CapabilityInfo;
+use crate::index::{IndexBuilder, ProjectIndex, RefSink, SiteRef, SymbolKind};
+use crate::resolver::{self, MethodTable as ResolverMethodTable};
+use bynk_project::{ParsedFile, UnitKind};
+use bynk_syntax::ast::{
+    ActorDecl, AgentDecl, BaseType, Block, CapRef, CapabilityDecl, CommonsItem, EventDecl,
+    ExportKind, Expr, ExprId, ExprKind, FnDecl, FnName, HandlerKind, Ident, Param, ProviderDecl,
+    ServiceDecl, Trivia, TypeBody, TypeDecl, TypeRef, Visibility,
+};
+use bynk_syntax::error::CompileError;
+use bynk_syntax::span::Span;
 
 /// v0.25 (ADR 0053): walk every parsed file's top-level declarations into
 /// the def table (synthetic first-party units and test files excluded —
 /// neither declares user-editable symbols), then qualify and attach the
 /// recorded edges. Methods register as owners only (attribution), not as
 /// symbols — they are deferred along with fields and op names.
-pub(crate) fn assemble_index(
+pub fn assemble_index(
     parsed: &[ParsedFile],
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
@@ -263,19 +276,16 @@ pub(crate) fn assemble_index(
 /// is `Refined { refinement: None }`, a plain alias, and carries neither;
 /// `opaque` is orthogonal (an `opaque … where` type carries both).
 /// `platform_native` when the declaring unit is a platform adapter.
-fn symbol_modifiers(
-    unit: &str,
-    type_decl: Option<&TypeDecl>,
-) -> bynk_check::index::SymbolModifiers {
+fn symbol_modifiers(unit: &str, type_decl: Option<&TypeDecl>) -> crate::index::SymbolModifiers {
     let (refined, opaque) = match type_decl.map(|t| &t.body) {
         Some(TypeBody::Refined { refinement, .. }) => (refinement.is_some(), false),
         Some(TypeBody::Opaque { refinement, .. }) => (refinement.is_some(), true),
         _ => (false, false),
     };
-    bynk_check::index::SymbolModifiers {
+    crate::index::SymbolModifiers {
         refined,
         opaque,
-        platform_native: bynk_check::firstparty::platform_of(unit).is_some(),
+        platform_native: crate::firstparty::platform_of(unit).is_some(),
     }
 }
 
@@ -317,7 +327,7 @@ pub struct UnitTable {
 /// below iterates `for &i in indices`, so it shadows a local `errors` vec and
 /// drains it into `out`, tagged with `parsed[i].identity_path()`, at the end of each
 /// file's pass — leaving the many inner `errors.push(…)` sites untouched.
-pub(crate) fn build_unit_table(
+pub fn build_unit_table(
     _name: &str,
     kind: UnitKind,
     indices: &[usize],
@@ -749,7 +759,7 @@ pub struct FileDeclIndex {
 /// for a split project, so a name declared in the *same* file is emitted as a
 /// sibling import of itself — the module then cannot load, and a workers
 /// runtime test hangs rather than fails. See ADR 0201 (E).
-pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDeclIndex {
+pub fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDeclIndex {
     let mut idx = FileDeclIndex {
         types: HashMap::new(),
         fns: HashMap::new(),
@@ -806,7 +816,7 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
 
 /// #696: returns the `parsed` index of the owning file alongside the `uses`
 /// clause span, so the caller can attribute the diagnostic to that file.
-pub(crate) fn uses_span_of(
+pub fn uses_span_of(
     parsed: &[ParsedFile],
     indices: &[usize],
     target: &str,
@@ -824,7 +834,7 @@ pub(crate) fn uses_span_of(
 /// Build the [`resolver::CrossContextInfo`] for a given consuming context.
 /// Used by both the resolver/checker (per-file processing) and the emitter
 /// (composition root + boundary casts).
-pub(crate) fn build_cross_context_info(
+pub fn build_cross_context_info(
     name: &str,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
@@ -944,7 +954,7 @@ pub(crate) fn build_cross_context_info(
 /// v0.25: record a clause-position capability reference (`provides Cap`,
 /// bare `given Cap`), qualifying a flattened bare name to its providing
 /// unit. The span is the name segment only.
-pub(crate) fn record_capability_clause_ref(
+pub fn record_capability_clause_ref(
     name: &Ident,
     cross_context: &resolver::CrossContextInfo,
     refs: &mut RefSink,
@@ -956,7 +966,7 @@ pub(crate) fn record_capability_clause_ref(
 /// capability reference *and* an implementation edge (the ambient owner is the
 /// provider). Flagged so assembly can tell it apart from the provider's own
 /// `given` deps, which are capability refs owned by the same provider.
-pub(crate) fn record_provides_clause_ref(
+pub fn record_provides_clause_ref(
     name: &Ident,
     cross_context: &resolver::CrossContextInfo,
     refs: &mut RefSink,
@@ -980,7 +990,7 @@ fn record_capability_clause_ref_inner(
     }
 }
 
-pub(crate) fn resolve_given_cap_ref(
+pub fn resolve_given_cap_ref(
     cap_ref: &CapRef,
     capability_info_map: &HashMap<String, CapabilityInfo>,
     cross_context: &resolver::CrossContextInfo,
@@ -1070,7 +1080,7 @@ pub(crate) fn resolve_given_cap_ref(
 /// canonicalise the callee's contract from the *same* table or their hashes
 /// diverge and every call 409s. Routing both through one function makes that
 /// agreement structural rather than a thing to keep in step by hand.
-pub(crate) fn combined_types_for(
+pub fn combined_types_for(
     unit: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
@@ -1132,7 +1142,7 @@ pub struct MessageBundleInfo {
 /// duplicating its own reference is already diagnosed by
 /// `check_messages_bundles` — this function simply doesn't count it as
 /// "found", rather than compounding an already-reported error).
-pub(crate) fn detect_context_message_bundle(
+pub fn detect_context_message_bundle(
     ctx: &str,
     unit_uses: &HashMap<String, Vec<String>>,
     groups: &BTreeMap<String, Vec<usize>>,
@@ -1170,6 +1180,10 @@ pub(crate) fn detect_context_message_bundle(
 #[cfg(test)]
 mod detect_context_message_bundle_tests {
     use super::*;
+    use bynk_syntax::ast::{
+        Annotation, Commons, CommonsForm, Context, MessagesDecl, QualifiedName, SourceUnit,
+        UsesDecl,
+    };
 
     fn ident(name: &str) -> Ident {
         Ident {
@@ -1417,7 +1431,7 @@ mod detect_context_message_bundle_tests {
 
 /// #696: returns the `parsed` index of the owning file alongside the `consumes`
 /// clause span, so the caller can attribute the diagnostic to that file.
-pub(crate) fn consumes_span_of(
+pub fn consumes_span_of(
     parsed: &[ParsedFile],
     indices: &[usize],
     target: &str,
@@ -1434,7 +1448,7 @@ pub(crate) fn consumes_span_of(
 
 /// #696: returns the `parsed` index of the owning file alongside the alias span,
 /// so the caller can attribute the diagnostic to that file.
-pub(crate) fn parsed_alias_span(
+pub fn parsed_alias_span(
     parsed: &[ParsedFile],
     indices: &[usize],
     alias: &str,
