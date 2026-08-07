@@ -1393,20 +1393,35 @@ fn phase_parse(
 }
 
 /// The `include` tree that discovered `pf`, found by matching its absolute
-/// path against each tree's (absolute) root — not `trees[0]` unconditionally,
-/// since R3.9 (#1113) lets a file live under any `include` tree, not just the
+/// path against each tree's root — not `trees[0]` unconditionally, since
+/// R3.9 (#1113) lets a file live under any `include` tree, not just the
 /// first. Falls back to `trees[0]` for a `pf` with no `abs_path` (unreachable
 /// for a real adapter: only synthetic units, which never declare `binding`,
 /// go without one) or if it somehow matches none. The longest matching root
 /// wins, in case one `include` tree is nested inside another.
+///
+/// A `trees` root is only absolute when `Roots`'s own `project_root` is — a
+/// relative project root (`bynkc build .`, the ordinary CLI shape) leaves
+/// every tree root relative, while `pf.abs_path()` (`bynk-project`'s
+/// `parse_sources`, via `std::path::absolute`) is always absolute. Comparing
+/// them directly with `starts_with` would never match, silently collapsing
+/// this back to the `trees[0]` bug it exists to fix. Each root is resolved
+/// through the same `std::path::absolute` before comparing, matching
+/// `abs_path`'s own normalisation exactly rather than requiring the caller
+/// to have already absolutised `Roots::project_root`.
 fn tree_root_for<'a>(trees: &'a [(PathBuf, PathBuf)], pf: &ParsedFile) -> &'a Path {
-    pf.abs_path()
-        .and_then(|abs| {
-            trees
-                .iter()
-                .filter(|(root, _)| abs.starts_with(root))
-                .max_by_key(|(root, _)| root.as_os_str().len())
+    let Some(abs) = pf.abs_path() else {
+        return trees[0].0.as_path();
+    };
+    trees
+        .iter()
+        .filter_map(|(root, _)| {
+            std::path::absolute(root)
+                .ok()
+                .map(|abs_root| (root, abs_root))
         })
+        .filter(|(_, abs_root)| abs.starts_with(abs_root))
+        .max_by_key(|(root, _)| root.as_os_str().len())
         .map(|(root, _)| root.as_path())
         .unwrap_or_else(|| trees[0].0.as_path())
 }
@@ -5751,6 +5766,40 @@ mod tests {
         assert!(
             names.contains(&"payments.binding.ts".to_string()),
             "expected the binding to be copied into the output among {names:?}"
+        );
+    }
+
+    /// Regression (code review of the #1114 fix itself): `tree_root_for`
+    /// compared `pf.abs_path()` (always absolute, via `std::path::absolute`)
+    /// against `trees`' roots as-is — for the ordinary CLI shape (a relative
+    /// project root, e.g. `bynkc build .`), every tree root stays relative,
+    /// so `starts_with` never matched and this silently fell back to
+    /// `trees[0]` for every file, reproducing the exact bug the fix above
+    /// exists to close. `scratch_project`-based tests never caught this
+    /// because their project root is always an absolute temp path.
+    #[test]
+    fn tree_root_for_matches_against_a_relative_tree_root() {
+        let trees = vec![
+            (PathBuf::from("src"), PathBuf::from("src")),
+            (PathBuf::from("adapters"), PathBuf::from("adapters")),
+        ];
+        let root = Path::new("adapters");
+        // Relative, exactly as `discover_bynk_files`/`phase_parse` would pass
+        // it when `Roots::Split.project_root` is itself relative.
+        let rel_path = root.join("payments.bynk");
+        let (parsed, _warnings) = parse_sources(
+            root,
+            Path::new("adapters"),
+            &rel_path,
+            "adapter payments {\n  binding \"./payments.binding.ts\"\n\n  exports capability { Pay }\n\n  capability Pay {\n    fn charge(amount: Int) -> Effect[String]\n  }\n\n  provides Pay = RealPay\n}\n".to_string(),
+            &mut 0,
+            &mut 0,
+        )
+        .expect("trivial adapter source must parse");
+        assert_eq!(
+            tree_root_for(&trees, &parsed[0]),
+            Path::new("adapters"),
+            "must resolve to the adapter's own (relative) tree root, not trees[0] (\"src\")"
         );
     }
 
