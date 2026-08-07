@@ -15,9 +15,12 @@ path = "src/lib.rs"
 [dependencies]
 # Spans, AST, CompileError, Severity.
 bynk-syntax.workspace = true
-# Resolver/checker + the captured index/hints/expr_types/locals tables.
+# Resolver/checker + the captured index/hints/expr_types/locals tables;
+# `analyse_project` (the non-bailing project analysis) lives here too
+# (`bynk_check::analysis`, P4.1/#1115).
 bynk-check.workspace = true
-# `analyse_project` (the non-bailing project analysis) lives in the project driver.
-bynk-emit.workspace = true
+# Project discovery, `Roots`/`ProjectPaths`, and path helpers (P4.2, #1122:
+# repointed off `bynk-emit`, which only re-exported these).
+bynk-project.workspace = true
 # Signature rendering for hover/completion docs (#808).
 bynk-fmt.workspace = true

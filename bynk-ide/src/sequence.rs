@@ -21,7 +21,7 @@
 //! one `Return` message: the callee's own body is never walked, even where
 //! reachable (an agent's handlers are visible via [`ContextSequenceInfo::agents`]).
 
-use bynk_emit::project::ContextSequenceInfo;
+use bynk_check::analysis::ContextSequenceInfo;
 use bynk_syntax::ast::*;
 use bynk_syntax::span::Span;
 
@@ -1008,7 +1008,7 @@ service nestedService {
 }
 "#;
 
-    fn misc_info(diag: &crate::ProjectDiagnostics) -> bynk_emit::project::ContextSequenceInfo {
+    fn misc_info(diag: &crate::ProjectDiagnostics) -> bynk_check::analysis::ContextSequenceInfo {
         diag.sequence_info
             .get("misc")
             .cloned()

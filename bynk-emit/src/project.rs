@@ -72,7 +72,7 @@ pub use bynk_check::project_model::BuildTarget;
 pub use bynk_check::symbols::{FileDeclIndex, UnitTable};
 pub use bynk_project::{
     AttributedError, ProjectPaths, ProjectPathsError, Roots, SchemaLock, UnitKind,
-    try_read_project_paths, try_read_project_paths_with, worker_dir_name,
+    discover_project_files, try_read_project_paths, try_read_project_paths_with, worker_dir_name,
     worker_handlers_output_path, worker_handlers_source_path,
 };
 pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
@@ -713,42 +713,6 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             Ok(out)
         }
     }
-}
-
-/// Slice A: the `.bynk` files these roots contain — the **same walk**
-/// `compile_project` performs, honouring `exclude` and the tool's own `out`/
-/// `node_modules` caches.
-///
-/// Exposed so the IDE surface consumes the compiler's discovery instead of
-/// re-deriving a lesser one. The LSP's completion previously hand-rolled a walk
-/// of a single directory with no excludes, which is the same class of defect as
-/// the analysis root itself being wrong.
-pub fn discover_project_files(roots: &Roots) -> Vec<PathBuf> {
-    let trees = roots.trees();
-    let excludes = roots.excludes();
-    let mut out = Vec::new();
-    for (root, _prefix) in &trees {
-        // Every tree past the first is optional — a project may simply have
-        // no such subtree (R3.9, #1113: every `include` entry is walked, not
-        // just the first two). `unwrap_or_default` already treats a missing
-        // root the same as "no files here" for every tree, first included —
-        // no need to `root.exists()` before calling `discover_bynk_files`
-        // (itself a `fs::read_dir`) just to decide whether to call it: that
-        // would cost a redundant `stat()` per tree for the same answer.
-        out.extend(discover_bynk_files(root, &excludes).unwrap_or_default());
-    }
-    out.sort();
-    out.dedup();
-    out
-}
-
-/// #302: the qualified name a file moved from `old_rel` to `new_rel` should
-/// now declare, preserving whichever single-file/multi-file arrangement
-/// (`check_path_name_alignment`) `old_rel` used to satisfy against
-/// `old_name`. Exposed so the LSP's `workspace/willRenameFiles` handler
-/// reuses the compiler's own path↔name rules instead of re-deriving them.
-pub fn renamed_unit_name(old_rel: &Path, old_name: &str, new_rel: &Path) -> Option<String> {
-    bynk_project::paths::renamed_unit_name(old_rel, old_name, new_rel)
 }
 
 /// v0.24: analyse a project without building — non-bailing, overlay-aware,

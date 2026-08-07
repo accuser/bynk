@@ -11,7 +11,7 @@ use bynk_syntax::lexer;
 use bynk_syntax::parser;
 use bynk_syntax::span::Span;
 
-use crate::roots::UnitKind;
+use crate::roots::{Roots, UnitKind};
 
 /// v0.118: a case's *effective* tier — its own `as <tier>`, else the suite
 /// default, else `unit`.
@@ -475,6 +475,34 @@ pub fn discover_bynk_files(
     }
     out.sort();
     Ok(out)
+}
+
+/// Slice A: the `.bynk` files these roots contain — the **same walk**
+/// `compile_project` performs, honouring `exclude` and the tool's own `out`/
+/// `node_modules` caches.
+///
+/// P4.2 (#1122, Decision B): moved here from `bynk-emit/src/project.rs` — its
+/// body called only `bynk-project`-local functions already, with no
+/// `bynk-emit`-specific state. `bynk-emit` re-exports it at its existing
+/// `bynk_emit::project::discover_project_files` path so `read_disk_sources`
+/// and `bynk-testkit` need no edit; `bynk-ide` calls this path directly.
+pub fn discover_project_files(roots: &Roots) -> Vec<PathBuf> {
+    let trees = roots.trees();
+    let excludes = roots.excludes();
+    let mut out = Vec::new();
+    for (root, _prefix) in &trees {
+        // Every tree past the first is optional — a project may simply have
+        // no such subtree (R3.9, #1113: every `include` entry is walked, not
+        // just the first two). `unwrap_or_default` already treats a missing
+        // root the same as "no files here" for every tree, first included —
+        // no need to `root.exists()` before calling `discover_bynk_files`
+        // (itself a `fs::read_dir`) just to decide whether to call it: that
+        // would cost a redundant `stat()` per tree for the same answer.
+        out.extend(discover_bynk_files(root, &excludes).unwrap_or_default());
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 pub fn check_file_directory_conflicts(

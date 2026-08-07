@@ -571,8 +571,8 @@ No slice cites `R3.11`: §3.5 found it already closed by prior paydown (#1078), 
 `bynk-greenfield-compiler.md` by this settling pass, so there is no open rule left for a slice to close.
 
 **Completion probe:** `ide_emit_edge` = absent. Already built (T0.0's probe harness, `xtask
-greenfield-status`) and CI-gated (`greenfield_status_table_is_current`); reads **present** as of this
-settling pass.
+greenfield-status`) and CI-gated (`greenfield_status_table_is_current`); read **present** as of this
+settling pass, now **absent** since P4.2 (#1122) repointed `bynk-ide`.
 
 ---
 
