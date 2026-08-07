@@ -20,8 +20,7 @@ use bynk_syntax::ast::{
 /// exactly — never the in-memory `tag` discriminant, and never a qualified
 /// reference like `Region.Domestic` into a value namespace the emitting
 /// module may not import), so it can be spliced in as the field's raw JSON
-/// access and re-enter `emit_field_deserialise` (`bynk-emit`) completely
-/// unchanged.
+/// access and re-enter [`emit_field_deserialise`] completely unchanged.
 ///
 /// `Err(reason)` for anything not closed-form. The caller
 /// (`bynk-emit/src/project/validate.rs`'s event-field-default check) turns
@@ -117,9 +116,8 @@ pub fn lower_field_default_wire(
 
 /// The wire form of a base-type literal — the raw literal a real wire value
 /// of this base type would also be, so it re-enters
-/// `emit_field_deserialise`'s (`bynk-emit`) ordinary `typeof`/
-/// `Number.isInteger` checks unchanged. `Bytes` has no literal syntax, so it
-/// is not admitted.
+/// [`emit_field_deserialise`]'s ordinary `typeof`/`Number.isInteger` checks
+/// unchanged. `Bytes` has no literal syntax, so it is not admitted.
 /// A qualified `TypeName.method(args)` call, in whichever `ExprKind` shape it
 /// actually parses as. Confirmed empirically (`OrderId.unsafe("x")` parses to
 /// `ExprKind::MethodCall { receiver: Ident("OrderId"), method: "unsafe", .. }`
