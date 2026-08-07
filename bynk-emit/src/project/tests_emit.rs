@@ -549,7 +549,11 @@ pub(crate) fn process_integration_tests(
             let Some(d) = parsed[i].integration() else {
                 continue;
             };
-            refs.enter_file(&parsed[i].identity_path(), &harness_name, parsed[i].is_synthetic());
+            refs.enter_file(
+                &parsed[i].identity_path(),
+                &harness_name,
+                parsed[i].is_synthetic(),
+            );
             for case in &d.cases {
                 check_integration_case_body(
                     &participants,
@@ -1712,7 +1716,11 @@ fn check_test_bodies(
         };
         // v0.25: test-case edges record in the test file, resolving bare
         // names through the *target* unit's namespace.
-        refs.enter_file(&parsed[i].identity_path(), target_name, parsed[i].is_synthetic());
+        refs.enter_file(
+            &parsed[i].identity_path(),
+            target_name,
+            parsed[i].is_synthetic(),
+        );
         for case in &test_decl.cases {
             check_test_case_body(
                 target_name,

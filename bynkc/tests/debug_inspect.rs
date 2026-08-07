@@ -84,8 +84,11 @@ fn breakpoint_in_bynk_binds_and_pauses_under_node_inspector() {
     // Compile the debug build (`.ts` specifiers) and write it with maps — exactly
     // what `bynkc test --inspect` writes before launching Node.
     let out_root = dir.join("out");
-    let opts = bynk_testkit::compile_options_split(dir.clone(), bynkc::try_read_project_paths(&dir).expect("well-formed fixture manifest"))
-        .import_ext(bynkc::ImportExt::Ts);
+    let opts = bynk_testkit::compile_options_split(
+        dir.clone(),
+        bynkc::try_read_project_paths(&dir).expect("well-formed fixture manifest"),
+    )
+    .import_ext(bynkc::ImportExt::Ts);
     let output = bynkc::compile_project(&opts)
         .map_err(bynkc::ProjectFailure::flatten)
         .unwrap_or_else(|e| panic!("compile failed: {e:?}"));

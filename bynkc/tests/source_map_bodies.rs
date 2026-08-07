@@ -85,8 +85,10 @@ fn gen_line_of(ts: &str, needle: &str) -> usize {
 /// Compile a project (optionally Workers target) and return the `(typescript,
 /// source_map)` of the one output file whose path ends with `suffix`.
 fn compile_file(dir: &Path, workers: bool, suffix: &str) -> (String, String) {
-    let opts =
-        bynk_testkit::compile_options_split(dir.to_path_buf(), bynkc::try_read_project_paths(dir).expect("well-formed fixture manifest"));
+    let opts = bynk_testkit::compile_options_split(
+        dir.to_path_buf(),
+        bynkc::try_read_project_paths(dir).expect("well-formed fixture manifest"),
+    );
     let opts = if workers {
         opts.target(bynkc::BuildTarget::Workers)
     } else {

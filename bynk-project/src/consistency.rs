@@ -89,9 +89,7 @@ pub fn check_directory_name_consistency(
 /// Within a multi-file unit (files sharing a qualified name), every file must
 /// agree on kind. Handled by [`check_group_kind_consistency`]; this check is
 /// the v0.4-style directory-level guard which now defers to it.
-pub fn check_directory_kind_consistency(
-    _parsed: &[ParsedFile],
-) -> Result<(), Vec<CompileError>> {
+pub fn check_directory_kind_consistency(_parsed: &[ParsedFile]) -> Result<(), Vec<CompileError>> {
     Ok(())
 }
 
