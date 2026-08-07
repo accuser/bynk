@@ -55,17 +55,36 @@ impl Roots {
     /// walked and discovered like any other. `pub` so `bynk-driver` walks
     /// exactly the trees `compile_project` would, rather than a
     /// hand-duplicated copy that can silently drift from this one.
+    ///
+    /// Two `include` entries that resolve to the same absolute root (a typo
+    /// like `["src", "src"]`, or two entries a symlink/`..` makes equal)
+    /// collapse to that root's *first* occurrence — the old `Roots::resolve`
+    /// this replaces skipped a secondary tree equal to the primary the same
+    /// way (`split_mode = src_root != tests_root`); without this a duplicate
+    /// entry would be walked and parsed twice, producing spurious
+    /// duplicate-name diagnostics. An empty `include` list falls back to one
+    /// tree at `project_root` itself, matching `Roots::resolve`'s old
+    /// `unwrap_or_default()` primary — every caller that reaches `trees()` is
+    /// meant to go through `ProjectPaths::conventional`/
+    /// `try_read_project_paths`, which never produce an empty list, but
+    /// `ProjectPaths`'s fields are `pub` and this keeps a caller that
+    /// constructs one directly from indexing an empty `Vec`.
     pub fn trees(&self) -> Vec<(PathBuf, PathBuf)> {
         match self {
             Roots::Single(root) => vec![(root.clone(), PathBuf::new())],
             Roots::Split {
                 project_root,
                 paths,
-            } => paths
-                .include
-                .iter()
-                .map(|p| {
+            } => {
+                if paths.include.is_empty() {
+                    return vec![(project_root.clone(), PathBuf::new())];
+                }
+                let mut out: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(paths.include.len());
+                for p in &paths.include {
                     let root = project_root.join(p);
+                    if out.iter().any(|(r, _)| *r == root) {
+                        continue;
+                    }
                     // `.` normalises to an empty prefix — a join identity.
                     // `ProjectPaths::conventional` pushes `"."` for the flat
                     // layout (`.bynk` at the project root, no `src/`), and
@@ -78,9 +97,10 @@ impl Roots {
                     } else {
                         p.clone()
                     };
-                    (root, prefix)
-                })
-                .collect(),
+                    out.push((root, prefix));
+                }
+                out
+            }
         }
     }
 
@@ -238,6 +258,47 @@ mod tests {
         assert_eq!(
             roots.trees(),
             vec![(PathBuf::from("/p/src"), PathBuf::from("src"))]
+        );
+    }
+
+    /// A duplicate `include` entry (a typo like `["src", "src"]`) collapses to
+    /// its first occurrence instead of being walked twice — the pre-R3.9
+    /// `Roots::resolve`'s `split_mode = src_root != tests_root` equality guard,
+    /// preserved here so `phase_discovery`/`phase_parse` don't produce two
+    /// `ParsedFile`s per file.
+    #[test]
+    fn split_duplicate_include_roots_collapse_to_one_tree() {
+        let roots = Roots::Split {
+            project_root: PathBuf::from("/proj"),
+            paths: ProjectPaths {
+                include: vec![PathBuf::from("src"), PathBuf::from("src")],
+                exclude: Vec::new(),
+            },
+        };
+        assert_eq!(
+            roots.trees(),
+            vec![(PathBuf::from("/proj/src"), PathBuf::from("src"))]
+        );
+    }
+
+    /// An empty `include` list (reachable only by constructing `ProjectPaths`
+    /// directly, bypassing `ProjectPaths::conventional`/
+    /// `try_read_project_paths`) falls back to one tree at the project root —
+    /// matching the old `Roots::resolve`'s `unwrap_or_default()` primary —
+    /// instead of an empty `Vec` that leaves callers indexing `trees[0]` to
+    /// panic.
+    #[test]
+    fn split_empty_include_falls_back_to_project_root() {
+        let roots = Roots::Split {
+            project_root: PathBuf::from("/proj"),
+            paths: ProjectPaths {
+                include: Vec::new(),
+                exclude: Vec::new(),
+            },
+        };
+        assert_eq!(
+            roots.trees(),
+            vec![(PathBuf::from("/proj"), PathBuf::new())]
         );
     }
 

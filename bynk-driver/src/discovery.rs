@@ -134,15 +134,20 @@ pub fn read_bynk_tree_single(root: &Path) -> Result<HashMap<PathBuf, String>, Di
 /// primary/secondary pair. `trees[0]` is mandatory (a missing directory is a
 /// real [`DiscoveryError`], same as any other unreadable directory); every
 /// later tree is optional — a conventional `src`-only project simply has no
-/// `tests/` at all — so only its absence is tolerated (`.exists()`).
+/// `tests/` at all — so only its absence is tolerated. Tried via
+/// `read_bynk_tree` itself (a `fs::read_dir`) and its `NotFound` caught for
+/// an optional tree, rather than a `root.exists()` pre-check, which would
+/// cost a redundant `stat()` per optional tree for the same answer.
 pub fn read_bynk_tree_split(
     trees: &[PathBuf],
     excludes: &[PathBuf],
 ) -> Result<HashMap<PathBuf, String>, DiscoveryError> {
     let mut out = HashMap::new();
     for (i, root) in trees.iter().enumerate() {
-        if i == 0 || root.exists() {
-            out.extend(read_bynk_tree(root, excludes)?);
+        match read_bynk_tree(root, excludes) {
+            Ok(files) => out.extend(files),
+            Err(e) if i > 0 && e.source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
     }
     Ok(out)

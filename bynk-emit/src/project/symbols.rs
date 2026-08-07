@@ -84,7 +84,7 @@ pub(crate) fn assemble_index(
             continue;
         }
         let site = |id: &Ident| SiteRef {
-            path: pf.identity_path().clone(),
+            path: pf.identity_path(),
             span: id.span,
         };
         for item in pf.items() {
@@ -246,7 +246,7 @@ pub(crate) fn assemble_index(
                         SymbolKind::Messages,
                         &m.tag,
                         SiteRef {
-                            path: pf.identity_path().clone(),
+                            path: pf.identity_path(),
                             span: m.tag_span,
                         },
                         symbol_modifiers(&unit, None),
@@ -374,11 +374,7 @@ pub(crate) fn build_unit_table(
                 }
             }
         }
-        out.extend(
-            errors
-                .into_iter()
-                .map(|e| (parsed[i].identity_path().clone(), e)),
-        );
+        out.extend(errors.into_iter().map(|e| (parsed[i].identity_path(), e)));
     }
     // v0.15: collect the names a context exports as capabilities.
     // v0.17: adapters export capabilities too.
@@ -556,11 +552,7 @@ pub(crate) fn build_unit_table(
                 _ => {}
             }
         }
-        out.extend(
-            errors
-                .into_iter()
-                .map(|e| (parsed[i].identity_path().clone(), e)),
-        );
+        out.extend(errors.into_iter().map(|e| (parsed[i].identity_path(), e)));
     }
     for &i in indices {
         let mut errors: Vec<CompileError> = Vec::new();
@@ -637,11 +629,7 @@ pub(crate) fn build_unit_table(
                 }
             }
         }
-        out.extend(
-            errors
-                .into_iter()
-                .map(|e| (parsed[i].identity_path().clone(), e)),
-        );
+        out.extend(errors.into_iter().map(|e| (parsed[i].identity_path(), e)));
     }
     // message-bundles slice 1 (#859): a commons declaring at least one
     // `messages` block also gets a synthetic `render(tag: LocaleTag, msg:
@@ -768,7 +756,7 @@ pub(crate) fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) ->
         methods: HashMap::new(),
     };
     for &i in indices {
-        let path = parsed[i].source_path().clone();
+        let path = parsed[i].source_path();
         for item in parsed[i].items() {
             match item {
                 CommonsItem::Type(t) => {
@@ -1166,7 +1154,7 @@ pub(crate) fn detect_context_message_bundle(
             if has_reference {
                 found.push(MessageBundleInfo {
                     commons: target.clone(),
-                    source_path: parsed[i].source_path().clone(),
+                    source_path: parsed[i].source_path(),
                 });
                 break;
             }
