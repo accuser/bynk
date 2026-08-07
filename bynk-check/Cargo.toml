@@ -27,4 +27,6 @@ regress.workspace = true
 # entry point against bynk-emit's `analyse_project_with`. A dev-dependency
 # only (excluded from library builds), so this doesn't invert the real
 # bynk-emit -> bynk-check dependency edge.
+# P4.1-only: remove alongside tests/differential_analysis.rs once phase 5
+# deletes `run_checks`'s `Mode::Analyse` arm and the fixture self-deletes.
 bynk-emit.workspace = true

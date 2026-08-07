@@ -133,6 +133,88 @@ fn render(errors: &[AttributedError]) -> Vec<RenderedError> {
         .collect()
 }
 
+fn sorted_keys<K: Ord + Clone, V>(m: &HashMap<K, V>) -> Vec<K> {
+    let mut ks: Vec<K> = m.keys().cloned().collect();
+    ks.sort();
+    ks
+}
+
+/// Structural parity beyond `errors`/`unit_sources`: every other
+/// `ProjectAnalysis` field `bynk-ide` reads and P4.2 exists to repoint —
+/// review feedback on #1117 (a differential fixture that pins two of twelve
+/// fields "cannot observe" a divergence in the other ten by construction).
+/// `ty_intern` is deliberately excluded: it is an opaque per-call intern
+/// table (`Types` exposes no length accessor), and the two paths build
+/// independent tables, so comparing them carries no signal beyond what
+/// `expr_types`'s key set (compared here) already pins.
+fn assert_structural_parity(legacy: &analysis::ProjectAnalysis, new: &analysis::ProjectAnalysis) {
+    assert_eq!(
+        legacy.snapshots.len(),
+        new.snapshots.len(),
+        "snapshots (files read) must agree"
+    );
+    assert_eq!(
+        sorted_keys(&legacy.hints),
+        sorted_keys(&new.hints),
+        "hints' file coverage must agree"
+    );
+    assert_eq!(
+        sorted_keys(&legacy.expr_types),
+        sorted_keys(&new.expr_types),
+        "expr_types' file coverage must agree"
+    );
+    assert_eq!(
+        sorted_keys(&legacy.locals),
+        sorted_keys(&new.locals),
+        "locals' file coverage must agree"
+    );
+    assert_eq!(
+        sorted_keys(&legacy.requirements),
+        sorted_keys(&new.requirements),
+        "requirements' file coverage must agree"
+    );
+    assert_eq!(
+        sorted_keys(&legacy.sequence_info),
+        sorted_keys(&new.sequence_info),
+        "sequence_info's unit coverage must agree"
+    );
+    assert_eq!(
+        sorted_keys(&legacy.boundary_info),
+        sorted_keys(&new.boundary_info),
+        "boundary_info's unit coverage must agree"
+    );
+    assert_eq!(
+        sorted_keys(&legacy.doc_scope),
+        sorted_keys(&new.doc_scope),
+        "doc_scope's unit coverage must agree"
+    );
+    assert_eq!(
+        legacy.index.symbols.len(),
+        new.index.symbols.len(),
+        "index.symbols must agree"
+    );
+    assert_eq!(
+        legacy.index.foreign_refs.len(),
+        new.index.foreign_refs.len(),
+        "index.foreign_refs must agree"
+    );
+    assert_eq!(
+        legacy.index.calls.len(),
+        new.index.calls.len(),
+        "index.calls must agree"
+    );
+    assert_eq!(
+        legacy.index.impls.len(),
+        new.index.impls.len(),
+        "index.impls must agree"
+    );
+    assert_eq!(
+        legacy.index.refinements.len(),
+        new.index.refinements.len(),
+        "index.refinements must agree"
+    );
+}
+
 #[test]
 fn new_entry_point_matches_analyse_project_with_on_a_clean_project() {
     let (root, overlay) = setup_project(
@@ -172,6 +254,8 @@ fn new_entry_point_matches_analyse_project_with_on_a_clean_project() {
     legacy_units.sort();
     new_units.sort();
     assert_eq!(legacy_units, new_units);
+
+    assert_structural_parity(&legacy, &new);
 }
 
 /// Same fixture, but with an obvious semantic error (an unknown `given`
@@ -201,5 +285,64 @@ fn new_entry_point_matches_analyse_project_with_on_a_broken_project() {
     assert!(
         !legacy_rendered.is_empty(),
         "fixture must actually be broken (regression guard for the fixture itself)"
+    );
+
+    assert_structural_parity(&legacy, &new);
+}
+
+/// Category 7 (test/integration-suite processing) is the one residual gap
+/// that isn't merely *avoided* by the other two fixtures — this pins the
+/// divergence itself, per review feedback on #1117 that a fixture shaped to
+/// dodge every gap can't also catch a regression in how a gap is described.
+/// `bynk-emit`'s own
+/// `check_project_reports_a_test_body_error_past_an_earlier_structural_error`
+/// is the analogous legacy-side pin.
+#[test]
+fn new_entry_point_omits_test_body_diagnostics() {
+    const MATH_SRC: &str = "commons demo.math\n\nfn double(n: Int) -> Int { n * 2 }\n";
+    const TEST_SRC: &str = "suite demo.math\n\ncase \"broken\" {\n  let x: Int = \"not an int\"\n  let y = double(1)\n  expect y == 2\n}\n";
+
+    let (root, overlay) = setup_project(
+        "test_body_gap",
+        &[
+            ("demo/math.bynk", MATH_SRC),
+            ("tests/math_test.bynk", TEST_SRC),
+        ],
+    );
+    let roots = Roots::Single(root);
+
+    let legacy = bynk_emit::project::analyse_project_with(&roots, &overlay);
+    let new = analysis::analyse_project(&roots, &overlay);
+
+    let legacy_categories: Vec<&str> = legacy.errors.iter().map(|a| a.error.category).collect();
+    let new_categories: Vec<&str> = new.errors.iter().map(|a| a.error.category).collect();
+    assert!(
+        legacy_categories.contains(&"bynk.types.let_annotation_mismatch"),
+        "legacy path must report the test body's own type error: {legacy_categories:?}"
+    );
+    assert!(
+        !new_categories.contains(&"bynk.types.let_annotation_mismatch"),
+        "this pins category 7 as a real, current gap — once it closes, tighten this \
+         assertion (and the doc comment) rather than deleting the test: {new_categories:?}"
+    );
+
+    // The second consequence: the test file's `double(1)` call is a binding
+    // edge (a ref on `double`'s index entry) the legacy path's index has and
+    // the new path's doesn't, because `process_tests` never runs here to
+    // record it (`&mut RefSink`) — the concrete go-to-definition-inside-a-
+    // test-file regression the doc comment now names.
+    let total_refs = |a: &analysis::ProjectAnalysis| {
+        a.index
+            .symbols
+            .values()
+            .map(|e| e.refs.len())
+            .sum::<usize>()
+    };
+    assert!(
+        total_refs(&legacy) > total_refs(&new),
+        "legacy index must have at least the test file's reference to `double` \
+         that the new path's index lacks: legacy={}, new={}",
+        total_refs(&legacy),
+        total_refs(&new)
     );
 }

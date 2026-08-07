@@ -275,11 +275,11 @@ fn lower_record_default(
 }
 
 /// Escapes a string for embedding in a TypeScript double-quoted string
-/// literal. Deliberately mirrors `bynk-emit::emitter::escape_ts_string`
-/// rather than sharing it — that function has ~65 unrelated call sites
-/// across the emitter's real emission code, not worth coupling to for this
-/// one checking-side use.
-fn escape_ts_literal(s: &str) -> String {
+/// literal. `pub` because `bynk-emit`'s `escape_ts_string` (~65 call sites
+/// across the emitter's real emission code) delegates here rather than
+/// keeping its own copy — the two must stay byte-identical since both
+/// splice into generated TypeScript, so this is the one shared definition.
+pub fn escape_ts_literal(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
