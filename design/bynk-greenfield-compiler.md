@@ -2529,9 +2529,9 @@ table otherwise reflects the 30 July measurement date; that one row does not.
 | R3.3 | no probe yet — today's pipeline has no discrete phase-output types to check for `PartialEq`/serialisation against; T0.0 or a later phase must define what "measured" means here | not costed |
 | R3.5 | registered `bynk.*` codes in `bynk-emit` = **200** (was a counted 190 at review — **growing**) | very large; staged order starts with `icu.rs` + `websocket::analyse_open_shape` |
 | R3.6 | `type_refs_match` = 0 ✅ **landed** | none |
-| R3.7 | no `bynk-project` crate | medium |
-| R3.8 | `read_project_paths` still total | small |
-| R3.9 | `Roots` still models the removed role split | small |
+| R3.7 | `bynk-project` crate exists ✅ **landed** (P4.0, #1113) — discovery, the unit graph, path resolution, consistency checks, the schema-registry document's read/write halves, and `AttributedError` moved out of `bynk-emit`; public surface enumerated (R10.4-style), no blanket `pub use` | none |
+| R3.8 | `read_project_paths` deleted ✅ **landed** (P4.0, #1113) — all 18 callers moved onto `try_read_project_paths`, surfacing `ProjectPathsError` instead of silently falling back to the conventional layout | none |
+| R3.9 | `Roots::trees` walks every `[paths] include` entry ✅ **landed** (P4.0, #1113) — no longer a hardcoded primary/secondary pair; a 3+-entry `include` list is discovered in full instead of silently dropping `include[2..]` | none |
 | R3.10 | `certify` = 0; `RecordCheck::partial_expr_types` exists as the seam | small — the shape is there, it needs to be the only path |
 | R3.11 | `CompileOptions::schema_registry` threaded end-to-end (`bynkc/src/main.rs`'s `schema_lock::read`/`write` round trip); every non-`Build` `run_checks` caller passes an explicit `SchemaLock::Off` (#1078), not an ambient read ✅ **landed** — closed by prior paydown, not this row's original 30 July 2026 measurement; corrected 6 August 2026 per `design/tracks/project-model.md` §3.5 | none |
 | R3.12 | no editor-query table | small to write, valuable immediately |

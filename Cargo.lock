@@ -203,6 +203,7 @@ name = "bynk-emit"
 version = "0.247.23"
 dependencies = [
  "bynk-check",
+ "bynk-project",
  "bynk-syntax",
  "serde",
  "toml",
@@ -253,6 +254,15 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "bynk-project"
+version = "0.247.23"
+dependencies = [
+ "bynk-syntax",
+ "serde",
+ "toml",
 ]
 
 [[package]]

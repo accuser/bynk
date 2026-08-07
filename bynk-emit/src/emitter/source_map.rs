@@ -22,7 +22,7 @@
 
 use bynk_syntax::span::{LineIndex, Span};
 
-use crate::json::json_string;
+use bynk_project::json_string;
 
 /// Accumulates source-map checkpoints during emission. Lives behind a `RefCell`
 /// on `LowerCtx` so the deep lowering chain and the declaration loop can both

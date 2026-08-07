@@ -53,7 +53,7 @@ fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
     let build = dir.join("build");
     let opts = bynk_testkit::compile_options_split(
         dir.clone(),
-        bynk_emit::project::read_project_paths(&dir),
+        bynk_emit::project::try_read_project_paths(&dir).expect("well-formed fixture manifest"),
     )
     .target(bynk_emit::project::BuildTarget::Workers);
     let out = bynk_emit::project::compile_project(&opts)

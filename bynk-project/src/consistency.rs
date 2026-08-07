@@ -1,4 +1,11 @@
-use super::*;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+
+use bynk_syntax::error::CompileError;
+
+use crate::discovery::ParsedFile;
+use crate::paths::unit_path_matches;
+use crate::roots::UnitKind;
 
 /// Within a multi-file unit (i.e., 2+ files in the same directory that share
 /// a qualified name), every file must declare exactly the same name.
@@ -14,7 +21,7 @@ use super::*;
 /// file's source. The "first file" it compares against is a *different* file, so
 /// its location is carried as a note (not a label, which would underline this
 /// file's own text).
-pub(crate) fn check_directory_name_consistency(
+pub fn check_directory_name_consistency(
     parsed: &[ParsedFile],
 ) -> Result<(), Vec<(PathBuf, CompileError)>> {
     let mut errors: Vec<(PathBuf, CompileError)> = Vec::new();
@@ -82,7 +89,7 @@ pub(crate) fn check_directory_name_consistency(
 /// Within a multi-file unit (files sharing a qualified name), every file must
 /// agree on kind. Handled by [`check_group_kind_consistency`]; this check is
 /// the v0.4-style directory-level guard which now defers to it.
-pub(crate) fn check_directory_kind_consistency(
+pub fn check_directory_kind_consistency(
     _parsed: &[ParsedFile],
 ) -> Result<(), Vec<CompileError>> {
     Ok(())
@@ -92,7 +99,7 @@ pub(crate) fn check_directory_kind_consistency(
 /// arrangements are valid:
 /// - **Single-file**: `a/b/c.bynk` declaring `a.b.c`.
 /// - **Multi-file**: `a/b/c/<any>.bynk` declaring `a.b.c`.
-pub(crate) fn check_path_name_alignment(
+pub fn check_path_name_alignment(
     parsed: &[ParsedFile],
 ) -> Result<(), Vec<(PathBuf, CompileError)>> {
     let mut errors: Vec<(PathBuf, CompileError)> = Vec::new();
@@ -131,7 +138,7 @@ pub(crate) fn check_path_name_alignment(
 }
 
 /// Files grouped by qualified name must agree on kind (even across directories).
-pub(crate) fn check_group_kind_consistency(
+pub fn check_group_kind_consistency(
     parsed: &[ParsedFile],
     groups: &BTreeMap<String, Vec<usize>>,
 ) -> Result<(), Vec<(PathBuf, CompileError)>> {

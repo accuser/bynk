@@ -1,15 +1,19 @@
 //! Regression: `bynk.toml` is the one input a user hand-edits that the
-//! compiler used to read without checking. `read_project_paths` was total by
-//! construction — a syntax error, a typo'd `[paths]` key, or an `include` list
-//! longer than `Roots` supports (a residual of the src/tests role split
-//! v0.113 removed) all silently fell back to the conventional layout with no
-//! diagnostic and exit 0, after which the user would only see a downstream
-//! cascade (e.g. `bynk.uses.unknown_target` pointing at units that plainly
-//! exist on disk) with no hint at the real cause.
+//! compiler used to read without checking. The deleted `read_project_paths`
+//! was total by construction — a syntax error or a typo'd `[paths]` key both
+//! silently fell back to the conventional layout with no diagnostic and exit
+//! 0, after which the user would only see a downstream cascade (e.g.
+//! `bynk.uses.unknown_target` pointing at units that plainly exist on disk)
+//! with no hint at the real cause. `try_read_project_paths` (R3.8, #1113)
+//! surfaces both instead.
 //!
-//! Drives the real `bynkc check` CLI against three malformed-config fixtures
-//! and asserts each now fails loudly with an actionable message, instead of
-//! silently succeeding.
+//! Drives the real `bynkc check` CLI against the two malformed-config
+//! fixtures and asserts each now fails loudly with an actionable message,
+//! instead of silently succeeding — plus the R3.9 (#1113) counterpart: an
+//! `include` list of three or more roots used to be capped at two
+//! (`too_many_include_roots`, silently dropping the third tree); `Roots::trees`
+//! now walks every entry, so the same shape of fixture must instead *succeed*
+//! and discover all three trees.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -45,12 +49,13 @@ fn a_typo_d_paths_key_fails_loudly_instead_of_being_silently_ignored() {
     );
 }
 
+/// R3.9 (#1113): a three-entry `[paths] include` used to be rejected
+/// (`ProjectPathsError::TooManyIncludeRoots`) — now every entry is a real
+/// tree `Roots::trees` walks, so a well-formed three-root project must
+/// compile clean, with all three trees' units visible to each other (the
+/// `tests/` suite calls `demo.f`, declared in `src/`).
 #[test]
-fn more_than_two_include_roots_fails_loudly_instead_of_silently_dropping_trees() {
-    let (ok, out) = check("tests/fixtures/behaviour/too_many_include_roots");
-    assert!(!ok, "expected failure, but the build succeeded:\n{out}");
-    assert!(
-        out.contains("include") && out.contains('3'),
-        "expected a diagnostic naming the unsupported include count, got:\n{out}"
-    );
+fn three_or_more_include_roots_are_all_discovered() {
+    let (ok, out) = check("tests/fixtures/behaviour/three_or_more_include_roots");
+    assert!(ok, "expected success, but the build failed:\n{out}");
 }

@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Duration;
 
-use bynk_emit::project::read_project_paths;
+use bynk_emit::project::{ProjectPaths, try_read_project_paths};
 
 use crate::compiler::Compiler;
 use crate::doctor::{self, Capability, Context, DoctorOptions, Report};
@@ -376,7 +376,14 @@ fn reap(child: &mut std::process::Child) {
 /// watch.
 fn watch_fingerprint(project_root: &Path) -> u64 {
     use std::hash::{Hash, Hasher};
-    let paths = read_project_paths(project_root);
+    // The watch loop's own fingerprint has no error channel to surface a
+    // malformed `bynk.toml` through — the CLI's real build/check paths
+    // (`bynk-driver::project_options`) already do that, via
+    // `try_read_project_paths_with`. This falls back to the conventional
+    // layout on any error, same as `read_project_paths`'s deleted total form
+    // (R3.8, #1113) always did for this one call site.
+    let paths = try_read_project_paths(project_root)
+        .unwrap_or_else(|_| ProjectPaths::conventional(project_root));
     let excludes: Vec<PathBuf> = paths.exclude.iter().map(|e| project_root.join(e)).collect();
     let mut entries: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
     let record = |path: &Path, entries: &mut Vec<(PathBuf, std::time::SystemTime, u64)>| {

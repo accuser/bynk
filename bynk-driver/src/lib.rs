@@ -77,7 +77,7 @@ pub fn try_project_options(input: &Path) -> Result<CompileOptions, ProjectOption
 /// fallback-free CLI path. A missing/unreadable `bynk.toml` yields an empty
 /// overlay, which `try_read_project_paths_with` already treats as "no
 /// manifest" (falls back to the conventional layout) — the same degrade
-/// `read_project_paths`/`try_read_project_paths` used to provide.
+/// `try_read_project_paths` itself provides.
 fn manifest_overlay(input: &Path) -> HashMap<PathBuf, String> {
     let toml_path = input.join("bynk.toml");
     match fs::read_to_string(&toml_path) {
@@ -89,7 +89,7 @@ fn manifest_overlay(input: &Path) -> HashMap<PathBuf, String> {
 /// The split-layout half of `project_options`/`try_project_options`: build the
 /// one `Roots` value the project resolves to, walk exactly that (via
 /// [`discovery::sources_for_roots`] — #1081 review, so the CLI's walk can't
-/// drift from what `Roots::resolve`/`Roots::excludes` themselves say), and
+/// drift from what `Roots::trees`/`Roots::excludes` themselves say), and
 /// hand the result to `CompileOptions::split` alongside it.
 fn options_for_split(
     input: &Path,

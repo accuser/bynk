@@ -1,4 +1,5 @@
 use super::*;
+use bynk_project::AttributedError;
 
 /// Internal: do the work, given a source root (for commons/contexts) and a
 /// test root (for test units). When both roots are the same path the
@@ -13,16 +14,6 @@ use super::*;
 pub(crate) enum Mode {
     Build,
     Analyse,
-}
-
-/// v0.24 (ADR 0052): a compile error attributed — where possible — to the
-/// project-relative source file it belongs to, tagged at the collection
-/// point (the phase that produced it knows which file it was processing).
-/// `None` is the project-level bucket: validations spanning files
-/// (group/cycle/directory consistency) with no single owning file.
-pub struct AttributedError {
-    pub source_path: Option<PathBuf>,
-    pub error: CompileError,
 }
 
 /// Collection-point error sink (ADR 0052). Helpers keep their plain

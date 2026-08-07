@@ -28,7 +28,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::json::json_string;
+use bynk_project::json_string;
 
 use bynk_check::actors::SumMemberSeam;
 use bynk_syntax::CompileError;

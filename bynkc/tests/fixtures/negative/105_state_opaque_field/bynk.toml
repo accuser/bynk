@@ -2,6 +2,4 @@
 name = "state-opaque-field"
 version = "0.1.0"
 [paths]
-src = "src"
-tests = "tests"
-out = "out"
+include = ["src", "tests"]

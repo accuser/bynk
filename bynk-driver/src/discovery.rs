@@ -126,23 +126,24 @@ pub fn read_bynk_tree_single(root: &Path) -> Result<HashMap<PathBuf, String>, Di
     read_bynk_tree(root, &[])
 }
 
-/// [`read_bynk_tree`] merged across a split project's up-to-two `include`
-/// roots (`src`/`tests`), matching `Roots::Split`'s own `resolve()` shape —
-/// the primary root's `paths.exclude` (plus the tool's own `out`/
-/// `node_modules` caches) applies to both.
+/// [`read_bynk_tree`] merged across every one of a split project's `include`
+/// roots, matching `Roots::trees`' shape — the primary root's `paths.exclude`
+/// (plus the tool's own `out`/`node_modules` caches) applies to all of them.
 ///
-/// #1081 review: the secondary root is optional in a way the primary is not —
-/// a conventional `src`-only project has no `tests/` at all — so only its
-/// absence is tolerated (`.exists()`); a missing *primary* root surfaces as a
-/// real [`DiscoveryError`], same as any other unreadable directory.
+/// R3.9 (#1113): walks every tree `Roots::trees` resolves to, not a hardcoded
+/// primary/secondary pair. `trees[0]` is mandatory (a missing directory is a
+/// real [`DiscoveryError`], same as any other unreadable directory); every
+/// later tree is optional — a conventional `src`-only project simply has no
+/// `tests/` at all — so only its absence is tolerated (`.exists()`).
 pub fn read_bynk_tree_split(
-    primary_root: &Path,
-    secondary_root: &Path,
+    trees: &[PathBuf],
     excludes: &[PathBuf],
 ) -> Result<HashMap<PathBuf, String>, DiscoveryError> {
-    let mut out = read_bynk_tree(primary_root, excludes)?;
-    if secondary_root != primary_root && secondary_root.exists() {
-        out.extend(read_bynk_tree(secondary_root, excludes)?);
+    let mut out = HashMap::new();
+    for (i, root) in trees.iter().enumerate() {
+        if i == 0 || root.exists() {
+            out.extend(read_bynk_tree(root, excludes)?);
+        }
     }
     Ok(out)
 }
@@ -151,19 +152,19 @@ pub fn read_bynk_tree_split(
 ///
 /// #1081 review: this used to re-implement `Roots::resolve`/`Roots::excludes`
 /// verbatim (down to the hardcoded `out`/`node_modules` cache list) because
-/// those were private to `bynk-emit`. Now that they're `pub`, this calls them
-/// directly — one definition of "which files are in this project", shared by
-/// the CLI's own walk and `compile_project`'s in-memory partitioning, so the
-/// two can no longer drift.
+/// those were private to `bynk-emit`. Now that they're `pub` (moved to
+/// `bynk-project`, #1113), this calls them directly — one definition of
+/// "which files are in this project", shared by the CLI's own walk and
+/// `compile_project`'s in-memory partitioning, so the two can no longer drift.
 pub fn sources_for_roots(roots: &Roots) -> Result<HashMap<PathBuf, String>, DiscoveryError> {
-    let (primary, secondary) = roots.resolve();
-    read_bynk_tree_split(&primary, &secondary, &roots.excludes())
+    let trees: Vec<PathBuf> = roots.trees().into_iter().map(|(root, _)| root).collect();
+    read_bynk_tree_split(&trees, &roots.excludes())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bynk_emit::project::{ProjectPaths, read_project_paths};
+    use bynk_emit::project::{ProjectPaths, try_read_project_paths};
     use std::fs;
 
     /// A throwaway on-disk directory tree, removed on drop (including on
@@ -246,20 +247,51 @@ mod tests {
     fn split_secondary_root_is_optional_but_primary_is_not() {
         // `tests/` need not exist for a `src`-only project.
         let root = scratch("split_no_secondary", &[("src/a.bynk", "context a\n")]);
-        let found = read_bynk_tree_split(&root.0.join("src"), &root.0.join("tests"), &[])
+        let found = read_bynk_tree_split(&[root.0.join("src"), root.0.join("tests")], &[])
             .expect("a missing secondary root is tolerated");
         assert_eq!(found.len(), 1);
 
         // A missing *primary* root is a real error, matching the review's
         // "missing include root panics instead of erroring" finding.
         let missing_primary = root.0.join("does-not-exist");
-        read_bynk_tree_split(&missing_primary, &root.0.join("tests"), &[])
+        read_bynk_tree_split(&[missing_primary, root.0.join("tests")], &[])
             .expect_err("a missing primary root must error, not panic");
     }
 
-    /// The `include.len()` == 0/1/2 branches `Roots::Split::resolve` takes,
-    /// exercised through `sources_for_roots` the way `project_options` calls
-    /// it — the file set a real `bynk.toml` project resolves to.
+    /// R3.9 (#1113): three or more `include` roots are all merged — not just
+    /// the first two — exercised through `sources_for_roots` the way
+    /// `project_options` calls it — the file set a real `bynk.toml` project
+    /// resolves to.
+    #[test]
+    fn sources_for_roots_merges_three_or_more_include_roots() {
+        let root = scratch(
+            "many_includes",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"x\"\n\n[paths]\ninclude = [\"src\", \"tests\", \"examples\"]\n",
+                ),
+                ("src/a.bynk", "context a\n"),
+                ("tests/a.bynk", "suite a\n"),
+                ("examples/e.bynk", "context e\n"),
+            ],
+        );
+        let paths: ProjectPaths =
+            try_read_project_paths(&root.0).expect("well-formed fixture manifest");
+        let roots = Roots::Split {
+            project_root: root.0.clone(),
+            paths,
+        };
+        let found = sources_for_roots(&roots).expect("a well-formed project must not error");
+        assert_eq!(found.len(), 3, "found: {:?}", found.keys().collect::<Vec<_>>());
+        assert!(found.contains_key(&root.0.join("src/a.bynk")));
+        assert!(found.contains_key(&root.0.join("tests/a.bynk")));
+        assert!(found.contains_key(&root.0.join("examples/e.bynk")));
+    }
+
+    /// The `include.len()` == 0/1/2 branches, exercised through
+    /// `sources_for_roots` the way `project_options` calls it — the file set
+    /// a real `bynk.toml` project resolves to.
     #[test]
     fn sources_for_roots_matches_a_conventional_split_project() {
         let root = scratch(
@@ -270,7 +302,8 @@ mod tests {
                 ("tests/a.bynk", "suite a\n"),
             ],
         );
-        let paths: ProjectPaths = read_project_paths(&root.0);
+        let paths: ProjectPaths =
+            try_read_project_paths(&root.0).expect("well-formed fixture manifest");
         let roots = Roots::Split {
             project_root: root.0.clone(),
             paths,

@@ -49,6 +49,7 @@ fn codes_used_in_source() -> BTreeSet<String> {
     collect(&manifest.join("src"), &re, &mut codes);
     collect(&manifest.join("../bynk-syntax/src"), &re, &mut codes);
     collect(&manifest.join("../bynk-check/src"), &re, &mut codes);
+    collect(&manifest.join("../bynk-project/src"), &re, &mut codes);
     collect(&manifest.join("../bynk-emit/src"), &re, &mut codes);
     codes
 }

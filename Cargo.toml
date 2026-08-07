@@ -3,6 +3,7 @@ members = [
     "bynk-syntax",
     "bynk-render",
     "bynk-check",
+    "bynk-project",
     "bynk-emit",
     "bynk-driver",
     "bynk-strip",
@@ -64,6 +65,7 @@ wildcard_enum_match_arm = "warn"
 bynk-syntax = { path = "bynk-syntax", version = "0.247.23" }
 bynk-render = { path = "bynk-render", version = "0.247.23" }
 bynk-check = { path = "bynk-check", version = "0.247.23" }
+bynk-project = { path = "bynk-project", version = "0.247.23" }
 bynk-emit = { path = "bynk-emit", version = "0.247.23" }
 bynk-driver = { path = "bynk-driver", version = "0.247.23" }
 bynk-strip = { path = "bynk-strip", version = "0.247.23" }

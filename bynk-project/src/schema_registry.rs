@@ -1,0 +1,220 @@
+//! Events track, slice 3c (#980): the cross-build schema registry's document
+//! shape and (de)serialisation.
+//!
+//! P4.0 (#1113, [DECISION A]): this module used to also hold `reconcile` —
+//! the `bynk_check`-coupled half that diffs a project's live event shapes
+//! against this document (it reads `UnitTable`, which stays in `bynk-emit`
+//! pending P4.1's `bynk-check` entry point). Only the pure, disk-free
+//! document shape and its parse/serialize moved here; `reconcile` and its
+//! helpers (`snapshot`, `canon_type`, `Reconciled`, …) stay in `bynk-emit`'s
+//! own `project/schema_registry.rs`, and reach `SchemaRegistry`'s otherwise-
+//! private `version`/`events` only through [`SchemaRegistry::new`],
+//! [`SchemaRegistry::get`], and [`SchemaRegistry::insert`] — never raw field
+//! access across the crate boundary.
+//!
+//! #1078: this module touches no disk. `parse`/`serialize` are pure —
+//! `bynk.schema.lock`'s content comes in through
+//! `CompileOptions::schema_registry`'s `SchemaLock::On { existing }` and goes
+//! out through `ProjectOutput::schema_lock`; `bynk-driver`'s `schema_lock`
+//! module owns the actual read/atomic-write. `parse` takes a
+//! `project_root: &Path` (#1085 review) purely to name the file in a
+//! corruption message — never for I/O.
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+pub fn lock_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SchemaRegistry {
+    // No serde `default`: a registry with no `version` is not a fresh
+    // project, it is corruption (a truncated write), and must fail the read
+    // rather than silently re-baseline every event's history — the same
+    // argument `bynk.deploy.lock`'s `DeployLock` makes for the identical
+    // field.
+    version: u32,
+    #[serde(default)]
+    events: BTreeMap<String, EventEntry>,
+}
+
+impl SchemaRegistry {
+    /// A fresh, empty registry at the current lock version — what
+    /// `bynk-emit`'s `reconcile` starts from and fills in per-event via
+    /// [`Self::insert`] as it walks the project's units. [DECISION A]: kept
+    /// private-fielded so `version`/`events` stay encapsulated across the
+    /// `bynk-emit` ↔ `bynk-project` boundary the way they always were
+    /// in-crate.
+    pub fn new() -> Self {
+        SchemaRegistry {
+            version: lock_version(),
+            events: BTreeMap::new(),
+        }
+    }
+
+    /// This registry's entry for `key` (`<unit>.<EventName>`), when one
+    /// exists — what `reconcile` diffs a unit's live event shape against.
+    pub fn get(&self, key: &str) -> Option<&EventEntry> {
+        self.events.get(key)
+    }
+
+    /// Record `entry` under `key`, overwriting any prior entry — what
+    /// `reconcile` calls once per event as it rebuilds the updated document.
+    pub fn insert(&mut self, key: String, entry: EventEntry) {
+        self.events.insert(key, entry);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EventEntry {
+    pub schema: i64,
+    pub fields: Vec<FieldShape>,
+}
+
+/// A shallow, per-field snapshot of an event's current shape — deliberately
+/// **not** `bynk-check/src/contract.rs`'s `canon_named_in`: that renders a
+/// field as `name: type` with no signal for default-presence, so an additive
+/// change (new field, has a default) and a breaking one (new field, no
+/// default) perturb it identically. This snapshot exists to tell those two
+/// apart, one field at a time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FieldShape {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
+    pub default: bool,
+}
+
+/// Parse `bynk.schema.lock`'s content. `existing: None` means the project
+/// has no lock file yet — a fresh project's first reconciliation, baselined
+/// rather than compared, exactly as a missing file always meant back when
+/// this function read the file itself. It must mean *verified absent*, never
+/// "content unavailable" for some other reason — see `SchemaLock::On`'s doc
+/// comment, which states that invariant on the type the caller constructs.
+///
+/// `Some(text)` that is empty/unparseable/a different lock version is
+/// corruption, not a fresh project, and fails hard (`ledger.rs`'s own
+/// argument for the identical case) — never silently re-baselines.
+///
+/// `project_root` is used only to name the file in an error message — #1078
+/// made this function disk-free (and so path-blind) for the content itself;
+/// #1085 review restored the location context a corruption diagnostic lost
+/// as a result, without reintroducing any `fs`/`Path` I/O here.
+pub fn parse(existing: Option<&str>, project_root: &Path) -> Result<SchemaRegistry, String> {
+    let Some(text) = existing else {
+        return Ok(SchemaRegistry::new());
+    };
+    let path = project_root.join("bynk.schema.lock");
+    if text.trim().is_empty() {
+        return Err(format!(
+            "schema registry `{}` is empty or truncated (corrupt); refusing \
+             to treat it as a fresh project — restore it from version control",
+            path.display()
+        ));
+    }
+    let reg: SchemaRegistry = toml::from_str(text).map_err(|e| {
+        format!(
+            "schema registry `{}` is corrupt ({e}) — restore it from version control",
+            path.display()
+        )
+    })?;
+    if reg.version != lock_version() {
+        return Err(format!(
+            "unsupported schema registry version {} (`{}`)",
+            reg.version,
+            path.display()
+        ));
+    }
+    Ok(reg)
+}
+
+/// Serialize a reconciled registry to `bynk.schema.lock`'s TOML form —
+/// what `bynk-driver` writes to disk, atomically, only on a fully clean
+/// build (`compile_project`'s own gate). No disk access here; see this
+/// module's doc comment for why. Cannot fail for this data shape (string
+/// keys, no floats) — `toml::to_string_pretty` only errors on inputs this
+/// struct never produces.
+pub fn serialize(reg: &SchemaRegistry) -> String {
+    toml::to_string_pretty(reg).expect("SchemaRegistry always serializes")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shape(name: &str, ty: &str, default: bool) -> FieldShape {
+        FieldShape {
+            name: name.to_string(),
+            ty: ty.to_string(),
+            default,
+        }
+    }
+
+    fn test_root() -> &'static Path {
+        Path::new("/project")
+    }
+
+    #[test]
+    fn new_registry_is_empty_at_the_current_lock_version() {
+        let reg = SchemaRegistry::new();
+        assert_eq!(reg.version, lock_version());
+        assert!(reg.events.is_empty());
+    }
+
+    #[test]
+    fn insert_then_get_round_trips_an_entry() {
+        let mut reg = SchemaRegistry::new();
+        let entry = EventEntry {
+            schema: 2,
+            fields: vec![shape("orderId", "String", false)],
+        };
+        reg.insert("commerce.order.PaymentConfirmed".to_string(), entry.clone());
+        assert_eq!(reg.get("commerce.order.PaymentConfirmed"), Some(&entry));
+        assert_eq!(reg.get("no.such.key"), None);
+    }
+
+    #[test]
+    fn parse_of_absent_content_is_an_empty_registry() {
+        let reg = parse(None, test_root()).unwrap();
+        assert!(reg.events.is_empty());
+    }
+
+    #[test]
+    fn parse_round_trips_serialized_content() {
+        let mut reg = SchemaRegistry::new();
+        reg.insert(
+            "commerce.order.PaymentConfirmed".to_string(),
+            EventEntry {
+                schema: 2,
+                fields: vec![shape("orderId", "String", false)],
+            },
+        );
+        let body = serialize(&reg);
+        assert_eq!(parse(Some(&body), test_root()).unwrap(), reg);
+    }
+
+    #[test]
+    fn a_truncated_file_is_corruption_not_a_fresh_project() {
+        let err = parse(Some("   \n"), test_root()).unwrap_err();
+        assert!(err.contains("restore it from version control"));
+        // Not a full path match (`\` vs `/` makes that Windows-fragile) —
+        // just proving the filename made it into the message at all.
+        assert!(err.contains("bynk.schema.lock"));
+    }
+
+    #[test]
+    fn an_unparseable_file_is_corruption() {
+        let err = parse(Some("not valid toml {{{"), test_root()).unwrap_err();
+        assert!(err.contains("corrupt"));
+        assert!(err.contains("bynk.schema.lock"));
+    }
+
+    #[test]
+    fn an_unsupported_lock_version_is_corruption() {
+        let err = parse(Some("version = 99\n"), test_root()).unwrap_err();
+        assert!(err.contains("unsupported schema registry version 99"));
+    }
+}

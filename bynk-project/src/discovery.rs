@@ -1,9 +1,21 @@
-use super::*;
-use bynk_syntax::ast::TestTier;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use bynk_syntax::ast::{
+    AdapterDecl, Case, Commons, CommonsItem, ConsumesDecl, ExportsDecl, SourceUnit, SuiteDecl,
+    TestTier, Trivia, UsesDecl,
+};
+use bynk_syntax::error::CompileError;
+use bynk_syntax::lexer;
+use bynk_syntax::parser;
+use bynk_syntax::span::Span;
+
+use crate::roots::UnitKind;
 
 /// v0.118: a case's *effective* tier — its own `as <tier>`, else the suite
 /// default, else `unit`.
-pub(crate) fn case_effective_tier(case: &Case, suite: &SuiteDecl) -> TestTier {
+pub fn case_effective_tier(case: &Case, suite: &SuiteDecl) -> TestTier {
     case.tier.or(suite.tier).unwrap_or(TestTier::Unit)
 }
 
@@ -11,7 +23,7 @@ pub(crate) fn case_effective_tier(case: &Case, suite: &SuiteDecl) -> TestTier {
 /// is `system`, or any case opts up to `system`. Such a suite is emitted via
 /// the wired cross-Worker (`Integration`) machinery; otherwise it stays
 /// in-process (`Test`).
-pub(crate) fn suite_effective_tier_is_system(suite: &SuiteDecl) -> bool {
+pub fn suite_effective_tier_is_system(suite: &SuiteDecl) -> bool {
     suite.tier == Some(TestTier::System)
         || suite.cases.iter().any(|c| c.tier == Some(TestTier::System))
 }
@@ -28,10 +40,7 @@ pub(crate) fn suite_effective_tier_is_system(suite: &SuiteDecl) -> bool {
 /// disk, so `canonicalize()` was a guaranteed-failing syscall on every read of
 /// every such file, for no benefit (the literal-path lookup below already
 /// finds the same entry).
-pub(crate) fn read_source(
-    path: &Path,
-    overlay: &HashMap<PathBuf, String>,
-) -> std::io::Result<String> {
+pub fn read_source(path: &Path, overlay: &HashMap<PathBuf, String>) -> std::io::Result<String> {
     if let Some(text) = overlay.get(path) {
         return Ok(text.clone());
     }
@@ -56,7 +65,7 @@ pub(crate) fn read_source(
 /// disk-read fallback here — the CLI's real production path has always
 /// worked exactly this way, `#1077`/`#1081` notwithstanding — is a
 /// deliberate, narrow carve-out, not a straggler.
-pub(crate) fn read_adapter_binding(
+pub fn read_adapter_binding(
     path: &Path,
     overlay: &HashMap<PathBuf, String>,
 ) -> std::io::Result<String> {
@@ -76,13 +85,18 @@ pub(crate) fn read_adapter_binding(
 /// conflating them is what made a two-root project's file identity ambiguous.
 /// They coincide for a single-root project, which is why one field sufficed
 /// until `include` could hold two entries.
+///
+/// P4.0 (#1113, [DECISION B]): fields are crate-private now that `ParsedFile`
+/// lives in `bynk-project` — `bynk-emit`'s `symbols`/`validate` read them
+/// through the accessors below instead of the direct field pokes a
+/// same-crate `pub(crate)` allowed before the move.
 #[derive(Clone)]
-pub(crate) struct ParsedFile {
+pub struct ParsedFile {
     /// The path **relative to the `include` root that contains this file** —
     /// the form unit validation requires. `src/todos.bynk` under the `src`
     /// root is `todos.bynk`, which is what lets it declare `context todos`
-    /// ([`super::paths::unit_path_matches`], via
-    /// [`super::consistency::check_path_name_alignment`]). Prefixing this
+    /// ([`crate::paths::unit_path_matches`], via
+    /// [`crate::consistency::check_path_name_alignment`]). Prefixing this
     /// would make every unit in every project fail alignment.
     pub(crate) source_path: PathBuf,
     /// Slice 0: the path **relative to the project root** — this file's
@@ -93,15 +107,14 @@ pub(crate) struct ParsedFile {
     /// name* may.
     ///
     /// Equal to `source_path` for a single-root project (`Roots::Single`
-    /// resolves to `(root, root)` with an empty prefix), so single-root
-    /// behaviour is unchanged by construction.
+    /// resolves to one tree with an empty prefix), so single-root behaviour
+    /// is unchanged by construction.
     pub(crate) identity_path: PathBuf,
     /// v0.72: the absolute path the compiler read this file from, used as the
     /// source-map `sources` entry so an editor's breakpoint (set on the real
     /// `.bynk` file) resolves to the same path the debugger loads. `None` for
     /// toolchain-injected synthetic units, which have no on-disk source.
     pub(crate) abs_path: Option<PathBuf>,
-    #[allow(dead_code)]
     pub(crate) source: String,
     pub(crate) unit: SourceUnit,
     pub(crate) kind: UnitKind,
@@ -111,13 +124,114 @@ pub(crate) struct ParsedFile {
 }
 
 impl ParsedFile {
+    /// Construct directly — used by `bynk-emit`'s first-party synthetic-unit
+    /// injection (`firstparty_parsed`), which builds a `ParsedFile` for a
+    /// toolchain-supplied source (`bynk.bynk`, `bynk.cloudflare`, …) that
+    /// never went through [`parse_sources`]'s discovery-driven path.
+    pub fn synthetic(
+        identity_path: PathBuf,
+        source_path: PathBuf,
+        source: String,
+        unit: SourceUnit,
+        kind: UnitKind,
+    ) -> Self {
+        ParsedFile {
+            source_path,
+            identity_path,
+            abs_path: None,
+            source,
+            unit,
+            kind,
+            synthetic: true,
+        }
+    }
+
+    /// General constructor — `bynk-emit`'s own tests use this to build a
+    /// hand-rolled `ParsedFile` fixture (a specific `source_path`/
+    /// `identity_path` pair, a non-synthetic unit) that neither
+    /// [`Self::synthetic`] (forces `source_path == identity_path`,
+    /// `synthetic: true`) nor [`parse_sources`] (needs a real token stream)
+    /// fits.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        source_path: PathBuf,
+        identity_path: PathBuf,
+        abs_path: Option<PathBuf>,
+        source: String,
+        unit: SourceUnit,
+        kind: UnitKind,
+        synthetic: bool,
+    ) -> Self {
+        ParsedFile {
+            source_path,
+            identity_path,
+            abs_path,
+            source,
+            unit,
+            kind,
+            synthetic,
+        }
+    }
+
+    /// The path **relative to the `include` root that contains this file**.
+    pub fn source_path(&self) -> PathBuf {
+        self.source_path.clone()
+    }
+
+    /// The path **relative to the project root** — this file's identity,
+    /// unique across `include` roots. See the field's own doc for why this
+    /// and [`Self::source_path`] must not be conflated.
+    pub fn identity_path(&self) -> PathBuf {
+        self.identity_path.clone()
+    }
+
+    /// The absolute path this file was read from, when it has one — `None`
+    /// for toolchain-injected synthetic units.
+    pub fn abs_path(&self) -> Option<PathBuf> {
+        self.abs_path.clone()
+    }
+
+    pub fn kind(&self) -> UnitKind {
+        self.kind
+    }
+
+    /// Override the discovered kind — `bynk-emit`'s own tests use this to
+    /// build a scenario's intermediate unit as a commons regardless of what
+    /// AST shape (`context_using`, …) constructed it, without needing a
+    /// second builder per kind.
+    pub fn set_kind(&mut self, kind: UnitKind) {
+        self.kind = kind;
+    }
+
+    /// True for toolchain-injected units (the `bynk` surface).
+    pub fn is_synthetic(&self) -> bool {
+        self.synthetic
+    }
+
+    pub fn unit(&self) -> &SourceUnit {
+        &self.unit
+    }
+
+    /// Mutable access to the parsed unit — `bynk-emit`'s
+    /// `normalize_service_defaults` (service `by`/`given` default injection)
+    /// is the one caller that rewrites a unit's items in place, ahead of
+    /// grouping/checking.
+    pub fn unit_mut(&mut self) -> &mut SourceUnit {
+        &mut self.unit
+    }
+
+    /// The raw source text this file was parsed from.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
     /// v0.72: the source-map `sources` entry for this file — the absolute path
     /// the compiler read it from (forward slashes), so an editor breakpoint set
     /// on the real `.bynk` resolves to the same path the debugger loads. A
     /// project-relative name would resolve against the emitted `.ts`'s directory,
     /// which is the wrong place. Synthetic units (no on-disk source) fall back to
     /// their relative path.
-    pub(crate) fn map_source_name(&self) -> String {
+    pub fn map_source_name(&self) -> String {
         self.abs_path
             .as_deref()
             .unwrap_or(self.source_path.as_path())
@@ -125,7 +239,7 @@ impl ParsedFile {
             .replace('\\', "/")
     }
 
-    pub(crate) fn items(&self) -> &Vec<CommonsItem> {
+    pub fn items(&self) -> &Vec<CommonsItem> {
         match &self.unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -139,7 +253,7 @@ impl ParsedFile {
         }
     }
 
-    pub(crate) fn uses(&self) -> &Vec<UsesDecl> {
+    pub fn uses(&self) -> &Vec<UsesDecl> {
         match &self.unit {
             SourceUnit::Commons(c) => &c.uses,
             SourceUnit::Context(c) => &c.uses,
@@ -148,7 +262,7 @@ impl ParsedFile {
         }
     }
 
-    pub(crate) fn consumes(&self) -> &[ConsumesDecl] {
+    pub fn consumes(&self) -> &[ConsumesDecl] {
         match &self.unit {
             SourceUnit::Commons(_) => &[],
             SourceUnit::Context(c) => &c.consumes,
@@ -163,7 +277,7 @@ impl ParsedFile {
 
     /// `exports` clauses, for the unit kinds that have them (contexts and
     /// adapters). Empty for commons/tests.
-    pub(crate) fn exports(&self) -> &[ExportsDecl] {
+    pub fn exports(&self) -> &[ExportsDecl] {
         match &self.unit {
             SourceUnit::Context(c) => &c.exports,
             SourceUnit::Adapter(a) => &a.exports,
@@ -171,14 +285,14 @@ impl ParsedFile {
         }
     }
 
-    pub(crate) fn adapter(&self) -> Option<&AdapterDecl> {
+    pub fn adapter(&self) -> Option<&AdapterDecl> {
         match &self.unit {
             SourceUnit::Adapter(a) => Some(a),
             _ => None,
         }
     }
 
-    pub(crate) fn test(&self) -> Option<&SuiteDecl> {
+    pub fn test(&self) -> Option<&SuiteDecl> {
         match &self.unit {
             SourceUnit::Suite(t) => Some(t),
             _ => None,
@@ -189,7 +303,7 @@ impl ParsedFile {
     /// the wired cross-Worker machinery (the retired standalone `integration`
     /// path, now re-driven from tiers). Returns the underlying [`SuiteDecl`]
     /// when this file is such a suite.
-    pub(crate) fn integration(&self) -> Option<&SuiteDecl> {
+    pub fn integration(&self) -> Option<&SuiteDecl> {
         match &self.unit {
             SourceUnit::Suite(t) if suite_effective_tier_is_system(t) => Some(t),
             _ => None,
@@ -198,7 +312,7 @@ impl ParsedFile {
 
     /// Build a synthetic Commons AST node carrying the given items, so the
     /// existing resolver/checker pipeline can be driven uniformly.
-    pub(crate) fn as_synthetic_commons(&self, items: Vec<CommonsItem>) -> Commons {
+    pub fn as_synthetic_commons(&self, items: Vec<CommonsItem>) -> Commons {
         let (name, uses, documentation, form, span) = match &self.unit {
             SourceUnit::Commons(c) => (
                 c.name.clone(),
@@ -249,7 +363,7 @@ impl ParsedFile {
 /// (`src`, `tests`, …), empty for a single-root project. It builds each file's
 /// `identity_path`; `source_path` stays relative to `root` (the tree), which is
 /// what unit validation reads. See [`ParsedFile`].
-pub(crate) fn parse_sources(
+pub fn parse_sources(
     root: &Path,
     prefix: &Path,
     path: &Path,
@@ -314,7 +428,7 @@ pub(crate) fn parse_sources(
     Ok((files, warnings))
 }
 
-pub(crate) fn discover_bynk_files(
+pub fn discover_bynk_files(
     root: &Path,
     excludes: &[PathBuf],
 ) -> Result<Vec<PathBuf>, CompileError> {
@@ -363,7 +477,7 @@ pub(crate) fn discover_bynk_files(
     Ok(out)
 }
 
-pub(crate) fn check_file_directory_conflicts(
+pub fn check_file_directory_conflicts(
     root: &Path,
     files: &[PathBuf],
 ) -> Result<(), Vec<CompileError>> {

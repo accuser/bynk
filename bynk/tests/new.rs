@@ -160,9 +160,9 @@ fn starter_renders_compiles_and_is_fmt_clean() {
 
 /// #521: the scaffolded `bynk.toml`'s `[paths]` keys must be keys the tools
 /// actually read. The old template wrote `src = "src"` / `tests = "tests"`,
-/// which `read_project_paths` silently ignored (the project only worked via
-/// the conventional fallback). Render the template into a scaffold-shaped
-/// tree and assert the reader consumes the declared layout.
+/// which the reader silently ignored (the project only worked via the
+/// conventional fallback). Render the template into a scaffold-shaped tree
+/// and assert the reader consumes the declared layout.
 #[test]
 fn scaffolded_manifest_paths_are_read_by_the_tools() {
     let dir = std::env::temp_dir().join(format!("bynk-new-manifest-{}", std::process::id()));
@@ -170,11 +170,12 @@ fn scaffolded_manifest_paths_are_read_by_the_tools() {
     fs::create_dir_all(dir.join("tests")).unwrap();
     let manifest = new::render(include_str!("../src/templates/bynk.toml"), "demo");
     fs::write(dir.join("bynk.toml"), manifest).unwrap();
-    let paths = bynk_emit::project::read_project_paths(&dir);
+    let paths = bynk_emit::project::try_read_project_paths(&dir)
+        .expect("the scaffolded manifest must be well-formed TOML");
     assert_eq!(
         paths.include,
         vec![PathBuf::from("src"), PathBuf::from("tests")],
-        "the template's [paths] include must round-trip through read_project_paths"
+        "the template's [paths] include must round-trip through try_read_project_paths"
     );
     assert!(paths.exclude.is_empty());
     fs::remove_dir_all(&dir).ok();

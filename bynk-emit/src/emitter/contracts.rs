@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::json::json_string;
+use bynk_project::json_string;
 
 /// The file the driver reads, beside each Worker's `wrangler.toml`.
 pub const CONTRACTS_MANIFEST: &str = "bynk-contracts.json";
