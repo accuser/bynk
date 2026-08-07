@@ -364,7 +364,14 @@ impl CompileOptions {
 /// R3.9 (#1113): partitions across every `trees` entry, not a hardcoded
 /// primary/secondary pair — a path that doesn't start with any tree's root
 /// (shouldn't happen for a well-formed `sources` map) falls back to the
-/// first tree, matching the old single-tree convention.
+/// *last* tree, matching the pre-R3.9 two-tree `partition`'s fallback (an
+/// unmatched key landed in `tests_files`, the second/last half of the pair).
+/// Falling back to the *first* tree instead — silently tried during this
+/// slice's initial cut — would move an unmatched file into whichever tree
+/// `check_file_directory_conflicts` and `identity_path` treat as primary,
+/// changing its attribution with no diagnostic raised either way; matching
+/// the old convention at least keeps this rare path's behaviour unchanged by
+/// the crate move.
 type Overlay = HashMap<PathBuf, String>;
 /// One file list per `trees` entry — the same shape `phase_discovery` and
 /// `run_checks`'s own `discovered` parameter already use.
@@ -381,7 +388,7 @@ fn sources_to_discovered(
         let idx = trees
             .iter()
             .position(|(root, _)| p.starts_with(root))
-            .unwrap_or(0);
+            .unwrap_or(trees.len().saturating_sub(1));
         buckets[idx].push(p);
     }
     (sources.clone(), Some(buckets))
@@ -738,13 +745,15 @@ pub fn discover_project_files(roots: &Roots) -> Vec<PathBuf> {
     let trees = roots.trees();
     let excludes = roots.excludes();
     let mut out = Vec::new();
-    for (i, (root, _prefix)) in trees.iter().enumerate() {
+    for (root, _prefix) in &trees {
         // Every tree past the first is optional — a project may simply have
         // no such subtree (R3.9, #1113: every `include` entry is walked, not
-        // just the first two).
-        if i == 0 || root.exists() {
-            out.extend(discover_bynk_files(root, &excludes).unwrap_or_default());
-        }
+        // just the first two). `unwrap_or_default` already treats a missing
+        // root the same as "no files here" for every tree, first included —
+        // no need to `root.exists()` before calling `discover_bynk_files`
+        // (itself a `fs::read_dir`) just to decide whether to call it: that
+        // would cost a redundant `stat()` per tree for the same answer.
+        out.extend(discover_bynk_files(root, &excludes).unwrap_or_default());
     }
     out.sort();
     out.dedup();
@@ -862,7 +871,7 @@ pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -
                 unit_sources
                     .entry(pf.unit().name().joined())
                     .or_default()
-                    .push(pf.identity_path().clone());
+                    .push(pf.identity_path());
             }
             // #846: qualified context/adapter unit name → the cross-context +
             // agent tables the sequence-diagram classifier needs. Rebuilt from
@@ -1051,12 +1060,16 @@ fn phase_discovery(
 ) -> Result<Vec<Vec<PathBuf>>, ()> {
     let mut out = Vec::with_capacity(trees.len());
     for (i, (root, _prefix)) in trees.iter().enumerate() {
-        if i > 0 && !root.exists() {
-            out.push(Vec::new());
-            continue;
-        }
         match discover_bynk_files(root, excludes) {
             Ok(f) => out.push(f),
+            // Every tree past the first is optional — a missing directory is
+            // not an error, same as the old secondary tree always was. Tried
+            // via `discover_bynk_files` itself (a `fs::read_dir`) rather than
+            // a `root.exists()` pre-check, which would cost a redundant
+            // `stat()` per optional tree for the same answer.
+            Err(e) if i > 0 && e.category == "bynk.project.no_root" => {
+                out.push(Vec::new());
+            }
             Err(e) => {
                 errors.push_for(None, e);
                 return Err(());
@@ -1379,6 +1392,25 @@ fn phase_parse(
     Ok((parsed, consumes_bynk, consumes_cloudflare))
 }
 
+/// The `include` tree that discovered `pf`, found by matching its absolute
+/// path against each tree's (absolute) root — not `trees[0]` unconditionally,
+/// since R3.9 (#1113) lets a file live under any `include` tree, not just the
+/// first. Falls back to `trees[0]` for a `pf` with no `abs_path` (unreachable
+/// for a real adapter: only synthetic units, which never declare `binding`,
+/// go without one) or if it somehow matches none. The longest matching root
+/// wins, in case one `include` tree is nested inside another.
+fn tree_root_for<'a>(trees: &'a [(PathBuf, PathBuf)], pf: &ParsedFile) -> &'a Path {
+    pf.abs_path()
+        .and_then(|abs| {
+            trees
+                .iter()
+                .filter(|(root, _)| abs.starts_with(root))
+                .max_by_key(|(root, _)| root.as_os_str().len())
+        })
+        .map(|(root, _)| root.as_path())
+        .unwrap_or_else(|| trees[0].0.as_path())
+}
+
 /// Phase 3: group the parsed units by qualified name (production units, unit
 /// tests, and integration suites tracked separately), run the per-directory
 /// and path/name consistency checks, enforce the reserved `bynk` namespace and
@@ -1389,7 +1421,7 @@ fn phase_parse(
 #[allow(clippy::type_complexity)]
 fn phase_group(
     parsed: &[ParsedFile],
-    src_root: &Path,
+    trees: &[(PathBuf, PathBuf)],
     platform: Platform,
     consumes_bynk: bool,
     consumes_cloudflare: bool,
@@ -1538,7 +1570,7 @@ fn phase_group(
         let pf_source_path = pf.source_path();
         let adapter_dir = pf_source_path.parent().unwrap_or(Path::new(""));
         let out_rel = normalize_rel(&adapter_dir.join(&b.module));
-        let src_abs = src_root.join(&out_rel);
+        let src_abs = tree_root_for(trees, pf).join(&out_rel);
         match read_adapter_binding(&src_abs, overlay) {
             Ok(content) => {
                 adapter_bindings.insert(
@@ -1950,7 +1982,7 @@ fn phase_consumes_aliases(
         for alias in aliases.keys() {
             let alias_site = parsed_alias_span(parsed, &groups[name], alias);
             let alias_span = alias_site.map(|(_, s)| s).unwrap_or_default();
-            let alias_file = alias_site.map(|(i, _)| parsed[i].identity_path().clone());
+            let alias_file = alias_site.map(|(i, _)| parsed[i].identity_path());
             let conflict_kind = if local.types.contains_key(alias) {
                 Some("type")
             } else if local.fns.contains_key(alias) {
@@ -2005,7 +2037,7 @@ fn phase_uses_name_conflicts(
                 if let Some(prev) = imported.get(type_name) {
                     let site = uses_span_of(parsed, &groups[name], t);
                     let span = site.map(|(_, s)| s).unwrap_or_default();
-                    let file = site.map(|(i, _)| parsed[i].identity_path().clone());
+                    let file = site.map(|(i, _)| parsed[i].identity_path());
                     errors.push_for(file.as_deref(),
                         CompileError::new(
                             "bynk.uses.name_conflict",
@@ -2029,7 +2061,7 @@ fn phase_uses_name_conflicts(
                 if let Some(prev) = imported.get(fn_name) {
                     let site = uses_span_of(parsed, &groups[name], t);
                     let span = site.map(|(_, s)| s).unwrap_or_default();
-                    let file = site.map(|(i, _)| parsed[i].identity_path().clone());
+                    let file = site.map(|(i, _)| parsed[i].identity_path());
                     errors.push_for(file.as_deref(),
                         CompileError::new(
                             "bynk.uses.name_conflict",
@@ -2567,7 +2599,7 @@ fn merge_consumed_exports(
                 // Name conflict between local/uses and consumed export.
                 let consumes_site = consumes_span_of(parsed, &unit_info[name].files, t);
                 let consumes_span = consumes_site.map(|(_, s)| s).unwrap_or_default();
-                let consumes_file = consumes_site.map(|(i, _)| parsed[i].identity_path().clone());
+                let consumes_file = consumes_site.map(|(i, _)| parsed[i].identity_path());
                 errors.push_for(consumes_file.as_deref(),
                     CompileError::new(
                         "bynk.consumes.name_conflict",
@@ -2857,7 +2889,7 @@ fn emit_unit(
     let emit_source_path = if workers_mode && kind == UnitKind::Context {
         worker_handlers_source_path(name)
     } else {
-        pf.source_path().clone()
+        pf.source_path()
     };
 
     // message-bundles slice 1 (#859): a `messages` block's generated `render`
@@ -2975,7 +3007,7 @@ fn emit_unit(
         ts_output_path(&pf.source_path())
     };
     compiled.push(CompiledFile {
-        source_path: pf.source_path().clone(),
+        source_path: pf.source_path(),
         output_path,
         typescript: ts,
         source_map,
@@ -3541,7 +3573,7 @@ fn run_checks(
     // -- 3. Group by (name, kind) and validate per-directory consistency. --
     let (groups, kinds, test_groups, integration_groups, adapter_bindings, npm_deps) = phase_group(
         &parsed,
-        &trees[0].0,
+        trees,
         platform,
         consumes_bynk,
         consumes_cloudflare,
@@ -3603,7 +3635,7 @@ fn run_checks(
                 });
                 let (_, warnings) =
                     crate::emitter::secrets::secret_reads_of(handlers.flatten(), flattened);
-                let rel = parsed[i].identity_path().clone();
+                let rel = parsed[i].identity_path();
                 errors.extend_for(Some(&rel), warnings);
             }
         }
@@ -3624,7 +3656,7 @@ fn run_checks(
             for c in parsed[i].consumes() {
                 consumes_sites
                     .entry((name.clone(), c.target.joined()))
-                    .or_insert_with(|| (parsed[i].identity_path().clone(), c.span));
+                    .or_insert_with(|| (parsed[i].identity_path(), c.span));
             }
         }
     }
@@ -3865,14 +3897,6 @@ fn run_checks(
     // integration-test passes so a multi-file commons imported by both is
     // aggregated into `out/<name>.ts` exactly once.
     let mut emitted_barrels: HashSet<PathBuf> = HashSet::new();
-    // Test-output paths key off the second `include` tree by convention
-    // (the `tests/` role) — orthogonal to R3.9's `Roots::trees` fix, which is
-    // about *discovery* walking every tree, not about renaming this
-    // longstanding output-path convention.
-    let tests_prefix: &Path = trees
-        .get(1)
-        .map(|(_, prefix)| prefix.as_path())
-        .unwrap_or(Path::new(""));
     let (test_outputs, runnable_tests) = process_tests(
         &test_groups,
         &parsed,
@@ -3884,7 +3908,6 @@ fn run_checks(
         &unit_uses,
         &unit_flattened,
         &groups,
-        tests_prefix,
         import_ext,
         contracts,
         &mut emitted_barrels,
@@ -3914,7 +3937,6 @@ fn run_checks(
         &unit_consumes_aliases,
         &unit_uses,
         &groups,
-        tests_prefix,
         &mut emitted_barrels,
         &mut integration_errors,
         &mut refs,
@@ -5439,6 +5461,33 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// Regression (code review of #1114): a `sources` key that matches none
+    /// of `trees`'s roots (shouldn't happen for a well-formed map — see
+    /// `sources_to_discovered`'s own doc) must fall back to the *last* tree,
+    /// matching the pre-R3.9 two-tree `partition`'s fallback, not silently
+    /// switch to the first.
+    #[test]
+    fn sources_to_discovered_unmatched_key_falls_back_to_the_last_tree() {
+        let trees = vec![
+            (PathBuf::from("/proj/src"), PathBuf::from("src")),
+            (PathBuf::from("/proj/tests"), PathBuf::from("tests")),
+        ];
+        let mut sources = HashMap::new();
+        sources.insert(PathBuf::from("/proj/src/a.bynk"), "commons a\n".to_string());
+        sources.insert(
+            PathBuf::from("/elsewhere/stray.bynk"),
+            "commons stray\n".to_string(),
+        );
+        let (_, discovered) = sources_to_discovered(&sources, &trees);
+        let buckets = discovered.expect("a sources map always yields Some(Discovered)");
+        assert_eq!(buckets[0], vec![PathBuf::from("/proj/src/a.bynk")]);
+        assert_eq!(
+            buckets[1],
+            vec![PathBuf::from("/elsewhere/stray.bynk")],
+            "an unmatched key must land in the last tree, not the first"
+        );
+    }
+
     /// Content-ownership track (#1086) slice 4: this crate's own
     /// `#[cfg(test)]` module can't depend on the cross-crate `bynk-testkit`
     /// (that crate depends on `bynk-emit` — a cyclic dev-dependency, the
@@ -5651,6 +5700,109 @@ mod tests {
             keys,
             vec!["src/thing.bynk", "tests/thing.bynk"],
             "a file's identity must be project-relative and unique across include roots"
+        );
+    }
+
+    /// Regression (code review of #1114): an adapter declared outside the
+    /// first `include` tree used to have its `binding` module resolved
+    /// against `trees[0]` unconditionally (`phase_group`'s old `src_root:
+    /// &Path` parameter) — a project with `include = ["src", "adapters",
+    /// "tests"]` and an adapter under `adapters/` would look for its binding
+    /// under `src/`, fail to find it, and report `bynk.adapter.no_binding`
+    /// even though the binding file exists right beside the adapter.
+    #[test]
+    fn adapter_binding_resolves_against_its_own_include_tree() {
+        let root = scratch_project(
+            "adapter_binding_tree",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"a\"\n\n[paths]\ninclude = [\"src\", \"adapters\", \"tests\"]\n",
+                ),
+                (
+                    "src/math.bynk",
+                    "commons math {\n  fn double(n: Int) -> Int { n * 2 }\n}\n",
+                ),
+                (
+                    "adapters/payments.bynk",
+                    "adapter payments {\n  binding \"./payments.binding.ts\"\n\n  exports capability { Pay }\n\n  capability Pay {\n    fn charge(amount: Int) -> Effect[String]\n  }\n\n  provides Pay = RealPay\n}\n",
+                ),
+                (
+                    "adapters/payments.binding.ts",
+                    "import type { Pay } from \"./payments.js\";\n\nexport class RealPay implements Pay {\n  async charge(amount: number): Promise<string> {\n    return \"ok\";\n  }\n}\n",
+                ),
+            ],
+        );
+        let options = compile_options_split_with_sources(
+            root.to_path_buf(),
+            try_read_project_paths(&root).expect("well-formed fixture manifest"),
+        );
+        let out = compile_project(&options).unwrap_or_else(|f| {
+            panic!(
+                "adapter with a binding in a non-first include tree must compile: {}",
+                render(&f.errors)
+            )
+        });
+        let names: Vec<String> = out
+            .files
+            .iter()
+            .map(|f| f.output_path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(
+            names.contains(&"payments.binding.ts".to_string()),
+            "expected the binding to be copied into the output among {names:?}"
+        );
+    }
+
+    /// Regression (code review of #1114): the emitted test module's
+    /// discovered-case location used to key off `trees.get(1)`'s prefix
+    /// unconditionally (`tests_prefix` in `process_tests`/
+    /// `emit_test_module`) — a project with `include = ["src", "examples",
+    /// "tests"]` would prefix every discovered case's location with
+    /// `examples/` (the second tree) even though the suite actually lives
+    /// under `tests/` (the third).
+    #[test]
+    fn discovered_case_location_uses_the_suite_files_own_tree() {
+        let root = scratch_project(
+            "test_tree_prefix",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"t\"\n\n[paths]\ninclude = [\"src\", \"examples\", \"tests\"]\n",
+                ),
+                (
+                    "src/math.bynk",
+                    "commons math {\n  fn double(n: Int) -> Int { n * 2 }\n}\n",
+                ),
+                (
+                    "tests/math_test.bynk",
+                    "suite math\n\ncase \"doubles\" {\n  expect double(2) == 4\n}\n",
+                ),
+            ],
+        );
+        let options = compile_options_split_with_sources(
+            root.to_path_buf(),
+            try_read_project_paths(&root).expect("well-formed fixture manifest"),
+        );
+        let out = compile_project(&options).unwrap_or_else(|f| {
+            panic!(
+                "a suite in the third include tree must compile: {}",
+                render(&f.errors)
+            )
+        });
+        let locations: Vec<String> = out
+            .discovered
+            .iter()
+            .flat_map(|s| &s.cases)
+            .filter_map(|c| c.location.as_ref())
+            .map(|l| l.path.clone())
+            .collect();
+        assert!(
+            locations
+                .iter()
+                .all(|p| p.starts_with("tests/") && !p.starts_with("examples/")),
+            "case locations must key off the suite file's own tree (`tests/`), not the \
+             second `include` tree (`examples/`): {locations:?}"
         );
     }
 

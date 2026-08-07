@@ -4805,11 +4805,7 @@ pub(crate) fn check_function_type_boundaries(
     for pf in parsed {
         let mut file_errors: Vec<CompileError> = Vec::new();
         check_function_type_boundary_items(pf.items(), &types, &mut file_errors);
-        attributed.extend(
-            file_errors
-                .into_iter()
-                .map(|e| (pf.identity_path().clone(), e)),
-        );
+        attributed.extend(file_errors.into_iter().map(|e| (pf.identity_path(), e)));
     }
     attributed
 }

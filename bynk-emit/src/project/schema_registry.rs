@@ -15,54 +15,35 @@
 //! in-memory builds must never touch a project tree as a side effect of
 //! compiling.
 //!
+//! P4.0 (#1113, [DECISION A]): the document shape itself — `SchemaRegistry`,
+//! `EventEntry`, `FieldShape`, and their `parse`/`serialize` — moved to
+//! `bynk_project::schema_registry`, re-exported here so every existing
+//! `schema_registry::X` call site in `project.rs` keeps working unchanged.
+//! `reconcile` and its helpers (`snapshot`, `canon_type`, `Reconciled`, …)
+//! stay here — this is the `bynk_check`-coupled half (`UnitTable`) pending
+//! P4.1's `bynk-check` entry point — and reach `SchemaRegistry`'s otherwise-
+//! private `version`/`events` only through `SchemaRegistry::new`/`get`/
+//! `insert`, never raw field access, now that the type lives in another
+//! crate.
+//!
 //! #1078: this module touches no disk. `parse`/`serialize` are pure —
 //! `bynk.schema.lock`'s content comes in through
 //! `CompileOptions::schema_registry`'s `SchemaLock::On { existing }` and goes
 //! out through `ProjectOutput::schema_lock`; `bynk-driver`'s `schema_lock`
 //! module owns the actual read/atomic-write, ported verbatim (including the
 //! unchanged-content no-op and the directory fsync) from what used to live
-//! here. `parse` takes a `project_root: &Path` (#1085 review) purely to name
-//! the file in a corruption message — never for I/O.
+//! here.
 
 use std::collections::BTreeMap;
-use std::path::Path;
-
-use serde::{Deserialize, Serialize};
 
 use bynk_syntax::ast::{EventDecl, TypeRef};
 use bynk_syntax::error::CompileError;
 
+pub(crate) use bynk_project::schema_registry::{
+    EventEntry, FieldShape, SchemaRegistry, parse, serialize,
+};
+
 use super::UnitTable;
-
-fn lock_version() -> u32 {
-    1
-}
-
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct SchemaRegistry {
-    // No serde `default`: a registry with no `version` is not a fresh
-    // project, it is corruption (a truncated write), and must fail the read
-    // rather than silently re-baseline every event's history — the same
-    // argument `bynk.deploy.lock`'s `DeployLock` makes for the identical
-    // field.
-    version: u32,
-    #[serde(default)]
-    events: BTreeMap<String, EventEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct EventEntry {
-    schema: i64,
-    fields: Vec<FieldShape>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct FieldShape {
-    name: String,
-    #[serde(rename = "type")]
-    ty: String,
-    default: bool,
-}
 
 /// A shallow, per-field snapshot of an event's current shape — deliberately
 /// **not** `bynk-check/src/contract.rs`'s `canon_named_in`: that renders a
@@ -230,10 +211,7 @@ pub(crate) fn reconcile(
     unit_tables: &std::collections::HashMap<String, UnitTable>,
     errors: &mut Vec<CompileError>,
 ) -> (SchemaRegistry, std::collections::HashMap<String, i64>) {
-    let mut updated = SchemaRegistry {
-        version: lock_version(),
-        events: BTreeMap::new(),
-    };
+    let mut updated = SchemaRegistry::new();
     let mut effective = std::collections::HashMap::new();
 
     let mut units: Vec<_> = unit_tables.iter().collect();
@@ -253,8 +231,7 @@ pub(crate) fn reconcile(
                 .map(|a| a.span);
             let has_annotation = annotation_span.is_some();
 
-            let (effective_version, entry) = match reconcile_one(&fields, existing.events.get(&key))
-            {
+            let (effective_version, entry) = match reconcile_one(&fields, existing.get(&key)) {
                 Reconciled::Baseline { fields } => (
                     declared,
                     EventEntry {
@@ -314,13 +291,16 @@ pub(crate) fn reconcile(
                     // must not perturb the registry (`compile_project`
                     // skips the write on any error too — this just keeps
                     // the in-memory document consistent with that).
-                    let old = existing.events[&key].clone();
+                    let old = existing
+                        .get(&key)
+                        .expect("a NonAdditive verdict only fires against a stored entry")
+                        .clone();
                     (old.schema, old)
                 }
             };
 
             effective.insert(key.clone(), effective_version);
-            updated.events.insert(key, entry);
+            updated.insert(key, entry);
         }
     }
 
@@ -388,63 +368,6 @@ fn non_additive_error(
         "an additive change adds only fields that carry a default; give a \
          breaking change a new event type name instead",
     )
-}
-
-/// Parse `bynk.schema.lock`'s content. `existing: None` means the project
-/// has no lock file yet — a fresh project's first reconciliation, baselined
-/// rather than compared, exactly as a missing file always meant back when
-/// this function read the file itself. It must mean *verified absent*, never
-/// "content unavailable" for some other reason — see
-/// `CompileOptions`' `SchemaLock::On` doc comment, which states that
-/// invariant on the type the caller constructs.
-///
-/// `Some(text)` that is empty/unparseable/a different lock version is
-/// corruption, not a fresh project, and fails hard (`ledger.rs`'s own
-/// argument for the identical case) — never silently re-baselines.
-///
-/// `project_root` is used only to name the file in an error message — #1078
-/// made this function disk-free (and so path-blind) for the content itself;
-/// #1085 review restored the location context a corruption diagnostic lost
-/// as a result, without reintroducing any `fs`/`Path` I/O here.
-pub(crate) fn parse(existing: Option<&str>, project_root: &Path) -> Result<SchemaRegistry, String> {
-    let Some(text) = existing else {
-        return Ok(SchemaRegistry {
-            version: lock_version(),
-            events: BTreeMap::new(),
-        });
-    };
-    let path = project_root.join("bynk.schema.lock");
-    if text.trim().is_empty() {
-        return Err(format!(
-            "schema registry `{}` is empty or truncated (corrupt); refusing \
-             to treat it as a fresh project — restore it from version control",
-            path.display()
-        ));
-    }
-    let reg: SchemaRegistry = toml::from_str(text).map_err(|e| {
-        format!(
-            "schema registry `{}` is corrupt ({e}) — restore it from version control",
-            path.display()
-        )
-    })?;
-    if reg.version != lock_version() {
-        return Err(format!(
-            "unsupported schema registry version {} (`{}`)",
-            reg.version,
-            path.display()
-        ));
-    }
-    Ok(reg)
-}
-
-/// Serialize a reconciled registry to `bynk.schema.lock`'s TOML form —
-/// what `bynk-driver` writes to disk, atomically, only on a fully clean
-/// build (`compile_project`'s own gate). No disk access here; see this
-/// module's doc comment for why. Cannot fail for this data shape (string
-/// keys, no floats) — `toml::to_string_pretty` only errors on inputs this
-/// struct never produces.
-pub(crate) fn serialize(reg: &SchemaRegistry) -> String {
-    toml::to_string_pretty(reg).expect("SchemaRegistry always serializes")
 }
 
 #[cfg(test)]
@@ -699,15 +622,18 @@ mod tests {
             "commerce.order".to_string(),
             table_with(vec![("PaymentConfirmed", e)]),
         );
-        let existing = SchemaRegistry {
-            version: lock_version(),
-            events: BTreeMap::new(),
-        };
+        let existing = SchemaRegistry::new();
         let mut errors = Vec::new();
         let (updated, effective) = reconcile(&existing, &units, &mut errors);
         assert!(errors.is_empty(), "a first-ever compile must not error");
         assert_eq!(effective.get("commerce.order.PaymentConfirmed"), Some(&3));
-        assert_eq!(updated.events["commerce.order.PaymentConfirmed"].schema, 3);
+        assert_eq!(
+            updated
+                .get("commerce.order.PaymentConfirmed")
+                .unwrap()
+                .schema,
+            3
+        );
     }
 
     #[test]
@@ -722,18 +648,14 @@ mod tests {
             "commerce.order".to_string(),
             table_with(vec![("PaymentConfirmed", e)]),
         );
-        let mut events = BTreeMap::new();
-        events.insert(
+        let mut existing = SchemaRegistry::new();
+        existing.insert(
             "commerce.order.PaymentConfirmed".to_string(),
             EventEntry {
                 schema: 2,
                 fields: vec![shape("orderId", "String", false)],
             },
         );
-        let existing = SchemaRegistry {
-            version: lock_version(),
-            events,
-        };
         let mut errors = Vec::new();
         let (_, effective) = reconcile(&existing, &units, &mut errors);
         assert_eq!(errors.len(), 1);
@@ -758,23 +680,22 @@ mod tests {
             "commerce.order".to_string(),
             table_with(vec![("OrderCancelled", e)]),
         );
-        let mut events = BTreeMap::new();
-        events.insert(
+        let mut existing = SchemaRegistry::new();
+        existing.insert(
             "commerce.order.OrderCancelled".to_string(),
             EventEntry {
                 schema: 1,
                 fields: vec![shape("orderId", "String", false)],
             },
         );
-        let existing = SchemaRegistry {
-            version: lock_version(),
-            events,
-        };
         let mut errors = Vec::new();
         let (updated, effective) = reconcile(&existing, &units, &mut errors);
         assert!(errors.is_empty());
         assert_eq!(effective.get("commerce.order.OrderCancelled"), Some(&2));
-        assert_eq!(updated.events["commerce.order.OrderCancelled"].schema, 2);
+        assert_eq!(
+            updated.get("commerce.order.OrderCancelled").unwrap().schema,
+            2
+        );
     }
 
     #[test]
@@ -789,8 +710,8 @@ mod tests {
             "commerce.order".to_string(),
             table_with(vec![("OrderCancelled", e)]),
         );
-        let mut events = BTreeMap::new();
-        events.insert(
+        let mut existing = SchemaRegistry::new();
+        existing.insert(
             "commerce.order.OrderCancelled".to_string(),
             EventEntry {
                 schema: 4,
@@ -800,16 +721,15 @@ mod tests {
                 ],
             },
         );
-        let existing = SchemaRegistry {
-            version: lock_version(),
-            events,
-        };
         let mut errors = Vec::new();
         let (updated, effective) = reconcile(&existing, &units, &mut errors);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].category, "bynk.event.non_additive_schema_change");
         assert_eq!(effective.get("commerce.order.OrderCancelled"), Some(&4));
-        assert_eq!(updated.events["commerce.order.OrderCancelled"].schema, 4);
+        assert_eq!(
+            updated.get("commerce.order.OrderCancelled").unwrap().schema,
+            4
+        );
     }
 
     #[test]
@@ -828,81 +748,22 @@ mod tests {
             "commerce.order".to_string(),
             table_with(vec![("PaymentConfirmedV2", e)]),
         );
-        let mut events = BTreeMap::new();
-        events.insert(
+        let mut existing = SchemaRegistry::new();
+        existing.insert(
             "commerce.order.PaymentConfirmed".to_string(),
             EventEntry {
                 schema: 3,
                 fields: vec![shape("orderId", "String", false)],
             },
         );
-        let existing = SchemaRegistry {
-            version: lock_version(),
-            events,
-        };
         let mut errors = Vec::new();
         let (updated, _) = reconcile(&existing, &units, &mut errors);
         assert!(errors.is_empty());
-        assert!(
-            !updated
-                .events
-                .contains_key("commerce.order.PaymentConfirmed")
-        );
-        assert!(
-            updated
-                .events
-                .contains_key("commerce.order.PaymentConfirmedV2")
-        );
+        assert!(updated.get("commerce.order.PaymentConfirmed").is_none());
+        assert!(updated.get("commerce.order.PaymentConfirmedV2").is_some());
     }
 
-    // -- parse/serialize ---------------------------------------------------
-    //
-    // #1078: `read`/`write`'s actual disk I/O (and the tests pinning its
-    // crash-safety — the unchanged-content no-op, the round-trip) moved to
-    // `bynk-driver`'s `schema_lock` module. What's left here is pure parsing,
-    // covered directly with no disk needed at all.
-
-    fn test_root() -> &'static Path {
-        Path::new("/project")
-    }
-
-    #[test]
-    fn parse_of_absent_content_is_an_empty_registry() {
-        let reg = parse(None, test_root()).unwrap();
-        assert!(reg.events.is_empty());
-    }
-
-    #[test]
-    fn parse_round_trips_serialized_content() {
-        let mut events = BTreeMap::new();
-        events.insert(
-            "commerce.order.PaymentConfirmed".to_string(),
-            EventEntry {
-                schema: 2,
-                fields: vec![shape("orderId", "String", false)],
-            },
-        );
-        let reg = SchemaRegistry {
-            version: lock_version(),
-            events,
-        };
-        let body = serialize(&reg);
-        assert_eq!(parse(Some(&body), test_root()).unwrap(), reg);
-    }
-
-    #[test]
-    fn a_truncated_file_is_corruption_not_a_fresh_project() {
-        let err = parse(Some("   \n"), test_root()).unwrap_err();
-        assert!(err.contains("restore it from version control"));
-        // Not a full path match (`\` vs `/` makes that Windows-fragile) —
-        // just proving the filename made it into the message at all.
-        assert!(err.contains("bynk.schema.lock"));
-    }
-
-    #[test]
-    fn an_unparseable_file_is_corruption() {
-        let err = parse(Some("not valid toml {{{"), test_root()).unwrap_err();
-        assert!(err.contains("corrupt"));
-        assert!(err.contains("bynk.schema.lock"));
-    }
+    // `parse`/`serialize` are `bynk_project::schema_registry`'s now (P4.0,
+    // #1113) — covered by that crate's own tests; nothing left to duplicate
+    // here.
 }
