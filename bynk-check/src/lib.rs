@@ -42,6 +42,7 @@ pub mod locals;
 pub mod project_model;
 pub mod requirements;
 pub mod resolver;
+pub mod schema_registry;
 pub mod store_ops;
 pub mod symbols;
 pub mod websocket;

@@ -29,21 +29,33 @@
 //!
 //! **Correction found while grounding this fixture set.** The tracking
 //! issue's [DECISION E] counted `check_platform_lock` among six *live*
-//! regressions. Reading `lock_violation` (`bynk-emit/src/project/
-//! validate.rs`) shows its `Conflict` arm is "not yet reachable end-to-end
-//! while only one platform ships native capabilities" (the function's own
-//! doc comment) and its `Required` arm fires only when the native platform
-//! disagrees with the *selected* one — but `analyse_project_with` (the
-//! pre-repoint LSP path) always calls `run_checks` with `Platform::default()`
-//! (Cloudflare) and `BuildTarget::Bundle` hardcoded (`project.rs:743-744`),
-//! and `bynk.cloudflare` is the *only* platform-native unit that exists
+//! regressions. Reading `lock_violation` (originally
+//! `bynk-emit/src/project/validate.rs`; relocated at P5.3 to
+//! `bynk-check/src/project_model.rs`, unchanged) shows its `Conflict` arm is
+//! "not yet reachable end-to-end while only one platform ships native
+//! capabilities" (the function's own doc comment) and its `Required` arm
+//! fires only when the native platform disagrees with the *selected* one —
+//! but `analyse_project_with` (the pre-repoint LSP path) always calls
+//! `run_checks` with `Platform::default()` (Cloudflare) and
+//! `BuildTarget::Bundle` hardcoded (`project.rs:743-744`), and
+//! `bynk.cloudflare` is the *only* platform-native unit that exists
 //! (`bynk_check::firstparty::platform_of`). So `first != selected` can never
 //! hold under the LSP's own hardcoded call, for any project, both before and
 //! after this slice — `check_platform_lock` was already a gap in name only,
 //! exactly like schema-registry reconciliation (category 1, which
 //! `bynk_check::analysis`'s own doc comment already excludes for the
 //! identical reason). `platform_lock_diagnostic_stays_absent` below pins
-//! that non-regression directly, rather than a repoint-caused one.
+//! that non-regression directly, rather than a repoint-caused one. **P5.3**
+//! relocated both `check_platform_lock` (as
+//! `bynk_check::project_model::phase_platform_lock`) and schema-registry
+//! reconciliation (as `bynk_check::schema_registry::reconcile`) into
+//! `bynk-check`, wiring both into `analyse_project` — R3.5 compliance, not a
+//! behaviour change: the reasoning above for why platform-lock can never fire
+//! on this path holds regardless of which crate the check's code lives in,
+//! so `platform_lock_diagnostic_stays_absent` needs no change, and no
+//! equivalent pin ever existed for schema-registry reconciliation (never
+//! counted among the six — the same "gap in name only" reasoning applied to
+//! it from the start, per `bynk_check::analysis`'s own doc).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -202,14 +214,17 @@ fn event_subscription_diagnostic_present() {
 }
 
 /// Category 4 of 6 (a non-regression, see this file's module doc comment):
-/// `check_platform_lock` (`bynk.target.vendor_required`). Fixture copied from
+/// `check_platform_lock`, now `bynk_check::project_model::phase_platform_lock`
+/// (P5.3) (`bynk.target.vendor_required`). Fixture copied from
 /// `bynkc/tests/fixtures/negative/150_kv_on_node_platform`, whose CLI-level
-/// violation needs `--platform node` — `analyse_project_with` (pre-repoint)
-/// always analysed as `Platform::default()` (Cloudflare)/`BuildTarget::Bundle`,
-/// under which this exact fixture is *not* a violation (Cloudflare-native `Kv`
-/// consumed while the selected platform is also Cloudflare). The category was
-/// already absent from the LSP's diagnostics before this slice — this pins
-/// that it stays absent, not that this slice took it away.
+/// violation needs `--platform node` — `analyse_project` always analyses as
+/// `Platform::default()` (Cloudflare)/`BuildTarget::Bundle`, under which this
+/// exact fixture is *not* a violation (Cloudflare-native `Kv` consumed while
+/// the selected platform is also Cloudflare). The category was already
+/// absent from the LSP's diagnostics before P4.2's repoint, and stays absent
+/// after P5.3 relocated the check's code into `bynk-check` and wired it into
+/// `analyse_project` — this pins that it stays absent, not that any one
+/// slice took it away.
 #[test]
 fn platform_lock_diagnostic_stays_absent() {
     const STORE: &str = "context cache.store\n\nconsumes bynk.cloudflare { Kv }\n\nservice cache {\n  on call(key: String, value: String) -> Effect[Option[String]] given Kv {\n    let previous <- Kv.get(key)\n    let _ <- Kv.put(key, value)\n    let _ <- Kv.delete(\"stale\")\n    previous\n  }\n}\n";

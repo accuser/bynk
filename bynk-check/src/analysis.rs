@@ -23,30 +23,38 @@
 //! [`crate::project_model::phase_locale_bundle_ambiguity`]/
 //! [`crate::project_model::phase_event_subscriptions`]/
 //! [`crate::project_model::phase_function_type_boundaries`] are now called
-//! from [`analyse_project`] at the same points `run_checks` calls them. Three
-//! categories remain open; two of those were already unreachable from the
-//! editor before P4.2 even shipped, so porting them would change nothing
-//! observable; the other is still P4.2's live regression, pinned at
-//! the `bynk-ide`/`bynk-lsp` layer by `bynk-lsp/tests/analysis_residual_gap.rs`
-//! and named in `CHANGELOG.md`:
+//! from [`analyse_project`] at the same points `run_checks` calls them.
+//! Categories 1 and 5 closed at P5.3, structurally rather than observably —
+//! both were already unreachable from the editor before P4.2 even shipped,
+//! so porting them changed nothing observable. One category remains open,
+//! still P4.2's live regression, pinned at the `bynk-ide`/`bynk-lsp` layer by
+//! `bynk-lsp/tests/analysis_residual_gap.rs` and named in `CHANGELOG.md`:
 //!
-//! 1. **Schema-registry reconciliation** (`schema_registry::reconcile`) —
-//!    unreachable from the `Mode::Analyse` path today anyway (it only runs
-//!    under `SchemaLock::On`, and `analyse_project_with` always passes
-//!    `SchemaLock::Off`), so this is a gap in name only.
+//! 1. ~~Schema-registry reconciliation~~ — **closed at P5.3**.
+//!    [`crate::schema_registry::reconcile`] is now called from
+//!    [`analyse_project`], right after [`crate::project_model::phase_validate_providers`]
+//!    (the same relative point `run_checks` calls it). Still unreachable on
+//!    this path — it only ever fires under `SchemaLock::On`, and this entry
+//!    point has no on-disk lock concept at all, so it always reconciles
+//!    against an empty registry, which every event baselines against
+//!    silently — so relocating it changed nothing observable; it now simply
+//!    originates in `bynk-check`, per R3.5.
 //! 2. ~~`messages` bundle validation~~ — **closed at P5.0**, see above.
 //! 3. ~~Locale bundle ambiguity~~ — **closed at P5.0**, see above.
 //! 4. ~~Event-subscription validation~~ — **closed at P5.1**, see above.
-//! 5. **Platform-lock enforcement** (`check_platform_lock`) — also a gap in
-//!    name only, for the same reason as category 1, found while grounding
-//!    P4.2's own regression fixtures: `analyse_project_with` always calls
-//!    `run_checks` with `Platform::default()` (Cloudflare) and
-//!    `BuildTarget::Bundle` hardcoded, and `bynk.cloudflare` is the only
-//!    platform-native unit that exists (`firstparty::platform_of`) — so
-//!    `check_platform_lock`'s `lock_violation` can never find a native
-//!    platform disagreeing with the selected one, for any project, on the
-//!    editor's analysis path. No fixture can observe this category
-//!    regressing because it never fired through this path to begin with.
+//! 5. ~~Platform-lock enforcement~~ — **closed at P5.3**.
+//!    [`crate::project_model::phase_platform_lock`] is now called from
+//!    [`analyse_project`], right after the per-unit compose/check loop (the
+//!    same relative point `run_checks` calls it, gated the same way on a
+//!    clean error sink so far). Still unreachable on this path, for the same
+//!    reason as before the relocation: `analyse_project` hardcodes
+//!    `Platform::default()` (Cloudflare) and `BuildTarget::Bundle`, and
+//!    `bynk.cloudflare` is the only platform-native unit that exists
+//!    (`firstparty::platform_of`) — so `lock_violation` can never find a
+//!    native platform disagreeing with the selected one, for any project, on
+//!    this path. No fixture can observe this category regressing (or
+//!    improving) because it never fired through this path to begin with, both
+//!    before and after this relocation.
 //! 6. ~~Function-type-boundary checks~~ — **closed at P5.2**. Formerly reached,
 //!    in `bynk-emit`, only through `phase_group`'s optional boundary-check
 //!    hook (`Some` from `run_checks`, `None` here); the hook is gone —
@@ -365,8 +373,21 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     // -- 6c. Provider matching. --
     project_model::phase_validate_providers(&unit_tables, &groups, &parsed, &mut errors, tys);
 
-    // Category 1 (schema-registry reconciliation) is the residual gap here —
-    // unreachable from this path in `bynk-emit` too (always `SchemaLock::Off`).
+    // -- 6d. Events track, slice 3c (#980): schema-registry reconciliation.
+    //        P5.3: closes category 1 of this module's own residual-gap
+    //        accounting — `crate::schema_registry::reconcile` now runs here
+    //        too, at the same point `run_checks` calls it. This entry point
+    //        carries no on-disk schema lock (mirrors `analyse_project_with`'s
+    //        own hardcoded `SchemaLock::Off`), so every event baselines
+    //        silently against an empty registry — no diagnostic is reachable
+    //        through this call, same as before the relocation. --
+    let mut schema_errors: Vec<bynk_syntax::error::CompileError> = Vec::new();
+    crate::schema_registry::reconcile(
+        &bynk_project::schema_registry::SchemaRegistry::new(),
+        &unit_tables,
+        &mut schema_errors,
+    );
+    errors.extend_for(None, schema_errors);
 
     // No bail gate: this entry point never bails after discovery (mirrors
     // `Mode::Analyse` — independent unit groups resolve/check past another
@@ -389,9 +410,11 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     );
 
     // -- 8. For each unit, compose the symbol space and resolve+check every
-    //       file. Categories 5 (platform-lock) and test/integration
-    //       processing are the residual gap after this loop — see this
-    //       module's own doc comment. --
+    //       file. Test/integration processing is the residual gap after this
+    //       loop — see this module's own doc comment. Category 5
+    //       (platform-lock) closes right after, below the loop, at the same
+    //       relative point `run_checks` calls it (after its own per-unit
+    //       checking, gated on a clean error sink so far). --
     for (name, info) in &unit_info {
         let kind = info.kind;
         let indices = info.files.as_slice();
@@ -459,6 +482,30 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
                 );
             }
         }
+    }
+
+    // v0.19 (decisions 0017/0024), P5.3: platform-lock enforcement — closes
+    // category 5 of this module's own residual-gap accounting. Mirrors
+    // `analyse_project_with`'s own hardcoded `Platform::default()`
+    // (Cloudflare) and `BuildTarget::Bundle`: `bynk.cloudflare` is the only
+    // platform-native unit that exists, and it matches the default
+    // selection, so `lock_violation` can never fire here, for any project
+    // (see `bynk-lsp/tests/analysis_residual_gap.rs`'s
+    // `platform_lock_diagnostic_stays_absent`) — this call closes the
+    // category structurally (R3.5), not observably.
+    if errors.is_empty() {
+        project_model::phase_platform_lock(
+            project_model::BuildTarget::Bundle,
+            Platform::default(),
+            &parsed,
+            &groups,
+            &kinds,
+            &unit_tables,
+            &unit_consumes,
+            &unit_consumes_aliases,
+            &unit_flattened,
+            &mut errors,
+        );
     }
 
     // -- Assemble the `ProjectAnalysis`. Mirrors `analyse_project_with`'s own
