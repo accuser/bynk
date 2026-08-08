@@ -899,7 +899,7 @@ fn property_tier(_prop: &PropertyDecl) -> Option<bynk_syntax::ast::TestTier> {
 /// operation's tail occupies.
 ///
 /// Dual-use (found during P5.4's move, not in the original slice plan):
-/// [`stub_value_typechecks`] (in this module) uses it for the checking path;
+/// `stub_value_typechecks` (in this module) uses it for the checking path;
 /// `bynk-emit`'s `lower_stub_value_block` also calls it, qualified, to lower
 /// a `stub` RHS value in the same op-body tail position. `pub` for that
 /// second caller, same as every other dual-use function in this module.
