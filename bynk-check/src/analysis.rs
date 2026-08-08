@@ -17,15 +17,16 @@
 //! This entry point was diagnostically faithful to `bynk-emit`'s
 //! `run_checks`'s `Mode::Analyse` arm **minus seven categories** of
 //! whole-project checking at P4.2 (recorded on the tracking issue's own
-//! scope-correction comments, not silently assumed). Categories 2, 3 and 4
-//! closed at P5.0/P5.1 (`design/tracks/semantics-in-the-checker.md` §6) —
-//! [`crate::project_model::phase_messages_bundles`]/
+//! scope-correction comments, not silently assumed). Categories 2, 3, 4 and 6
+//! closed at P5.0/P5.1/P5.2 (`design/tracks/semantics-in-the-checker.md` §6)
+//! — [`crate::project_model::phase_messages_bundles`]/
 //! [`crate::project_model::phase_locale_bundle_ambiguity`]/
-//! [`crate::project_model::phase_event_subscriptions`] are now called from
-//! [`analyse_project`] at the same points `run_checks` calls them. Four
+//! [`crate::project_model::phase_event_subscriptions`]/
+//! [`crate::project_model::phase_function_type_boundaries`] are now called
+//! from [`analyse_project`] at the same points `run_checks` calls them. Three
 //! categories remain open; two of those were already unreachable from the
 //! editor before P4.2 even shipped, so porting them would change nothing
-//! observable; the other two are still P4.2's live regression, pinned at
+//! observable; the other is still P4.2's live regression, pinned at
 //! the `bynk-ide`/`bynk-lsp` layer by `bynk-lsp/tests/analysis_residual_gap.rs`
 //! and named in `CHANGELOG.md`:
 //!
@@ -46,12 +47,11 @@
 //!    platform disagreeing with the selected one, for any project, on the
 //!    editor's analysis path. No fixture can observe this category
 //!    regressing because it never fired through this path to begin with.
-//! 6. **Function-type-boundary checks** (`check_function_type_boundaries`) —
-//!    reached, in `bynk-emit`, from inside `phase_group`; this entry point
-//!    calls [`crate::project_model::phase_group`] with `None` for that
-//!    phase's optional boundary-check hook, so the check genuinely doesn't
-//!    run rather than being duplicated with a different diagnostic order.
-//!    Live gap.
+//! 6. ~~Function-type-boundary checks~~ — **closed at P5.2**. Formerly reached,
+//!    in `bynk-emit`, only through `phase_group`'s optional boundary-check
+//!    hook (`Some` from `run_checks`, `None` here); the hook is gone and both
+//!    callers now call [`crate::project_model::phase_function_type_boundaries`]
+//!    directly, immediately after `phase_group` returns.
 //! 7. **Test/integration-suite processing**
 //!    (`process_tests`/`process_integration_tests`) — unlike categories 2-6,
 //!    these run *unconditionally* in `run_checks`, in `Mode::Analyse` too,
@@ -258,9 +258,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     normalize_service_defaults(&mut parsed);
     let parsed = parsed;
 
-    // -- 3. Group. The `None` here is the residual gap's category 6 (see
-    //       this module's own doc comment) — `phase_group` never calls
-    //       `check_function_type_boundaries`. --
+    // -- 3. Group. --
     let (groups, kinds, _test_groups, _integration_groups, _adapter_bindings, _npm_deps) =
         project_model::phase_group(
             &parsed,
@@ -269,9 +267,14 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             consumes_bynk,
             consumes_cloudflare,
             overlay,
-            None,
             &mut errors,
         );
+
+    // -- 3b. Function types are confined to non-boundary positions. P5.2:
+    //        closes category 6 of this module's own residual-gap accounting
+    //        (see doc comment above) — this entry point now calls the same
+    //        relocated check `run_checks` does, immediately after `phase_group`. --
+    project_model::phase_function_type_boundaries(&parsed, &mut errors);
 
     // -- 4. Per-unit combined symbol tables. --
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);

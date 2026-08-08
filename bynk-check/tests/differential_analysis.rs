@@ -13,14 +13,22 @@
 //!
 //! ## Why the fixture avoids the residual-gap categories
 //!
-//! `bynk_check::analysis::analyse_project`'s own doc comment names six
-//! categories of whole-project checking it deliberately does not run
-//! (schema-registry reconciliation, `messages`-bundle validation, locale
-//! bundle ambiguity, event-subscription validation, platform-lock
-//! enforcement, function-type-boundary checks). A fixture that triggered any
-//! of those would see the two paths *legitimately* disagree — that
-//! divergence is accepted debt (ADR 0328), not a bug this test should catch.
-//! So the fixture below has: no `messages` block, no `Locale` capability
+//! `bynk_check::analysis::analyse_project`'s own doc comment named seven
+//! categories of whole-project checking it deliberately did not run.
+//! `messages`-bundle validation, locale bundle ambiguity, event-subscription
+//! validation (P5.0/P5.1) and function-type-boundary checks (P5.2,
+//! `design/tracks/semantics-in-the-checker.md` §6) have since closed — both
+//! paths now call the same relocated `bynk_check::project_model` functions,
+//! so a fixture triggering any of those four no longer has a legitimate
+//! divergence to avoid. What's left, still deliberately avoided here: schema-
+//! registry reconciliation and platform-lock enforcement (both gap-in-name-
+//! only — unreachable on this path regardless of where the checking code
+//! lives, so a fixture couldn't observe a difference either way, but is kept
+//! out for clarity), and `test`/`test integration` processing (category 7,
+//! the one remaining live divergence — that divergence is accepted debt
+//! (ADR 0328), not a bug this test should catch, and is pinned directly by
+//! `new_entry_point_omits_test_body_diagnostics` below instead). So the
+//! fixture below has: no `messages` block, no `Locale` capability
 //! consumption, no `Events`/`from Events(...)` subscription, nothing that
 //! reaches a platform-native capability (no `--platform` lock to trip), no
 //! generic-record boundary violation (a function type in a non-boundary

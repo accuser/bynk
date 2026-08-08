@@ -76,8 +76,6 @@ pub use bynk_project::{
     worker_handlers_output_path, worker_handlers_source_path,
 };
 pub use diagnostics::{ContextBoundaryInfo, ContextSequenceInfo, ProjectAnalysis, ProjectFailure};
-pub use validate::check_function_type_boundary_items;
-pub(crate) use validate::collect_type_decls;
 
 /// One generated TypeScript file.
 pub struct CompiledFile {
@@ -1540,14 +1538,15 @@ fn run_checks(
             consumes_bynk,
             consumes_cloudflare,
             overlay,
-            // v0.20a: function types are confined to non-boundary positions.
-            // This check stays in `bynk-emit` (the new `bynk-check`-native
-            // analysis entry point's documented residual gap) — `phase_group`
-            // reaches it only through this optional hook so the two callers
-            // can't drift on diagnostic order (see `phase_group`'s own doc).
-            Some(&check_function_type_boundaries),
             &mut errors,
         );
+
+    // -- 3b. Function types are confined to non-boundary positions. P5.2
+    //        (`design/tracks/semantics-in-the-checker.md` §6): this check now
+    //        lives in `bynk-check::project_model` and is called directly by
+    //        both this path and the `bynk-check`-native analysis entry point
+    //        — no more optional hook to drift on. --
+    project_model::phase_function_type_boundaries(&parsed, &mut errors);
 
     // -- 4. Build per-unit combined symbol tables. --
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);

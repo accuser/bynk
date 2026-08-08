@@ -16,22 +16,26 @@
 //! way P4.0 turned `project.rs` into a caller of `bynk-project`.
 //!
 //! What stayed in `bynk-emit` (not shared, because only the `Mode::Build` path
-//! needs it, or because it's genuinely emission-shaped): the whole-project
-//! `messages`/locale-ambiguity/event-subscription checks, schema-registry
+//! needs it, or because it's genuinely emission-shaped): schema-registry
 //! reconciliation, platform-lock, the `Mode::Build` bail gate, and everything
 //! from emission onward (`EmitUnitCtx`, `emit_unit`,
-//! `collect_history_target_agents`). `check_function_type_boundaries` also
-//! stays in `bynk-emit` (`validate.rs`) — [`phase_group`] reaches it only
-//! through an optional hook, never a direct call, so the new entry point can
-//! genuinely omit it (a documented residual gap, see `analysis.rs`) rather
-//! than duplicate it with a different diagnostic order.
+//! `collect_history_target_agents`). The whole-project `messages`/locale-
+//! ambiguity/event-subscription checks (P5.0/P5.1) and the function-type-
+//! boundary check (P5.2, [`phase_function_type_boundaries`]) have since moved
+//! here too — the last of those closed `phase_group`'s optional boundary-check
+//! hook, which used to be the only way `run_checks` and the new entry point
+//! could reach it without duplicating the diagnostic-ordering logic
+//! (see `analysis.rs` for the residual-gap accounting that remains).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use crate::checker::{self, Ty, TyId, Types};
-use crate::context_checks::{build_capability_op_info, ts_type_ref_display, type_ref_to_display};
+use crate::context_checks::{
+    build_capability_op_info, reject_fn_types, ts_type_ref_display, type_ref_is_held,
+    type_ref_to_display, validate_store_field_value_types,
+};
 use crate::firstparty::{self, Platform};
 use crate::icu;
 use crate::index::{RefSink, SymbolKind};
@@ -602,17 +606,6 @@ pub fn phase_group(
     consumes_bynk: bool,
     consumes_cloudflare: bool,
     overlay: &HashMap<PathBuf, String>,
-    // P4.1 (#1115): the whole-project function-type-boundary check
-    // (`bynk-emit`'s `check_function_type_boundaries`) is one of the five
-    // `validate.rs` checks the new `bynk-check`-side analysis entry point
-    // deliberately omits (the documented residual gap, `analysis.rs`'s own
-    // doc comment). It cannot move here itself (`validate.rs` stays in
-    // `bynk-emit`), so this phase takes it as an optional hook instead of
-    // calling it directly — `run_checks` passes `Some`, preserving its exact
-    // diagnostic-ordering position in this phase; the new entry point passes
-    // `None` and the check simply doesn't run, rather than being duplicated
-    // with a different diagnostic order.
-    function_type_boundary_check: Option<&dyn Fn(&[ParsedFile]) -> Vec<(PathBuf, CompileError)>>,
     errors: &mut ErrorSink,
 ) -> (
     BTreeMap<String, Vec<usize>>,
@@ -665,15 +658,6 @@ pub fn phase_group(
     // its target and is legal in any file — so test-ness carries no path check.
     if let Err(e) = check_path_name_alignment(parsed) {
         for (path, err) in e {
-            errors.push_for(Some(&path), err);
-        }
-    }
-
-    // v0.20a: function types are confined to non-boundary positions. See
-    // this fn's own doc comment for why this is an injected hook, not a
-    // direct call.
-    if let Some(check) = function_type_boundary_check {
-        for (path, err) in check(parsed) {
             errors.push_for(Some(&path), err);
         }
     }
@@ -827,6 +811,176 @@ pub fn phase_group(
         adapter_bindings,
         npm_deps,
     )
+}
+
+/// v0.20a: apply the function-type boundary confinement to every serialisable
+/// or boundary-crossing position in a file's items: record fields and sum
+/// payloads (types can cross contexts and persist), service/agent handler
+/// signatures (the Workers wire), capability operation signatures (kept out
+/// in v0.20a — see ADR 0030), agent state fields, and agent keys. Free `fn`
+/// signatures are deliberately NOT walked — they are the non-boundary home
+/// of function types.
+///
+/// #696: each diagnostic is paired with the project-relative `identity_path` of
+/// the file whose items produced it, so the CLI renders it against that file's
+/// source.
+///
+/// P5.2 (`design/tracks/semantics-in-the-checker.md` §6): relocated verbatim
+/// from `bynk-emit/src/project/validate.rs`'s `check_function_type_boundaries`
+/// — category 6 of `analysis.rs`'s own seven-category accounting. Previously
+/// reached only through `phase_group`'s optional `function_type_boundary_check`
+/// hook (`Some` from `run_checks`, `None` from the new entry point); that hook
+/// is gone — both callers now call this function directly, immediately after
+/// `phase_group` returns, so they can no longer drift on whether the check runs.
+pub fn phase_function_type_boundaries(parsed: &[ParsedFile], errors: &mut ErrorSink) {
+    // v0.174 (#592): the boundary check now also rejects a *recursive* generic
+    // record (`reject_fn_types`' `App` arm), which needs the type declarations to
+    // walk the containment graph. Build the project-wide table once — a generic
+    // referenced from one file may be declared in another.
+    let types = collect_type_decls(parsed.iter().flat_map(|pf| pf.items()));
+    for pf in parsed {
+        let mut file_errors: Vec<CompileError> = Vec::new();
+        check_function_type_boundary_items(pf.items(), &types, &mut file_errors);
+        for err in file_errors {
+            errors.push_for(Some(&pf.identity_path()), err);
+        }
+    }
+}
+
+/// v0.174 (#592): a `name -> TypeDecl` table over a set of items, for the
+/// recursive-generic boundary walk. Relocated alongside
+/// `phase_function_type_boundaries` (P5.2) — public since `bynk-emit`'s
+/// single-file compile path (`lib.rs`) also needs it, across the crate
+/// boundary this relocation now draws.
+pub fn collect_type_decls<'a>(
+    items: impl Iterator<Item = &'a CommonsItem>,
+) -> HashMap<String, Arc<TypeDecl>> {
+    let mut out = HashMap::new();
+    for item in items {
+        match item {
+            CommonsItem::Type(t) => {
+                out.entry(t.name.name.clone())
+                    .or_insert_with(|| Arc::new(t.clone()));
+            }
+            // Events track, slice 0 (spine #936): an event's synthetic
+            // `TypeDecl` joins the same table, so a field referencing an
+            // event type recurses into it exactly like any other type.
+            CommonsItem::Event(e) => {
+                out.entry(e.name.name.clone())
+                    .or_insert_with(|| Arc::new(e.as_type_decl()));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Item-level body of the boundary confinement, shared with the single-file
+/// (legacy) compile path in `bynk-emit`'s `lib.rs`. Relocated alongside
+/// `phase_function_type_boundaries` (P5.2).
+pub fn check_function_type_boundary_items(
+    items: &[CommonsItem],
+    types: &HashMap<String, Arc<TypeDecl>>,
+    errors: &mut Vec<CompileError>,
+) {
+    for item in items {
+        match item {
+            CommonsItem::Type(t) => match &t.body {
+                TypeBody::Record(r) => {
+                    for f in &r.fields {
+                        reject_fn_types(&f.type_ref, "a record field", types, errors);
+                    }
+                }
+                TypeBody::Sum(s) => {
+                    for v in &s.variants {
+                        for p in &v.payload {
+                            reject_fn_types(&p.type_ref, "a sum-variant payload", types, errors);
+                        }
+                    }
+                }
+                TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+            },
+            // Events track, slice 0 (spine #936): an event's fields are
+            // boundary values (an emission crosses a context boundary),
+            // so the same record-field rule applies as for a `type`.
+            CommonsItem::Event(e) => {
+                for f in &e.body.fields {
+                    reject_fn_types(&f.type_ref, "an event field", types, errors);
+                }
+            }
+            CommonsItem::Capability(c) => {
+                for op in &c.ops {
+                    for p in &op.params {
+                        reject_fn_types(
+                            &p.type_ref,
+                            "a capability operation signature",
+                            types,
+                            errors,
+                        );
+                    }
+                    // v0.102 (§2.9.1): a capability operation may *produce* a
+                    // held value — it is the canonical held source — so an
+                    // `Effect[Connection[F]]` return is admitted.
+                    if !type_ref_is_held(&op.return_type) {
+                        reject_fn_types(
+                            &op.return_type,
+                            "a capability operation signature",
+                            types,
+                            errors,
+                        );
+                    }
+                }
+            }
+            CommonsItem::Service(s) => {
+                for h in &s.handlers {
+                    for p in &h.params {
+                        // v0.102 (§2.9.4): the framework may supply a held
+                        // value as a handler parameter (the `on open`
+                        // connection), so a `Connection[F]` parameter is
+                        // admitted.
+                        if !type_ref_is_held(&p.type_ref) {
+                            reject_fn_types(
+                                &p.type_ref,
+                                "a service handler signature",
+                                types,
+                                errors,
+                            );
+                        }
+                    }
+                    reject_fn_types(&h.return_type, "a service handler signature", types, errors);
+                }
+            }
+            CommonsItem::Agent(a) => {
+                reject_fn_types(&a.key_type, "an agent key", types, errors);
+                for f in &a.store_fields {
+                    validate_store_field_value_types(f, types, errors);
+                }
+                for h in &a.handlers {
+                    for p in &h.params {
+                        // v0.102 (§2.9.4): a held value may be transferred to
+                        // an agent handler as a parameter.
+                        if !type_ref_is_held(&p.type_ref) {
+                            reject_fn_types(
+                                &p.type_ref,
+                                "an agent handler signature",
+                                types,
+                                errors,
+                            );
+                        }
+                    }
+                    reject_fn_types(&h.return_type, "an agent handler signature", types, errors);
+                }
+            }
+            CommonsItem::Actor(a) => {
+                if let Some(id) = &a.identity {
+                    reject_fn_types(id, "an actor identity type", types, errors);
+                }
+            }
+            // slice 1: `MessageEntry.code`/`.template` are plain string
+            // literals, no fn-type-bearing fields to reject here.
+            CommonsItem::Fn(_) | CommonsItem::Provider(_) | CommonsItem::Messages(_) => {}
+        }
+    }
 }
 
 /// Phase 4: build each production unit's combined symbol table from its files,
