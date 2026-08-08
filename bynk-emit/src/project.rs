@@ -1529,7 +1529,11 @@ fn run_checks(
     project_model::normalize_service_defaults(&mut parsed);
     let parsed = parsed;
 
-    // -- 3. Group by (name, kind) and validate per-directory consistency. --
+    // -- 3. Group by (name, kind) and validate per-directory consistency.
+    //       P5.2 (`design/tracks/semantics-in-the-checker.md` §6):
+    //       `phase_group` now also confines function types to non-boundary
+    //       positions directly, at the point its old optional hook used to
+    //       fire — see that function's own doc comment. --
     let (groups, kinds, test_groups, integration_groups, adapter_bindings, npm_deps) =
         project_model::phase_group(
             &parsed,
@@ -1540,13 +1544,6 @@ fn run_checks(
             overlay,
             &mut errors,
         );
-
-    // -- 3b. Function types are confined to non-boundary positions. P5.2
-    //        (`design/tracks/semantics-in-the-checker.md` §6): this check now
-    //        lives in `bynk-check::project_model` and is called directly by
-    //        both this path and the `bynk-check`-native analysis entry point
-    //        — no more optional hook to drift on. --
-    project_model::phase_function_type_boundaries(&parsed, &mut errors);
 
     // -- 4. Build per-unit combined symbol tables. --
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);
