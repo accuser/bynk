@@ -52,8 +52,9 @@ path = "src/main.rs"
 #
 # content-ownership track (#1086), slice 0: deliberately no `bynk-emit`
 # dependency here. `bynk-ide` already re-shapes everything this crate needs
-# from `bynk-emit` (`AnalysisRoots`, `discover_files`, `diagnose_project_with`)
-# into its own IDE-facing surface with no `bynk-emit` type crossing into
+# (`AnalysisRoots`, `discover_files`, `diagnose_project_with`) from
+# `bynk-check`/`bynk-project` (P4.2, #1122 — no longer from `bynk-emit` at
+# all) into its own IDE-facing surface with no `bynk-emit` type crossing into
 # `bynk-lsp` — see `bynk-ide/src/lib.rs`'s `AnalysisRoots` doc comment. Adding
 # `bynk-emit` here would give this crate a second, parallel way to reach the
 # same project model `bynk-ide` already owns for it.
