@@ -1522,12 +1522,10 @@ pub fn phase_messages_bundles(
         // bundle always needs both together, so splitting the code would
         // just be two author-facing fixes for one underlying requirement.
         let targets = unit_uses.get(name);
-        let has_locale_uses = targets.is_some_and(|targets| {
-            targets.iter().any(|t| t == firstparty::LOCALE_UNIT)
-        });
-        let has_locale_types_uses = targets.is_some_and(|targets| {
-            targets.iter().any(|t| t == firstparty::LOCALE_TYPES_UNIT)
-        });
+        let has_locale_uses =
+            targets.is_some_and(|targets| targets.iter().any(|t| t == firstparty::LOCALE_UNIT));
+        let has_locale_types_uses = targets
+            .is_some_and(|targets| targets.iter().any(|t| t == firstparty::LOCALE_TYPES_UNIT));
         if !has_locale_uses || !has_locale_types_uses {
             let missing = match (has_locale_uses, has_locale_types_uses) {
                 (false, false) => "`bynk.locale` and `bynk.locale.types`",
