@@ -1,10 +1,11 @@
 # Semantics in the checker — migrating to the greenfield reference (phase 5)
 
-- **Status:** **Draft — Settling.** Spine open. This file exists locally as the track doc but is not
-  yet committed via a settling draft PR (tracks/README.md step 2). Nothing here is decided — every
-  question in §3 is open, each with the investigation it needs, not yet argued under review. Opening
-  a draft PR that adds this file (referencing the spine, "Part of #1126") is the next step; marking it
-  ready for review asserts §3's five questions are closed.
+- **Status:** **Settled — Slicing on merge.** §3's five questions were argued under a settling review on
+  this branch. Q2 surfaced a finding the original draft didn't anticipate — the emission/checking
+  boundary P4.1 drew informally is already a documented, fixture-pinned, CHANGELOG-named live regression
+  in the editor, not just an architectural judgment call — see the provenance note at the head of §3.
+  Merging settles **direction**; it is not a build authorisation. Each slice is still an ordinary
+  increment proposal, and `accepted` on that sub-issue is the approval to build.
 - **Spine:** [#1126](https://github.com/accuser/bynk/issues/1126).
 - **Theme:** **Phase 5** of [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md) —
   everything that makes Bynk *Bynk* is checked in one crate, `bynk-check`; `bynk-emit` emits no
@@ -15,63 +16,44 @@
   ([#1107](https://github.com/accuser/bynk/issues/1107), settled 6 August 2026, retired 8 August 2026)
   and leaves a coherent compiler regardless of whether this phase lands.
 - **Relates:** reference rules R3.5, R4.6, R4.11, R10.1, R10.4 (the trajectory's own phase-5 list,
-  trajectory §3) — **but see Q1: three of the four non-R3.5 rules already read ✅ landed in the
-  reference's own Appendix D**, closed by paydown that predates this track. [ADR 0200](../decisions/0200-cross-context-contract-hash.md)
-  is not this phase's (phase 8's, per `project-model.md` §3.4); the schema-registry lockfile contract
-  R3.11 names (already closed) is directly adjacent to one of this phase's candidate slices (§6, P5.1).
+  trajectory §3) — **Q1 settles that R4.6/R4.11/R10.4 stay in scope narrowly, as verify-only items**;
+  Appendix D already marks all three ✅ landed elsewhere. [ADR 0200](../decisions/0200-cross-context-contract-hash.md)
+  is not this phase's (phase 8's, per `project-model.md` §3.4). R3.11's lockfile contract (already
+  closed) is directly adjacent to candidate slice P5.2 below.
 - **Precedent:** `project-model.md` (retired) is this track's direct predecessor on the same trajectory.
   Its own closing summary names the handoff explicitly: "Opens phase 5 (semantics centralisation —
   `validate.rs` dissolves into `bynk-check`)," and its §3.3(a) named a specific debt for this phase to
-  collect — a temporary duplication between a new `bynk-check` analysis entry point and
-  `bynk-emit::run_checks`'s `Mode::Analyse` arm, "phase 5's to remove." §1 below finds that debt already
-  paid, by the implementing slice rather than by this track — worth reading in full because it changes
-  this phase's real shape. `semantics-in-the-checker.md` would be the tenth track to run the ADR 0167
-  flow from the start, after `compiler-architecture.md` (sixth), `identity-and-totality.md` (seventh),
-  `content-ownership.md` (eighth) and `project-model.md` (ninth).
+  collect. §1 finds that debt already substantially paid, by the implementing slice rather than by this
+  track. `semantics-in-the-checker.md` is the tenth track to run the ADR 0167 flow from the start, after
+  `compiler-architecture.md` (sixth), `identity-and-totality.md` (seventh), `content-ownership.md`
+  (eighth) and `project-model.md` (ninth).
 
 ### ADR 0076 trigger check
 
 | Trigger | Met? |
 |---|---|
-| Spans several increments | **Yes, if narrowly** — trajectory §5 rates this phase relative size 12, confidence *low*, "200 diagnostic codes and a reverse edge dragging `icu.rs`." §1 below finds the real remaining surface is far smaller than that sizing assumed: `icu.rs` and `websocket::analyse_open_shape` are already in `bynk-check`, and the live probe reads 49 (not 200). The size question itself is one of §3's open items (Q1, Q2), not yet answered downward with confidence |
-| Surface not yet settled | **No** — the destination (R3.5: "no crate but `bynk-check` checks or diagnoses") is specified; what's open is which of the ~10 remaining genuine diagnostic sites are "checking" under that rule versus emission-time invariants R3.5 doesn't reach, a line the phase-4 implementation already drew once, informally, without a settling review behind it (§1, §3 Q2) |
-| Security/safety boundary | **No** — the three gates R4.6 exists to protect (`.raw`, `T.unsafe(…)`, owner-only event emission) are already closed, per Appendix D, by phase 1's `ResolvedCommons` constructor. This phase's own risk in that direction is regression, not a new gate (§9) |
+| Spans several increments | **Yes, if narrowly** — trajectory §5 rates this phase relative size 12, confidence *low*. §1/§6 replace that estimate with a concrete, named seven-category decomposition, most of it small; only category 7 (test/integration-suite processing, P5.4) is genuinely large |
+| Surface not yet settled | **No** — the destination (R3.5) is specified; §3 closes the question of which of `bynk-emit`'s remaining diagnostic sites are R3.5's business |
+| Security/safety boundary | **No** — the three gates R4.6 protects are already closed (phase 1). This phase's own risk in that direction is regression, not a new gate (§9) |
 
-**One of three, same count as every internal-architecture track on this trajectory before it.** The
-warrant is the tracks README's own: §3's questions govern which of a handful of candidate slices this
-phase actually needs, and where the crate boundary really sits once the two false-large assumptions in
-the trigger table above are corrected — governance that needs a home neither a proposal nor the
-trajectory document itself provides.
+**One of three, same count as every internal-architecture track on this trajectory before it.**
 
 ---
 
 ## 1. Why now
 
-**Phase 4's own closing note opens this phase by name.** `project-model.md`'s retirement summary reads:
-"the resulting duplication named as phase 5's to remove" — the debt was `bynk-emit::run_checks`'s
-`Mode::Analyse` arm sitting alongside a new, narrower `bynk-check` analysis entry point doing
-overlapping work, accepted deliberately in §3.3(a) rather than avoided, with phase 5 named as the
-crate that inherits it.
+**Phase 4's own closing note opens this phase by name**, and names a specific debt: a temporary
+duplication between a new `bynk-check` analysis entry point and `bynk-emit::run_checks`'s
+`Mode::Analyse` arm, accepted deliberately in `project-model.md` §3.3(a), "phase 5's to remove."
 
-**That debt is already paid — by the implementing slice, ahead of the design doc's own commitment.**
-`project-model.md` §3.3(a)'s decision text is explicit: *"phase 4 does not move `run_checks`… `run_checks`
-itself stays in `bynk-emit`, unchanged."* The shipped code disagrees. `bynk-check/src/project_model.rs`'s
-own module doc (1,941 lines, verified live):
-
-> "P4.1 (#1115), second scope finding on the tracking issue: this pipeline — `phase_discovery` through
-> `assemble_unit_info`, plus the per-unit symbol composition… — used to live only in
-> `bynk-emit/src/project.rs`, inline in `run_checks`. …rather than write a second, independently-maintained
-> copy… it moved here. `bynk-emit`'s `run_checks` becomes a caller of these functions instead of owning
-> the logic."
-
-`bynk-emit/src/project.rs` carries the same story at the call site (lines 926–939, verified live): two
-`P4.1 (#1115)` comments record that `record_analyse_types` and the whole discovery→parse→group→resolve
-pipeline relocated to `bynk-check::check_pipeline`/`bynk-check::project_model`, "the same way P4.0 turned
-`project.rs` into a caller of `bynk-project`." The implementing PR went further than the settled decision
-it shipped under, closed the named debt early, and neither `project-model.md` (deleted at retirement, so
-uncorrectable in place) nor the trajectory doc's phase-5 sizing (§5: relative size 12, "very large") was
-updated to reflect it. This is the same failure mode trajectory §9 names — "the evidence ages" — now
-caught before a slice proposal cites the stale figure rather than after.
+**That debt is already substantially paid — by the implementing slice, ahead of the design doc's own
+commitment.** `project-model.md` §3.3(a)'s decision text was explicit: *"`run_checks` itself stays in
+`bynk-emit`, unchanged."* The shipped code disagrees. `bynk-check/src/project_model.rs`'s own module doc
+(1,941 lines, verified live) records that P4.1 (#1115) relocated the whole discovery→parse→group→resolve
+pipeline into `bynk-check::project_model`, with `bynk-emit`'s `run_checks` now a caller rather than an
+owner. Neither `project-model.md` (deleted at retirement) nor the trajectory doc's phase-5 sizing (§5:
+relative size 12) was updated to reflect it — trajectory §9's own "the evidence ages" warning, caught
+here before a slice proposal cites the stale figure.
 
 **The live probe confirms the shape.** `design/greenfield-status.md`, regenerated at commit `7d2c382c`
 (P4.2, the same commit series that closed phase 4), gated and CI-checked
@@ -82,34 +64,59 @@ emit_diagnostics: bynk-emit=49/53, bynk-check=346/353 (true/naive)
 ```
 
 49 registered `bynk.*` codes still originate in `bynk-emit` — down from the trajectory's own §3.0
-baseline of 200 (30 July 2026) and the review's 190. R3.5 was the one row the trajectory's own Appendix D
-flagged as moving the *wrong* direction between review and baseline (§3.0: "phase 5's distance has
-**grown**"). It has since reversed hard, and by more than ordinary churn alone plausibly accounts for —
-worth settling in Q1 whether the reversal is fully attributable to P4.1 or partly to an untracked Wave-5
-pass (`git log` shows a commit titled "Wave 5: layering for the compiler pipeline review (#956)" that
-independently relocated `icu.rs` and `websocket::analyse_open_shape` into `bynk-check` and gave
-`Ctx` its `pub(crate)` visibility — both already true today, verified live, and both named in this
-phase's own invariant).
+baseline of 200. Two independent moves account for the drop: P4.1 (#1115, above) and an earlier,
+untracked pass — commit `ac3daca5`, "Wave 5: layering for the compiler pipeline review (#956)" — which
+relocated `icu.rs` and `websocket::analyse_open_shape` into `bynk-check` and gave `Ctx` its `pub(crate)`
+visibility, both verified true today and both named in this phase's own invariant.
 
-**What's actually left, verified directly (naive-string grep, cross-checked against the probe's 49/53):**
+**`bynk-check/src/analysis.rs`'s own module doc is the authoritative accounting of what's left, and it
+is far more precise than anything a fresh grep sweep would produce.** It enumerates exactly seven
+categories of whole-project checking that `run_checks`'s `Mode::Analyse` arm performs and the new
+`bynk-check::analyse_project` entry point (P4.1/P4.2) does not port:
 
-| File | Real diagnostic sites | What they check |
-|---|---|---|
-| `bynk-emit/src/project/validate.rs` (1,160 lines, down from the 5,019-line figure `project-model.md` cited for the *whole* `project.rs` module tree — not an apples-to-apples comparison, flagged for correction) | ~15: `bynk.target.*` (platform lock), `bynk.messages.*`/`bynk.locale.*` (message/locale completeness), `bynk.event.*` (subscription/pattern checks) | Whole-project, cross-unit semantic checks |
-| `bynk-emit/src/project/schema_registry.rs` | 2: `bynk.event.schema_version_mismatch`, `bynk.event.non_additive_schema_change` | R3.11's lockfile-contract enforcement |
-| `bynk-emit/src/emitter/secrets.rs` | 1: `bynk.secrets.computed_name` | A single named-secret validation |
-| `bynk-emit/src/emitter/emit.rs` | 1: `bynk.emit.unresolved_cross_context_signature` | Reads as an emission-time internal-consistency assertion, not a user-diagnosable program error — flagged in Q2 |
-| `bynk-emit/src/project.rs` | 1: `bynk.project.schema_registry_corrupt` | The remaining 15 naive hits in this file are `bynk.toml`/`bynk.locale`/`bynk.map` string literals and test assertions, not diagnostic emission |
+| # | Category | Owning function | Status |
+|---|---|---|---|
+| 1 | Schema-registry reconciliation | `schema_registry::reconcile` | Gap in name only — unreachable on the analyse path anyway (`analyse_project_with` always passes `SchemaLock::Off`) |
+| 2 | `messages` bundle validation | `check_messages_bundles` | **Live gap** |
+| 3 | Locale bundle ambiguity | `check_locale_bundle_ambiguity` | **Live gap** |
+| 4 | Event-subscription validation | `check_event_subscriptions` | **Live gap** |
+| 5 | Platform-lock enforcement | `check_platform_lock` | Gap in name only — `analyse_project_with` hardcodes `Platform::default()`/`BuildTarget::Bundle`, so `lock_violation` can never fire on this path for any project |
+| 6 | Function-type-boundary checks | `check_function_type_boundaries` | **Live gap** — reached only through an optional hook the new entry point passes as `None` |
+| 7 | Test/integration-suite processing | `process_tests`/`process_integration_tests` | **Live gap**, plus a second consequence: go-to-definition/find-references/completion for a test-only binding also regress, since both functions also populate `RefSink` |
 
-**`bynk-check/src/project_model.rs`'s own doc comment already draws the line this phase must ratify or
-revise, without a settling review behind it:** "What stayed in `bynk-emit` (not shared, because only the
-`Mode::Build` path needs it, or because it's genuinely emission-shaped): the whole-project
-`messages`/locale-ambiguity/event-subscription checks, schema-registry reconciliation, platform-lock, the
-`Mode::Build` bail gate… `check_function_type_boundaries` also stays in `bynk-emit` (`validate.rs`) —
-[`phase_group`] reaches it only through an optional hook, never a direct call… a documented residual gap."
-That is a real, working boundary — but it was drawn by an implementer closing a different slice's finding,
-not settled under this phase's own review, and R3.5's text carries no "only used during `Build`" carve-out.
-Q2 and Q3 below exist because of this passage specifically.
+**This is not a hypothetical architectural question — it is an already-shipped, already-diagnosed, already
+CI-pinned regression**, confirmed directly:
+
+- `CHANGELOG.md` (the v0.247.something entry covering #1122) names the five live gaps explicitly under
+  "Language server," states they are "accepted, tracked debt (`design/tracks/project-model.md` §3.3(a)),
+  closed when phase 5 of that track ports these checks into `bynk-check`'s analysis entry point," and
+  tells users to run `bynkc build`/`bynkc test` to see the diagnostics meanwhile.
+- `bynk-lsp/tests/analysis_residual_gap.rs` pins each live-gap category as a direct assertion that
+  today's `bynk_ide::diagnose_project` output lacks it, sourced from real `bynkc/tests/fixtures/negative`
+  cases — "pin the gap as an assertion, not an absence." Its own header records a correction made while
+  grounding the fixture set: `check_platform_lock` was initially counted as a sixth live regression, then
+  found to be gap-in-name-only for the same reason as schema-registry reconciliation.
+- `bynk-check/tests/differential_analysis.rs`'s `new_entry_point_omits_test_body_diagnostics` pins
+  category 7's divergence directly against `analyse_project_with`.
+
+This phase's job, in concrete terms, is closing that named debt: porting categories 2, 3, 4, 6 and 7 so
+the editor sees them again, and categories 1 and 5 for R3.5 compliance even though nothing currently
+observes the improvement.
+
+**Two sites from a first-pass file grep turned out not to belong to any of the seven categories, and
+needed direct verification rather than being taken at naive-grep face value:**
+
+- `bynk-emit/src/emitter/emit.rs`'s `bynk.emit.unresolved_cross_context_signature` is **not a registered
+  diagnostic at all** — verified directly: both occurrences are inside a `panic!`/`assert_eq!` message
+  string, never a `CompileError::new(...)` construction. Its own comment explains why: "the checker
+  resolved this call before the emitter ran, so an absent signature is the emitter disagreeing with the
+  checker — a compiler bug. Fail instead [of silently degrading]." It is an internal-consistency
+  assertion, correctly outside R3.5's scope, and outside `emit_diagnostics`'s true/naive gap.
+- `bynk-emit/src/project/tests_emit.rs` was mischaracterised in an earlier pass over this doc as
+  fixture/test noise. It is not — despite the filename, it holds `process_tests`/`process_integration_tests`
+  (category 7 above), real production code with roughly 19 genuine `bynk.*` codes (`bynk.suite.*`,
+  `bynk.stub.*`, `bynk.tier.*`, `bynk.test.*`, `bynk.contract.*`, `bynk.history.*`, `bynk.val.*`,
+  `bynk.property.*`). Corrected here rather than left silently wrong.
 
 ---
 
@@ -117,104 +124,103 @@ Q2 and Q3 below exist because of this passage specifically.
 
 - **Not phase 6 (the IR).** `bynk-emit` naming no AST type and `CommitShape` becoming data are untouched
   here — this phase only removes checking, per the trajectory's own "5 before 6" ordering argument.
-- **Not re-opening R4.6, R4.11 or R10.4.** Appendix D already marks all three ✅ landed, closed by phase
-  1's `ResolvedCommons` constructor and by prior `pub`-surface paydown, not by this phase. This track's
-  business with them is narrower: verifying the remaining relocations (§6) don't regress them by
-  hand-rolling a new `ResolvedCommons`-shaped struct at a new call site — a real risk named in §9, not new
-  construction work.
-- **Not a `bynk-emit` crate rename.** R10.1 asks for an accurate one-line input/output description, not
-  new crate boundaries — the reference's own target crate list (§10, `bynk-greenfield-compiler.md` ~line
-  1610) does not add an orchestration crate distinct from `bynk-driver`. Whether `bynk-emit`'s remaining
-  job needs only a doc correction or a real split is Q5, not a foregone restructuring.
+- **Not new construction against R4.6, R4.11 or R10.4.** Appendix D already marks all three ✅ landed.
+  This track's business with them (P5.5, §6) is verification only: confirming the relocations in §6
+  don't regress them by hand-rolling a new `ResolvedCommons`-shaped struct at a new call site.
+- **Not a `bynk-emit` crate rename.** §3.5 (Q5) settles this: R10.1 closes with an accurate crate-level
+  doc/`Cargo.toml` description once checking leaves, not a restructuring toward `bynk-driver`.
 - **Not R3.2** (`bynk check` still runs the bailing path) — a different rule, untouched by this phase's
   scope.
-- **Not phases 6–8.** Carried as forward references in §7, not refusals, per the discipline every prior
-  track on this trajectory has used for phases not yet open.
+- **Not `emit.rs`'s internal-consistency assertion.** §1 found it isn't a registered diagnostic at all;
+  it needs no relocation and carries no rule.
+- **Not phases 6–8.** Carried as forward references in §7, not refusals.
 
 ---
 
-## 3. Design questions — open
+## 3. Design questions — settled
 
-None of the five below has been argued under a settling review yet. Each states the investigation
-already done and the tension it leaves.
+> **Provenance: Q2 changed shape during this settling pass, in the direction of more evidence, not
+> more doubt.**
+>
+> The draft framed Q2 as an open judgment call — does R3.5 apply uniformly, or does `bynk-emit` get a
+> carve-out for checks "only the `Mode::Build` path needs"? Reading `bynk-check/src/analysis.rs`'s own
+> module doc and its neighbours (`bynk-lsp/tests/analysis_residual_gap.rs`, `CHANGELOG.md`) closed the
+> question with more force than the draft anticipated: the boundary isn't merely an informal judgment
+> call worth re-examining — it's an already-shipped regression the codebase's own authors already named,
+> fixture-pinned, and scheduled onto this exact track by name (`CHANGELOG.md`: "closed when phase 5 of
+> that track ports these checks"). Five of seven categories are confirmed live gaps in the editor today;
+> the other two are confirmed-unreachable regardless of where they live, which changes their priority but
+> not their in-scope status. Q3 folded into this finding directly — `check_function_type_boundaries` is
+> category 6, one of the five live gaps, which settles "close the hook" without a separate argument.
+>
+> Q1, Q4 and Q5 resolved close to the draft's own framing, each for the reason stated below.
 
-### 3.1 Q1 — Does this track's rule list still include R4.6, R4.11 and R10.4?
+### 3.1 Q1 — Does this track's rule list still include R4.6, R4.11 and R10.4? **Settled.**
 
-Appendix D marks all three ✅ landed, attributed to work outside this phase (phase 1's `ResolvedCommons`
-constructor for R4.6/R4.11; prior facade-deletion paydown for R10.4, `#1048`). The trajectory doc's own
-phase-5 section (§3) still lists all five rules together, written before that paydown landed. Keeping
-them in this track's `Relates:` list as "verify-closed, not build" items gives phase 5 a reason to check
-that the remaining relocations (§6) don't quietly reintroduce a hand-rolled `ResolvedCommons` at a new
-`bynk-check` call site — a real regression shape, since every relocation in §6 needs *some* commons view
-of resolved types at its new home. Dropping them risks losing that verification step entirely.
+**Decision: keep all three, narrowed to a verify-only item (P5.5).** Every category in §6 needs some
+resolved-type view at its new `bynk-check` call site; building that by hand rather than reusing
+`ResolvedCommons`'s real constructor would reopen the exact defect phase 1 closed, in a location
+Appendix D's next `bynk-emit`-side sweep wouldn't catch until after the fact. Dropping the rules from
+this track's scope removes the reason to check for that regression at review time. P5.5 is the explicit,
+narrow slice this verification rides on — not new construction, not reopened decisions.
 
-**Needs settling:** keep R4.6/R4.11/R10.4 as an explicit, narrow verification item in this track (a
-"stays closed" check alongside the "closes" checks the other rules need), or drop them from this track's
-scope and rely on Appendix D's own regeneration to catch a regression after the fact?
+### 3.2 Q2 — Does phase 5 ratify `project_model.rs`'s own emission/checking boundary, or move more of it? **Settled — and the finding is bigger than the question.**
 
-### 3.2 Q2 — Does phase 5 ratify `project_model.rs`'s own emission/checking boundary, or move more of it?
+**Decision: all seven categories in §1's table are this phase's scope**, split by priority rather than
+by in/out:
 
-R3.5's text is unconditional: "`bynk-emit` performs no checks and emits no diagnostics." The line P4.1
-actually drew — messages/locale/event checks and schema-registry reconciliation stay because "only the
-`Mode::Build` path needs it" or because they're "genuinely emission-shaped" — is a judgment call made
-inside an unrelated slice, not argued under this phase's own review. Two sub-cases:
+- **Categories 2, 3, 4, 6, 7 (live gaps) are the priority order** — each closes a named, fixture-pinned,
+  CHANGELOG-documented editor regression the moment it ships. `check_function_type_boundaries` (category
+  6) settles Q3 (§3.3) as part of this same decision: its home is `bynk-check`, called directly, not
+  through an optional hook.
+- **Categories 1 and 5 (gap in name only) move too, for R3.5 compliance**, but ship after the live-gap
+  categories since nothing currently observes the improvement — `analyse_project_with`'s own hardcoded
+  `SchemaLock::Off`/`Platform::default()` means neither can fire on the analyse path regardless of where
+  the checking code lives. (A related, smaller question the relocation should resolve in passing: whether
+  the *new* `bynk-check` entry point should stop hardcoding those values once it owns the checks — a
+  slice-level design call for P5.2/P5.3, not this track's.)
 
-- **The whole-project checks** (`validate.rs`'s `bynk.messages.*`/`bynk.locale.*`/`bynk.event.*`,
-  `schema_registry.rs`'s two codes) read as ordinary semantic checking under R3.5's own rationale — the
-  causal chain the trajectory names ("context-level semantics were written in `project.rs` because that
-  is where the project model was") applies to them exactly as it did to everything P4.1 already moved.
-  "Only `Mode::Build` needs it" describes *when* a check runs, not *what kind* of check it is, and R3.5
-  draws no such distinction.
-- **`emit.rs`'s `bynk.emit.unresolved_cross_context_signature`** reads differently in kind — its own
-  message text ("no signature for…") is phrased as an internal-consistency assertion about the emitter's
-  own state, not a diagnosable error in the *program* being compiled. If that reading holds, it may not
-  be R3.5's business at all — it could be an emission-time invariant that belongs behind an `assert!` or
-  a genuine internal-error type, a question closer to R4.3's `Ty::Error`/phase-6 IR territory than to
-  checking.
+**`emit.rs`'s one flagged site is out of scope entirely** — confirmed not a registered diagnostic (§1).
+**`secrets.rs`'s `bynk.secrets.computed_name`** is real (`CompileError::new`-constructed) and, per its own
+surrounding comment, reachable from `bynk check`/the LSP already — but it is not named among
+`analysis.rs`'s seven categories, so whether it already reaches the editor via some other already-ported
+path, or is an eighth, unnamed gap, isn't resolved by this settling pass. Carried into P5.6 as a
+verification item rather than assumed either way — see §9.
 
-**Needs settling:** does R3.5 apply uniformly to every `bynk.*`-coded site in `bynk-emit`, or does the
-compiler need (and does the reference specify) a distinct category for emission-time internal invariants
-that are exempt? If the latter, which of the five files in §1's table fall into it?
+### 3.3 Q3 — `check_function_type_boundaries`'s optional-hook seam: close it, or a legitimate permanent seam? **Settled, folded into Q2.**
 
-### 3.3 Q3 — `check_function_type_boundaries`'s optional-hook seam: close it, or is it a legitimate permanent seam?
+**Decision: close it.** It is category 6 of §1's table — a confirmed live gap, not a defensible permanent
+exception. `bynk-check`'s new entry point currently reaches into `bynk-emit` for it through an optional
+hook it passes as `None`; the function moves into `bynk-check`, called directly like every other check,
+removing both the reverse-reach and the gap in one move. content-ownership's precedent for permanent,
+named exceptions (three `fs_below_driver` cases) doesn't apply here — those exceptions have no user-facing
+regression attached; this one does.
 
-`project_model.rs`'s own doc names this "a documented residual gap": `bynk-check`'s new entry point
-reaches `bynk-emit`'s `check_function_type_boundaries` (`validate.rs:941`, `pub(crate)`) only through an
-optional hook, never a direct call, so the entry point "can genuinely omit it… rather than duplicate it
-with a different diagnostic order." That is `bynk-check` reaching *forward* into `bynk-emit` for a check
-— arguably the reverse-boundary problem R3.5's invariant ("no crate reaches back across a boundary to
-drive the checker") exists to remove, just pointed the opposite direction from every other case this
-trajectory has fixed so far.
+### 3.4 Q4 — Freeze scope: `validate.rs`, or `project_model.rs`? **Settled.**
 
-**Needs settling:** does the function move into `bynk-check` (closing the hook, matching every other
-check's home), or is there a structural reason it has to stay caller-supplied that the other relocations
-in §6 don't share? content-ownership's precedent (three *permanent*, named `fs_below_driver` exceptions)
-shows this trajectory does sometimes accept a residual seam rather than force it closed — Q3 is where
-that same judgment gets made for this one, not assumed either way.
+**Decision: freeze per-slice, not track-wide, and scoped to whichever file that slice's category moves
+out of or into.** §1's seven-category breakdown means this phase ships as roughly five to six small
+slices (§6) rather than one large one; a single freeze spanning the whole track would block unrelated
+`bynk-emit`/`bynk-check` work far longer than any prior phase's freeze did. Each slice freezes its own
+source file (`validate.rs` for P5.1/P5.2, `tests_emit.rs` for P5.4) for that slice's duration only,
+mirroring phase 4's `project.rs` freeze for P4.0 specifically rather than for phase 4 as a whole.
+`project_model.rs` (the shared destination, gaining callers across several slices) is not frozen — it's
+the landing site, not contended source, the same distinction phase 4 drew for `bynk-project`.
 
-### 3.4 Q4 — Freeze scope: `validate.rs`, or `project_model.rs`?
+### 3.5 Q5 — R10.1: a doc correction, or a real orchestration/emission split? **Settled.**
 
-Phase 3 froze `checker.rs` for one slice; phase 4 froze `project.rs`. `validate.rs` is the obvious
-candidate here (it holds most of §1's remaining real diagnostic sites), but `project_model.rs` — the
-1,941-line shared hub `bynk-emit::run_checks` and `bynk-check::analyse_project` both now call into,
-per §1 — is arguably the more contended file for whichever slice lands the relocation, since it gains
-new callers and new functions in the same pass `validate.rs` loses them.
-
-**Needs settling:** freeze one file, both, or neither (mirroring `identity-and-totality.md`'s own answer
-to the same question when the touched surface turned out to be mostly self-contained)?
-
-### 3.5 Q5 — R10.1: a doc correction, or a real orchestration/emission split?
-
-R10.1's text: "a crate is named for what it produces, and if its input type and output type cannot be
-stated in one line, it is not a crate yet." Once §6's relocations land, `bynk-emit`'s remaining job is
-close to pure TS emission — but `project.rs`'s `compile_project`/`run_checks` orchestration (discovery →
-parse → resolve → check → emit, sequenced) still lives there too, and the reference's own target crate
-diagram doesn't show a distinct orchestration crate separate from `bynk-driver`.
-
-**Needs settling:** does R10.1 close with an accurate crate-doc/`Cargo.toml` description once checking
-leaves (orchestration is legitimately emission's neighbour, not a separate concern), or does
-`compile_project`/`run_checks` itself need to move toward `bynk-driver`, which is a materially bigger
-slice this track hasn't sized?
+**Decision: a doc correction, not a split — deferred, not refused.** Once §6 lands, what remains in
+`bynk-emit` is TypeScript emission plus `compile_project`/`run_checks`'s own per-unit build sequencing.
+That sequencing is not generic command-dispatch orchestration of the kind `bynk-driver` already owns for
+other commands (R10.5) — it's interleaved with emission's own per-context, per-unit iteration in the
+two-pass structure the trajectory's own R3.5 rationale already names ("discovery, resolution, checking
+and emission are one two-pass pipeline by design"). Forcing it into `bynk-driver` now would split a
+tightly coupled sequence for a rule (R10.1) that only asks for an accurate one-line description, not a
+specific crate boundary — the reference's own target crate diagram doesn't show a distinct orchestration
+crate either. `bynk-emit`'s crate-level doc and `Cargo.toml` description get corrected once §6 ships
+(P5.5); a real split stays a named forward reference (§7), gated on an actual second orchestration
+consumer appearing — the same "named trigger, not appetite" discipline this trajectory has used for
+every other deferred item.
 
 ---
 
@@ -232,27 +238,30 @@ what §11 front-loads; every slice citing `Closes-Rule:`.
 Same principle as every prior track on this trajectory: a slice is complete when the old path is
 **deleted**, not when the new home merely exists alongside it. Here: `emit_diagnostics` reads 0/0
 (true/naive) for `bynk-emit`, `validate.rs` either no longer exists or contains no diagnostic-emitting
-code, and R10.1's crate-level doc states an accurate one-line input/output for whatever `bynk-emit`'s job
-turns out to be once §3.5 settles.
+code, `bynk-lsp/tests/analysis_residual_gap.rs`'s pinned gaps are deleted or flipped to
+positive-coverage assertions as each category closes, and R10.1's crate-level doc states an accurate
+one-line input/output for `bynk-emit`'s remaining job.
 
 ---
 
-## 6. Slice decomposition — candidate, pending §3
+## 6. Slice decomposition
 
-None of the below is accepted yet; §3 governs both which of these actually ship and their order.
+§3 is settled; all slices below are accepted, buildable, not forward references.
 
-| Slice (candidate) | What it would move | Rules | Gated on |
+| Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P5.0** | `validate.rs`'s platform-lock, messages, locale and event-pattern checks relocate to `bynk-check` (destination TBD by Q3/Q4 — extends `project_model.rs`, or a new module) | R3.5 | Q2 (confirms these are in-scope), Q4 (freeze) |
-| **P5.1** | `schema_registry.rs`'s two event-schema codes relocate, paired with R3.11's already-threaded `schema_lock` plumbing | R3.5 | Q2 |
-| **P5.2** | `secrets.rs`'s `bynk.secrets.computed_name` relocates | R3.5 | Q2 |
-| **P5.3** | `check_function_type_boundaries` moves into `bynk-check`, closing the optional-hook seam, or is confirmed a permanent exception | R3.5 | Q3 |
-| **P5.4** | `emit.rs`'s `bynk.emit.unresolved_cross_context_signature` reclassified (moved, or converted to an internal invariant, per Q2) | R3.5 (or none, if Q2 finds it out of scope) | Q2 |
-| **P5.5** | `bynk-emit`'s crate-level doc/`Cargo.toml` description corrected; `bynk-project.rs`'s `bynk.project.schema_registry_corrupt` relocated; `validate.rs` deleted once empty | R10.1 | P5.0–P5.4, Q5 |
-| **P5.6** | Verification pass: confirm no relocation hand-rolled a new commons-shaped struct (R4.6/R4.11 stay closed); confirm R10.4's facade discipline holds at the new call sites | R4.6, R4.11, R10.4 (verify-only) | Q1; rides with whichever of P5.0–P5.3 lands last |
+| **P5.0** | `check_messages_bundles` + `check_locale_bundle_ambiguity` relocate to `bynk-check` (extending `project_model.rs` or a sibling module), wired into `analyse_project`; closes categories 2–3 | R3.5 | §3 settled |
+| **P5.1** | `check_event_subscriptions` relocates; closes category 4 | R3.5 | P5.0 (colocation — same `validate.rs` region) |
+| **P5.2** | `check_function_type_boundaries` moves into `bynk-check`; `phase_group`'s optional hook is deleted, the check called directly; closes category 6 | R3.5 | §3.3 |
+| **P5.3** | `schema_registry::reconcile` and `check_platform_lock` relocate; closes categories 1 and 5 (no editor-visible change — see §3.2) | R3.5, adjacent to R3.11 | P5.0–P5.2 landed (lower priority, per §3.2) |
+| **P5.4** | `process_tests`/`process_integration_tests` relocate from `tests_emit.rs`; closes category 7, including the go-to-definition/`RefSink` regression. Largest slice — emission-coupled types (`CompiledFile`, `RunnableTest`, `ImportExt`, `contracts`) need their own resolution, per `analysis.rs`'s own note that porting this "out of proportion" as a single move | R3.5 | P5.0–P5.3 (last, by design — the one category `analysis.rs` itself flagged as needing more care) |
+| **P5.5** | `bynk-emit`'s crate-level doc/`Cargo.toml` description corrected; `project.rs`'s `bynk.project.schema_registry_corrupt` relocated; `validate.rs` deleted once empty; verification pass confirming R4.6/R4.11 stay closed and R10.4's facade discipline holds at every new call site; `secrets.rs`'s `bynk.secrets.computed_name` resolved as either already-covered or an eighth relocation | R10.1, R4.6/R4.11/R10.4 (verify-only) | P5.0–P5.4 |
+
+Each slice deletes its corresponding pinned gap in `bynk-lsp/tests/analysis_residual_gap.rs`, converting
+the assertion from "category X is absent" to a positive coverage check, per §5.
 
 **Completion probe:** `emit_diagnostics` = 0/0. Already built and CI-gated
-(`greenfield_status_table_is_current`); reads **49/53** as of this draft.
+(`greenfield_status_table_is_current`); reads **49/53** as of this settling pass.
 
 ---
 
@@ -262,8 +271,8 @@ None of the below is accepted yet; §3 governs both which of these actually ship
 |---|---|---|
 | The full IR (reference Part 6) | 6 | this track's probe (`emit_diagnostics`) reads 0/0 |
 | The TypeScript tree and printer (reference Part 7) | 7 | phase 6 complete |
-| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | phases 3 and 4 complete (already true; phase 8 itself waits on phase 7 landing first per the trajectory's stated order) |
-| A real orchestration/emission crate split, if Q5 decides one's needed | *unopened — no trigger yet unless Q5 settles that way* | Q5 |
+| Incrementality — query granularity, `UnitSignature`, the firewall | 8 | phases 3 and 4 complete (already true; phase 8 itself waits on phase 7 per the trajectory's stated order) |
+| A real orchestration/emission crate split (§3.5, Q5) | *unopened — no trigger yet* | a second orchestration consumer actually appearing, not appetite alone |
 | Unifying the CLI's and LSP's file-discovery seams | *unopened — no trigger yet* | named by `project-model.md` §3.3(b); still no observed divergence |
 
 ---
@@ -272,36 +281,37 @@ None of the below is accepted yet; §3 governs both which of these actually ship
 
 No new probe infrastructure is needed for this phase's gate — `emit_diagnostics` already exists, already
 runs in CI (`greenfield_status_table_is_current`), and already reads the value this track needs to drive
-to zero. One correction worth raising under review: the trajectory doc's own §3.0/§5 (baseline 200,
-relative size 12) and phase-5 rule list (still citing R4.6/R4.11/R10.4 as open) are both stale against
-Appendix D and the live probe — a routine update this track's settling pass should carry, the same way
-`project-model.md` §3.5 corrected a stale R3.11 appendix row ahead of the generator.
+to zero. Two corrections worth raising under review, ahead of the generator: the trajectory doc's own
+§3.0/§5 (baseline 200, relative size 12) and phase-5 rule list (still citing R4.6/R4.11/R10.4 as fully
+open) are both stale against Appendix D and the live probe — the same kind of routine update
+`project-model.md` §3.5 made ahead of the generator for a stale R3.11 row.
 
 ---
 
 ## 9. Risks
 
-**The "genuinely emission-shaped" boundary (§1, Q2) was drawn without a settling review.** It may be
-right — but it was a judgment call inside a slice scoped for something else, and this is the first time
-it gets argued rather than assumed. If Q2 finds part of it wrong, the candidate slice list in §6 changes
-shape, not just size.
+**`secrets.rs`'s `bynk.secrets.computed_name` is not fully accounted for.** §3.2 leaves it a P5.5
+verification item rather than a scoped relocation, because it doesn't fit `analysis.rs`'s own seven-category
+accounting and this settling pass didn't trace its exact reachability from the new entry point far enough
+to be certain. If P5.5 finds it's a genuine eighth gap, that's new, unsized scope discovered late — named
+here so a reviewer watches for it rather than assuming §6's five slices are exhaustive.
 
-**Relocating checks risks a quiet R4.6/R4.11 regression.** Every relocation candidate in §6 needs some
-resolved-type view at its new call site; building that view by hand rather than reusing
-`ResolvedCommons`'s real constructor would reopen exactly the defect phase 1 closed, in a new location
-Appendix D wouldn't catch until its next `bynk-emit`-side sweep. P5.6 exists to make this an explicit
-check, not an assumption.
+**Relocating checks risks a quiet R4.6/R4.11 regression.** Every slice in §6 needs some resolved-type view
+at its new call site; building that view by hand rather than reusing `ResolvedCommons`'s real constructor
+would reopen exactly the defect phase 1 closed, in a new location. P5.5 makes this an explicit check, not
+an assumption — but it's the last slice, so a regression introduced by P5.0–P5.4 lives undetected until
+then unless each slice's own review catches it first.
 
-**The trajectory's own sizing for this phase (relative size 12, confidence low) may now be
-overstated in the other direction — or understated, depending on how Q5 settles.** §1's findings cut the
-diagnostic-code surface from ~200 to ~20 real sites; but if Q5 finds `compile_project`/`run_checks`
-orchestration needs to move toward `bynk-driver`, that's a materially different, unsized piece of work
-this draft hasn't scoped. Both directions need settling before this track's own size estimate is worth
-trusting.
+**P5.4 (category 7) is the one category `analysis.rs`'s own author flagged as disproportionate to port
+as originally scoped.** Its emission-coupled types (`CompiledFile`, `RunnableTest`, `ImportExt`,
+`contracts`) may force a design choice this settling pass hasn't made — a shared type moving to
+`bynk-check`, a duplicate lighter-weight representation for the analyse path, or something else. Sequenced
+last deliberately (§6), so the smaller slices land — and the four smaller live-gap regressions close — even
+if P5.4 needs its own mini-settling pass.
 
 **The evidence ages.** Every fact, line number and quotation in this doc was measured against `main` at
 commit `7d2c382c` on 8 August 2026. Re-check before a slice proposal cites one, per every prior track's
-own §9 — this draft's own §1 is a direct demonstration of why that discipline exists.
+own §9 — this doc's own §1 is a direct demonstration of why that discipline exists.
 
 ---
 
@@ -309,27 +319,28 @@ own §9 — this draft's own §1 is a direct demonstration of why that disciplin
 
 Per the trajectory's own "5 before 6" argument: "An IR built while hundreds of diagnostic codes still
 live in the emitter would have to model the emitter's checking needs. Move the checks first and the IR
-only has to carry what emission needs." §1's finding sharpens the stakes without changing the argument —
-phase 6 was always going to inherit whatever boundary phase 5 leaves between "checking" and "emission
-detail," and Q2's disposition of `emit.rs`'s one remaining code is a preview of exactly that boundary
-question at IR scale, not a one-off.
+only has to carry what emission needs." §3.2's settled decision sharpens this: the boundary phase 6
+inherits is not a fuzzy architectural preference but the same live-gap/gap-in-name-only distinction this
+phase already had to draw precisely, category by category — phase 6 gets a `bynk-emit` that emits and
+nothing else, with the boundary question already answered rather than reopened.
 
 ---
 
 ## 11. ADRs
 
-Per ADR 0167 step 2, load-bearing, hard-to-reverse decisions land before slicing. Candidates, pending §3
-actually closing under review (numbers assigned at merge by the stamp, per every prior track's own
-convention of referring to them by letter until then):
+Per ADR 0167 step 2, load-bearing, hard-to-reverse decisions land before slicing. Three do, with this
+settling pass (numbers assigned at merge by the stamp; referred to by letter until then):
 
-- **ADR-A** — whether R4.6/R4.11/R10.4 stay in this track's scope as verify-only items or are dropped
-  entirely (§3.1, Q1).
-- **ADR-B** — where the emission/checking boundary actually sits: which of `validate.rs`'s and
-  `schema_registry.rs`'s remaining checks are R3.5's business, and how `emit.rs`'s one remaining code is
-  classified (§3.2, Q2). Likely the most load-bearing of the set — it decides §6's real slice list.
-  Likely the hardest to reverse: once P4.1 has already drawn this line once, informally, a second
-  informal redraw compounds the same problem project-model.md's own Q3 named for the previous phase.
-- **ADR-C** — `check_function_type_boundaries`'s home (§3.3, Q3).
+- **ADR-A** — R4.6, R4.11 and R10.4 stay in this track's scope as verify-only items (P5.5), not reopened
+  decisions. §3.1 (Q1).
+- **ADR-B** — all seven categories `bynk-check/src/analysis.rs` names are this phase's scope, sequenced
+  by whether they close a live editor regression (categories 2, 3, 4, 6, 7) or only architectural
+  compliance (categories 1, 5); `emit.rs`'s flagged site is confirmed out of scope entirely. §3.2 (Q2).
+  The most load-bearing of the three — it fixes §6's whole slice list — and the one this settling pass
+  found the most direct, contemporaneous evidence for (CHANGELOG, a dedicated regression-fixture file,
+  and the module doc all naming this exact phase by name already).
+- **ADR-C** — `check_function_type_boundaries` moves into `bynk-check`, closing the optional-hook seam.
+  §3.3 (Q3), folded from the same evidence as ADR-B.
 
 ---
 
@@ -337,4 +348,4 @@ convention of referring to them by letter until then):
 
 Mirrors every prior track on this trajectory: retires when §6's probe (`emit_diagnostics`) reads 0/0 and
 every slice named to reach it has landed. The retirement PR removes this doc, appends its closing summary
-to `../archive/retired-tracks.md`, and closes the spine issue once one exists.
+to `../archive/retired-tracks.md`, and closes the spine issue ([#1126](https://github.com/accuser/bynk/issues/1126)).

@@ -2509,10 +2509,13 @@ closed rather than deleted, because "this was a finding and it is no longer" is 
 T0.0). Hand maintenance is the failure mode Appendix B's own discipline warns about, and this
 revision is the proof.
 
-**One row is a hand exception, and it says so.** R3.11 was corrected 6 August 2026 by
+**Two rows are hand exceptions, and they say so.** R3.11 was corrected 6 August 2026 by
 `design/tracks/project-model.md` §3.5, ahead of the generator this section asks for — a genuine
-instance of the failure mode named above, accepted because the fix was one self-contained line. The
-table otherwise reflects the 30 July measurement date; that one row does not.
+instance of the failure mode named above, accepted because the fix was one self-contained line. R3.5
+was corrected 8 August 2026 by `design/tracks/semantics-in-the-checker.md` §1/§3.2, for the same
+reason: two moves that predate that track's own settling review — P4.1 (#1115) and an untracked
+"Wave 5" pass (#956) — had already relocated most of what this row's July 30 reading measured. The
+table otherwise reflects the 30 July measurement date; those two rows do not.
 
 | Rule | Measured state | Cost to close |
 |---|---|---|
@@ -2527,7 +2530,7 @@ table otherwise reflects the 30 July measurement date; that one row does not.
 | R3.1 | `CompileOptions: Clone` ✅ **landed**; `run_checks`'s positional args remain | small residue |
 | R3.2 | `bynk check` still runs the bailing path | medium |
 | R3.3 | no probe yet — today's pipeline has no discrete phase-output types to check for `PartialEq`/serialisation against; T0.0 or a later phase must define what "measured" means here | not costed |
-| R3.5 | registered `bynk.*` codes in `bynk-emit` = **200** (was a counted 190 at review — **growing**) | very large; staged order starts with `icu.rs` + `websocket::analyse_open_shape` |
+| R3.5 | `icu.rs`/`websocket::analyse_open_shape` in `bynk-check` ✅; `Ctx` `pub(crate)` ✅ (both #956); registered `bynk.*` codes in `bynk-emit` = **49/53** (true/naive), down from 200 at this table's own 30 July reading — `emit_diagnostics` probe, live at commit `7d2c382c` ✅ **corrected 8 August 2026, `design/tracks/semantics-in-the-checker.md` §1** | medium — seven named categories (`bynk-check/src/analysis.rs`'s own accounting), five closing a live editor regression; `design/tracks/semantics-in-the-checker.md` §6 |
 | R3.6 | `type_refs_match` = 0 ✅ **landed** | none |
 | R3.7 | `bynk-project` crate exists ✅ **landed** (P4.0, #1113) — discovery, the unit graph, path resolution, consistency checks, the schema-registry document's read/write halves, and `AttributedError` moved out of `bynk-emit`; public surface enumerated (R10.4-style), no blanket `pub use` | none |
 | R3.8 | `read_project_paths` deleted ✅ **landed** (P4.0, #1113) — all 18 callers moved onto `try_read_project_paths`, surfacing `ProjectPathsError` instead of silently falling back to the conventional layout | none |
@@ -2577,7 +2580,13 @@ table otherwise reflects the 30 July measurement date; that one row does not.
 table (R2.12), conformance totality (R11.7), fixture adoption (R11.2), the typed hoist (R6.2), the
 async flag (R6.4), and `ReportKind`'s residue. Everything else is phase 3 or later.
 
-**And one row is going the wrong way.** R3.5's distance grew between v0.237.1 and v0.245.0 — 190
-counted codes originating in `bynk-emit` then, 200 registered codes now. Ordinary work fixes the
-small things and deepens the layering problem, which is the clearest evidence in this document that
-phases 3–7 need a track rather than good intentions.
+**One row went the wrong way, then reversed once a track existed to absorb it.** R3.5's distance grew
+between v0.237.1 and v0.245.0 — 190 counted codes originating in `bynk-emit` then, 200 registered codes
+at this table's own 30 July reading. It has since dropped to 49/53 (corrected above, 8 August 2026) —
+not because phase 5 opened yet, but because phase 4's own P4.1 slice, scoped for something else
+entirely, relocated most of the shared checking pipeline as a side effect of closing R10.2. That is
+still the argument this document opened with, sharpened rather than undercut: *small* defects are
+fixed by ordinary churn either way; a *structural* one only moved because a track (phase 4) existed
+for a slice to attach the fix to, and even then it moved as an accidental side effect rather than by
+design — the version of "ordinary work" that still needs a track's own review to notice, name, and
+finish (`design/tracks/semantics-in-the-checker.md` §1 is exactly that noticing, after the fact).
