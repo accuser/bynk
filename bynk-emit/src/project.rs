@@ -1651,7 +1651,11 @@ fn run_checks(
     //           subscription must name a real, declared event — needs
     //           `unit_tables` + `unit_consumes` together, so it runs here
     //           rather than in the per-context `check_service_protocols`.
-    check_event_subscriptions(
+    //
+    //           P5.1 (#1130, `design/tracks/semantics-in-the-checker.md` §6):
+    //           relocated to `bynk-check::project_model`, same move as
+    //           P5.0's neighbours above.
+    project_model::phase_event_subscriptions(
         &parsed,
         &groups,
         &kinds,

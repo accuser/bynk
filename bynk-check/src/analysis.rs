@@ -17,14 +17,15 @@
 //! This entry point was diagnostically faithful to `bynk-emit`'s
 //! `run_checks`'s `Mode::Analyse` arm **minus seven categories** of
 //! whole-project checking at P4.2 (recorded on the tracking issue's own
-//! scope-correction comments, not silently assumed). Categories 2 and 3
-//! closed at P5.0 (`design/tracks/semantics-in-the-checker.md` §6) —
+//! scope-correction comments, not silently assumed). Categories 2, 3 and 4
+//! closed at P5.0/P5.1 (`design/tracks/semantics-in-the-checker.md` §6) —
 //! [`crate::project_model::phase_messages_bundles`]/
-//! [`crate::project_model::phase_locale_bundle_ambiguity`] are now called
-//! from [`analyse_project`] at the same point `run_checks` calls them. Five
+//! [`crate::project_model::phase_locale_bundle_ambiguity`]/
+//! [`crate::project_model::phase_event_subscriptions`] are now called from
+//! [`analyse_project`] at the same points `run_checks` calls them. Four
 //! categories remain open; two of those were already unreachable from the
 //! editor before P4.2 even shipped, so porting them would change nothing
-//! observable; the other three are still P4.2's live regression, pinned at
+//! observable; the other two are still P4.2's live regression, pinned at
 //! the `bynk-ide`/`bynk-lsp` layer by `bynk-lsp/tests/analysis_residual_gap.rs`
 //! and named in `CHANGELOG.md`:
 //!
@@ -34,7 +35,7 @@
 //!    `SchemaLock::Off`), so this is a gap in name only.
 //! 2. ~~`messages` bundle validation~~ — **closed at P5.0**, see above.
 //! 3. ~~Locale bundle ambiguity~~ — **closed at P5.0**, see above.
-//! 4. **Event-subscription validation** (`check_event_subscriptions`). Live gap.
+//! 4. ~~Event-subscription validation~~ — **closed at P5.1**, see above.
 //! 5. **Platform-lock enforcement** (`check_platform_lock`) — also a gap in
 //!    name only, for the same reason as category 1, found while grounding
 //!    P4.2's own regression fixtures: `analyse_project_with` always calls
@@ -324,9 +325,22 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         &mut errors,
     );
 
-    // -- 6b. Type exports. Category 4 (event-subscription checks) is the
-    //        residual gap between here and `phase_validate_providers` — see
-    //        this module's own doc comment. --
+    // -- 6a'''. Events track, slice 0 (spine #936): a `from Events(E)`
+    //           subscription must name a real, declared event — needs
+    //           `unit_tables` + `unit_consumes` together, so it runs here
+    //           rather than in the per-context `check_service_protocols`.
+    //           P5.1: closes category 4. --
+    project_model::phase_event_subscriptions(
+        &parsed,
+        &groups,
+        &kinds,
+        &unit_tables,
+        &unit_consumes,
+        &unit_uses,
+        &mut errors,
+    );
+
+    // -- 6b. Type exports. --
     let exports_visibility = project_model::phase_validate_type_exports(
         &groups,
         &kinds,

@@ -272,7 +272,7 @@ retirement, the same treatment `content-ownership.md` gave R2.3's `fs_below_driv
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
 | **P5.0** ✅ | `check_messages_bundles` + `check_locale_bundle_ambiguity` relocated to `bynk-check::project_model` as `phase_messages_bundles`/`phase_locale_bundle_ambiguity`, wired into `analyse_project`; closes categories 2–3. `emit_diagnostics` dropped `bynk-emit` from 49/53 to 37/41 (true/naive) — exactly the 12 codes these two checks own. `bynk-lsp/tests/analysis_residual_gap.rs`'s two corresponding pins flipped to positive coverage (#1128) | R3.5 (partial) | §3 settled |
-| **P5.1** | `check_event_subscriptions` relocates; closes category 4 | R3.5 | P5.0 (colocation — same `validate.rs` region) |
+| **P5.1** ✅ | `check_event_subscriptions` (+ `check_event_pattern`/`check_schema_dispatch`/`check_event_pattern_value`/`resolve_type_decl` helpers) relocated to `bynk-check::project_model` as `phase_event_subscriptions`, wired into `analyse_project`; closes category 4. `emit_diagnostics` dropped `bynk-emit` from 37/41 to 30/34 (true/naive) — exactly the 7 `bynk.event.*` codes this check owns. `bynk-lsp/tests/analysis_residual_gap.rs`'s pin flipped to positive coverage (#1130) | R3.5 (partial) | P5.0 (colocation — same `validate.rs` region) |
 | **P5.2** | `check_function_type_boundaries` moves into `bynk-check`; `phase_group`'s optional hook is deleted, the check called directly; closes category 6 | R3.5 | §3.3 |
 | **P5.3** | `schema_registry::reconcile` and `check_platform_lock` relocate; closes categories 1 and 5 (no editor-visible change — see §3.2) | R3.5, adjacent to R3.11 | P5.0–P5.2 landed (lower priority, per §3.2) |
 | **P5.4** | `process_tests`/`process_integration_tests` relocate from `tests_emit.rs`; closes category 7, including the go-to-definition/`RefSink` regression. Largest slice — emission-coupled types (`CompiledFile`, `RunnableTest`, `ImportExt`, `contracts`) need their own resolution, per `analysis.rs`'s own note that porting this "out of proportion" as a single move | R3.5 | P5.0–P5.3 (last, by design — the one category `analysis.rs` itself flagged as needing more care) |
@@ -283,7 +283,8 @@ the assertion from "category X is absent" to a positive coverage check, per §5.
 
 **Completion probe:** `emit_diagnostics` = **4/4** (true/naive), not 0/0 — see §5 for the named floor and
 why it's a probe-precision gap, not open relocation work. Already built and CI-gated
-(`greenfield_status_table_is_current`); read **49/53** at this settling pass, now **37/41** after P5.0.
+(`greenfield_status_table_is_current`); read **49/53** at this settling pass, **37/41** after P5.0,
+now **30/34** after P5.1.
 
 ---
 
