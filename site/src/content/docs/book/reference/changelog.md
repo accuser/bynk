@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.30** | P5.3 (design/tracks/semantics-in-the-checker.md) — schema-registry reconciliation and platform-lock enforcement relocate from bynk-emit to bynk-check, closing the last two of the seven whole-project diagnostic categories that don't already originate there (#1126) |
 | **v0.247.29** | P5.2 (design/tracks/semantics-in-the-checker.md) — check_function_type_boundaries relocates from bynk-emit to bynk-check, restoring the fourth of the five whole-project diagnostic categories P4.2 silenced in the editor (#1126) |
 | **v0.247.28** | P5.1 (design/tracks/semantics-in-the-checker.md) — check_event_subscriptions relocates from bynk-emit to bynk-check, restoring a third of the five whole-project diagnostic categories P4.2 silenced in the editor (#1130) |
 | **v0.247.27** | P5.0 (design/tracks/semantics-in-the-checker.md) — check_messages_bundles and check_locale_bundle_ambiguity relocate from bynk-emit to bynk-check, restoring two of the five whole-project diagnostic categories P4.2 silenced in the editor (#1128) |
