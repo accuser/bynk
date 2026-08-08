@@ -181,11 +181,13 @@ by in/out:
   slice-level design call for P5.2/P5.3, not this track's.)
 
 **`emit.rs`'s one flagged site is out of scope entirely** — confirmed not a registered diagnostic (§1).
-**`secrets.rs`'s `bynk.secrets.computed_name`** is real (`CompileError::new`-constructed) and, per its own
-surrounding comment, reachable from `bynk check`/the LSP already — but it is not named among
-`analysis.rs`'s seven categories, so whether it already reaches the editor via some other already-ported
-path, or is an eighth, unnamed gap, isn't resolved by this settling pass. Carried into P5.6 as a
-verification item rather than assumed either way — see §9.
+**`project.rs`'s own `bynk.project.schema_registry_corrupt`** is real and outside all seven categories
+too, but unambiguously in scope — an eighth site the category accounting doesn't cover, relocated by
+P5.5 alongside the crate-doc correction (§6). **`secrets.rs`'s `bynk.secrets.computed_name`** is also real
+(`CompileError::new`-constructed) and, per its own surrounding comment, reachable from `bynk check`/the
+LSP already — but unlike `project.rs`'s site, it is not yet placed in a specific slice: whether it
+already reaches the editor via some other already-ported path, or is a ninth, unnamed gap, isn't resolved
+by this settling pass. Carried into P5.5 as a verification item rather than assumed either way — see §9.
 
 ### 3.3 Q3 — `check_function_type_boundaries`'s optional-hook seam: close it, or a legitimate permanent seam? **Settled, folded into Q2.**
 
@@ -199,11 +201,12 @@ regression attached; this one does.
 ### 3.4 Q4 — Freeze scope: `validate.rs`, or `project_model.rs`? **Settled.**
 
 **Decision: freeze per-slice, not track-wide, and scoped to whichever file that slice's category moves
-out of or into.** §1's seven-category breakdown means this phase ships as roughly five to six small
-slices (§6) rather than one large one; a single freeze spanning the whole track would block unrelated
-`bynk-emit`/`bynk-check` work far longer than any prior phase's freeze did. Each slice freezes its own
-source file (`validate.rs` for P5.1/P5.2, `tests_emit.rs` for P5.4) for that slice's duration only,
-mirroring phase 4's `project.rs` freeze for P4.0 specifically rather than for phase 4 as a whole.
+out of or into.** §1's seven-category breakdown means this phase ships as six small slices (§6) rather
+than one large one; a single freeze spanning the whole track would block unrelated `bynk-emit`/`bynk-check`
+work far longer than any prior phase's freeze did. Each slice freezes its own source file for its own
+duration only, mirroring phase 4's `project.rs` freeze for P4.0 specifically rather than for phase 4 as a
+whole: `validate.rs` for P5.0, P5.1, P5.2 and P5.3 (four of six slices move code out of it, not two —
+platform-lock/messages/locale/event-pattern checks all live there), `tests_emit.rs` for P5.4.
 `project_model.rs` (the shared destination, gaining callers across several slices) is not frozen — it's
 the landing site, not contended source, the same distinction phase 4 drew for `bynk-project`.
 
@@ -236,11 +239,29 @@ what §11 front-loads; every slice citing `Closes-Rule:`.
 ## 5. The completion criterion
 
 Same principle as every prior track on this trajectory: a slice is complete when the old path is
-**deleted**, not when the new home merely exists alongside it. Here: `emit_diagnostics` reads 0/0
-(true/naive) for `bynk-emit`, `validate.rs` either no longer exists or contains no diagnostic-emitting
-code, `bynk-lsp/tests/analysis_residual_gap.rs`'s pinned gaps are deleted or flipped to
-positive-coverage assertions as each category closes, and R10.1's crate-level doc states an accurate
-one-line input/output for `bynk-emit`'s remaining job.
+**deleted**, not when the new home merely exists alongside it. Here: `emit_diagnostics` reads **4/4**
+(true/naive), not 0/0 — a named floor, not open work (found under review; see below) —
+`validate.rs` either no longer exists or contains no diagnostic-emitting code,
+`bynk-lsp/tests/analysis_residual_gap.rs`'s pinned gaps are deleted or flipped to positive-coverage
+assertions as each category closes, and R10.1's crate-level doc states an accurate one-line
+input/output for `bynk-emit`'s remaining job.
+
+**Why 4/4, not 0/0.** `emit_diagnostics` (`xtask/src/greenfield_status.rs`) has no test-scope filter —
+unlike `has_production_std_fs` in the same file, it counts `bynk.*` literals inside `#[cfg(test)]`
+modules. `bynk-emit/src/project.rs`'s own trailing `#[cfg(test)] mod tests` (from line 3413 to the file's
+end) asserts against four registered codes — `bynk.exports.undeclared_capability`,
+`bynk.types.let_annotation_mismatch`, `bynk.project.inconsistent_commons_name`,
+`bynk.types.uninferable_element_type` — that are genuinely `bynk-check`-owned diagnostics (type/export
+checks), referenced here only as expected strings in integration-test assertions over
+`compile_project`'s/`run_checks`'s end-to-end output. Since §3.5 settles that `run_checks` itself stays in
+`bynk-emit`, these assertions have no reason to move with the checks they're asserting on, and the probe
+counts them regardless. Once every §6 slice lands, `emit_diagnostics` reaches this floor, not zero.
+
+A real 0/0 read is available as an optional, non-blocking follow-on: add a `#[cfg(test)]`-exclusion to
+`emit_diagnostics` mirroring `has_production_std_fs`'s existing technique in the same file — a
+probe-precision fix, not a code relocation. Named here, filed separately, and not gating this track's
+retirement, the same treatment `content-ownership.md` gave R2.3's `fs_below_driver` named floor
+(filed as [#1104](https://github.com/accuser/bynk/issues/1104) rather than blocking retirement).
 
 ---
 
@@ -260,7 +281,8 @@ one-line input/output for `bynk-emit`'s remaining job.
 Each slice deletes its corresponding pinned gap in `bynk-lsp/tests/analysis_residual_gap.rs`, converting
 the assertion from "category X is absent" to a positive coverage check, per §5.
 
-**Completion probe:** `emit_diagnostics` = 0/0. Already built and CI-gated
+**Completion probe:** `emit_diagnostics` = **4/4** (true/naive), not 0/0 — see §5 for the named floor and
+why it's a probe-precision gap, not open relocation work. Already built and CI-gated
 (`greenfield_status_table_is_current`); reads **49/53** as of this settling pass.
 
 ---
@@ -269,7 +291,7 @@ the assertion from "category X is absent" to a positive coverage check, per §5.
 
 | Item | Phase | Entry condition |
 |---|---|---|
-| The full IR (reference Part 6) | 6 | this track's probe (`emit_diagnostics`) reads 0/0 |
+| The full IR (reference Part 6) | 6 | this track's probe (`emit_diagnostics`) reads its named floor, 4/4 (§5) |
 | The TypeScript tree and printer (reference Part 7) | 7 | phase 6 complete |
 | Incrementality — query granularity, `UnitSignature`, the firewall | 8 | phases 3 and 4 complete (already true; phase 8 itself waits on phase 7 per the trajectory's stated order) |
 | A real orchestration/emission crate split (§3.5, Q5) | *unopened — no trigger yet* | a second orchestration consumer actually appearing, not appetite alone |
@@ -292,9 +314,10 @@ open) are both stale against Appendix D and the live probe — the same kind of 
 
 **`secrets.rs`'s `bynk.secrets.computed_name` is not fully accounted for.** §3.2 leaves it a P5.5
 verification item rather than a scoped relocation, because it doesn't fit `analysis.rs`'s own seven-category
-accounting and this settling pass didn't trace its exact reachability from the new entry point far enough
-to be certain. If P5.5 finds it's a genuine eighth gap, that's new, unsized scope discovered late — named
-here so a reviewer watches for it rather than assuming §6's five slices are exhaustive.
+accounting (unlike `project.rs`'s own eighth site, which is scoped) and this settling pass didn't trace its
+exact reachability from the new entry point far enough to be certain. If P5.5 finds it's a genuine ninth
+gap, that's new, unsized scope discovered late — named here so a reviewer watches for it rather than
+assuming §6's six slices are exhaustive.
 
 **Relocating checks risks a quiet R4.6/R4.11 regression.** Every slice in §6 needs some resolved-type view
 at its new call site; building that view by hand rather than reusing `ResolvedCommons`'s real constructor
@@ -346,6 +369,7 @@ settling pass (numbers assigned at merge by the stamp; referred to by letter unt
 
 ## 12. Retirement
 
-Mirrors every prior track on this trajectory: retires when §6's probe (`emit_diagnostics`) reads 0/0 and
-every slice named to reach it has landed. The retirement PR removes this doc, appends its closing summary
-to `../archive/retired-tracks.md`, and closes the spine issue ([#1126](https://github.com/accuser/bynk/issues/1126)).
+Mirrors every prior track on this trajectory: retires when §6's probe (`emit_diagnostics`) reads its
+named floor (**4/4**, true/naive — §5) and every slice named to reach it has landed. The retirement PR
+removes this doc, appends its closing summary to `../archive/retired-tracks.md`, and closes the spine
+issue ([#1126](https://github.com/accuser/bynk/issues/1126)).
