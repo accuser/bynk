@@ -49,9 +49,11 @@
 //!    regressing because it never fired through this path to begin with.
 //! 6. ~~Function-type-boundary checks~~ — **closed at P5.2**. Formerly reached,
 //!    in `bynk-emit`, only through `phase_group`'s optional boundary-check
-//!    hook (`Some` from `run_checks`, `None` here); the hook is gone and both
-//!    callers now call [`crate::project_model::phase_function_type_boundaries`]
-//!    directly, immediately after `phase_group` returns.
+//!    hook (`Some` from `run_checks`, `None` here); the hook is gone —
+//!    [`crate::project_model::phase_group`] now calls
+//!    [`crate::project_model::phase_function_type_boundaries`] directly, at
+//!    the exact point the hook used to fire, so both callers see it in the
+//!    same diagnostic-ordering position as before.
 //! 7. **Test/integration-suite processing**
 //!    (`process_tests`/`process_integration_tests`) — unlike categories 2-6,
 //!    these run *unconditionally* in `run_checks`, in `Mode::Analyse` too,
@@ -258,7 +260,10 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     normalize_service_defaults(&mut parsed);
     let parsed = parsed;
 
-    // -- 3. Group. --
+    // -- 3. Group. P5.2: closes category 6 of this module's own residual-gap
+    //       accounting (see doc comment above) — `phase_group` now also
+    //       confines function types to non-boundary positions directly, at
+    //       the point its old optional hook used to fire. --
     let (groups, kinds, _test_groups, _integration_groups, _adapter_bindings, _npm_deps) =
         project_model::phase_group(
             &parsed,
@@ -269,12 +274,6 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             overlay,
             &mut errors,
         );
-
-    // -- 3b. Function types are confined to non-boundary positions. P5.2:
-    //        closes category 6 of this module's own residual-gap accounting
-    //        (see doc comment above) — this entry point now calls the same
-    //        relocated check `run_checks` does, immediately after `phase_group`. --
-    project_model::phase_function_type_boundaries(&parsed, &mut errors);
 
     // -- 4. Per-unit combined symbol tables. --
     let unit_tables = project_model::phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);

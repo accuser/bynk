@@ -231,12 +231,13 @@ fn platform_lock_diagnostic_stays_absent() {
 /// (`design/tracks/semantics-in-the-checker.md` §6):
 /// `phase_function_type_boundaries` (`bynk.types.function_at_boundary` — a
 /// function type in a non-boundary position, here a service handler
-/// parameter) is now called directly by both
-/// `bynk_check::analysis::analyse_project` and `bynk-emit`'s `run_checks` —
-/// `phase_group`'s optional boundary-check hook is gone. Flipped from a
-/// pinned absence to a positive-coverage assertion rather than deleted, per
-/// this module's own instruction. Copied from `bynkc/tests/fixtures/negative/
-/// 152_fn_type_in_service_sig`.
+/// parameter) is now called directly from inside `phase_group` itself, at
+/// the exact point `phase_group`'s old optional boundary-check hook used to
+/// fire — so both `bynk_check::analysis::analyse_project` and `bynk-emit`'s
+/// `run_checks` see it, with no hook and no diagnostic-ordering drift
+/// between them. Flipped from a pinned absence to a positive-coverage
+/// assertion rather than deleted, per this module's own instruction. Copied
+/// from `bynkc/tests/fixtures/negative/152_fn_type_in_service_sig`.
 #[test]
 fn function_type_boundary_diagnostic_present() {
     const API: &str = "context hof.api\n\nservice runner {\n  on call(f: Int -> Int) -> Effect[Int] {\n    Effect.pure(0)\n  }\n}\n";

@@ -20,19 +20,25 @@
 //! `design/tracks/semantics-in-the-checker.md` §6) have since closed — both
 //! paths now call the same relocated `bynk_check::project_model` functions,
 //! so a fixture triggering any of those four no longer has a legitimate
-//! divergence to avoid. What's left, still deliberately avoided here: schema-
-//! registry reconciliation and platform-lock enforcement (both gap-in-name-
-//! only — unreachable on this path regardless of where the checking code
-//! lives, so a fixture couldn't observe a difference either way, but is kept
-//! out for clarity), and `test`/`test integration` processing (category 7,
-//! the one remaining live divergence — that divergence is accepted debt
-//! (ADR 0328), not a bug this test should catch, and is pinned directly by
+//! divergence to avoid. The clean/broken fixtures below still don't trigger
+//! any of the four (unchanged since P4.1 — nothing in `SHARED_SRC`/
+//! `CONTEXT_SRC` was ever shaped to trip them), so proving parity on one of
+//! them needs its own dedicated fixture rather than a tweak to the shared
+//! one: `new_entry_point_matches_analyse_project_with_on_a_function_type_boundary_violation`
+//! below does that for category 6, the one this slice closed. What's left,
+//! still deliberately avoided by the fixture in this file: schema-registry
+//! reconciliation and platform-lock enforcement (both gap-in-name-only —
+//! unreachable on this path regardless of where the checking code lives, so
+//! a fixture couldn't observe a difference either way, but is kept out for
+//! clarity), and `test`/`test integration` processing (category 7, the one
+//! remaining live divergence — that divergence is accepted debt (ADR 0328),
+//! not a bug this test should catch, and is pinned directly by
 //! `new_entry_point_omits_test_body_diagnostics` below instead). So the
-//! fixture below has: no `messages` block, no `Locale` capability
-//! consumption, no `Events`/`from Events(...)` subscription, nothing that
-//! reaches a platform-native capability (no `--platform` lock to trip), no
-//! generic-record boundary violation (a function type in a non-boundary
-//! position), and no `test`/`test integration` block.
+//! clean/broken fixture below has: no `messages` block, no `Locale`
+//! capability consumption, no `Events`/`from Events(...)` subscription,
+//! nothing that reaches a platform-native capability (no `--platform` lock
+//! to trip), no generic-record boundary violation (a function type in a
+//! non-boundary position), and no `test`/`test integration` block.
 //!
 //! What it *does* exercise: a commons (`uses`-imported into the context, so
 //! `compose_unit_symbols`'s mixin path runs), a locally-declared capability
@@ -296,6 +302,41 @@ fn new_entry_point_matches_analyse_project_with_on_a_broken_project() {
     );
 
     assert_structural_parity(&legacy, &new);
+}
+
+/// P5.2 (`design/tracks/semantics-in-the-checker.md` §6): a dedicated parity
+/// fixture for category 6 (function-type-boundary checks), the category this
+/// slice closed. The two clean/broken fixtures above deliberately avoid a
+/// boundary violation (see this module's own doc comment), so neither one
+/// exercises `phase_function_type_boundaries` at all -- this proves the two
+/// paths agree on it specifically, not just that the shared fixture doesn't
+/// trip it. Same source as `bynk-lsp/tests/analysis_residual_gap.rs`'s
+/// `function_type_boundary_diagnostic_present` (copied from
+/// `bynkc/tests/fixtures/negative/152_fn_type_in_service_sig`), the analogous
+/// pin one layer up, at the `bynk-ide`/`bynk-lsp` call path.
+#[test]
+fn new_entry_point_matches_analyse_project_with_on_a_function_type_boundary_violation() {
+    const API: &str = "context hof.api\n\nservice runner {\n  on call(f: Int -> Int) -> Effect[Int] {\n    Effect.pure(0)\n  }\n}\n";
+    let (root, overlay) = setup_project("fn_boundary", &[("src/hof/api.bynk", API)]);
+    let roots = Roots::Single(root);
+
+    let legacy = bynk_emit::project::analyse_project_with(&roots, &overlay);
+    let new = analysis::analyse_project(&roots, &overlay);
+
+    let legacy_rendered = render(&legacy.errors);
+    let new_rendered = render(&new.errors);
+    assert_eq!(
+        legacy_rendered, new_rendered,
+        "the two analysis paths must report identical diagnostics for a \
+         function-type boundary violation"
+    );
+    assert!(
+        legacy_rendered
+            .iter()
+            .any(|e| e.category == "bynk.types.function_at_boundary"),
+        "fixture must actually trigger the boundary check (regression guard \
+         for the fixture itself): {legacy_rendered:?}"
+    );
 }
 
 /// Category 7 (test/integration-suite processing) is the one residual gap

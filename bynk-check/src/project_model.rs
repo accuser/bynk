@@ -662,6 +662,14 @@ pub fn phase_group(
         }
     }
 
+    // v0.20a: function types are confined to non-boundary positions. P5.2:
+    // this used to be an injected hook (`function_type_boundary_check`) so
+    // `run_checks` and the new analysis entry point could reach it without
+    // `bynk-check` reaching back into `bynk-emit`; now that the check lives
+    // here too, it's a direct call at the exact point the hook used to fire,
+    // preserving diagnostic order for both callers with no hook needed.
+    phase_function_type_boundaries(parsed, errors);
+
     // v0.17: the `bynk` root namespace is reserved for the toolchain. No user
     // unit of any kind may be named `bynk` or `bynk.*` (§3.4).
     for pf in parsed {
@@ -830,8 +838,10 @@ pub fn phase_group(
 /// — category 6 of `analysis.rs`'s own seven-category accounting. Previously
 /// reached only through `phase_group`'s optional `function_type_boundary_check`
 /// hook (`Some` from `run_checks`, `None` from the new entry point); that hook
-/// is gone — both callers now call this function directly, immediately after
-/// `phase_group` returns, so they can no longer drift on whether the check runs.
+/// is gone — [`phase_group`] itself now calls this function directly, at the
+/// exact point the hook used to fire, so both callers see it in the same
+/// diagnostic-ordering position as before and can no longer drift on whether
+/// the check runs at all.
 pub fn phase_function_type_boundaries(parsed: &[ParsedFile], errors: &mut ErrorSink) {
     // v0.174 (#592): the boundary check now also rejects a *recursive* generic
     // record (`reject_fn_types`' `App` arm), which needs the type declarations to
