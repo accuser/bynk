@@ -2608,14 +2608,15 @@ enum LockViolation {
 
 /// v0.15's cross-context capability resolution, relocated alongside
 /// [`phase_platform_lock`] (P5.3): resolve a `given`/handler capability
-/// prefix (`ctx.Cap`) against a context's own `consumes`/alias tables.
-/// Deliberately a **separate copy** from `bynk-emit/src/project.rs`'s
-/// function of the same name, not a shared relocation — that one also backs
-/// several TypeScript-codegen call sites (`instantiate_provider_expr` and
-/// its callers), which stay in `bynk-emit`; duplicating this ten-line pure
-/// lookup is cheaper than threading a dependency across the crate boundary
-/// for it.
-fn resolve_consume_prefix(
+/// prefix (`ctx.Cap`) against a context's own `consumes`/alias tables. Pure —
+/// no codegen, no `bynk-emit` dependency of its own — so unlike
+/// [`collect_given_closure`] this one **is** shared rather than duplicated:
+/// `bynk-emit/src/project.rs`'s own copy of this function (and of
+/// [`handler_cross_caps`]) was deleted in review (#1133) and every one of its
+/// call sites repointed here — `bynk-emit` already depends on `bynk-check`,
+/// so there was no dependency direction to route around, and keeping two
+/// copies only bought two things that could drift out of sync for no reason.
+pub fn resolve_consume_prefix(
     prefix: &str,
     consumed: &[String],
     aliases: &HashMap<String, String>,
@@ -2630,11 +2631,9 @@ fn resolve_consume_prefix(
 }
 
 /// v0.15: the cross-context capabilities a context's **handlers** reference,
-/// as `deps_key → consumed_context`. Relocated alongside
-/// [`resolve_consume_prefix`] (P5.3) — see that function's doc for why this
-/// is a separate copy from `bynk-emit/src/project.rs`'s own
-/// `handler_cross_caps`, not a shared one.
-fn handler_cross_caps(
+/// as `deps_key → consumed_context`. Shared with `bynk-emit`, not duplicated
+/// — see [`resolve_consume_prefix`]'s doc.
+pub fn handler_cross_caps(
     table: &UnitTable,
     consumed: &[String],
     aliases: &HashMap<String, String>,
@@ -3265,6 +3264,136 @@ mod platform_lock_tests {
                 a: (Platform::Cloudflare, "bynk.cloudflare".to_string()),
                 b: (Platform::Node, "bynk.synthetic".to_string()),
             })
+        );
+    }
+}
+
+#[cfg(test)]
+mod native_platform_closure_tests {
+    use super::{HashMap, Platform, UnitTable, native_platforms_of_context};
+    use bynk_syntax::ast::{CapRef, Ident, ProviderDecl, QualifiedName};
+    use bynk_syntax::span::Span;
+    use std::collections::HashMap as StdHashMap;
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            name: name.to_string(),
+            span: Span::default(),
+        }
+    }
+
+    fn qualified(parts: &[&str]) -> QualifiedName {
+        QualifiedName {
+            parts: parts.iter().map(|p| ident(p)).collect(),
+            span: Span::default(),
+        }
+    }
+
+    fn given_cap(prefix: Option<&[&str]>, name: &str) -> CapRef {
+        CapRef {
+            context: prefix.map(qualified),
+            name: ident(name),
+            span: Span::default(),
+        }
+    }
+
+    fn provider(capability: &str, given: Vec<CapRef>) -> ProviderDecl {
+        ProviderDecl {
+            capability: ident(capability),
+            provider_name: ident(&format!("{capability}Impl")),
+            given,
+            ops: Vec::new(),
+            external: false,
+            documentation: None,
+            span: Span::default(),
+            trivia: Default::default(),
+        }
+    }
+
+    fn empty_table() -> UnitTable {
+        UnitTable {
+            kind: None,
+            types: StdHashMap::new(),
+            fns: StdHashMap::new(),
+            methods: StdHashMap::new(),
+            capabilities: StdHashMap::new(),
+            providers: StdHashMap::new(),
+            services: StdHashMap::new(),
+            agents: StdHashMap::new(),
+            actors: StdHashMap::new(),
+            exported_capabilities: Default::default(),
+            events: StdHashMap::new(),
+        }
+    }
+
+    /// P5.3 review finding (#1133): nothing in the tree exercised
+    /// `collect_given_closure`'s recursive arm — every existing fixture that
+    /// reaches `bynk.cloudflare` does so through a handler's bare `given Kv`
+    /// (`handler_cross_caps`, depth 0: `provider.given.is_empty()` short-
+    /// circuits immediately), never through a local provider's own `given`
+    /// chain. This pins the contract `collect_given_closure`'s own doc
+    /// states: a context whose *only* path to a platform-native unit is a
+    /// provider's `given` — `provides Cache = LocalCache given
+    /// bynk.cloudflare.Kv { … }`, with no handler ever naming `Kv` directly —
+    /// must still be recognised as native. `bynkc/tests/fixtures/negative/
+    /// 1030_kv_provider_given_wrong_platform` pins the same contract
+    /// end-to-end through `run_checks`.
+    #[test]
+    fn a_providers_given_chain_into_a_platform_native_unit_is_recognised() {
+        let mut table = empty_table();
+        table.providers.insert(
+            "Cache".to_string(),
+            provider(
+                "Cache",
+                vec![given_cap(Some(&["bynk", "cloudflare"]), "Kv")],
+            ),
+        );
+        let mut unit_tables = HashMap::new();
+        unit_tables.insert("app.web".to_string(), table);
+        let mut unit_consumes = HashMap::new();
+        unit_consumes.insert("app.web".to_string(), vec!["bynk.cloudflare".to_string()]);
+
+        let native = native_platforms_of_context(
+            "app.web",
+            unit_tables.get("app.web").unwrap(),
+            &unit_tables,
+            &unit_consumes,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        assert_eq!(
+            native.get(&Platform::Cloudflare).map(String::as_str),
+            Some("bynk.cloudflare"),
+            "a provider's own `given` closure into a platform-native unit must be \
+             walked recursively, not just a handler's direct `given` — got {native:?}"
+        );
+    }
+
+    /// A provider whose `given` closure never leaves ordinary (non-native)
+    /// units contributes nothing — the recursive walk must not manufacture a
+    /// platform out of thin air.
+    #[test]
+    fn a_providers_given_chain_into_an_ordinary_unit_is_not_native() {
+        let mut table = empty_table();
+        table.providers.insert(
+            "Cache".to_string(),
+            provider("Cache", vec![given_cap(None, "Clock")]),
+        );
+        let mut unit_tables = HashMap::new();
+        unit_tables.insert("app.web".to_string(), table);
+
+        let native = native_platforms_of_context(
+            "app.web",
+            unit_tables.get("app.web").unwrap(),
+            &unit_tables,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        assert!(
+            native.is_empty(),
+            "a `given` closure that never reaches a platform-native unit must not \
+             report one — got {native:?}"
         );
     }
 }

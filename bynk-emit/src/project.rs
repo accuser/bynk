@@ -33,7 +33,9 @@ use bynk_check::firstparty::{self, Platform};
 use bynk_check::hints::HintSink;
 use bynk_check::index::{ProjectIndex, RefSink, SymbolKind};
 use bynk_check::locals::LocalsSink;
-use bynk_check::project_model::{self, AdapterBinding, UnitInfo};
+use bynk_check::project_model::{
+    self, AdapterBinding, UnitInfo, handler_cross_caps, resolve_consume_prefix,
+};
 use bynk_check::requirements::RequirementSink;
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
 use bynk_syntax::ast::ExprId;
@@ -2370,68 +2372,12 @@ fn build_output(
     }
 }
 
-/// Build a project-level composition root that wires every context's
-/// providers and cross-context surfaces together. Returns `None` if the
-/// project has no cross-context wiring to glue.
-/// Resolve a `given` prefix (alias or qualified context name) to a consumed
-/// context, using one context's `consumes`/alias tables (v0.15).
-fn resolve_consume_prefix(
-    prefix: &str,
-    consumed: &[String],
-    aliases: &HashMap<String, String>,
-) -> Option<String> {
-    if let Some(q) = aliases.get(prefix) {
-        return Some(q.clone());
-    }
-    if consumed.iter().any(|c| c == prefix) {
-        return Some(prefix.to_string());
-    }
-    None
-}
-
-/// v0.15: the cross-context capabilities a context's **handlers** reference,
-/// as `deps_key → consumed_context`. These become top-level deps fields.
-fn handler_cross_caps(
-    table: &UnitTable,
-    consumed: &[String],
-    aliases: &HashMap<String, String>,
-    flattened: &HashMap<String, String>,
-) -> std::collections::BTreeMap<String, String> {
-    let mut out = std::collections::BTreeMap::new();
-    let mut scan = |given: &[CapRef]| {
-        for c in given {
-            // Events track, slice 0 (spine #936): `Events.emit` is
-            // intercepted entirely at the call site (release-at-commit
-            // buffering) and never calls through a constructed provider —
-            // there is no `EventsProvider` for compose to build, so the
-            // first-party `Events` must never become a compose deps entry.
-            if c.key() == "Events" && flattened.get(c.key()).map(String::as_str) == Some("bynk") {
-                continue;
-            }
-            if let Some(p) = c.prefix() {
-                if let Some(ctx) = resolve_consume_prefix(&p, consumed, aliases) {
-                    out.entry(c.key().to_string()).or_insert(ctx);
-                }
-            } else if let Some(unit) = flattened.get(c.key()) {
-                // v0.17: a bare flattened capability is provided by the unit it
-                // was flattened from.
-                out.entry(c.key().to_string())
-                    .or_insert_with(|| unit.clone());
-            }
-        }
-    };
-    for s in table.services.values() {
-        for h in &s.handlers {
-            scan(&h.given);
-        }
-    }
-    for a in table.agents.values() {
-        for h in &a.handlers {
-            scan(&h.given);
-        }
-    }
-    out
-}
+// P5.3 review (#1133): `resolve_consume_prefix` and `handler_cross_caps` used
+// to have their own copies here, byte-identical to `bynk-check::project_model`'s
+// (neither builds TypeScript, so neither had the codegen coupling that keeps
+// `instantiate_provider_expr`/`native_platforms_of_context` below in this
+// crate) — deleted, every call site repointed at
+// `project_model::{resolve_consume_prefix, handler_cross_caps}`.
 
 /// v0.19 (decision 0017): the native platforms a context's **in-process
 /// closure** commits it to: every unit whose provider its compose would
