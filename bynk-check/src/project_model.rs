@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use crate::checker::{self, Ty, TyId, Types};
-use crate::context_checks::{build_capability_op_info, ts_type_ref_display};
+use crate::context_checks::{build_capability_op_info, ts_type_ref_display, type_ref_to_display};
 use crate::firstparty::{self, Platform};
 use crate::icu;
 use crate::index::{RefSink, SymbolKind};
@@ -1631,6 +1631,390 @@ fn check_entry_icu_syntax(entry: &MessageEntry, file: Option<&Path>, errors: &mu
             );
         }
     }
+}
+
+/// Events track, slice 0 (spine #936): a `from Events(E)` subscription must
+/// name a real, declared event — owned either by this context or by a
+/// context it `consumes` (mirroring `discover_event_subscribers`'s own
+/// ownership resolution, `project.rs`, which silently drops an unresolvable
+/// subscription rather than diagnosing it). Runs at the project-wide phase
+/// (needs `unit_tables` + `unit_consumes` together, unlike the local, per-
+/// context `check_service_protocols`), alongside the other cross-unit checks
+/// that need the same two maps.
+///
+/// P5.1 (`design/tracks/semantics-in-the-checker.md` §6): relocated verbatim
+/// from `bynk-emit/src/project/validate.rs`'s `check_event_subscriptions` —
+/// category 4 of `analysis.rs`'s own seven-category accounting, the third
+/// live editor-diagnostics regression this track closes.
+pub fn phase_event_subscriptions(
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        if kinds.get(name) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let consumed = unit_consumes.get(name).cloned().unwrap_or_default();
+        for &i in indices {
+            for item in parsed[i].items() {
+                let CommonsItem::Service(s) = item else {
+                    continue;
+                };
+                let ServiceProtocol::Events {
+                    event_type,
+                    pattern,
+                    schema_dispatch,
+                } = &s.protocol
+                else {
+                    continue;
+                };
+                // Events track, slice 4 (spine #936): `via schema(N)`'s
+                // legality needs nothing about the subscribed event itself
+                // (unlike the payload pattern below), so it's checked
+                // independently of whether the subscription even resolves.
+                if let Some(dispatch) = schema_dispatch {
+                    check_schema_dispatch(dispatch, &parsed[i].identity_path(), errors);
+                }
+                let TypeRef::Named(id) = event_type else {
+                    continue;
+                };
+                let owner_locally = unit_tables
+                    .get(name)
+                    .filter(|t| t.events.contains_key(&id.name))
+                    .map(|_| name.clone());
+                let owner_consumed = consumed.iter().find(|c| {
+                    unit_tables
+                        .get(*c)
+                        .is_some_and(|t| t.events.contains_key(&id.name))
+                });
+                let owner = owner_locally
+                    .as_deref()
+                    .or(owner_consumed.map(String::as_str));
+                let Some(owner) = owner else {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path()),
+                        CompileError::new(
+                            "bynk.event.unknown_subscription",
+                            id.span,
+                            format!(
+                                "`{}` is not a declared event in this context or any consumed context",
+                                id.name
+                            ),
+                        )
+                        .with_note(
+                            "check the spelling, or add `consumes <context>` for the context whose `event` this names — an unresolvable subscription never receives anything, silently",
+                        ),
+                    );
+                    continue;
+                };
+                // Events track, slice 1 (spine #936): once the event itself
+                // resolves, check the subscription pattern's fields against
+                // its declared record shape. No pattern is the pattern-less
+                // form (slice 0) and needs none of this.
+                let Some(pattern) = pattern else {
+                    continue;
+                };
+                let Some(event_decl) = unit_tables.get(owner).and_then(|t| t.events.get(&id.name))
+                else {
+                    continue;
+                };
+                check_event_pattern(
+                    pattern,
+                    event_decl,
+                    owner,
+                    unit_tables,
+                    unit_uses,
+                    &parsed[i].identity_path(),
+                    errors,
+                );
+            }
+        }
+    }
+}
+
+/// Events track, slice 1 (spine #936): resolve a subscription pattern's
+/// fields/values against the owning event's declared record shape. `owner`
+/// is the context that declares `event_decl` (may differ from the
+/// subscribing context, reached via `consumes`) — a field's own type (e.g. a
+/// discriminator sum like `Region`) resolves against the *owner's* types
+/// (locally declared, or pulled in via the owner's own `uses <commons>`),
+/// mirroring how the field's type is resolved everywhere else the event's
+/// record shape is used.
+fn check_event_pattern(
+    pattern: &EventPattern,
+    event_decl: &EventDecl,
+    owner: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    identity_path: &std::path::Path,
+    errors: &mut ErrorSink,
+) {
+    let mut seen: HashSet<String> = HashSet::new();
+    for field in &pattern.fields {
+        if !seen.insert(field.name.name.clone()) {
+            errors.push_for(
+                Some(identity_path),
+                CompileError::new(
+                    "bynk.event.pattern_duplicate_field",
+                    field.name.span,
+                    format!(
+                        "field `{}` is matched more than once in this subscription pattern",
+                        field.name.name
+                    ),
+                ),
+            );
+            continue;
+        }
+        let Some(record_field) = event_decl
+            .body
+            .fields
+            .iter()
+            .find(|f| f.name.name == field.name.name)
+        else {
+            let known: Vec<&str> = event_decl
+                .body
+                .fields
+                .iter()
+                .map(|f| f.name.name.as_str())
+                .collect();
+            errors.push_for(
+                Some(identity_path),
+                CompileError::new(
+                    "bynk.event.pattern_unknown_field",
+                    field.name.span,
+                    format!(
+                        "`{}` has no field named `{}`",
+                        event_decl.name.name, field.name.name
+                    ),
+                )
+                .with_note(format!(
+                    "declared fields: {}",
+                    if known.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        known.join(", ")
+                    }
+                )),
+            );
+            continue;
+        };
+        check_event_pattern_value(
+            &field.value,
+            record_field,
+            owner,
+            unit_tables,
+            unit_uses,
+            identity_path,
+            errors,
+        );
+    }
+}
+
+/// Events track, slice 4 (spine #936): `via schema(N)`'s `N` must be a
+/// positive `Int` literal — the identical rule `@schema(N)` already
+/// enforces (`bynk.event.bad_schema_version`), reused under its own code
+/// since the two are unrelated syntax positions (an annotation on the
+/// event's own declaration vs. a clause on a subscriber's header).
+fn check_schema_dispatch(
+    dispatch: &SchemaDispatch,
+    identity_path: &std::path::Path,
+    errors: &mut ErrorSink,
+) {
+    let SchemaVersionPattern::Literal(n) = &dispatch.pattern;
+    if *n <= 0 {
+        errors.push_for(
+            Some(identity_path),
+            CompileError::new(
+                "bynk.event.bad_schema_dispatch",
+                dispatch.span,
+                "`via schema(...)`'s argument must be a positive `Int` literal",
+            ),
+        );
+    }
+}
+
+/// Resolve one pattern field's matched value against that field's declared
+/// type — a literal must match the field's base type; a variant must name a
+/// nullary member of the field's sum type.
+fn check_event_pattern_value(
+    value: &EventPatternValue,
+    record_field: &RecordField,
+    owner: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    identity_path: &std::path::Path,
+    errors: &mut ErrorSink,
+) {
+    match value {
+        EventPatternValue::Literal { value: lit, span } => {
+            // A base type (`Int`/`String`/`Bool`/…) is its own `TypeRef`
+            // variant, not `TypeRef::Named` — only a *user*-declared type
+            // (including a refined/opaque type built on a base) goes through
+            // `resolve_type_decl`. An earlier version of this match only
+            // handled the `Named` case, so a plain `orderId: String` field
+            // (the common case) fell through to "not a literal-kind type",
+            // caught by `events_workers_wiring.rs`'s patterned fixture.
+            let base = match &record_field.type_ref {
+                TypeRef::Base(b, _) => Some(*b),
+                TypeRef::Named(field_type_name) => {
+                    resolve_type_decl(unit_tables, unit_uses, owner, &field_type_name.name)
+                        .and_then(|d| match &d.body {
+                            TypeBody::Refined { base, .. } | TypeBody::Opaque { base, .. } => {
+                                Some(*base)
+                            }
+                            _ => None,
+                        })
+                }
+                _ => None,
+            };
+            let Some(base) = base else {
+                errors.push_for(
+                    Some(identity_path),
+                    CompileError::new(
+                        "bynk.event.pattern_type_mismatch",
+                        *span,
+                        format!(
+                            "field `{}` is not a literal-kind type — a literal pattern value cannot match it",
+                            record_field.name.name
+                        ),
+                    ),
+                );
+                return;
+            };
+            let kind_matches = matches!(
+                (lit, base),
+                (LiteralValue::Int(_), BaseType::Int)
+                    | (LiteralValue::Str(_), BaseType::String)
+                    | (LiteralValue::Bool(_), BaseType::Bool)
+            );
+            if !kind_matches {
+                errors.push_for(
+                    Some(identity_path),
+                    CompileError::new(
+                        "bynk.event.pattern_type_mismatch",
+                        *span,
+                        format!(
+                            "this literal does not match the type of field `{}` (`{}`)",
+                            record_field.name.name,
+                            type_ref_to_display(&record_field.type_ref)
+                        ),
+                    ),
+                );
+            }
+        }
+        EventPatternValue::Variant {
+            type_name,
+            variant,
+            span,
+        } => {
+            let TypeRef::Named(field_type_name) = &record_field.type_ref else {
+                errors.push_for(
+                    Some(identity_path),
+                    CompileError::new(
+                        "bynk.event.pattern_type_mismatch",
+                        *span,
+                        format!(
+                            "field `{}` is not a sum type — a variant pattern value cannot match it",
+                            record_field.name.name
+                        ),
+                    ),
+                );
+                return;
+            };
+            if let Some(qualifier) = type_name
+                && qualifier.name != field_type_name.name
+            {
+                errors.push_for(
+                    Some(identity_path),
+                    CompileError::new(
+                        "bynk.event.pattern_type_mismatch",
+                        qualifier.span,
+                        format!(
+                            "field `{}` has type `{}`, not `{}`",
+                            record_field.name.name, field_type_name.name, qualifier.name
+                        ),
+                    ),
+                );
+                return;
+            }
+            let Some(decl) =
+                resolve_type_decl(unit_tables, unit_uses, owner, &field_type_name.name)
+            else {
+                // The field's own type failed to resolve — a different,
+                // pre-existing check (ordinary type-reference resolution)
+                // already reports this; don't double-report it here.
+                return;
+            };
+            let TypeBody::Sum(sum) = &decl.body else {
+                errors.push_for(
+                    Some(identity_path),
+                    CompileError::new(
+                        "bynk.event.pattern_type_mismatch",
+                        *span,
+                        format!(
+                            "field `{}` has type `{}`, which is not a sum type",
+                            record_field.name.name, field_type_name.name
+                        ),
+                    ),
+                );
+                return;
+            };
+            let Some(member) = sum.variants.iter().find(|v| v.name.name == variant.name) else {
+                errors.push_for(
+                    Some(identity_path),
+                    CompileError::new(
+                        "bynk.event.pattern_unknown_variant",
+                        variant.span,
+                        format!(
+                            "`{}` has no variant named `{}`",
+                            field_type_name.name, variant.name
+                        ),
+                    ),
+                );
+                return;
+            };
+            if !member.payload.is_empty() {
+                errors.push_for(
+                    Some(identity_path),
+                    CompileError::new(
+                        "bynk.event.pattern_variant_payload",
+                        variant.span,
+                        format!(
+                            "`{}.{}` carries a payload — only a nullary variant may be matched here, since testing the tag alone would silently ignore the payload",
+                            field_type_name.name, variant.name
+                        ),
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Resolve a named type as `owner` sees it: the context's own `types` first,
+/// then any commons unit it `uses`. Events track slice 1 (spine #936) needs
+/// this because a pattern field's type (e.g. a discriminator sum) may be
+/// declared in a commons the event's owning context pulls in with `uses`,
+/// rather than in the context itself.
+fn resolve_type_decl<'a>(
+    unit_tables: &'a HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    owner: &str,
+    name: &str,
+) -> Option<&'a Arc<TypeDecl>> {
+    if let Some(t) = unit_tables.get(owner).and_then(|t| t.types.get(name)) {
+        return Some(t);
+    }
+    for used in unit_uses.get(owner).into_iter().flatten() {
+        if let Some(t) = unit_tables.get(used).and_then(|t| t.types.get(name)) {
+            return Some(t);
+        }
+    }
+    None
 }
 
 /// Phase 6b: validate each context/adapter's `exports opaque/transparent { … }`

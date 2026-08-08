@@ -105,13 +105,14 @@ The reserved namespace `karn` is renamed to **`bynk`**. Update your sources:
   function-type-boundary checks, and everything inside a `suite`/`test
   integration` body (diagnostics *and* the binding index, so
   go-to-definition/find-references/completion for a test-only binding
-  regress too). **`messages`-bundle validation and locale-bundle ambiguity
-  are restored** (P5.0, #1128, `design/tracks/semantics-in-the-checker.md`
-  §6) — both now run inside `bynk-check::analysis::analyse_project` itself,
-  not just at build time. The remaining three categories are accepted,
-  tracked debt (`design/tracks/semantics-in-the-checker.md` §6, P5.1–P5.4),
-  closed as phase 5's remaining slices land — run `bynkc build`/`bynkc test`
-  (or the CI build) to see those diagnostics in the meantime. Schema-registry
+  regress too). **`messages`-bundle validation, locale-bundle ambiguity, and
+  event-subscription validation are restored** (P5.0/P5.1, #1128/#1130,
+  `design/tracks/semantics-in-the-checker.md` §6) — all three now run inside
+  `bynk-check::analysis::analyse_project` itself, not just at build time. The
+  remaining two categories are accepted, tracked debt
+  (`design/tracks/semantics-in-the-checker.md` §6, P5.2/P5.4), closed as
+  phase 5's remaining slices land — run `bynkc build`/`bynkc test` (or the CI
+  build) to see those diagnostics in the meantime. Schema-registry
   reconciliation and platform-lock enforcement are **not** newly affected —
   both were already unreachable from the editor's analysis before P4.2 (the
   editor never reconciles the schema registry, and always analyses as the

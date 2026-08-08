@@ -23,6 +23,8 @@
 //! the five live regressions — `messages_bundle_diagnostic_present` and
 //! `locale_bundle_ambiguity_diagnostic_present` are flipped to positive
 //! coverage rather than deleted, per this module's own instruction below.
+//! **P5.1** closed a third — `event_subscription_diagnostic_present`, same
+//! treatment.
 //!
 //! **Correction found while grounding this fixture set.** The tracking
 //! issue's [DECISION E] counted `check_platform_lock` among six *live*
@@ -162,15 +164,19 @@ fn locale_bundle_ambiguity_diagnostic_present() {
     );
 }
 
-/// Category 3 of 6: `check_event_subscriptions`
+/// Category 3 of 6, **closed at P5.1**
+/// (`design/tracks/semantics-in-the-checker.md` §6): `phase_event_subscriptions`
 /// (`bynk.event.unknown_subscription` — a `from Events(...)` subscription
-/// naming a misspelled event). Copied from `bynkc/tests/fixtures/negative/
-/// 505_events_unknown_subscription` (target-independent: the check takes no
-/// `BuildTarget`, so the source fixture's `target.txt = workers` is not
-/// needed here — `analyse_project_with`'s hardcoded `BuildTarget::Bundle`
-/// already ran this check unconditionally pre-repoint).
+/// naming a misspelled event) is now called by
+/// `bynk_check::analysis::analyse_project`. Flipped from a pinned absence to
+/// a positive-coverage assertion rather than deleted. Copied from
+/// `bynkc/tests/fixtures/negative/505_events_unknown_subscription`
+/// (target-independent: the check takes no `BuildTarget`, so the source
+/// fixture's `target.txt = workers` is not needed here —
+/// `analyse_project_with`'s hardcoded `BuildTarget::Bundle` already ran this
+/// check unconditionally pre-repoint).
 #[test]
-fn event_subscription_diagnostic_goes_missing() {
+fn event_subscription_diagnostic_present() {
     const ORDER: &str = "context commerce.order\n\nexports transparent { PaymentConfirmed }\nconsumes bynk { Events }\n\nevent PaymentConfirmed = {\n  orderId: String,\n}\n\nservice markPaid {\n  on call(orderId: String) -> Effect[()] given Events {\n    Events.emit[PaymentConfirmed](PaymentConfirmed { orderId: orderId })\n  }\n}\n";
     const NOTIFICATIONS: &str = "context commerce.notifications\n\nconsumes commerce.order\n\nservice OnPayment from Events(PaymentConfrimed) {\n  on event(e: PaymentConfrimed) -> Effect[()] {\n    ()\n  }\n}\n";
 
@@ -186,11 +192,11 @@ fn event_subscription_diagnostic_goes_missing() {
     assert_units_resolved(&pd, &["commerce.order", "commerce.notifications"]);
     let categories = all_categories(&pd);
     assert!(
-        !categories.contains(&"bynk.event.unknown_subscription"),
-        "this pins the accepted P4.2 regression — `check_event_subscriptions` is not \
-         called by `bynk_check::analysis::analyse_project`, so a `from Events(...)` \
-         subscription naming an undeclared event no longer gets a diagnostic through \
-         the LSP: {categories:?}"
+        categories.contains(&"bynk.event.unknown_subscription"),
+        "P5.1 relocated `check_event_subscriptions` into \
+         `bynk_check::project_model::phase_event_subscriptions`, called from \
+         `analyse_project` — a `from Events(...)` subscription naming an undeclared \
+         event should get a diagnostic through the LSP again: {categories:?}"
     );
 }
 
