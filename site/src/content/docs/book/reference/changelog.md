@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.28** | P5.1 (design/tracks/semantics-in-the-checker.md) — check_event_subscriptions relocates from bynk-emit to bynk-check, restoring a third of the five whole-project diagnostic categories P4.2 silenced in the editor (#1130) |
 | **v0.247.27** | P5.0 (design/tracks/semantics-in-the-checker.md) — check_messages_bundles and check_locale_bundle_ambiguity relocate from bynk-emit to bynk-check, restoring two of the five whole-project diagnostic categories P4.2 silenced in the editor (#1128) |
 | **v0.247.26** | Settle phase 5 of the compiler trajectory (`design/tracks/semantics-in-the-checker.md`) — the remaining `bynk-emit` diagnostic sites relocate to `bynk-check` by priority (five close a named, fixture-pinned editor regression; two close for R3.5 compliance alone), `check_function_type_boundaries`'s reach-back hook closes, and R10.1 closes with a crate-doc correction rather than a `bynk-driver` split |
 | **v0.247.25** | bynk-ide repoints off bynk-emit onto bynk-check/bynk-project directly, closing R10.2; the editor's project analysis silently stops reporting five whole-project check categories until phase 5 ports them (#1122) |
