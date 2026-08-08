@@ -16,18 +16,19 @@
 //! way P4.0 turned `project.rs` into a caller of `bynk-project`.
 //!
 //! What stayed in `bynk-emit` (not shared, because only the `Mode::Build` path
-//! needs it, or because it's genuinely emission-shaped): schema-registry
-//! reconciliation, platform-lock, the `Mode::Build` bail gate, and everything
-//! from emission onward (`EmitUnitCtx`, `emit_unit`,
+//! needs it, or because it's genuinely emission-shaped): the `Mode::Build`
+//! bail gate and everything from emission onward (`EmitUnitCtx`, `emit_unit`,
 //! `collect_history_target_agents`). The whole-project `messages`/locale-
-//! ambiguity/event-subscription checks (P5.0/P5.1) and the function-type-
-//! boundary check (P5.2, [`phase_function_type_boundaries`]) have since moved
-//! here too — the last of those closed `phase_group`'s optional boundary-check
-//! hook, which used to be the only way `run_checks` and the new entry point
-//! could reach it without duplicating the diagnostic-ordering logic
-//! (see `analysis.rs` for the residual-gap accounting that remains).
+//! ambiguity/event-subscription checks (P5.0/P5.1), the function-type-
+//! boundary check (P5.2, [`phase_function_type_boundaries`]), and
+//! schema-registry reconciliation/platform-lock enforcement (P5.3,
+//! [`crate::schema_registry::reconcile`]/[`phase_platform_lock`]) have since
+//! moved here too — the P5.2 move closed `phase_group`'s optional
+//! boundary-check hook, which used to be the only way `run_checks` and the
+//! new entry point could reach it without duplicating the diagnostic-ordering
+//! logic (see `analysis.rs` for the residual-gap accounting that remains).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -2564,6 +2565,368 @@ pub fn phase_validate_providers(
     }
 }
 
+/// v0.19: the lock violation a deployment unit's native-platform set implies
+/// under the selected `--platform`, if any. Pure — unit-tested below with
+/// synthetic sets (the conflict arm is not yet reachable end-to-end while
+/// only one platform ships native capabilities).
+///
+/// P5.3 (`design/tracks/semantics-in-the-checker.md` §6): relocated
+/// verbatim from `bynk-emit/src/project/validate.rs`, alongside
+/// [`phase_platform_lock`].
+fn lock_violation(
+    native: &BTreeMap<Platform, String>,
+    selected: Platform,
+) -> Option<LockViolation> {
+    let mut platforms = native.iter();
+    let (first, first_unit) = platforms.next()?;
+    if let Some((second, second_unit)) = platforms.next() {
+        return Some(LockViolation::Conflict {
+            a: (*first, first_unit.clone()),
+            b: (*second, second_unit.clone()),
+        });
+    }
+    if *first != selected {
+        return Some(LockViolation::Required {
+            needed: *first,
+            unit: first_unit.clone(),
+        });
+    }
+    None
+}
+
+/// A platform-lock violation (v0.19, `bynk.target.*`).
+#[derive(Debug, PartialEq, Eq)]
+enum LockViolation {
+    /// The deployment unit needs `needed` but another platform is selected.
+    Required { needed: Platform, unit: String },
+    /// The deployment unit's closure spans two mutually-exclusive platforms.
+    Conflict {
+        a: (Platform, String),
+        b: (Platform, String),
+    },
+}
+
+/// v0.15's cross-context capability resolution, relocated alongside
+/// [`phase_platform_lock`] (P5.3): resolve a `given`/handler capability
+/// prefix (`ctx.Cap`) against a context's own `consumes`/alias tables.
+/// Deliberately a **separate copy** from `bynk-emit/src/project.rs`'s
+/// function of the same name, not a shared relocation — that one also backs
+/// several TypeScript-codegen call sites (`instantiate_provider_expr` and
+/// its callers), which stay in `bynk-emit`; duplicating this ten-line pure
+/// lookup is cheaper than threading a dependency across the crate boundary
+/// for it.
+fn resolve_consume_prefix(
+    prefix: &str,
+    consumed: &[String],
+    aliases: &HashMap<String, String>,
+) -> Option<String> {
+    if let Some(q) = aliases.get(prefix) {
+        return Some(q.clone());
+    }
+    if consumed.iter().any(|c| c == prefix) {
+        return Some(prefix.to_string());
+    }
+    None
+}
+
+/// v0.15: the cross-context capabilities a context's **handlers** reference,
+/// as `deps_key → consumed_context`. Relocated alongside
+/// [`resolve_consume_prefix`] (P5.3) — see that function's doc for why this
+/// is a separate copy from `bynk-emit/src/project.rs`'s own
+/// `handler_cross_caps`, not a shared one.
+fn handler_cross_caps(
+    table: &UnitTable,
+    consumed: &[String],
+    aliases: &HashMap<String, String>,
+    flattened: &HashMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut scan = |given: &[CapRef]| {
+        for c in given {
+            // Events track, slice 0 (spine #936): `Events.emit` is
+            // intercepted entirely at the call site (release-at-commit
+            // buffering) and never calls through a constructed provider —
+            // there is no `EventsProvider` for compose to build, so the
+            // first-party `Events` must never become a compose deps entry.
+            if c.key() == "Events" && flattened.get(c.key()).map(String::as_str) == Some("bynk") {
+                continue;
+            }
+            if let Some(p) = c.prefix() {
+                if let Some(ctx) = resolve_consume_prefix(&p, consumed, aliases) {
+                    out.entry(c.key().to_string()).or_insert(ctx);
+                }
+            } else if let Some(unit) = flattened.get(c.key()) {
+                // v0.17: a bare flattened capability is provided by the unit it
+                // was flattened from.
+                out.entry(c.key().to_string())
+                    .or_insert_with(|| unit.clone());
+            }
+        }
+    };
+    for s in table.services.values() {
+        for h in &s.handlers {
+            scan(&h.given);
+        }
+    }
+    for a in table.agents.values() {
+        for h in &a.handlers {
+            scan(&h.given);
+        }
+    }
+    out
+}
+
+/// The units a provider capability's `given` closure transitively reaches,
+/// recorded into `referenced_units`. P5.3: a pure resolution walk over the
+/// same graph `bynk-emit`'s `instantiate_provider_expr` walks to build a
+/// TypeScript instantiation expression — this one builds no TypeScript at
+/// all, since `bynk-check` must never depend on `bynk-emit`'s codegen
+/// (`bynk-emit` depends on `bynk-check`, never the reverse). The two walks
+/// must keep resolving `given` targets identically (prefix → alias/consumes,
+/// bare → flattened) or `phase_platform_lock`'s native-platform accounting
+/// could drift from what a real build's compose actually instantiates; a
+/// reviewer changing one should check the other.
+fn collect_given_closure(
+    provider_ctx: &str,
+    cap: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    referenced_units: &mut BTreeSet<String>,
+) {
+    referenced_units.insert(provider_ctx.to_string());
+    let Some(provider) = unit_tables
+        .get(provider_ctx)
+        .and_then(|t| t.providers.get(cap))
+    else {
+        return;
+    };
+    if provider.given.is_empty() {
+        return;
+    }
+    let consumed = unit_consumes.get(provider_ctx).cloned().unwrap_or_default();
+    let aliases = unit_consumes_aliases
+        .get(provider_ctx)
+        .cloned()
+        .unwrap_or_default();
+    let flattened = unit_flattened
+        .get(provider_ctx)
+        .cloned()
+        .unwrap_or_default();
+    for g in &provider.given {
+        let target_ctx = match g.prefix() {
+            Some(p) => resolve_consume_prefix(&p, &consumed, &aliases)
+                .unwrap_or_else(|| provider_ctx.to_string()),
+            None => flattened
+                .get(g.key())
+                .cloned()
+                .unwrap_or_else(|| provider_ctx.to_string()),
+        };
+        collect_given_closure(
+            &target_ctx,
+            g.key(),
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+            referenced_units,
+        );
+    }
+}
+
+/// v0.19 (decision 0017): the native platforms a context's **in-process
+/// closure** commits it to: every unit whose provider its compose would
+/// instantiate — local providers' `given` recursion plus the capabilities its
+/// handlers reference — mapped through [`firstparty::platform_of`]. Each
+/// platform carries an exemplar unit for the diagnostic message. Service
+/// `consumes` edges (RPC under `workers`) do not contribute — only the
+/// provider-instantiation walk, which is in-process by construction.
+///
+/// P5.3: relocated alongside [`phase_platform_lock`], reimplemented on
+/// [`collect_given_closure`] rather than moved verbatim — see that
+/// function's doc.
+fn native_platforms_of_context(
+    ctx: &str,
+    table: &UnitTable,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+) -> BTreeMap<Platform, String> {
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    for cap in table.providers.keys() {
+        collect_given_closure(
+            ctx,
+            cap,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+            &mut referenced,
+        );
+    }
+    let consumed = unit_consumes.get(ctx).cloned().unwrap_or_default();
+    let aliases = unit_consumes_aliases.get(ctx).cloned().unwrap_or_default();
+    let flattened = unit_flattened.get(ctx).cloned().unwrap_or_default();
+    for (key, cctx) in handler_cross_caps(table, &consumed, &aliases, &flattened) {
+        collect_given_closure(
+            &cctx,
+            &key,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+            &mut referenced,
+        );
+    }
+    let mut out = BTreeMap::new();
+    for unit in referenced {
+        if let Some(p) = firstparty::platform_of(&unit) {
+            out.entry(p).or_insert(unit);
+        }
+    }
+    out
+}
+
+/// v0.19 (decisions 0017/0024): enforce the platform lock per deployment
+/// unit — each context under `--target workers`, the whole program under
+/// `bundle` (co-location shares the lock).
+///
+/// P5.3 (`design/tracks/semantics-in-the-checker.md` §6): relocated from
+/// `bynk-emit/src/project/validate.rs`'s `check_platform_lock` — category 5
+/// of `analysis.rs`'s own seven-category residual-gap accounting ("gap in
+/// name only": `analyse_project` hardcodes `Platform::default()`
+/// (Cloudflare) and `BuildTarget::Bundle`, and `bynk.cloudflare` is the only
+/// platform-native unit that exists, so `lock_violation` can never fire on
+/// that path regardless of where this function lives — see `analysis.rs`'s
+/// own doc for why R3.5 still requires the move).
+#[allow(clippy::too_many_arguments)]
+pub fn phase_platform_lock(
+    target: BuildTarget,
+    selected: Platform,
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    errors: &mut ErrorSink,
+) {
+    // In-browser track, slice 2: `browser` is a Bundle-only platform — a browser
+    // cannot do the Workers wire-call model (Service Bindings, Durable Objects,
+    // cross-context wire calls). Reject the combination up front, before the
+    // per-unit native-platform lock below, which is moot for an invalid build.
+    if selected == Platform::Browser && target == BuildTarget::Workers {
+        errors.push_for(
+            None,
+            CompileError::new(
+                "bynk.target.browser_bundle_only",
+                Span::default(),
+                "`--platform browser` builds only the in-process `Bundle` topology, but `--target workers` was selected; a browser cannot run the Workers wire-call model",
+            )
+            .with_note("build the browser target with `--target bundle` (the default)"),
+        );
+        return;
+    }
+    // v0.104 (real-time track slice 3b): the `from websocket` Workers mapping (the
+    // Durable Object hibernatable upgrade) is now emitted, so the 3a platform-lock
+    // that gated it off is removed.
+    // Per-context native sets, with the context name kept for spans/messages.
+    let mut per_context: Vec<(String, BTreeMap<Platform, String>)> = Vec::new();
+    let mut names: Vec<&String> = groups.keys().collect();
+    names.sort();
+    for name in names {
+        if kinds.get(name.as_str()) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let Some(table) = unit_tables.get(name.as_str()) else {
+            continue;
+        };
+        let native = native_platforms_of_context(
+            name,
+            table,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+        );
+        if !native.is_empty() {
+            per_context.push((name.clone(), native));
+        }
+    }
+    // The deployment units to check: per-context under workers; their union
+    // under bundle (the whole program co-locates).
+    let units: Vec<(String, BTreeMap<Platform, String>)> = match target {
+        BuildTarget::Workers => per_context,
+        BuildTarget::Bundle => {
+            let mut union = BTreeMap::new();
+            let mut owner: Option<String> = None;
+            for (ctx, native) in per_context {
+                owner.get_or_insert(ctx);
+                for (p, unit) in native {
+                    union.entry(p).or_insert(unit);
+                }
+            }
+            match owner {
+                Some(ctx) if !union.is_empty() => vec![(ctx, union)],
+                _ => Vec::new(),
+            }
+        }
+    };
+    for (ctx, native) in units {
+        let Some(violation) = lock_violation(&native, selected) else {
+            continue;
+        };
+        let span_for = |unit: &str| {
+            groups
+                .get(&ctx)
+                .and_then(|idx| consumes_span_of(parsed, idx, unit))
+                .map(|(_, s)| s)
+                .unwrap_or_default()
+        };
+        match violation {
+            LockViolation::Required { needed, unit } => {
+                errors.push_for(
+                    None,
+                    CompileError::new(
+                        "bynk.target.vendor_required",
+                        span_for(&unit),
+                        format!(
+                            "context `{ctx}` uses the platform-native capabilities of `{unit}`, which run only on the `{}` platform, but the build selects `--platform {}`",
+                            needed.as_str(),
+                            selected.as_str(),
+                        ),
+                    )
+                    .with_note(
+                        "build with the matching `--platform`, or remove the platform-native dependency to stay portable",
+                    ),
+                );
+            }
+            LockViolation::Conflict { a, b } => {
+                errors.push_for(
+                    None,
+                    CompileError::new(
+                        "bynk.target.vendor_conflict",
+                        span_for(&a.1),
+                        format!(
+                            "one deployment unit (via context `{ctx}`) uses platform-native capabilities from two mutually-exclusive platforms: `{}` (from `{}`) and `{}` (from `{}`)",
+                            a.0.as_str(),
+                            a.1,
+                            b.0.as_str(),
+                            b.1,
+                        ),
+                    )
+                    .with_note(
+                        "split the consumers into separate deployment units (`--target workers`), or remove one of the platform-native dependencies",
+                    ),
+                );
+            }
+        }
+    }
+}
+
 /// Phase 7: build each production unit's file-declaration index (which file in
 /// the unit declares which name), for cross-file lookups in the back half.
 pub fn phase_file_index(
@@ -2847,5 +3210,61 @@ pub fn phase_detect_consumes_cycles(
     detect_consumes_cycles(unit_consumes, &consumes_sites, &mut cycle_errors);
     for (path, err) in cycle_errors {
         errors.push_for(path.as_deref(), err);
+    }
+}
+
+#[cfg(test)]
+mod platform_lock_tests {
+    use super::{LockViolation, Platform, lock_violation};
+    use std::collections::BTreeMap;
+
+    fn native(entries: &[(Platform, &str)]) -> BTreeMap<Platform, String> {
+        entries
+            .iter()
+            .map(|(p, u)| (*p, (*u).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn empty_closure_imposes_no_lock() {
+        assert_eq!(lock_violation(&native(&[]), Platform::Node), None);
+    }
+
+    #[test]
+    fn matching_platform_is_fine() {
+        let n = native(&[(Platform::Cloudflare, "bynk.cloudflare")]);
+        assert_eq!(lock_violation(&n, Platform::Cloudflare), None);
+    }
+
+    #[test]
+    fn mismatched_platform_is_required() {
+        let n = native(&[(Platform::Cloudflare, "bynk.cloudflare")]);
+        assert_eq!(
+            lock_violation(&n, Platform::Node),
+            Some(LockViolation::Required {
+                needed: Platform::Cloudflare,
+                unit: "bynk.cloudflare".to_string(),
+            })
+        );
+    }
+
+    // The conflict arm is not yet reachable end-to-end (only one platform
+    // ships native capabilities until `bynk.aws`); the rule is exercised here
+    // with a synthetic two-platform set so it does not ship untested
+    // (proposal v0.19, review call).
+    #[test]
+    fn two_platforms_conflict_regardless_of_selection() {
+        let n = native(&[
+            (Platform::Cloudflare, "bynk.cloudflare"),
+            (Platform::Node, "bynk.synthetic"),
+        ]);
+        let v = lock_violation(&n, Platform::Cloudflare);
+        assert_eq!(
+            v,
+            Some(LockViolation::Conflict {
+                a: (Platform::Cloudflare, "bynk.cloudflare".to_string()),
+                b: (Platform::Node, "bynk.synthetic".to_string()),
+            })
+        );
     }
 }

@@ -25,15 +25,21 @@
 //! `CONTEXT_SRC` was ever shaped to trip them), so proving parity on one of
 //! them needs its own dedicated fixture rather than a tweak to the shared
 //! one: `new_entry_point_matches_analyse_project_with_on_a_function_type_boundary_violation`
-//! below does that for category 6, the one this slice closed. What's left,
-//! still deliberately avoided by the fixture in this file: schema-registry
-//! reconciliation and platform-lock enforcement (both gap-in-name-only —
-//! unreachable on this path regardless of where the checking code lives, so
-//! a fixture couldn't observe a difference either way, but is kept out for
-//! clarity), and `test`/`test integration` processing (category 7, the one
-//! remaining live divergence — that divergence is accepted debt (ADR 0328),
-//! not a bug this test should catch, and is pinned directly by
-//! `new_entry_point_omits_test_body_diagnostics` below instead). So the
+//! below does that for category 6, the one this slice closed. Schema-registry
+//! reconciliation and platform-lock enforcement also closed, at P5.3 — both
+//! were (and remain) gap-in-name-only: `analyse_project` calls
+//! `crate::schema_registry::reconcile` against an always-empty registry and
+//! `crate::project_model::phase_platform_lock` against the hardcoded
+//! Cloudflare/Bundle pair, exactly like `analyse_project_with` did (does)
+//! through `run_checks` for the same hardcoded values — unreachable on this
+//! path regardless of where the checking code lives, so no fixture, dedicated
+//! or shared, could observe a divergence either way; kept out of the shared
+//! fixture below for clarity all the same. What's left, still deliberately
+//! avoided by the fixture in this file: `test`/`test integration` processing
+//! (category 7, the one remaining live divergence — that divergence is
+//! accepted debt (ADR 0328), not a bug this test should catch, and is pinned
+//! directly by `new_entry_point_omits_test_body_diagnostics` below instead).
+//! So the
 //! clean/broken fixture below has: no `messages` block, no `Locale`
 //! capability consumption, no `Events`/`from Events(...)` subscription,
 //! nothing that reaches a platform-native capability (no `--platform` lock

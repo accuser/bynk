@@ -49,10 +49,13 @@ use bynk_syntax::span::Span;
 // §6 row P4.0). P4.1 (#1115): `symbols` and the per-file `context_checks`
 // subset of `validate` moved to `bynk-check` for the same reason — this
 // crate reaches them as `bynk_check::symbols`/`bynk_check::context_checks`
-// now. `validate` (the project-wide checks that remain), `tests_emit`, and
-// pipeline-driving types (`diagnostics`'s `Mode`/`ErrorSink`/
-// `ProjectAnalysis`/`ProjectFailure`, the reconciliation half of
-// `schema_registry`) stay here.
+// now. P5.0-P5.3 (`design/tracks/semantics-in-the-checker.md` §6) emptied
+// `validate` out the same way, project-wide check by project-wide check,
+// including the reconciliation half of `schema_registry` (now
+// `bynk_check::schema_registry`) — `validate` stays only as a placeholder
+// module pending its own deletion at P5.5. `tests_emit` and pipeline-driving
+// types (`diagnostics`'s `Mode`/`ErrorSink`/`ProjectAnalysis`/
+// `ProjectFailure`) stay here.
 mod diagnostics;
 mod schema_registry;
 mod tests_emit;
@@ -64,7 +67,6 @@ use bynk_project::discovery::*;
 use bynk_project::paths::*;
 use diagnostics::*;
 use tests_emit::*;
-use validate::*;
 
 // External facade: items referenced as `crate::project::X` from outside this
 // module (emitter, main, lib) must stay reachable at that path.
@@ -1697,15 +1699,21 @@ fn run_checks(
     //        `finish_build` the TypeScript is already emitted. Only the
     //        *write* is deferred — to the caller, gated on a fully clean
     //        build (#1078: `bynk-emit` computes, never writes) — reconciliation
-    //        itself happens here.
+    //        itself happens here. P5.3: `reconcile` itself now lives in
+    //        `bynk_check::schema_registry` (this crate is a caller, not an
+    //        owner) — `parse`/`SchemaRegistry` stay re-exported from this
+    //        crate's own `schema_registry` module.
     let mut schema_effective_versions: HashMap<String, i64> = HashMap::new();
     let mut schema_registry_doc: Option<schema_registry::SchemaRegistry> = None;
     if let SchemaLock::On { existing } = schema_registry {
         match schema_registry::parse(existing.as_deref(), project_root) {
             Ok(existing_reg) => {
                 let mut schema_errors: Vec<CompileError> = Vec::new();
-                let (updated, effective) =
-                    schema_registry::reconcile(&existing_reg, &unit_tables, &mut schema_errors);
+                let (updated, effective) = bynk_check::schema_registry::reconcile(
+                    &existing_reg,
+                    &unit_tables,
+                    &mut schema_errors,
+                );
                 errors.extend_for(None, schema_errors);
                 schema_effective_versions = effective;
                 schema_registry_doc = Some(updated);
@@ -1910,10 +1918,11 @@ fn run_checks(
     // unit whose in-process closure reaches a platform-native capability is
     // locked to that platform; the selected `--platform` must match. Run only
     // on otherwise-clean programs: the closure walk recurses the provider
-    // graph, whose acyclicity the earlier checks establish.
+    // graph, whose acyclicity the earlier checks establish. P5.3: relocated
+    // to `bynk_check::project_model::phase_platform_lock` — this crate is a
+    // caller, not an owner.
     if errors.is_empty() {
-        let mut lock_errors: Vec<CompileError> = Vec::new();
-        check_platform_lock(
+        project_model::phase_platform_lock(
             target,
             platform,
             &parsed,
@@ -1923,9 +1932,8 @@ fn run_checks(
             &unit_consumes,
             &unit_consumes_aliases,
             &unit_flattened,
-            &mut lock_errors,
+            &mut errors,
         );
-        errors.extend_for(None, lock_errors);
     }
 
     // v0.176 (#642): the `Bytes`-at-a-workers-boundary guard (ADR 0142 D8) is

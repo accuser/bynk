@@ -114,12 +114,13 @@ The reserved namespace `karn` is renamed to **`bynk`**. Update your sources:
   accepted, tracked debt (`design/tracks/semantics-in-the-checker.md` §6,
   P5.4), closed when phase 5's last slice lands — run `bynkc build`/`bynkc
   test` (or the CI build) to see those diagnostics in the meantime.
-  Schema-registry reconciliation and platform-lock enforcement are **not** newly affected —
-  both were already unreachable from the editor's analysis before P4.2 (the
-  editor never reconciles the schema registry, and always analyses as the
-  default Cloudflare platform/Bundle target, under which platform-lock can
-  never fire since Cloudflare is the only platform-native unit that exists
-  today).
+  Schema-registry reconciliation and platform-lock enforcement now originate
+  in `bynk-check` too (P5.3, `design/tracks/semantics-in-the-checker.md` §6),
+  but are **not** newly affected observably — both were, and remain,
+  unreachable from the editor's analysis (the editor never reconciles the
+  schema registry, and always analyses as the default Cloudflare
+  platform/Bundle target, under which platform-lock can never fire since
+  Cloudflare is the only platform-native unit that exists today).
 
 ### Migrating a project
 
