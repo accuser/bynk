@@ -48,6 +48,20 @@
 //! to trip), no generic-record boundary violation (a function type in a
 //! non-boundary position), and no `test`/`test integration` block.
 //!
+//! P5.5 (`design/tracks/semantics-in-the-checker.md` §6, §9) closed two more
+//! sites outside the seven-category accounting —
+//! `bynk.project.schema_registry_corrupt` (now
+//! `bynk_check::schema_registry::parse_or_diagnose`) and
+//! `bynk.secrets.computed_name` (now
+//! `bynk_check::project_model::phase_secrets_computed_name`). Both join
+//! schema-registry reconciliation and platform-lock in the gap-in-name-only
+//! bucket rather than needing a dedicated parity fixture:
+//! `bynk_emit::project::analyse_project_with` hardcodes `SchemaLock::Off` and
+//! `BuildTarget::Bundle` (`project.rs:750-763`) exactly as
+//! `bynk_check::analysis::analyse_project` does, so neither diagnostic is
+//! reachable through either path — no divergence exists for a fixture to
+//! prove parity on.
+//!
 //! What it *does* exercise: a commons (`uses`-imported into the context, so
 //! `compose_unit_symbols`'s mixin path runs), a locally-declared capability
 //! with a Bynk-bodied provider (`phase_validate_providers`'s op-matching

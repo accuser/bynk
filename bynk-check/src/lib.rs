@@ -43,6 +43,7 @@ pub mod project_model;
 pub mod requirements;
 pub mod resolver;
 pub mod schema_registry;
+pub mod secrets;
 pub mod store_ops;
 pub mod symbols;
 pub mod test_suites;
