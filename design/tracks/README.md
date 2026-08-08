@@ -78,7 +78,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`project-model.md`](project-model.md) | [#1107](https://github.com/accuser/bynk/issues/1107) | Settled — Slicing on merge | Phase 4 of the compiler trajectory — `bynk-project` as its own crate below both check and emit; `bynk-ide` drops its `bynk-emit` edge via a new `bynk-check` analysis entry point |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -106,8 +105,8 @@ row, which has itself now retired in turn.
 internal-architecture theme rather than language surface, same as
 `compiler-architecture.md`/`identity-and-totality.md` before it — realising
 R2.3 for `bynk-emit`/`bynk-ide`, open since T0.7.
-`project-model.md` is the ninth, continuing the same internal-architecture
-theme as phase 4 of the same trajectory, entry-gated on
+`project-model.md` (now retired) was the ninth, continuing the same
+internal-architecture theme as phase 4 of the same trajectory, entry-gated on
 `identity-and-totality.md`'s own retirement note. Its settling PR
 ([#1108](https://github.com/accuser/bynk/pull/1108)) closed all six of its
 design questions under review; one (whether `bynk-ide`'s real dependency on
@@ -116,7 +115,9 @@ a finding the draft hadn't anticipated — `analyse_project_with` calls the same
 checking-and-discovery orchestration function (`run_checks`) the CLI path
 does — and settled on a new `bynk-check` analysis entry point rather than a
 simple relocation, with the resulting duplication named as phase 5's to
-remove.
+remove. All three named slices shipped (P4.0, P4.1, P4.2), closing R3.7,
+R3.8, R3.9 and R10.2 in full (R3.11 separately found already closed by prior
+paydown); `ide_emit_edge` reads absent.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
@@ -134,6 +135,15 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`project-model.md`** — phase 4 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): the project model (discovery, the
+  unit graph, the schema registry) moved below both `bynk-check` and `bynk-emit` into its own crate,
+  `bynk-project`; `bynk-ide` repointed at a new `bynk-check` analysis entry point instead of
+  `bynk-emit`, closing R10.2. All three slices shipped (P4.0, P4.1, P4.2), closing R3.7, R3.8, R3.9 and
+  R10.2 in full (R3.11 separately found already closed by prior paydown). Three ADRs:
+  [0326](../decisions/0326-project-model-phase4-scope.md)–[0328](../decisions/0328-project-model-analysis-entry-point.md).
+  `ide_emit_edge` reads absent. Retired 8 August 2026. Opens phase 5 (semantics centralisation —
+  `validate.rs` dissolves into `bynk-check`).
 - **`content-ownership.md`** — `bynk-lsp` becomes the sole reader of `.bynk`
   project source content, realising R2.3 for `bynk-emit`/`bynk-ide`. All six
   slices shipped (0–5); `fs_below_driver` reads 0 for `bynk-ide`, 3 for
