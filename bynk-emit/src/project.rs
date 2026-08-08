@@ -31,7 +31,7 @@ use bynk_check::checker::{TyId, Types};
 use bynk_check::expr_types::ExprTypeSink;
 use bynk_check::firstparty::{self, Platform};
 use bynk_check::hints::HintSink;
-use bynk_check::index::{ProjectIndex, RefSink, SymbolKind};
+use bynk_check::index::{ProjectIndex, RefSink};
 use bynk_check::locals::LocalsSink;
 use bynk_check::project_model::{
     self, AdapterBinding, UnitInfo, handler_cross_caps, resolve_consume_prefix,
@@ -55,15 +55,18 @@ use bynk_syntax::span::Span;
 // `validate` out the same way, project-wide check by project-wide check,
 // including the reconciliation half of `schema_registry` (now
 // `bynk_check::schema_registry`) — `validate` stays only as a placeholder
-// module pending its own deletion at P5.5. `tests_emit` and pipeline-driving
+// module pending its own deletion at P5.5. P5.4 moved `tests_emit`'s
+// checking half (target/participant resolution, `stub` resolution,
+// case/property body type-checking) to `bynk_check::test_suites` the same
+// way — `tests_emit` stays here as a caller of it, holding only TypeScript
+// emission plus the two functions' unchanged public shape. Pipeline-driving
 // types (`diagnostics`'s `Mode`/`ErrorSink`/`ProjectAnalysis`/
-// `ProjectFailure`) stay here.
+// `ProjectFailure`) stay here too.
 mod diagnostics;
 mod schema_registry;
 mod tests_emit;
 mod validate;
 
-use bynk_check::context_checks::build_capability_op_info;
 use bynk_check::symbols::*;
 use bynk_project::discovery::*;
 use bynk_project::paths::*;

@@ -26,9 +26,10 @@
 //! from [`analyse_project`] at the same points `run_checks` calls them.
 //! Categories 1 and 5 closed at P5.3, structurally rather than observably —
 //! both were already unreachable from the editor before P4.2 even shipped,
-//! so porting them changed nothing observable. One category remains open,
-//! still P4.2's live regression, pinned at the `bynk-ide`/`bynk-lsp` layer by
-//! `bynk-lsp/tests/analysis_residual_gap.rs` and named in `CHANGELOG.md`:
+//! so porting them changed nothing observable. Category 7 closed at P5.4, the
+//! last of the seven and the one this doc comment's own author flagged as
+//! needing more care (§9 of the design doc) — see below. All seven
+//! categories are now closed:
 //!
 //! 1. ~~Schema-registry reconciliation~~ — **closed at P5.3**.
 //!    [`crate::schema_registry::reconcile`] is now called from
@@ -62,23 +63,26 @@
 //!    [`crate::project_model::phase_function_type_boundaries`] directly, at
 //!    the exact point the hook used to fire, so both callers see it in the
 //!    same diagnostic-ordering position as before.
-//! 7. **Test/integration-suite processing**
-//!    (`process_tests`/`process_integration_tests`) — unlike categories 2-6,
-//!    these run *unconditionally* in `run_checks`, in `Mode::Analyse` too,
-//!    and push into the same shared error sink (`bynk-emit`'s own
+//! 7. ~~Test/integration-suite processing~~
+//!    (`process_tests`/`process_integration_tests`) — **closed at P5.4**.
+//!    Unlike categories 2-6, these run *unconditionally* in `run_checks`, in
+//!    `Mode::Analyse` too, and push into the same shared error sink (`bynk-emit`'s own
 //!    `check_project_reports_a_test_body_error_past_an_earlier_structural_error`
 //!    pins a `bynk.types.let_annotation_mismatch` originating inside a
-//!    `suite`/`test integration` body). This entry point reports none of it:
-//!    the two functions are emission-coupled (`CompiledFile`, `RunnableTest`,
-//!    `ImportExt`, `contracts`, a shared `emitted_barrels` set) deeply enough
-//!    that porting them here would mean porting a slice of emission into an
-//!    entry point defined by never emitting — out of proportion with this
-//!    slice. A second, non-diagnostic consequence rides along: both
-//!    functions take `&mut RefSink`, so every binding edge inside a `.bynk`
-//!    suite file is also absent from [`ProjectAnalysis::index`] here. Since
-//!    P4.2 repointed `bynk-ide` at this entry point, go-to-definition inside
-//!    a test file no longer works, with no diagnostic to explain why, until
-//!    this category closes. Live gap.
+//!    `suite`/`test integration` body). The two functions were emission-coupled
+//!    (`CompiledFile`, `RunnableTest`, `ImportExt`, `contracts`, a shared
+//!    `emitted_barrels` set) deeply enough that P5.4 split them at the
+//!    check/emit boundary rather than porting the whole thing: their checking
+//!    half relocated to [`crate::test_suites::phase_test_bodies`]/
+//!    [`crate::test_suites::phase_integration_bodies`], now called from
+//!    [`analyse_project`] right after the per-unit compose/check loop (the
+//!    same relative point `run_checks` calls the originals, unconditionally —
+//!    unlike categories 2-6, neither is gated on a clean error sink), while
+//!    emission itself stays in `bynk-emit::project::tests_emit`, which now
+//!    calls the relocated checking phase too rather than duplicating it. Both
+//!    functions still take `&mut RefSink`, so every binding edge inside a
+//!    `.bynk` suite file is populated here again too — go-to-definition
+//!    inside a test file works through this entry point once more.
 //!
 //! Emission itself is orthogonal rather than a gap: this entry point never
 //! emits, by construction (it has no `BuildTarget`/`ImportExt`/`contracts`
@@ -87,9 +91,9 @@
 //! A fixture that exercises none of the seven categories above sees identical
 //! diagnostics from this entry point and from `analyse_project_with` — that
 //! is what the differential fixture's two clean/broken cases assert. A third
-//! case (`new_entry_point_omits_test_body_diagnostics`) pins category 7's
-//! divergence itself, so it is visible in the fixture rather than merely
-//! documented here.
+//! case (`new_entry_point_omits_test_body_diagnostics`) pinned category 7's
+//! divergence directly; now that P5.4 closed it, that test asserts parity
+//! instead (see its own doc comment).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -272,7 +276,7 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     //       accounting (see doc comment above) — `phase_group` now also
     //       confines function types to non-boundary positions directly, at
     //       the point its old optional hook used to fire. --
-    let (groups, kinds, _test_groups, _integration_groups, _adapter_bindings, _npm_deps) =
+    let (groups, kinds, test_groups, integration_groups, _adapter_bindings, _npm_deps) =
         project_model::phase_group(
             &parsed,
             &trees,
@@ -494,6 +498,49 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
             }
         }
     }
+
+    // P5.4 (`design/tracks/semantics-in-the-checker.md` §6): test/
+    // integration-suite processing — closes category 7 of this module's own
+    // residual-gap accounting, the last of the seven. Mirrors `run_checks`'s
+    // own call shape: both run unconditionally (unlike categories 2-6 above,
+    // `run_checks` never gates these on a clean error sink), right after its
+    // own per-unit `check_unit_files` loop and before platform-lock — the
+    // same relative point this loop just occupied. Neither function's
+    // returned "ready for emission" map is needed here — this entry point
+    // never emits — only the diagnostic/`RefSink` side effects matter, so
+    // both are discarded. Diagnostics are file-unattributed (`extend_for(None,
+    // ...)`), matching `run_checks`'s own `#696`-noted gap (attributing them
+    // means threading a file through many internal push sites — out of scope
+    // here, same as there).
+    let mut test_errors: Vec<bynk_syntax::error::CompileError> = Vec::new();
+    let _ready_tests = crate::test_suites::phase_test_bodies(
+        &test_groups,
+        &parsed,
+        &kinds,
+        &unit_tables,
+        &exports_visibility,
+        &unit_consumes,
+        &unit_consumes_aliases,
+        &unit_uses,
+        &mut test_errors,
+        &mut refs,
+        tys,
+    );
+    errors.extend_for(None, test_errors);
+
+    let mut integration_errors: Vec<bynk_syntax::error::CompileError> = Vec::new();
+    let _ready_integration = crate::test_suites::phase_integration_bodies(
+        &integration_groups,
+        &parsed,
+        &unit_tables,
+        &unit_consumes,
+        &unit_consumes_aliases,
+        &unit_uses,
+        &mut integration_errors,
+        &mut refs,
+        tys,
+    );
+    errors.extend_for(None, integration_errors);
 
     // v0.19 (decisions 0017/0024), P5.3: platform-lock enforcement — closes
     // category 5 of this module's own residual-gap accounting. Mirrors
