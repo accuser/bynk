@@ -69,9 +69,9 @@ pub enum FormatKind {
 impl FormatKind {
     /// PR #879 review (finding 2): the lowercase surface vocabulary used
     /// everywhere else (the diagnostics registry, ICU keywords themselves,
-    /// `message_template_placeholder_summary`) — not `{:?}`'s capitalized
-    /// Rust enum name, which leaked into `bynk.messages.format_mismatch`'s
-    /// message text.
+    /// `bynk-ide::symbols::describe_messages`'s hover summary) — not
+    /// `{:?}`'s capitalized Rust enum name, which leaked into
+    /// `bynk.messages.format_mismatch`'s message text.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Plain => "plain",

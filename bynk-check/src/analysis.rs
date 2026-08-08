@@ -2,12 +2,15 @@
 //! (`bynk-project`) → parse → resolve → check, returning the `bynk-ide`-facing
 //! analogue of `bynk-emit`'s `ProjectAnalysis` — without ever emitting.
 //!
-//! `bynk-ide` is **not** repointed at [`analyse_project`] by this slice (that
-//! is P4.2's job) — `bynk_emit::project::analyse_project_with` is still what
-//! every real caller uses today. This entry point exists so P4.2 has
-//! something to repoint at, and so the differential fixture
-//! (`bynk-check/tests/differential_analysis.rs`) can pin the two paths
-//! together while both exist.
+//! `bynk-ide` is repointed at [`analyse_project`] as of P4.2 (#1122) —
+//! `bynk_emit::project::analyse_project_with` is no longer reachable from
+//! `bynk-ide` at all (it has no `bynk-emit` dependency left). This entry
+//! point is what every real caller uses today; the differential fixture
+//! (`bynk-check/tests/differential_analysis.rs`) still pins it against
+//! `analyse_project_with` directly (both remain real, exercised paths —
+//! `bynk-emit`'s own CLI build still drives `run_checks`), so a future
+//! divergence between the two is still caught even though only one of them
+//! feeds the editor now.
 //!
 //! ## The residual gap
 //!
@@ -15,21 +18,35 @@
 //! `bynk-emit`'s `run_checks`'s `Mode::Analyse` arm **minus** seven
 //! categories of whole-project checking, deliberately not ported here
 //! (recorded on the tracking issue's own scope-correction comments, not
-//! silently assumed):
+//! silently assumed). Two of the seven were already unreachable from the
+//! editor before P4.2 even shipped, so porting them here would change
+//! nothing observable; the other five are P4.2's live regression, pinned at
+//! the `bynk-ide`/`bynk-lsp` layer by `bynk-lsp/tests/analysis_residual_gap.rs`
+//! and named in `CHANGELOG.md`:
 //!
 //! 1. **Schema-registry reconciliation** (`schema_registry::reconcile`) —
 //!    unreachable from the `Mode::Analyse` path today anyway (it only runs
 //!    under `SchemaLock::On`, and `analyse_project_with` always passes
 //!    `SchemaLock::Off`), so this is a gap in name only.
-//! 2. **`messages` bundle validation** (`check_messages_bundles`).
-//! 3. **Locale bundle ambiguity** (`check_locale_bundle_ambiguity`).
-//! 4. **Event-subscription validation** (`check_event_subscriptions`).
-//! 5. **Platform-lock enforcement** (`check_platform_lock`).
+//! 2. **`messages` bundle validation** (`check_messages_bundles`). Live gap.
+//! 3. **Locale bundle ambiguity** (`check_locale_bundle_ambiguity`). Live gap.
+//! 4. **Event-subscription validation** (`check_event_subscriptions`). Live gap.
+//! 5. **Platform-lock enforcement** (`check_platform_lock`) — also a gap in
+//!    name only, for the same reason as category 1, found while grounding
+//!    P4.2's own regression fixtures: `analyse_project_with` always calls
+//!    `run_checks` with `Platform::default()` (Cloudflare) and
+//!    `BuildTarget::Bundle` hardcoded, and `bynk.cloudflare` is the only
+//!    platform-native unit that exists (`firstparty::platform_of`) — so
+//!    `check_platform_lock`'s `lock_violation` can never find a native
+//!    platform disagreeing with the selected one, for any project, on the
+//!    editor's analysis path. No fixture can observe this category
+//!    regressing because it never fired through this path to begin with.
 //! 6. **Function-type-boundary checks** (`check_function_type_boundaries`) —
 //!    reached, in `bynk-emit`, from inside `phase_group`; this entry point
 //!    calls [`crate::project_model::phase_group`] with `None` for that
 //!    phase's optional boundary-check hook, so the check genuinely doesn't
 //!    run rather than being duplicated with a different diagnostic order.
+//!    Live gap.
 //! 7. **Test/integration-suite processing**
 //!    (`process_tests`/`process_integration_tests`) — unlike categories 2-6,
 //!    these run *unconditionally* in `run_checks`, in `Mode::Analyse` too,
@@ -43,10 +60,10 @@
 //!    entry point defined by never emitting — out of proportion with this
 //!    slice. A second, non-diagnostic consequence rides along: both
 //!    functions take `&mut RefSink`, so every binding edge inside a `.bynk`
-//!    suite file is also absent from [`ProjectAnalysis::index`] here. After
-//!    P4.2 repoints `bynk-ide` at this entry point, go-to-definition inside a
-//!    test file stops working with no diagnostic to explain why, until this
-//!    category closes.
+//!    suite file is also absent from [`ProjectAnalysis::index`] here. Since
+//!    P4.2 repointed `bynk-ide` at this entry point, go-to-definition inside
+//!    a test file no longer works, with no diagnostic to explain why, until
+//!    this category closes. Live gap.
 //!
 //! Emission itself is orthogonal rather than a gap: this entry point never
 //! emits, by construction (it has no `BuildTarget`/`ImportExt`/`contracts`

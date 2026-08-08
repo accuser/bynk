@@ -81,6 +81,24 @@ fn all_categories(pd: &bynk_ide::ProjectDiagnostics) -> Vec<&'static str> {
         .collect()
 }
 
+/// A positive control every absence assertion below must clear first — a
+/// pure `!categories.contains(...)` pin is satisfied just as well by
+/// discovery finding nothing, the fixture failing to parse, or a stale
+/// diagnostic-code string as by the actual accepted regression, so each
+/// test proves the project actually resolved as far as the unit(s) whose
+/// diagnostic is expected to be missing before asserting it's missing.
+fn assert_units_resolved(pd: &bynk_ide::ProjectDiagnostics, units: &[&str]) {
+    let mut resolved: Vec<&str> = pd.unit_sources.keys().map(String::as_str).collect();
+    resolved.sort();
+    for u in units {
+        assert!(
+            pd.unit_sources.contains_key(*u),
+            "fixture must actually resolve unit `{u}` — otherwise the absence \
+             assertion below would pass for the wrong reason; resolved units: {resolved:?}"
+        );
+    }
+}
+
 /// Category 1 of 6: `check_messages_bundles` (`bynk.messages.missing_reference`
 /// here — a bundle with no `@reference` block). Copied from
 /// `bynkc/tests/fixtures/negative/480_messages_missing_reference`.
@@ -91,6 +109,7 @@ fn messages_bundle_diagnostic_goes_missing() {
     let (scratch, overlay) = setup_project("messages", &[("src/bundle.bynk", SRC)]);
 
     let pd = bynk_ide::diagnose_project(&scratch.0, &overlay);
+    assert_units_resolved(&pd, &["bundle"]);
     let categories = all_categories(&pd);
     assert!(
         !categories.contains(&"bynk.messages.missing_reference"),
@@ -121,6 +140,7 @@ fn locale_bundle_ambiguity_diagnostic_goes_missing() {
     );
 
     let pd = bynk_ide::diagnose_project(&scratch.0, &overlay);
+    assert_units_resolved(&pd, &["msgs_a", "msgs_b", "web"]);
     let categories = all_categories(&pd);
     assert!(
         !categories.contains(&"bynk.locale.multiple_message_bundles"),
@@ -152,6 +172,7 @@ fn event_subscription_diagnostic_goes_missing() {
     );
 
     let pd = bynk_ide::diagnose_project(&scratch.0, &overlay);
+    assert_units_resolved(&pd, &["commerce.order", "commerce.notifications"]);
     let categories = all_categories(&pd);
     assert!(
         !categories.contains(&"bynk.event.unknown_subscription"),
@@ -178,6 +199,7 @@ fn platform_lock_diagnostic_stays_absent() {
     let (scratch, overlay) = setup_project("platform_lock", &[("src/cache/store.bynk", STORE)]);
 
     let pd = bynk_ide::diagnose_project(&scratch.0, &overlay);
+    assert_units_resolved(&pd, &["cache.store"]);
     let categories = all_categories(&pd);
     assert!(
         !categories.contains(&"bynk.target.vendor_required"),
@@ -198,6 +220,7 @@ fn function_type_boundary_diagnostic_goes_missing() {
     let (scratch, overlay) = setup_project("fn_boundary", &[("src/hof/api.bynk", API)]);
 
     let pd = bynk_ide::diagnose_project(&scratch.0, &overlay);
+    assert_units_resolved(&pd, &["hof.api"]);
     let categories = all_categories(&pd);
     assert!(
         !categories.contains(&"bynk.types.function_at_boundary"),
@@ -232,6 +255,7 @@ fn test_body_diagnostics_and_index_bindings_go_missing() {
     );
 
     let pd = bynk_ide::diagnose_project(&scratch.0, &overlay);
+    assert_units_resolved(&pd, &["demo.math"]);
     let categories = all_categories(&pd);
     assert!(
         !categories.contains(&"bynk.types.let_annotation_mismatch"),
@@ -239,16 +263,16 @@ fn test_body_diagnostics_and_index_bindings_go_missing() {
          longer gets a diagnostic through the LSP: {categories:?}"
     );
 
-    let double_refs_outside_tests = pd
+    let double_refs_in_tests = pd
         .index
         .symbols
         .iter()
         .filter(|(k, _)| k.name == "double")
         .flat_map(|(_, entry)| entry.refs.iter())
-        .filter(|site| site.path.components().any(|c| c.as_os_str() == "tests"))
+        .filter(|site| site.path.starts_with("tests"))
         .count();
     assert_eq!(
-        double_refs_outside_tests, 0,
+        double_refs_in_tests, 0,
         "the suite case's call to `double` must be absent from the index too — \
          `process_tests` never runs, so the reference is never recorded — this is \
          the concrete go-to-definition-inside-a-test-file regression"
