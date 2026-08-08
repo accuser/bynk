@@ -1,0 +1,19 @@
+context cache.store
+
+consumes bynk.cloudflare
+
+capability Cache {
+  fn get(key: String) -> Effect[Option[String]]
+}
+
+provides Cache = LocalCache given bynk.cloudflare.Kv {
+  fn get(key: String) -> Effect[Option[String]] {
+    bynk.cloudflare.Kv.get(key)
+  }
+}
+
+service store {
+  on call(key: String) -> Effect[Option[String]] given Cache {
+    Cache.get(key)
+  }
+}

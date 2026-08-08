@@ -380,7 +380,18 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     //        carries no on-disk schema lock (mirrors `analyse_project_with`'s
     //        own hardcoded `SchemaLock::Off`), so every event baselines
     //        silently against an empty registry — no diagnostic is reachable
-    //        through this call, same as before the relocation. --
+    //        through this call, same as before the relocation.
+    //
+    //        Cost (review #1133): this is a full sweep over every event in
+    //        every unit on every analysis — `snapshot` clones each field name
+    //        and runs `canon_type` per field, plus a sort and two `HashMap`
+    //        inserts per event — for a diagnostic that can provably never
+    //        fire on this path. R3.5 wants the check to *originate* in
+    //        `bynk-check`; it does not require paying for it on the editor's
+    //        hot path. Not measured against a large project before this
+    //        landed — worth profiling (or skipping the call under a
+    //        `unit_tables`-is-empty-of-events fast path) if LSP latency on a
+    //        big project ever traces back here. --
     let mut schema_errors: Vec<bynk_syntax::error::CompileError> = Vec::new();
     crate::schema_registry::reconcile(
         &bynk_project::schema_registry::SchemaRegistry::new(),
@@ -493,6 +504,14 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     // (see `bynk-lsp/tests/analysis_residual_gap.rs`'s
     // `platform_lock_diagnostic_stays_absent`) — this call closes the
     // category structurally (R3.5), not observably.
+    //
+    // Cost (review #1133): a full provider-closure walk per context, same
+    // shape as `run_checks`'s own gate, for a diagnostic that is provably
+    // dead here. `collect_given_closure` is also unmemoised — a
+    // diamond-shaped provider graph re-walks shared subtrees, so this is
+    // worse than linear in the closure's depth, not just wasted. Same
+    // trade-off and same "worth profiling if it ever shows up" note as the
+    // schema-registry reconciliation call above.
     if errors.is_empty() {
         project_model::phase_platform_lock(
             project_model::BuildTarget::Bundle,
