@@ -133,25 +133,25 @@ fn cross_file_type_and_fn_resolve_to_one_definition() {
         &["shop/util.bynk"],
     );
 
-    // Fn: called cross-file (billing).
+    // Fn: called cross-file (billing) and from the test unit's own
+    // `double(2)` call. P5.4 (`design/tracks/semantics-in-the-checker.md`
+    // §6): closed the residual gap's category 7 —
+    // `bynk_check::analysis::analyse_project` (which `bynk-ide` now calls)
+    // now runs `bynk_check::test_suites::phase_test_bodies` (the relocated
+    // checking half of `process_tests`), so a `.bynk` suite body's bindings
+    // reach `index` again too. Formerly asserted absent (P4.2, #1122,
+    // `design/tracks/project-model.md` §3.3(a)); folded into the ordinary
+    // `assert_sites_spell` site list now that the gap has closed.
     let double = key("shop.util", SymbolKind::Fn, "double");
     assert_sites_spell(
         &index,
         &snapshots,
         &double,
-        &["shop/util.bynk", "shop/billing.bynk"],
-    );
-    // P4.2 (#1122): the test unit's own `double(2)` call is no longer
-    // indexed — `bynk_check::analysis::analyse_project` (which `bynk-ide`
-    // now calls) never runs `process_tests`, so no `.bynk` suite body's
-    // bindings reach `index` at all (the residual gap's category 7, an
-    // accepted, tracked regression — `design/tracks/project-model.md`
-    // §3.3(a)). Once phase 5 ports test/integration-suite processing,
-    // tighten this back to an `assert_sites_spell` site (and delete this
-    // comment) rather than deleting the assertion.
-    assert!(
-        refs_in(&index, &double, "tests/billing.test.bynk").is_empty(),
-        "the test unit's call to `double` must be absent from the index — process_tests never runs"
+        &[
+            "shop/util.bynk",
+            "shop/billing.bynk",
+            "tests/billing.test.bynk",
+        ],
     );
 }
 
@@ -206,20 +206,20 @@ fn capability_references_cover_every_clause_and_call_form() {
 fn cross_context_service_call_and_type_export_clause_are_indexed() {
     let (index, snapshots) = analyse(&matrix_root());
 
-    // `shop.billing.bill(3)` in ops/audit.bynk references the service.
+    // `shop.billing.bill(3)` in ops/audit.bynk references the service, as
+    // does the test body's `bill.call(d)` — same P5.4 closure (category 7)
+    // as `double`'s call above; see that assertion's comment for the full
+    // explanation.
     let bill = key("shop.billing", SymbolKind::Service, "bill");
     assert_sites_spell(
         &index,
         &snapshots,
         &bill,
-        &["shop/billing.bynk", "ops/audit.bynk"],
-    );
-    // P4.2 (#1122): the test body's `bill.call(d)` is no longer indexed —
-    // same accepted, tracked regression (category 7) as `double`'s call
-    // above; see that assertion's comment for the full explanation.
-    assert!(
-        refs_in(&index, &bill, "tests/billing.test.bynk").is_empty(),
-        "the test unit's call to `bill` must be absent from the index — process_tests never runs"
+        &[
+            "shop/billing.bynk",
+            "ops/audit.bynk",
+            "tests/billing.test.bynk",
+        ],
     );
 
     // `exports transparent { Receipt }` is a reference to the type.

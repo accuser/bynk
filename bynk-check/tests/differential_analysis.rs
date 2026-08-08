@@ -34,13 +34,15 @@
 //! through `run_checks` for the same hardcoded values — unreachable on this
 //! path regardless of where the checking code lives, so no fixture, dedicated
 //! or shared, could observe a divergence either way; kept out of the shared
-//! fixture below for clarity all the same. What's left, still deliberately
-//! avoided by the fixture in this file: `test`/`test integration` processing
-//! (category 7, the one remaining live divergence — that divergence is
-//! accepted debt (ADR 0328), not a bug this test should catch, and is pinned
-//! directly by `new_entry_point_omits_test_body_diagnostics` below instead).
-//! So the
-//! clean/broken fixture below has: no `messages` block, no `Locale`
+//! fixture below for clarity all the same. `test`/`test integration`
+//! processing (category 7) also closed, at P5.4: both paths now call
+//! `bynk_check::test_suites::phase_test_bodies`/`phase_integration_bodies`
+//! for their checking half, so `new_entry_point_omits_test_body_diagnostics`
+//! below now asserts parity rather than divergence — see its own doc
+//! comment. The clean/broken fixture below still avoids all seven
+//! categories, not because any remains a legitimate divergence to dodge, but
+//! because it predates every one of them closing and there's no reason to
+//! reshape it now: it has no `messages` block, no `Locale`
 //! capability consumption, no `Events`/`from Events(...)` subscription,
 //! nothing that reaches a platform-native capability (no `--platform` lock
 //! to trip), no generic-record boundary violation (a function type in a
@@ -345,13 +347,24 @@ fn new_entry_point_matches_analyse_project_with_on_a_function_type_boundary_viol
     );
 }
 
-/// Category 7 (test/integration-suite processing) is the one residual gap
-/// that isn't merely *avoided* by the other two fixtures — this pins the
+/// Category 7 (test/integration-suite processing), **closed at P5.4**
+/// (`design/tracks/semantics-in-the-checker.md` §6): this pinned the
 /// divergence itself, per review feedback on #1117 that a fixture shaped to
-/// dodge every gap can't also catch a regression in how a gap is described.
-/// `bynk-emit`'s own
+/// dodge every gap can't also catch a regression in how a gap is described —
+/// its own doc comment said "once it closes, tighten this assertion (and the
+/// doc comment) rather than deleting the test." Tightened here: both paths
+/// now call `bynk_check::test_suites::phase_test_bodies`/
+/// `phase_integration_bodies` for their checking half
+/// (`bynk_check::analysis::analyse_project` directly,
+/// `bynk_emit::project::analyse_project_with` through `run_checks`'s
+/// `process_tests`/`process_integration_tests`), so a test body's own type
+/// error and its binding refs now agree between the two paths — asserting
+/// parity, not divergence. `bynk-emit`'s own
 /// `check_project_reports_a_test_body_error_past_an_earlier_structural_error`
-/// is the analogous legacy-side pin.
+/// is the analogous legacy-side pin (unaffected — it only ever exercised the
+/// legacy path). Kept, not deleted: this file's own module doc says it
+/// self-deletes only once phase 5 removes `run_checks`'s `Mode::Analyse` arm
+/// entirely (P5.5+), which is out of scope here.
 #[test]
 fn new_entry_point_omits_test_body_diagnostics() {
     const MATH_SRC: &str = "commons demo.math\n\nfn double(n: Int) -> Int { n * 2 }\n";
@@ -376,16 +389,17 @@ fn new_entry_point_omits_test_body_diagnostics() {
         "legacy path must report the test body's own type error: {legacy_categories:?}"
     );
     assert!(
-        !new_categories.contains(&"bynk.types.let_annotation_mismatch"),
-        "this pins category 7 as a real, current gap — once it closes, tighten this \
-         assertion (and the doc comment) rather than deleting the test: {new_categories:?}"
+        new_categories.contains(&"bynk.types.let_annotation_mismatch"),
+        "P5.4 closed category 7 — `analyse_project` now calls \
+         `bynk_check::test_suites::phase_test_bodies`, so the new path should report \
+         the test body's own type error too: {new_categories:?}"
     );
 
-    // The second consequence: the test file's `double(1)` call is a binding
-    // edge (a ref on `double`'s index entry) the legacy path's index has and
-    // the new path's doesn't, because `process_tests` never runs here to
-    // record it (`&mut RefSink`) — the concrete go-to-definition-inside-a-
-    // test-file regression the doc comment now names.
+    // The second consequence, now closed too: the test file's `double(1)`
+    // call is a binding edge (a ref on `double`'s index entry) — both paths
+    // record it now, since `phase_test_bodies` populates `&mut RefSink` the
+    // same way `process_tests` always did — the concrete
+    // go-to-definition-inside-a-test-file regression this test also pinned.
     let total_refs = |a: &analysis::ProjectAnalysis| {
         a.index
             .symbols
@@ -393,10 +407,10 @@ fn new_entry_point_omits_test_body_diagnostics() {
             .map(|e| e.refs.len())
             .sum::<usize>()
     };
-    assert!(
-        total_refs(&legacy) > total_refs(&new),
-        "legacy index must have at least the test file's reference to `double` \
-         that the new path's index lacks: legacy={}, new={}",
+    assert_eq!(
+        total_refs(&legacy),
+        total_refs(&new),
+        "both paths should now record the same reference edges — legacy={}, new={}",
         total_refs(&legacy),
         total_refs(&new)
     );

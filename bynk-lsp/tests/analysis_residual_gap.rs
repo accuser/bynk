@@ -25,7 +25,11 @@
 //! coverage rather than deleted, per this module's own instruction below.
 //! **P5.1** closed a third — `event_subscription_diagnostic_present`, same
 //! treatment. **P5.2** closed a fourth —
-//! `function_type_boundary_diagnostic_present`, same treatment.
+//! `function_type_boundary_diagnostic_present`, same treatment. **P5.4**
+//! closed the fifth and last — `test_body_diagnostics_and_index_bindings_go_missing`,
+//! same treatment (its polarity genuinely flips, unlike
+//! `platform_lock_diagnostic_stays_absent` below, which stays absent for an
+//! unrelated hardcoding reason — see that test's own doc comment).
 //!
 //! **Correction found while grounding this fixture set.** The tracking
 //! issue's [DECISION E] counted `check_platform_lock` among six *live*
@@ -271,15 +275,24 @@ fn function_type_boundary_diagnostic_present() {
     );
 }
 
-/// Category 6 of 6: test/integration-suite processing — `process_tests` never
-/// runs in the new entry point, so (a) a type error inside a `suite` case's
-/// body reports no diagnostic, and (b) the suite body's own binding edges
-/// (e.g. a call to a commons `fn`) are absent from `index` too, breaking
-/// go-to-definition/find-references for a test-only binding. Same fixture as
-/// `bynk-check/tests/differential_analysis.rs`'s
+/// Category 6 of 6, **closed at P5.4**
+/// (`design/tracks/semantics-in-the-checker.md` §6): test/integration-suite
+/// processing. `process_tests`'s checking half is now
+/// `bynk_check::test_suites::phase_test_bodies`, called from
+/// `bynk_check::analysis::analyse_project` — so (a) a type error inside a
+/// `suite` case's body gets a diagnostic again, and (b) the suite body's own
+/// binding edges (e.g. a call to a commons `fn`) are populated into `index`
+/// again too, restoring go-to-definition/find-references for a test-only
+/// binding. Flipped from a pinned absence/zero-count to a positive-coverage
+/// assertion rather than deleted, per this module's own instruction — this
+/// one's polarity genuinely flips (both assertions below invert), unlike
+/// `platform_lock_diagnostic_stays_absent` above, which stayed absent for an
+/// unrelated hardcoding reason even after its own relocation (P5.3). Same
+/// fixture as `bynk-check/tests/differential_analysis.rs`'s
 /// `new_entry_point_omits_test_body_diagnostics` (the analogous pin one layer
 /// down, at the `bynk-check` entry point itself rather than through
-/// `bynk-ide`'s own call path).
+/// `bynk-ide`'s own call path — that test's own doc comment records the
+/// tightened parity assertion this same closure earns there).
 #[test]
 fn test_body_diagnostics_and_index_bindings_go_missing() {
     const MATH_SRC: &str = "commons demo.math\n\nfn double(n: Int) -> Int { n * 2 }\n";
@@ -297,9 +310,11 @@ fn test_body_diagnostics_and_index_bindings_go_missing() {
     assert_units_resolved(&pd, &["demo.math"]);
     let categories = all_categories(&pd);
     assert!(
-        !categories.contains(&"bynk.types.let_annotation_mismatch"),
-        "this pins the accepted P4.2 regression — the test body's own type error no \
-         longer gets a diagnostic through the LSP: {categories:?}"
+        categories.contains(&"bynk.types.let_annotation_mismatch"),
+        "P5.4 relocated `process_tests`'s checking half into \
+         `bynk_check::test_suites::phase_test_bodies`, called from `analyse_project` \
+         — the test body's own type error should get a diagnostic through the LSP \
+         again: {categories:?}"
     );
 
     let double_refs_in_tests = pd
@@ -310,10 +325,11 @@ fn test_body_diagnostics_and_index_bindings_go_missing() {
         .flat_map(|(_, entry)| entry.refs.iter())
         .filter(|site| site.path.starts_with("tests"))
         .count();
-    assert_eq!(
-        double_refs_in_tests, 0,
-        "the suite case's call to `double` must be absent from the index too — \
-         `process_tests` never runs, so the reference is never recorded — this is \
-         the concrete go-to-definition-inside-a-test-file regression"
+    assert!(
+        double_refs_in_tests > 0,
+        "the suite case's call to `double` should be present in the index again — \
+         `phase_test_bodies` populates `RefSink` the same way `process_tests` always \
+         did — this is the concrete go-to-definition-inside-a-test-file regression's \
+         fix: {double_refs_in_tests}"
     );
 }

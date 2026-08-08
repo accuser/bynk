@@ -45,6 +45,7 @@ pub mod resolver;
 pub mod schema_registry;
 pub mod store_ops;
 pub mod symbols;
+pub mod test_suites;
 pub mod websocket;
 pub mod wire;
 pub mod wire_default;

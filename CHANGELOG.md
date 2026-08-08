@@ -109,13 +109,16 @@ The reserved namespace `karn` is renamed to **`bynk`**. Update your sources:
   event-subscription validation, and function-type-boundary checks are
   restored** (P5.0/P5.1/P5.2, #1128/#1130/#1126,
   `design/tracks/semantics-in-the-checker.md` §6) — all four now run inside
-  `bynk-check::analysis::analyse_project` itself, not just at build time. The
-  remaining category (everything inside a `suite`/`test integration` body) is
-  accepted, tracked debt (`design/tracks/semantics-in-the-checker.md` §6,
-  P5.4), closed when phase 5's last slice lands — run `bynkc build`/`bynkc
-  test` (or the CI build) to see those diagnostics in the meantime.
-  Schema-registry reconciliation and platform-lock enforcement now originate
-  in `bynk-check` too (P5.3, `design/tracks/semantics-in-the-checker.md` §6),
+  `bynk-check::analysis::analyse_project` itself, not just at build time.
+  **Everything inside a `suite`/`test integration` body is restored too**
+  (P5.4, `design/tracks/semantics-in-the-checker.md` §6) — diagnostics and
+  the binding index both, since `process_tests`'/`process_integration_tests`'
+  checking half now runs inside `analyse_project` as well
+  (`bynk_check::test_suites::phase_test_bodies`/`phase_integration_bodies`),
+  so go-to-definition/find-references/completion for a test-only binding
+  work again too. Schema-registry reconciliation and platform-lock
+  enforcement now originate in `bynk-check` too (P5.3,
+  `design/tracks/semantics-in-the-checker.md` §6),
   but are **not** newly affected observably — both were, and remain,
   unreachable from the editor's analysis (the editor never reconciles the
   schema registry, and always analyses as the default Cloudflare
