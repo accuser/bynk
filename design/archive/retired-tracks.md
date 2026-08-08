@@ -685,3 +685,59 @@ imposed; entries keep the order they were retired in.
   decision. Surface lives in `bynk-emit/src/project/discovery.rs` and
   `paths.rs`, `bynk-ide/src/lib.rs`, `bynk-lsp/src/content.rs` and `lib.rs`,
   and the new `bynk-testkit` crate. Retired 6 August 2026.
+- **`project-model.md`** — phase 4 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
+  `identity-and-totality.md`'s own retirement: the project model (discovery, the unit graph, the
+  schema registry) moved below both `bynk-check` and `bynk-emit` into its own crate, and `bynk-ide`
+  repointed at a `bynk-check`-native analysis entry point instead of `bynk-emit`, closing the CI-gated
+  dependency-graph check R10.2 asks for. Settled under a same-branch settling review (spine
+  [#1107](https://github.com/accuser/bynk/issues/1107), settling PR
+  [#1108](https://github.com/accuser/bynk/pull/1108), 6 August 2026) that argued all six of its design
+  questions; one (Q3) surfaced a finding the original draft didn't anticipate — `bynk-ide`'s real
+  dependency wasn't on a relocatable discovery function but on `run_checks`, an orchestrator that also
+  checks — and grew the phase's actual shape past what the draft's relative-size-3 rating assumed.
+  Three ADRs front-loaded before slicing:
+  [0326](../decisions/0326-project-model-phase4-scope.md) (extract today's name-keyed shape; the typed
+  `ProjectGraph`/`UnitId`/`ContractHash` defer to phase 8),
+  [0327](../decisions/0327-project-model-symbols-boundary.md) (the module boundary is a five-part test
+  plus a composite rule, not "no literal `bynk_check` import" — a check that took four review passes to
+  state completely), and
+  [0328](../decisions/0328-project-model-analysis-entry-point.md) (the new `bynk-check` entry point
+  closes R10.2 without moving `run_checks` itself, accepting temporary, named duplication as phase 5's
+  to remove). All three named slices shipped: **P4.0** — the `bynk-project` crate skeleton:
+  `discovery.rs`, `graph.rs`, `paths.rs`, `consistency.rs`, `schema_registry.rs`'s
+  `SchemaRegistry`/`parse`/`serialize` (not `reconcile`), `AttributedError`
+  ([#1113](https://github.com/accuser/bynk/issues/1113)/[#1114](https://github.com/accuser/bynk/pull/1114),
+  closing **R3.7, R3.8, R3.9**); **P4.1** — `bynk_check::analysis::analyse_project`, the narrow
+  discovery→parse→resolve→check entry point ADR 0328 named, with `symbols.rs` and
+  `ProjectAnalysis`/`ContextSequenceInfo`/`ContextBoundaryInfo` relocated to `bynk-check`
+  ([#1115](https://github.com/accuser/bynk/issues/1115)/[#1117](https://github.com/accuser/bynk/pull/1117),
+  review fixes in [#1119](https://github.com/accuser/bynk/pull/1119)) — two scope corrections found
+  under implementation, not deferred: the per-file `check_context_constraints`/
+  `check_context_declarations` transitive closure (~3,800 of `validate.rs`'s ~5,000 lines) moved to
+  `bynk-check/src/context_checks.rs`, and `run_checks`'s own discovery→group→resolve orchestration
+  (~2,070 lines) moved to `bynk-check/src/project_model.rs`/`check_pipeline.rs`; a differential fixture
+  (`bynk-check/tests/differential_analysis.rs`) pins the new entry point's diagnostics against
+  `run_checks`'s `Mode::Analyse` arm, later widened to pin a seventh residual-gap category
+  (test/integration-suite processing) a post-merge review caught mis-filed as orthogonal; **P4.2** —
+  `bynk-ide` repointed at the new entry point, all nine `bynk_emit::project`/`bynk_emit::emitter` reach
+  points closed, `bynk-ide/Cargo.toml`'s `bynk-emit` dependency line deleted
+  ([#1122](https://github.com/accuser/bynk/issues/1122)/[#1123](https://github.com/accuser/bynk/pull/1123),
+  closing **R10.2**) — grounding its own regression fixtures found `check_platform_lock` was already
+  unreachable from the editor's analysis before this slice too (the editor always analyses as the
+  default Cloudflare platform/Bundle target, under which platform-lock can never fire), correcting the
+  tracking issue's own six-category count down to five genuine regressions, pinned in
+  `bynk-lsp/tests/analysis_residual_gap.rs` and named in the CHANGELOG. §3.5 separately found R3.11
+  already closed by prior paydown (#1078), corrected directly in the reference appendix rather than
+  cited as a slice's own close. `ide_emit_edge` reads absent — the CI-gated dependency-graph check R10.2
+  asked for, already built (T0.0) and already running continuously, needed no new probe to flip. The
+  accepted debt this phase names rather than resolves: `run_checks`'s `Mode::Analyse` arm still
+  duplicates the new entry point's work, and the editor's project analysis is diagnostically faithful to
+  it minus five checks (`messages`-bundle validation, locale-bundle ambiguity, event-subscription
+  validation, function-type-boundary checks, and everything inside a `suite`/`test integration` body)
+  until phase 5 ports them. What this track opens: phase 5 (semantics centralisation — `validate.rs`
+  dissolves into `bynk-check`, `run_checks`'s checking half folds onto P4.1's entry point, deleting the
+  duplication ADR 0328 accepted), entry-gated on this track's own probe (`ide_emit_edge`) reading
+  absent — met. Surface lives in the new `bynk-project` crate in full, `bynk-check/src/analysis.rs`,
+  `context_checks.rs`, `project_model.rs` and `check_pipeline.rs`, and `bynk-ide/src/lib.rs` and its
+  `architecture.rs`/`sequence.rs`/`symbols.rs`/`wire_contract.rs`. Retired 8 August 2026.
