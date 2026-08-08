@@ -24,7 +24,8 @@
 //! `locale_bundle_ambiguity_diagnostic_present` are flipped to positive
 //! coverage rather than deleted, per this module's own instruction below.
 //! **P5.1** closed a third — `event_subscription_diagnostic_present`, same
-//! treatment.
+//! treatment. **P5.2** closed a fourth —
+//! `function_type_boundary_diagnostic_present`, same treatment.
 //!
 //! **Correction found while grounding this fixture set.** The tracking
 //! issue's [DECISION E] counted `check_platform_lock` among six *live*
@@ -226,12 +227,18 @@ fn platform_lock_diagnostic_stays_absent() {
     );
 }
 
-/// Category 5 of 6: `check_function_type_boundaries`
-/// (`bynk.types.function_at_boundary` — a function type in a non-boundary
-/// position, here a service handler parameter). Copied from `bynkc/tests/
-/// fixtures/negative/152_fn_type_in_service_sig`.
+/// Category 5 of 6, **closed at P5.2**
+/// (`design/tracks/semantics-in-the-checker.md` §6):
+/// `phase_function_type_boundaries` (`bynk.types.function_at_boundary` — a
+/// function type in a non-boundary position, here a service handler
+/// parameter) is now called directly by both
+/// `bynk_check::analysis::analyse_project` and `bynk-emit`'s `run_checks` —
+/// `phase_group`'s optional boundary-check hook is gone. Flipped from a
+/// pinned absence to a positive-coverage assertion rather than deleted, per
+/// this module's own instruction. Copied from `bynkc/tests/fixtures/negative/
+/// 152_fn_type_in_service_sig`.
 #[test]
-fn function_type_boundary_diagnostic_goes_missing() {
+fn function_type_boundary_diagnostic_present() {
     const API: &str = "context hof.api\n\nservice runner {\n  on call(f: Int -> Int) -> Effect[Int] {\n    Effect.pure(0)\n  }\n}\n";
 
     let (scratch, overlay) = setup_project("fn_boundary", &[("src/hof/api.bynk", API)]);
@@ -240,12 +247,11 @@ fn function_type_boundary_diagnostic_goes_missing() {
     assert_units_resolved(&pd, &["hof.api"]);
     let categories = all_categories(&pd);
     assert!(
-        !categories.contains(&"bynk.types.function_at_boundary"),
-        "this pins the accepted P4.2 regression — `bynk_check::analysis::analyse_project` \
-         calls `phase_group` with `None` for the function-type-boundary hook \
-         (`check_function_type_boundaries` never runs), so a function type at a \
-         service-handler boundary no longer gets a diagnostic through the LSP: \
-         {categories:?}"
+        categories.contains(&"bynk.types.function_at_boundary"),
+        "P5.2 relocated `check_function_type_boundaries` into \
+         `bynk_check::project_model::phase_function_type_boundaries`, called \
+         directly from `analyse_project` — a function type at a service-handler \
+         boundary should get a diagnostic through the LSP again: {categories:?}"
     );
 }
 
