@@ -94,6 +94,27 @@
 //! case (`new_entry_point_omits_test_body_diagnostics`) pinned category 7's
 //! divergence directly; now that P5.4 closed it, that test asserts parity
 //! instead (see its own doc comment).
+//!
+//! ## Two sites outside the seven-category accounting
+//!
+//! `bynk-check/src/analysis.rs`'s own seven categories were `run_checks`'s
+//! whole-project checks; two more registered diagnostics were still
+//! constructed in `bynk-emit` and outside that accounting, found and closed
+//! at P5.5 (`design/tracks/semantics-in-the-checker.md` §6, §9):
+//!
+//! - `bynk.project.schema_registry_corrupt` — a malformed on-disk
+//!   `bynk.schema.lock`. [`crate::schema_registry::parse_or_diagnose`] now
+//!   constructs it. Unreachable from this entry point, same reason as
+//!   category 1: no on-disk lock concept exists here.
+//! - `bynk.secrets.computed_name` — see
+//!   [`crate::project_model::phase_secrets_computed_name`]'s own doc. Unlike
+//!   the seven categories (scoped and confirmed live gaps or confirmed
+//!   gap-in-name-only by this settling pass), this one's reachability from
+//!   *this* entry point was still open at settling time — §9 named it a risk
+//!   rather than a scoped item. It resolved the same way categories 1 and 5
+//!   did: gap-in-name-only, since `run_checks`'s own gate
+//!   (`target == BuildTarget::Workers`) can never pass against this entry
+//!   point's hardcoded `BuildTarget::Bundle`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -307,6 +328,26 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
     // -- 5b'. `consumes` aliases. --
     let unit_consumes_aliases =
         project_model::phase_consumes_aliases(&groups, &kinds, &parsed, &unit_tables, &mut errors);
+
+    // -- 5b''. v0.173 (ADR 0196 D1), P5.5 (`design/tracks/semantics-in-the-checker.md`
+    //          §6, §9): warn where a `bynk.Secrets` read names its secret with
+    //          a computed expression — closes the "ninth gap" that §9 flagged
+    //          as unresolved risk rather than a scoped relocation. Mirrors
+    //          `run_checks`'s own call at the same relative point. Gated on
+    //          the Workers target, same as `run_checks`; this entry point
+    //          hardcodes `BuildTarget::Bundle` (mirrors `analyse_project_with`'s
+    //          own hardcoding, see this function's doc comment), so the call
+    //          closes the category structurally (R3.5 — the diagnostic now
+    //          originates in `bynk-check`), not observably, the same as
+    //          categories 1 and 5. --
+    project_model::phase_secrets_computed_name(
+        project_model::BuildTarget::Bundle,
+        &parsed,
+        &groups,
+        &kinds,
+        &unit_flattened,
+        &mut errors,
+    );
 
     // -- 5c. `consumes` cycles. --
     project_model::phase_detect_consumes_cycles(&groups, &parsed, &unit_consumes, &mut errors);

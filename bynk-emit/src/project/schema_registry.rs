@@ -18,7 +18,7 @@
 //!
 //! P4.0 (#1113, [DECISION A]): the document shape itself — `SchemaRegistry`,
 //! `EventEntry`, `FieldShape`, and their `parse`/`serialize` — moved to
-//! `bynk_project::schema_registry`. `SchemaRegistry`/`parse`/`serialize` are
+//! `bynk_project::schema_registry`. `SchemaRegistry`/`serialize` are
 //! re-exported below so every existing `schema_registry::X` call site in
 //! `project.rs` keeps working unchanged; `EventEntry`/`FieldShape` had no
 //! remaining call site here once `reconcile` moved (see next) and are not.
@@ -31,7 +31,14 @@
 //! This module is now just the re-export below; `project.rs`'s `run_checks`
 //! calls `bynk_check::schema_registry::reconcile` directly.
 //!
-//! #1078: this module touches no disk. `parse`/`serialize` are pure —
+//! P5.5 (§6, §3.2's "eighth site"): `project.rs`'s own
+//! `bynk.project.schema_registry_corrupt` construction moved to
+//! `bynk_check::schema_registry::parse_or_diagnose`, which calls
+//! `bynk_project::schema_registry::parse` itself now — `parse` had no
+//! remaining call site in this crate once that moved, and is not re-exported
+//! below either, the same way `EventEntry`/`FieldShape` dropped out at P5.3.
+//!
+//! #1078: this module touches no disk. `serialize` is pure —
 //! `bynk.schema.lock`'s content comes in through
 //! `CompileOptions::schema_registry`'s `SchemaLock::On { existing }` and goes
 //! out through `ProjectOutput::schema_lock`; `bynk-driver`'s `schema_lock`
@@ -39,4 +46,4 @@
 //! unchanged-content no-op and the directory fsync) from what used to live
 //! here.
 
-pub(crate) use bynk_project::schema_registry::{SchemaRegistry, parse, serialize};
+pub(crate) use bynk_project::schema_registry::{SchemaRegistry, serialize};

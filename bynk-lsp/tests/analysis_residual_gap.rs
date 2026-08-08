@@ -60,6 +60,18 @@
 //! equivalent pin ever existed for schema-registry reconciliation (never
 //! counted among the six — the same "gap in name only" reasoning applied to
 //! it from the start, per `bynk_check::analysis`'s own doc).
+//!
+//! **P5.5** found a seventh site the six-category accounting above never
+//! covered: `bynk.secrets.computed_name`, real production code whose own
+//! comment claimed it reached the editor via `run_checks`'s `Mode::Analyse`
+//! arm — true before P4.2's repoint, silently false after. Unlike the six
+//! above, this one had no pin here (it was never counted as a live
+//! regression, because nobody had re-derived its reachability since the
+//! repoint) — `secrets_computed_name_diagnostic_stays_absent` below adds one
+//! now that P5.5 has relocated and re-wired it, landing in the
+//! `platform_lock_diagnostic_stays_absent` bucket (gap in name only, same
+//! `BuildTarget::Bundle`-hardcoding reason) rather than the five genuinely
+//! live ones.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -331,5 +343,39 @@ fn test_body_diagnostics_and_index_bindings_go_missing() {
          `phase_test_bodies` populates `RefSink` the same way `process_tests` always \
          did — this is the concrete go-to-definition-inside-a-test-file regression's \
          fix: {double_refs_in_tests}"
+    );
+}
+
+/// Not one of the six categories above — P5.5's own finding
+/// (`design/tracks/semantics-in-the-checker.md` §6, §9): `bynk.secrets.computed_name`
+/// (v0.173, ADR 0196 D1) was constructed only in `bynk-emit::project::run_checks`,
+/// whose own comment claimed it "reaches the editor" — true only while the LSP
+/// still called `run_checks`'s `Mode::Analyse` arm, stale silently once P4.2
+/// repointed `bynk-ide` at `analyse_project` (`bynk-check` cannot depend on
+/// `bynk-emit` to reach it). §9 named this an open risk rather than a scoped
+/// relocation, unlike the six categories above. P5.5 relocated the check to
+/// `bynk_check::secrets::secret_reads_of`, wired in as
+/// `bynk_check::project_model::phase_secrets_computed_name`, called from
+/// `analyse_project` at the same relative point `run_checks` calls it — R3.5
+/// compliance. It resolved the same way category 4
+/// (`platform_lock_diagnostic_stays_absent`) did, not as a sixth live
+/// regression: the check is gated on `target == BuildTarget::Workers`, and
+/// `analyse_project` hardcodes `BuildTarget::Bundle`, so it cannot fire on
+/// this path either before or after the relocation.
+#[test]
+fn secrets_computed_name_diagnostic_stays_absent() {
+    const PROBE: &str = "context net.probe\n\nconsumes bynk { Secrets }\n\nservice probe {\n  on call(key: String) -> Effect[Option[String]] given Secrets {\n    Secrets.get(key)\n  }\n}\n";
+
+    let (scratch, overlay) = setup_project("secrets_computed_name", &[("net/probe.bynk", PROBE)]);
+
+    let pd = bynk_ide::diagnose_project(&scratch.0, &overlay);
+    assert_units_resolved(&pd, &["net.probe"]);
+    let categories = all_categories(&pd);
+    assert!(
+        !categories.contains(&"bynk.secrets.computed_name"),
+        "no computed-secret-name warning is reachable via `bynk_ide::diagnose_project` \
+         either before or after P5.5 — `analyse_project` always analyses as \
+         `BuildTarget::Bundle`, under which the Workers-gated check can never fire: \
+         {categories:?}"
     );
 }

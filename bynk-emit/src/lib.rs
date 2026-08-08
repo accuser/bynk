@@ -1,10 +1,14 @@
-//! Bynk's build orchestration and TypeScript emission — the layer above
-//! `bynk-check`.
+//! Bynk's TypeScript emission, plus the per-unit build sequencing that drives
+//! it — the layer above `bynk-project` (discovery, the dependency graph) and
+//! `bynk-check` (all semantic checking, R3.5).
 //!
-//! `project` is the build driver: it conducts discovery, the dependency graph,
-//! consistency, validation, symbols, and paths, and owns `compile_project`.
-//! `emitter` lowers a checked program to TypeScript. Read the crate as "build
-//! orchestration + TS emission" — orchestration drives emission.
+//! `project` owns `compile_project`/`run_checks`: the two-pass sequence over
+//! a project's units — discover and parse (`bynk-project`), then resolve,
+//! type-check (`bynk-check`) and emit each unit with full visibility of what
+//! it `uses`/`consumes`. `emitter` lowers a checked program to TypeScript.
+//! Input: a project tree (or an in-memory overlay). Output: TypeScript files
+//! plus diagnostics — this crate originates none of its own (P5.5,
+//! `design/tracks/semantics-in-the-checker.md` §3.5, R10.1).
 //!
 //! Extracted from `bynkc` as slice 4 of the crate-decomposition track over
 //! `bynk-syntax` + `bynk-check`. Behaviour is unchanged; `bynkc` depends on this

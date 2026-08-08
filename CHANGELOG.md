@@ -123,7 +123,13 @@ The reserved namespace `karn` is renamed to **`bynk`**. Update your sources:
   unreachable from the editor's analysis (the editor never reconciles the
   schema registry, and always analyses as the default Cloudflare
   platform/Bundle target, under which platform-lock can never fire since
-  Cloudflare is the only platform-native unit that exists today).
+  Cloudflare is the only platform-native unit that exists today). A malformed
+  `bynk.schema.lock` (`bynk.project.schema_registry_corrupt`) and a
+  `Secrets.get` call with a computed argument (`bynk.secrets.computed_name`)
+  now originate in `bynk-check` too (P5.5, same track) — also **not**
+  newly affected observably, for the same reasons (no on-disk schema lock
+  and a Workers-only gate, respectively, neither reachable from the editor's
+  hardcoded Cloudflare/Bundle analysis).
 
 ### Migrating a project
 

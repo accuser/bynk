@@ -22,15 +22,39 @@
 //! move). `bynk-emit`'s `run_checks` is now this function's caller, not its
 //! owner, the same way P4.0/P4.1 turned `project.rs` into a caller of
 //! `bynk-project`/`bynk-check` throughout.
+//!
+//! P5.5 (§6, §3.2's "eighth site"): [`parse_or_diagnose`] moved here too —
+//! `bynk.project.schema_registry_corrupt`, a real `CompileError::new`
+//! construction the seven-category accounting above didn't cover (it isn't a
+//! whole-project *check*, it's the read step immediately before
+//! [`reconcile`]), found and scoped by name in §3.2 rather than left for a
+//! future sweep to rediscover. `bynk_project::schema_registry::parse` itself
+//! — the document-shape parse — stays in `bynk-project` (P4.0); only the
+//! diagnostic construction on its error path moves, the same split
+//! `reconcile`'s own move drew between document shape and checking.
 
 use std::collections::BTreeMap;
 
 use bynk_syntax::ast::{EventDecl, TypeRef};
 use bynk_syntax::error::CompileError;
+use bynk_syntax::span::Span;
 
 use bynk_project::schema_registry::{EventEntry, FieldShape, SchemaRegistry};
 
 use crate::symbols::UnitTable;
+
+/// Parse `bynk.schema.lock`'s content, diagnosing a corrupt file as
+/// `bynk.project.schema_registry_corrupt` rather than handing the caller a
+/// bare `String` to wrap itself. `existing`/`project_root` are exactly
+/// `bynk_project::schema_registry::parse`'s own parameters — `None` (no lock
+/// file yet) always succeeds with a fresh, empty registry.
+pub fn parse_or_diagnose(
+    existing: Option<&str>,
+    project_root: &std::path::Path,
+) -> Result<SchemaRegistry, CompileError> {
+    bynk_project::schema_registry::parse(existing, project_root)
+        .map_err(|msg| CompileError::new("bynk.project.schema_registry_corrupt", Span::default(), msg))
+}
 
 /// A shallow, per-field snapshot of an event's current shape — deliberately
 /// **not** `bynk-check/src/contract.rs`'s `canon_named_in`: that renders a
@@ -750,7 +774,44 @@ mod tests {
         assert!(updated.get("commerce.order.PaymentConfirmedV2").is_some());
     }
 
-    // `parse`/`serialize` are `bynk_project::schema_registry`'s (P4.0,
-    // #1113) — covered by that crate's own tests; nothing left to duplicate
-    // here.
+    // `serialize`, and `parse`'s own parsing rules, are
+    // `bynk_project::schema_registry`'s (P4.0, #1113) — covered by that
+    // crate's own tests; nothing left to duplicate here.
+
+    // -- parse_or_diagnose (P5.5) ------------------------------------------
+
+    #[test]
+    fn parse_or_diagnose_passes_through_a_valid_registry() {
+        let mut reg = SchemaRegistry::new();
+        reg.insert(
+            "commerce.order.PaymentConfirmed".to_string(),
+            EventEntry {
+                schema: 1,
+                fields: vec![shape("orderId", "String", false)],
+            },
+        );
+        let text = bynk_project::schema_registry::serialize(&reg);
+        let parsed = parse_or_diagnose(Some(&text), std::path::Path::new("/tmp"))
+            .expect("a freshly serialized registry must parse");
+        assert_eq!(
+            parsed
+                .get("commerce.order.PaymentConfirmed")
+                .map(|e| e.schema),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn parse_or_diagnose_reports_a_corrupt_registry_under_its_own_code() {
+        let err = parse_or_diagnose(Some("not valid toml {{{"), std::path::Path::new("/tmp"))
+            .expect_err("garbage content must not parse");
+        assert_eq!(err.category, "bynk.project.schema_registry_corrupt");
+    }
+
+    #[test]
+    fn parse_or_diagnose_with_no_existing_content_baselines_empty() {
+        let parsed = parse_or_diagnose(None, std::path::Path::new("/tmp"))
+            .expect("no lock file yet is not corruption");
+        assert!(parsed.get("anything.at_all").is_none());
+    }
 }

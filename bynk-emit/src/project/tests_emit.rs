@@ -26,6 +26,7 @@ use crate::emitter::RuntimeUse;
 use crate::emitter::source_map::SourceMapBuilder;
 use bynk_check::checker::Types;
 use bynk_check::test_suites::{self, ResolvedStub};
+use bynk_syntax::span::Span;
 use std::sync::Arc;
 
 // -- v0.7 / v0.118: test declaration processing --

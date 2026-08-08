@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Bynk's build orchestration and TypeScript emission: project discovery, the dependency graph, validation, and the emitter that lowers checked Bynk to TypeScript."
+description = "Bynk's TypeScript emission and the per-unit build sequencing (compile_project/run_checks) that drives it, atop bynk-project (discovery, the dependency graph) and bynk-check (all semantic checking)."
 keywords = ["compiler", "dsl", "typescript", "codegen", "language"]
 categories = ["compilers"]
 

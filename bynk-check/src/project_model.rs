@@ -2926,6 +2926,61 @@ pub fn phase_platform_lock(
     }
 }
 
+/// v0.173 (ADR 0196 D1), P5.5 (`design/tracks/semantics-in-the-checker.md`
+/// §6, §9): warn where a `bynk.Secrets` read names its secret with a computed
+/// expression. Non-failing — the program is correct, `bynk deploy` simply
+/// cannot see the name — walked per **file** rather than per unit, since a
+/// merged `UnitTable` has thrown away which file a call site lives in and
+/// [`ErrorSink::extend_for`] attributes a diagnostic to a path.
+///
+/// Gated on the Workers target because the whole consequence is about `bynk
+/// deploy`'s plan, which no other target produces; warning a bundle project
+/// about a deploy plan it will never produce would be noise. Relocated from
+/// `bynk-emit::project::run_checks` — that call site's own comment claimed
+/// this "reaches the editor" via `bynk check`/the LSP, which was true only
+/// while the LSP still called `run_checks`'s `Mode::Analyse` arm; P4.2
+/// repointed `bynk-ide` at [`crate::analysis::analyse_project`] instead, and
+/// `bynk-check` cannot depend on `bynk-emit` to reach this code — so the
+/// claim went stale silently, exactly the "ninth gap" §9 of the design doc
+/// flagged as a risk rather than a scoped relocation. Wired into
+/// `analyse_project` at the same relative point `run_checks` calls it,
+/// mirroring [`phase_platform_lock`]'s own treatment of a build-target-gated
+/// check: `analyse_project` hardcodes `BuildTarget::Bundle`, so this closes
+/// the category structurally (R3.5 — the diagnostic now originates in
+/// `bynk-check`), not observably, the same as categories 1 and 5.
+pub fn phase_secrets_computed_name(
+    target: BuildTarget,
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    errors: &mut ErrorSink,
+) {
+    if target != BuildTarget::Workers {
+        return;
+    }
+    for (name, indices) in groups {
+        if kinds.get(name) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let Some(flattened) = unit_flattened.get(name) else {
+            continue;
+        };
+        for &i in indices {
+            let SourceUnit::Context(ctx) = &parsed[i].unit() else {
+                continue;
+            };
+            let handlers = ctx.items.iter().filter_map(|item| match item {
+                CommonsItem::Service(s) => Some(s.handlers.iter()),
+                _ => None,
+            });
+            let (_, warnings) = crate::secrets::secret_reads_of(handlers.flatten(), flattened);
+            let rel = parsed[i].identity_path();
+            errors.extend_for(Some(&rel), warnings);
+        }
+    }
+}
+
 /// Phase 7: build each production unit's file-declaration index (which file in
 /// the unit declares which name), for cross-file lookups in the back half.
 pub fn phase_file_index(

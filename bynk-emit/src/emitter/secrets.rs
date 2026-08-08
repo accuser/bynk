@@ -25,15 +25,21 @@
 //! `bynkc` override the compiler is a child process handing back an exit status
 //! — there is no in-memory model to consult. A name the compiler knows must
 //! reach the driver in the build output, or not at all (ADR 0195 D5).
+//!
+//! P5.5 (`design/tracks/semantics-in-the-checker.md` §6, §9): the checking
+//! half — `SecretReads`, the `Secrets.get` AST walk, and the
+//! `bynk.secrets.computed_name` diagnostic itself — moved to
+//! `bynk_check::secrets`, a real gap this track's settling pass had not
+//! scoped (see that module's own doc). What stays here is emission-only:
+//! rendering the manifest `bynk deploy` reads, which is not this crate's
+//! business to ask `bynk-check` to do.
 
 use std::collections::BTreeSet;
 
 use bynk_project::json_string;
 
 use bynk_check::actors::SumMemberSeam;
-use bynk_syntax::CompileError;
-use bynk_syntax::ast::{Block, Expr, ExprKind};
-use bynk_syntax::span::Span;
+use bynk_check::secrets::SecretReads;
 
 use crate::project::UnitTable;
 
@@ -49,32 +55,6 @@ pub const SECRETS_MANIFEST: &str = "bynk-secrets.json";
 /// evidence either way about computed names, and defaulting `read_complete` to
 /// `true` for it would be the manifest's one claim that could be silently wrong.
 const MANIFEST_VERSION: u32 = 2;
-
-/// The capability whose `get` names a platform secret. Matched against the
-/// capability a context actually resolved, never against the spelling — see
-/// [`reads_secrets_of_bynk`].
-const SECRETS_CAPABILITY: &str = "Secrets";
-
-/// What a context's handlers read through `bynk.Secrets`.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct SecretReads {
-    /// Literal names, sorted. A census only while `complete` holds.
-    pub names: BTreeSet<String>,
-    /// False when at least one `Secrets.get` argument was not a literal, so no
-    /// pass could know the name.
-    pub complete: bool,
-}
-
-impl SecretReads {
-    /// A context that reads nothing: complete by vacuity, and the shape a
-    /// non-`bynk.Secrets` context gets without walking a single expression.
-    fn none() -> Self {
-        Self {
-            names: BTreeSet::new(),
-            complete: true,
-        }
-    }
-}
 
 /// Every secret name this context's handlers will read from `env`.
 ///
@@ -116,140 +96,22 @@ pub(crate) fn declared_secrets(table: &UnitTable) -> BTreeSet<String> {
     names
 }
 
-/// Does this context's `Secrets` resolve to **`bynk`**'s?
-///
-/// The whole of [DECISION D]. `flattened` maps a context's in-scope capability
-/// name to the unit providing it, so this asks the question that matters —
-/// *whose* `Secrets` is this? — rather than matching the identifier.
-///
-/// An author may declare their own capability (an adapter's
-/// `capability Jwt { … }` is an ordinary thing to write), so nothing stops one
-/// being named `Secrets`. Collecting from *that* would put a name in the
-/// manifest that `deploy` then sets on Cloudflare — a real secret written to a
-/// real account for a store that was never Cloudflare's. A context with no
-/// `Secrets` at all answers `false` here and never gets walked.
-fn reads_secrets_of_bynk(flattened: &std::collections::HashMap<String, String>) -> bool {
-    flattened
-        .get(SECRETS_CAPABILITY)
-        .is_some_and(|unit| unit == bynk_check::firstparty::BYNK_UNIT)
-}
-
-/// The literal `bynk.Secrets` names this context's handlers read, and whether
-/// that list is everything.
-///
-/// Walks the same handlers [`declared_secrets`] does, so the two classes cannot
-/// come to describe different Workers. Emits `bynk.secrets.computed_name` — a
-/// non-failing warning ([ADR 0117](../../../design/decisions)) — at each call
-/// site whose argument is not a literal, which is the only place an author can
-/// be told that they have stepped outside what `deploy` can see.
-/// Returns the reads **and** the warnings, rather than taking a sink, so the two
-/// callers can each take the half they need from one pure walk: `run_checks`
-/// raises the warnings (which is what puts them in the editor, via the same
-/// analyse path `bynk check` uses), and `build_output` writes the names into the
-/// manifest. Called twice over the same inputs rather than threaded through
-/// `RunChecks` — it is a cheap AST walk beside emitting TypeScript, and one
-/// function with one rule cannot disagree with itself.
+/// The reads half of what a context knows about its own `bynk.Secrets` use —
+/// `declared_secrets`'s counterpart, read from the AST rather than derived
+/// from actor bindings. The walk itself, its `bynk.secrets.computed_name`
+/// diagnostic, and the `reads_secrets_of_bynk` capability-resolution guard
+/// now live in [`bynk_check::secrets::secret_reads_of`] (P5.5) — this wrapper
+/// calls it qualified rather than duplicating it, discarding the warnings
+/// `build_output` has no use for (`run_checks` raises them, via
+/// `bynk_check::project_model::phase_secrets_computed_name`, its own caller
+/// of the same function).
 pub(crate) fn secret_reads(
     table: &UnitTable,
     flattened: &std::collections::HashMap<String, String>,
-) -> (SecretReads, Vec<CompileError>) {
-    secret_reads_of(
+) -> (SecretReads, Vec<bynk_syntax::CompileError>) {
+    bynk_check::secrets::secret_reads_of(
         table.services.values().flat_map(|s| s.handlers.iter()),
         flattened,
-    )
-}
-
-/// The walk itself, over any handler set.
-///
-/// Split so the two callers can scope it differently without the *rule*
-/// differing: the manifest wants a context's whole handler set (its names span
-/// every file), while the warning wants one file's handlers at a time, because
-/// `extend_for` attributes a diagnostic to a path and a `UnitTable` has merged
-/// that away.
-pub(crate) fn secret_reads_of<'a>(
-    handlers: impl Iterator<Item = &'a bynk_syntax::ast::Handler>,
-    flattened: &std::collections::HashMap<String, String>,
-) -> (SecretReads, Vec<CompileError>) {
-    if !reads_secrets_of_bynk(flattened) {
-        return (SecretReads::none(), Vec::new());
-    }
-    let mut reads = SecretReads::none();
-    let mut warnings = Vec::new();
-    for handler in handlers {
-        walk_block(&handler.body, &mut reads, &mut warnings);
-    }
-    (reads, warnings)
-}
-
-/// Every expression in a handler body.
-///
-/// Reuses `statement_exprs` rather than matching `Statement` here: a
-/// `Secrets.get` in a `let`, an `expect`, a `~>` send or a bare `do` is still a
-/// read, and re-enumerating the statement kinds would be a second place to
-/// forget one the day a new kind lands.
-fn walk_block(block: &Block, reads: &mut SecretReads, warnings: &mut Vec<CompileError>) {
-    let mut exprs: Vec<&Expr> = Vec::new();
-    for statement in &block.statements {
-        bynk_syntax::ast::statement_exprs(statement, &mut exprs);
-    }
-    exprs.push(&block.tail);
-    for e in exprs {
-        walk_expr(e, reads, warnings);
-    }
-}
-
-/// Visit `e` and everything under it, recording each `Secrets.get` call.
-///
-/// Recurses through [`bynk_syntax::ast::expr_children`] rather than re-matching
-/// every `ExprKind`: a `Secrets.get` inside a `match` arm, a lambda, or an
-/// interpolation hole is still a read, and a hand-rolled visitor would be a
-/// second place to forget that.
-fn walk_expr(e: &Expr, reads: &mut SecretReads, warnings: &mut Vec<CompileError>) {
-    if let ExprKind::MethodCall {
-        receiver,
-        method,
-        args,
-        ..
-    } = &e.kind
-        && method.name == "get"
-        && matches!(&receiver.kind, ExprKind::Ident(name) if name.name == SECRETS_CAPABILITY)
-    {
-        // Arity is the checker's (`bynk.capability.op_arity`); this reads the
-        // one argument when it is there and stays quiet when it is not, rather
-        // than reporting a second diagnostic about the same call.
-        match args.first().map(|a| &a.kind) {
-            Some(ExprKind::StrLit(name)) => {
-                reads.names.insert(name.clone());
-            }
-            Some(_) => {
-                reads.complete = false;
-                warnings.push(computed_name_warning(e.span));
-            }
-            None => {}
-        }
-    }
-    for child in bynk_syntax::ast::expr_children(e) {
-        walk_expr(child, reads, warnings);
-    }
-}
-
-/// The one thing that can tell an author `deploy` has lost sight of a secret.
-///
-/// A warning, not an error ([DECISION A]): `Secrets.get(pickName())` is legal
-/// and sometimes reasonable, and making it a compile failure to serve a driver's
-/// convenience would be the language spending expressiveness it does not need to
-/// spend. The severity is carried by the code — `Severity::for_error` classifies
-/// it, and the diagnostic sink routes on that.
-fn computed_name_warning(span: Span) -> CompileError {
-    CompileError::new(
-        "bynk.secrets.computed_name",
-        span,
-        "`Secrets.get` is called with a computed name, so `bynk deploy` cannot know which secret this context reads"
-            .to_string(),
-    )
-    .with_note(
-        "the deploy plan will not list it, and will say its list of read secrets is incomplete; \
-         pass a string literal if you want it planned",
     )
 }
 

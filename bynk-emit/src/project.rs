@@ -43,7 +43,6 @@ use bynk_syntax::ast::*;
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer;
 use bynk_syntax::parser;
-use bynk_syntax::span::Span;
 
 // P4.0 (#1113): discovery, the unit graph, path resolution, and cross-unit
 // consistency checks moved to `bynk-project` — this crate is now a
@@ -54,18 +53,22 @@ use bynk_syntax::span::Span;
 // now. P5.0-P5.3 (`design/tracks/semantics-in-the-checker.md` §6) emptied
 // `validate` out the same way, project-wide check by project-wide check,
 // including the reconciliation half of `schema_registry` (now
-// `bynk_check::schema_registry`) — `validate` stays only as a placeholder
-// module pending its own deletion at P5.5. P5.4 moved `tests_emit`'s
-// checking half (target/participant resolution, `stub` resolution,
-// case/property body type-checking) to `bynk_check::test_suites` the same
-// way — `tests_emit` stays here as a caller of it, holding only TypeScript
-// emission plus the two functions' unchanged public shape. Pipeline-driving
-// types (`diagnostics`'s `Mode`/`ErrorSink`/`ProjectAnalysis`/
-// `ProjectFailure`) stay here too.
+// `bynk_check::schema_registry`). P5.4 moved `tests_emit`'s checking half
+// (target/participant resolution, `stub` resolution, case/property body
+// type-checking) to `bynk_check::test_suites` the same way — `tests_emit`
+// stays here as a caller of it, holding only TypeScript emission plus the
+// two functions' unchanged public shape. P5.5 (§5, §6): `validate` reached
+// empty (its last occupant, `check_platform_lock`, left at P5.3) and its
+// remaining diagnostic-emitting sites — the `bynk.secrets.computed_name`
+// warning and the `bynk.project.schema_registry_corrupt` construction, both
+// outside the seven-category accounting — relocated too (§3.2's "eighth
+// site" and §9's open risk respectively); `validate.rs` and its module
+// declaration are deleted, this track's own completion criterion (§5).
+// Pipeline-driving types (`diagnostics`'s `Mode`/`ErrorSink`/
+// `ProjectAnalysis`/`ProjectFailure`) stay here too.
 mod diagnostics;
 mod schema_registry;
 mod tests_emit;
-mod validate;
 
 use bynk_check::symbols::*;
 use bynk_project::discovery::*;
@@ -1577,41 +1580,20 @@ fn run_checks(
         project_model::phase_consumes_aliases(&groups, &kinds, &parsed, &unit_tables, &mut errors);
 
     // -- 5b''. v0.173 (ADR 0196 D1): warn where a `bynk.Secrets` read names its
-    //          secret with a computed expression. Non-failing — the program is
-    //          correct, `deploy` simply cannot see the name (D1) — and raised
-    //          here rather than at emit so it reaches the **editor**: `bynk
-    //          check` and the LSP run this path and never build.
-    //
-    //          Gated on the Workers target because the whole consequence is
-    //          about `bynk deploy`, which no other target has; warning a bundle
-    //          project about a deploy plan it will never produce would be noise.
-    //          Walked per **file** rather than per unit: `extend_for` attributes
-    //          a diagnostic to a path, and a `UnitTable` has merged a context's
-    //          files away — so a squiggle would land on the project instead of
-    //          the call site.
-    if target == BuildTarget::Workers {
-        for (name, indices) in &groups {
-            if kinds.get(name) != Some(&UnitKind::Context) {
-                continue;
-            }
-            let Some(flattened) = unit_flattened.get(name) else {
-                continue;
-            };
-            for &i in indices {
-                let bynk_syntax::ast::SourceUnit::Context(ctx) = &parsed[i].unit() else {
-                    continue;
-                };
-                let handlers = ctx.items.iter().filter_map(|item| match item {
-                    bynk_syntax::ast::CommonsItem::Service(s) => Some(s.handlers.iter()),
-                    _ => None,
-                });
-                let (_, warnings) =
-                    crate::emitter::secrets::secret_reads_of(handlers.flatten(), flattened);
-                let rel = parsed[i].identity_path();
-                errors.extend_for(Some(&rel), warnings);
-            }
-        }
-    }
+    //          secret with a computed expression. P5.5
+    //          (`design/tracks/semantics-in-the-checker.md` §6, §9): relocated
+    //          to `bynk_check::project_model::phase_secrets_computed_name` —
+    //          this is now a caller, not an owner, the same move as this
+    //          function's neighbours above. See that function's own doc for
+    //          why raising it here no longer reaches the editor by itself.
+    project_model::phase_secrets_computed_name(
+        target,
+        &parsed,
+        &groups,
+        &kinds,
+        &unit_flattened,
+        &mut errors,
+    );
 
     // -- 5c. Detect `consumes` cycles. --
     project_model::phase_detect_consumes_cycles(&groups, &parsed, &unit_consumes, &mut errors);
@@ -1706,12 +1688,16 @@ fn run_checks(
     //        build (#1078: `bynk-emit` computes, never writes) — reconciliation
     //        itself happens here. P5.3: `reconcile` itself now lives in
     //        `bynk_check::schema_registry` (this crate is a caller, not an
-    //        owner) — `parse`/`SchemaRegistry` stay re-exported from this
-    //        crate's own `schema_registry` module.
+    //        owner) — `SchemaRegistry` stays re-exported from this crate's
+    //        own `schema_registry` module. P5.5: the corrupt-file diagnostic
+    //        moved too — `bynk_check::schema_registry::parse_or_diagnose` is
+    //        now this crate's caller-side of both the parse and the
+    //        `bynk.project.schema_registry_corrupt` construction (§3.2's
+    //        "eighth site").
     let mut schema_effective_versions: HashMap<String, i64> = HashMap::new();
     let mut schema_registry_doc: Option<schema_registry::SchemaRegistry> = None;
     if let SchemaLock::On { existing } = schema_registry {
-        match schema_registry::parse(existing.as_deref(), project_root) {
+        match bynk_check::schema_registry::parse_or_diagnose(existing.as_deref(), project_root) {
             Ok(existing_reg) => {
                 let mut schema_errors: Vec<CompileError> = Vec::new();
                 let (updated, effective) = bynk_check::schema_registry::reconcile(
@@ -1723,11 +1709,8 @@ fn run_checks(
                 schema_effective_versions = effective;
                 schema_registry_doc = Some(updated);
             }
-            Err(msg) => {
-                errors.push_for(
-                    None,
-                    CompileError::new("bynk.project.schema_registry_corrupt", Span::default(), msg),
-                );
+            Err(err) => {
+                errors.push_for(None, err);
             }
         }
     }
