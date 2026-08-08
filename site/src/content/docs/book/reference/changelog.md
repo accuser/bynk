@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.25** | bynk-ide repoints off bynk-emit onto bynk-check/bynk-project directly, closing R10.2; the editor's project analysis silently stops reporting five whole-project check categories until phase 5 ports them (#1122) |
 | **v0.247.24** | bynk-check gains a project-level analysis entry point (analyse_project); symbols, context-checks, and run_checks's orchestration relocate from bynk-emit to back it (#1115) |
 | **v0.247.23** | Settle phase 4 of the compiler trajectory (`design/tracks/project-model.md`) — `bynk-project` extracts today's project-model logic below both `bynk-check` and `bynk-emit`; contract hashing and the typed `ProjectGraph` defer to phase 8; a new `bynk-check` analysis entry point closes R10.2 without moving `run_checks` early |
 | **v0.247.22** | fs_below_driver probe-precision follow-on (#1104) — the R2.3 probe now classifies each flagged file as a named floor (every production-scope std::fs touch attributable to one of content-ownership's three settled carve-outs — discover_bynk_files, read_adapter_binding, try_read_project_paths — or a bare import declaration enabling one of them) versus a residual violation; design/greenfield-status.md's committed bynk-emit reading now states "3 (3 named floor, 0 residual)" instead of a bare 3 a reader had to cross-reference against retired track docs to interpret |
