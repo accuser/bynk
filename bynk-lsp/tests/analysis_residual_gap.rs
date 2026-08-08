@@ -19,6 +19,11 @@
 //! output lacks the category a real violation would carry — "pin the gap as
 //! an assertion, not an absence", per the tracking issue's own framing.
 //!
+//! **P5.0** (`design/tracks/semantics-in-the-checker.md` §6) closed two of
+//! the five live regressions — `messages_bundle_diagnostic_present` and
+//! `locale_bundle_ambiguity_diagnostic_present` are flipped to positive
+//! coverage rather than deleted, per this module's own instruction below.
+//!
 //! **Correction found while grounding this fixture set.** The tracking
 //! issue's [DECISION E] counted `check_platform_lock` among six *live*
 //! regressions. Reading `lock_violation` (`bynk-emit/src/project/
@@ -99,11 +104,15 @@ fn assert_units_resolved(pd: &bynk_ide::ProjectDiagnostics, units: &[&str]) {
     }
 }
 
-/// Category 1 of 6: `check_messages_bundles` (`bynk.messages.missing_reference`
-/// here — a bundle with no `@reference` block). Copied from
+/// Category 1 of 6, **closed at P5.0**
+/// (`design/tracks/semantics-in-the-checker.md` §6): `phase_messages_bundles`
+/// (`bynk.messages.missing_reference` here — a bundle with no `@reference`
+/// block) is now called by `bynk_check::analysis::analyse_project`. Flipped
+/// from a pinned absence to a positive-coverage assertion rather than
+/// deleted, per the module doc's own instruction. Copied from
 /// `bynkc/tests/fixtures/negative/480_messages_missing_reference`.
 #[test]
-fn messages_bundle_diagnostic_goes_missing() {
+fn messages_bundle_diagnostic_present() {
     const SRC: &str =
         "commons bundle\n\nuses bynk.locale\n\nmessages \"en\" {\n  \"a\" => \"b\"\n}\n";
     let (scratch, overlay) = setup_project("messages", &[("src/bundle.bynk", SRC)]);
@@ -112,20 +121,22 @@ fn messages_bundle_diagnostic_goes_missing() {
     assert_units_resolved(&pd, &["bundle"]);
     let categories = all_categories(&pd);
     assert!(
-        !categories.contains(&"bynk.messages.missing_reference"),
-        "this pins the accepted P4.2 regression — `check_messages_bundles` is not \
-         called by `bynk_check::analysis::analyse_project`, so a bundle missing its \
-         `@reference` block no longer gets a diagnostic through the LSP; once phase 5 \
-         ports this check, tighten this assertion (and delete this comment) rather \
-         than deleting the test: {categories:?}"
+        categories.contains(&"bynk.messages.missing_reference"),
+        "P5.0 relocated `check_messages_bundles` into \
+         `bynk_check::project_model::phase_messages_bundles`, called from \
+         `analyse_project` — a bundle missing its `@reference` block should get a \
+         diagnostic through the LSP again: {categories:?}"
     );
 }
 
-/// Category 2 of 6: `check_locale_bundle_ambiguity`
-/// (`bynk.locale.multiple_message_bundles`). Copied from
+/// Category 2 of 6, **closed at P5.0**
+/// (`design/tracks/semantics-in-the-checker.md` §6): `phase_locale_bundle_ambiguity`
+/// (`bynk.locale.multiple_message_bundles`) is now called by
+/// `bynk_check::analysis::analyse_project`. Flipped from a pinned absence to
+/// a positive-coverage assertion rather than deleted. Copied from
 /// `bynkc/tests/fixtures/negative/496_locale_multiple_message_bundles`.
 #[test]
-fn locale_bundle_ambiguity_diagnostic_goes_missing() {
+fn locale_bundle_ambiguity_diagnostic_present() {
     const MSGS_A: &str = "commons msgs_a\n\nuses bynk.locale\n\nmessages \"en\" @reference {\n  \"greeting\" => \"Hello\"\n}\n";
     const MSGS_B: &str = "commons msgs_b\n\nuses bynk.locale\n\nmessages \"en\" @reference {\n  \"farewell\" => \"Bye\"\n}\n";
     const WEB: &str = "context web\n\nconsumes bynk { Locale }\nuses msgs_a\nuses msgs_b\n\nservice api {\n  on call() -> Effect[String] given Locale {\n    let tag <- Locale.current()\n    Effect.pure(tag)\n  }\n}\n";
@@ -143,11 +154,11 @@ fn locale_bundle_ambiguity_diagnostic_goes_missing() {
     assert_units_resolved(&pd, &["msgs_a", "msgs_b", "web"]);
     let categories = all_categories(&pd);
     assert!(
-        !categories.contains(&"bynk.locale.multiple_message_bundles"),
-        "this pins the accepted P4.2 regression — `check_locale_bundle_ambiguity` is \
-         not called by `bynk_check::analysis::analyse_project`, so a context reaching \
-         two message-bundle commons while consuming `Locale` no longer gets a \
-         diagnostic through the LSP: {categories:?}"
+        categories.contains(&"bynk.locale.multiple_message_bundles"),
+        "P5.0 relocated `check_locale_bundle_ambiguity` into \
+         `bynk_check::project_model::phase_locale_bundle_ambiguity`, called from \
+         `analyse_project` — a context reaching two message-bundle commons while \
+         consuming `Locale` should get a diagnostic through the LSP again: {categories:?}"
     );
 }
 
