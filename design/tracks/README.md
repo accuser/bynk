@@ -78,6 +78,7 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
+| [`semantics-in-the-checker.md`](semantics-in-the-checker.md) | [#1126](https://github.com/accuser/bynk/issues/1126) | Settled — Slicing on merge | Phase 5 of the compiler trajectory — the remaining whole-project checks still in `bynk-emit` relocate to `bynk-check`, closing a named editor diagnostics regression |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -118,6 +119,17 @@ simple relocation, with the resulting duplication named as phase 5's to
 remove. All three named slices shipped (P4.0, P4.1, P4.2), closing R3.7,
 R3.8, R3.9 and R10.2 in full (R3.11 separately found already closed by prior
 paydown); `ide_emit_edge` reads absent.
+`semantics-in-the-checker.md` is the tenth, phase 5 of the same trajectory,
+entry-gated on `project-model.md`'s own retirement note. Its settling PR
+([#1127](https://github.com/accuser/bynk/pull/1127)) closed all five of its
+design questions under review; the real finding was in Q2 — the emission/
+checking boundary phase 4's own P4.1 slice drew informally, without a
+settling review, turned out to already be a named, fixture-pinned,
+CHANGELOG-documented live regression in the editor's own diagnostics
+(`bynk-check/src/analysis.rs`'s own seven-category accounting), not merely
+an architectural judgment call worth re-examining. Q3 folded into that same
+finding. Six candidate slices accepted (P5.0–P5.5), sequenced by whether
+each closes a live editor regression or only architectural compliance.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
