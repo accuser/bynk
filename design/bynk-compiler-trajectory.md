@@ -79,15 +79,25 @@ does not, the number is the distance.
 | 7 TS tree | TypeScript-producing `write!` outside a printer | not measured | 0 |
 | 8 Incrementality | keystroke-to-diagnostic latency by query level | not measured | — |
 
-**Two readings matter more than the rest.** Phases 0 and 1 are largely complete and *nobody planned
-them* — the paydown happened as ordinary work between v0.237.1 and v0.245.0, including the
-`ResolvedCommons` constructor that re-enabled three security gates. And phase 5's distance has
-**grown**: the July review counted 190 codes originating in `bynk-emit`, and the same crate now
-carries 200 codes that are in the registry (a bare `bynk.*` literal grep says 206; six are commons
-and namespace paths, not codes).
+**The phase-5 row is a snapshot, not a live reading — see the correction below.** This table records
+what a probe read on 30 July 2026; it is not re-run in place as later work changes the number, the same
+convention `bynk-greenfield-compiler.md`'s Appendix D uses. Phase 5's own settling review
+(`design/tracks/semantics-in-the-checker.md` §1, 8 August 2026) found the live probe (`emit_diagnostics`)
+had already dropped to 49/53 by the time that track opened — reflected in Appendix D's own corrected row,
+not rewritten here.
 
-That pair is the trajectory's whole argument, measured rather than asserted: **small defects are
-fixed by ordinary churn; structural ones drift the wrong way without a track.**
+**Two readings matter more than the rest, read together with that correction.** Phases 0 and 1 are
+largely complete and *nobody planned them* — the paydown happened as ordinary work between v0.237.1 and
+v0.245.0, including the `ResolvedCommons` constructor that re-enabled three security gates. Phase 5's
+distance *did* grow between the July review and this table's own 30 July reading (190 counted codes to
+200 registered ones) — but it has since reversed hard, for the same "ordinary churn" reason as phases 0–1,
+not because phase 5 opened yet: phase 4's own P4.1 slice relocated most of the shared checking pipeline as
+a side effect of closing a different rule (R10.2).
+
+That pair is the trajectory's whole argument, measured rather than asserted: **small defects are fixed by
+ordinary churn; structural ones drift the wrong way without a track — until a track for a *neighbouring*
+phase exists to catch one by accident, which is what phase 4 did for phase 5 here, and still needed phase
+5's own settling review to notice, name and finish the job.**
 
 ### Phase 0 — Seams
 
@@ -295,10 +305,22 @@ Relative, not absolute — an absolute estimate here would be false precision.
 | 2 Typed lowering | 3 | high — "mechanical across roughly ninety functions" |
 | 3 Identity & totality | 8 | medium — the review killed a naive retrofit; §6's parallel-data technique is the mitigation |
 | 4 Project model | 3 | medium |
-| 5 Semantics | 12 | low — 200 diagnostic codes and a reverse edge dragging `icu.rs` |
+| 5 Semantics | 12 → **revised, see note** | low → **medium**, per the settling review below |
 | 6 The IR | 20 | low — Part 13 predicts the extension cost; phases 0–5 do not de-risk the declaration half |
 | 7 TS tree & printer | 15 | low |
 | 8 Incrementality | 5 | medium — the preconditions are all paid by then |
+
+**Phase 5's row is revised, not just stale — see `design/tracks/semantics-in-the-checker.md`.** Its
+settling review (§1, 8 August 2026) found phase 4's own P4.1 slice had already relocated most of what
+this row's "12, low confidence, 200 diagnostic codes and a reverse edge dragging `icu.rs`" estimate
+priced in — `icu.rs` and `websocket::analyse_open_shape` are already in `bynk-check`, and the live probe
+reads 49/53, not 200. The track's own §1/§6 replace the estimate with a named, seven-category
+decomposition (`bynk-check/src/analysis.rs`'s own accounting) across six accepted slices, most of them
+small; only test/integration-suite processing (P5.4) is genuinely large, per that category's own flag
+that porting it "out of proportion" as a single move. This is a routine update carried by phase 5's
+settling pass, the same way `identity-and-totality.md`'s settling corrected phase 3's own sizing in
+its day; the row above is left as a dash-through rather than silently overwritten so the original
+estimate — and how wrong its premises turned out to be — stays legible.
 
 **Phases 0–2 are roughly a tenth of the whole.** They are also where every high-confidence estimate
 is. That is not an argument against the trajectory; it is the reason §2's stopping property matters,
