@@ -97,24 +97,27 @@ The reserved namespace `karn` is renamed to **`bynk`**. Update your sources:
 ### Language server
 
 - The editor's project analysis (`bynkc-lsp`, backing diagnostics,
-  go-to-definition, and completion) now silently omits five categories of
+  go-to-definition, and completion) silently omitted five categories of
   whole-project checking it previously reported (P4.2, #1122 — `bynk-ide`
   now reaches `bynk-check`/`bynk-project` directly instead of `bynk-emit`,
-  and the new entry point does not yet port these five): `messages`-bundle
+  and the new entry point did not yet port these five): `messages`-bundle
   validation, locale-bundle ambiguity, event-subscription validation,
   function-type-boundary checks, and everything inside a `suite`/`test
   integration` body (diagnostics *and* the binding index, so
   go-to-definition/find-references/completion for a test-only binding
-  regress too). This is accepted, tracked debt
-  (`design/tracks/project-model.md` §3.3(a)), closed when phase 5 of that
-  track ports these checks into `bynk-check`'s analysis entry point — run
-  `bynkc build`/`bynkc test` (or the CI build) to see these diagnostics in
-  the meantime. Schema-registry reconciliation and platform-lock enforcement
-  are **not** newly affected — both were already unreachable from the
-  editor's analysis before this change (the editor never reconciles the
-  schema registry, and always analyses as the default Cloudflare
-  platform/Bundle target, under which platform-lock can never fire since
-  Cloudflare is the only platform-native unit that exists today).
+  regress too). **`messages`-bundle validation and locale-bundle ambiguity
+  are restored** (P5.0, #1128, `design/tracks/semantics-in-the-checker.md`
+  §6) — both now run inside `bynk-check::analysis::analyse_project` itself,
+  not just at build time. The remaining three categories are accepted,
+  tracked debt (`design/tracks/semantics-in-the-checker.md` §6, P5.1–P5.4),
+  closed as phase 5's remaining slices land — run `bynkc build`/`bynkc test`
+  (or the CI build) to see those diagnostics in the meantime. Schema-registry
+  reconciliation and platform-lock enforcement are **not** newly affected —
+  both were already unreachable from the editor's analysis before P4.2 (the
+  editor never reconciles the schema registry, and always analyses as the
+  default Cloudflare platform/Bundle target, under which platform-lock can
+  never fire since Cloudflare is the only platform-native unit that exists
+  today).
 
 ### Migrating a project
 

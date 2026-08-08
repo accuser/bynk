@@ -33,11 +33,13 @@ use std::sync::{Arc, OnceLock};
 use crate::checker::{self, Ty, TyId, Types};
 use crate::context_checks::{build_capability_op_info, ts_type_ref_display};
 use crate::firstparty::{self, Platform};
+use crate::icu;
 use crate::index::{RefSink, SymbolKind};
 use crate::resolver::MethodTable as ResolverMethodTable;
 use crate::symbols::{
-    ConsumedType, FileDeclIndex, UnitTable, build_file_decl_index, build_unit_table,
-    consumes_span_of, parsed_alias_span, uses_span_of,
+    ConsumedType, ContextMessageBundle, FileDeclIndex, UnitTable, build_file_decl_index,
+    build_unit_table, consumes_span_of, detect_context_message_bundle, parsed_alias_span,
+    uses_span_of,
 };
 use bynk_project::{
     AttributedError, ParsedFile, UnitKind, check_directory_kind_consistency,
@@ -1267,6 +1269,368 @@ pub fn phase_uses_name_conflicts(
                     imported.insert(fn_name.clone(), t.clone());
                 }
             }
+        }
+    }
+}
+
+/// message-bundles slice 1 (#859): messages-block legality, `@reference`
+/// cardinality, within-block duplicate codes, and the `uses bynk.locale`
+/// dependency. Runs here (not in `phase_group`) because it needs `unit_uses`,
+/// resolved just above.
+///
+/// P5.0 (`design/tracks/semantics-in-the-checker.md` §6): relocated verbatim
+/// from `bynk-emit/src/project/validate.rs`'s `check_messages_bundles` — one
+/// of the two live editor-diagnostics regressions this slice closes (category
+/// 2 of `analysis.rs`'s own seven-category accounting). Cross-locale
+/// completeness (`bynk.messages.incomplete`, only for codes present in the
+/// reference locale but not this one — a locale-specific-only code is not an
+/// error, per the "reference is a floor, not a ceiling" convention) and
+/// cross-locale placeholder-*set* agreement (`bynk.messages.placeholder_mismatch`,
+/// only for codes present in both — a missing code is `incomplete`'s job, not
+/// this one's). Two blocks declaring the same locale tag are rejected outright
+/// (`bynk.resolve.duplicate_message_locale`, PR #875 review) — the emitter
+/// has no dedup of its own, so a silent last-wins here would let a hard
+/// `tsc` redeclare error (two colliding `const __messages_<tag>`
+/// declarations) through instead.
+pub fn phase_messages_bundles(
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        let mut first_messages: Option<(usize, Span)> = None;
+        let mut reference_sites: Vec<(usize, Span)> = Vec::new();
+        let mut reference_block: Option<(usize, &MessagesDecl)> = None;
+        let mut by_tag: HashMap<&str, (usize, &MessagesDecl)> = HashMap::new();
+        for &i in indices {
+            for item in parsed[i].items() {
+                let CommonsItem::Messages(m) = item else {
+                    continue;
+                };
+                if first_messages.is_none() {
+                    first_messages = Some((i, m.span));
+                }
+                if kinds.get(name) != Some(&UnitKind::Commons) {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path()),
+                        CompileError::new(
+                            "bynk.messages.outside_commons",
+                            m.span,
+                            "`messages` declarations are only allowed inside a commons, not a context or adapter",
+                        ),
+                    );
+                    continue;
+                }
+                // #899: the tag is a `LocaleTag` string literal, checked here
+                // against `LocaleTag`'s own refinement (read from the
+                // firstparty `bynk.locale.types` source, so the pattern has one
+                // definition). An invalid tag would otherwise reach `Intl` at
+                // runtime as `new Intl.PluralRules("xx")`, which throws — the
+                // opposite of `render`'s totality contract.
+                if !checker::locale_tag_accepts(&m.tag) {
+                    let pattern = checker::locale_tag_pattern().unwrap_or("");
+                    errors.push_for(
+                        Some(&parsed[i].identity_path()),
+                        CompileError::new(
+                            "bynk.messages.invalid_locale_tag",
+                            m.tag_span,
+                            format!(
+                                "\"{}\" is not a valid `LocaleTag` — it must match the pattern `{}`",
+                                m.tag, pattern
+                            ),
+                        ),
+                    );
+                }
+                // message-bundles slice 2 (#874, PR #875 review): two blocks
+                // declaring the same locale tag are rejected, not
+                // last-write-wins — the emitter (`emit_messages_bundle`) has no
+                // dedup of its own and would emit two colliding table entries
+                // under one object key, a hard `tsc` error. Mirrors
+                // `bynk.resolve.duplicate_fn`'s own shape: only the *first*
+                // occurrence seeds `by_tag`, so a third duplicate still reports
+                // against the original, not the second.
+                if let Some(&(_, prev)) = by_tag.get(m.tag.as_str()) {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path()),
+                        CompileError::new(
+                            "bynk.resolve.duplicate_message_locale",
+                            m.tag_span,
+                            format!("locale \"{}\" is already declared in this bundle", m.tag),
+                        )
+                        .with_label(prev.tag_span, "previously declared here"),
+                    );
+                } else {
+                    by_tag.insert(m.tag.as_str(), (i, m));
+                }
+                for ann in &m.annotations {
+                    if ann.name.name == "reference" {
+                        reference_sites.push((i, ann.span));
+                        reference_block = Some((i, m));
+                    }
+                }
+                let mut seen: HashMap<&str, Span> = HashMap::new();
+                for entry in &m.entries {
+                    if let Some(prev) = seen.get(entry.code.as_str()) {
+                        errors.push_for(
+                            Some(&parsed[i].identity_path()),
+                            CompileError::new(
+                                "bynk.resolve.duplicate_message_code",
+                                entry.code_span,
+                                format!(
+                                    "message code \"{}\" is already declared in this block",
+                                    entry.code
+                                ),
+                            )
+                            .with_label(*prev, "previously declared here"),
+                        );
+                    } else {
+                        seen.insert(entry.code.as_str(), entry.code_span);
+                    }
+                    // message-bundles slice 3 (#878): runs unconditionally,
+                    // once per entry, regardless of `@reference` cardinality
+                    // — malformed ICU syntax shouldn't wait on cardinality
+                    // being resolved first.
+                    check_entry_icu_syntax(entry, Some(&parsed[i].identity_path()), errors);
+                }
+            }
+        }
+        let Some((first_i, first_span)) = first_messages else {
+            continue;
+        };
+        if kinds.get(name) != Some(&UnitKind::Commons) {
+            // Already reported above (outside_commons) for every block;
+            // cardinality/uses checks don't apply to a non-commons unit.
+            continue;
+        }
+        match reference_sites.len() {
+            0 => {
+                errors.push_for(
+                    Some(&parsed[first_i].identity_path()),
+                    CompileError::new(
+                        "bynk.messages.missing_reference",
+                        first_span,
+                        "a message bundle must have exactly one `@reference` block; none found",
+                    ),
+                );
+            }
+            1 => {
+                // message-bundles slice 2 (#874): "the reference" is only
+                // well-defined here — 0 or 2+ already reported their own
+                // diagnostic above, and completeness/placeholder-agreement
+                // against an ambiguous or absent reference would be noise.
+                let (_, reference) = reference_block
+                    .expect("reference_sites.len() == 1 implies reference_block is Some");
+                // Sorted for deterministic diagnostic order — `by_tag`'s
+                // HashMap iteration is not otherwise stable across runs.
+                let mut sorted_tags: Vec<&&str> = by_tag.keys().collect();
+                sorted_tags.sort();
+                for &&tag in &sorted_tags {
+                    let &(locale_i, locale_m) = &by_tag[tag];
+                    if tag == reference.tag.as_str() {
+                        continue;
+                    }
+                    for ref_entry in &reference.entries {
+                        let Some(locale_entry) =
+                            locale_m.entries.iter().find(|e| e.code == ref_entry.code)
+                        else {
+                            errors.push_for(
+                                Some(&parsed[locale_i].identity_path()),
+                                CompileError::new(
+                                    "bynk.messages.incomplete",
+                                    locale_m.span,
+                                    format!(
+                                        "locale \"{tag}\" is missing code \"{}\", declared by the reference locale \"{}\"",
+                                        ref_entry.code, reference.tag
+                                    ),
+                                ),
+                            );
+                            continue;
+                        };
+                        let ref_names = icu::placeholder_names(&ref_entry.template);
+                        let locale_names = icu::placeholder_names(&locale_entry.template);
+                        if ref_names != locale_names {
+                            errors.push_for(
+                                Some(&parsed[locale_i].identity_path()),
+                                CompileError::new(
+                                    "bynk.messages.placeholder_mismatch",
+                                    locale_entry.template_span,
+                                    format!(
+                                        "locale \"{tag}\"'s template for code \"{}\" uses placeholders {locale_names:?}, but the reference locale \"{}\"'s uses {ref_names:?}",
+                                        ref_entry.code, reference.tag
+                                    ),
+                                ),
+                            );
+                        }
+                        // message-bundles slice 3 (#878, Decision D): a name
+                        // present in both templates must also agree on ICU
+                        // format *kind* (plain/plural/select/number/date) —
+                        // a UI can't sanely alternate that per locale. A
+                        // missing name is `placeholder_mismatch`'s job, not
+                        // this one's; a malformed template's kinds are
+                        // silently absent from `template_format_kinds`
+                        // (already reported once by `check_entry_icu_syntax`
+                        // above, never double-reported here).
+                        let ref_kinds = icu::template_format_kinds(&ref_entry.template);
+                        let locale_kinds = icu::template_format_kinds(&locale_entry.template);
+                        for (pname, ref_kind) in &ref_kinds {
+                            let Some(locale_kind) = locale_kinds.get(pname) else {
+                                continue;
+                            };
+                            if locale_kind != ref_kind {
+                                errors.push_for(
+                                    Some(&parsed[locale_i].identity_path()),
+                                    CompileError::new(
+                                        "bynk.messages.format_mismatch",
+                                        locale_entry.template_span,
+                                        format!(
+                                            "locale \"{tag}\"'s placeholder \"{pname}\" in code \"{}\" is formatted as {}, but the reference locale \"{}\"'s is {}",
+                                            ref_entry.code,
+                                            locale_kind.as_str(),
+                                            reference.tag,
+                                            ref_kind.as_str(),
+                                        ),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                let (_, first_ref_span) = reference_sites[0];
+                for &(i, span) in &reference_sites[1..] {
+                    errors.push_for(
+                        Some(&parsed[i].identity_path()),
+                        CompileError::new(
+                            "bynk.messages.multiple_reference",
+                            span,
+                            "a message bundle must have exactly one `@reference` block; found more than one",
+                        )
+                        .with_label(first_ref_span, "first `@reference` here"),
+                    );
+                }
+            }
+        }
+        // Locale-negotiation-slice-2 follow-up (#886): the synthetic `render`
+        // this commons gets (`synthetic_render_fn`, symbols.rs) names
+        // `LocaleTag`/`Message` by `TypeRef::Named` — real, resolved
+        // references, not bypassed — so both `bynk.locale` (for `render`
+        // itself) and `bynk.locale.types` (for the types its signature
+        // names) must be `uses`d. Kept as one diagnostic, not two: a message
+        // bundle always needs both together, so splitting the code would
+        // just be two author-facing fixes for one underlying requirement.
+        let targets = unit_uses.get(name);
+        let has_locale_uses = targets.is_some_and(|targets| {
+            targets.iter().any(|t| t == firstparty::LOCALE_UNIT)
+        });
+        let has_locale_types_uses = targets.is_some_and(|targets| {
+            targets.iter().any(|t| t == firstparty::LOCALE_TYPES_UNIT)
+        });
+        if !has_locale_uses || !has_locale_types_uses {
+            let missing = match (has_locale_uses, has_locale_types_uses) {
+                (false, false) => "`bynk.locale` and `bynk.locale.types`",
+                (false, true) => "`bynk.locale`",
+                (true, false) => "`bynk.locale.types`",
+                (true, true) => unreachable!("at least one of the two is missing here"),
+            };
+            errors.push_for(
+                Some(&parsed[first_i].identity_path()),
+                CompileError::new(
+                    "bynk.messages.missing_locale_dependency",
+                    first_span,
+                    format!("a commons declaring `messages` must also `uses` {missing}"),
+                ),
+            );
+        }
+    }
+}
+
+/// Locale capability track, slice 2 (#882): a context whose direct `uses`
+/// reaches two or more message-bundle commons has no principled single
+/// answer for what `Locale.current()` should negotiate against — but this
+/// is only worth diagnosing when the context actually `consumes bynk {
+/// Locale }` at all; a context with 2+ bundles that never touches `Locale`
+/// has nothing ambiguous to resolve.
+///
+/// P5.0 (`design/tracks/semantics-in-the-checker.md` §6): relocated verbatim
+/// from `bynk-emit/src/project/validate.rs`'s `check_locale_bundle_ambiguity`
+/// — category 3 of `analysis.rs`'s own seven-category accounting, the second
+/// of this slice's two live editor-diagnostics regressions.
+pub fn phase_locale_bundle_ambiguity(
+    parsed: &[ParsedFile],
+    groups: &BTreeMap<String, Vec<usize>>,
+    kinds: &BTreeMap<String, UnitKind>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, indices) in groups {
+        if kinds.get(name) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let ContextMessageBundle::Many(bundles) =
+            detect_context_message_bundle(name, unit_uses, groups, kinds, parsed)
+        else {
+            continue;
+        };
+        let consumes_locale = unit_flattened
+            .get(name)
+            .and_then(|m| m.get("Locale"))
+            .is_some_and(|owner| owner == firstparty::BYNK_UNIT);
+        if !consumes_locale {
+            continue;
+        }
+        for &i in indices {
+            for c in parsed[i].consumes() {
+                if c.target.joined() != firstparty::BYNK_UNIT {
+                    continue;
+                }
+                let Some(locale_ident) = c.selected.iter().flatten().find(|id| id.name == "Locale")
+                else {
+                    continue;
+                };
+                let mut err = CompileError::new(
+                    "bynk.locale.multiple_message_bundles",
+                    locale_ident.span,
+                    format!(
+                        "context `{name}` uses {} message bundles ({}) — `Locale.current()` has no single bundle to negotiate against",
+                        bundles.len(),
+                        bundles.join(", "),
+                    ),
+                );
+                for &j in indices {
+                    for u in parsed[j].uses() {
+                        if bundles.contains(&u.target.joined()) {
+                            err = err
+                                .with_label(u.span, format!("`{}` used here", u.target.joined()));
+                        }
+                    }
+                }
+                errors.push_for(Some(&parsed[i].identity_path()), err);
+            }
+        }
+    }
+}
+
+/// A message bundle entry's ICU template, syntax-checked at parse time
+/// against the ICU MessageFormat grammar `icu.rs` implements. Relocated
+/// alongside `phase_messages_bundles` (P5.0) — its only caller.
+fn check_entry_icu_syntax(entry: &MessageEntry, file: Option<&Path>, errors: &mut ErrorSink) {
+    for (inner_offset, inner) in icu::icu_dispatch_placeholders(&entry.template) {
+        if let Err(e) = icu::parse_icu_placeholder(inner) {
+            let decoded_start = inner_offset + e.offset;
+            let decoded_span = Span::new(decoded_start, decoded_start + e.len);
+            let raw_span = decoded_span.offset(entry.template_span.start + 1);
+            errors.push_for(
+                file,
+                CompileError::new(
+                    "bynk.messages.malformed_icu_syntax",
+                    raw_span,
+                    e.kind.message(),
+                ),
+            );
         }
     }
 }

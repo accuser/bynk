@@ -14,13 +14,17 @@
 //!
 //! ## The residual gap
 //!
-//! This entry point is diagnostically faithful to
-//! `bynk-emit`'s `run_checks`'s `Mode::Analyse` arm **minus** seven
-//! categories of whole-project checking, deliberately not ported here
-//! (recorded on the tracking issue's own scope-correction comments, not
-//! silently assumed). Two of the seven were already unreachable from the
-//! editor before P4.2 even shipped, so porting them here would change
-//! nothing observable; the other five are P4.2's live regression, pinned at
+//! This entry point was diagnostically faithful to `bynk-emit`'s
+//! `run_checks`'s `Mode::Analyse` arm **minus seven categories** of
+//! whole-project checking at P4.2 (recorded on the tracking issue's own
+//! scope-correction comments, not silently assumed). Categories 2 and 3
+//! closed at P5.0 (`design/tracks/semantics-in-the-checker.md` §6) —
+//! [`crate::project_model::phase_messages_bundles`]/
+//! [`crate::project_model::phase_locale_bundle_ambiguity`] are now called
+//! from [`analyse_project`] at the same point `run_checks` calls them. Five
+//! categories remain open; two of those were already unreachable from the
+//! editor before P4.2 even shipped, so porting them would change nothing
+//! observable; the other three are still P4.2's live regression, pinned at
 //! the `bynk-ide`/`bynk-lsp` layer by `bynk-lsp/tests/analysis_residual_gap.rs`
 //! and named in `CHANGELOG.md`:
 //!
@@ -28,8 +32,8 @@
 //!    unreachable from the `Mode::Analyse` path today anyway (it only runs
 //!    under `SchemaLock::On`, and `analyse_project_with` always passes
 //!    `SchemaLock::Off`), so this is a gap in name only.
-//! 2. **`messages` bundle validation** (`check_messages_bundles`). Live gap.
-//! 3. **Locale bundle ambiguity** (`check_locale_bundle_ambiguity`). Live gap.
+//! 2. ~~`messages` bundle validation~~ — **closed at P5.0**, see above.
+//! 3. ~~Locale bundle ambiguity~~ — **closed at P5.0**, see above.
 //! 4. **Event-subscription validation** (`check_event_subscriptions`). Live gap.
 //! 5. **Platform-lock enforcement** (`check_platform_lock`) — also a gap in
 //!    name only, for the same reason as category 1, found while grounding
@@ -301,9 +305,28 @@ pub fn analyse_project(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> Pro
         &mut errors,
     );
 
-    // -- 6b. Type exports. Categories 2-4 (messages/locale/event checks) are
-    //        the residual gap between here and `phase_validate_providers` —
-    //        see this module's own doc comment. --
+    // -- 6a'. message-bundles slice 1 (#859): messages-block legality,
+    //         @reference cardinality, within-block duplicate codes, and the
+    //         `uses bynk.locale` dependency. P5.0: closes category 2 of this
+    //         module's own residual-gap accounting. --
+    project_model::phase_messages_bundles(&parsed, &groups, &kinds, &unit_uses, &mut errors);
+
+    // -- 6a''. Locale capability track, slice 2 (#882): a context reaching
+    //          two or more message-bundle commons while consuming `Locale`
+    //          has no single bundle to negotiate against. P5.0: closes
+    //          category 3. --
+    project_model::phase_locale_bundle_ambiguity(
+        &parsed,
+        &groups,
+        &kinds,
+        &unit_uses,
+        &unit_flattened,
+        &mut errors,
+    );
+
+    // -- 6b. Type exports. Category 4 (event-subscription checks) is the
+    //        residual gap between here and `phase_validate_providers` — see
+    //        this module's own doc comment. --
     let exports_visibility = project_model::phase_validate_type_exports(
         &groups,
         &kinds,

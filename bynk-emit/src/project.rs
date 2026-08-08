@@ -1626,12 +1626,19 @@ fn run_checks(
     //         @reference cardinality, within-block duplicate codes, and the
     //         `uses bynk.locale` dependency. Runs here (not in phase_group)
     //         because it needs `unit_uses`, resolved just above.
-    check_messages_bundles(&parsed, &groups, &kinds, &unit_uses, &mut errors);
+    //
+    //         P5.0 (#1128, `design/tracks/semantics-in-the-checker.md` §6):
+    //         relocated to `bynk-check::project_model` alongside the rest of
+    //         this pipeline (P4.1's own move) — this is now a caller, not an
+    //         owner, the same way P4.0/P4.1 turned this function into a
+    //         caller of `bynk-project`/`bynk-check`.
+    project_model::phase_messages_bundles(&parsed, &groups, &kinds, &unit_uses, &mut errors);
 
     // -- 6a''. Locale capability track, slice 2 (#882): a context reaching
     //          two or more message-bundle commons while consuming `Locale`
-    //          has no single bundle to negotiate against.
-    check_locale_bundle_ambiguity(
+    //          has no single bundle to negotiate against. P5.0: relocated,
+    //          see above.
+    project_model::phase_locale_bundle_ambiguity(
         &parsed,
         &groups,
         &kinds,
