@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.26** | Settle phase 5 of the compiler trajectory (`design/tracks/semantics-in-the-checker.md`) — the remaining `bynk-emit` diagnostic sites relocate to `bynk-check` by priority (five close a named, fixture-pinned editor regression; two close for R3.5 compliance alone), `check_function_type_boundaries`'s reach-back hook closes, and R10.1 closes with a crate-doc correction rather than a `bynk-driver` split |
 | **v0.247.25** | bynk-ide repoints off bynk-emit onto bynk-check/bynk-project directly, closing R10.2; the editor's project analysis silently stops reporting five whole-project check categories until phase 5 ports them (#1122) |
 | **v0.247.24** | bynk-check gains a project-level analysis entry point (analyse_project); symbols, context-checks, and run_checks's orchestration relocate from bynk-emit to back it (#1115) |
 | **v0.247.23** | Settle phase 4 of the compiler trajectory (`design/tracks/project-model.md`) — `bynk-project` extracts today's project-model logic below both `bynk-check` and `bynk-emit`; contract hashing and the typed `ProjectGraph` defer to phase 8; a new `bynk-check` analysis entry point closes R10.2 without moving `run_checks` early |
