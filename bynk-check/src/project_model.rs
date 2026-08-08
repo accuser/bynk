@@ -2610,7 +2610,7 @@ enum LockViolation {
 /// [`phase_platform_lock`] (P5.3): resolve a `given`/handler capability
 /// prefix (`ctx.Cap`) against a context's own `consumes`/alias tables. Pure —
 /// no codegen, no `bynk-emit` dependency of its own — so unlike
-/// [`collect_given_closure`] this one **is** shared rather than duplicated:
+/// `collect_given_closure` this one **is** shared rather than duplicated:
 /// `bynk-emit/src/project.rs`'s own copy of this function (and of
 /// [`handler_cross_caps`]) was deleted in review (#1133) and every one of its
 /// call sites repointed here — `bynk-emit` already depends on `bynk-check`,
