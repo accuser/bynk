@@ -18,6 +18,18 @@
 pub mod emitter;
 pub mod project;
 
+/// P6.1 (design/tracks/the-ir.md §6, #1141): the IR's core node types
+/// (`ir`) and the `CheckedProgram → Ir` lowering skeleton (`ir::lower`).
+/// `pub(crate)`, not `pub` — no consumer outside this crate yet, and no
+/// consumer inside it either: this module is additive scaffolding with no
+/// call site anywhere in the existing emission path (`emitter`/`project`)
+/// until a later slice (P6.2 onward) wires one in. `#[allow(dead_code)]`
+/// (Decision D) — its own `#[cfg(test)]` module is this slice's only
+/// caller (Decision E), and a plain, non-test library build compiles
+/// without it; remove this `allow` the moment a real caller lands.
+#[allow(dead_code)]
+pub(crate) mod ir;
+
 #[cfg(test)]
 pub(crate) mod testkit;
 
