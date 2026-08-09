@@ -16,32 +16,56 @@
 //! already applies to its own `bynk.emit.unresolved_cross_context_signature`
 //! panic.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bynk_check::checker::{self, CheckedProgram, Ty, TyId, TypedCommons};
-use bynk_syntax::ast::{BinOp, Block, Expr, ExprId, ExprKind, Param, Statement, TypeBody, UnaryOp};
+use bynk_syntax::ast::{
+    BinOp, Block, Expr, ExprId, ExprKind, FnDecl, FnName, Statement, TypeBody, UnaryOp,
+};
 
 use crate::ir::{ConstVal, GlobalRef, IrExpr, IrExprKind, IrStmt};
 
 /// The lowering pass's own working state: the certified program's typed
-/// output (for `.ty`/`.types` lookups) and a lexical scope stack this pass
+/// output (for `.ty`/`.types` lookups), a lexical scope stack this pass
 /// tracks itself — `TypedCommons` has no persisted "what type does this bound
 /// name have" table (that lived only in the checker's own transient `Ctx`),
 /// so the one case that needs it (a record shorthand field, `{ x }`, which
 /// has no `ExprId` of its own to key `expr_types` by) re-derives it from the
-/// same param/`let` binding sites the checker itself walked.
+/// same param/`let` binding sites the checker itself walked — and the
+/// enclosing fn/method's own rigid type variables (`fn identity[T](x: T)`,
+/// and a generic type's own params on one of its methods), needed by
+/// `resolve_type_ref_in` the same way `Ctx::type_vars` is
+/// (`bynk-check/src/checker.rs:2816`); `resolve_type_ref` (no `vars` set)
+/// would otherwise resolve a rigid `T` as an unknown declared type and
+/// silently fail.
 pub(crate) struct LowerIrCtx<'a> {
     program: &'a TypedCommons,
     scopes: Vec<HashMap<String, TyId>>,
+    type_vars: HashSet<String>,
 }
 
 impl<'a> LowerIrCtx<'a> {
-    pub(crate) fn new(program: &'a CheckedProgram) -> Self {
+    fn new(program: &'a CheckedProgram, type_vars: HashSet<String>) -> Self {
         Self {
             program: program.program(),
             scopes: vec![HashMap::new()],
+            type_vars,
         }
+    }
+
+    /// A type reference resolved in this pass's own rigid-variable scope —
+    /// the `resolve_type_ref_in` counterpart to `Ctx::resolve_type_ref_in`
+    /// call sites (e.g. `checker.rs:2816,2897`), not the bare
+    /// `resolve_type_ref` (which has no `vars` set and cannot resolve a
+    /// generic fn/method's own type parameters).
+    fn resolve_type_ref(&self, r: &bynk_syntax::ast::TypeRef) -> Option<TyId> {
+        checker::resolve_type_ref_in(
+            r,
+            &self.program.types,
+            &self.type_vars,
+            &self.program.ty_intern,
+        )
     }
 
     fn push_scope(&mut self) {
@@ -100,22 +124,64 @@ impl<'a> LowerIrCtx<'a> {
     }
 }
 
-/// Lower a function/method/handler body: seeds scope from `params`, lowers
-/// `body` as an ordinary value block, then wraps the tail in
-/// [`IrExprKind::Return`] — the one place this pass builds a `Return` node
-/// (Bynk has no `return` keyword; see that variant's own doc comment).
-/// Distinct from [`lower_block_ir`], which lowers a *nested* block as a bare
-/// value with no such wrapping.
-pub(crate) fn lower_fn_body_ir(body: &Block, params: &[Param], program: &CheckedProgram) -> IrExpr {
-    let mut cx = LowerIrCtx::new(program);
-    for p in params {
-        if let Some(ty) =
-            checker::resolve_type_ref(&p.type_ref, &cx.program.types, &cx.program.ty_intern)
-        {
-            cx.bind(p.name.name.clone(), ty);
-        }
+/// Lower a function/method body: seeds scope from `f`'s params (and its own
+/// rigid type variables — its own `[T, ...]` type parameters, plus a
+/// generic receiver's, for a method), lowers the body as an ordinary value
+/// block, then wraps the tail in [`IrExprKind::Return`] — the one place
+/// this pass builds a `Return` node (Bynk has no `return` keyword; see that
+/// variant's own doc comment). Distinct from [`lower_block_ir`], which
+/// lowers a *nested* block as a bare value with no such wrapping.
+///
+/// Handler bodies are out of scope for this entry point: a handler's own
+/// non-local bare-ident forms (store-field/cell reads, agent `self`, the
+/// actor binder, transition `old`/`new`) need resolved-identity plumbing
+/// (`store_fields`, `agent_state_ty`, `actor_binding` — the `Ctx` fields
+/// `check_handler_body` seeds, `checker.rs:930-960`) this pass has no
+/// parameter for and does not commission (Decision C) — calling this on a
+/// handler body would silently misclassify any bare ident matching one of
+/// those forms as a `Local`/`Global` miss (`todo!()`) rather than the
+/// specific kind it actually is, which is why no such entry point exists
+/// yet rather than one that would produce a wrong tree.
+pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
+    let mut type_vars: HashSet<String> = f
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
+    if let FnName::Method { type_name, .. } = &f.name
+        && let Some(decl) = program.program().types.get(&type_name.name)
+    {
+        type_vars.extend(decl.type_params.iter().map(|tp| tp.name.name.clone()));
     }
-    let block = lower_block_ir(body, &mut cx);
+    let mut cx = LowerIrCtx::new(program, type_vars);
+    // `self` is never in `f.params` (`FnDecl::has_self` gates it) — mirrors
+    // `check_fn`'s own binding (`checker.rs`, the `f.has_self` arm): a
+    // generic receiver's `self` carries the receiver applied to its own
+    // rigid type variables (`Box[A]`'s `self`, not a fixed `Box[Int]`).
+    if let FnName::Method { type_name, .. } = &f.name
+        && f.has_self
+        && let Some(decl) = program.program().types.get(&type_name.name)
+    {
+        let self_args = decl
+            .type_params
+            .iter()
+            .map(|tp| cx.program.ty_intern.intern(Ty::Var(tp.name.name.clone())))
+            .collect();
+        let self_ty = checker::named_ty_with_args(decl, self_args, &cx.program.ty_intern);
+        cx.bind("self".to_string(), self_ty);
+    }
+    for p in &f.params {
+        let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
+            panic!(
+                "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in this \
+                 pass's own rigid-variable scope, but the checker already accepted this fn body — \
+                 bynk-emit::ir::lower's type_vars disagrees with bynk-check's Ctx::type_vars",
+                p.name.name
+            )
+        });
+        cx.bind(p.name.name.clone(), ty);
+    }
+    let block = lower_block_ir(&f.body, &mut cx);
     let IrExpr {
         kind: IrExprKind::Block { stmts, tail },
         ty,
@@ -167,7 +233,30 @@ fn lower_stmt_ir(s: &Statement, cx: &mut LowerIrCtx) -> IrStmt {
     match s {
         Statement::Let(l) => {
             let value = lower_expr_ir(&l.value, cx);
-            cx.bind(l.name.name.clone(), value.ty);
+            // The checker binds the *annotation's* type when one is present
+            // (`type_of_block`'s `Statement::Let` arm, `checker.rs:2829-2853`)
+            // — `compatible()` admits a refined value under its base's
+            // annotation, so the bound type can genuinely differ from the
+            // RHS expression's own recorded type. `value.ty` stays the RHS's
+            // own honest type (R6.1, this expression's real checked type);
+            // only this pass's own scope bookkeeping (read back by a later
+            // shorthand-field lookup) uses the annotation-preferred one, the
+            // same distinction the checker itself draws between an
+            // expression's type and a binding's type.
+            let bound_ty = l.type_annot.as_ref().map_or(value.ty, |a| {
+                cx.resolve_type_ref(a).unwrap_or_else(|| {
+                    panic!(
+                        "bynk internal error (ADR 0334): `let` annotation for `{}` does not \
+                         resolve in this pass's own rigid-variable scope, but the checker \
+                         already accepted this binding",
+                        l.name.name
+                    )
+                })
+            });
+            // Mirrors `checker.rs:2854`: `_` is never bound.
+            if l.name.name != "_" {
+                cx.bind(l.name.name.clone(), bound_ty);
+            }
             IrStmt::Let {
                 local: l.name.name.clone(),
                 value,
@@ -177,7 +266,22 @@ fn lower_stmt_ir(s: &Statement, cx: &mut LowerIrCtx) -> IrStmt {
             let effect = lower_expr_ir(&l.value, cx);
             let span = effect.span;
             let ty = cx.peel_effect(effect.ty);
-            cx.bind(l.name.name.clone(), ty);
+            // Same annotation-vs-RHS distinction as `Statement::Let` above,
+            // peeled through `Effect[_]` (`checker.rs:2894-2953`'s own
+            // `EffectLet` arm).
+            let bound_ty = l.type_annot.as_ref().map_or(ty, |a| {
+                cx.resolve_type_ref(a).unwrap_or_else(|| {
+                    panic!(
+                        "bynk internal error (ADR 0334): `let <-` annotation for `{}` does not \
+                         resolve in this pass's own rigid-variable scope, but the checker \
+                         already accepted this binding",
+                        l.name.name
+                    )
+                })
+            });
+            if l.name.name != "_" {
+                cx.bind(l.name.name.clone(), bound_ty);
+            }
             IrStmt::Let {
                 local: l.name.name.clone(),
                 value: IrExpr {
@@ -427,15 +531,35 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
 /// Classify a bare `Ident` as `Local` or `Global` — Decision C's narrow
 /// scope (refined during implementation, see [`GlobalRef`]'s doc comment for
 /// why the `HttpResult`/`QueueResult` case named in the original proposal
-/// was dropped). Every other non-local bare-ident case
-/// `bynk-emit/src/emitter/lower.rs`'s `lower_ident` still special-cases today
-/// — `old`/`new` transition binders, invariant state-field reads, agent
+/// was dropped).
+///
+/// The `Global` probe is a pure name-shaped lookup with nothing tying it to
+/// "this name is not one of the other, unmigrated forms" — a real
+/// collision risk a review of this slice named directly. Only one of those
+/// forms is cheaply excludable here (a bare free-function name, `ctx.input.
+/// fns` in `check_ident`'s own ladder, `checker/expressions.rs:56-101` —
+/// checked *before* its own nullary-variant fallback): excluding it first
+/// closes the one case this pass can actually reach today, since this
+/// entry point only ever runs over a `fn`/method body ([`lower_fn_body_ir`]'s
+/// own doc comment) where a free function is the one non-local, non-variant
+/// bare ident that legitimately occurs (a fn-value reference, `Callee`/
+/// `Lambda`-adjacent, P6.2 territory). The remaining forms —
+/// `bynk-emit/src/emitter/lower.rs`'s `lower_ident` still special-cases
+/// `old`/`new` transition binders, invariant state-field reads, agent
 /// store-cell/store-map/store-log reads, the multi-actor `deps.who` binder —
-/// stays exactly as it is, unmigrated: each needs its own resolved-identity
-/// plumbing this slice does not commission (Decision C).
+/// are handler-body-only and structurally unreachable through this entry
+/// point (it has no `store_fields`/`agent_state_ty`/`actor_binding`
+/// parameter to carry them), not merely unexcluded; each needs its own
+/// resolved-identity plumbing this slice does not commission (Decision C).
 fn lower_ident_ir(name: &str, cx: &LowerIrCtx) -> IrExprKind {
     if cx.lookup(name).is_some() {
         return IrExprKind::Local(name.to_string());
+    }
+    if cx.program.fns.contains_key(name) {
+        todo!(
+            "bare ident `{name}` names a free function used as a value — Callee/Lambda-adjacent, \
+             P6.2 territory, not a Global reference"
+        )
     }
     if let Some(sum) = nullary_variant_owner(name, cx) {
         return IrExprKind::Global(GlobalRef {
@@ -444,18 +568,28 @@ fn lower_ident_ir(name: &str, cx: &LowerIrCtx) -> IrExprKind {
         });
     }
     todo!(
-        "bare ident `{name}` is neither a locally-bound name nor a bare nullary sum-variant \
-         reference — one of lower_ident's other special cases (store field, agent `self`, actor \
-         binder, transition `old`/`new`), left unmigrated per Decision C"
+        "bare ident `{name}` is neither a locally-bound name, a free function, nor a bare \
+         nullary sum-variant reference — one of lower_ident's other special cases (store field, \
+         agent `self`, actor binder, transition `old`/`new`), structurally unreachable through \
+         lower_fn_body_ir (see its own doc comment) but left unhandled here defensively"
     )
 }
 
 /// The unique sum type owning a nullary (empty-payload) variant named
-/// `name`, if exactly one exists — the same structural, unconditional test
-/// `check_ident`'s own fallback arm uses
-/// (`bynk-check/src/checker/expressions.rs:103-130`), re-run here against
-/// `TypedCommons::types` since that arm's own verdict isn't recorded
-/// anywhere a later reader can read back.
+/// `name`, if exactly one exists. **Not** the same test `check_ident`'s own
+/// fallback arm uses (`bynk-check/src/checker/expressions.rs:102-130`) —
+/// that arm filters candidate owners by name *only*, requires exactly one,
+/// and only then checks the matched variant's payload (a non-empty payload
+/// there is a diagnostic, `bynk.types.variant_missing_payload`, not a
+/// non-match). This filters by name *and* empty payload before the
+/// uniqueness test, so a name matching one sum's nullary variant and a
+/// second sum's non-nullary variant of the same name resolves here
+/// (uniquely nullary) where `check_ident` would reject it (two owners).
+/// Unreachable on a certified program today — the checker's own stricter
+/// ladder already rejected that source — so this is a documented
+/// divergence, not a live bug; re-run here (rather than read back) because
+/// `check_ident`'s own verdict isn't recorded anywhere a later reader can
+/// read.
 fn nullary_variant_owner(name: &str, cx: &LowerIrCtx) -> Option<Arc<bynk_syntax::ast::TypeDecl>> {
     let mut owners = cx.program.types.values().filter(|t| {
         matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == name && v.payload.is_empty()))
@@ -521,7 +655,7 @@ mod tests {
 
     fn lower_fn(program: &CheckedProgram, name: &str) -> IrExpr {
         let f = find_fn(program, name);
-        lower_fn_body_ir(&f.body, &f.params, program)
+        lower_fn_body_ir(f, program)
     }
 
     /// Every fixture's `fn`-body wrapping — asserts the outer shape once so
@@ -593,6 +727,26 @@ commons demo {
     }
 
     #[test]
+    fn generic_fn_type_parameters_are_rigid_variables_not_unresolvable_declared_types() {
+        // `resolve_type_ref` (no `vars` set) resolves a fn's own type
+        // parameter `T` as an unknown *declared* type and fails — the same
+        // failure mode `checker.rs`'s own `Ctx::type_vars` +
+        // `resolve_type_ref_in` exists to avoid. Without it, `x`'s own type
+        // never binds, and this test's own body — a bare `Local` — would
+        // wrongly fall through to `lower_ident_ir`'s `todo!()`.
+        let program = checked_program(
+            r#"
+commons demo {
+  fn identity[T](x: T) -> T { x }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "identity");
+        let tail = fn_tail(&ir);
+        assert!(matches!(&tail.kind, IrExprKind::Local(name) if name == "x"));
+    }
+
+    #[test]
     fn global_covers_a_bare_nullary_sum_variant() {
         let program = checked_program(
             r#"
@@ -615,6 +769,26 @@ commons demo {
     }
 
     #[test]
+    #[should_panic(expected = "Callee/Lambda-adjacent")]
+    fn bare_free_function_reference_is_excluded_from_the_global_probe() {
+        // A bare function-value reference (not a call) is the one non-local,
+        // non-variant ident this pass can actually reach — `lower_ident_ir`
+        // must stop here rather than risk `nullary_variant_owner` matching a
+        // same-named variant by coincidence (a real collision risk a review
+        // of this slice named directly).
+        let program = checked_program(
+            r#"
+commons demo {
+  fn double(n: Int) -> Int { n * 2 }
+
+  fn get_double() -> (Int) -> Int { double }
+}
+"#,
+        );
+        let _ = lower_fn(&program, "get_double");
+    }
+
+    #[test]
     fn record_construction_covers_explicit_and_shorthand_fields() {
         let program = checked_program(
             r#"
@@ -626,21 +800,55 @@ commons demo {
 }
 "#,
         );
-        for fn_name in ["explicit", "shorthand"] {
-            let ir = lower_fn(&program, fn_name);
-            let tail = fn_tail(&ir);
-            let IrExprKind::Record { def, fields } = &tail.kind else {
-                panic!("{fn_name}: expected Record, got {:?}", tail.kind)
-            };
-            assert_eq!(def.name.name, "Point");
-            assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].0, "x");
-            assert_eq!(fields[1].0, "y");
-            assert!(matches!(
-                &fields[0].1.kind,
-                IrExprKind::Const(ConstVal::Int(1)) | IrExprKind::Local(_)
-            ));
-        }
+        let explicit_ir = lower_fn(&program, "explicit");
+        let explicit_tail = fn_tail(&explicit_ir);
+        let IrExprKind::Record {
+            def: explicit_def,
+            fields: explicit_fields,
+        } = &explicit_tail.kind
+        else {
+            panic!("explicit: expected Record, got {:?}", explicit_tail.kind)
+        };
+        assert_eq!(explicit_def.name.name, "Point");
+        assert_eq!(explicit_fields.len(), 2);
+        assert_eq!(explicit_fields[0].0, "x");
+        assert!(matches!(
+            &explicit_fields[0].1.kind,
+            IrExprKind::Const(ConstVal::Int(1))
+        ));
+        assert_eq!(explicit_fields[1].0, "y");
+        assert!(matches!(
+            &explicit_fields[1].1.kind,
+            IrExprKind::Const(ConstVal::Int(2))
+        ));
+
+        let shorthand_ir = lower_fn(&program, "shorthand");
+        let shorthand_tail = fn_tail(&shorthand_ir);
+        let IrExprKind::Record {
+            def: shorthand_def,
+            fields: shorthand_fields,
+        } = &shorthand_tail.kind
+        else {
+            panic!("shorthand: expected Record, got {:?}", shorthand_tail.kind)
+        };
+        assert_eq!(shorthand_def.name.name, "Point");
+        assert_eq!(shorthand_fields.len(), 2);
+        assert_eq!(shorthand_fields[0].0, "x");
+        assert!(matches!(&shorthand_fields[0].1.kind, IrExprKind::Local(n) if n == "x"));
+        assert_eq!(shorthand_fields[1].0, "y");
+        assert!(matches!(&shorthand_fields[1].1.kind, IrExprKind::Local(n) if n == "y"));
+        // The shorthand path is the only reason `LowerIrCtx` tracks a scope
+        // stack at all — assert the thing it uniquely produces (a field's
+        // `ty`, taken from `cx.lookup` since a shorthand field has no
+        // `ExprId` of its own) actually matches the param's real type.
+        assert!(matches!(
+            &*program.program().ty_intern.get(shorthand_fields[0].1.ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+        assert!(matches!(
+            &*program.program().ty_intern.get(shorthand_fields[1].1.ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
     }
 
     #[test]
@@ -782,7 +990,7 @@ commons demo {
 "#,
         );
         let f = find_fn(&program, "use_it");
-        let ir = lower_fn_body_ir(&f.body, &f.params, &program);
+        let ir = lower_fn_body_ir(f, &program);
         let IrExprKind::Block { stmts, .. } = &ir.kind else {
             panic!("expected Block")
         };
@@ -792,6 +1000,58 @@ commons demo {
         };
         assert_eq!(local, "x");
         assert!(matches!(&value.kind, IrExprKind::Await { .. }));
+    }
+
+    #[test]
+    fn let_annotation_widens_the_bound_scope_type_not_just_the_rhs_expression() {
+        // `compatible()` admits a refined value under its own base's
+        // annotation — `let n: Int = p` with `p: Reps` leaves the checker's
+        // scope holding `Int`, not the narrower `Reps`. The `let` statement's
+        // own `value` keeps the RHS expression's own honest (refined) type
+        // (R6.1); only the *bound* name — read back here by the shorthand
+        // field `{ n }`, which has no `ExprId` of its own to fall back on —
+        // must reflect the annotation's widened type instead.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Reps = Int where InRange(1, 100)
+  type Wrapper = { n: Int }
+
+  fn make(p: Reps) -> Wrapper {
+    let n: Int = p
+    Wrapper { n }
+  }
+}
+"#,
+        );
+        let f = find_fn(&program, "make");
+        let ir = lower_fn_body_ir(f, &program);
+        let IrExprKind::Block { stmts, tail } = &ir.kind else {
+            panic!("expected Block")
+        };
+        let IrStmt::Let { local, value } = &stmts[0] else {
+            panic!("expected Let, got {:?}", stmts[0])
+        };
+        assert_eq!(local, "n");
+        assert!(matches!(
+            &*program.program().ty_intern.get(value.ty),
+            Ty::Named {
+                kind: bynk_check::checker::NamedKind::Refined(_),
+                ..
+            }
+        ));
+        let IrExprKind::Return { value: wrapper } = &tail.kind else {
+            panic!("expected Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Record { fields, .. } = &wrapper.kind else {
+            panic!("expected Record, got {:?}", wrapper.kind)
+        };
+        assert_eq!(fields[0].0, "n");
+        assert!(matches!(&fields[0].1.kind, IrExprKind::Local(name) if name == "n"));
+        assert!(matches!(
+            &*program.program().ty_intern.get(fields[0].1.ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
     }
 
     #[test]
@@ -807,7 +1067,7 @@ commons demo {
 "#,
         );
         let f = find_fn(&program, "use_it");
-        let ir = lower_fn_body_ir(&f.body, &f.params, &program);
+        let ir = lower_fn_body_ir(f, &program);
         let IrExprKind::Block { stmts, .. } = &ir.kind else {
             panic!("expected Block")
         };
@@ -831,7 +1091,7 @@ commons demo {
 "#,
         );
         let f = find_fn(&program, "use_it");
-        let ir = lower_fn_body_ir(&f.body, &f.params, &program);
+        let ir = lower_fn_body_ir(f, &program);
         let IrExprKind::Block { stmts, .. } = &ir.kind else {
             panic!("expected Block")
         };
