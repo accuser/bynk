@@ -52,8 +52,9 @@ pub fn parse_or_diagnose(
     existing: Option<&str>,
     project_root: &std::path::Path,
 ) -> Result<SchemaRegistry, CompileError> {
-    bynk_project::schema_registry::parse(existing, project_root)
-        .map_err(|msg| CompileError::new("bynk.project.schema_registry_corrupt", Span::default(), msg))
+    bynk_project::schema_registry::parse(existing, project_root).map_err(|msg| {
+        CompileError::new("bynk.project.schema_registry_corrupt", Span::default(), msg)
+    })
 }
 
 /// A shallow, per-field snapshot of an event's current shape — deliberately
