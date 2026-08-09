@@ -19,9 +19,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bynk_check::checker::{self, CheckedProgram, Ty, TyId, TypedCommons};
+use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    BinOp, Block, Expr, ExprId, ExprKind, FnDecl, FnName, Statement, TypeBody, UnaryOp,
+    BinOp, Block, Expr, ExprId, ExprKind, FnDecl, FnName, LambdaExpr, Statement, TypeBody, UnaryOp,
 };
 
 use crate::ir::{ConstVal, GlobalRef, IrExpr, IrExprKind, IrStmt};
@@ -121,6 +121,21 @@ impl<'a> LowerIrCtx<'a> {
 
     fn unit_ty(&self) -> TyId {
         self.program.ty_intern.intern(Ty::Unit)
+    }
+
+    /// P6.2 (#1143): the `Callee` `bynk-check` recorded for a call-shaped
+    /// expression (P6.0), if any. Deliberately `Option`, not `.expect()`-ed
+    /// like `expr_ty` — a certified program is only guaranteed a `Callee`
+    /// for shapes `calls.rs`'s six functions or the store-field ladder
+    /// dispatch (P6.0/P6.2's own "Done when" scope); a handful of shapes
+    /// this slice's own Decision C left out on purpose (`HttpResult`/
+    /// `QueueResult` bare-variant construction, `Events.emit`, the
+    /// production `is_system_http_service` address) reach here with none —
+    /// an expected miss, not a bug, so the caller decides what to do with
+    /// `None` rather than this accessor panicking on a state that is
+    /// sometimes legitimate.
+    fn callee(&self, id: ExprId) -> Option<&Callee> {
+        self.program.callees.get(&id)
     }
 }
 
@@ -325,12 +340,20 @@ fn lower_stmt_ir(s: &Statement, cx: &mut LowerIrCtx) -> IrStmt {
         Statement::Expect(_) => todo!(
             "Statement::Expect has no IrStmt target — not named by any rule this track commissions"
         ),
-        // A `Cell` store write — Callee::Store territory (P6.2's row names
-        // `Callee::Store`-detected writes directly; P6.7 gives store fields
-        // their own IR shape).
-        Statement::Assign(_) => todo!(
-            "Statement::Assign (a Cell store write) is Callee::Store/StoreFieldIr territory — P6.2/P6.7"
-        ),
+        // `cell := expr` — the unconditional `Cell` write. `Callee::Store`
+        // now exists (P6.2, #1143), but `Statement` carries no `ExprId` of
+        // its own to key a `Callee` sink by (the sink is `HashMap<ExprId,
+        // Callee>`) — `:=`'s own checker-side validation
+        // (`checker.rs`'s `Statement::Assign` arm) never reaches an
+        // `Expr`-shaped call site the way a `.put(...)`-style store method
+        // call does. A real `IrStmt` target for this needs its own
+        // identity/sink shape, which P6.7 ("store-field state shape and
+        // index tables derived in the IR") is better positioned to design
+        // deliberately than re-deriving one here from a single statement
+        // kind.
+        Statement::Assign(_) => {
+            todo!("Statement::Assign (a Cell `:=` write) has no ExprId to key a Callee by — P6.7")
+        }
     }
 }
 
@@ -496,25 +519,33 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             | BinOp::Div,
             ..,
         ) => todo!(
-            "comparison/arithmetic BinOp has no dedicated IrExprKind in Part 6.2 — routes through \
-             Callee::Kernel once P6.2 lands (Implies desugars to Or(Not, _), P6.3's row)"
+            "comparison/arithmetic BinOp has no dedicated IrExprKind in Part 6.2 and no Callee \
+             classification either — P6.2 (#1143) confirmed neither exists, so this stays a gap \
+             for whichever future slice actually names it (Implies desugars to Or(Not, _), P6.3's \
+             own row)"
         ),
         ExprKind::UnaryOp(UnaryOp::Neg, _) => {
-            todo!("UnaryOp::Neg — Callee::Kernel territory, P6.2")
+            todo!("UnaryOp::Neg has no Callee classification — same gap as arithmetic BinOp above")
         }
         ExprKind::InterpStr(_) => todo!("interpolated strings — not named by any P6.x rule yet"),
-        ExprKind::Call { .. } => todo!("Call — P6.2, driven by Callee"),
-        ExprKind::Lambda(_) => todo!("Lambda — P6.2"),
+        ExprKind::Call {
+            type_args, args, ..
+        } => lower_call_ir(e, None, type_args, args, cx),
+        ExprKind::Lambda(lambda) => lower_lambda_ir(e, lambda, cx),
         ExprKind::Ok(_) | ExprKind::Err(_) | ExprKind::Some(_) | ExprKind::None => {
             todo!(
-                "Result/Option constructors — P6.2 (Callee::Ctor-adjacent), not yet Callee-classified by P6.0 either"
+                "Result/Option constructors — P6.2 (#1143) confirmed these are not yet \
+                 Callee-classified by P6.0 either, so ir::lower still can't drive them"
             )
         }
         ExprKind::Question(_) => todo!("`?` propagation — P6.3's desugaring table (R6.7-R6.9)"),
-        ExprKind::ConstructorCall { .. } => {
-            todo!("qualified static/variant call — P6.2, driven by Callee")
-        }
-        ExprKind::MethodCall { .. } => todo!("method call — P6.2, driven by Callee"),
+        ExprKind::ConstructorCall { args, .. } => lower_call_ir(e, None, &[], args, cx),
+        ExprKind::MethodCall {
+            receiver,
+            type_args,
+            args,
+            ..
+        } => lower_call_ir(e, Some(receiver), type_args, args, cx),
         ExprKind::Match { .. } => todo!("Match — P6.4/P6.5 (Pattern IR + Match lowering)"),
         ExprKind::Is { .. } => todo!("`is` pattern test — P6.3's desugaring table"),
         ExprKind::RecordSpread { .. } => todo!("record spread — P6.3's desugaring table (R6.7)"),
@@ -525,6 +556,128 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             todo!("capability-call observation — not named by any P6.x rule yet")
         }
         ExprKind::Trace { .. } => todo!("`trace(...)` — not named by any P6.x rule yet"),
+    }
+}
+
+/// Shared by `Call`/`MethodCall`/qualified-`ConstructorCall`: read back the
+/// `Callee` P6.0 already recorded for `e.id` and build the matching
+/// `IrExprKind` — never re-derive which dispatch branch fired. `receiver`
+/// is `Some` only for `MethodCall`; `Call`/`ConstructorCall` have none, so
+/// `type_args`/`args` alone determine the call's own arguments.
+///
+/// A `Callee::Ctor` becomes [`IrExprKind::Variant`], not `Call` — sum-variant
+/// construction is a distinct node in Part 6.2's own shape, even though
+/// `check_call`/`check_static_call` dispatch it identically to a real call.
+/// Every other `Callee` becomes [`IrExprKind::Call`]. A method call's own
+/// `receiver` is lowered and prepended to `args` *only* when the `Callee`
+/// says the receiver is a genuine value the call operates on — `Method`
+/// (`self`), `Kernel` (the collection/etc. value), `Agent` (the instance) —
+/// the same way UFCS already treats `self` as an ordinary leading argument
+/// (`check_method_call`'s own doc comment: "UFCS-style call resolution").
+/// Every other `Callee` reached via `MethodCall` (`Static`, `Capability`,
+/// `CrossCap`, `Cross`, `TestService`, `Store`, `Query`) has a receiver that
+/// is a pure namespace/field reference already fully captured by the
+/// `Callee`'s own fields (a type name, a capability name, a store field's
+/// own name) — lowering and prepending it would be redundant at best (its
+/// identity is already recorded) and wrong at worst (a bare type name like
+/// `Point` in `Point.origin()` is not a `Local`, not a `Global`-shaped
+/// nullary variant, and not a free function — lowering it as an ordinary
+/// expression would hit `lower_ident_ir`'s own fallback `todo!()` for no
+/// good reason). This is a lowering-time convention with no consumer yet to
+/// validate it against (Decision A, #1143) — worth a second look once a
+/// real `Ir → TS` printer is proposed.
+fn lower_call_ir(
+    e: &Expr,
+    receiver: Option<&Expr>,
+    type_args: &[bynk_syntax::ast::TypeRef],
+    args: &[Expr],
+    cx: &mut LowerIrCtx,
+) -> IrExpr {
+    let ty = cx.expr_ty(e.id);
+    let span = e.span;
+    let Some(callee) = cx.callee(e.id).cloned() else {
+        todo!(
+            "no Callee recorded for this call at {span:?} — one of the shapes Decision C (#1143) \
+             left out on purpose (HttpResult/QueueResult bare-variant construction, Events.emit, \
+             the production is_system_http_service address), or a genuine, newly-discovered gap"
+        )
+    };
+    if let Callee::Ctor { sum, tag } = callee {
+        return IrExpr {
+            kind: IrExprKind::Variant {
+                sum,
+                tag,
+                payload: args.iter().map(|a| lower_expr_ir(a, cx)).collect(),
+            },
+            ty,
+            span,
+        };
+    }
+    let receiver_is_a_value = matches!(
+        callee,
+        Callee::Method(_) | Callee::Kernel { .. } | Callee::Agent { .. }
+    );
+    let mut ir_args: Vec<IrExpr> = Vec::with_capacity(args.len() + receiver_is_a_value as usize);
+    if receiver_is_a_value && let Some(r) = receiver {
+        ir_args.push(lower_expr_ir(r, cx));
+    }
+    ir_args.extend(args.iter().map(|a| lower_expr_ir(a, cx)));
+    let targs = type_args
+        .iter()
+        .map(|t| {
+            cx.resolve_type_ref(t).unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): an explicit call-site type argument does \
+                     not resolve in this pass's own rigid-variable scope, but the checker \
+                     already accepted this call"
+                )
+            })
+        })
+        .collect();
+    IrExpr {
+        kind: IrExprKind::Call {
+            callee,
+            targs,
+            args: ir_args,
+        },
+        ty,
+        span,
+    }
+}
+
+/// A lambda's own recorded type is always `Ty::Fn { params, ret }`
+/// (`check_lambda`, `bynk-check/src/checker/expressions.rs:974`) — that
+/// `params` list is this pass's only source for each parameter's type,
+/// since `LambdaParam::type_ref` is optional and, when absent, the
+/// checker infers it from context (an expected function type) rather than
+/// resolving it from an annotation this pass could re-derive.
+fn lower_lambda_ir(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerIrCtx) -> IrExpr {
+    let ty = cx.expr_ty(e.id);
+    let param_tys: Vec<TyId> = match &*cx.program.ty_intern.get(ty) {
+        Ty::Fn { params, .. } => params.clone(),
+        _ => panic!(
+            "bynk internal error (ADR 0334): a Lambda's own recorded type is not Ty::Fn — \
+             check_lambda only ever types one as a function type"
+        ),
+    };
+    cx.push_scope();
+    for (p, pty) in lambda.params.iter().zip(&param_tys) {
+        cx.bind(p.name.name.clone(), *pty);
+    }
+    let body = lower_expr_ir(&lambda.body, cx);
+    cx.pop_scope();
+    IrExpr {
+        kind: IrExprKind::Lambda {
+            params: lambda.params.iter().map(|p| p.name.name.clone()).collect(),
+            body: Box::new(body),
+            // Free-variable analysis isn't built here — nothing consumes
+            // Lambda's IR yet (Decision A, #1143); a later slice computes
+            // this once a real need (closure-conversion, a printer) exists
+            // to validate it against.
+            captures: Vec::new(),
+        },
+        ty,
+        span: e.span,
     }
 }
 
@@ -1104,5 +1257,170 @@ commons demo {
             &*program.program().ty_intern.get(value.ty),
             bynk_check::checker::Ty::Unit
         ));
+    }
+
+    // P6.2 (#1143): Call/Lambda/Variant, driven entirely by the Callee P6.0
+    // already recorded. `Callee::Store`/`Callee::Query` are deliberately
+    // untested here — both dispatch only inside an agent handler body,
+    // which needs the full context/project pipeline
+    // (`context_checks::check_context_declarations`, a `UnitTable`,
+    // `CrossContextInfo`) to check at all; `checked_program`'s own
+    // single-file `resolver::resolve`/`checker::check` pipeline never
+    // walks a `CommonsItem::Agent` (only `CommonsItem::Fn`), the same
+    // "needs the full pipeline" limitation P6.0's own differential test
+    // (`bynk-check/tests/callee_classification.rs`) already documented for
+    // `Capability`/`CrossCap`/`Cross`/`Agent`.
+
+    #[test]
+    fn call_driven_by_callee_fn_lowers_a_free_function_call() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn double(n: Int) -> Int { n }
+
+  fn use_it() -> Int { double(1) }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "use_it");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Call {
+            callee,
+            targs,
+            args,
+        } = &tail.kind
+        else {
+            panic!("expected Call, got {:?}", tail.kind)
+        };
+        assert!(matches!(callee, Callee::Fn(f) if f.name.display() == "double"));
+        assert!(targs.is_empty());
+        assert_eq!(args.len(), 1);
+        assert!(matches!(&args[0].kind, IrExprKind::Const(ConstVal::Int(1))));
+    }
+
+    #[test]
+    fn call_driven_by_callee_value_applies_a_function_typed_local() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn apply(f: (Int) -> Int, x: Int) -> Int { f(x) }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "apply");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
+            panic!("expected Call, got {:?}", tail.kind)
+        };
+        assert!(matches!(callee, Callee::Value(name) if name == "f"));
+        assert_eq!(args.len(), 1);
+        assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "x"));
+    }
+
+    #[test]
+    fn bare_and_qualified_variant_construction_both_lower_to_variant() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Shape =
+    | Circle(radius: Int)
+    | Square(side: Int)
+
+  fn bare(n: Int) -> Shape { Circle(n) }
+  fn qualified(n: Int) -> Shape { Shape.Circle(n) }
+}
+"#,
+        );
+        for fn_name in ["bare", "qualified"] {
+            let ir = lower_fn(&program, fn_name);
+            let tail = fn_tail(&ir);
+            let IrExprKind::Variant { sum, tag, payload } = &tail.kind else {
+                panic!("{fn_name}: expected Variant, got {:?}", tail.kind)
+            };
+            assert_eq!(sum.name.name, "Shape");
+            assert_eq!(tag, "Circle");
+            assert_eq!(payload.len(), 1);
+            assert!(matches!(&payload[0].kind, IrExprKind::Local(n) if n == "n"));
+        }
+    }
+
+    #[test]
+    fn method_call_driven_by_callee_method_prepends_the_receiver() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Point = { x: Int, y: Int }
+
+  fn Point.shiftX(self, dx: Int) -> Point {
+    Point { x: self.x, y: self.y }
+  }
+
+  fn use_it(p: Point, dx: Int) -> Point { p.shiftX(dx) }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "use_it");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
+            panic!("expected Call, got {:?}", tail.kind)
+        };
+        assert!(matches!(callee, Callee::Method(f) if f.name.display().ends_with("shiftX")));
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "p"));
+        assert!(matches!(&args[1].kind, IrExprKind::Local(n) if n == "dx"));
+    }
+
+    #[test]
+    fn static_call_driven_by_callee_static_has_no_prepended_receiver() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Point = { x: Int, y: Int }
+
+  fn Point.origin() -> Point { Point { x: 0, y: 0 } }
+
+  fn use_it() -> Point { Point.origin() }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "use_it");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
+            panic!("expected Call, got {:?}", tail.kind)
+        };
+        assert!(matches!(callee, Callee::Static(f) if f.name.display().ends_with("origin")));
+        // `Point` (the receiver) is a type name, not a value — must not be
+        // lowered and prepended, unlike the Method case above.
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn kernel_method_call_prepends_the_receiver() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn identity_all(xs: List[Int]) -> List[Int] { xs.map((y) => y) }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "identity_all");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
+            panic!("expected Call, got {:?}", tail.kind)
+        };
+        assert!(matches!(callee, Callee::Kernel { op, .. } if op == "map"));
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "xs"));
+        let IrExprKind::Lambda {
+            params,
+            body,
+            captures,
+        } = &args[1].kind
+        else {
+            panic!("expected Lambda, got {:?}", args[1].kind)
+        };
+        assert_eq!(params, &["y".to_string()]);
+        assert!(captures.is_empty());
+        assert!(matches!(&body.kind, IrExprKind::Local(n) if n == "y"));
     }
 }

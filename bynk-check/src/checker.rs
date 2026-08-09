@@ -541,6 +541,43 @@ pub enum Callee {
     /// type at runtime) — this classification exists purely for a later
     /// consumer (e.g. go-to-definition on the address), not typing.
     TestService { service: String, address: String },
+    /// An effectful `<field>.<op>(…)` storage operation on a `store`
+    /// `Map`/`Set`/`Cache`/`Log`/`Cell` field — R6.5's own named target
+    /// (P6.2, #1143): a mutation detector keyed on this variant, not a
+    /// receiver's bare name, cannot miss a mutation reached through a
+    /// non-`Ident` receiver or false-negative on a shadowed local, the
+    /// defect class `block_writes_state`'s `mutating_op` still carries.
+    /// `field` is the store field's own name (no `FieldId` arena exists —
+    /// same adaptation `check_store_*_op`'s own lookups already use). Note
+    /// this is recorded *outside* `calls.rs`'s six functions — the
+    /// store-field ladder lives directly in `checker.rs`'s own `type_of`,
+    /// never reaching any of them — extending P6.0's own recording surface
+    /// past the boundary its "Done when" deliberately drew.
+    Store { field: String, op: String },
+    /// A query builder/terminal call that *lifts* a bare `store` `Map`/`Log`
+    /// field into a lazy `Query[V]` (`is_query_op`'s own gate,
+    /// `checker.rs`'s `type_of`) — R6.12's own named target (P6.2, #1143):
+    /// `role` is read back from the checker's own typing decision for this
+    /// exact call (`Ty::Query(_)` result ⇒ `Builder`, anything else ⇒
+    /// `Terminal`), not a second name-list classifier alongside
+    /// `is_query_op`'s. A *chained* builder/terminal call on an
+    /// already-`Query`-typed receiver (`.filter(p).count()`'s own `.count()`)
+    /// is not this variant — it reaches `check_method_call`'s ordinary
+    /// kernel dispatch and is `Callee::Kernel` already (P6.0); `Query` here
+    /// exists only because the lift call's own outer expression never
+    /// passes through any of `calls.rs`'s six functions to get one.
+    Query { op: String, role: QueryRole },
+}
+
+/// Whether a [`Callee::Query`] call returns another `Query[T]` (chainable)
+/// or executes and returns `Effect[T]` — R6.12: "the builder/terminal split
+/// is a field on the callee, not a name list." Determined by reading back
+/// `check_query_kernel_method`'s own return type at the recording site, not
+/// by a second copy of its `match method.name.as_str()` ladder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryRole {
+    Builder,
+    Terminal,
 }
 
 /// Output of type checking.
@@ -3572,30 +3609,112 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                                     ty: tys.intern(Ty::Query(v)),
                                 },
                             );
-                            check_query_kernel_method(method, args, v, expr.span, ctx)
+                            let result = check_query_kernel_method(method, args, v, expr.span, ctx);
+                            // P6.2 (#1143, R6.12): role is read back from
+                            // this call's own resolved type, not a second
+                            // name-list classifier — `is_query_op` above only
+                            // decides "lift or not", never "builder or
+                            // terminal".
+                            let role = match result.map(|t| tys.get(t)).as_deref() {
+                                Some(Ty::Query(_)) => QueryRole::Builder,
+                                _ => QueryRole::Terminal,
+                            };
+                            ctx.callees.insert(
+                                expr.id,
+                                Callee::Query {
+                                    op: method.name.clone(),
+                                    role,
+                                },
+                            );
+                            result
                         } else {
+                            ctx.callees.insert(
+                                expr.id,
+                                Callee::Store {
+                                    field: id.name.clone(),
+                                    op: method.name.clone(),
+                                },
+                            );
                             check_store_map_op(method, args, k, v, expr.span, ctx)
                         }
                     }
                     // v0.83: `<set>.<op>(…)` on a `store Set[T]` field —
                     // effectful storage-set ops.
-                    StoreField::Set(t) => check_store_set_op(method, args, t, expr.span, ctx),
+                    StoreField::Set(t) => {
+                        ctx.callees.insert(
+                            expr.id,
+                            Callee::Store {
+                                field: id.name.clone(),
+                                op: method.name.clone(),
+                            },
+                        );
+                        check_store_set_op(method, args, t, expr.span, ctx)
+                    }
                     // v0.87 (ADR 0113): `<cache>.<op>(…)` on a `store
                     // Cache[K, V]` field — the storage-map ops plus a `given
                     // Clock` requirement (eviction).
                     StoreField::Cache(k, v, _ttl) => {
+                        ctx.callees.insert(
+                            expr.id,
+                            Callee::Store {
+                                field: id.name.clone(),
+                                op: method.name.clone(),
+                            },
+                        );
                         check_store_cache_op(method, args, k, v, expr.span, ctx)
                     }
                     // v0.95 (ADR 0121): `<log>.<op>(…)` on a `store Log[T]`
                     // field — `append` is the effectful non-idempotent write
                     // (`given Clock`); the time-window roots and general
                     // builders lift the log into a lazy `Query[T]` over its
-                    // entry values.
-                    StoreField::Log(t) => check_store_log_op(method, args, t, expr.span, ctx),
+                    // entry values. Unlike `Map`, the store-vs-query split
+                    // lives *inside* `check_store_log_op` itself (the
+                    // window-root vocabulary `since`/`before`/`between`/
+                    // `recent`/`reversed` plus its own `is_query_op`
+                    // fallthrough, `calls.rs:1879-1913`) — `append` is Log's
+                    // one and only write op, so it alone distinguishes
+                    // `Store` from `Query` here; `Query`'s own `role` is
+                    // still read back from the call's resolved type, exactly
+                    // as `Map`'s query-lift branch does above.
+                    StoreField::Log(t) => {
+                        if method.name.as_str() == "append" {
+                            ctx.callees.insert(
+                                expr.id,
+                                Callee::Store {
+                                    field: id.name.clone(),
+                                    op: method.name.clone(),
+                                },
+                            );
+                            check_store_log_op(method, args, t, expr.span, ctx)
+                        } else {
+                            let result = check_store_log_op(method, args, t, expr.span, ctx);
+                            let role = match result.map(|ty| tys.get(ty)).as_deref() {
+                                Some(Ty::Query(_)) => QueryRole::Builder,
+                                _ => QueryRole::Terminal,
+                            };
+                            ctx.callees.insert(
+                                expr.id,
+                                Callee::Query {
+                                    op: method.name.clone(),
+                                    role,
+                                },
+                            );
+                            result
+                        }
+                    }
                     // v0.98 (ADR 0125): `<cell>.update(f)` on a `store
                     // Cell[T]` field — the one method-shaped cell op (read is
                     // the bare name, write is `:=`).
-                    StoreField::Cell(t) => check_store_cell_op(method, args, t, expr.span, ctx),
+                    StoreField::Cell(t) => {
+                        ctx.callees.insert(
+                            expr.id,
+                            Callee::Store {
+                                field: id.name.clone(),
+                                op: method.name.clone(),
+                            },
+                        );
+                        check_store_cell_op(method, args, t, expr.span, ctx)
+                    }
                 }
             }
             // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
