@@ -366,7 +366,8 @@ fn test_body_diagnostics_and_index_bindings_go_missing() {
 fn secrets_computed_name_diagnostic_stays_absent() {
     const PROBE: &str = "context net.probe\n\nconsumes bynk { Secrets }\n\nservice probe {\n  on call(key: String) -> Effect[Option[String]] given Secrets {\n    Secrets.get(key)\n  }\n}\n";
 
-    let (scratch, overlay) = setup_project("secrets_computed_name", &[("net/probe.bynk", PROBE)]);
+    let (scratch, overlay) =
+        setup_project("secrets_computed_name", &[("src/net/probe.bynk", PROBE)]);
 
     let pd = bynk_ide::diagnose_project(&scratch.0, &overlay);
     assert_units_resolved(&pd, &["net.probe"]);

@@ -161,12 +161,98 @@ fn computed_name_warning(span: Span) -> CompileError {
 mod tests {
     use super::*;
 
-    // `secret_reads_of`'s own walk (`walk_block`/`walk_expr`) has no direct
-    // unit coverage here, mirroring the original `bynk-emit` module it moved
-    // from — that file's own tests exercised only `json_string`/`render`,
-    // the manifest-rendering half that stayed behind. Behaviour parity for
-    // the walk itself is what `bynk-check/tests/differential_analysis.rs`
-    // and `bynk-lsp/tests/analysis_residual_gap.rs` are for.
+    // `secret_reads_of`'s own walk (`walk_block`/`walk_expr`) is pinned
+    // end-to-end by `bynkc/tests/fixtures/positive/374_secrets_computed_name`
+    // (`target.txt` = `workers`) — an earlier version of this comment pointed
+    // at `differential_analysis.rs`/`analysis_residual_gap.rs` instead, which
+    // was wrong: this PR's own additions to both establish that neither can
+    // observe this walk (both new sites are gap-in-name-only under the
+    // hardcoded `BuildTarget::Bundle`/`SchemaLock::Off` both analysis paths
+    // share — see their own doc comments). The tests below cover the same
+    // branches directly, now that `secret_reads_of` is `bynk-check`'s public
+    // API, by parsing real source rather than hand-building a `Handler`.
+
+    fn parse_context_handlers(src: &str) -> Vec<bynk_syntax::ast::Handler> {
+        let tokens = bynk_syntax::lexer::tokenize(src).expect("lex");
+        let unit = bynk_syntax::parser::parse_unit(&tokens, src).expect("parse");
+        let bynk_syntax::ast::SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit");
+        };
+        ctx.items
+            .into_iter()
+            .filter_map(|item| match item {
+                bynk_syntax::ast::CommonsItem::Service(s) => Some(s.handlers.into_iter()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn flattened_to_bynk() -> std::collections::HashMap<String, String> {
+        [(
+            SECRETS_CAPABILITY.to_string(),
+            crate::firstparty::BYNK_UNIT.to_string(),
+        )]
+        .into_iter()
+        .collect()
+    }
+
+    const LITERAL_READ: &str = "context net.probe\n\nconsumes bynk { Secrets }\n\nservice probe {\n  on call() -> Effect[Option[String]] given Secrets {\n    Secrets.get(\"API_KEY\")\n  }\n}\n";
+
+    #[test]
+    fn a_literal_argument_is_collected_and_warns_nothing() {
+        let handlers = parse_context_handlers(LITERAL_READ);
+        let flattened = flattened_to_bynk();
+        let (reads, warnings) = secret_reads_of(handlers.iter(), &flattened);
+        assert_eq!(reads.names, ["API_KEY".to_string()].into());
+        assert!(reads.complete);
+        assert!(warnings.is_empty());
+    }
+
+    const COMPUTED_READ: &str = "context net.probe\n\nconsumes bynk { Secrets }\n\nservice probe {\n  on call(key: String) -> Effect[Option[String]] given Secrets {\n    Secrets.get(key)\n  }\n}\n";
+
+    #[test]
+    fn a_computed_argument_warns_once_and_marks_the_read_set_incomplete() {
+        let handlers = parse_context_handlers(COMPUTED_READ);
+        let flattened = flattened_to_bynk();
+        let (reads, warnings) = secret_reads_of(handlers.iter(), &flattened);
+        assert!(reads.names.is_empty());
+        assert!(!reads.complete);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].category, "bynk.secrets.computed_name");
+    }
+
+    const NESTED_IN_MATCH_ARM: &str = "context net.probe\n\nconsumes bynk { Secrets }\n\ntype Choice = enum { A, B }\n\nservice probe {\n  on call(key: String, choice: Choice) -> Effect[Option[String]] given Secrets {\n    match choice {\n      A => Secrets.get(key)\n      B => Secrets.get(\"FIXED\")\n    }\n  }\n}\n";
+
+    #[test]
+    fn a_call_nested_inside_a_match_arm_is_still_found() {
+        // `expr_children` is trusted to recurse into constructs `walk_expr`
+        // never names explicitly — a `match` arm's body is the case this test
+        // pins, since `walk_expr` only ever matches `MethodCall` directly.
+        let handlers = parse_context_handlers(NESTED_IN_MATCH_ARM);
+        let flattened = flattened_to_bynk();
+        let (reads, warnings) = secret_reads_of(handlers.iter(), &flattened);
+        assert_eq!(reads.names, ["FIXED".to_string()].into());
+        assert!(
+            !reads.complete,
+            "the other arm's computed argument still counts"
+        );
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn a_context_whose_secrets_is_not_bynks_is_never_walked() {
+        // Same computed-argument source as above — if this resolved to
+        // `bynk`'s `Secrets`, it would warn; walking nothing is the point.
+        let handlers = parse_context_handlers(COMPUTED_READ);
+        let flattened: std::collections::HashMap<String, String> =
+            [(SECRETS_CAPABILITY.to_string(), "acme.vault".to_string())]
+                .into_iter()
+                .collect();
+        let (reads, warnings) = secret_reads_of(handlers.iter(), &flattened);
+        assert_eq!(reads, SecretReads::none());
+        assert!(warnings.is_empty());
+    }
 
     #[test]
     fn reads_secrets_of_bynk_matches_on_the_resolved_unit_not_the_spelling() {
