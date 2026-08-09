@@ -124,27 +124,44 @@ used for `validate.rs`'s four-slice `messages`/`locale`/`event`/`platform-lock` 
 
 ### 3.2 Q2 — Does R6.1 (`IrExpr` carries its type, no fallible lookup) require R4.9 (`expr_types` as `IndexVec`) closed first? **Settled.**
 
-**Decision: no. The lowering pass is the one place totality is enforced, by construction, independent
-of `expr_types`'s own container type — and a checker/lowerer disagreement panics rather than falling
-back.** `TypedCommons.expr_types` is already `HashMap<ExprId, TypedExpr>` (T3.4, phase 3), not
-`HashMap<Span, Ty>` as R4.9's own rationale text describes — phase 3 already replaced the
-position-keyed map with an identity-keyed one; only the container's totality (`HashMap` vs.
-`IndexVec`, i.e. "can a lookup miss" vs. "cannot by construction") remains, exactly what phase 3's own
-retirement named as open ("functionally but not structurally"). A `CheckedProgram` is constructible
-only by `certify`, which rejects on any error-severity diagnostic (R3.10) — so for a certified program,
-every reachable `ExprId` a real (non-synthetic-post-check) expression owns should already have an
-`expr_types` entry by the checker's own construction discipline, not by luck. The Lower phase's own
-walk over `TypedCommons.commons`, minting each `IrExpr.ty` from `expr_ty(id)` as it goes, is therefore
-the total, single-pass consumer R4.9 was written to make safe — and this codebase already has the
-right precedent for how to treat a "should never happen" miss inside that walk:
-`bynk-emit/src/emitter/emit.rs`'s `unresolved_cross_context_signature` panics rather than silently
-degrading, on exactly the same "the checker resolved this before I run; an absent value here is the
-checker and I disagreeing, which is a compiler bug" reasoning. Every `Lower` function `.expect()`s its
-`expr_ty` lookup rather than falling back — closing R6.1 without touching `expr_types`'s own
-representation. R4.9 (the `IndexVec` conversion itself) is filed as an optional, non-blocking residue
-once nothing performance-sensitive still queries the `HashMap` — the same treatment
-`content-ownership.md` gave `fs_below_driver`'s carve-outs and `semantics-in-the-checker.md` gave
-`emit_diagnostics`'s 4/4-vs-0/0 gap: named, filed separately, not gating this track's slices.
+**Decision: no, for lowering driven from a certified `CheckedProgram` — the lowering pass enforces
+totality there, by construction, independent of `expr_types`'s own container type, and a
+checker/lowerer disagreement on *that* path panics rather than falls back.** `TypedCommons.expr_types`
+is already `HashMap<ExprId, TypedExpr>` (T3.4, phase 3), not `HashMap<Span, Ty>` as R4.9's own
+rationale text describes — phase 3 already replaced the position-keyed map with an identity-keyed one;
+only the container's totality (`HashMap` vs. `IndexVec`, i.e. "can a lookup miss" vs. "cannot by
+construction") remains, exactly what phase 3's own retirement named as open ("functionally but not
+structurally"). A `CheckedProgram` is constructible only by `certify`, which rejects on any
+error-severity diagnostic (R3.10) — so for a certified program, every reachable `ExprId` a real
+(non-synthetic-post-check) expression owns should already have an `expr_types` entry by the checker's
+own construction discipline, not by luck. Lowering's own walk over `TypedCommons.commons`, minting each
+`IrExpr.ty` from `expr_ty(id)` as it goes, is therefore the total, single-pass consumer R4.9 was
+written to make safe on *that* path — and this codebase already has the right precedent for how to
+treat a "should never happen" miss inside it: `bynk-emit/src/emitter/emit.rs`'s
+`lower_workers_cross_context_call` panics on its own `bynk.emit.unresolved_cross_context_signature`
+rather than silently degrading, on exactly the same "the checker resolved this before I run; an absent
+value here is the checker and I disagreeing, which is a compiler bug" reasoning.
+
+**The panic discipline is scoped to that path deliberately, not applied uniformly — a real
+counterexample rules out "always."** `TypedCommons` has a second, non-certified producer today:
+`bynk-emit/src/project/tests_emit.rs`'s `synthetic_typed_commons_for_target` builds one with
+`expr_types: HashMap::new()`, filled in by `bynk-check/src/test_suites.rs`'s
+`let _ = checker::check_body(…)` — errors discarded by design, no `certify`, no R3.10 gate — and
+test-suite emission lowers case/property bodies through the same `lower.rs` functions this track
+replaces. A blanket `.expect()` there would turn a partially-typed test body (an ordinary, expected
+state on that path) into a compiler panic on user source, not a caught compiler bug. `.expect()`
+applies only to lowering reached from a real `CheckedProgram`; the test-suite emission path keeps its
+existing `Some(..) => …, _ => …` fallback shape unless and until a slice routes it through `certify`
+first — a call this settling pass does not make, since that path's own errors-discarded design looks
+deliberate (case bodies partially type despite errors, so completion/hover-adjacent tooling can still
+say something), not an oversight this track should reach into uninvited.
+
+Every `Lower` function driven from a `CheckedProgram` `.expect()`s its `expr_ty` lookup — closing R6.1
+on that path without touching `expr_types`'s own representation. R4.9 (the `IndexVec` conversion
+itself) is filed as an optional, non-blocking residue once nothing performance-sensitive still queries
+the `HashMap` — the same treatment `content-ownership.md` gave `fs_below_driver`'s carve-outs and
+`semantics-in-the-checker.md` gave `emit_diagnostics`'s 4/4-vs-0/0 gap: named, filed separately, not
+gating this track's slices.
 
 ### 3.3 Q3 — Where does the IR live: a new `bynk-ir`/`bynk-lower` crate pair, or inside `bynk-emit`? **Settled.**
 
@@ -255,12 +272,12 @@ longer exist or call only into `bynk-emit::ir`'s lowering pass; every declaratio
 
 | Slice | What lands | Rules | Gated on |
 |---|---|---|---|
-| **P6.0** | `Callee` classification added to `bynk-check`'s checked output (extends `TypedCommons`/`CheckedProgram`) — the taxonomy from Part 6.5 (`Fn`/`Value`/`Ctor`/`Refine`/`Unsafe`/`Static`/`Method`/`Kernel`/`Query`/`Store`/`Capability`/`Agent`/`Cross`/`CrossCap`/`Intrinsic`), resolved once during checking, consumed (not re-derived) by every later slice | R6.10 (partial) | §3 settled (Q4) |
+| **P6.0** | `Callee` classification added to `bynk-check`'s checked output (extends `TypedCommons`/`CheckedProgram`) — the taxonomy from Part 6.5 (`Fn`/`Value`/`Ctor`/`Refine`/`Unsafe`/`Static`/`Method`/`Kernel`/`Query`/`Store`/`Capability`/`Agent`/`Cross`/`CrossCap`/`Intrinsic`), resolved once during checking, consumed (not re-derived) by every later slice; the `Kernel { recv, op }` case is generated from the one machine-readable kernel table rather than re-deriving a sixth hand-synced copy | R6.10 (partial), R6.11 | §3 settled (Q4) |
 | **P6.1** | `bynk-emit::ir` module: `IrExpr`/`IrStmt`/`Callee` core types (Part 6.2) and the `CheckedProgram → Ir` lowering skeleton for the node kinds needing no new resolution — `Const`, `Local`, `Global`, `Record`, `Field`, `List`, `Block`, `If`, `And`/`Or`/`Not`, `Return`, `Await`/`Send`/`Pure` | R6.1 (partial) | §3 settled (Q2, Q3) |
-| **P6.2** | `Call`/`Lambda` lowering driven by P6.0's `Callee`, replacing `lower_method_call`/`lower_call`'s two hand-synced ordered-guard dispatchers | R6.10, R6.12 | P6.0, P6.1 |
+| **P6.2** | `Call`/`Lambda` lowering driven by P6.0's `Callee`, replacing `lower_method_call`/`lower_call`'s two hand-synced ordered-guard dispatchers; a store write reached through a `Callee::Store` op is detected by matching the callee, not a name — closes the name-matched-receiver defect `block_writes_state` still carries (§9) | R6.5, R6.10, R6.12 | P6.0, P6.1 |
 | **P6.3** | The desugaring table (Part 6.4): `Question`, `Is`, `Implies`, `RecordSpread`, `Expect`, `Val`, `Observation`, `Trace`, `Wire`, `EffectPure` as one exhaustive, normative match — closes the `let x = match risky()? { … }` miscompile class directly (§6.3's worked example) | R6.7, R6.8, R6.9 | P6.1 |
-| **P6.4** | Pattern IR (`IrPat`, `IrArm`, `Exhaustive`) per Part 5.1 — closes `pattern_match_tests`'s `Vec<String>` destruction (R5.1) and records the lowering-form decision (R5.2) once rather than re-deriving it at three emission sites | R5.1–R5.11 | P6.1 |
-| **P6.5** | `Match` lowering wired to P6.4's `IrPat` — ties the core `Match`/`IrArm` node from P6.1 to the pattern IR | R5.2, R5.3 | P6.1, P6.4 |
+| **P6.4** | Pattern IR (`IrPat`, `IrArm`, `Exhaustive`) per Part 5.1 — closes `pattern_match_tests`'s `Vec<String>` destruction (R5.1), records the or-pattern binding mode and guard/refinement ordering as recorded IR properties rather than emission-time discoveries | R5.1, R5.4–R5.11 | P6.1 |
+| **P6.5** | `Match` lowering wired to P6.4's `IrPat` — ties the core `Match`/`IrArm` node from P6.1 to the pattern IR, deciding the lowering form (R5.2) and arm independence (R5.3) once rather than re-deriving either at three emission sites | R5.2, R5.3 | P6.1, P6.4 |
 | **P6.6** | Declarations as `IrItem` (Part 6.6): `Type`/`Fn`/`Agent`/`Service`/`Actor`/`Capability`/`Provider` — closes the emitter reading AST declarations directly (`EmitProjectCtx`'s 28 fields, 5 with no readers) | R6.13 | P6.1–P6.3 |
 | **P6.7** | Store-field state shape and index tables derived in the IR (`StoreFieldIr`, `StoreKindIr`) rather than at emission time | R6.14 | P6.6 |
 | **P6.8** | `CommitShape` as IR data, not emitter control flow | R6.15 | P6.6, P6.7 |
@@ -345,10 +362,13 @@ settling pass (numbers assigned at merge by the stamp; referred to by letter unt
 - **ADR-B** — `Callee` classification is checking work and lands in `bynk-check` (P6.0), not
   `bynk-emit`'s lowering pass — new work this phase commissions, not scope the retired phase-5 track
   missed. §3.4 (Q4).
-- **ADR-C** — the `CheckedProgram → Ir` lowering pass enforces R6.1's totality by construction via a
-  single total walk that `.expect()`s each `expr_ty` lookup rather than falling back on a miss,
-  matching this codebase's own `unresolved_cross_context_signature` precedent; `expr_types` stays a
-  `HashMap`, and R4.9's `IndexVec` conversion is filed as optional, non-blocking residue. §3.2 (Q2).
+- **ADR-C** — lowering driven from a certified `CheckedProgram` enforces R6.1's totality by
+  construction via a single total walk that `.expect()`s each `expr_ty` lookup rather than falling
+  back on a miss, matching `lower_workers_cross_context_call`'s own
+  `bynk.emit.unresolved_cross_context_signature` precedent — scoped to that path only, since
+  `tests_emit.rs`'s non-certified `TypedCommons` producer needs the existing fallback to stay;
+  `expr_types` stays a `HashMap`, and R4.9's `IndexVec` conversion is filed as optional, non-blocking
+  residue. §3.2 (Q2).
 
 ---
 
