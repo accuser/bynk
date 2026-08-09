@@ -741,3 +741,70 @@ imposed; entries keep the order they were retired in.
   absent — met. Surface lives in the new `bynk-project` crate in full, `bynk-check/src/analysis.rs`,
   `context_checks.rs`, `project_model.rs` and `check_pipeline.rs`, and `bynk-ide/src/lib.rs` and its
   `architecture.rs`/`sequence.rs`/`symbols.rs`/`wire_contract.rs`. Retired 8 August 2026.
+- **`semantics-in-the-checker.md`** — phase 5 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
+  `project-model.md`'s own retirement note above: every remaining whole-project check still living in
+  `bynk-emit` relocates to `bynk-check`, so `bynk-check` is the one crate that checks (R3.5) and
+  `bynk-emit` originates no diagnostic of its own. Settled under a same-branch settling review (spine
+  [#1126](https://github.com/accuser/bynk/issues/1126), settling PR
+  [#1127](https://github.com/accuser/bynk/pull/1127), 8 August 2026) that argued all five of its design
+  questions; Q2 was the load-bearing one — the emission/checking boundary P4.1 drew informally, without
+  its own settling review, turned out to already be a shipped, `CHANGELOG`-named, fixture-pinned live
+  regression in the editor's diagnostics (`bynk-check/src/analysis.rs`'s own seven-category residual-gap
+  accounting), not an architectural judgment call still open to debate — which settled "all seven
+  categories are in scope" with more force than the draft anticipated, sequenced by whether each closes
+  a live regression (categories 2, 3, 4, 6, 7) or only architectural compliance (categories 1, 5, both
+  already unreachable from the editor before this track and after it, for the same
+  `Platform::default()`/`BuildTarget::Bundle`-hardcoding reason `project-model.md` found for
+  `check_platform_lock`). Q3 folded into the same finding. Three ADRs front-loaded before slicing:
+  [0329](../decisions/0329-semantics-phase5-rule-scope.md) (R4.6, R4.11 and R10.4 stay in scope
+  narrowly, as verify-only items — all three already read landed in Appendix D),
+  [0330](../decisions/0330-semantics-phase5-check-relocation-scope.md) (all seven categories relocate,
+  split by priority not by in/out — the most load-bearing of the three), and
+  [0331](../decisions/0331-semantics-phase5-function-boundary-hook.md) (`check_function_type_boundaries`
+  moves into `bynk-check`, closing the optional-hook seam `bynk-check` reached back through). All six
+  named slices shipped: **P5.0** — `check_messages_bundles`/`check_locale_bundle_ambiguity` relocated as
+  `phase_messages_bundles`/`phase_locale_bundle_ambiguity`, closing categories 2–3
+  ([#1128](https://github.com/accuser/bynk/issues/1128)/[#1129](https://github.com/accuser/bynk/pull/1129));
+  **P5.1** — `check_event_subscriptions` relocated as `phase_event_subscriptions`, closing category 4
+  ([#1130](https://github.com/accuser/bynk/issues/1130)/[#1131](https://github.com/accuser/bynk/pull/1131));
+  **P5.2** — `check_function_type_boundaries` relocated as `phase_function_type_boundaries`,
+  `phase_group`'s optional hook deleted and called directly instead, closing category 6 and ADR 0331
+  ([#1132](https://github.com/accuser/bynk/pull/1132)); **P5.3** — `schema_registry::reconcile` relocated
+  to a new `bynk-check::schema_registry` module and `check_platform_lock` relocated as
+  `phase_platform_lock` on a from-scratch pure resolution walk (not `bynk-emit`'s own TypeScript-building
+  helper of that name), closing categories 1 and 5 structurally, not observably
+  ([#1133](https://github.com/accuser/bynk/pull/1133)); **P5.4** — `process_tests`/
+  `process_integration_tests` split at the check/emit boundary rather than ported whole: the checking half
+  (target/participant resolution, `stub` resolution, case/property body type-checking) relocated to a new
+  `bynk-check::test_suites` module, TypeScript emission stayed in `bynk-emit::project::tests_emit` as a
+  caller of it, closing category 7 (the last and the one `analysis.rs`'s own author flagged as needing
+  more care) — go-to-definition/find-references inside a test file restored too, since both relocated
+  functions still populate `RefSink`
+  ([#1134](https://github.com/accuser/bynk/pull/1134)); **P5.5** — the two sites outside the
+  seven-category accounting: `bynk.secrets.computed_name` (a real, `CompileError::new`-constructed
+  diagnostic whose own comment claimed it reached the editor — true only until P4.2 repointed `bynk-ide`
+  off `run_checks` entirely, stale silently after, named an open risk rather than a scoped item by the
+  settling pass) relocated to `bynk_check::secrets::secret_reads_of`, and
+  `bynk.project.schema_registry_corrupt` relocated to
+  `bynk_check::schema_registry::parse_or_diagnose`; `validate.rs` (empty since P5.3) deleted; `bynk-emit`'s
+  crate doc and `Cargo.toml` description corrected to what actually remains — TypeScript emission plus
+  `compile_project`/`run_checks`'s per-unit build sequencing (R10.1)
+  ([#1135](https://github.com/accuser/bynk/pull/1135)). `emit_diagnostics` moved 49/53 (true/naive, this
+  track's own baseline) → 37/41 → 30/34 → 30/34 (P5.2's diagnostics were already `bynk-check`-owned) →
+  25/27 → 6/8 → **4/6** — the named floor (§5 of the retired doc): four registered codes remain, all
+  `#[cfg(test)]` assertion *strings* in `bynk-emit/src/project.rs`'s own test module, referenced as
+  expected output rather than constructed; naive stays above true because two non-diagnostic literals
+  (`bynk.locale`, `bynk.toml`) share the `bynk.` prefix without being registered codes. `R4.6`/`R4.11`
+  reverified clean throughout — every new `bynk-check` call site reached `ResolvedCommons` through its
+  real constructor, no hand-rolled construction. Every category's pin in
+  `bynk-lsp/tests/analysis_residual_gap.rs` flipped from a pinned absence to either positive coverage (the
+  five live regressions) or a documented stay-absent assertion (the gap-in-name-only sites); the
+  differential fixture in `bynk-check/tests/differential_analysis.rs` gained dedicated parity tests along
+  the way and needs no further widening — no divergence exists left to prove parity on. Surface lives in
+  `bynk-check/src/project_model.rs`, `schema_registry.rs`, `test_suites.rs` and the new `secrets.rs`;
+  `bynk-emit/src/project.rs`, `project/schema_registry.rs`, `project/tests_emit.rs` and
+  `emitter/secrets.rs` (`project/validate.rs` deleted). Retired 9 August 2026. Opens phase 6 (the IR, per
+  the trajectory) — its own reference-doc rationale ("move the checks first and the IR only has to carry
+  what emission needs") is exactly the boundary this track drew, category by category, rather than
+  leaving as a fuzzy architectural preference for phase 6 to reopen.
