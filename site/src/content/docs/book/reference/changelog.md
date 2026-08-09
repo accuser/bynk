@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.32** | P5.5 (design/tracks/semantics-in-the-checker.md) — bynk.project.schema_registry_corrupt and bynk.secrets.computed_name relocate from bynk-emit to bynk-check, validate.rs (empty since P5.3) is deleted, and bynk-emit's crate doc/Cargo.toml description are corrected to what remains (TypeScript emission plus per-unit build sequencing) — no diagnostic is constructed in bynk-emit any more (emit_diagnostics true = 4, all test-module assertion strings), the track's completion criterion (#1126) |
 | **v0.247.31** | P5.4 (design/tracks/semantics-in-the-checker.md) — process_tests/process_integration_tests' checking half relocates from bynk-emit to bynk-check as bynk_check::test_suites, closing the seventh and last whole-project diagnostic category P4.2 silenced in the editor, plus the test-file go-to-definition/find-references regression that rode with it (#1126) |
 | **v0.247.30** | P5.3 (design/tracks/semantics-in-the-checker.md) — schema-registry reconciliation and platform-lock enforcement relocate from bynk-emit to bynk-check, closing the last two of the seven whole-project diagnostic categories that don't already originate there (#1126) |
 | **v0.247.29** | P5.2 (design/tracks/semantics-in-the-checker.md) — check_function_type_boundaries relocates from bynk-emit to bynk-check, restoring the fourth of the five whole-project diagnostic categories P4.2 silenced in the editor (#1126) |
