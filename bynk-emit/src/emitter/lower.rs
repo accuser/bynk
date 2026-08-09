@@ -5769,6 +5769,7 @@ mod idempotency_scoping_tests {
             fns: HashMap::new(),
             methods: HashMap::new(),
             expr_types: HashMap::new(),
+            callees: HashMap::new(),
             warnings: Vec::new(),
             ty_intern: Arc::new(bynk_check::checker::Types::new()),
         }

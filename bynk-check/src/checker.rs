@@ -465,6 +465,80 @@ impl Ty {
     }
 }
 
+/// P6.0 (design/tracks/the-ir.md §6, #1139): a resolved classification of a
+/// call-shaped expression, recorded once by the checker's own dispatch
+/// (`checker::calls`) rather than re-derived by each later consumer —
+/// closing R6.10's duplicated-classification gap between `bynk-check` and
+/// `bynk-emit`'s `lower_method_call`/`lower_call`.
+///
+/// Adapted to the identity handles this checker already has (Decision A,
+/// `design/pending/the-ir-settling.md`'s `the-ir-callee-in-bynk-check` ADR)
+/// rather than the reference document's `DefId`/`LocalId`/`VariantId`/`OpId`
+/// arena — none of which exists here, since the `Resolve` phase that would
+/// mint them was never built (`project-model.md` §3.4 deferred it to phase
+/// 8). `Arc<FnDecl>`/`Arc<TypeDecl>` are already-cheap resolved handles
+/// (`ResolvedCommons::fns`/`types`); every other variant's identity is a
+/// name, exactly as the checker already keys capabilities, store fields,
+/// units, and agents.
+///
+/// Recorded at each dispatch decision as soon as it is known — including on
+/// an error sub-branch (an arity mismatch, an undeclared capability) — since
+/// the *kind* of call is fixed by dispatch, not by whether it went on to
+/// type-check cleanly.
+#[derive(Debug, Clone)]
+pub enum Callee {
+    /// A free function call.
+    Fn(Arc<FnDecl>),
+    /// Applying a function-typed local or parameter (`f(x)` where `f` is in
+    /// scope, not declared). No stable id exists for a local beyond its
+    /// name — the reference's `LocalId` presumes the same `Resolve` phase
+    /// Decision A declines to build here.
+    Value(String),
+    /// Sum-variant construction, bare (`Some(x)`) or qualified
+    /// (`Opt.Some(x)`).
+    Ctor { sum: Arc<TypeDecl>, tag: String },
+    /// `T.of(value)` — the refined/opaque runtime constructor.
+    Refine(Arc<TypeDecl>),
+    /// `T.unsafe(value)` — the opaque constructor, defining-unit only.
+    Unsafe(Arc<TypeDecl>),
+    /// A user-declared static method (`Type.method(...)`).
+    Static(Arc<FnDecl>),
+    /// A user-declared instance method (UFCS), generic or not.
+    Method(Arc<FnDecl>),
+    /// A built-in method on a value — the collection/query/stream/
+    /// connection/numeric/duration/instant/bytes/string/option/result/
+    /// effect kernels, including the refined-receiver fallback (ADR 0168).
+    /// `recv` is the receiver's own checked type; no `KernelOp` enum exists
+    /// yet in this crate (R6.11), so the operation is named, not typed.
+    Kernel { recv: TyId, op: String },
+    /// A built-in static constructor with no declaring type — `List.empty`,
+    /// `Map.empty`, `Int.parse`/`Float.parse`, `Duration.millis`,
+    /// `Instant.fromEpochMillis`, `Bytes.fromUtf8`/`fromBase64`/`empty`,
+    /// `Json.decode`/`encode`, `Stream.of`.
+    Intrinsic { ns: &'static str, op: String },
+    /// A same-context capability operation call (`Cap.op(...)`).
+    Capability { cap: String, op: String },
+    /// A cross-context capability operation call (`B.Cap.op(...)` /
+    /// `Alias.Cap.op(...)`).
+    CrossCap { unit: String, cap: String, op: String },
+    /// A cross-context service call (`B.service(...)` / `Alias.service(...)`).
+    Cross { unit: String, service: String },
+    /// `AgentName(key)` — agent instance construction. No slot exists for
+    /// this in the reference's own `Callee` taxonomy (Part 6.5 only names
+    /// handler dispatch); added here since this slice covers every call
+    /// shape `check_call` dispatches, not only the ones the reference
+    /// anticipated.
+    AgentInit(String),
+    /// `agent.handler(args)` — agent handler dispatch.
+    Agent { agent: String, handler: String },
+    /// A test-body service address (`svc.call`/`svc.<VERB>("/path", …)`/
+    /// `svc.schedule(...)`/`svc.message(...)`). `check_test_service_address`
+    /// always returns `None` by design (the runner recovers the outcome
+    /// type at runtime) — this classification exists purely for a later
+    /// consumer (e.g. go-to-definition on the address), not typing.
+    TestService { service: String, address: String },
+}
+
 /// Output of type checking.
 pub struct TypedCommons {
     pub commons: Commons,
@@ -477,6 +551,12 @@ pub struct TypedCommons {
     /// position-shaped question, asked at the editor boundary, not the
     /// checker's own identity) can still answer it without a second map.
     pub expr_types: HashMap<ExprId, TypedExpr>,
+    /// P6.0 (#1139): the call-shaped expressions this unit's checker
+    /// dispatched, classified once here rather than re-derived by
+    /// `bynk-emit`'s lowering (P6.2) or any other later consumer. Mirrors
+    /// `expr_types` exactly — same key, same "recorded during checking, read
+    /// afterward" shape.
+    pub callees: HashMap<ExprId, Callee>,
     /// v0.89 (ADR 0117): non-failing warnings produced while checking this unit
     /// — surfaced but not gating. Empty unless a warning-category diagnostic
     /// (e.g. `bynk.given.unused_capability`) fired on an otherwise-clean check.
@@ -509,6 +589,13 @@ impl TypedCommons {
     /// read before T3.6b.
     pub fn expr_ty(&self, id: ExprId) -> Option<Arc<Ty>> {
         self.expr_types.get(&id).map(|te| self.ty_intern.get(te.ty))
+    }
+
+    /// P6.0 (#1139): the resolved [`Callee`] classification for a
+    /// call-shaped expression, if this unit's checker dispatched one at
+    /// `id`. Mirrors [`Self::expr_ty`]'s shape.
+    pub fn callee(&self, id: ExprId) -> Option<&Callee> {
+        self.callees.get(&id)
     }
 }
 
@@ -637,6 +724,7 @@ pub fn check_record_in(
     let ty_intern = Arc::clone(ty_intern);
     let mut errors = Vec::new();
     let mut expr_types: HashMap<ExprId, TypedExpr> = HashMap::new();
+    let mut callees: HashMap<ExprId, Callee> = HashMap::new();
     // 1. Validate each type declaration.
     for item in &input.commons.items {
         if let CommonsItem::Type(t) = item {
@@ -652,6 +740,7 @@ pub fn check_record_in(
                 f,
                 &input,
                 &mut expr_types,
+                &mut callees,
                 &mut errors,
                 refs,
                 hints,
@@ -696,6 +785,7 @@ pub fn check_record_in(
                 fns: input.fns,
                 methods: input.methods,
                 expr_types,
+                callees,
                 warnings,
                 ty_intern: Arc::clone(&ty_intern),
             }),
@@ -786,6 +876,8 @@ pub struct CheckSinks<'a> {
     pub hints: &'a mut HintSink,
     pub locals: &'a mut LocalsSink,
     pub requirements: &'a mut RequirementSink,
+    /// P6.0 (#1139): the `Callee` classification sink — see [`Callee`].
+    pub callees: &'a mut HashMap<ExprId, Callee>,
 }
 
 /// #522: everything [`check_handler_body`] needs to know about the handler —
@@ -881,6 +973,7 @@ pub fn check_handler_body(
         hints,
         locals,
         requirements,
+        callees,
     } = sinks;
     let return_ty_span = return_type.span();
     let Some(return_ty) = resolve_type_ref(return_type, &input.types, tys) else {
@@ -936,6 +1029,7 @@ pub fn check_handler_body(
         hints,
         locals,
         requirements,
+        callees,
         scopes: vec![param_scope],
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
@@ -1073,6 +1167,7 @@ pub fn check_body(
         hints,
         locals,
         requirements,
+        callees,
     } = sinks;
     let mut ctx = Ctx {
         input,
@@ -1083,6 +1178,7 @@ pub fn check_body(
         hints,
         locals,
         requirements,
+        callees,
         scopes: vec![scope],
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
@@ -1153,6 +1249,7 @@ pub fn check_invariants(
     hints: &mut HintSink,
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
+    callees: &mut HashMap<ExprId, Callee>,
 ) {
     // Duplicate-name check across the agent's invariants.
     let mut seen: HashMap<&str, ()> = HashMap::new();
@@ -1229,6 +1326,7 @@ pub fn check_invariants(
             hints,
             locals,
             requirements,
+            callees,
             scopes: vec![field_scope.clone()],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
@@ -1310,6 +1408,7 @@ pub fn check_contracts(
     hints: &mut HintSink,
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
+    callees: &mut HashMap<ExprId, Callee>,
     type_vars: &HashSet<String>,
     tys: &Types,
 ) {
@@ -1341,7 +1440,8 @@ pub fn check_contracts(
                         refs: &mut RefSink,
                         hints: &mut HintSink,
                         locals: &mut LocalsSink,
-                        requirements: &mut RequirementSink| {
+                        requirements: &mut RequirementSink,
+                        callees: &mut HashMap<ExprId, Callee>| {
         if let Some(span) = predicate_impure_construct(&c.predicate) {
             errors.push(
                 CompileError::new(
@@ -1370,6 +1470,7 @@ pub fn check_contracts(
             hints,
             locals,
             requirements,
+            callees,
             scopes: vec![scope],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
@@ -1440,6 +1541,7 @@ pub fn check_contracts(
             hints,
             locals,
             requirements,
+            callees,
         );
     }
 
@@ -1457,6 +1559,7 @@ pub fn check_contracts(
             hints,
             locals,
             requirements,
+            callees,
         );
     }
 }
@@ -1495,6 +1598,7 @@ pub fn check_transitions(
     hints: &mut HintSink,
     locals: &mut LocalsSink,
     requirements: &mut RequirementSink,
+    callees: &mut HashMap<ExprId, Callee>,
     tys: &Types,
 ) {
     // Duplicate-name check across the agent's transitions.
@@ -1589,6 +1693,7 @@ pub fn check_transitions(
             hints,
             locals,
             requirements,
+            callees,
             scopes: vec![scope.clone()],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
@@ -1843,6 +1948,8 @@ pub(crate) struct Ctx<'a> {
     /// site (direct call, store op), covered or not, recorded so the editor
     /// surfaces (the ghost `given` inlay hint, hover) can read it.
     pub requirements: &'a mut RequirementSink,
+    /// P6.0 (#1139): the `Callee` classification sink — see [`Callee`].
+    pub callees: &'a mut HashMap<ExprId, Callee>,
     /// Stack of in-scope name → type frames.
     pub scopes: Vec<HashMap<String, TyId>>,
     /// Memoised `is`-pattern bindings, keyed by the condition sub-expression's
@@ -3307,7 +3414,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                     // `queue_variant` else-if below) relies on the http and
                     // queue variant keyword sets being disjoint, so an http
                     // name could never have taken the queue branch anyway.
-                    check_call(name, type_args, args, expr.span, expected, ctx)
+                    check_call(name, type_args, args, expr.span, expected, expr.id, ctx)
                 }
             } else if let Some(qv) = queue_variant(&name.name)
                 && (expected.is_some_and(|t| peel_to_queue_result(t, tys))
@@ -3316,7 +3423,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                 // v0.44: a QueueResult variant call (`Retry(reason)`).
                 check_queue_variant(expr.span, qv, args, ctx)
             } else {
-                check_call(name, type_args, args, expr.span, expected, ctx)
+                check_call(name, type_args, args, expr.span, expected, expr.id, ctx)
             }
         }
         ExprKind::UnaryOp(op, inner) => check_unary(*op, inner, expr.span, ctx),
@@ -3363,7 +3470,7 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                 // `ConstructorCall` has no type-argument slot — qualified
                 // variant construction (`Opt.Some(x)`), never a capability
                 // call, so `type_args` is always empty here.
-                check_static_call(type_name, method, &[], args, expr.span, expected, ctx)
+                check_static_call(type_name, method, &[], args, expr.span, expected, expr.id, ctx)
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
@@ -3494,7 +3601,9 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                     None
                 }
             } else {
-                check_method_call(receiver, method, type_args, args, expr.span, expected, ctx)
+                check_method_call(
+                    receiver, method, type_args, args, expr.span, expected, expr.id, ctx,
+                )
             }
         }
         ExprKind::Match { discriminant, arms } => {

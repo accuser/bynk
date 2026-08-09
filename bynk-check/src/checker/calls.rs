@@ -26,6 +26,7 @@ pub(crate) fn check_fn(
     f: &FnDecl,
     input: &ResolvedCommons,
     expr_types: &mut HashMap<ExprId, TypedExpr>,
+    callees: &mut HashMap<ExprId, Callee>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     hints: &mut HintSink,
@@ -130,6 +131,7 @@ pub(crate) fn check_fn(
             hints,
             locals,
             requirements,
+            callees,
             &vars,
             tys,
         );
@@ -144,6 +146,7 @@ pub(crate) fn check_fn(
         hints,
         locals,
         requirements,
+        callees,
         scopes: vec![param_scope],
         is_binding_cache: HashMap::new(),
         pattern_binding_types: HashMap::new(),
@@ -225,6 +228,10 @@ fn check_static_initialiser(
     // A static initialiser is a pure value — no capability calls reach here —
     // so requirements are discarded into a throwaway sink.
     let mut init_requirements = RequirementSink::new();
+    // Same reasoning as `init_requirements`: an initialiser is checked once
+    // and its `Callee` classification (a `.of`/`.unsafe`/variant-constructor
+    // call, at most) has no consumer here — discard it too.
+    let mut init_callees: HashMap<ExprId, Callee> = HashMap::new();
     let result = {
         let mut ctx = Ctx {
             input,
@@ -235,6 +242,7 @@ fn check_static_initialiser(
             hints,
             locals,
             requirements: &mut init_requirements,
+            callees: &mut init_callees,
             scopes: vec![HashMap::new()],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
@@ -462,11 +470,15 @@ pub(crate) fn check_call(
     // #593: the binding's expected type grounds a generic variant constructor
     // whose payload cannot determine every parameter (`let o: Opt[Int] = Nil`).
     expected: Option<TyId>,
+    // P6.0 (#1139): the outer `Call` expression's own identity — keys the
+    // `Callee` classification recorded at whichever branch below dispatches.
+    expr_id: ExprId,
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
     if let Some(fn_decl) = ctx.input.fns.get(&name.name) {
         ctx.refs.record(name.span, SymbolKind::Fn, &name.name);
+        ctx.callees.insert(expr_id, Callee::Fn(Arc::clone(fn_decl)));
         warn_bynk_list_deprecation(name, args, span, ctx);
         return check_call_against_fn(name, fn_decl, type_args, args, ctx);
     }
@@ -496,6 +508,18 @@ pub(crate) fn check_call(
         .filter(|t| matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == name.name)))
         .collect();
     if owners.len() == 1 {
+        // `owners[0]` is a borrow out of `ctx.input.types`'s own `Arc`-wrapped
+        // values (stripped to `&TypeDecl` above) — look the `Arc` back up by
+        // name rather than deep-cloning the declaration into a fresh one.
+        if let Some(sum) = ctx.input.types.get(&owners[0].name.name) {
+            ctx.callees.insert(
+                expr_id,
+                Callee::Ctor {
+                    sum: Arc::clone(sum),
+                    tag: name.name.clone(),
+                },
+            );
+        }
         return check_variant_construction(owners[0], &name.name, args, span, expected, ctx);
     }
     // Agent instantiation: `AgentName(key)` constructs an instance keyed by
@@ -503,6 +527,8 @@ pub(crate) fn check_call(
     // `agent_instance.method(args)` lookups can find the agent's handler set.
     if let Some(agent) = ctx.input.agents.get(&name.name).cloned() {
         ctx.refs.record(name.span, SymbolKind::Agent, &name.name);
+        ctx.callees
+            .insert(expr_id, Callee::AgentInit(name.name.clone()));
         let key_ty = resolve_type_ref(&agent.key_type, &ctx.input.types, tys);
         if args.len() != 1 {
             ctx.errors.push(CompileError::new(
@@ -547,7 +573,11 @@ pub(crate) fn check_call(
     // and documented in §5.
     if let Some(ty) = ctx.lookup(&name.name) {
         return match &*tys.get(ty) {
-            Ty::Fn { params, ret } => check_value_application(name, params, *ret, args, span, ctx),
+            Ty::Fn { params, ret } => {
+                ctx.callees
+                    .insert(expr_id, Callee::Value(name.name.clone()));
+                check_value_application(name, params, *ret, args, span, ctx)
+            }
             _ => {
                 // Relocated from the resolver (which has no type info): a
                 // non-function-typed value called as a function.
@@ -1021,6 +1051,7 @@ fn record_capability_ref(span: Span, name: &str, ctx: &mut Ctx) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_static_call(
     type_name: &Ident,
     method: &Ident,
@@ -1035,6 +1066,11 @@ pub(crate) fn check_static_call(
     // #593: threaded to `check_variant_construction` so a qualified generic
     // variant (`Opt.Nil`) can ground its arguments from the binding's type.
     expected: Option<TyId>,
+    // P6.0 (#1139): the outer expression's identity — the `ConstructorCall`/
+    // `MethodCall` node this dispatch is checking on behalf of (this
+    // function is also reached from inside `check_method_call`, not only
+    // from `type_of` directly).
+    expr_id: ExprId,
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
@@ -1045,6 +1081,13 @@ pub(crate) fn check_static_call(
         && !ctx.caps.capabilities.contains_key(&type_name.name)
     {
         record_capability_ref(type_name.span, &type_name.name, ctx);
+        ctx.callees.insert(
+            expr_id,
+            Callee::Capability {
+                cap: type_name.name.clone(),
+                op: method.name.clone(),
+            },
+        );
         let mut err = CompileError::new(
             "bynk.given.undeclared_capability",
             type_name.span,
@@ -1090,6 +1133,13 @@ pub(crate) fn check_static_call(
     }
     if let Some(cap) = ctx.caps.capabilities.get(&type_name.name).cloned() {
         record_capability_ref(type_name.span, &type_name.name, ctx);
+        ctx.callees.insert(
+            expr_id,
+            Callee::Capability {
+                cap: type_name.name.clone(),
+                op: method.name.clone(),
+            },
+        );
         if !ctx.effectful {
             ctx.errors.push(
                 CompileError::new(
@@ -1306,6 +1356,8 @@ pub(crate) fn check_static_call(
         .get(&type_name.name)
         .and_then(|table| table.statics.get(&method.name))
     {
+        ctx.callees
+            .insert(expr_id, Callee::Static(Arc::clone(method_decl)));
         return check_method_args(method_decl, args, ctx, type_name, method);
     }
 
@@ -1313,6 +1365,8 @@ pub(crate) fn check_static_call(
     if method.name == OF
         && let Some(base) = type_decl_base(decl)
     {
+        ctx.callees
+            .insert(expr_id, Callee::Refine(Arc::clone(decl)));
         if args.len() != 1 {
             ctx.errors.push(CompileError::new(
                 "bynk.types.constructor_arity",
@@ -1357,6 +1411,8 @@ pub(crate) fn check_static_call(
     if method.name == UNSAFE
         && let TypeBody::Opaque { base, .. } = &decl.body
     {
+        ctx.callees
+            .insert(expr_id, Callee::Unsafe(Arc::clone(decl)));
         if !ctx.input.is_local_type(&decl.name.name) {
             ctx.errors.push(
                 CompileError::new(
@@ -1406,6 +1462,13 @@ pub(crate) fn check_static_call(
 
     // 3) Qualified variant construction `TypeName.Variant(args)`.
     if let TypeBody::Sum(_) = &decl.body {
+        ctx.callees.insert(
+            expr_id,
+            Callee::Ctor {
+                sum: Arc::clone(decl),
+                tag: method.name.clone(),
+            },
+        );
         return check_variant_construction(decl, &method.name, args, span, expected, ctx);
     }
 
@@ -2024,6 +2087,7 @@ pub(crate) fn check_store_cell_op(
     Some(tys.intern(effect))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_method_call(
     receiver: &Expr,
     method: &Ident,
@@ -2031,6 +2095,8 @@ pub(crate) fn check_method_call(
     args: &[Expr],
     span: Span,
     expected: Option<TyId>,
+    // P6.0 (#1139): the outer `MethodCall` expression's own identity.
+    expr_id: ExprId,
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
@@ -2094,7 +2160,7 @@ pub(crate) fn check_method_call(
             ctx.refs
                 .record_in_unit(id.span, SymbolKind::Service, &id.name, &unit);
         }
-        return check_test_service_address(&sig, id, method, args, ctx);
+        return check_test_service_address(&sig, id, method, args, expr_id, ctx);
     }
     // v0.6: cross-context service call. Two shapes:
     //   - `Alias.service(args)`           where Alias is from `consumes X as Alias`
@@ -2116,11 +2182,11 @@ pub(crate) fn check_method_call(
                     .record_in_unit(field.span, SymbolKind::Capability, &cap, &consumed);
             }
             return check_cross_context_capability_call(
-                receiver, &consumed, &cap, method, type_args, args, span, ctx,
+                receiver, &consumed, &cap, method, type_args, args, span, expr_id, ctx,
             );
         }
         if let Some(consumed) = cross_context_prefix(receiver, ctx) {
-            return check_cross_context_call(receiver, &consumed, method, args, span, ctx);
+            return check_cross_context_call(receiver, &consumed, method, args, span, expr_id, ctx);
         }
         // Looks like a dotted prefix (no local binding for the root). If the
         // chain matches the shape of a consumed-context call but the prefix
@@ -2162,7 +2228,7 @@ pub(crate) fn check_method_call(
         && (ctx.caps.capabilities.contains_key(&id.name)
             || ctx.caps.declared_capabilities.contains_key(&id.name))
     {
-        return check_static_call(id, method, type_args, args, span, expected, ctx);
+        return check_static_call(id, method, type_args, args, span, expected, expr_id, ctx);
     }
     // Detect static-call shape: receiver is a bare Ident naming a declared
     // type (not a local/param). Dispatch to check_static_call. `type_args` is
@@ -2173,7 +2239,7 @@ pub(crate) fn check_method_call(
         && ctx.lookup(id.name.as_str()).is_none()
         && ctx.input.types.contains_key(&id.name)
     {
-        return check_static_call(id, method, type_args, args, span, expected, ctx);
+        return check_static_call(id, method, type_args, args, span, expected, expr_id, ctx);
     }
     // v0.20b: qualified statics on the built-in collection types —
     // `List.empty()` / `Map.empty()`. Like an empty `[]`, they need an
@@ -2183,6 +2249,14 @@ pub(crate) fn check_method_call(
         && !ctx.input.types.contains_key(&id.name)
         && (id.name == LIST || id.name == MAP)
     {
+        let ns = if id.name == LIST { LIST } else { MAP };
+        ctx.callees.insert(
+            expr_id,
+            Callee::Intrinsic {
+                ns,
+                op: method.name.clone(),
+            },
+        );
         return check_collection_static(id, method, args, span, expected, ctx);
     }
     // v0.22a: the numeric parse statics — `Int.parse(s)` / `Float.parse(s)`.
@@ -2191,6 +2265,14 @@ pub(crate) fn check_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && (id.name == INT || id.name == FLOAT)
     {
+        let ns = if id.name == INT { INT } else { FLOAT };
+        ctx.callees.insert(
+            expr_id,
+            Callee::Intrinsic {
+                ns,
+                op: method.name.clone(),
+            },
+        );
         return check_numeric_parse_static(id, method, args, span, ctx);
     }
     // v0.86 (ADR 0112): the `Duration.millis(n)` static constructor — the way to
@@ -2200,6 +2282,13 @@ pub(crate) fn check_method_call(
         && ctx.lookup(DURATION).is_none()
         && !ctx.input.types.contains_key(DURATION)
     {
+        ctx.callees.insert(
+            expr_id,
+            Callee::Intrinsic {
+                ns: DURATION,
+                op: method.name.clone(),
+            },
+        );
         return check_duration_static(method, args, span, ctx);
     }
     // v0.90 (ADR 0114 D6): the `Instant.fromEpochMillis(n)` static constructor.
@@ -2208,6 +2297,13 @@ pub(crate) fn check_method_call(
         && ctx.lookup(INSTANT).is_none()
         && !ctx.input.types.contains_key(INSTANT)
     {
+        ctx.callees.insert(
+            expr_id,
+            Callee::Intrinsic {
+                ns: INSTANT,
+                op: method.name.clone(),
+            },
+        );
         return check_instant_static(method, args, span, ctx);
     }
     // v0.110 (ADR 0142 D2): the `Bytes` static constructors —
@@ -2217,6 +2313,13 @@ pub(crate) fn check_method_call(
         && ctx.lookup(BYTES).is_none()
         && !ctx.input.types.contains_key(BYTES)
     {
+        ctx.callees.insert(
+            expr_id,
+            Callee::Intrinsic {
+                ns: BYTES,
+                op: method.name.clone(),
+            },
+        );
         return check_bytes_static(method, args, span, ctx);
     }
     // v0.22b: the typed JSON codec statics (ADR 0045).
@@ -2225,6 +2328,13 @@ pub(crate) fn check_method_call(
         && ctx.lookup(JSON).is_none()
         && !ctx.input.types.contains_key(JSON)
     {
+        ctx.callees.insert(
+            expr_id,
+            Callee::Intrinsic {
+                ns: JSON,
+                op: method.name.clone(),
+            },
+        );
         return check_json_static(method, type_args, args, span, expected, ctx);
     }
     // v0.100: the `Stream.of(xs)` static constructor (real-time track slice 0).
@@ -2233,6 +2343,13 @@ pub(crate) fn check_method_call(
         && ctx.lookup(STREAM).is_none()
         && !ctx.input.types.contains_key(STREAM)
     {
+        ctx.callees.insert(
+            expr_id,
+            Callee::Intrinsic {
+                ns: STREAM,
+                op: method.name.clone(),
+            },
+        );
         return check_stream_static(method, args, span, ctx);
     }
     // v0.20b: `insert`/`prepend` return their receiver's collection type —
@@ -2250,23 +2367,28 @@ pub(crate) fn check_method_call(
     // the deferral bites only on declared methods (ADR 0037).
     match &*tys.get(recv_ty) {
         Ty::List(elem) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_list_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.91 (ADR 0115): a chained builder/terminal on a lazy `Query[T]`.
         Ty::Query(elem) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_query_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.100: a chained builder/terminal on a `Stream[T]`.
         Ty::Stream(elem) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_stream_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.102: the held-resource operations on a `Connection[F]` — `send(f)`
         // (non-consuming) and `close()` (consuming). The linearity pass tracks
         // the ownership transitions; this types the operations.
         Ty::Connection(frame) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_connection_method(method, args, *frame, span, ctx);
         }
         Ty::Map(key, val) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_map_kernel_method(method, args, *key, *val, span, ctx);
         }
         // v0.21: the numeric kernel — conversions as value methods on the
@@ -2277,29 +2399,36 @@ pub(crate) fn check_method_call(
         // opaque type it exposes no `.unsafe` (that is opaque-only, confined
         // to the defining commons).
         Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_numeric_kernel_method(method, args, *base, span, ctx);
         }
         // v0.86 (ADR 0112): the `Duration` kernel — `toMillis`/`toString`.
         Ty::Base(BaseType::Duration) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_duration_kernel_method(method, args, span, ctx);
         }
         // v0.90 (ADR 0114): the `Instant` kernel — `toEpochMillis`/`toString`.
         Ty::Base(BaseType::Instant) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_instant_kernel_method(method, args, span, ctx);
         }
         // v0.110 (ADR 0142): the `Bytes` kernel — `length`/`toBase64`/`decodeUtf8`.
         Ty::Base(BaseType::Bytes) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_bytes_kernel_method(method, args, span, ctx);
         }
         // v0.22a: the string kernel (ADR 0046).
         Ty::Base(BaseType::String) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_string_kernel_method(method, args, span, ctx);
         }
         // v0.22a: the Option/Result combinators as kernel methods (ADR 0048).
         Ty::Option(inner) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_option_kernel_method(method, args, *inner, span, ctx);
         }
         Ty::Result(ok, err) => {
+            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
             return check_result_kernel_method(method, args, *ok, *err, span, ctx);
         }
         // The `Effect[Result[T, E]]` combinators (§2.8.3): `mapOk`/`mapErr`/
@@ -2308,6 +2437,7 @@ pub(crate) fn check_method_call(
         // through to the "no methods" error below.
         Ty::Effect(inner) => {
             if let Ty::Result(ok, err) = &*tys.get(*inner) {
+                ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
                 return check_effect_result_kernel_method(method, args, *ok, *err, span, ctx);
             }
         }
@@ -2350,6 +2480,13 @@ pub(crate) fn check_method_call(
             }
             return None;
         };
+        ctx.callees.insert(
+            expr_id,
+            Callee::Agent {
+                agent: type_name.clone(),
+                handler: method.name.clone(),
+            },
+        );
         // #304: the handler is a first-class index symbol, keyed by the
         // compound `"Agent.handler"` name — same convention and same
         // recorded-regardless-of-downstream-errors placement as the
@@ -2418,6 +2555,15 @@ pub(crate) fn check_method_call(
             ..
         } = &*tys.get(recv_ty)
         {
+            if !matches!(base, BaseType::Bool) {
+                ctx.callees.insert(
+                    expr_id,
+                    Callee::Kernel {
+                        recv: recv_ty,
+                        op: method.name.clone(),
+                    },
+                );
+            }
             match base {
                 BaseType::Int | BaseType::Float => {
                     return check_numeric_kernel_method(method, args, *base, span, ctx);
@@ -2448,6 +2594,8 @@ pub(crate) fn check_method_call(
         SymbolKind::Method,
         &format!("{type_name}.{}", method.name),
     );
+    ctx.callees
+        .insert(expr_id, Callee::Method(Arc::clone(&method_decl)));
     // #594: a generic instance method — one on a generic receiver, or one
     // carrying its own type parameters — resolves its parameter and return
     // types against a substitution seeded from the receiver's type arguments,
@@ -2747,12 +2895,21 @@ fn check_test_service_address(
     id: &Ident,
     method: &Ident,
     args: &[Expr],
+    // P6.0 (#1139): the outer `MethodCall` expression's own identity.
+    expr_id: ExprId,
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     use bynk_syntax::ast::{ExprKind as EK, HandlerKind};
 
     // `svc.call(...)` — the `on call` handler (Slice 0).
     if method.name == "call" {
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: "call".to_string(),
+            },
+        );
         let Some(handler) = sig.call_handler() else {
             let message = match &sig.protocol {
                 Some(protocol) => format!(
@@ -2782,6 +2939,13 @@ fn check_test_service_address(
     // params then the body, matched against the handler's declared params.
     // `HttpMethod::from_ident` is the single source of truth the emitter shares.
     if bynk_syntax::ast::HttpMethod::from_ident(&method.name).is_some() {
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: method.name.clone(),
+            },
+        );
         let Some(EK::StrLit(path)) = args.first().map(|a| &a.kind) else {
             ctx.errors.push(
                 CompileError::new(
@@ -2870,6 +3034,13 @@ fn check_test_service_address(
 
     // `svc.schedule("<expr>", …)` — a cron handler, matched by its schedule.
     if method.name == "schedule" {
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: "schedule".to_string(),
+            },
+        );
         let Some(EK::StrLit(expr)) = args.first().map(|a| &a.kind) else {
             ctx.errors.push(CompileError::new(
                 "bynk.test.service_bad_address",
@@ -2910,6 +3081,13 @@ fn check_test_service_address(
 
     // `svc.message(msg)` — the queue message handler.
     if method.name == "message" {
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: "message".to_string(),
+            },
+        );
         let matched = sig
             .handlers
             .iter()
@@ -3389,9 +3567,19 @@ fn check_cross_context_capability_call(
     type_args: &[TypeRef],
     args: &[Expr],
     _span: Span,
+    // P6.0 (#1139): the outer `MethodCall` expression's own identity.
+    expr_id: ExprId,
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
+    ctx.callees.insert(
+        expr_id,
+        Callee::CrossCap {
+            unit: consumed.to_string(),
+            cap: cap.to_string(),
+            op: method.name.clone(),
+        },
+    );
     // Capability calls require an effectful body (same rule as local ones).
     if !ctx.effectful {
         ctx.errors.push(CompileError::new(
@@ -3577,9 +3765,18 @@ fn check_cross_context_call(
     method: &Ident,
     args: &[Expr],
     _span: Span,
+    // P6.0 (#1139): the outer `MethodCall` expression's own identity.
+    expr_id: ExprId,
     ctx: &mut Ctx,
 ) -> Option<TyId> {
     let tys = ctx.tys;
+    ctx.callees.insert(
+        expr_id,
+        Callee::Cross {
+            unit: consumed.to_string(),
+            service: method.name.clone(),
+        },
+    );
     // The consuming context must be effectful at this call site (services
     // and agent handlers are; pure free fns are not).
     if !ctx.effectful {

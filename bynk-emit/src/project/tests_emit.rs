@@ -1007,6 +1007,7 @@ fn integration_typed_commons(
         fns,
         methods,
         expr_types: HashMap::new(),
+        callees: HashMap::new(),
         warnings: vec![],
         // T3.6b (R4.1): the *caller's* table, not a fresh one. A synthesised
         // commons starts with an empty `expr_types`, but the case/property
@@ -2164,6 +2165,7 @@ fn lower_stub_value_block(
                 hints: &mut HintSink::new(),
                 locals: &mut LocalsSink::new(),
                 requirements: &mut RequirementSink::new(),
+                callees: &mut typed.callees,
             },
         );
     }
@@ -2247,6 +2249,7 @@ fn synthetic_typed_commons_for_target(
         fns,
         methods,
         expr_types: HashMap::new(),
+        callees: HashMap::new(),
         warnings: vec![],
         // T3.6b (R4.1): the *caller's* table, not a fresh one. A synthesised
         // commons starts with an empty `expr_types`, but the case/property
