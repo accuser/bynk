@@ -16,19 +16,22 @@
 //! emitted TS that only that call shape could have produced.
 //!
 //! Scope note: `Callee::Capability`/`CrossCap`/`Cross`/`Agent`/`AgentInit`/
-//! `TestService` all dispatch only inside a handler/test body, which needs
-//! the full context/service/capability project pipeline
-//! (`context_checks::check_context_declarations`) to check at all —
-//! `bynk-check`'s single-file `resolver::resolve`/`checker::check` entry
-//! points this file otherwise uses never reach them, and the project-level
-//! entry point that does (`analyse_project`) does not thread a `callees`
-//! sink (only `expr_types`/`requirements`/etc.) — out of scope for this
-//! slice (P6.0 populates the sink; wiring every analysis entry point to
-//! expose it is a later concern, same footing as the LSP query the doc
-//! comment on `Callee` already defers). The six shapes below — `Fn`,
-//! `Ctor`, `Refine`, `Static`, `Method`, `Kernel`, `Intrinsic`, `Value` —
-//! are exactly the ones `check_call`/`check_static_call`/`check_method_call`
-//! dispatch from an ordinary `fn` body, so they're covered directly.
+//! `TestService` (6 of the enum's 15 variants) all dispatch only inside a
+//! handler/test body, which needs the full context/service/capability
+//! project pipeline (`context_checks::check_context_declarations`) to check
+//! at all — `bynk-check`'s single-file `resolver::resolve`/`checker::check`
+//! entry points this file otherwise uses never reach them, and the
+//! project-level entry point that does (`analyse_project`) does not thread
+//! a `callees` sink (only `expr_types`/`requirements`/etc.) — out of scope
+//! for this slice (P6.0 populates the sink; wiring every analysis entry
+//! point to expose it is a later concern, same footing as the LSP query the
+//! doc comment on `Callee` already defers). The remaining 9 variants —
+//! `Fn`, `Ctor`, `Refine`, `Unsafe`, `Static`, `Method`, `Kernel`,
+//! `Intrinsic`, `Value` — are exactly the ones dispatched from an ordinary
+//! `fn` body (by `check_call` directly, or by `check_method_call` via its
+//! own bare-ident receiver branches — `check_static_call`'s capability arm
+//! is the only one of the three top-level dispatchers this file's fixtures
+//! never reach), so they're covered directly below.
 
 use bynk_check::checker::{self, Callee};
 use bynk_check::resolver;
@@ -103,6 +106,37 @@ commons demo {
 }
 
 #[test]
+fn opaque_unsafe_constructor_is_classified_unsafe() {
+    // `Refine`/`Unsafe` are the pair most likely to be confused by a later
+    // consumer — `.of`/`.unsafe` on the *same* opaque decl both carry an
+    // `Arc<TypeDecl>` and differ only by which variant recorded them — so
+    // this pins `.unsafe` down against the emitter independently of the
+    // `.of` case above.
+    let src = r#"
+commons demo {
+  type Token = opaque String
+
+  fn make(s: String) -> Token {
+    Token.unsafe(s)
+  }
+}
+"#;
+    let callees = callees_for(src);
+    assert!(
+        callees
+            .iter()
+            .any(|c| matches!(c, Callee::Unsafe(t) if t.name.name == "Token")),
+        "expected a Callee::Unsafe(\"Token\"), got {callees:?}"
+    );
+    let ts = emit(src);
+    assert!(
+        ts.contains("unsafe(value: string): Token") && ts.contains("return Token.unsafe(s)"),
+        "expected the opaque `.unsafe` constructor's own emission shape — a plain \
+         (non-`Result`-wrapped) brand cast, unlike `.of`'s validating constructor — got:\n{ts}"
+    );
+}
+
+#[test]
 fn bare_sum_variant_construction_is_classified_ctor() {
     let src = r#"
 commons demo {
@@ -148,6 +182,11 @@ commons demo {
             |c| matches!(c, Callee::Ctor { sum, tag } if sum.name.name == "Shape" && tag == "Circle")
         ),
         "expected a Callee::Ctor{{ sum: Shape, tag: Circle }} for the qualified form too, got {callees:?}"
+    );
+    let ts = emit(src);
+    assert!(
+        ts.contains("Circle") && ts.contains("radius"),
+        "expected the variant constructor's own emission shape, got:\n{ts}"
     );
 }
 
@@ -234,6 +273,14 @@ commons demo {
 
 #[test]
 fn duration_millis_static_is_classified_intrinsic() {
+    // Not differential against `emit`, unlike the other cases: `Duration` has
+    // no runtime representation distinct from a bare `Int` (a compile-time-
+    // only brand, ADR 0112), so `Duration.millis(n)` erases to the identity
+    // conversion — the emitted TS is just `return n;`, with no "Duration" or
+    // "millis" substring left to assert on. `bynk-emit`'s own
+    // `check_duration_static`/lowering agreement is exercised by the
+    // existing fixture suite (e.g. `bynkc/tests/fixtures/positive`'s
+    // Duration cases); this test only pins the checker's own classification.
     let src = r#"
 commons demo {
   fn make(n: Int) -> Duration {
