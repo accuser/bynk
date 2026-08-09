@@ -2367,28 +2367,58 @@ pub(crate) fn check_method_call(
     // the deferral bites only on declared methods (ADR 0037).
     match &*tys.get(recv_ty) {
         Ty::List(elem) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_list_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.91 (ADR 0115): a chained builder/terminal on a lazy `Query[T]`.
         Ty::Query(elem) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_query_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.100: a chained builder/terminal on a `Stream[T]`.
         Ty::Stream(elem) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_stream_kernel_method(method, args, *elem, span, ctx);
         }
         // v0.102: the held-resource operations on a `Connection[F]` — `send(f)`
         // (non-consuming) and `close()` (consuming). The linearity pass tracks
         // the ownership transitions; this types the operations.
         Ty::Connection(frame) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_connection_method(method, args, *frame, span, ctx);
         }
         Ty::Map(key, val) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_map_kernel_method(method, args, *key, *val, span, ctx);
         }
         // v0.21: the numeric kernel — conversions as value methods on the
@@ -2399,36 +2429,78 @@ pub(crate) fn check_method_call(
         // opaque type it exposes no `.unsafe` (that is opaque-only, confined
         // to the defining commons).
         Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_numeric_kernel_method(method, args, *base, span, ctx);
         }
         // v0.86 (ADR 0112): the `Duration` kernel — `toMillis`/`toString`.
         Ty::Base(BaseType::Duration) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_duration_kernel_method(method, args, span, ctx);
         }
         // v0.90 (ADR 0114): the `Instant` kernel — `toEpochMillis`/`toString`.
         Ty::Base(BaseType::Instant) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_instant_kernel_method(method, args, span, ctx);
         }
         // v0.110 (ADR 0142): the `Bytes` kernel — `length`/`toBase64`/`decodeUtf8`.
         Ty::Base(BaseType::Bytes) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_bytes_kernel_method(method, args, span, ctx);
         }
         // v0.22a: the string kernel (ADR 0046).
         Ty::Base(BaseType::String) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_string_kernel_method(method, args, span, ctx);
         }
         // v0.22a: the Option/Result combinators as kernel methods (ADR 0048).
         Ty::Option(inner) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_option_kernel_method(method, args, *inner, span, ctx);
         }
         Ty::Result(ok, err) => {
-            ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+            ctx.callees.insert(
+                expr_id,
+                Callee::Kernel {
+                    recv: recv_ty,
+                    op: method.name.clone(),
+                },
+            );
             return check_result_kernel_method(method, args, *ok, *err, span, ctx);
         }
         // The `Effect[Result[T, E]]` combinators (§2.8.3): `mapOk`/`mapErr`/
@@ -2437,7 +2509,13 @@ pub(crate) fn check_method_call(
         // through to the "no methods" error below.
         Ty::Effect(inner) => {
             if let Ty::Result(ok, err) = &*tys.get(*inner) {
-                ctx.callees.insert(expr_id, Callee::Kernel { recv: recv_ty, op: method.name.clone() });
+                ctx.callees.insert(
+                    expr_id,
+                    Callee::Kernel {
+                        recv: recv_ty,
+                        op: method.name.clone(),
+                    },
+                );
                 return check_effect_result_kernel_method(method, args, *ok, *err, span, ctx);
             }
         }

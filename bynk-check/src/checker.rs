@@ -520,7 +520,11 @@ pub enum Callee {
     Capability { cap: String, op: String },
     /// A cross-context capability operation call (`B.Cap.op(...)` /
     /// `Alias.Cap.op(...)`).
-    CrossCap { unit: String, cap: String, op: String },
+    CrossCap {
+        unit: String,
+        cap: String,
+        op: String,
+    },
     /// A cross-context service call (`B.service(...)` / `Alias.service(...)`).
     Cross { unit: String, service: String },
     /// `AgentName(key)` — agent instance construction. No slot exists for
@@ -3470,7 +3474,16 @@ pub(crate) fn type_of(expr: &Expr, expected: Option<TyId>, ctx: &mut Ctx) -> Opt
                 // `ConstructorCall` has no type-argument slot — qualified
                 // variant construction (`Opt.Some(x)`), never a capability
                 // call, so `type_args` is always empty here.
-                check_static_call(type_name, method, &[], args, expr.span, expected, expr.id, ctx)
+                check_static_call(
+                    type_name,
+                    method,
+                    &[],
+                    args,
+                    expr.span,
+                    expected,
+                    expr.id,
+                    ctx,
+                )
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
