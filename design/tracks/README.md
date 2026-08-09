@@ -78,7 +78,6 @@ each track's spine issue; this table is deliberately just the map.
 |---|---|---|---|
 | [`documentation.md`](documentation.md) | [#557](https://github.com/accuser/bynk/issues/557) | Slicing (slice 0 shipped) | Documentation & web presence: the Astro + Starlight migration, a CI snippet-verification harness, playground integration seams |
 | [`idempotency-capability.md`](idempotency-capability.md) | [#921](https://github.com/accuser/bynk/issues/921) | Slicing (slice 0 shipped, #929; call-site key scoping follow-up shipped, #934) | The `Idempotency` capability: mechanical dedup for at-least-once delivery, per design notes §4, §12 |
-| [`semantics-in-the-checker.md`](semantics-in-the-checker.md) | [#1126](https://github.com/accuser/bynk/issues/1126) | Settled — Slicing on merge | Phase 5 of the compiler trajectory — the remaining whole-project checks still in `bynk-emit` relocate to `bynk-check`, closing a named editor diagnostics regression |
 
 (`documentation.md` pre-dates the GitHub-native flow, so its doc was
 committed by an ordinary PR rather than a settling draft PR; the spine issue
@@ -119,17 +118,18 @@ simple relocation, with the resulting duplication named as phase 5's to
 remove. All three named slices shipped (P4.0, P4.1, P4.2), closing R3.7,
 R3.8, R3.9 and R10.2 in full (R3.11 separately found already closed by prior
 paydown); `ide_emit_edge` reads absent.
-`semantics-in-the-checker.md` is the tenth, phase 5 of the same trajectory,
-entry-gated on `project-model.md`'s own retirement note. Its settling PR
-([#1127](https://github.com/accuser/bynk/pull/1127)) closed all five of its
-design questions under review; the real finding was in Q2 — the emission/
-checking boundary phase 4's own P4.1 slice drew informally, without a
-settling review, turned out to already be a named, fixture-pinned,
+`semantics-in-the-checker.md` (now retired) was the tenth, phase 5 of the
+same trajectory, entry-gated on `project-model.md`'s own retirement note.
+Its settling PR ([#1127](https://github.com/accuser/bynk/pull/1127)) closed
+all five of its design questions under review; the real finding was in Q2 —
+the emission/checking boundary phase 4's own P4.1 slice drew informally,
+without a settling review, turned out to already be a named, fixture-pinned,
 CHANGELOG-documented live regression in the editor's own diagnostics
 (`bynk-check/src/analysis.rs`'s own seven-category accounting), not merely
 an architectural judgment call worth re-examining. Q3 folded into that same
-finding. Six candidate slices accepted (P5.0–P5.5), sequenced by whether
-each closes a live editor regression or only architectural compliance.
+finding. All six named slices shipped (P5.0–P5.5), closing R3.5 in full;
+`emit_diagnostics` reads 4/6 (true/naive), true=4 the named floor — see
+`retired-tracks.md`'s closing summary for why naive doesn't also reach 4.
 `agent-capability-encapsulation.md` is a committed Draft that appears in
 neither this table nor `retired-tracks.md`; it predates this row's addition
 and needs a spine issue or a retirement — tracked separately, not by this
@@ -147,6 +147,16 @@ A retired track's closing summary — what shipped, which ADRs carry its
 decisions, the named follow-ons — is kept for the record in
 [`../archive/retired-tracks.md`](../archive/retired-tracks.md):
 
+- **`semantics-in-the-checker.md`** — phase 5 of
+  [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md), opened directly by
+  `project-model.md`'s own retirement note below: every remaining whole-project check still in
+  `bynk-emit` relocates to `bynk-check`, so `bynk-check` is the one crate that checks (R3.5). All six
+  slices shipped (P5.0–P5.5), closing R3.5 in full (R4.6, R4.11, R10.4 reverified still closed, not
+  reopened; R10.1 closed by a crate-doc correction, not a split). Three ADRs:
+  [0329](../decisions/0329-semantics-phase5-rule-scope.md)–[0331](../decisions/0331-semantics-phase5-function-boundary-hook.md).
+  `emit_diagnostics` reads 4/6 (true/naive) — true=4 is the named floor (four `#[cfg(test)]` assertion
+  strings, not live diagnostic construction). Retired 9 August 2026. Opens phase 6 (the IR, per the
+  trajectory). Full closing summary in `../archive/retired-tracks.md`.
 - **`project-model.md`** — phase 4 of
   [`../bynk-compiler-trajectory.md`](../bynk-compiler-trajectory.md): the project model (discovery, the
   unit graph, the schema registry) moved below both `bynk-check` and `bynk-emit` into its own crate,
