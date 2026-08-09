@@ -498,28 +498,22 @@ pub(crate) fn check_call(
         return None;
     }
     // Could be a bare variant constructor with payload. Borrow the matching
-    // sum decls (references only — no full-body clones); the ambiguity check
-    // below reuses the same list.
-    let owners: Vec<&TypeDecl> = ctx
+    // sum decls' own `Arc`s (a pointer bump each, no full-body clones); the
+    // ambiguity check below reuses the same list.
+    let owners: Vec<&Arc<TypeDecl>> = ctx
         .input
         .types
         .values()
-        .map(std::sync::Arc::as_ref)
         .filter(|t| matches!(&t.body, TypeBody::Sum(s) if s.variants.iter().any(|v| v.name.name == name.name)))
         .collect();
     if owners.len() == 1 {
-        // `owners[0]` is a borrow out of `ctx.input.types`'s own `Arc`-wrapped
-        // values (stripped to `&TypeDecl` above) — look the `Arc` back up by
-        // name rather than deep-cloning the declaration into a fresh one.
-        if let Some(sum) = ctx.input.types.get(&owners[0].name.name) {
-            ctx.callees.insert(
-                expr_id,
-                Callee::Ctor {
-                    sum: Arc::clone(sum),
-                    tag: name.name.clone(),
-                },
-            );
-        }
+        ctx.callees.insert(
+            expr_id,
+            Callee::Ctor {
+                sum: Arc::clone(owners[0]),
+                tag: name.name.clone(),
+            },
+        );
         return check_variant_construction(owners[0], &name.name, args, span, expected, ctx);
     }
     // Agent instantiation: `AgentName(key)` constructs an instance keyed by
@@ -3040,6 +3034,17 @@ fn check_test_service_address(
             }
             return None;
         };
+        // The classification recorded above (verb only) is enriched here,
+        // now that the route pattern — the thing `sig.handlers` is actually
+        // matched against below — is known; a later go-to-definition
+        // consumer needs the path, not just the verb, to resolve a handler.
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: format!("{} {path}", method.name),
+            },
+        );
         let matched = sig.handlers.iter().find(|h| {
             matches!(&h.kind, HandlerKind::Http { method: m, path: p } if m.as_str() == method.name && p == path)
         });
@@ -3133,6 +3138,15 @@ fn check_test_service_address(
             }
             return None;
         };
+        // Enrich with the schedule expression `sig.handlers` is matched
+        // against below — same reasoning as the http-verb branch above.
+        ctx.callees.insert(
+            expr_id,
+            Callee::TestService {
+                service: id.name.clone(),
+                address: format!("schedule {expr}"),
+            },
+        );
         let matched = sig
             .handlers
             .iter()

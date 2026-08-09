@@ -472,11 +472,11 @@ impl Ty {
 /// `bynk-emit`'s `lower_method_call`/`lower_call`.
 ///
 /// Adapted to the identity handles this checker already has (Decision A,
-/// `design/pending/the-ir-settling.md`'s `the-ir-callee-in-bynk-check` ADR)
-/// rather than the reference document's `DefId`/`LocalId`/`VariantId`/`OpId`
-/// arena — none of which exists here, since the `Resolve` phase that would
-/// mint them was never built (`project-model.md` §3.4 deferred it to phase
-/// 8). `Arc<FnDecl>`/`Arc<TypeDecl>` are already-cheap resolved handles
+/// ADR 0333, `the-ir-callee-in-bynk-check`) rather than the reference
+/// document's `DefId`/`LocalId`/`VariantId`/`OpId` arena — none of which
+/// exists here, since the `Resolve` phase that would mint them was never
+/// built (`project-model.md` §3.4 deferred it to phase 8).
+/// `Arc<FnDecl>`/`Arc<TypeDecl>` are already-cheap resolved handles
 /// (`ResolvedCommons::fns`/`types`); every other variant's identity is a
 /// name, exactly as the checker already keys capabilities, store fields,
 /// units, and agents.
