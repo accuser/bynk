@@ -603,6 +603,16 @@ fn lower_call_ir(
         )
     };
     if let Callee::Ctor { sum, tag } = callee {
+        // `IrExprKind::Variant` has no `targs` slot, unlike `Call` below —
+        // deliberate, not dropped: `type_args` can never be non-empty here.
+        // `check_call`'s own gate rejects any explicit type argument before
+        // it even considers whether `name` is a variant constructor
+        // ("`{name}` is not a generic function — it takes no type
+        // arguments", `calls.rs:484-495`), and `ConstructorCall` (the
+        // qualified form, `Opt.Some(x)`) has no `type_args` slot on the AST
+        // at all — a generic sum's own instantiation is inferred from the
+        // payload's argument types instead (`check_variant_construction`),
+        // never named explicitly at a call site.
         return IrExpr {
             kind: IrExprKind::Variant {
                 sum,
@@ -660,6 +670,13 @@ fn lower_lambda_ir(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerIrCtx) -> IrExpr
              check_lambda only ever types one as a function type"
         ),
     };
+    assert_eq!(
+        lambda.params.len(),
+        param_tys.len(),
+        "bynk internal error (ADR 0334): a Lambda's own recorded Ty::Fn has a different arity \
+         than its own AST params — bynk-emit::ir::lower and bynk-check disagree about this \
+         lambda's shape"
+    );
     cx.push_scope();
     for (p, pty) in lambda.params.iter().zip(&param_tys) {
         cx.bind(p.name.name.clone(), *pty);
@@ -1296,6 +1313,59 @@ commons demo {
         assert!(targs.is_empty());
         assert_eq!(args.len(), 1);
         assert!(matches!(&args[0].kind, IrExprKind::Const(ConstVal::Int(1))));
+    }
+
+    #[test]
+    fn call_with_an_explicit_type_argument_resolves_targs() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn identity[T](x: T) -> T { x }
+
+  fn use_it() -> Int { identity[Int](1) }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "use_it");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Call { callee, targs, .. } = &tail.kind else {
+            panic!("expected Call, got {:?}", tail.kind)
+        };
+        assert!(matches!(callee, Callee::Fn(f) if f.name.display() == "identity"));
+        assert_eq!(targs.len(), 1);
+        assert!(matches!(
+            &*program.program().ty_intern.get(targs[0]),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn call_with_an_explicit_type_argument_naming_the_enclosing_fns_own_rigid_var() {
+        // The case `resolve_type_ref_in`'s own `type_vars` set exists for
+        // (`lower.rs`'s own `LowerIrCtx::resolve_type_ref`) — a wrong
+        // `type_vars` seed for `wrap`'s own body turns into a panic here
+        // (`identity[U]`'s own `U` fails to resolve as a declared type)
+        // rather than a silently wrong result.
+        let program = checked_program(
+            r#"
+commons demo {
+  fn identity[T](x: T) -> T { x }
+
+  fn wrap[U](x: U) -> U { identity[U](x) }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "wrap");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Call { callee, targs, .. } = &tail.kind else {
+            panic!("expected Call, got {:?}", tail.kind)
+        };
+        assert!(matches!(callee, Callee::Fn(f) if f.name.display() == "identity"));
+        assert_eq!(targs.len(), 1);
+        assert!(matches!(
+            &*program.program().ty_intern.get(targs[0]),
+            Ty::Var(name) if name == "U"
+        ));
     }
 
     #[test]
