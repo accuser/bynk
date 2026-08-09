@@ -681,6 +681,7 @@ fn check_provider_decls(
                     hints,
                     locals,
                     requirements,
+                    callees: &mut typed.callees,
                 },
             );
         }
@@ -1972,6 +1973,7 @@ fn check_service_decls(
                     hints,
                     locals,
                     requirements,
+                    callees: &mut typed.callees,
                 },
             );
         }
@@ -2934,6 +2936,7 @@ fn check_agent_decls(
             hints,
             locals,
             requirements,
+            &mut typed.callees,
         );
 
         // v0.116 (testing track slice 4): step invariants — predicates over the
@@ -2949,6 +2952,7 @@ fn check_agent_decls(
             hints,
             locals,
             requirements,
+            &mut typed.callees,
             tys,
         );
 
@@ -3017,6 +3021,7 @@ fn check_agent_decls(
                     hints,
                     locals,
                     requirements,
+                    callees: &mut typed.callees,
                 },
             );
         }

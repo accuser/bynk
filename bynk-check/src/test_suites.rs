@@ -712,6 +712,7 @@ fn check_integration_case_body(
     );
     let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types, tys).unwrap();
     let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
+    let mut callees: HashMap<ExprId, checker::Callee> = HashMap::new();
     // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
     let mut no_hints = HintSink::new();
     let mut no_locals = LocalsSink::new();
@@ -738,6 +739,7 @@ fn check_integration_case_body(
             hints: &mut no_hints,
             locals: &mut no_locals,
             requirements: &mut no_requirements,
+            callees: &mut callees,
         },
     );
 }
@@ -925,6 +927,7 @@ fn stub_value_typechecks(
 ) -> bool {
     let block = value_block(e);
     let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
+    let mut callees: HashMap<ExprId, checker::Callee> = HashMap::new();
     let mut errs: Vec<CompileError> = Vec::new();
     checker::check_handler_body(
         resolved,
@@ -937,6 +940,7 @@ fn stub_value_typechecks(
             hints: &mut HintSink::new(),
             locals: &mut LocalsSink::new(),
             requirements: &mut RequirementSink::new(),
+            callees: &mut callees,
         },
     );
     errs.is_empty()
@@ -1087,6 +1091,7 @@ pub fn typecheck_case_body(
     tys: &Arc<Types>,
 ) -> HashMap<ExprId, checker::TypedExpr> {
     let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
+    let mut callees: HashMap<ExprId, checker::Callee> = HashMap::new();
     // Synthesise an Effect[Result[(), ValidationError]] return type as a
     // stand-in for Effect[Result[(), ExpectationError]]. v0.7 doesn't model an
     // explicit ExpectationError type — the runtime catches it instead.
@@ -1156,6 +1161,7 @@ pub fn typecheck_case_body(
             hints: &mut no_hints,
             locals: &mut no_locals,
             requirements: &mut no_requirements,
+            callees: &mut callees,
         },
     );
     expr_types
@@ -2039,6 +2045,7 @@ fn check_property_body(
     // Type the `where`/body predicates in the target's privileged view with the
     // bindings in scope — mirroring the `case` body context.
     let mut expr_types: HashMap<ExprId, checker::TypedExpr> = HashMap::new();
+    let mut callees: HashMap<ExprId, checker::Callee> = HashMap::new();
     let unit_span = prop.span;
     let synthetic_return = TypeRef::Effect(
         Box::new(TypeRef::Result(
@@ -2099,6 +2106,7 @@ fn check_property_body(
             hints: &mut no_hints,
             locals: &mut no_locals,
             requirements: &mut no_requirements,
+            callees: &mut callees,
         },
     );
 
