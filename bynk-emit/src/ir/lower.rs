@@ -21,8 +21,10 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    BinOp, Block, Expr, ExprId, ExprKind, FnDecl, FnName, LambdaExpr, Statement, TypeBody, UnaryOp,
+    BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, LambdaExpr, Statement,
+    TypeBody, UnaryOp,
 };
+use bynk_syntax::span::Span;
 
 use crate::ir::{ConstVal, GlobalRef, IrExpr, IrExprKind, IrStmt};
 
@@ -503,11 +505,33 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
         // parenthesized covered-node subexpression doesn't panic.
         ExprKind::Paren(inner) => lower_expr_ir(inner, cx),
 
+        // `p implies q` -> `Or { lhs: Not(p), rhs: q }` (P6.3, design/tracks/
+        // the-ir.md §6, R6.7 — the reference's own Part 6.4 table). Peeled off
+        // the bundled comparison/arithmetic `todo!()` below, which P6.2
+        // (#1143) already confirmed has no dedicated IrExprKind and no Callee
+        // classification either.
+        ExprKind::BinOp(BinOp::Implies, lhs, rhs) => IrExpr {
+            kind: IrExprKind::Or {
+                // `Not`'s own type is Bool — the same type `Implies` itself
+                // (and therefore `lhs`) already carries, so no new type is
+                // synthesised here, only reused.
+                lhs: Box::new(IrExpr {
+                    kind: IrExprKind::Not {
+                        operand: Box::new(lower_expr_ir(lhs, cx)),
+                    },
+                    ty,
+                    span: lhs.span,
+                }),
+                rhs: Box::new(lower_expr_ir(rhs, cx)),
+            },
+            ty,
+            span,
+        },
+
         // Every arm below is genuinely out of this slice's scope — see
         // design/tracks/the-ir.md §6 for which future slice covers it.
         ExprKind::BinOp(
-            BinOp::Implies
-            | BinOp::Eq
+            BinOp::Eq
             | BinOp::NotEq
             | BinOp::Lt
             | BinOp::LtEq
@@ -520,9 +544,9 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             ..,
         ) => todo!(
             "comparison/arithmetic BinOp has no dedicated IrExprKind in Part 6.2 and no Callee \
-             classification either — P6.2 (#1143) confirmed neither exists, so this stays a gap \
-             for whichever future slice actually names it (Implies desugars to Or(Not, _), P6.3's \
-             own row)"
+             classification either — P6.2 (#1143) confirmed neither exists, and P6.3 (#1145) \
+             didn't name it either (only Implies, the row's one BinOp, was in scope); stays a gap \
+             for whichever future slice actually names it"
         ),
         ExprKind::UnaryOp(UnaryOp::Neg, _) => {
             todo!("UnaryOp::Neg has no Callee classification — same gap as arithmetic BinOp above")
@@ -535,10 +559,19 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
         ExprKind::Ok(_) | ExprKind::Err(_) | ExprKind::Some(_) | ExprKind::None => {
             todo!(
                 "Result/Option constructors — P6.2 (#1143) confirmed these are not yet \
-                 Callee-classified by P6.0 either, so ir::lower still can't drive them"
+                 Callee-classified by P6.0 either, so ir::lower still can't drive them; P6.3 \
+                 (#1145, Decision B) named the deeper blocker too — Option/Result are built-in \
+                 Ty variants with no Arc<TypeDecl> to put in IrExprKind::Variant's `sum` field \
+                 the way a user-declared sum has, and no ADR has decided how to represent that \
+                 identity yet"
             )
         }
-        ExprKind::Question(_) => todo!("`?` propagation — P6.3's desugaring table (R6.7-R6.9)"),
+        ExprKind::Question(_) => todo!(
+            "`?` propagation desugars to a real Match (scrutinee: e, arms: Ok(v) => v, Err(e) \
+             => Return(Err(...))) — genuinely gated on P6.4's Pattern IR, not P6.1: \
+             IrArm/Exhaustive/MatchForm are still uninhabited placeholder enums (ir.rs), so no \
+             value of Match's own arms field is constructible yet (P6.3, #1145, Decision A)"
+        ),
         ExprKind::ConstructorCall { args, .. } => lower_call_ir(e, None, &[], args, cx),
         ExprKind::MethodCall {
             receiver,
@@ -547,15 +580,37 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             ..
         } => lower_call_ir(e, Some(receiver), type_args, args, cx),
         ExprKind::Match { .. } => todo!("Match — P6.4/P6.5 (Pattern IR + Match lowering)"),
-        ExprKind::Is { .. } => todo!("`is` pattern test — P6.3's desugaring table"),
-        ExprKind::RecordSpread { .. } => todo!("record spread — P6.3's desugaring table (R6.7)"),
-        ExprKind::Expect(_) => todo!("`expect` expression — not named by any P6.x rule yet"),
-        ExprKind::Val { .. } => todo!("`Val[T]` — test-only, not named by any P6.x rule yet"),
-        ExprKind::Wire(_) => todo!("`Wire(...)` — test-only, not named by any P6.x rule yet"),
-        ExprKind::Observation(_) => {
-            todo!("capability-call observation — not named by any P6.x rule yet")
-        }
-        ExprKind::Trace { .. } => todo!("`trace(...)` — not named by any P6.x rule yet"),
+        ExprKind::Is { .. } => todo!(
+            "`is` pattern test desugars to a real Match (per the reference's own table) — same \
+             P6.4 Pattern IR gate as `?` above, not buildable on P6.1 alone (P6.3, #1145, \
+             Decision A)"
+        ),
+        ExprKind::RecordSpread {
+            base, overrides, ..
+        } => lower_record_spread_ir(ty, span, base, overrides, cx),
+        ExprKind::Expect(_) => todo!(
+            "`expect` expression — test-body-only, gated by ctx.in_test_body \
+             (bynk-check/src/checker.rs's check_body), unreachable through this pass's own \
+             single-file checked_program/find_fn/lower_fn harness without first building or \
+             routing through bynk-check's heavier project-level test machinery (P6.3, #1145, \
+             Decision C)"
+        ),
+        ExprKind::Val { .. } => todo!(
+            "`Val[T]` — test-body-only, same unreachable-through-this-harness gap as `expect` \
+             above (P6.3, #1145, Decision C)"
+        ),
+        ExprKind::Wire(_) => todo!(
+            "`Wire(...)` — test-body-only, same unreachable-through-this-harness gap as `expect` \
+             above (P6.3, #1145, Decision C)"
+        ),
+        ExprKind::Observation(_) => todo!(
+            "capability-call observation — test-body-only, same unreachable-through-this-harness \
+             gap as `expect` above (P6.3, #1145, Decision C)"
+        ),
+        ExprKind::Trace { .. } => todo!(
+            "`trace(...)` — test-body-only, same unreachable-through-this-harness gap as \
+             `expect` above (P6.3, #1145, Decision C)"
+        ),
     }
 }
 
@@ -787,6 +842,137 @@ fn named_decl(ty: TyId, cx: &LowerIrCtx) -> Arc<bynk_syntax::ast::TypeDecl> {
              RecordConstruction just resolved to it"
         )
     }))
+}
+
+/// `TypeName { ...base, field: value, ... }` -> `Block { stmts: [Let(tmp,
+/// base)], tail: Record { <complete, resolved field list> } }` (P6.3,
+/// design/tracks/the-ir.md §6, R6.7 — the reference's own Part 6.4 table,
+/// Decision E). Every field the target record declares is present in the
+/// tail `Record`, each resolved from `overrides` when named there, or
+/// otherwise from a synthesised `tmp.<field>` read — the same
+/// complete-by-construction shape `RecordConstruction` already lowers to,
+/// not the current string emitter's own raw `...spread` splice
+/// (`emitter/lower.rs`'s `lower_record_spread`).
+fn lower_record_spread_ir(
+    ty: TyId,
+    span: Span,
+    base: &Expr,
+    overrides: &[FieldInit],
+    cx: &mut LowerIrCtx,
+) -> IrExpr {
+    // `ty` is this spread's own resolved type — `check_record_spread`
+    // returns the base's own type unchanged (Some(base_ty)), so the
+    // declaring `TypeDecl` and its applied type arguments both come from
+    // here, the same way `RecordConstruction`'s lowering reads `def` back
+    // from its own resolved type rather than re-resolving `type_name`.
+    let def = named_decl(ty, cx);
+    let base_args = match &*cx.program.ty_intern.get(ty) {
+        Ty::Named { args, .. } => args.clone(),
+        _ => unreachable!("named_decl above already panics on a non-Ty::Named `ty`"),
+    };
+    let TypeBody::Record(record_body) = &def.body else {
+        panic!(
+            "bynk internal error (ADR 0334): `{}` is a RecordSpread's own resolved record type, \
+             but its declaration is not TypeBody::Record",
+            def.name.name
+        )
+    };
+
+    let base_ir = lower_expr_ir(base, cx);
+    let base_ty = base_ir.ty;
+    let base_span = base_ir.span;
+    // A synthesised local, never a source-level name — no collision risk
+    // with a bound name from the surrounding scope, since `parser`'s own
+    // identifier grammar never produces one starting with `__`.
+    const TMP: &str = "__spread_base";
+    let stmts = vec![IrStmt::Let {
+        local: TMP.to_string(),
+        value: base_ir,
+    }];
+
+    let overrides_by_name: HashMap<&str, &FieldInit> = overrides
+        .iter()
+        .map(|f| (f.name.name.as_str(), f))
+        .collect();
+
+    let fields = record_body
+        .fields
+        .iter()
+        .map(|decl_field| {
+            let name = decl_field.name.name.clone();
+            let value = match overrides_by_name.get(name.as_str()) {
+                // An override's own value is lowered exactly like
+                // `RecordConstruction`'s explicit/shorthand field above —
+                // same two forms, same rules for each.
+                Some(f) => match &f.value {
+                    Some(v) => lower_expr_ir(v, cx),
+                    None => {
+                        let local_ty = cx.lookup(&f.name.name).unwrap_or_else(|| {
+                            panic!(
+                                "bynk internal error (ADR 0334): shorthand spread override `{}` \
+                                 has no local binding in this pass's own scope — the checker \
+                                 accepted it, so its own `ctx.lookup` must have found one",
+                                f.name.name
+                            )
+                        });
+                        IrExpr {
+                            kind: lower_ident_ir(&f.name.name, cx),
+                            ty: local_ty,
+                            span: f.name.span,
+                        }
+                    }
+                },
+                // Not overridden — spread through from `tmp`. The field's own
+                // type is the declared type instantiated at this spread's own
+                // base type arguments (v0.157/ADR 0183's `instantiate_field_ty`,
+                // the same substitution `check_record_spread` already applies
+                // to type-check an override against a generic record).
+                None => {
+                    let field_ty = checker::instantiate_field_ty(
+                        &def,
+                        &base_args,
+                        &decl_field.type_ref,
+                        &cx.program.types,
+                        &cx.program.ty_intern,
+                    )
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "bynk internal error (ADR 0334): declared field `{name}` of `{}` \
+                             does not resolve against this spread's own base type arguments, \
+                             but the checker already accepted this record spread",
+                            def.name.name
+                        )
+                    });
+                    IrExpr {
+                        kind: IrExprKind::Field {
+                            base: Box::new(IrExpr {
+                                kind: IrExprKind::Local(TMP.to_string()),
+                                ty: base_ty,
+                                span: base_span,
+                            }),
+                            field: name.clone(),
+                        },
+                        ty: field_ty,
+                        span: decl_field.span,
+                    }
+                }
+            };
+            (name, value)
+        })
+        .collect();
+
+    IrExpr {
+        kind: IrExprKind::Block {
+            stmts,
+            tail: Box::new(IrExpr {
+                kind: IrExprKind::Record { def, fields },
+                ty,
+                span,
+            }),
+        },
+        ty,
+        span,
+    }
 }
 
 /// Decision E: targeted minimal fixtures, one per node kind this slice
@@ -1492,5 +1678,92 @@ commons demo {
         assert_eq!(params, &["y".to_string()]);
         assert!(captures.is_empty());
         assert!(matches!(&body.kind, IrExprKind::Local(n) if n == "y"));
+    }
+
+    // P6.3 (#1145): Implies/RecordSpread desugaring — the only two of the
+    // reference's own Part 6.4 desugaring-table rows this slice covers
+    // (Decision D); every other row named there stays a `todo!()` citing its
+    // own specific blocker (Decisions A–C).
+
+    #[test]
+    fn implies_desugars_to_or_not() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn imp(p: Bool, q: Bool) -> Bool { p implies q }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "imp");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Or { lhs, rhs } = &tail.kind else {
+            panic!("expected Or, got {:?}", tail.kind)
+        };
+        let IrExprKind::Not { operand } = &lhs.kind else {
+            panic!("expected Or's lhs to be Not, got {:?}", lhs.kind)
+        };
+        assert!(matches!(&operand.kind, IrExprKind::Local(n) if n == "p"));
+        assert!(matches!(&rhs.kind, IrExprKind::Local(n) if n == "q"));
+        assert!(matches!(
+            &*program.program().ty_intern.get(lhs.ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Bool)
+        ));
+    }
+
+    #[test]
+    fn record_spread_resolves_every_declared_field_override_and_spread_through() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Point = { x: Int, y: Int, z: Int }
+
+  fn shift(p: Point, y: Int) -> Point { Point { ...p, x: 0, y } }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "shift");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Block {
+            stmts,
+            tail: block_tail,
+        } = &tail.kind
+        else {
+            panic!("expected Block, got {:?}", tail.kind)
+        };
+        assert_eq!(stmts.len(), 1);
+        let IrStmt::Let { local, value } = &stmts[0] else {
+            panic!("expected Let, got {:?}", stmts[0])
+        };
+        assert_eq!(local, "__spread_base");
+        assert!(matches!(&value.kind, IrExprKind::Local(n) if n == "p"));
+
+        let IrExprKind::Record { def, fields } = &block_tail.kind else {
+            panic!("expected Record, got {:?}", block_tail.kind)
+        };
+        assert_eq!(def.name.name, "Point");
+        assert_eq!(fields.len(), 3);
+
+        // `x: 0` — a full-form override.
+        assert_eq!(fields[0].0, "x");
+        assert!(matches!(
+            &fields[0].1.kind,
+            IrExprKind::Const(ConstVal::Int(0))
+        ));
+
+        // `y` — a shorthand override, reading the `y` parameter, not `p.y`.
+        assert_eq!(fields[1].0, "y");
+        assert!(matches!(&fields[1].1.kind, IrExprKind::Local(n) if n == "y"));
+
+        // `z` — not overridden, spread through as a synthesised `tmp.z` read.
+        assert_eq!(fields[2].0, "z");
+        let IrExprKind::Field { base, field } = &fields[2].1.kind else {
+            panic!("expected Field, got {:?}", fields[2].1.kind)
+        };
+        assert_eq!(field, "z");
+        assert!(matches!(&base.kind, IrExprKind::Local(n) if n == "__spread_base"));
+        assert!(matches!(
+            &*program.program().ty_intern.get(fields[2].1.ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
     }
 }
