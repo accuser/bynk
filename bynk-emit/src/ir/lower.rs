@@ -26,8 +26,10 @@ use bynk_syntax::ast::{
 };
 use bynk_syntax::span::Span;
 
+use crate::emitter::match_needs_if_chain;
 use crate::ir::{
     BindingMode, ConstVal, Exhaustive, GlobalRef, IrArm, IrExpr, IrExprKind, IrPat, IrStmt,
+    MatchForm,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -590,10 +592,16 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             )
         }
         ExprKind::Question(_) => todo!(
-            "`?` propagation desugars to a real Match (scrutinee: e, arms: Ok(v) => v, Err(e) \
-             => Return(Err(...))) — genuinely gated on P6.4's Pattern IR, not P6.1: \
-             IrArm/Exhaustive/MatchForm are still uninhabited placeholder enums (ir.rs), so no \
-             value of Match's own arms field is constructible yet (P6.3, #1145, Decision A)"
+            "`?` propagation's real shipped desugar (emitter/lower.rs:1012-1042, ADR 0177/ADR \
+             0178) branches on the operand's own checked type into three distinct shapes — an \
+             `Option[T]?` early-returns HttpResult.NotFound (not any Err construction at all), \
+             a `Result[T,E]?` either returns the scrutinee value unchanged or, under a declared \
+             `embeds` conversion, constructs a new Err(EmbedType.Variant(..)) — not the single \
+             generic Match{{Ok(v) => v, Err(e) => Return(Err(convert(e)))}} shape this comment \
+             used to claim; modelling three divergent per-operand-type shapes as one \
+             Match is its own design fork, not this row's own commission (P6.5, #1159, \
+             Decision C — Match itself is real as of this slice, this gap is Question's own, \
+             not a shared one)"
         ),
         ExprKind::ConstructorCall { args, .. } => lower_call_ir(e, None, &[], args, cx),
         ExprKind::MethodCall {
@@ -602,11 +610,38 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             args,
             ..
         } => lower_call_ir(e, Some(receiver), type_args, args, cx),
-        ExprKind::Match { .. } => todo!("Match — P6.4/P6.5 (Pattern IR + Match lowering)"),
+        ExprKind::Match { discriminant, arms } => {
+            let scrutinee = Box::new(lower_expr_ir(discriminant, cx));
+            let scrutinee_ty = scrutinee.ty;
+            let ir_arms: Vec<IrArm> = arms
+                .iter()
+                .map(|a| lower_arm_ir(a, scrutinee_ty, cx))
+                .collect();
+            let exhaustive = lower_exhaustive_ir(arms);
+            let form = if match_needs_if_chain(arms) {
+                MatchForm::IfChain
+            } else {
+                MatchForm::Flat
+            };
+            IrExpr {
+                kind: IrExprKind::Match {
+                    scrutinee,
+                    arms: ir_arms,
+                    exhaustive,
+                    form,
+                },
+                ty,
+                span,
+            }
+        }
         ExprKind::Is { .. } => todo!(
-            "`is` pattern test desugars to a real Match (per the reference's own table) — same \
-             P6.4 Pattern IR gate as `?` above, not buildable on P6.1 alone (P6.3, #1145, \
-             Decision A)"
+            "`is`'s real shipped desugar (`lower_is`, emitter/lower.rs:5615) already diverges \
+             from a plain two-arm boolean Match for a refined-type check: it skips \
+             pattern-match machinery entirely (refined_check_as_bool plus a forced receiver \
+             temp, is_receiver_ref_forced) — R5.9 (narrowing-scope recording) and R5.10 (the \
+             forced-receiver-temp as an explicit IR Let), both already explicitly deferred by \
+             #1157's own Decision D, unaffected by Match becoming real this slice (P6.5, #1159, \
+             Decision C)"
         ),
         ExprKind::RecordSpread {
             base, overrides, ..
@@ -1056,9 +1091,10 @@ fn lower_record_spread_ir(
 }
 
 /// P6.4 (design/tracks/the-ir.md §6, #1157): `&Pattern -> IrPat`, tested
-/// standalone against real certified programs — not yet called by
-/// [`lower_expr_ir`]'s `Match`/`Question`/`Is` arms, all three still
-/// `todo!()` until P6.5 decides `MatchForm` and wires a real consumer.
+/// standalone against real certified programs. Since P6.5 (#1159), also
+/// reached indirectly through [`lower_expr_ir`]'s `Match` arm (via
+/// [`lower_arm_ir`]) — `Question`/`Is` stay `todo!()`, each for its own
+/// reason, unaffected by `Match` becoming real.
 ///
 /// `scrutinee_ty` is the type of whatever value this particular pattern
 /// matches against — the match's own discriminant at the top level, or a
@@ -1256,9 +1292,10 @@ fn ir_pat_contains_or(pat: &IrPat) -> bool {
 
 /// P6.4 (#1157): the non-form-deciding parts of a `MatchArm` —
 /// `pat`/`guard`/`body`/`binds`/`binding_mode` — everything but the
-/// `MatchForm` policy R5.2 decides, which is P6.5's own job. Tested
-/// standalone the same way [`lower_pattern_ir`] is; not called by
-/// [`lower_expr_ir`]'s `Match` arm, still `todo!()`.
+/// `MatchForm` policy R5.2 decides, which P6.5 (#1159) builds separately
+/// (`match_needs_if_chain`, reused from the string emitter — Decision B).
+/// Tested standalone the same way [`lower_pattern_ir`] is; since P6.5, also
+/// called per-arm by [`lower_expr_ir`]'s real `Match` arm.
 ///
 /// R5.4's ordering (structural test, then refinement, then bindings, then
 /// guard) is why `guard`/`body` are lowered with the pattern's own bound
@@ -2244,11 +2281,13 @@ commons demo {
 
     // ==== P6.4 (#1157): IrPat/IrArm/Exhaustive, tested standalone ====
     //
-    // None of `lower_pattern_ir`/`lower_arm_ir`/`lower_exhaustive_ir` is
-    // called by `lower_expr_ir`'s `Match` arm — still `todo!()`, P6.5's own
-    // job. Every fixture below digs its own `match` straight out of a
-    // fixture fn's body tail and lowers it through these three entry points
-    // directly, bypassing `lower_expr_ir` entirely.
+    // `lower_pattern_ir`/`lower_arm_ir`/`lower_exhaustive_ir` are exercised
+    // here at their own standalone granularity — each fixture below digs its
+    // own `match` straight out of a fixture fn's body tail and lowers it
+    // through these three entry points directly, bypassing `lower_expr_ir`.
+    // Since P6.5 (#1159), the same three are also reached through the
+    // ordinary `lower_expr_ir`/`lower_fn_body_ir` path — see the `match_*`
+    // tests below this section for that coverage.
 
     /// Every fixture below is a single-expression `fn` body whose tail is
     /// `ExprKind::Match` — no general-purpose statement walk is needed.
@@ -2651,5 +2690,190 @@ commons demo {
             span: Span::default(),
         };
         let _ = lower_exhaustive_ir(std::slice::from_ref(&arm));
+    }
+
+    // ==== P6.5 (#1159): Match wired to a real consumer ====
+    //
+    // Unlike the P6.4 section above, every fixture below goes through the
+    // ordinary `lower_expr_ir`/`lower_fn_body_ir` path — no digging a
+    // fixture's own `match` out by hand and calling `lower_arm_ir`/
+    // `lower_exhaustive_ir` directly.
+
+    #[test]
+    fn match_through_lower_expr_ir_builds_a_real_match_node_with_flat_form() {
+        // Also this slice's own end-to-end coverage of `Exhaustive::Total`
+        // reachable through `lower_fn_body_ir` — the P6.4 section above only
+        // ever reaches it through the standalone `lower_exhaustive_ir` entry
+        // point, not the real `ExprKind::Match` arm this slice wires up.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Outcome =
+    | Hit(score: Int)
+    | Miss
+
+  fn describe(o: Outcome) -> Int {
+    match o {
+      Hit(score) => score
+      Miss => 0
+    }
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "describe");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Match {
+            scrutinee,
+            arms,
+            exhaustive,
+            form,
+        } = &tail.kind
+        else {
+            panic!("expected Match, got {:?}", tail.kind)
+        };
+        assert!(matches!(&scrutinee.kind, IrExprKind::Local(n) if n == "o"));
+        assert_eq!(arms.len(), 2);
+        assert!(matches!(&arms[0].pat, IrPat::Variant { tag, .. } if tag == "Hit"));
+        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(n) if n == "score"));
+        assert!(matches!(&arms[1].pat, IrPat::Variant { tag, .. } if tag == "Miss"));
+        assert!(matches!(exhaustive, Exhaustive::Total));
+        assert_eq!(*form, MatchForm::Flat);
+    }
+
+    #[test]
+    fn match_with_a_guarded_arm_gets_if_chain_form() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Outcome =
+    | Hit(flag: Bool)
+    | Miss
+
+  fn describe(o: Outcome) -> Int {
+    match o {
+      Hit(flag) if flag => 1
+      _ => 0
+    }
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "describe");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Match { form, .. } = &tail.kind else {
+            panic!("expected Match, got {:?}", tail.kind)
+        };
+        assert_eq!(*form, MatchForm::IfChain);
+    }
+
+    #[test]
+    fn match_with_a_nested_refutable_payload_pattern_gets_if_chain_form() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn describe(x: Result[Option[Int], String]) -> Int {
+    match x {
+      Ok(Some(v)) => v
+      Ok(None) => 0
+      Err(_) => 0
+    }
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "describe");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Match { form, .. } = &tail.kind else {
+            panic!("expected Match, got {:?}", tail.kind)
+        };
+        assert_eq!(*form, MatchForm::IfChain);
+    }
+
+    #[test]
+    fn match_construction_is_position_agnostic_tail_vs_nested() {
+        // Mirrors `if_lowers_both_branches_as_blocks_not_return_wrapped`'s
+        // own precedent: `Match`'s own scrutinee/arms/exhaustive/form don't
+        // depend on whether the match sits in a fn body's own tail (wrapped
+        // in `Return` by `lower_fn_body_ir`) or nested inside another
+        // expression (here, a `let`'s own value) — the same source-level
+        // match lowers to the same shape either way, since `MatchForm`
+        // deliberately doesn't record a position axis (Decision A).
+        let program = checked_program(
+            r#"
+commons demo {
+  type Outcome =
+    | Hit(score: Int)
+    | Miss
+
+  fn tail_position(o: Outcome) -> Int {
+    match o {
+      Hit(score) => score
+      Miss => 0
+    }
+  }
+
+  fn nested_position(o: Outcome) -> Int {
+    let result = match o {
+      Hit(score) => score
+      Miss => 0
+    }
+    result
+  }
+}
+"#,
+        );
+
+        let tail_ir = lower_fn(&program, "tail_position");
+        let tail = fn_tail(&tail_ir);
+        let IrExprKind::Match {
+            arms: tail_arms,
+            exhaustive: tail_exhaustive,
+            form: tail_form,
+            ..
+        } = &tail.kind
+        else {
+            panic!("tail_position: expected Match, got {:?}", tail.kind)
+        };
+
+        let nested_ir = lower_fn(&program, "nested_position");
+        let IrExprKind::Block { stmts, .. } = &nested_ir.kind else {
+            panic!(
+                "lower_fn_body_ir always returns IrExprKind::Block, got {:?}",
+                nested_ir.kind
+            )
+        };
+        let IrStmt::Let {
+            value: nested_match,
+            ..
+        } = &stmts[0]
+        else {
+            panic!("nested_position: expected a Let statement, got {stmts:?}")
+        };
+        let IrExprKind::Match {
+            arms: nested_arms,
+            exhaustive: nested_exhaustive,
+            form: nested_form,
+            ..
+        } = &nested_match.kind
+        else {
+            panic!(
+                "nested_position: expected Match, got {:?}",
+                nested_match.kind
+            )
+        };
+
+        fn tags(arms: &[IrArm]) -> Vec<&str> {
+            arms.iter()
+                .map(|a| match &a.pat {
+                    IrPat::Variant { tag, .. } => tag.as_str(),
+                    other => panic!("expected a Variant pattern, got {other:?}"),
+                })
+                .collect()
+        }
+        assert_eq!(tags(tail_arms), tags(nested_arms));
+        assert_eq!(*tail_form, *nested_form);
+        assert!(matches!(tail_exhaustive, Exhaustive::Total));
+        assert!(matches!(nested_exhaustive, Exhaustive::Total));
     }
 }

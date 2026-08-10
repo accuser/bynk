@@ -5254,7 +5254,13 @@ fn emit_match_body(
 /// or a refutable nested payload pattern — a JS `switch` on `.tag` can express
 /// neither. Flat, unguarded matches keep the `switch` (zero churn to existing
 /// output).
-fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
+///
+/// `pub(crate)` since P6.5 (#1159, Decision B) — `bynk-emit::ir::lower`
+/// reuses this pure predicate verbatim to decide `MatchForm`, rather than
+/// re-deriving an equivalent one over `IrPat`'s own shape, so the string
+/// emitter's own if-chain-vs-switch choice and the IR's own recorded `form`
+/// can never silently disagree.
+pub(crate) fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
     arms.iter().any(|a| {
         a.guard.is_some()
             || pattern_has_nested_test(&a.pattern)
@@ -5264,7 +5270,10 @@ fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
 
 /// True when `pat` carries a payload sub-pattern that is itself refutable (a
 /// nested variant/literal) — i.e. it cannot be tested by a single `.tag` switch.
-fn pattern_has_nested_test(pat: &Pattern) -> bool {
+///
+/// `pub(crate)` since P6.5 (#1159, Decision B) — same reuse rationale as
+/// [`match_needs_if_chain`], which calls this directly.
+pub(crate) fn pattern_has_nested_test(pat: &Pattern) -> bool {
     match pat {
         Pattern::Variant { bindings, .. } => bindings.iter().any(|b| {
             let sp = b.pattern();
