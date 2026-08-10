@@ -39,6 +39,17 @@
 //! constraint that its whole seven-variant design-sketch shape must exist as
 //! of this slice — see [`IrItem`]'s own doc comment for exactly which are
 //! real.
+//!
+//! **P6.7 (#1163) adds [`StoreFieldIr`]/[`StoreKindIr`]/[`IndexIr`]** (Part
+//! 6.6's own trailing two structs, R6.14) — an agent `store` field's own
+//! state shape and index-table keys, derived once here rather than
+//! re-derived independently by both the checker's own ephemeral
+//! `checker::StoreField` dispatch and the shipped emitter's own
+//! `store_map_fields`/`store_cache_fields`/`store_log_fields`/…
+//! (`bynk-emit/src/emitter/emit.rs`). Same posture as every prior P6.x
+//! slice: no `IrItem` variant references these yet — `IrItem::Agent`/
+//! `Service` remain unconstructed (see [`IrItem`]'s own doc comment for
+//! exactly what still blocks them).
 
 use std::sync::Arc;
 
@@ -383,11 +394,14 @@ pub(crate) enum IrStmt {
 /// deferred variant has its own real, distinct blocker, not a shared
 /// "later" (full grounding in #1161's own Decision D):
 /// - `Agent`/`Service` both need `IrHandler`/`StoreFieldIr`/`CommitShape` —
-///   P6.7's own commission (R6.14/R6.15); `design/tracks/the-ir.md`'s own
-///   slice table gates P6.7 on P6.6, so those types are not available to
-///   this slice, not merely deferred by choice. `Service` additionally
-///   carries a materially larger surface than its own reference sketch
-///   shows at all (CORS/security-headers/request-body-size policy structs,
+///   `StoreFieldIr`/`StoreKindIr` are real as of P6.7 (R6.14, #1163), but
+///   `CommitShape` (R6.15) is P6.8's own row and `IrHandler` is named by
+///   neither row (`design/tracks/the-ir.md`'s own slice table never
+///   assigns it a slice at all) — P6.7's own Risks section names this gap
+///   precisely: even once `CommitShape` lands, `handlers: Vec<IrHandler>`
+///   still has no value to construct. `Service` additionally carries a
+///   materially larger surface than its own reference sketch shows at all
+///   (CORS/security-headers/request-body-size policy structs,
 ///   `ServiceDecl.cors`/`security`/`limits`).
 /// - `Actor` has no emitted artefact of its own today (R8.1: "no
 ///   declaration; drives the boundary wrapper in `compose.ts`") — genuinely
@@ -489,3 +503,69 @@ pub(crate) enum TypeShape {
 /// [`IrPat::Variant`]'s own `fields: Vec<(String, Box<IrPat>)>` precedent
 /// for a two-part fact with no further structure.
 pub(crate) type EmbedIr = (TyId, String);
+
+/// P6.7's real store-field state shape (`design/bynk-greenfield-compiler.md`
+/// §6.6, R6.14, #1163) — the payload of an agent `store` field declaration,
+/// [`lower::lower_store_field_ir`]'s own return value. Mirrors
+/// `checker::StoreField`'s own five-kind dispatch
+/// (`bynk-check/src/checker.rs`) in shape, but is persistent IR data with no
+/// consumer yet, not that checking pass's own ephemeral, per-agent scratch
+/// value — the two are deliberately not unified (see
+/// [`lower::lower_store_field_ir`]'s own doc comment). No `IrItem` variant
+/// references this yet — `IrItem::Agent`/`Service` remain unconstructed
+/// (`IrItem`'s own doc comment names exactly what still blocks them).
+#[derive(Debug, Clone)]
+pub(crate) struct StoreFieldIr {
+    /// The field's own declared name ([DECISION A]: `String`, sourced
+    /// directly from `StoreField.name.name` — this module's own "no arena
+    /// exists in this codebase" substitution, applied to the reference's
+    /// own `FieldId` arena slot).
+    pub field: String,
+    pub kind: StoreKindIr,
+    /// The fresh-key initialiser, constructed only for a `Cell` field
+    /// ([DECISION D]) — `None` for every other kind, regardless of whether
+    /// the AST grammatically parsed one there. A non-`Cell` field's `init`
+    /// expression is parsed but never type-checked (a real, pre-existing
+    /// checker gap; see [`lower::lower_store_field_ir`]'s own doc comment),
+    /// so on a certified program it has no `expr_types` entry to lower.
+    pub init: Option<IrExpr>,
+    /// `@indexed(by: …)` sibling-table keys, in the annotation's own
+    /// `by:`-argument order — one entry per `by:` argument ([DECISION C]),
+    /// no sort ([DECISION E]). Empty for every kind but `Map`, the only
+    /// kind `@indexed` attaches to (`ANNOTATIONS`'s own registry,
+    /// `bynk-check/src/context_checks.rs`).
+    pub indexed: Vec<IndexIr>,
+}
+
+/// P6.7's real `StoreKindIr` (Part 6.6, R6.14, #1163) — five variants, one
+/// per functional storage kind (`Cell`/`Map`/`Set`/`Cache`/`Log`). `Queue`
+/// is not a variant here: `bynk.store.kind_unsupported` gates it before
+/// `certify` (R3.10), so this type is total over what a certified program's
+/// own store fields can actually contain, not a subset some later slice
+/// needs to extend. [DECISION B]: `Duration` substitutes to `i64`
+/// milliseconds throughout — the same substitution [`ConstVal::DurationMillis`]
+/// and `checker::StoreField::Cache`'s own already-resolved TTL already made.
+#[derive(Debug, Clone)]
+pub(crate) enum StoreKindIr {
+    /// `Cell[T]` — element type.
+    Cell(TyId),
+    /// `Map[K, V]` — key, value.
+    Map(TyId, TyId),
+    /// `Set[T]` — element type.
+    Set(TyId),
+    /// `Cache[K, V] @ttl(...)` — key, value, TTL in milliseconds.
+    Cache(TyId, TyId, i64),
+    /// `Log[T] [@retain(...)]` — element type, optional retain millis.
+    Log(TyId, Option<i64>),
+}
+
+/// The payload of [`StoreFieldIr::indexed`] — one `@indexed(by: …)` key,
+/// identified by the indexed value-field's own name ([DECISION C], #1163):
+/// referenced by the reference's own `StoreFieldIr.indexed: Vec<IndexIr>`
+/// but never defined anywhere in the document, the same "referenced, not
+/// specified" gap #1161's own Decision C named for [`EmbedIr`]. No
+/// dedicated struct: the sibling table's own emitted shape
+/// (`Record<string, string[]>`) is fixed by the *map's own key type*, not
+/// the indexed field's, so the indexed field's resolved type is not needed
+/// downstream — mirrors `EmbedIr`'s own "no further structure" precedent.
+pub(crate) type IndexIr = String;

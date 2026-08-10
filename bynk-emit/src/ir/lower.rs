@@ -22,14 +22,15 @@ use std::sync::Arc;
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
     BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, LambdaExpr, LiteralValue,
-    MatchArm, MatchBody, Pattern, PatternBindingKind, Statement, TypeBody, TypeDecl, UnaryOp,
+    MatchArm, MatchBody, Pattern, PatternBindingKind, Statement, StoreField, TypeBody, TypeDecl,
+    UnaryOp,
 };
 use bynk_syntax::span::Span;
 
 use crate::emitter::match_needs_if_chain;
 use crate::ir::{
-    BindingMode, ConstVal, Exhaustive, GlobalRef, IrArm, IrExpr, IrExprKind, IrItem, IrPat, IrStmt,
-    MatchForm, TypeShape,
+    BindingMode, ConstVal, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind, IrItem,
+    IrPat, IrStmt, MatchForm, StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -428,6 +429,160 @@ pub(crate) fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrI
         ret,
         body: lower_fn_body_ir(f, program),
         effectful,
+    }
+}
+
+/// A store field's own element/key/value type, resolved with no rigid type
+/// variables in scope — `AgentDecl` carries no `type_params` of its own
+/// (its own struct shape, `bynk-syntax/src/ast.rs:908-934`), so
+/// [`lower_store_field_ir`] never needs the `fn_rigid_type_vars`-shaped
+/// seeding every fn/method-level constructor here does. Shared by every
+/// arm of that function's own kind dispatch so a resolution failure panics
+/// with one consistent message naming the field, not five hand-duplicated
+/// copies.
+fn resolve_store_field_ty(
+    cx: &LowerIrCtx,
+    r: &bynk_syntax::ast::TypeRef,
+    field_name: &str,
+) -> TyId {
+    cx.resolve_type_ref(r).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): store field `{field_name}`'s type does not \
+             resolve in this pass's own scope, but the checker already accepted this \
+             declaration"
+        )
+    })
+}
+
+/// A `@name(<duration literal>)` annotation's own millisecond value — the
+/// shared "find the annotation, read its first argument's `DurationLit`"
+/// step both `@ttl` (`Cache`) and `@retain` (`Log`) need, factored out so
+/// the two [`lower_store_field_ir`] arms are one call each rather than two
+/// near-identical inline `find`/`and_then` chains. Mirrors, but does not
+/// call, `cache_ttl_millis` (`bynk-check/src/context_checks.rs`) and the
+/// shipped emitter's own equivalent extraction (`emit.rs`'s
+/// `store_cache_fields`/`store_log_fields`) — those thread a
+/// `&mut Vec<CompileError>` for a missing-`@ttl` diagnostic and are private
+/// to their own module, so reusing them directly here is not architecturally
+/// available; see [`lower_store_field_ir`]'s own doc comment for why this is
+/// an accepted, named duplication rather than a gap this slice closes.
+fn duration_millis_annotation(
+    annotations: &[bynk_syntax::ast::Annotation],
+    name: &str,
+) -> Option<i64> {
+    annotations
+        .iter()
+        .find(|a| a.name.name == name)
+        .and_then(|a| match a.args.first().map(|arg| &arg.value.kind) {
+            Some(ExprKind::DurationLit { millis, .. }) => Some(*millis),
+            _ => None,
+        })
+}
+
+/// P6.7 (#1163): lower an agent `store` field declaration into a real
+/// [`StoreFieldIr`] — dispatches on `f.kind.head.name` into
+/// [`StoreKindIr`]'s five real variants; `Queue` cannot reach a certified
+/// program (`bynk.store.kind_unsupported` gates it before `certify`, R3.10),
+/// so this match is total over what one can actually contain, not a gap
+/// needing its own extension later.
+///
+/// `@ttl`/`@retain` millis and `@indexed(by: …)` field names are read
+/// directly off `f.annotations`, independently of `cache_ttl_millis`/
+/// `store_log_fields`/`store_map_indexes` (`bynk-check`/the shipped
+/// emitter) — the *pattern* is the same one those already established
+/// ([DECISION B]/[DECISION C], #1163), not a call into shared code: this
+/// track's own P6.0 precedent (`design/tracks/the-ir.md` §3.4, Q4) chose to
+/// extend the checker's typed output once (`Callee`) rather than let a
+/// lowering pass re-derive from the AST the way the shipped emitter's own
+/// dispatcher does, and this constructor falls short of that bar — a real,
+/// accepted duplication (three independent copies of the same
+/// `DurationLit`-extraction shape now exist: `context_checks.rs`,
+/// `emitter/emit.rs`, and here), not one this slice is positioned to close,
+/// since none of the three is `pub`/shaped for a shared caller today. Within
+/// this function the `@ttl`/`@retain` cases at least share one call each to
+/// [`duration_millis_annotation`], rather than repeating the extraction
+/// inline a second time. `indexed` keeps the annotation's own declaration
+/// order — no sort, unlike the shipped emitter's own doubly-sorted
+/// `HashMap` intermediate ([DECISION E]'s own structural fix, `ir.rs`'s own
+/// `StoreFieldIr::indexed` doc comment).
+///
+/// `init` is constructed only for a `Cell` field ([DECISION D]) — no
+/// checker pass types a non-`Cell` field's `init` expression (a real,
+/// pre-existing gap this proposal's own grounding pass found:
+/// `context_checks.rs`'s init-checking loop skips anything that isn't
+/// `Cell`, and no other pass fills that gap either), so on a certified
+/// program such an expression, if ever written, has no `expr_types` entry —
+/// lowering it here would hit this pass's own ADR 0334 panic on a value the
+/// checker never verified, not a recoverable state.
+///
+/// Deliberately not unified with `checker::StoreField` (`bynk-check/src/checker.rs`):
+/// that dispatch is ephemeral, per-agent checking-time scratch, rebuilt
+/// fresh inside `check_agent_decls` and discarded once that agent's
+/// handler/invariant checking finishes; this constructor produces
+/// persistent IR data with no consumer yet. Collapsing them would mean
+/// either the checker producing IR-shaped data (crossing the phase-5/
+/// phase-6 boundary `the-ir.md` §3.4 already drew deliberately) or this
+/// pass consuming the checker's own discarded scratch state across a value
+/// that no longer exists once `check_agent_decls` returns — a real, named
+/// duplication (#1163's own Risks), not a gap this slice closes.
+pub(crate) fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
+    let mut cx = LowerIrCtx::new(program, HashSet::new());
+    let head = f.kind.head.name.as_str();
+    let kind = match head {
+        "Cell" => StoreKindIr::Cell(resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name)),
+        "Map" => StoreKindIr::Map(
+            resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name),
+            resolve_store_field_ty(&cx, &f.kind.args[1], &f.name.name),
+        ),
+        "Set" => StoreKindIr::Set(resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name)),
+        "Cache" => {
+            let k = resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name);
+            let v = resolve_store_field_ty(&cx, &f.kind.args[1], &f.name.name);
+            let ttl = duration_millis_annotation(&f.annotations, "ttl").unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): `Cache` field `{}` has no resolvable \
+                     `@ttl` millis, but the checker already accepted this declaration — \
+                     bynk.store.cache_ttl_required gates a missing `@ttl` before certify",
+                    f.name.name
+                )
+            });
+            StoreKindIr::Cache(k, v, ttl)
+        }
+        "Log" => {
+            let elem = resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name);
+            let retain = duration_millis_annotation(&f.annotations, "retain");
+            StoreKindIr::Log(elem, retain)
+        }
+        other => panic!(
+            "bynk internal error (ADR 0334): store field `{}` has storage kind `{other}`, which \
+             cannot reach a certified program — only Cell/Map/Set/Cache/Log are functional \
+             (Queue is gated by bynk.store.kind_unsupported before certify)",
+            f.name.name
+        ),
+    };
+    // [DECISION C]/[DECISION E]: one entry per `by:` argument, declaration
+    // order, no dedup/sort — legal only on `Map` (`ANNOTATIONS`'s own
+    // registry), so this is empty by construction for every other kind.
+    let indexed: Vec<IndexIr> = f
+        .annotations
+        .iter()
+        .filter(|a| a.name.name == "indexed")
+        .flat_map(|a| &a.args)
+        .filter_map(|arg| match (&arg.label, &arg.value.kind) {
+            (Some(l), ExprKind::Ident(k)) if l.name == "by" => Some(k.name.clone()),
+            _ => None,
+        })
+        .collect();
+    // [DECISION D]: only a `Cell` field's `init` is ever lowered.
+    let init = match &kind {
+        StoreKindIr::Cell(_) => f.init.as_ref().map(|e| lower_expr_ir(e, &mut cx)),
+        _ => None,
+    };
+    StoreFieldIr {
+        field: f.name.name.clone(),
+        kind,
+        init,
+        indexed,
     }
 }
 
@@ -1583,8 +1738,13 @@ fn lower_exhaustive_ir(arms: &[MatchArm]) -> Exhaustive {
 mod tests {
     use super::*;
     use bynk_check::checker::CheckedProgram;
-    use bynk_check::{checker, resolver};
-    use bynk_syntax::ast::{CommonsItem, FnDecl};
+    use bynk_check::hints::HintSink;
+    use bynk_check::index::RefSink;
+    use bynk_check::locals::LocalsSink;
+    use bynk_check::requirements::RequirementSink;
+    use bynk_check::{checker, context_checks, resolver, symbols};
+    use bynk_project::UnitKind;
+    use bynk_syntax::ast::{AgentDecl, Commons, CommonsItem, FnDecl, SourceUnit};
     use bynk_syntax::{lexer, parser};
 
     fn checked_program(source: &str) -> CheckedProgram {
@@ -3540,5 +3700,309 @@ commons demo {
             &*program.program().ty_intern.get(args[0]),
             Ty::Base(bynk_syntax::ast::BaseType::Int)
         ));
+    }
+
+    /// Like [`checked_program`], but for source that declares an `agent` —
+    /// `agent` is only legal inside a `context`, not a bare `commons`
+    /// (`bynk.agent.outside_context`), so `source` is parsed as a context
+    /// unit and its items re-wrapped into a [`Commons`] value before
+    /// re-using the same `resolve`/`check` pipeline `checked_program` does.
+    /// `resolver::resolve`/`checker::check` both already treat
+    /// `CommonsItem::Agent` as inert (v0.5 declaration kinds "go through
+    /// the context-level v0.5 path", `resolver.rs`'s own comment) — real
+    /// agent checking (`store` field kinds, handler bodies, `expr_types`
+    /// for a `Cell` initialiser) only happens via
+    /// `context_checks::check_context_declarations`, called here by hand
+    /// with a [`symbols::UnitTable`] built directly from the checked
+    /// commons' own agent items (no cross-context `uses`/`consumes` in any
+    /// fixture this helper is given, so `resolver::CrossContextInfo::default()`
+    /// is exact, not an approximation).
+    fn checked_context_program(source: &str) -> CheckedProgram {
+        let tokens = lexer::tokenize(source).expect("lex");
+        let unit = parser::parse_unit(&tokens, source).expect("parse");
+        let SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit, got {unit:?}")
+        };
+        let commons = Commons {
+            name: ctx.name,
+            items: ctx.items,
+            uses: ctx.uses,
+            documentation: ctx.documentation,
+            form: ctx.form,
+            span: ctx.span,
+            trivia: ctx.trivia,
+            trailing_comments: ctx.trailing_comments,
+        };
+        let resolved = resolver::resolve(commons).expect("resolve");
+        let mut typed = checker::check(resolved).expect("check");
+        let agents: HashMap<String, AgentDecl> = typed
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Agent(a) => Some((a.name.name.clone(), a.clone())),
+                _ => None,
+            })
+            .collect();
+        let table = symbols::UnitTable {
+            kind: Some(UnitKind::Context),
+            types: typed.types.clone(),
+            agents,
+            ..symbols::UnitTable::default()
+        };
+        let tys = typed.ty_intern.clone();
+        let errors = context_checks::check_context_declarations(
+            &mut typed,
+            &table,
+            &resolver::CrossContextInfo::default(),
+            true,
+            &HashSet::new(),
+            &HashMap::new(),
+            &mut RefSink::new(),
+            &mut HintSink::new(),
+            &mut LocalsSink::new(),
+            &mut RequirementSink::new(),
+            &tys,
+        );
+        checker::certify(typed, errors).expect("certify")
+    }
+
+    fn find_agent<'a>(program: &'a CheckedProgram, name: &str) -> &'a AgentDecl {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Agent(a) if a.name.name == name => Some(a),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no agent named `{name}` in this fixture"))
+    }
+
+    fn find_store_field<'a>(agent: &'a AgentDecl, name: &str) -> &'a StoreField {
+        agent
+            .store_fields
+            .iter()
+            .find(|f| f.name.name == name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no store field named `{name}` on agent `{}`",
+                    agent.name.name
+                )
+            })
+    }
+
+    #[test]
+    fn store_field_cell_with_initialiser_and_without() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Counter {
+  key id: String
+  store balance: Cell[Int] = 0
+  store hint: Cell[String]
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Counter");
+
+        let balance = find_store_field(agent, "balance");
+        let ir = lower_store_field_ir(balance, &program);
+        assert_eq!(ir.field, "balance");
+        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
+        assert!(
+            ir.init.is_some(),
+            "a Cell field with an initialiser lowers a real init expression"
+        );
+        assert!(ir.indexed.is_empty());
+
+        let hint = find_store_field(agent, "hint");
+        let ir = lower_store_field_ir(hint, &program);
+        assert_eq!(ir.field, "hint");
+        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
+        assert!(
+            ir.init.is_none(),
+            "Decision D's own boundary: a Cell field with no initialiser lowers to None, \
+             not merely reached by omission"
+        );
+    }
+
+    #[test]
+    fn store_field_cell_init_qualified_constructor_call_lowers_without_panicking() {
+        // A `Cell` field's own initialiser is checked via
+        // `checker::check_state_initialiser`, which types call-shaped
+        // sub-expressions (`T.unsafe(lit)`, a qualified sum-variant
+        // constructor) through the same `Ctx` every other body check uses —
+        // including recording a `Callee` for the call. `lower_store_field_ir`
+        // lowers that same init expression through `lower_expr_ir`, which
+        // reads `program.callees` unconditionally for a call-shaped node
+        // (ADR 0334): this pins that `check_static_initialiser` persists its
+        // own `Callee` into the real `typed.callees` sink rather than a
+        // throwaway local, so this doesn't panic on a certified program the
+        // checker legitimately accepted.
+        let program = checked_context_program(
+            r#"
+context demo
+
+type PositiveId = opaque Int where NonNegative
+
+agent Counter {
+  key id: String
+  store n: Cell[PositiveId] = PositiveId.unsafe(1)
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Counter");
+        let n = find_store_field(agent, "n");
+        let ir = lower_store_field_ir(n, &program);
+        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
+        assert!(ir.init.is_some());
+    }
+
+    #[test]
+    fn store_field_map_indexed_zero_one_and_multiple() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+type Reservation = {
+  id: String,
+  orderId: String,
+  status: String,
+}
+
+agent Inventory {
+  key sku: String
+  store noIndex: Map[String, Reservation]
+  store oneIndex: Map[String, Reservation] @indexed(by: orderId)
+  store twoIndex: Map[String, Reservation] @indexed(by: orderId, by: status)
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Inventory");
+
+        let no_index = find_store_field(agent, "noIndex");
+        let ir = lower_store_field_ir(no_index, &program);
+        assert!(matches!(ir.kind, StoreKindIr::Map(_, _)));
+        assert!(ir.indexed.is_empty());
+        assert!(
+            ir.init.is_none(),
+            "Decision D: init is None for a non-Cell kind"
+        );
+
+        let one_index = find_store_field(agent, "oneIndex");
+        let ir = lower_store_field_ir(one_index, &program);
+        assert_eq!(ir.indexed, vec!["orderId".to_string()]);
+
+        let two_index = find_store_field(agent, "twoIndex");
+        let ir = lower_store_field_ir(two_index, &program);
+        assert_eq!(
+            ir.indexed,
+            vec!["orderId".to_string(), "status".to_string()],
+            "Vec<IndexIr>'s own multi-entry case, in the annotation's own by: order"
+        );
+    }
+
+    #[test]
+    fn store_field_set_element_type() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Tags {
+  key id: String
+  store tags: Set[String]
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Tags");
+        let tags = find_store_field(agent, "tags");
+        let ir = lower_store_field_ir(tags, &program);
+        assert_eq!(ir.field, "tags");
+        assert!(matches!(ir.kind, StoreKindIr::Set(_)));
+        assert!(ir.init.is_none());
+        assert!(ir.indexed.is_empty());
+    }
+
+    #[test]
+    fn store_field_cache_resolves_ttl_millis() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Sessions {
+  key id: String
+  store live: Cache[String, Int] @ttl(5.minutes)
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Sessions");
+        let live = find_store_field(agent, "live");
+        let ir = lower_store_field_ir(live, &program);
+        assert_eq!(ir.field, "live");
+        let StoreKindIr::Cache(_, _, ttl) = ir.kind else {
+            panic!("expected StoreKindIr::Cache, got {:?}", ir.kind)
+        };
+        assert_eq!(
+            ttl,
+            5 * 60 * 1000,
+            "5.minutes' own DurationLit.millis, not re-derived arithmetic"
+        );
+    }
+
+    #[test]
+    fn store_field_log_with_and_without_retain() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Inventory {
+  key id: String
+  store historyWithRetain: Log[String] @retain(30.days)
+  store historyNoRetain: Log[String]
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Inventory");
+
+        let with_retain = find_store_field(agent, "historyWithRetain");
+        let ir = lower_store_field_ir(with_retain, &program);
+        let StoreKindIr::Log(_, retain) = ir.kind else {
+            panic!("expected StoreKindIr::Log, got {:?}", ir.kind)
+        };
+        assert_eq!(retain, Some(30 * 24 * 60 * 60 * 1000));
+
+        let no_retain = find_store_field(agent, "historyNoRetain");
+        let ir = lower_store_field_ir(no_retain, &program);
+        let StoreKindIr::Log(_, retain) = ir.kind else {
+            panic!("expected StoreKindIr::Log, got {:?}", ir.kind)
+        };
+        assert_eq!(retain, None, "@retain is genuinely optional on Log");
     }
 }
