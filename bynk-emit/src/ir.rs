@@ -119,9 +119,16 @@ pub(crate) enum IrExprKind {
     /// A bare reference to something with no scope of its own — narrowly
     /// scoped per Decision C; see [`GlobalRef`].
     Global(GlobalRef),
-    /// Record construction. `fields` is always complete and ordered — a
-    /// shorthand field (`{ x }`) is resolved to its full `(name, value)`
-    /// pair during lowering, same as every other field.
+    /// Record construction. `fields` is always complete — every field the
+    /// record declares is present, exactly once, a shorthand field (`{ x }`)
+    /// resolved to its full `(name, value)` pair during lowering same as
+    /// every other field — and *ordered by evaluation order*, left to
+    /// right: a reader walking `fields` in order reproduces the same
+    /// left-to-right effect sequencing a value expression's own evaluation
+    /// has, so this is never re-sorted to, say, the record's own declared
+    /// field order once evaluation order and declaration order diverge
+    /// (`RecordSpread`'s own lowering, `ir/lower.rs`'s
+    /// `lower_record_spread_ir`, is the one producer where they can).
     Record {
         def: Arc<TypeDecl>,
         fields: Vec<(String, IrExpr)>,

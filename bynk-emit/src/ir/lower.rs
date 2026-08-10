@@ -45,6 +45,12 @@ pub(crate) struct LowerIrCtx<'a> {
     program: &'a TypedCommons,
     scopes: Vec<HashMap<String, TyId>>,
     type_vars: HashSet<String>,
+    /// Bumped once per [`lower_record_spread_ir`] call — a fixed temp name
+    /// is unique against every *source-level* name (`__` is unlexable) but
+    /// not against another spread on the same nesting chain (a spread
+    /// inside an override value, e.g. `Point { ...p, x: (Point { ...q, x:
+    /// 0 }).x }`); a monotonic per-function suffix removes that hazard.
+    spread_tmp_counter: usize,
 }
 
 impl<'a> LowerIrCtx<'a> {
@@ -53,7 +59,14 @@ impl<'a> LowerIrCtx<'a> {
             program: program.program(),
             scopes: vec![HashMap::new()],
             type_vars,
+            spread_tmp_counter: 0,
         }
+    }
+
+    fn fresh_spread_tmp(&mut self) -> String {
+        let n = self.spread_tmp_counter;
+        self.spread_tmp_counter += 1;
+        format!("__spread_base_{n}")
     }
 
     /// A type reference resolved in this pass's own rigid-variable scope —
@@ -510,6 +523,14 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
         // the bundled comparison/arithmetic `todo!()` below, which P6.2
         // (#1143) already confirmed has no dedicated IrExprKind and no Callee
         // classification either.
+        //
+        // This flat `Or`/`Not` pair has nowhere to carry an `is` binding from
+        // the antecedent into the consequent (`p is Foo(x) implies f(x)`,
+        // the reason the string emitter's own `Implies` handling exists,
+        // `emitter/lower.rs:4332`'s `lower_and_with_is`) — unreachable today
+        // since `ExprKind::Is` is still a `todo!()` three arms below, but
+        // this arm needs revisiting, not inheriting by default, once P6.4
+        // lands `Is`.
         ExprKind::BinOp(BinOp::Implies, lhs, rhs) => IrExpr {
             kind: IrExprKind::Or {
                 // `Not`'s own type is Bool — the same type `Implies` itself
@@ -845,14 +866,28 @@ fn named_decl(ty: TyId, cx: &LowerIrCtx) -> Arc<bynk_syntax::ast::TypeDecl> {
 }
 
 /// `TypeName { ...base, field: value, ... }` -> `Block { stmts: [Let(tmp,
-/// base)], tail: Record { <complete, resolved field list> } }` (P6.3,
-/// design/tracks/the-ir.md §6, R6.7 — the reference's own Part 6.4 table,
-/// Decision E). Every field the target record declares is present in the
-/// tail `Record`, each resolved from `overrides` when named there, or
-/// otherwise from a synthesised `tmp.<field>` read — the same
-/// complete-by-construction shape `RecordConstruction` already lowers to,
-/// not the current string emitter's own raw `...spread` splice
-/// (`emitter/lower.rs`'s `lower_record_spread`).
+/// base), <discarded shadowed-override effects>], tail: Record {
+/// <complete, resolved field list> } }` (P6.3, design/tracks/the-ir.md §6,
+/// R6.7 — the reference's own Part 6.4 table, Decision E). Every field the
+/// target record declares is present in the tail `Record`, each resolved
+/// from `overrides` when named there, or otherwise from a synthesised
+/// `tmp.<field>` read — the same complete-by-construction shape
+/// `RecordConstruction` already lowers to, not the current string emitter's
+/// own raw `...spread` splice (`emitter/lower.rs`'s `lower_record_spread`).
+///
+/// `fields`' own order is *evaluation* order, not declared-field order (the
+/// convention `RecordConstruction`'s own lowering above already sets, by
+/// simply preserving whatever order its own source `fields` were written
+/// in): every overridden field lands in `fields` in the *source* order its
+/// override was written, ahead of every spread-through field (declared
+/// order, since a bare `tmp.<field>` read has no side effect of its own, so
+/// its exact position among the others is not observable). This matters
+/// because an override's value may be effectful (`body_performs_effects`,
+/// `bynk-check/src/checker/expressions.rs:1303`, walks `overrides` for
+/// exactly that reason) — the current string emitter's own splice already
+/// evaluates overrides in source order, and a future consumer reading
+/// `fields` left-to-right must reproduce that, not silently reorder it to
+/// match field *declaration* order instead.
 fn lower_record_spread_ir(
     ty: TyId,
     span: Span,
@@ -877,89 +912,132 @@ fn lower_record_spread_ir(
             def.name.name
         )
     };
+    let declared: HashSet<&str> = record_body
+        .fields
+        .iter()
+        .map(|f| f.name.name.as_str())
+        .collect();
 
     let base_ir = lower_expr_ir(base, cx);
     let base_ty = base_ir.ty;
     let base_span = base_ir.span;
-    // A synthesised local, never a source-level name — no collision risk
-    // with a bound name from the surrounding scope, since `parser`'s own
-    // identifier grammar never produces one starting with `__`.
-    const TMP: &str = "__spread_base";
-    let stmts = vec![IrStmt::Let {
-        local: TMP.to_string(),
+    let tmp = cx.fresh_spread_tmp();
+    let mut stmts = vec![IrStmt::Let {
+        local: tmp.clone(),
         value: base_ir,
     }];
 
-    let overrides_by_name: HashMap<&str, &FieldInit> = overrides
+    // Lower every override's value in source order — same order the string
+    // emitter's own splice and `body_performs_effects`'s own walk already
+    // use. `check_record_spread` (`bynk-check/src/checker/expressions.rs:2269`)
+    // has no duplicate-name diagnostic, so a field named more than once
+    // type-checks today; `overridden` keeps every occurrence (not just the
+    // last) so a shadowed occurrence's own effect isn't silently dropped
+    // below.
+    let overridden: Vec<(String, IrExpr)> = overrides
         .iter()
-        .map(|f| (f.name.name.as_str(), f))
-        .collect();
-
-    let fields = record_body
-        .fields
-        .iter()
-        .map(|decl_field| {
-            let name = decl_field.name.name.clone();
-            let value = match overrides_by_name.get(name.as_str()) {
+        .map(|f| {
+            if !declared.contains(f.name.name.as_str()) {
+                // check_record_spread's own bynk.record_spread.unknown_field
+                // diagnostic already rejects this on any program that
+                // reaches lowering — ADR 0334 discipline: a live mismatch
+                // here is this pass and the checker disagreeing about an
+                // already-certified program, a compiler bug, not a silent
+                // skip.
+                panic!(
+                    "bynk internal error (ADR 0334): record spread override `{}` names a field \
+                     `{}` does not declare, but the checker already accepted this spread",
+                    f.name.name, def.name.name
+                )
+            }
+            let value = match &f.value {
                 // An override's own value is lowered exactly like
                 // `RecordConstruction`'s explicit/shorthand field above —
                 // same two forms, same rules for each.
-                Some(f) => match &f.value {
-                    Some(v) => lower_expr_ir(v, cx),
-                    None => {
-                        let local_ty = cx.lookup(&f.name.name).unwrap_or_else(|| {
-                            panic!(
-                                "bynk internal error (ADR 0334): shorthand spread override `{}` \
-                                 has no local binding in this pass's own scope — the checker \
-                                 accepted it, so its own `ctx.lookup` must have found one",
-                                f.name.name
-                            )
-                        });
-                        IrExpr {
-                            kind: lower_ident_ir(&f.name.name, cx),
-                            ty: local_ty,
-                            span: f.name.span,
-                        }
-                    }
-                },
-                // Not overridden — spread through from `tmp`. The field's own
-                // type is the declared type instantiated at this spread's own
-                // base type arguments (v0.157/ADR 0183's `instantiate_field_ty`,
-                // the same substitution `check_record_spread` already applies
-                // to type-check an override against a generic record).
+                Some(v) => lower_expr_ir(v, cx),
                 None => {
-                    let field_ty = checker::instantiate_field_ty(
-                        &def,
-                        &base_args,
-                        &decl_field.type_ref,
-                        &cx.program.types,
-                        &cx.program.ty_intern,
-                    )
-                    .unwrap_or_else(|| {
+                    let local_ty = cx.lookup(&f.name.name).unwrap_or_else(|| {
                         panic!(
-                            "bynk internal error (ADR 0334): declared field `{name}` of `{}` \
-                             does not resolve against this spread's own base type arguments, \
-                             but the checker already accepted this record spread",
-                            def.name.name
+                            "bynk internal error (ADR 0334): shorthand spread override `{}` has \
+                             no local binding in this pass's own scope — the checker accepted \
+                             it, so its own `ctx.lookup` must have found one",
+                            f.name.name
                         )
                     });
                     IrExpr {
-                        kind: IrExprKind::Field {
-                            base: Box::new(IrExpr {
-                                kind: IrExprKind::Local(TMP.to_string()),
-                                ty: base_ty,
-                                span: base_span,
-                            }),
-                            field: name.clone(),
-                        },
-                        ty: field_ty,
-                        span: decl_field.span,
+                        kind: lower_ident_ir(&f.name.name, cx),
+                        ty: local_ty,
+                        span: f.name.span,
                     }
                 }
             };
-            (name, value)
+            (f.name.name.clone(), value)
         })
         .collect();
+
+    // A name's *last* occurrence is the one whose value the checker actually
+    // admits into the resulting record (`check_record_spread` type-checks
+    // every occurrence but the emitted value is always the last-written
+    // one) — every earlier occurrence still ran, so it becomes a discarded
+    // statement here, preserving its own effect without contributing a
+    // field.
+    let mut last_index: HashMap<String, usize> = HashMap::new();
+    for (i, (name, _)) in overridden.iter().enumerate() {
+        last_index.insert(name.clone(), i);
+    }
+    let mut fields: Vec<(String, IrExpr)> = Vec::with_capacity(record_body.fields.len());
+    let mut overridden_names: HashSet<String> = HashSet::new();
+    for (i, (name, value)) in overridden.into_iter().enumerate() {
+        if last_index[&name] == i {
+            overridden_names.insert(name.clone());
+            fields.push((name, value));
+        } else {
+            stmts.push(IrStmt::Expr { value });
+        }
+    }
+
+    // Spread-through fields — every declared field `overrides` didn't name
+    // — appended after, in declared order; a bare `tmp.<field>` read has no
+    // effect of its own, so no ordering among these is observable. The
+    // field's own type is the declared type instantiated at this spread's
+    // own base type arguments (v0.157/ADR 0183's `instantiate_field_ty`,
+    // the same substitution `check_record_spread` already applies to
+    // type-check an override against a generic record).
+    for decl_field in &record_body.fields {
+        if overridden_names.contains(decl_field.name.name.as_str()) {
+            continue;
+        }
+        let field_ty = checker::instantiate_field_ty(
+            &def,
+            &base_args,
+            &decl_field.type_ref,
+            &cx.program.types,
+            &cx.program.ty_intern,
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "bynk internal error (ADR 0334): declared field `{}` of `{}` does not resolve \
+                 against this spread's own base type arguments, but the checker already \
+                 accepted this record spread",
+                decl_field.name.name, def.name.name
+            )
+        });
+        fields.push((
+            decl_field.name.name.clone(),
+            IrExpr {
+                kind: IrExprKind::Field {
+                    base: Box::new(IrExpr {
+                        kind: IrExprKind::Local(tmp.clone()),
+                        ty: base_ty,
+                        span: base_span,
+                    }),
+                    field: decl_field.name.name.clone(),
+                },
+                ty: field_ty,
+                span: decl_field.span,
+            },
+        ));
+    }
 
     IrExpr {
         kind: IrExprKind::Block {
@@ -1734,7 +1812,7 @@ commons demo {
         let IrStmt::Let { local, value } = &stmts[0] else {
             panic!("expected Let, got {:?}", stmts[0])
         };
-        assert_eq!(local, "__spread_base");
+        assert_eq!(local, "__spread_base_0");
         assert!(matches!(&value.kind, IrExprKind::Local(n) if n == "p"));
 
         let IrExprKind::Record { def, fields } = &block_tail.kind else {
@@ -1760,9 +1838,130 @@ commons demo {
             panic!("expected Field, got {:?}", fields[2].1.kind)
         };
         assert_eq!(field, "z");
-        assert!(matches!(&base.kind, IrExprKind::Local(n) if n == "__spread_base"));
+        assert!(matches!(&base.kind, IrExprKind::Local(n) if n == "__spread_base_0"));
         assert!(matches!(
             &*program.program().ty_intern.get(fields[2].1.ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn record_spread_orders_fields_by_evaluation_order_not_declaration_order() {
+        // Overrides land in `fields` in *source* order, not the record's own
+        // declared field order — `y`'s override is written before `x`'s, so
+        // it must come first, since an override's value may be effectful
+        // and a future reader walks `fields` left to right to reproduce
+        // that ordering (see `lower_record_spread_ir`'s own doc comment).
+        let program = checked_program(
+            r#"
+commons demo {
+  type Point = { x: Int, y: Int, z: Int }
+
+  fn shift(p: Point) -> Point { Point { ...p, y: 1, x: 2 } }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "shift");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Block {
+            tail: block_tail, ..
+        } = &tail.kind
+        else {
+            panic!("expected Block, got {:?}", tail.kind)
+        };
+        let IrExprKind::Record { fields, .. } = &block_tail.kind else {
+            panic!("expected Record, got {:?}", block_tail.kind)
+        };
+        let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["y", "x", "z"]);
+    }
+
+    #[test]
+    fn record_spread_duplicate_override_keeps_the_last_value_and_still_runs_the_earlier_one() {
+        // `check_record_spread` has no duplicate-name diagnostic, so `x` is
+        // named twice here and type-checks — the resulting field must take
+        // `x`'s *last* value (2), but `x`'s *first* value (1) must still
+        // run, as a discarded statement, since it may have been effectful.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Point = { x: Int, y: Int }
+
+  fn shift(p: Point) -> Point { Point { ...p, x: 1, x: 2 } }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "shift");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Block {
+            stmts,
+            tail: block_tail,
+        } = &tail.kind
+        else {
+            panic!("expected Block, got {:?}", tail.kind)
+        };
+        assert_eq!(stmts.len(), 2, "the base Let plus one discarded duplicate");
+        let IrStmt::Expr { value: discarded } = &stmts[1] else {
+            panic!(
+                "expected the second stmt to be a discarded Expr, got {:?}",
+                stmts[1]
+            )
+        };
+        assert!(matches!(
+            &discarded.kind,
+            IrExprKind::Const(ConstVal::Int(1))
+        ));
+
+        let IrExprKind::Record { fields, .. } = &block_tail.kind else {
+            panic!("expected Record, got {:?}", block_tail.kind)
+        };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "x");
+        assert!(matches!(
+            &fields[0].1.kind,
+            IrExprKind::Const(ConstVal::Int(2))
+        ));
+    }
+
+    #[test]
+    fn record_spread_instantiates_a_generic_records_spread_through_field_type() {
+        // `Point`-shaped fixtures above are all monomorphic, so
+        // `instantiate_field_ty`'s own substitution (ADR 0183/v0.157) is a
+        // no-op there — a generic record's spread-through field is the one
+        // case that actually exercises it, since `item`'s declared type is
+        // the record's own rigid `T`, only resolvable via `base_args`.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Boxed[T] = { item: T, tag: String }
+
+  fn retag(b: Boxed[Int]) -> Boxed[Int] { Boxed { ...b, tag: "x" } }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "retag");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Block {
+            tail: block_tail, ..
+        } = &tail.kind
+        else {
+            panic!("expected Block, got {:?}", tail.kind)
+        };
+        let IrExprKind::Record { fields, .. } = &block_tail.kind else {
+            panic!("expected Record, got {:?}", block_tail.kind)
+        };
+        let (_, item) = fields
+            .iter()
+            .find(|(n, _)| n == "item")
+            .expect("item field present");
+        let IrExprKind::Field { .. } = &item.kind else {
+            panic!(
+                "expected item to spread through as Field, got {:?}",
+                item.kind
+            )
+        };
+        assert!(matches!(
+            &*program.program().ty_intern.get(item.ty),
             Ty::Base(bynk_syntax::ast::BaseType::Int)
         ));
     }
