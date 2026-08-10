@@ -1192,21 +1192,39 @@ fn collect_pattern_binding_tys(
             variant, bindings, ..
         } => {
             let variant_info = variant_info_of(ty, &variant.name, program);
+            // `.expect()`-not-fallback (ADR 0334), matching `lower_pattern_ir`'s
+            // identical lookups on the identical condition — this walk runs
+            // over the same certified pattern, so a miss here is the same
+            // checker/lowering disagreement, not a softer case.
             for (idx, b) in bindings.iter().enumerate() {
                 match &b.kind {
                     PatternBindingKind::Named { field, pattern } => {
-                        if let Some((_, field_ty)) = variant_info
+                        let field_ty = variant_info
                             .payload
                             .iter()
                             .find(|(name, _)| name == &field.name)
-                        {
-                            collect_pattern_binding_tys(pattern, *field_ty, program, out);
-                        }
+                            .map(|(_, ty)| *ty)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "bynk internal error (ADR 0334): named pattern field `{}` \
+                                     does not resolve against variant `{}`'s own payload, but \
+                                     the checker already accepted this pattern",
+                                    field.name, variant.name
+                                )
+                            });
+                        collect_pattern_binding_tys(pattern, field_ty, program, out);
                     }
                     PatternBindingKind::Positional { pattern } => {
-                        if let Some((_, field_ty)) = variant_info.payload.get(idx) {
-                            collect_pattern_binding_tys(pattern, *field_ty, program, out);
-                        }
+                        let (_, field_ty) =
+                            variant_info.payload.get(idx).cloned().unwrap_or_else(|| {
+                                panic!(
+                                    "bynk internal error (ADR 0334): positional pattern binding \
+                                     {idx} has no matching payload field on variant `{}`, but \
+                                     the checker already accepted this pattern's arity",
+                                    variant.name
+                                )
+                            });
+                        collect_pattern_binding_tys(pattern, field_ty, program, out);
                     }
                 }
             }
@@ -1303,9 +1321,10 @@ fn lower_exhaustive_ir(arms: &[MatchArm]) -> Exhaustive {
     } else {
         unreachable!(
             "bynk internal error (ADR 0334, extended by Decision B / #1157): a certified \
-             program's match always has at least one unguarded arm — bynk-check's own \
-             missing_patterns gate (bynk.types.non_exhaustive_match, error-severity, rejected by \
-             certify per R3.10) guarantees it"
+             program's match is never empty (the parser itself already requires at least one \
+             arm) and always has at least one unguarded arm — bynk-check's own missing_patterns \
+             gate (bynk.types.non_exhaustive_match, error-severity, rejected by certify per \
+             R3.10) guarantees it"
         )
     }
 }
@@ -2475,6 +2494,137 @@ commons demo {
         // `Miss`'s own arm has no `Or` anywhere in its pattern — stays
         // `Direct`, proving the mode is per-arm, not a whole-match property.
         assert_eq!(arms[1].binding_mode, BindingMode::Direct);
+
+        assert!(matches!(exhaustive, Exhaustive::Total));
+    }
+
+    #[test]
+    fn pattern_ir_arm_guard_lowers_and_sees_the_patterns_own_bindings() {
+        // R5.4's ordering claim (a guard must be able to read the pattern's
+        // own bound names) needs a guard that is itself an expression this
+        // pass can lower — comparison/arithmetic BinOps are still `todo!()`
+        // (P6.2, #1143), so `score > 0` isn't available yet. A `Bool`
+        // payload field read straight back as the guard exercises the exact
+        // same scope-ordering property without depending on either.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Outcome =
+    | Hit(flag: Bool)
+    | Miss
+
+  fn guarded(o: Outcome) -> Int {
+    match o {
+      Hit(flag) if flag => 1
+      _ => 0
+    }
+  }
+}
+"#,
+        );
+
+        let (arms, exhaustive) = lower_match_fixture(&program, "guarded");
+        let guard = arms[0]
+            .guard
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected a lowered guard, got {:?}", arms[0].guard));
+        assert!(matches!(&guard.kind, IrExprKind::Local(n) if n == "flag"));
+        assert!(matches!(exhaustive, Exhaustive::Total));
+    }
+
+    #[test]
+    fn pattern_ir_named_bindings_resolve_by_field_name_not_position() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Pair =
+    | Pair(a: Int, b: String)
+    | Empty
+
+  fn named_reordered(p: Pair) -> String {
+    match p {
+      Pair(b: s, a: n) => s
+      Empty => "none"
+    }
+  }
+
+  fn named_subset(p: Pair) -> Int {
+    match p {
+      Pair(a: n) => n
+      Empty => 0
+    }
+  }
+}
+"#,
+        );
+
+        // Out-of-order named bindings: `b` (String) is written first in
+        // source order, `a` (Int) second — an index-keyed lookup would bind
+        // `s` against `a`'s own `Int` field instead of `b`'s `String` one.
+        let (reordered_arms, _) = lower_match_fixture(&program, "named_reordered");
+        let IrPat::Variant { fields, .. } = &reordered_arms[0].pat else {
+            panic!("expected Variant, got {:?}", reordered_arms[0].pat)
+        };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "b");
+        assert!(matches!(&*fields[0].1, IrPat::Bind { local } if local == "s"));
+        assert_eq!(fields[1].0, "a");
+        assert!(matches!(&*fields[1].1, IrPat::Bind { local } if local == "n"));
+
+        // The named form's documented strict-subset case: `Pair(a: n)`
+        // binds only `a`, leaving `b` entirely out of `fields` — not padded
+        // with a synthesised wildcard for the field it doesn't name.
+        let (subset_arms, _) = lower_match_fixture(&program, "named_subset");
+        let IrPat::Variant { fields, .. } = &subset_arms[0].pat else {
+            panic!("expected Variant, got {:?}", subset_arms[0].pat)
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "a");
+        assert!(matches!(&*fields[0].1, IrPat::Bind { local } if local == "n"));
+    }
+
+    #[test]
+    fn pattern_ir_nested_variant_pattern_threads_a_derived_field_ty() {
+        // The one shape where the recursive `lower_pattern_ir` call re-enters
+        // `variant_info_of` against a *derived* `field_ty` (`Ok`'s own
+        // `value` field, `Option[Int]`) rather than the top-level scrutinee
+        // — the substance of Decision A, otherwise only exercised to depth 1.
+        let program = checked_program(
+            r#"
+commons demo {
+  fn nested_variant(x: Result[Option[Int], String]) -> Int {
+    match x {
+      Ok(Some(v)) => v
+      Ok(None) => 0
+      Err(_) => 0
+    }
+  }
+}
+"#,
+        );
+
+        let (arms, exhaustive) = lower_match_fixture(&program, "nested_variant");
+        let IrPat::Variant {
+            tag: outer_tag,
+            fields: outer_fields,
+            ..
+        } = &arms[0].pat
+        else {
+            panic!("expected Variant, got {:?}", arms[0].pat)
+        };
+        assert_eq!(outer_tag, "Ok");
+        assert_eq!(outer_fields[0].0, "value");
+        let IrPat::Variant {
+            tag: inner_tag,
+            fields: inner_fields,
+            ..
+        } = &*outer_fields[0].1
+        else {
+            panic!("expected a nested Variant, got {:?}", outer_fields[0].1)
+        };
+        assert_eq!(inner_tag, "Some");
+        assert!(matches!(&*inner_fields[0].1, IrPat::Bind { local } if local == "v"));
+        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(n) if n == "v"));
 
         assert!(matches!(exhaustive, Exhaustive::Total));
     }
