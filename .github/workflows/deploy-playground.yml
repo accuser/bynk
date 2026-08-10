@@ -188,7 +188,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       # wasm-bindgen-cli must match the wasm-bindgen crate (Cargo.lock: 0.2.126);
       # a version skew between the glue and the module fails at load.
-      - uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
+      - uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2
         with:
           tool: wasm-bindgen-cli@0.2.126
       # wasm-opt (binaryen) shrinks the release artefact (-Oz, the size budget).
