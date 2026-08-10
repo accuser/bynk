@@ -22,14 +22,14 @@ use std::sync::Arc;
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
     BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, LambdaExpr, LiteralValue,
-    MatchArm, MatchBody, Pattern, PatternBindingKind, Statement, TypeBody, UnaryOp,
+    MatchArm, MatchBody, Pattern, PatternBindingKind, Statement, TypeBody, TypeDecl, UnaryOp,
 };
 use bynk_syntax::span::Span;
 
 use crate::emitter::match_needs_if_chain;
 use crate::ir::{
-    BindingMode, ConstVal, Exhaustive, GlobalRef, IrArm, IrExpr, IrExprKind, IrPat, IrStmt,
-    MatchForm,
+    BindingMode, ConstVal, Exhaustive, GlobalRef, IrArm, IrExpr, IrExprKind, IrItem, IrPat, IrStmt,
+    MatchForm, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -237,6 +237,152 @@ pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
         },
         ty,
         span,
+    }
+}
+
+/// P6.6 (#1161): lower a `type` declaration into a real [`IrItem::Type`] —
+/// [`IrItem`]'s own doc comment names which of its seven design-sketch
+/// variants are real as of this slice (`Type`/`Fn` only, Decision D). Takes
+/// a bare `&TypedCommons`, not a certified `CheckedProgram` (unlike
+/// [`lower_fn_item_ir`]): a declared type's own field/variant types resolve
+/// from the type table directly through `resolve_type_ref_in`, with no
+/// per-expression `expr_types` lookup involved (Q2,
+/// `design/tracks/the-ir.md` §3.2).
+pub(crate) fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &TypedCommons) -> IrItem {
+    let type_vars: HashSet<String> = decl
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
+    let resolve = |r: &bynk_syntax::ast::TypeRef| {
+        checker::resolve_type_ref_in(r, &program.types, &type_vars, &program.ty_intern)
+    };
+    let shape = match &decl.body {
+        TypeBody::Record(r) => TypeShape::Record {
+            fields: r
+                .fields
+                .iter()
+                .map(|f| {
+                    let ty = resolve(&f.type_ref).unwrap_or_else(|| {
+                        panic!(
+                            "bynk internal error (ADR 0334): field `{}` of type `{}` does not \
+                             resolve, but the checker already accepted this declaration",
+                            f.name.name, decl.name.name
+                        )
+                    });
+                    (f.name.name.clone(), ty)
+                })
+                .collect(),
+        },
+        TypeBody::Sum(s) => TypeShape::Sum {
+            variants: s
+                .variants
+                .iter()
+                .map(|v| {
+                    let payload = v
+                        .payload
+                        .iter()
+                        .map(|vf| {
+                            let ty = resolve(&vf.type_ref).unwrap_or_else(|| {
+                                panic!(
+                                    "bynk internal error (ADR 0334): field `{}` of variant `{}` \
+                                     of type `{}` does not resolve, but the checker already \
+                                     accepted this declaration",
+                                    vf.name.name, v.name.name, decl.name.name
+                                )
+                            });
+                            (vf.name.name.clone(), ty)
+                        })
+                        .collect();
+                    (v.name.name.clone(), payload)
+                })
+                .collect(),
+            embeds: s
+                .embeds
+                .iter()
+                .map(|e| {
+                    let source = resolve(&e.source_type).unwrap_or_else(|| {
+                        panic!(
+                            "bynk internal error (ADR 0334): `embeds` clause source type on \
+                             variant `{}` of type `{}` does not resolve, but the checker \
+                             already accepted this declaration",
+                            e.variant.name, decl.name.name
+                        )
+                    });
+                    (source, e.variant.name.clone())
+                })
+                .collect(),
+        },
+        TypeBody::Refined {
+            base, refinement, ..
+        } => TypeShape::Refined {
+            base: *base,
+            refinement: refinement.clone(),
+            opaque: false,
+        },
+        TypeBody::Opaque {
+            base, refinement, ..
+        } => TypeShape::Refined {
+            base: *base,
+            refinement: refinement.clone(),
+            opaque: true,
+        },
+    };
+    IrItem::Type {
+        def: Arc::clone(decl),
+        shape,
+    }
+}
+
+/// P6.6 (#1161): lower a `fn` declaration into a real [`IrItem::Fn`] —
+/// wraps [`lower_fn_body_ir`] (#1141, unchanged) rather than re-deriving its
+/// own rigid-variable seeding or body lowering; adds only `def`/`params`/
+/// `ret`/`effectful` around its existing return value. Covers both free
+/// functions and methods alike (`FnName::Free`/`FnName::Method`) — which
+/// `IrItem::Fn`s a future printer re-attaches under which `IrItem::Type`'s
+/// own namespace (R8.1) is phase 7's own concern, not decided here.
+pub(crate) fn lower_fn_item_ir(f: &FnDecl, program: &CheckedProgram) -> IrItem {
+    let mut type_vars: HashSet<String> = f
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
+    if let FnName::Method { type_name, .. } = &f.name
+        && let Some(decl) = program.program().types.get(&type_name.name)
+    {
+        type_vars.extend(decl.type_params.iter().map(|tp| tp.name.name.clone()));
+    }
+    let cx = LowerIrCtx::new(program, type_vars);
+    let params: Vec<(String, TyId)> = f
+        .params
+        .iter()
+        .map(|p| {
+            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in \
+                     this pass's own rigid-variable scope, but the checker already accepted \
+                     this fn — bynk-emit::ir::lower's type_vars disagrees with bynk-check's \
+                     Ctx::type_vars",
+                    p.name.name
+                )
+            });
+            (p.name.name.clone(), ty)
+        })
+        .collect();
+    let ret = cx.resolve_type_ref(&f.return_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): the return type of `{}` does not resolve in this \
+             pass's own rigid-variable scope, but the checker already accepted this fn",
+            f.name.display()
+        )
+    });
+    let effectful = matches!(&*program.program().ty_intern.get(ret), Ty::Effect(_));
+    IrItem::Fn {
+        def: Arc::new(f.clone()),
+        params,
+        ret,
+        body: lower_fn_body_ir(f, program),
+        effectful,
     }
 }
 
@@ -1420,6 +1566,14 @@ mod tests {
     fn lower_fn(program: &CheckedProgram, name: &str) -> IrExpr {
         let f = find_fn(program, name);
         lower_fn_body_ir(f, program)
+    }
+
+    fn find_type<'a>(program: &'a CheckedProgram, name: &str) -> &'a Arc<TypeDecl> {
+        program
+            .program()
+            .types
+            .get(name)
+            .unwrap_or_else(|| panic!("no type named `{name}` in this fixture"))
     }
 
     /// Every fixture's `fn`-body wrapping — asserts the outer shape once so
@@ -2970,5 +3124,216 @@ commons demo {
         assert_eq!(*tail_form, *nested_form);
         assert!(matches!(tail_exhaustive, Exhaustive::Total));
         assert!(matches!(nested_exhaustive, Exhaustive::Total));
+    }
+
+    #[test]
+    fn type_item_record_resolves_fields_and_generic_rigid_vars() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Box[T] = { value: T }
+}
+"#,
+        );
+        let decl = find_type(&program, "Box");
+        let item = lower_type_item_ir(decl, program.program());
+        let IrItem::Type { def, shape } = &item else {
+            panic!("expected IrItem::Type, got {item:?}")
+        };
+        assert_eq!(def.name.name, "Box");
+        let TypeShape::Record { fields } = shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "value");
+        assert!(matches!(
+            &*program.program().ty_intern.get(fields[0].1),
+            Ty::Var(name) if name == "T"
+        ));
+    }
+
+    #[test]
+    fn type_item_sum_resolves_variant_payloads_and_embeds() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type PaymentError = enum { Declined, InsufficientFunds }
+
+  type OrderError =
+    | OutOfStock(sku: String, qty: Int)
+    | Payment(reason: PaymentError)
+    embeds PaymentError as Payment
+}
+"#,
+        );
+        let decl = find_type(&program, "OrderError");
+        let item = lower_type_item_ir(decl, program.program());
+        let IrItem::Type { shape, .. } = &item else {
+            panic!("expected IrItem::Type, got {item:?}")
+        };
+        let TypeShape::Sum { variants, embeds } = shape else {
+            panic!("expected TypeShape::Sum, got {shape:?}")
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].0, "OutOfStock");
+        assert_eq!(variants[0].1.len(), 2);
+        assert_eq!(variants[0].1[0].0, "sku");
+        assert!(matches!(
+            &*program.program().ty_intern.get(variants[0].1[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
+        ));
+        assert_eq!(variants[0].1[1].0, "qty");
+        assert!(matches!(
+            &*program.program().ty_intern.get(variants[0].1[1].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+        assert_eq!(variants[1].0, "Payment");
+        assert_eq!(variants[1].1.len(), 1);
+        assert_eq!(variants[1].1[0].0, "reason");
+
+        assert_eq!(embeds.len(), 1);
+        let (source, tag) = &embeds[0];
+        assert_eq!(tag, "Payment");
+        let Ty::Named { name, .. } = &*program.program().ty_intern.get(*source) else {
+            panic!("expected embeds source to resolve to a named type")
+        };
+        assert_eq!(name, "PaymentError");
+    }
+
+    #[test]
+    fn type_item_refined_and_opaque_cover_bare_and_predicated_and_opaque_forms() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Age = Int where Positive
+  type UserId = opaque Int
+  type Bare = Int
+}
+"#,
+        );
+        let age = find_type(&program, "Age");
+        let IrItem::Type {
+            shape: age_shape, ..
+        } = lower_type_item_ir(age, program.program())
+        else {
+            unreachable!()
+        };
+        let TypeShape::Refined {
+            base,
+            refinement,
+            opaque,
+        } = age_shape
+        else {
+            panic!("expected TypeShape::Refined for Age")
+        };
+        assert_eq!(base, bynk_syntax::ast::BaseType::Int);
+        assert!(refinement.is_some());
+        assert!(!opaque);
+
+        let user_id = find_type(&program, "UserId");
+        let IrItem::Type {
+            shape: user_id_shape,
+            ..
+        } = lower_type_item_ir(user_id, program.program())
+        else {
+            unreachable!()
+        };
+        let TypeShape::Refined {
+            refinement, opaque, ..
+        } = user_id_shape
+        else {
+            panic!("expected TypeShape::Refined for UserId")
+        };
+        assert!(refinement.is_none());
+        assert!(opaque);
+
+        let bare = find_type(&program, "Bare");
+        let IrItem::Type {
+            shape: bare_shape, ..
+        } = lower_type_item_ir(bare, program.program())
+        else {
+            unreachable!()
+        };
+        let TypeShape::Refined {
+            refinement, opaque, ..
+        } = bare_shape
+        else {
+            panic!("expected TypeShape::Refined for Bare")
+        };
+        assert!(refinement.is_none());
+        assert!(!opaque);
+    }
+
+    #[test]
+    fn fn_item_covers_effectful_and_pure_and_generic_and_method() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Box[A] = { value: A }
+
+  fn Box.get(self) -> A { self.value }
+
+  fn two_params(a: Int, b: Int) -> Int { a }
+
+  fn identity[T](x: T) -> T { x }
+
+  fn fetch() -> Effect[Int] { Effect.pure(1) }
+}
+"#,
+        );
+
+        let two_params = find_fn(&program, "two_params");
+        let IrItem::Fn {
+            def,
+            params,
+            ret,
+            effectful,
+            ..
+        } = lower_fn_item_ir(two_params, &program)
+        else {
+            unreachable!()
+        };
+        assert_eq!(def.name.display(), "two_params");
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].0, "a");
+        assert_eq!(params[1].0, "b");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ret),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+        assert!(!effectful);
+
+        let fetch = find_fn(&program, "fetch");
+        let IrItem::Fn { effectful, .. } = lower_fn_item_ir(fetch, &program) else {
+            unreachable!()
+        };
+        assert!(effectful);
+
+        let identity = find_fn(&program, "identity");
+        let IrItem::Fn { params, ret, .. } = lower_fn_item_ir(identity, &program) else {
+            unreachable!()
+        };
+        assert!(matches!(
+            &*program.program().ty_intern.get(params[0].1),
+            Ty::Var(n) if n == "T"
+        ));
+        assert!(matches!(
+            &*program.program().ty_intern.get(ret),
+            Ty::Var(n) if n == "T"
+        ));
+
+        let method = find_fn(&program, "Box.get");
+        let IrItem::Fn {
+            def, params, ret, ..
+        } = lower_fn_item_ir(method, &program)
+        else {
+            unreachable!()
+        };
+        assert_eq!(def.name.display(), "Box.get");
+        assert!(params.is_empty());
+        assert!(matches!(
+            &*program.program().ty_intern.get(ret),
+            Ty::Var(n) if n == "A"
+        ));
     }
 }
