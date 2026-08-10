@@ -205,14 +205,22 @@ pub(crate) fn check_fn(
 /// capabilities, and effects are all out of reach) with the field type as
 /// the expected type, so refined literals admit (v0.9.4) and sum variants
 /// resolve. The init's expression types are recorded into `expr_types` for
-/// emission; `code`/`subject` name the caller's own diagnostic and the noun
-/// used in its message ("state field initialiser" / "event field default").
+/// emission, and its `Callee` classification (a `.of`/`.unsafe`/variant-
+/// constructor call, at most) into `callees` (P6.7, #1163) — `bynk-emit::ir`'s
+/// `lower_store_field_ir` lowers a `Cell` field's own `init` through the same
+/// `lower_expr_ir` any other call-shaped expression goes through, which reads
+/// `program.callees` unconditionally (ADR 0334): a call-shaped static
+/// initialiser with no entry there would panic on a certified program the
+/// checker legitimately accepted, not a recoverable state. `code`/`subject`
+/// name the caller's own diagnostic and the noun used in its message ("state
+/// field initialiser" / "event field default").
 #[allow(clippy::too_many_arguments)]
 fn check_static_initialiser(
     init: &Expr,
     field_type: &TypeRef,
     input: &ResolvedCommons,
     expr_types: &mut HashMap<ExprId, TypedExpr>,
+    callees: &mut HashMap<ExprId, Callee>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     hints: &mut HintSink,
@@ -228,10 +236,6 @@ fn check_static_initialiser(
     // A static initialiser is a pure value — no capability calls reach here —
     // so requirements are discarded into a throwaway sink.
     let mut init_requirements = RequirementSink::new();
-    // Same reasoning as `init_requirements`: an initialiser is checked once
-    // and its `Callee` classification (a `.of`/`.unsafe`/variant-constructor
-    // call, at most) has no consumer here — discard it too.
-    let mut init_callees: HashMap<ExprId, Callee> = HashMap::new();
     let result = {
         let mut ctx = Ctx {
             input,
@@ -242,7 +246,7 @@ fn check_static_initialiser(
             hints,
             locals,
             requirements: &mut init_requirements,
-            callees: &mut init_callees,
+            callees,
             scopes: vec![HashMap::new()],
             is_binding_cache: HashMap::new(),
             pattern_binding_types: HashMap::new(),
@@ -293,6 +297,7 @@ pub fn check_state_initialiser(
     input: &ResolvedCommons,
     tys: &Types,
     expr_types: &mut HashMap<ExprId, TypedExpr>,
+    callees: &mut HashMap<ExprId, Callee>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     hints: &mut HintSink,
@@ -303,6 +308,7 @@ pub fn check_state_initialiser(
         field_type,
         input,
         expr_types,
+        callees,
         errors,
         refs,
         hints,
@@ -337,6 +343,7 @@ pub fn check_event_field_default(
     input: &ResolvedCommons,
     tys: &Types,
     expr_types: &mut HashMap<ExprId, TypedExpr>,
+    callees: &mut HashMap<ExprId, Callee>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
     hints: &mut HintSink,
@@ -347,6 +354,7 @@ pub fn check_event_field_default(
         field_type,
         input,
         expr_types,
+        callees,
         errors,
         refs,
         hints,
