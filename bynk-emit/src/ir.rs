@@ -20,16 +20,20 @@
 //! **The whole Part 6.2 shape lands in one piece** (Decision D): every
 //! variant below exists, including `Match`/`Variant`/`Call`/`Lambda`, so a
 //! later slice (P6.2, P6.4, P6.5) widens only [`lower`]'s match, never this
-//! type. `Match`'s own payload (`IrArm`/`Exhaustive`/`MatchForm`) is *not*
-//! designed here — that is P6.4/P6.5's named commission (Part 5.1/5.2 of the
-//! reference) — so those three are left genuinely uninhabited (an empty
-//! `enum`, constructible by no one) rather than a guessed-at shape a real
-//! slice would have to unpick later.
+//! type. `Match`'s own payload is three types: [`IrPat`]/[`IrArm`]/
+//! [`Exhaustive`] are P6.4's own commission (#1157, Part 5.1/5.2 of the
+//! reference) and are real, constructible types as of that slice — [`lower`]
+//! has standalone constructors for the pattern/arm shape
+//! ([`lower::lower_pattern_ir`]/[`lower::lower_arm_ir`]), tested directly,
+//! but nothing yet wires them into [`IrExprKind::Match`] itself. `MatchForm`
+//! is P6.5's own commission (R5.2/R5.3) and stays genuinely uninhabited (an
+//! empty `enum`, constructible by no one) rather than a guessed-at shape a
+//! real slice would have to unpick later.
 
 use std::sync::Arc;
 
 use bynk_check::checker::{Callee, TyId};
-use bynk_syntax::ast::TypeDecl;
+use bynk_syntax::ast::{Refinement, TypeDecl};
 use bynk_syntax::span::Span;
 
 pub(crate) mod lower;
@@ -86,21 +90,113 @@ pub(crate) struct GlobalRef {
     pub tag: String,
 }
 
-/// Placeholder for P6.4's Pattern IR (`design/bynk-greenfield-compiler.md`
-/// §5.1) — not designed by this slice. Exists only so
-/// [`IrExprKind::Match`] matches Part 6.2's own field list; genuinely
-/// uninhabited (no variant), since `Match`'s lowering arm is `todo!()` and
-/// nothing here ever constructs one.
+/// P6.4's real Pattern IR (`design/bynk-greenfield-compiler.md` §5.1, #1157):
+/// a pattern's own recursive shape, six variants mapping one-to-one onto
+/// `bynk_syntax::ast::Pattern`'s own six (`Wildcard`, `Binding`, `Literal`,
+/// `Variant`, `Refined`, `Or`). [`lower::lower_pattern_ir`] is the
+/// `&Pattern -> IrPat` constructor, tested standalone — not yet wired into
+/// [`IrExprKind::Match`]/`Question`/`Is` construction (P6.5's own
+/// commission). No `PatId` arena — a pattern owns its children directly
+/// (`Box<IrPat>`), the same "no arena exists in this codebase" substitution
+/// this module's own doc comment already applies throughout.
 #[derive(Debug, Clone)]
-pub(crate) enum IrArm {}
+pub(crate) enum IrPat {
+    /// `_` — matches anything, binds nothing.
+    Wild,
+    /// A name binding — matches anything, binds `local` to the whole value
+    /// at this position (Decision B substitution: `String`, no `LocalId`
+    /// arena).
+    Bind { local: String },
+    /// A literal pattern — `Int`/`Str`/`Bool` only (ADR 0001's closed
+    /// literal-pattern set), reusing [`ConstVal`] rather than inventing a
+    /// narrower value type for the variants (`Float`/`DurationMillis`/
+    /// `Unit`) no `Pattern::Literal` ever produces.
+    Const { value: ConstVal },
+    /// A sum-variant pattern, `Variant` or `Variant(bindings)` — not just a
+    /// user-declared sum (Decision A): `scrutinee_ty` is resolved through
+    /// the checker's own `variants_of`, the same function that already
+    /// flattens a user sum, `Result`, `Option`, `ActorSum` and `HttpResult`
+    /// into one uniform shape, rather than `Callee::Ctor`'s
+    /// `Arc<TypeDecl>`-keyed identity scheme, which never fires for
+    /// `Ok`/`Err`/`Some`/`None` (`#1145`'s own Decision B, left open).
+    Variant {
+        /// The value this pattern matches against — resolved via
+        /// `variants_of(scrutinee_ty, ..)` to find `tag`'s own payload
+        /// shape. Not the sum's own declaration identity: no `Arc<TypeDecl>`
+        /// exists for a built-in sum like `Option`/`Result`.
+        scrutinee_ty: TyId,
+        tag: String,
+        /// Exactly the payload bindings the source pattern names — a named
+        /// form may bind a strict subset of the variant's payload fields
+        /// (`bynk-check`'s own `check_pattern` allows this); empty for a
+        /// nullary pattern, even over a non-nullary variant (`Miss` without
+        /// `(..)` binds nothing and only tests the tag).
+        fields: Vec<(String, Box<IrPat>)>,
+    },
+    /// `p 'where' predicate` — R5.4: a refinement is a *test*, ordered after
+    /// structural matching and before the guard; never a binding site of its
+    /// own.
+    Refined {
+        inner: Box<IrPat>,
+        refinement: Refinement,
+    },
+    /// `p1 | p2 | … | pn` — matches if any alternative matches. R5.5's own
+    /// binding-mode consequence lives on [`IrArm::binding_mode`], not here —
+    /// an `Or` node is a pure structural fact about the pattern's shape.
+    Or { alts: Vec<IrPat> },
+}
 
-/// Placeholder — see [`IrArm`]'s doc comment. P6.4 builds the real
-/// witness-carrying shape (Part 5.2, R5.6).
+/// P6.4's real `IrArm` (Part 5.1, #1157) — the reference's own bare sketch
+/// (`struct IrArm { pat, guard, body, binds }`) adapted per this module's
+/// "no arena" substitution (`local: LocalId -> String`, `pat: PatId ->
+/// IrPat` owned directly) plus one field the sketch doesn't carry:
+/// `binding_mode` (Decision C, R5.5) — the `let`-vs-`const` choice
+/// `emitter/lower.rs`'s `emit_pattern_bindings` today discovers at emission
+/// time by testing `matches!(pattern, Pattern::Or { .. })`, recorded once
+/// here instead so the checker and the LSP can read the same fact
+/// (`design/bynk-greenfield-compiler.md:749-751`).
 #[derive(Debug, Clone)]
-pub(crate) enum Exhaustive {}
+pub(crate) struct IrArm {
+    pub pat: IrPat,
+    pub guard: Option<IrExpr>,
+    pub body: IrExpr,
+    /// Every name this arm's pattern binds (Decision B substitution:
+    /// `String`, no `LocalId`) — `Pattern::bound_names`'s own "first
+    /// alternative" defensive default for an `Or` (the checker separately
+    /// verifies every alternative binds the same set at the same types).
+    pub binds: Vec<String>,
+    pub binding_mode: BindingMode,
+}
 
-/// Placeholder — see [`IrArm`]'s doc comment. P6.5, not P6.4, decides and
-/// records this (R5.2: tail-vs-value position × flat-vs-if-chain shape).
+/// R5.5 — computed once during [`lower::lower_arm_ir`]'s own `IrArm`
+/// construction, not re-walked by any later reader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BindingMode {
+    /// No `Or` anywhere in the pattern's tree — every bound name can emit
+    /// as a plain `const`.
+    Direct,
+    /// An `Or` is present somewhere in the pattern's tree — a shared name
+    /// can bind at a different structural path in each alternative, so
+    /// emission must switch to `let` plus a per-alternative dispatch.
+    OrDispatch,
+}
+
+/// P6.4's real `Exhaustive` (Part 5.2, R5.6/R5.7, #1157) — `Partial`'s own
+/// witness payload reuses the checker's already-shipped `missing_patterns`
+/// shape (`Vec<String>`, human-readable witness descriptions) rather than
+/// inventing the reference's own unspecified `PatternWitness` struct
+/// (Decision B). Both variants are real and matchable, but this slice's own
+/// [`lower::lower_exhaustive_ir`] only ever constructs `Total` — see that
+/// function's own doc comment for why `Partial` is real, inhabited code,
+/// yet unreached here.
+#[derive(Debug, Clone)]
+pub(crate) enum Exhaustive {
+    Total,
+    Partial(Vec<String>),
+}
+
+/// Placeholder — P6.5, not P6.4, decides and records this (R5.2: tail-vs-
+/// value position × flat-vs-if-chain shape).
 #[derive(Debug, Clone)]
 pub(crate) enum MatchForm {}
 
@@ -158,8 +254,10 @@ pub(crate) enum IrExprKind {
         then_: Box<IrExpr>,
         else_: Box<IrExpr>,
     },
-    /// Pattern matching. Lowering deferred to P6.4/P6.5 — see [`IrArm`]'s
-    /// doc comment for why its payload types are placeholders.
+    /// Pattern matching. `IrPat`/`IrArm`/`Exhaustive` are real as of P6.4
+    /// (#1157), but this variant's own construction is still `todo!()` in
+    /// [`lower`] — `form: MatchForm` has no value to build until P6.5
+    /// decides R5.2/R5.3, so `Match` itself stays deferred to that slice.
     Match {
         scrutinee: Box<IrExpr>,
         arms: Vec<IrArm>,

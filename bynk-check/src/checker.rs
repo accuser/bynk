@@ -3937,9 +3937,18 @@ fn peel_to_map(ty: TyId, tys: &Types) -> Option<(TyId, TyId)> {
 // ==== Structural compatibility and variant introspection ====
 
 /// A flattened view of a type's variants (name + payload types).
-struct VariantInfo {
-    name: String,
-    payload: Vec<(String, TyId)>,
+///
+/// `pub` since P6.4 (design/tracks/the-ir.md §6, #1157, Decision A):
+/// `bynk-emit::ir::lower`'s pattern-lowering needs the exact same uniform
+/// view this function already gives the checker — a user sum, `Result`,
+/// `Option`, `ActorSum` and `HttpResult` all flattened into one `name` +
+/// `payload` shape, with no `Arc<TypeDecl>` required (`Callee::Ctor`'s own
+/// identity scheme never fires for `Ok`/`Err`/`Some`/`None`, ADR 0333's
+/// `#1145` Decision B). No behaviour change — a reachability change only,
+/// the same shape ADR 0333 already gave `Callee`.
+pub struct VariantInfo {
+    pub name: String,
+    pub payload: Vec<(String, TyId)>,
 }
 
 /// Project a return type produced in the consumed context's namespace into
@@ -4267,7 +4276,10 @@ fn refinements_match(a: Option<&Refinement>, b: Option<&Refinement>) -> bool {
     }
 }
 
-fn variants_of(
+/// `pub` since P6.4 (#1157, Decision A) — see [`VariantInfo`]'s own doc
+/// comment for why `bynk-emit` needs this exact function rather than a
+/// re-derived copy (R5.11, for the IR side).
+pub fn variants_of(
     ty: TyId,
     types: &HashMap<String, Arc<TypeDecl>>,
     tys: &Types,

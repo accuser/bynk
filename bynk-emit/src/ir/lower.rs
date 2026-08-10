@@ -21,12 +21,14 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, LambdaExpr, Statement,
-    TypeBody, UnaryOp,
+    BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, LambdaExpr, LiteralValue,
+    MatchArm, MatchBody, Pattern, PatternBindingKind, Statement, TypeBody, UnaryOp,
 };
 use bynk_syntax::span::Span;
 
-use crate::ir::{ConstVal, GlobalRef, IrExpr, IrExprKind, IrStmt};
+use crate::ir::{
+    BindingMode, ConstVal, Exhaustive, GlobalRef, IrArm, IrExpr, IrExprKind, IrPat, IrStmt,
+};
 
 /// The lowering pass's own working state: the certified program's typed
 /// output (for `.ty`/`.types` lookups), a lexical scope stack this pass
@@ -1053,6 +1055,261 @@ fn lower_record_spread_ir(
     }
 }
 
+/// P6.4 (design/tracks/the-ir.md §6, #1157): `&Pattern -> IrPat`, tested
+/// standalone against real certified programs — not yet called by
+/// [`lower_expr_ir`]'s `Match`/`Question`/`Is` arms, all three still
+/// `todo!()` until P6.5 decides `MatchForm` and wires a real consumer.
+///
+/// `scrutinee_ty` is the type of whatever value this particular pattern
+/// matches against — the match's own discriminant at the top level, or a
+/// payload field's own type one level down inside a `Variant` pattern.
+/// Every leaf but `Variant` ignores it structurally (a literal/binding/
+/// wildcard pattern's own shape never depends on the scrutinee's type); a
+/// `Variant` pattern uses it to resolve `tag`/`fields` through the
+/// checker's own `variants_of` (Decision A) — the one place `bynk-check`
+/// state is required at all, since `IrPat` otherwise needs nothing beyond
+/// the AST `Pattern` it lowers.
+fn lower_pattern_ir(pattern: &Pattern, scrutinee_ty: TyId, program: &TypedCommons) -> IrPat {
+    match pattern {
+        Pattern::Wildcard(_) => IrPat::Wild,
+        Pattern::Binding(id) => IrPat::Bind {
+            local: id.name.clone(),
+        },
+        Pattern::Literal { value, .. } => IrPat::Const {
+            value: match value {
+                LiteralValue::Int(n) => ConstVal::Int(*n),
+                LiteralValue::Str(s) => ConstVal::Str(s.clone()),
+                LiteralValue::Bool(b) => ConstVal::Bool(*b),
+            },
+        },
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            let variant_info = variant_info_of(scrutinee_ty, &variant.name, program);
+            let fields = bindings
+                .iter()
+                .enumerate()
+                .map(|(idx, b)| match &b.kind {
+                    PatternBindingKind::Named { field, pattern } => {
+                        let field_ty = variant_info
+                            .payload
+                            .iter()
+                            .find(|(name, _)| name == &field.name)
+                            .map(|(_, ty)| *ty)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "bynk internal error (ADR 0334): named pattern field `{}` \
+                                     does not resolve against variant `{}`'s own payload, but \
+                                     the checker already accepted this pattern",
+                                    field.name, variant.name
+                                )
+                            });
+                        (
+                            field.name.clone(),
+                            Box::new(lower_pattern_ir(pattern, field_ty, program)),
+                        )
+                    }
+                    PatternBindingKind::Positional { pattern } => {
+                        let (name, field_ty) =
+                            variant_info.payload.get(idx).cloned().unwrap_or_else(|| {
+                                panic!(
+                                    "bynk internal error (ADR 0334): positional pattern binding \
+                                     {idx} has no matching payload field on variant `{}`, but \
+                                     the checker already accepted this pattern's arity",
+                                    variant.name
+                                )
+                            });
+                        (name, Box::new(lower_pattern_ir(pattern, field_ty, program)))
+                    }
+                })
+                .collect();
+            IrPat::Variant {
+                scrutinee_ty,
+                tag: variant.name.clone(),
+                fields,
+            }
+        }
+        Pattern::Refined {
+            inner, predicate, ..
+        } => IrPat::Refined {
+            inner: Box::new(lower_pattern_ir(inner, scrutinee_ty, program)),
+            refinement: predicate.clone(),
+        },
+        Pattern::Or(alts, _) => IrPat::Or {
+            alts: alts
+                .iter()
+                .map(|p| lower_pattern_ir(p, scrutinee_ty, program))
+                .collect(),
+        },
+    }
+}
+
+/// Shared by [`lower_pattern_ir`]'s `Variant` arm and
+/// [`collect_pattern_binding_tys`]'s own mirror walk: resolve `tag` against
+/// `scrutinee_ty` through the checker's `variants_of` (Decision A, R5.11).
+/// `.expect()`-not-fallback (ADR 0334) — both call sites are reached only
+/// from a certified program's own pattern, which `check_pattern`
+/// (`bynk-check/src/checker/expressions.rs:3162`) already required to name
+/// a real variant of a real variant-kind scrutinee.
+fn variant_info_of(scrutinee_ty: TyId, tag: &str, program: &TypedCommons) -> checker::VariantInfo {
+    checker::variants_of(scrutinee_ty, &program.types, program.tys())
+        .unwrap_or_else(|| {
+            panic!(
+                "bynk internal error (ADR 0334): variant pattern `{tag}` matches against a \
+                 non-variant-kind scrutinee, but the checker already accepted this pattern"
+            )
+        })
+        .into_iter()
+        .find(|v| v.name == tag)
+        .unwrap_or_else(|| {
+            panic!(
+                "bynk internal error (ADR 0334): scrutinee has no variant `{tag}`, but the \
+                 checker already accepted this pattern"
+            )
+        })
+}
+
+/// Mirrors [`lower_pattern_ir`]'s own recursive walk but collects `(name,
+/// TyId)` pairs instead of building `IrPat` nodes — [`lower_arm_ir`]'s own
+/// need, not `IrPat`'s: a bound name's type has nowhere to live on `IrPat`
+/// itself (R6.1 is an `IrExpr` rule, not a pattern rule; the reference's own
+/// `IrPat::Bind` carries no type either), yet this pass's `guard`/`body`
+/// lowering needs every bound name in scope to resolve as a `Local` the
+/// same way a `Block`'s own `Let` does. The checker's own equivalent table
+/// (`Ctx::pattern_binding_types`) is transient — never persisted onto
+/// `TypedCommons` — so this pass re-derives it here rather than reading a
+/// checked-output field.
+fn collect_pattern_binding_tys(
+    pattern: &Pattern,
+    ty: TyId,
+    program: &TypedCommons,
+    out: &mut Vec<(String, TyId)>,
+) {
+    match pattern {
+        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
+        Pattern::Binding(id) => out.push((id.name.clone(), ty)),
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            let variant_info = variant_info_of(ty, &variant.name, program);
+            for (idx, b) in bindings.iter().enumerate() {
+                match &b.kind {
+                    PatternBindingKind::Named { field, pattern } => {
+                        if let Some((_, field_ty)) = variant_info
+                            .payload
+                            .iter()
+                            .find(|(name, _)| name == &field.name)
+                        {
+                            collect_pattern_binding_tys(pattern, *field_ty, program, out);
+                        }
+                    }
+                    PatternBindingKind::Positional { pattern } => {
+                        if let Some((_, field_ty)) = variant_info.payload.get(idx) {
+                            collect_pattern_binding_tys(pattern, *field_ty, program, out);
+                        }
+                    }
+                }
+            }
+        }
+        Pattern::Refined { inner, .. } => collect_pattern_binding_tys(inner, ty, program, out),
+        // Every alternative binds the same names at the same types
+        // (`check_or_pattern_bindings`'s own Rule 1/2) — the first
+        // alternative only, matching `Pattern::bound_names`'s own
+        // defensive default.
+        Pattern::Or(alts, _) => {
+            if let Some(first) = alts.first() {
+                collect_pattern_binding_tys(first, ty, program, out);
+            }
+        }
+    }
+}
+
+/// R5.5 (Decision C): `true` iff `pat` contains an `Or` anywhere in its own
+/// tree — the fact [`IrArm::binding_mode`] records once rather than the
+/// emitter re-discovering it at emission time.
+fn ir_pat_contains_or(pat: &IrPat) -> bool {
+    match pat {
+        IrPat::Wild | IrPat::Bind { .. } | IrPat::Const { .. } => false,
+        IrPat::Variant { fields, .. } => fields.iter().any(|(_, p)| ir_pat_contains_or(p)),
+        IrPat::Refined { inner, .. } => ir_pat_contains_or(inner),
+        IrPat::Or { .. } => true,
+    }
+}
+
+/// P6.4 (#1157): the non-form-deciding parts of a `MatchArm` —
+/// `pat`/`guard`/`body`/`binds`/`binding_mode` — everything but the
+/// `MatchForm` policy R5.2 decides, which is P6.5's own job. Tested
+/// standalone the same way [`lower_pattern_ir`] is; not called by
+/// [`lower_expr_ir`]'s `Match` arm, still `todo!()`.
+///
+/// R5.4's ordering (structural test, then refinement, then bindings, then
+/// guard) is why `guard`/`body` are lowered with the pattern's own bound
+/// names already pushed into scope — a guard must be able to read them.
+fn lower_arm_ir(arm: &MatchArm, scrutinee_ty: TyId, cx: &mut LowerIrCtx) -> IrArm {
+    let pat = lower_pattern_ir(&arm.pattern, scrutinee_ty, cx.program);
+    let binds: Vec<String> = arm
+        .pattern
+        .bound_names()
+        .into_iter()
+        .map(|id| id.name.clone())
+        .collect();
+
+    let mut bind_tys = Vec::new();
+    collect_pattern_binding_tys(&arm.pattern, scrutinee_ty, cx.program, &mut bind_tys);
+
+    cx.push_scope();
+    for (name, ty) in bind_tys {
+        cx.bind(name, ty);
+    }
+    let guard = arm.guard.as_ref().map(|g| lower_expr_ir(g, cx));
+    let body = match &arm.body {
+        MatchBody::Expr(e) => lower_expr_ir(e, cx),
+        MatchBody::Block(b) => lower_block_ir(b, cx),
+    };
+    cx.pop_scope();
+
+    let binding_mode = if ir_pat_contains_or(&pat) {
+        BindingMode::OrDispatch
+    } else {
+        BindingMode::Direct
+    };
+
+    IrArm {
+        pat,
+        guard,
+        body,
+        binds,
+        binding_mode,
+    }
+}
+
+/// P6.4 (#1157, Decision B — extends ADR 0334's `.expect()`-not-fallback
+/// discipline to a second rule): a certified `CheckedProgram` can never
+/// contain a structurally non-exhaustive match — every diagnostic path that
+/// would produce one (`bynk.types.non_exhaustive_match`) is error-severity,
+/// and `certify` (R3.10) rejects any unit carrying one. This pass therefore
+/// never re-derives the verdict `bynk-check`'s own `saw_wildcard`/
+/// `missing_patterns` machinery already computed — it trusts it, checking
+/// only the one structural fact that verdict *implies* and this function
+/// can cheaply confirm without rebuilding `missing_patterns`' own witness
+/// machinery: a guarded arm never contributes to coverage
+/// (`bynk-check/src/checker/expressions.rs`'s own `unguarded` filter,
+/// `:3016`/`:3034`), so a certified match always has at least one unguarded
+/// arm. `Exhaustive::Partial` stays real, inhabited code (a future
+/// non-certified producer's own lane) — just never constructed here.
+fn lower_exhaustive_ir(arms: &[MatchArm]) -> Exhaustive {
+    if arms.iter().any(|a| a.guard.is_none()) {
+        Exhaustive::Total
+    } else {
+        unreachable!(
+            "bynk internal error (ADR 0334, extended by Decision B / #1157): a certified \
+             program's match always has at least one unguarded arm — bynk-check's own \
+             missing_patterns gate (bynk.types.non_exhaustive_match, error-severity, rejected by \
+             certify per R3.10) guarantees it"
+        )
+    }
+}
+
 /// Decision E: targeted minimal fixtures, one per node kind this slice
 /// covers, staying strictly inside the subset [`lower_expr_ir`]/
 /// [`lower_stmt_ir`] actually implement — not a walk over the real
@@ -1964,5 +2221,285 @@ commons demo {
             &*program.program().ty_intern.get(item.ty),
             Ty::Base(bynk_syntax::ast::BaseType::Int)
         ));
+    }
+
+    // ==== P6.4 (#1157): IrPat/IrArm/Exhaustive, tested standalone ====
+    //
+    // None of `lower_pattern_ir`/`lower_arm_ir`/`lower_exhaustive_ir` is
+    // called by `lower_expr_ir`'s `Match` arm — still `todo!()`, P6.5's own
+    // job. Every fixture below digs its own `match` straight out of a
+    // fixture fn's body tail and lowers it through these three entry points
+    // directly, bypassing `lower_expr_ir` entirely.
+
+    /// Every fixture below is a single-expression `fn` body whose tail is
+    /// `ExprKind::Match` — no general-purpose statement walk is needed.
+    fn find_match_arms(f: &FnDecl) -> (&Expr, &[MatchArm]) {
+        let ExprKind::Match { discriminant, arms } = &f.body.tail.kind else {
+            panic!(
+                "fixture's fn body tail is not a Match, got {:?}",
+                f.body.tail.kind
+            )
+        };
+        (discriminant, arms)
+    }
+
+    /// Binds the fn's own params into scope first (mirroring
+    /// `lower_fn_body_ir`'s own setup) so a guard/body that reads an outer
+    /// param — not just a pattern binding — resolves too, then lowers every
+    /// arm of the fixture's own top-level `match` plus its `Exhaustive`.
+    fn lower_match_fixture(program: &CheckedProgram, fn_name: &str) -> (Vec<IrArm>, Exhaustive) {
+        let f = find_fn(program, fn_name);
+        let (discriminant, arms) = find_match_arms(f);
+        let disc_ty = program
+            .program()
+            .expr_types
+            .get(&discriminant.id)
+            .unwrap_or_else(|| panic!("{fn_name}: discriminant has no recorded type"))
+            .ty;
+        let mut cx = LowerIrCtx::new(program, HashSet::new());
+        for p in &f.params {
+            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
+                panic!("{fn_name}: param `{}`'s type does not resolve", p.name.name)
+            });
+            cx.bind(p.name.name.clone(), ty);
+        }
+        let ir_arms: Vec<IrArm> = arms
+            .iter()
+            .map(|a| lower_arm_ir(a, disc_ty, &mut cx))
+            .collect();
+        let exhaustive = lower_exhaustive_ir(arms);
+        (ir_arms, exhaustive)
+    }
+
+    #[test]
+    fn pattern_ir_covers_wildcard_binding_and_literal_leaves() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn wildcard_case(n: Int) -> Int {
+    match n {
+      _ => 0
+    }
+  }
+
+  fn binding_case(n: Int) -> Int {
+    match n {
+      m => m
+    }
+  }
+
+  fn literal_case(n: Int) -> String {
+    match n {
+      0 => "zero"
+      other => "other"
+    }
+  }
+}
+"#,
+        );
+
+        let (wild_arms, wild_exhaustive) = lower_match_fixture(&program, "wildcard_case");
+        assert_eq!(wild_arms.len(), 1);
+        assert!(matches!(&wild_arms[0].pat, IrPat::Wild));
+        assert!(wild_arms[0].binds.is_empty());
+        assert_eq!(wild_arms[0].binding_mode, BindingMode::Direct);
+        assert!(matches!(wild_exhaustive, Exhaustive::Total));
+
+        let (binding_arms, _) = lower_match_fixture(&program, "binding_case");
+        assert!(matches!(&binding_arms[0].pat, IrPat::Bind { local } if local == "m"));
+        assert_eq!(binding_arms[0].binds, vec!["m".to_string()]);
+        assert!(matches!(&binding_arms[0].body.kind, IrExprKind::Local(n) if n == "m"));
+
+        let (literal_arms, literal_exhaustive) = lower_match_fixture(&program, "literal_case");
+        assert!(matches!(
+            &literal_arms[0].pat,
+            IrPat::Const {
+                value: ConstVal::Int(0)
+            }
+        ));
+        assert!(matches!(&literal_arms[1].pat, IrPat::Bind { local } if local == "other"));
+        assert!(matches!(literal_exhaustive, Exhaustive::Total));
+    }
+
+    #[test]
+    fn pattern_ir_variant_over_a_user_sum_resolves_tag_and_payload_fields() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Outcome =
+    | Hit(score: Int)
+    | Miss
+
+  fn variant_user_sum(o: Outcome) -> Int {
+    match o {
+      Hit(score) => score
+      Miss => 0
+    }
+  }
+}
+"#,
+        );
+
+        let (arms, exhaustive) = lower_match_fixture(&program, "variant_user_sum");
+        assert_eq!(arms.len(), 2);
+
+        let IrPat::Variant { tag, fields, .. } = &arms[0].pat else {
+            panic!("expected Variant, got {:?}", arms[0].pat)
+        };
+        assert_eq!(tag, "Hit");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "score");
+        assert!(matches!(&*fields[0].1, IrPat::Bind { local } if local == "score"));
+        assert_eq!(arms[0].binds, vec!["score".to_string()]);
+        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(n) if n == "score"));
+
+        let IrPat::Variant { tag, fields, .. } = &arms[1].pat else {
+            panic!("expected Variant, got {:?}", arms[1].pat)
+        };
+        assert_eq!(tag, "Miss");
+        assert!(fields.is_empty());
+        assert!(arms[1].binds.is_empty());
+
+        assert!(matches!(exhaustive, Exhaustive::Total));
+    }
+
+    #[test]
+    fn pattern_ir_variant_over_result_and_option_resolves_via_variants_of() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn variant_result(r: Result[Int, String]) -> Int {
+    match r {
+      Ok(v) => v
+      Err(_) => 0
+    }
+  }
+
+  fn variant_option(o: Option[Int]) -> Int {
+    match o {
+      Some(v) => v
+      None => 0
+    }
+  }
+}
+"#,
+        );
+
+        let (result_arms, _) = lower_match_fixture(&program, "variant_result");
+        let IrPat::Variant { tag, fields, .. } = &result_arms[0].pat else {
+            panic!("expected Variant, got {:?}", result_arms[0].pat)
+        };
+        assert_eq!(tag, "Ok");
+        assert_eq!(fields[0].0, "value");
+        assert!(matches!(&*fields[0].1, IrPat::Bind { local } if local == "v"));
+        let IrPat::Variant { tag, fields, .. } = &result_arms[1].pat else {
+            panic!("expected Variant, got {:?}", result_arms[1].pat)
+        };
+        assert_eq!(tag, "Err");
+        assert_eq!(fields[0].0, "error");
+        assert!(matches!(&*fields[0].1, IrPat::Wild));
+
+        let (option_arms, _) = lower_match_fixture(&program, "variant_option");
+        let IrPat::Variant { tag, fields, .. } = &option_arms[0].pat else {
+            panic!("expected Variant, got {:?}", option_arms[0].pat)
+        };
+        assert_eq!(tag, "Some");
+        assert_eq!(fields[0].0, "value");
+        let IrPat::Variant { tag, fields, .. } = &option_arms[1].pat else {
+            panic!("expected Variant, got {:?}", option_arms[1].pat)
+        };
+        assert_eq!(tag, "None");
+        assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn pattern_ir_refined_wraps_the_inner_pattern_and_stays_direct_mode() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn refined_case(n: Int) -> Int {
+    match n {
+      _ where Positive => 1
+      _ => 0
+    }
+  }
+}
+"#,
+        );
+
+        let (arms, exhaustive) = lower_match_fixture(&program, "refined_case");
+        let IrPat::Refined { inner, refinement } = &arms[0].pat else {
+            panic!("expected Refined, got {:?}", arms[0].pat)
+        };
+        assert!(matches!(&**inner, IrPat::Wild));
+        assert_eq!(refinement.predicates.len(), 1);
+        assert_eq!(refinement.predicates[0].kind.name(), "Positive");
+        assert_eq!(arms[0].binding_mode, BindingMode::Direct);
+        assert!(matches!(exhaustive, Exhaustive::Total));
+    }
+
+    #[test]
+    fn pattern_ir_or_pattern_records_or_dispatch_binding_mode_and_shared_binds() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Outcome =
+    | Hit(score: Int)
+    | Boost(score: Int)
+    | Miss
+
+  fn or_case(o: Outcome) -> Int {
+    match o {
+      Hit(score) | Boost(score) => score
+      Miss => 0
+    }
+  }
+}
+"#,
+        );
+
+        let (arms, exhaustive) = lower_match_fixture(&program, "or_case");
+        let IrPat::Or { alts } = &arms[0].pat else {
+            panic!("expected Or, got {:?}", arms[0].pat)
+        };
+        assert_eq!(alts.len(), 2);
+        assert!(matches!(&alts[0], IrPat::Variant { tag, .. } if tag == "Hit"));
+        assert!(matches!(&alts[1], IrPat::Variant { tag, .. } if tag == "Boost"));
+        // The whole point of R5.5/Decision C — a name shared across
+        // alternatives, at different structural paths, still surfaces as
+        // one `binds` entry and flips the arm's own dispatch mode.
+        assert_eq!(arms[0].binds, vec!["score".to_string()]);
+        assert_eq!(arms[0].binding_mode, BindingMode::OrDispatch);
+        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(n) if n == "score"));
+
+        // `Miss`'s own arm has no `Or` anywhere in its pattern — stays
+        // `Direct`, proving the mode is per-arm, not a whole-match property.
+        assert_eq!(arms[1].binding_mode, BindingMode::Direct);
+
+        assert!(matches!(exhaustive, Exhaustive::Total));
+    }
+
+    #[test]
+    #[should_panic(expected = "always has at least one unguarded arm")]
+    fn exhaustive_ir_panics_if_every_arm_is_guarded() {
+        // Never reachable through a real certified program — the checker's
+        // own `missing_patterns` gate (`bynk.types.non_exhaustive_match`)
+        // already rejects an all-guarded arm list as non-exhaustive before
+        // `certify` ever produces a `CheckedProgram` (finding 3, #1157).
+        // Hand-built here, bypassing `checked_program` entirely, to prove
+        // the ADR 0334-style discipline Decision B commissions is real, not
+        // decorative.
+        let dummy_expr = Expr {
+            id: ExprId(0),
+            kind: ExprKind::BoolLit(true),
+            span: Span::default(),
+        };
+        let arm = MatchArm {
+            pattern: Pattern::Wildcard(Span::default()),
+            guard: Some(dummy_expr.clone()),
+            body: MatchBody::Expr(dummy_expr),
+            span: Span::default(),
+        };
+        let _ = lower_exhaustive_ir(std::slice::from_ref(&arm));
     }
 }
