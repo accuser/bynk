@@ -20,15 +20,17 @@
 //! **The whole Part 6.2 shape lands in one piece** (Decision D): every
 //! variant below exists, including `Match`/`Variant`/`Call`/`Lambda`, so a
 //! later slice (P6.2, P6.4, P6.5) widens only [`lower`]'s match, never this
-//! type. `Match`'s own payload is three types: [`IrPat`]/[`IrArm`]/
+//! type. `Match`'s own payload is four types: [`IrPat`]/[`IrArm`]/
 //! [`Exhaustive`] are P6.4's own commission (#1157, Part 5.1/5.2 of the
-//! reference) and are real, constructible types as of that slice — [`lower`]
-//! has standalone constructors for the pattern/arm shape
-//! ([`lower::lower_pattern_ir`]/[`lower::lower_arm_ir`]), tested directly,
-//! but nothing yet wires them into [`IrExprKind::Match`] itself. `MatchForm`
-//! is P6.5's own commission (R5.2/R5.3) and stays genuinely uninhabited (an
-//! empty `enum`, constructible by no one) rather than a guessed-at shape a
-//! real slice would have to unpick later.
+//! reference); [`MatchForm`] is P6.5's own (#1159, R5.2/R5.3, scoped to
+//! shape only — Decision A). All four are real, constructible types as of
+//! P6.5, wired into a real [`IrExprKind::Match`] by [`lower`]'s
+//! `ExprKind::Match` arm, which calls P6.4's own standalone constructors
+//! ([`lower::lower_pattern_ir`]/[`lower::lower_arm_ir`]/
+//! [`lower::lower_exhaustive_ir`]) verbatim. `Question`/`Is` stay
+//! desugars-to-`Match` in name only — neither gets real construction this
+//! slice, each for a reason specific to it (see [`lower`]'s own `todo!()`
+//! text for each).
 
 use std::sync::Arc;
 
@@ -209,10 +211,27 @@ pub(crate) enum Exhaustive {
     Partial(Vec<String>),
 }
 
-/// Placeholder — P6.5, not P6.4, decides and records this (R5.2: tail-vs-
-/// value position × flat-vs-if-chain shape).
-#[derive(Debug, Clone)]
-pub(crate) enum MatchForm {}
+/// P6.5's own real `MatchForm` (#1159, R5.2/R5.3) — scoped to shape only
+/// (Decision A). The reference's own table crosses tail-vs-value position
+/// with flat-vs-if-chain shape into four printed forms, but position is
+/// decided by *where in the AST the caller already is* — the same mechanism
+/// that already decides tail-vs-value for every other `IrExprKind`,
+/// including `If`, which P6.1 already committed to modelling
+/// position-agnostically (this module's own `IrExprKind::If` doc comment).
+/// `Match`'s own `scrutinee`/`arms`/`exhaustive` are identical regardless of
+/// position, so only the shape bit is recorded here — a future printer
+/// derives the tail-vs-value physical shape itself, the same way it would
+/// for `If`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MatchForm {
+    /// A flat `switch` on the scrutinee's own tag/value — no arm carries a
+    /// guard or a refutable nested payload pattern.
+    Flat,
+    /// An if/else-if chain (ADR 0169) — at least one arm carries a guard or
+    /// a refutable nested payload pattern a single-level `switch` can't
+    /// express.
+    IfChain,
+}
 
 /// A lowered expression's shape. Every node kind from Part 6.2 exists here
 /// (Decision D); [`lower`] implements real construction only for the
@@ -268,10 +287,14 @@ pub(crate) enum IrExprKind {
         then_: Box<IrExpr>,
         else_: Box<IrExpr>,
     },
-    /// Pattern matching. `IrPat`/`IrArm`/`Exhaustive` are real as of P6.4
-    /// (#1157), but this variant's own construction is still `todo!()` in
-    /// [`lower`] — `form: MatchForm` has no value to build until P6.5
-    /// decides R5.2/R5.3, so `Match` itself stays deferred to that slice.
+    /// Pattern matching. `scrutinee`/`arms`/`exhaustive`/`form` are all
+    /// real, constructible values as of P6.5 (#1159) — `arms`/`exhaustive`
+    /// built by calling P6.4's own `lower_pattern_ir`/`lower_arm_ir`/
+    /// `lower_exhaustive_ir` verbatim (#1157), `form` by reusing the
+    /// shipped string emitter's own `match_needs_if_chain`/
+    /// `pattern_has_nested_test` (Decision B) rather than re-deriving an
+    /// equivalent predicate over `IrPat`'s own (slightly different)
+    /// recursive shape.
     Match {
         scrutinee: Box<IrExpr>,
         arms: Vec<IrArm>,
