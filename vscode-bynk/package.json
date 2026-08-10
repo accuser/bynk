@@ -532,7 +532,7 @@
     "glob": "^13.0.6",
     "markdown-it": "^15.0.0",
     "mermaid": "^11.16.1",
-    "mocha": "^11.7.6",
+    "mocha": "^11.8.0",
     "typescript": "^7.0.2"
   },
   "overrides": {
