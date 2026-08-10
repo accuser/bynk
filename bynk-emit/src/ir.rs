@@ -31,11 +31,19 @@
 //! desugars-to-`Match` in name only — neither gets real construction this
 //! slice, each for a reason specific to it (see [`lower`]'s own `todo!()`
 //! text for each).
+//!
+//! **P6.6 (#1161) adds [`IrItem`]/[`TypeShape`] (Part 6.6)** — a *separate*
+//! top-level type from [`IrExpr`], not a new [`IrExprKind`] variant:
+//! declarations and expressions are different node families in the
+//! reference sketch, and unlike `Match`'s own payload, `IrItem` carries no
+//! constraint that its whole seven-variant design-sketch shape must exist as
+//! of this slice — see [`IrItem`]'s own doc comment for exactly which are
+//! real.
 
 use std::sync::Arc;
 
 use bynk_check::checker::{Callee, TyId};
-use bynk_syntax::ast::{Refinement, TypeDecl};
+use bynk_syntax::ast::{BaseType, FnDecl, Refinement, TypeDecl};
 use bynk_syntax::span::Span;
 
 pub(crate) mod lower;
@@ -353,3 +361,115 @@ pub(crate) enum IrStmt {
     Let { local: String, value: IrExpr },
     Expr { value: IrExpr },
 }
+
+/// P6.6's real declaration IR (`design/bynk-greenfield-compiler.md` §6.6,
+/// #1161) — a top-level declaration's own shape, the payload
+/// [`lower::lower_type_item_ir`]/[`lower::lower_fn_item_ir`] construct.
+/// Identity is adapted per this module's own "no arena" substitution
+/// (`DefId -> Arc<TypeDecl>`/`Arc<FnDecl>`, the same substitution
+/// `Record`/`GlobalRef` already made).
+///
+/// **Only `Type` and `Fn` exist as variants this slice** (Decision D,
+/// #1161, matching the issue's own title: "Agent/Service/Actor/Capability/
+/// Provider deferred"). This is a different posture from `Match`'s own
+/// payload (`IrPat`/`IrArm`/`Exhaustive`/`MatchForm`), which had to exist —
+/// even genuinely uninhabited — the moment `IrExprKind::Match`'s own field
+/// list was written, because `IrExprKind` is one enum whose whole Part 6.2
+/// shape landed in a single slice (P6.1) and never grows a new variant
+/// after. `IrItem` carries no such constraint: nothing outside this module
+/// matches on it exhaustively yet (no consumer at all, same posture as
+/// every prior P6.x slice), so a later slice can add a wholly new variant
+/// rather than needing a placeholder reserved here in advance. Each
+/// deferred variant has its own real, distinct blocker, not a shared
+/// "later" (full grounding in #1161's own Decision D):
+/// - `Agent`/`Service` both need `IrHandler`/`StoreFieldIr`/`CommitShape` —
+///   P6.7's own commission (R6.14/R6.15); `design/tracks/the-ir.md`'s own
+///   slice table gates P6.7 on P6.6, so those types are not available to
+///   this slice, not merely deferred by choice. `Service` additionally
+///   carries a materially larger surface than its own reference sketch
+///   shows at all (CORS/security-headers/request-body-size policy structs,
+///   `ServiceDecl.cors`/`security`/`limits`).
+/// - `Actor` has no emitted artefact of its own today (R8.1: "no
+///   declaration; drives the boundary wrapper in `compose.ts`") — genuinely
+///   unsettled how `auth`/`identity`/`claims` map onto the reference's own
+///   sketch, not safely guessable from the reference alone.
+/// - `Capability`'s own `ops: Vec<OpSig>` names a type (`OpSig`) the
+///   reference never defines anywhere — the same "referenced, not
+///   specified" gap as `Actor`'s `AuthScheme`.
+/// - `Provider`'s `body: ProviderBody` needs modelling `ProviderDecl`'s own
+///   `Bynk`/`External(module)` dispatch — not named closely enough in the
+///   reference to build without its own grounding pass.
+#[derive(Debug, Clone)]
+pub(crate) enum IrItem {
+    /// A `type` declaration. `shape` covers all three real [`TypeShape`]
+    /// forms.
+    Type {
+        def: Arc<TypeDecl>,
+        shape: TypeShape,
+    },
+    /// A `fn` declaration — free function or method alike (`FnName::Free`/
+    /// `FnName::Method`); which `IrItem::Fn`s a future printer re-attaches
+    /// under which `IrItem::Type`'s own namespace (R8.1) is phase 7's own
+    /// concern, not decided here.
+    Fn {
+        def: Arc<FnDecl>,
+        /// Adapts the reference's own bare `Vec<LocalId>` to `Vec<(String,
+        /// TyId)>` (Decision E, #1161) — no arena exists to look a param's
+        /// type back up from its name alone once this `IrItem` outlives the
+        /// `LowerIrCtx` that resolved it, unlike every other Decision-B
+        /// "name only" substitution in this module, where the type is
+        /// either implied by context or carried alongside on the same node
+        /// (e.g. `IrExpr::ty`).
+        params: Vec<(String, TyId)>,
+        ret: TyId,
+        /// [`lower::lower_fn_body_ir`]'s own return value, unchanged
+        /// (#1141) — this constructor adds no further transformation.
+        body: IrExpr,
+        /// Derived once from `ret`'s structural shape (`Ty::Fn`'s own doc
+        /// comment, `bynk-check/src/checker.rs`: effectful iff `ret` is
+        /// `Effect[_]`), never threaded from anywhere else — the same
+        /// single-source-of-truth discipline this module already follows
+        /// for [`BindingMode`]/[`Exhaustive`].
+        effectful: bool,
+    },
+}
+
+/// P6.6's real `TypeShape` (Part 6.6, #1161) — a declared type's own
+/// resolved structure, the payload of [`IrItem::Type`]. Covers the AST's
+/// four `TypeBody` variants (`Refined`/`Record`/`Sum`/`Opaque`) with the
+/// reference's own three ([DECISION A]): `Opaque` unifies into `Refined`
+/// via its own `opaque: bool` field, mirroring `emitter/emit.rs`'s own
+/// `RefinedShape { base, refinement, is_opaque }` — the shipped emitter's
+/// own precedent for exactly this unification (`emit_type`,
+/// `emitter/emit.rs:19`).
+#[derive(Debug, Clone)]
+pub(crate) enum TypeShape {
+    /// Every field the record declares, in declaration order ([DECISION B]
+    /// extended: a field's own inline `refinement` is dropped — a
+    /// construction-time constraint the checker already enforces, not part
+    /// of the emitted shape; confirmed by search, no `.refinement` reader
+    /// anywhere in `bynk-emit`'s emitter today).
+    Record { fields: Vec<(String, TyId)> },
+    /// Every variant the sum declares, each with its own payload field
+    /// list, plus any `embeds` clauses ([DECISION C]: [`EmbedIr`]).
+    Sum {
+        variants: Vec<(String, Vec<(String, TyId)>)>,
+        embeds: Vec<EmbedIr>,
+    },
+    /// `type X = base where refinement` (`Refined`) or `type X = unsafe
+    /// base ...` (`Opaque`, `opaque: true`). `refinement` is `Option`, not
+    /// the reference's own bare `RefinementId` ([DECISION B]) — a bare
+    /// `type X = Int` (no `where` clause) is legal and carries none.
+    Refined {
+        base: BaseType,
+        refinement: Option<Refinement>,
+        opaque: bool,
+    },
+}
+
+/// The payload of [`TypeShape::Sum`]'s own `embeds` — a resolved `embeds`
+/// clause ([DECISION C], #1161): the source type paired with the target
+/// variant's own tag name. A plain tuple, not a dedicated struct, mirroring
+/// [`IrPat::Variant`]'s own `fields: Vec<(String, Box<IrPat>)>` precedent
+/// for a two-part fact with no further structure.
+pub(crate) type EmbedIr = (TyId, String);
