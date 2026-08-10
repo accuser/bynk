@@ -612,6 +612,13 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
         } => lower_call_ir(e, Some(receiver), type_args, args, cx),
         ExprKind::Match { discriminant, arms } => {
             let scrutinee = Box::new(lower_expr_ir(discriminant, cx));
+            // Deliberately the lowered `IrExpr`'s own `ty`, not
+            // `cx.expr_ty(discriminant.id)` (the AST-keyed type P6.4's own
+            // standalone fixtures read instead, `lower_match_fixture` below)
+            // — the two agree everywhere reachable today, but `scrutinee.ty`
+            // stays correct even if a future discriminant ever lowers
+            // through a type-adjusting arm (a `peel_effect` site), where the
+            // recorded AST type and the lowered node's own type can diverge.
             let scrutinee_ty = scrutinee.ty;
             let ir_arms: Vec<IrArm> = arms
                 .iter()
@@ -623,6 +630,16 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             } else {
                 MatchForm::Flat
             };
+            // Not recorded here: the string emitter also decides, at this
+            // same site, whether the discriminant needs hoisting to a temp
+            // before an if-chain re-evaluates it per arm
+            // (`is_narrowable_path`, `emitter/lower.rs:5068` — re-evaluating
+            // a non-ident/field discriminant could repeat side effects).
+            // Left deliberately derivable from `scrutinee`'s own `Local`/
+            // `Field` shape rather than mirrored onto `IrExprKind::Match` as
+            // a second flag — the same "can never silently disagree"
+            // argument Decision B makes for `form` applies here too, just
+            // resolved by omission instead of reuse.
             IrExpr {
                 kind: IrExprKind::Match {
                     scrutinee,
@@ -2761,10 +2778,22 @@ commons demo {
         );
         let ir = lower_fn(&program, "describe");
         let tail = fn_tail(&ir);
-        let IrExprKind::Match { form, .. } = &tail.kind else {
+        let IrExprKind::Match { arms, form, .. } = &tail.kind else {
             panic!("expected Match, got {:?}", tail.kind)
         };
         assert_eq!(*form, MatchForm::IfChain);
+        // Not just `form` — the guard itself must actually lower, and
+        // (R5.4 ordering) must see the pattern's own bound name `flag`
+        // already in scope, resolving as a `Local` rather than falling
+        // through to `lower_ident_ir`'s `todo!()`. `lower_arm_ir` already
+        // covers this standalone (`pattern_ir_arm_guard_lowers_and_sees_the_
+        // patterns_own_bindings`); this pins the same property reached
+        // through the real `ExprKind::Match` arm instead.
+        let guard = arms[0]
+            .guard
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected a lowered guard, got {:?}", arms[0].guard));
+        assert!(matches!(&guard.kind, IrExprKind::Local(n) if n == "flag"));
     }
 
     #[test]
@@ -2788,6 +2817,72 @@ commons demo {
             panic!("expected Match, got {:?}", tail.kind)
         };
         assert_eq!(*form, MatchForm::IfChain);
+    }
+
+    #[test]
+    fn match_with_a_refined_arm_gets_if_chain_form() {
+        // The third of `match_needs_if_chain`'s three disjuncts
+        // (`Pattern::Refined`), untested through `lower_expr_ir` by the two
+        // tests above — also pins the IR counterpart this same slice builds
+        // for a `where`-refined arm (`IrPat::Refined`), so `form` and the
+        // pattern shape are checked together rather than in isolation.
+        let program = checked_program(
+            r#"
+commons demo {
+  fn describe(n: Int) -> Int {
+    match n {
+      _ where Positive => 1
+      _ => 0
+    }
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "describe");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Match { arms, form, .. } = &tail.kind else {
+            panic!("expected Match, got {:?}", tail.kind)
+        };
+        assert!(matches!(&arms[0].pat, IrPat::Refined { .. }));
+        assert_eq!(*form, MatchForm::IfChain);
+    }
+
+    #[test]
+    fn match_with_a_bindingless_or_pattern_stays_flat() {
+        // The counter-intuitive half of `pattern_has_nested_test`'s own
+        // `Pattern::Or` rule: a bindingless or-pattern (`Hit | Boost`) stays
+        // `Flat` — only an or-pattern *with* bindings, or one with a nested
+        // refutable payload, needs the if-chain. A distinct axis from
+        // `IrArm::binding_mode` (`OrDispatch` the moment `IrPat::Or` occurs
+        // anywhere, bindings or not, R5.5 — see `ir_pat_contains_or`'s own
+        // doc comment), so no assertion on `binding_mode` here. The
+        // cheapest way to catch a future "any `Or` => if-chain" regression,
+        // in either the emitter predicate or a re-derivation of it, is
+        // pinning the case that would silently flip first.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Outcome =
+    | Hit
+    | Boost
+    | Miss
+
+  fn describe(o: Outcome) -> Int {
+    match o {
+      Hit | Boost => 1
+      Miss => 0
+    }
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "describe");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Match { arms, form, .. } = &tail.kind else {
+            panic!("expected Match, got {:?}", tail.kind)
+        };
+        assert!(matches!(&arms[0].pat, IrPat::Or { .. }));
+        assert_eq!(*form, MatchForm::Flat);
     }
 
     #[test]
