@@ -1,0 +1,4 @@
+---
+level: patch
+changelog: P6.3 (design/tracks/the-ir.md §6) — bynk-emit::ir::lower gains real desugaring for two of the row's ten node kinds: BinOp::Implies -> Or{lhs: Not(a), rhs: b}, split out of the bundled comparison/arithmetic todo!(); and ExprKind::RecordSpread -> Block{stmts: [Let(tmp, base)], tail: Record{<complete, resolved field list>}}, a real desugar enumerating the target record's own declared fields rather than a port of the current string emitter's raw ...spread splice. Question/Is stay deferred to P6.4's Pattern IR (Match/IrArm are still uninhabited placeholders); Ok/Err/Some/None stay deferred pending a built-in-type identity decision no ADR has made; Expect/Val/Observation/Trace/Wire stay deferred as test-body-only, unreachable through the existing single-file lowering test harness — each todo!() now names its own specific blocker instead of a bare "not yet". No consumer yet and no bynk-emit emission-behaviour change (#1145)
+---
