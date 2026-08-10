@@ -150,11 +150,11 @@ pub(crate) enum IrPat {
 /// (`struct IrArm { pat, guard, body, binds }`) adapted per this module's
 /// "no arena" substitution (`local: LocalId -> String`, `pat: PatId ->
 /// IrPat` owned directly) plus one field the sketch doesn't carry:
-/// `binding_mode` (Decision C, R5.5) — the `let`-vs-`const` choice
-/// `emitter/lower.rs`'s `emit_pattern_bindings` today discovers at emission
-/// time by testing `matches!(pattern, Pattern::Or { .. })`, recorded once
-/// here instead so the checker and the LSP can read the same fact
-/// (`design/bynk-greenfield-compiler.md:749-751`).
+/// `binding_mode` (Decision C, R5.5, computed once during this arm's own
+/// construction rather than re-walked by any later reader —
+/// `design/bynk-greenfield-compiler.md:749-751`). See [`BindingMode`]'s own
+/// doc comment for exactly what this one arm-level flag does and doesn't
+/// tell a future reader.
 #[derive(Debug, Clone)]
 pub(crate) struct IrArm {
     pub pat: IrPat,
@@ -168,16 +168,30 @@ pub(crate) struct IrArm {
     pub binding_mode: BindingMode,
 }
 
-/// R5.5 — computed once during [`lower::lower_arm_ir`]'s own `IrArm`
-/// construction, not re-walked by any later reader.
+/// R5.5, Decision C — `OrDispatch` iff `IrPat::Or` occurs anywhere in the
+/// arm's own pattern tree, computed once by [`lower::lower_arm_ir`].
+///
+/// **Arm-level granularity, not node-level** — worth being precise about,
+/// since `emit_pattern_bindings` (`emitter/lower.rs:5401-5503`) is not the
+/// single top-level check this doc comment used to claim: it is itself a
+/// recursive walk, and its `Pattern::Or` arm fires wherever an `Or` node
+/// occurs, at whatever depth — a nested `Or` inside a `Variant` payload
+/// really parses (`Hit(a, Sub(b) | Other(b))`) and really reaches it. So
+/// this flag answers "does *any* node in this arm's pattern need `let` +
+/// per-alternative dispatch", not "which node" — a consumer that needs the
+/// latter still walks `IrPat`'s own recursive shape to find it (P6.5's own
+/// job, whichever future consumer needs it). What this flag removes is
+/// having to do that walk at all just to answer the yes/no question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BindingMode {
     /// No `Or` anywhere in the pattern's tree — every bound name can emit
     /// as a plain `const`.
     Direct,
-    /// An `Or` is present somewhere in the pattern's tree — a shared name
-    /// can bind at a different structural path in each alternative, so
-    /// emission must switch to `let` plus a per-alternative dispatch.
+    /// An `Or` occurs somewhere in the pattern's tree — at least one shared
+    /// name can bind at a different structural path across alternatives, so
+    /// emission needs `let` plus a per-alternative dispatch somewhere in
+    /// this arm (see this type's own doc comment for why "somewhere" is as
+    /// precise as this flag alone gets).
     OrDispatch,
 }
 
