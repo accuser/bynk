@@ -5270,10 +5270,7 @@ pub(crate) fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
 
 /// True when `pat` carries a payload sub-pattern that is itself refutable (a
 /// nested variant/literal) — i.e. it cannot be tested by a single `.tag` switch.
-///
-/// `pub(crate)` since P6.5 (#1159, Decision B) — same reuse rationale as
-/// [`match_needs_if_chain`], which calls this directly.
-pub(crate) fn pattern_has_nested_test(pat: &Pattern) -> bool {
+fn pattern_has_nested_test(pat: &Pattern) -> bool {
     match pat {
         Pattern::Variant { bindings, .. } => bindings.iter().any(|b| {
             let sp = b.pattern();
