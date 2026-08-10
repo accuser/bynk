@@ -413,6 +413,17 @@ pub(crate) enum IrItem {
     /// concern, not decided here.
     Fn {
         def: Arc<FnDecl>,
+        /// The method receiver's own type, generic in the owning type's own
+        /// rigid variables (e.g. `Box[A]`'s `self` is `Ty::Named { name:
+        /// "Box", args: [Ty::Var("A")], .. }`) — `None` for a free function.
+        /// **Not** in `params`: `self` is never in `f.params` either
+        /// (`FnDecl::has_self` gates it, mirrored by
+        /// [`lower::lower_fn_body_ir`]'s own binding), but `body` still
+        /// references it as `Local { name: "self" }` when `has_self` is
+        /// true — a consumer that walks `body` needs this field to know
+        /// what that bare name resolves to, rather than re-deriving the
+        /// generic-receiver type itself from `def`.
+        receiver: Option<TyId>,
         /// Adapts the reference's own bare `Vec<LocalId>` to `Vec<(String,
         /// TyId)>` (Decision E, #1161) — no arena exists to look a param's
         /// type back up from its name alone once this `IrItem` outlives the
@@ -447,8 +458,13 @@ pub(crate) enum TypeShape {
     /// Every field the record declares, in declaration order ([DECISION B]
     /// extended: a field's own inline `refinement` is dropped — a
     /// construction-time constraint the checker already enforces, not part
-    /// of the emitted shape; confirmed by search, no `.refinement` reader
-    /// anywhere in `bynk-emit`'s emitter today).
+    /// of the emitted shape. Scoped claim: no reader on the record-*type*
+    /// emission path (`emit_record_type`, `emitter/emit.rs:234-263`, reads
+    /// `type_ref` alone). There *is* one `.refinement` reader in the
+    /// emitter overall — `emitter/emit.rs:2781`, agent-state zero-value
+    /// construction — but that is `StoreFieldIr` territory (P6.7), out of
+    /// this variant's scope; do not read this comment as licence to drop
+    /// `refinement` from a future store field too.
     Record { fields: Vec<(String, TyId)> },
     /// Every variant the sum declares, each with its own payload field
     /// list, plus any `embeds` clauses ([DECISION C]: [`EmbedIr`]).

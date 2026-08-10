@@ -158,6 +158,57 @@ impl<'a> LowerIrCtx<'a> {
     }
 }
 
+/// A fn/method's own rigid type variables — its own `[T, ...]` type
+/// parameters, plus a generic receiver's, for a method — the `vars` set
+/// `resolve_type_ref_in` needs to resolve a rigid `T` as `Ty::Var` rather
+/// than an unknown declared type. Shared by [`lower_fn_body_ir`] and
+/// [`lower_fn_item_ir`] so the two can never independently drift on which
+/// names are rigid for the same `f`: both functions' own `ADR 0334` panic
+/// text warns specifically against `bynk-emit::ir::lower`'s `type_vars`
+/// disagreeing with `bynk-check`'s `Ctx::type_vars`, and a hand-duplicated
+/// copy of this exact computation would be one more place that guarantee
+/// could quietly stop holding.
+fn fn_rigid_type_vars(f: &FnDecl, program: &TypedCommons) -> HashSet<String> {
+    let mut type_vars: HashSet<String> = f
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
+    if let FnName::Method { type_name, .. } = &f.name
+        && let Some(decl) = program.types.get(&type_name.name)
+    {
+        type_vars.extend(decl.type_params.iter().map(|tp| tp.name.name.clone()));
+    }
+    type_vars
+}
+
+/// A method's own generic receiver type — `Box[A]`'s `self` is
+/// `Ty::Named { name: "Box", args: [Ty::Var("A")], .. }`, not a fixed
+/// instantiation like `Box[Int]` — or `None` for a free function or a
+/// method declared with no `self` parameter. Shared by
+/// [`lower_fn_body_ir`] (which binds the result into scope under
+/// `"self"`) and [`lower_fn_item_ir`] (which records it verbatim as
+/// `IrItem::Fn::receiver`) — the same value, computed once.
+fn fn_receiver_ty(f: &FnDecl, program: &TypedCommons) -> Option<TyId> {
+    let FnName::Method { type_name, .. } = &f.name else {
+        return None;
+    };
+    if !f.has_self {
+        return None;
+    }
+    let decl = program.types.get(&type_name.name)?;
+    let self_args = decl
+        .type_params
+        .iter()
+        .map(|tp| program.ty_intern.intern(Ty::Var(tp.name.name.clone())))
+        .collect();
+    Some(checker::named_ty_with_args(
+        decl,
+        self_args,
+        &program.ty_intern,
+    ))
+}
+
 /// Lower a function/method body: seeds scope from `f`'s params (and its own
 /// rigid type variables — its own `[T, ...]` type parameters, plus a
 /// generic receiver's, for a method), lowers the body as an ordinary value
@@ -177,31 +228,13 @@ impl<'a> LowerIrCtx<'a> {
 /// specific kind it actually is, which is why no such entry point exists
 /// yet rather than one that would produce a wrong tree.
 pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
-    let mut type_vars: HashSet<String> = f
-        .type_params
-        .iter()
-        .map(|tp| tp.name.name.clone())
-        .collect();
-    if let FnName::Method { type_name, .. } = &f.name
-        && let Some(decl) = program.program().types.get(&type_name.name)
-    {
-        type_vars.extend(decl.type_params.iter().map(|tp| tp.name.name.clone()));
-    }
+    let type_vars = fn_rigid_type_vars(f, program.program());
     let mut cx = LowerIrCtx::new(program, type_vars);
     // `self` is never in `f.params` (`FnDecl::has_self` gates it) — mirrors
     // `check_fn`'s own binding (`checker.rs`, the `f.has_self` arm): a
     // generic receiver's `self` carries the receiver applied to its own
     // rigid type variables (`Box[A]`'s `self`, not a fixed `Box[Int]`).
-    if let FnName::Method { type_name, .. } = &f.name
-        && f.has_self
-        && let Some(decl) = program.program().types.get(&type_name.name)
-    {
-        let self_args = decl
-            .type_params
-            .iter()
-            .map(|tp| cx.program.ty_intern.intern(Ty::Var(tp.name.name.clone())))
-            .collect();
-        let self_ty = checker::named_ty_with_args(decl, self_args, &cx.program.ty_intern);
+    if let Some(self_ty) = fn_receiver_ty(f, program.program()) {
         cx.bind("self".to_string(), self_ty);
     }
     for p in &f.params {
@@ -243,12 +276,21 @@ pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
 /// P6.6 (#1161): lower a `type` declaration into a real [`IrItem::Type`] —
 /// [`IrItem`]'s own doc comment names which of its seven design-sketch
 /// variants are real as of this slice (`Type`/`Fn` only, Decision D). Takes
-/// a bare `&TypedCommons`, not a certified `CheckedProgram` (unlike
-/// [`lower_fn_item_ir`]): a declared type's own field/variant types resolve
-/// from the type table directly through `resolve_type_ref_in`, with no
-/// per-expression `expr_types` lookup involved (Q2,
-/// `design/tracks/the-ir.md` §3.2).
-pub(crate) fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &TypedCommons) -> IrItem {
+/// a certified `&CheckedProgram`, matching this module's own categorical
+/// discipline (this file's own header doc: "every entry point here takes a
+/// `&CheckedProgram`"), even though only `TypedCommons::types`/`ty_intern`
+/// are read — no per-expression `expr_types` lookup is involved (Q2,
+/// `design/tracks/the-ir.md` §3.2), but *which fields are read* isn't the
+/// discipline; *which failures are allowed to `panic!`* is. Every panic
+/// below asserts "the checker already accepted this declaration" — true
+/// only once `certify` has run: a bare `TypedCommons` is not certified by
+/// construction (`checker.rs`'s own `CheckedProgram` doc notes the
+/// project/batch path holds per-unit `TypedCommons` values *before* that
+/// unit's build-wide gate is decided), so accepting one here would make
+/// `resolve_type_ref_in` returning `None` a reachable, not just a buggy,
+/// outcome.
+pub(crate) fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &CheckedProgram) -> IrItem {
+    let program = program.program();
     let type_vars: HashSet<String> = decl
         .type_params
         .iter()
@@ -336,23 +378,25 @@ pub(crate) fn lower_type_item_ir(decl: &Arc<TypeDecl>, program: &TypedCommons) -
 
 /// P6.6 (#1161): lower a `fn` declaration into a real [`IrItem::Fn`] —
 /// wraps [`lower_fn_body_ir`] (#1141, unchanged) rather than re-deriving its
-/// own rigid-variable seeding or body lowering; adds only `def`/`params`/
-/// `ret`/`effectful` around its existing return value. Covers both free
-/// functions and methods alike (`FnName::Free`/`FnName::Method`) — which
-/// `IrItem::Fn`s a future printer re-attaches under which `IrItem::Type`'s
-/// own namespace (R8.1) is phase 7's own concern, not decided here.
-pub(crate) fn lower_fn_item_ir(f: &FnDecl, program: &CheckedProgram) -> IrItem {
-    let mut type_vars: HashSet<String> = f
-        .type_params
-        .iter()
-        .map(|tp| tp.name.name.clone())
-        .collect();
-    if let FnName::Method { type_name, .. } = &f.name
-        && let Some(decl) = program.program().types.get(&type_name.name)
-    {
-        type_vars.extend(decl.type_params.iter().map(|tp| tp.name.name.clone()));
-    }
+/// own rigid-variable seeding or body lowering; adds only `def`/`receiver`/
+/// `params`/`ret`/`effectful` around its existing return value. Covers both
+/// free functions and methods alike (`FnName::Free`/`FnName::Method`) —
+/// which `IrItem::Fn`s a future printer re-attaches under which
+/// `IrItem::Type`'s own namespace (R8.1) is phase 7's own concern, not
+/// decided here.
+///
+/// Takes `f: &Arc<FnDecl>`, not a bare `&FnDecl` — `def` reuses this exact
+/// `Arc`, the identity substitution [`IrItem`]'s own doc comment claims
+/// (`Record`/`GlobalRef`/[`lower_type_item_ir`]'s own `Arc::clone(decl)`
+/// all reuse the program's own handle the same way): a fresh `Arc::new`
+/// would both lose pointer identity against `TypedCommons.fns`/
+/// `Callee::Fn`/`Callee::Method` (no way back from an `IrItem::Fn` to the
+/// call sites that reference the same declaration except by re-comparing
+/// names) and deep-clone the whole body AST for every fn in a unit.
+pub(crate) fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrItem {
+    let type_vars = fn_rigid_type_vars(f, program.program());
     let cx = LowerIrCtx::new(program, type_vars);
+    let receiver = fn_receiver_ty(f, program.program());
     let params: Vec<(String, TyId)> = f
         .params
         .iter()
@@ -378,7 +422,8 @@ pub(crate) fn lower_fn_item_ir(f: &FnDecl, program: &CheckedProgram) -> IrItem {
     });
     let effectful = matches!(&*program.program().ty_intern.get(ret), Ty::Effect(_));
     IrItem::Fn {
-        def: Arc::new(f.clone()),
+        def: Arc::clone(f),
+        receiver,
         params,
         ret,
         body: lower_fn_body_ir(f, program),
@@ -1574,6 +1619,28 @@ mod tests {
             .types
             .get(name)
             .unwrap_or_else(|| panic!("no type named `{name}` in this fixture"))
+    }
+
+    /// Like [`find_fn`], but returns the program's own `Arc<FnDecl>` handle
+    /// (from `TypedCommons.fns`/`.methods`, not re-walked from
+    /// `commons.items`) — [`lower_fn_item_ir`] takes `&Arc<FnDecl>`
+    /// specifically so `IrItem::Fn::def` can reuse this same `Arc`.
+    fn find_fn_arc<'a>(program: &'a CheckedProgram, name: &str) -> &'a Arc<FnDecl> {
+        if let Some((type_name, method_name)) = name.split_once('.') {
+            let table = program.program().methods.get(type_name).unwrap_or_else(|| {
+                panic!("no method table for type `{type_name}` in this fixture")
+            });
+            return table
+                .instance
+                .get(method_name)
+                .or_else(|| table.statics.get(method_name))
+                .unwrap_or_else(|| panic!("no method named `{name}` in this fixture"));
+        }
+        program
+            .program()
+            .fns
+            .get(name)
+            .unwrap_or_else(|| panic!("no fn named `{name}` in this fixture"))
     }
 
     /// Every fixture's `fn`-body wrapping — asserts the outer shape once so
@@ -3136,7 +3203,7 @@ commons demo {
 "#,
         );
         let decl = find_type(&program, "Box");
-        let item = lower_type_item_ir(decl, program.program());
+        let item = lower_type_item_ir(decl, &program);
         let IrItem::Type { def, shape } = &item else {
             panic!("expected IrItem::Type, got {item:?}")
         };
@@ -3167,7 +3234,7 @@ commons demo {
 "#,
         );
         let decl = find_type(&program, "OrderError");
-        let item = lower_type_item_ir(decl, program.program());
+        let item = lower_type_item_ir(decl, &program);
         let IrItem::Type { shape, .. } = &item else {
             panic!("expected IrItem::Type, got {item:?}")
         };
@@ -3214,7 +3281,7 @@ commons demo {
         let age = find_type(&program, "Age");
         let IrItem::Type {
             shape: age_shape, ..
-        } = lower_type_item_ir(age, program.program())
+        } = lower_type_item_ir(age, &program)
         else {
             unreachable!()
         };
@@ -3234,7 +3301,7 @@ commons demo {
         let IrItem::Type {
             shape: user_id_shape,
             ..
-        } = lower_type_item_ir(user_id, program.program())
+        } = lower_type_item_ir(user_id, &program)
         else {
             unreachable!()
         };
@@ -3250,7 +3317,7 @@ commons demo {
         let bare = find_type(&program, "Bare");
         let IrItem::Type {
             shape: bare_shape, ..
-        } = lower_type_item_ir(bare, program.program())
+        } = lower_type_item_ir(bare, &program)
         else {
             unreachable!()
         };
@@ -3273,6 +3340,8 @@ commons demo {
 
   fn Box.get(self) -> A { self.value }
 
+  fn Box.fetch(self) -> Effect[A] { Effect.pure(self.value) }
+
   fn two_params(a: Int, b: Int) -> Int { a }
 
   fn identity[T](x: T) -> T { x }
@@ -3282,9 +3351,10 @@ commons demo {
 "#,
         );
 
-        let two_params = find_fn(&program, "two_params");
+        let two_params = find_fn_arc(&program, "two_params");
         let IrItem::Fn {
             def,
+            receiver,
             params,
             ret,
             effectful,
@@ -3293,7 +3363,12 @@ commons demo {
         else {
             unreachable!()
         };
+        assert!(
+            Arc::ptr_eq(&def, two_params),
+            "def should reuse the program's own Arc, not a fresh clone"
+        );
         assert_eq!(def.name.display(), "two_params");
+        assert!(receiver.is_none(), "a free function has no receiver");
         assert_eq!(params.len(), 2);
         assert_eq!(params[0].0, "a");
         assert_eq!(params[1].0, "b");
@@ -3303,13 +3378,13 @@ commons demo {
         ));
         assert!(!effectful);
 
-        let fetch = find_fn(&program, "fetch");
+        let fetch = find_fn_arc(&program, "fetch");
         let IrItem::Fn { effectful, .. } = lower_fn_item_ir(fetch, &program) else {
             unreachable!()
         };
         assert!(effectful);
 
-        let identity = find_fn(&program, "identity");
+        let identity = find_fn_arc(&program, "identity");
         let IrItem::Fn { params, ret, .. } = lower_fn_item_ir(identity, &program) else {
             unreachable!()
         };
@@ -3322,18 +3397,148 @@ commons demo {
             Ty::Var(n) if n == "T"
         ));
 
-        let method = find_fn(&program, "Box.get");
+        let method = find_fn_arc(&program, "Box.get");
         let IrItem::Fn {
-            def, params, ret, ..
+            def,
+            receiver,
+            params,
+            ret,
+            effectful,
+            ..
         } = lower_fn_item_ir(method, &program)
         else {
             unreachable!()
         };
+        assert!(
+            Arc::ptr_eq(&def, method),
+            "def should reuse the program's own Arc, not a fresh clone"
+        );
         assert_eq!(def.name.display(), "Box.get");
-        assert!(params.is_empty());
+        assert!(params.is_empty(), "self is not a param — see receiver");
+        let Some(receiver_ty) = receiver else {
+            panic!("expected Box.get to carry a receiver")
+        };
+        let Ty::Named { name, args, .. } = &*program.program().ty_intern.get(receiver_ty) else {
+            panic!("expected the receiver to resolve to a named type")
+        };
+        assert_eq!(name, "Box");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(
+            &*program.program().ty_intern.get(args[0]),
+            Ty::Var(n) if n == "A"
+        ));
         assert!(matches!(
             &*program.program().ty_intern.get(ret),
             Ty::Var(n) if n == "A"
+        ));
+        assert!(!effectful);
+
+        let effectful_method = find_fn_arc(&program, "Box.fetch");
+        let IrItem::Fn {
+            receiver,
+            effectful,
+            ..
+        } = lower_fn_item_ir(effectful_method, &program)
+        else {
+            unreachable!()
+        };
+        assert!(
+            receiver.is_some(),
+            "Box.fetch is also a method with a receiver"
+        );
+        assert!(effectful, "Effect[A] return makes Box.fetch effectful");
+    }
+
+    #[test]
+    fn type_item_sum_covers_a_payload_less_variant() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type PaymentError = enum { Declined, InsufficientFunds }
+}
+"#,
+        );
+        let decl = find_type(&program, "PaymentError");
+        let item = lower_type_item_ir(decl, &program);
+        let IrItem::Type { shape, .. } = &item else {
+            panic!("expected IrItem::Type, got {item:?}")
+        };
+        let TypeShape::Sum { variants, embeds } = shape else {
+            panic!("expected TypeShape::Sum, got {shape:?}")
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].0, "Declined");
+        assert!(
+            variants[0].1.is_empty(),
+            "a bare variant carries no payload"
+        );
+        assert_eq!(variants[1].0, "InsufficientFunds");
+        assert!(variants[1].1.is_empty());
+        assert!(embeds.is_empty());
+    }
+
+    #[test]
+    fn type_item_record_drops_a_fields_own_inline_refinement() {
+        // Decision B extension, `ir.rs`'s own `TypeShape::Record` doc
+        // comment: a field's inline `where` clause is a construction-time
+        // constraint the checker already enforces, not part of the emitted
+        // shape — pin that the field still lowers to `(name, ty)` with the
+        // refinement silently absent, not that lowering rejects it.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Account = { balance: Int where NonNegative }
+}
+"#,
+        );
+        let decl = find_type(&program, "Account");
+        let item = lower_type_item_ir(decl, &program);
+        let IrItem::Type { shape, .. } = &item else {
+            panic!("expected IrItem::Type, got {item:?}")
+        };
+        let TypeShape::Record { fields } = shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "balance");
+        assert!(matches!(
+            &*program.program().ty_intern.get(fields[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn type_item_record_resolves_a_generic_type_application_field() {
+        // The `TypeRef::App` arm of `resolve_type_ref_in` — the one arm
+        // that returns `None` for an unknown/unapplied name, and so the one
+        // most likely to silently hit this pass's own ADR 0334 panic if the
+        // field's resolution were ever wired up wrong.
+        let program = checked_program(
+            r#"
+commons demo {
+  type Box[T] = { value: T }
+  type Wrapper = { boxed: Box[Int] }
+}
+"#,
+        );
+        let decl = find_type(&program, "Wrapper");
+        let item = lower_type_item_ir(decl, &program);
+        let IrItem::Type { shape, .. } = &item else {
+            panic!("expected IrItem::Type, got {item:?}")
+        };
+        let TypeShape::Record { fields } = shape else {
+            panic!("expected TypeShape::Record, got {shape:?}")
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "boxed");
+        let Ty::Named { name, args, .. } = &*program.program().ty_intern.get(fields[0].1) else {
+            panic!("expected `boxed` to resolve to a named type")
+        };
+        assert_eq!(name, "Box");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(
+            &*program.program().ty_intern.get(args[0]),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
         ));
     }
 }
