@@ -3892,9 +3892,12 @@ commons demo {
     /// for a `Cell` initialiser) only happens via
     /// `context_checks::check_context_declarations`, called here by hand
     /// with a [`symbols::UnitTable`] built directly from the checked
-    /// commons' own agent items (no cross-context `uses`/`consumes` in any
-    /// fixture this helper is given, so `resolver::CrossContextInfo::default()`
-    /// is exact, not an approximation).
+    /// commons' own agent and local `capability` items (a handler's `given
+    /// <Cap>` resolves against `table.capabilities` — populated here so a
+    /// fixture can declare its own local capability, but still no
+    /// cross-context `uses`/`consumes` in any fixture this helper is given,
+    /// so `resolver::CrossContextInfo::default()` is exact, not an
+    /// approximation).
     fn checked_context_program(source: &str) -> CheckedProgram {
         let tokens = lexer::tokenize(source).expect("lex");
         let unit = parser::parse_unit(&tokens, source).expect("parse");
@@ -3922,10 +3925,27 @@ commons demo {
                 _ => None,
             })
             .collect();
+        // A `given <Cap>` clause on a handler resolves against
+        // `table.capabilities` (`context_checks.rs`'s own `capability_info_map`
+        // construction) — populated here from this fixture's own local
+        // `capability` declarations so a handler can legitimately declare one
+        // (e.g. `Log.append`'s own `given Clock` requirement), the same
+        // "no cross-context uses/consumes" scope this helper's own doc
+        // comment already names for `agents`/`types`.
+        let capabilities: HashMap<String, bynk_syntax::ast::CapabilityDecl> = typed
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Capability(c) => Some((c.name.name.clone(), c.clone())),
+                _ => None,
+            })
+            .collect();
         let table = symbols::UnitTable {
             kind: Some(UnitKind::Context),
             types: typed.types.clone(),
             agents,
+            capabilities,
             ..symbols::UnitTable::default()
         };
         let tys = typed.ty_intern.clone();
@@ -4346,10 +4366,22 @@ fn Box.put(self, x: Int) -> Effect[()] {
   Effect.pure(())
 }
 
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    42
+  }
+}
+
 agent Widget {
   key id: String
   store items: Map[String, Int]
   store active: Cell[Bool] = true
+  store tags: Set[String]
+  store history: Log[String]
 
   on call readOnlyPlain() -> Effect[()] {
     Effect.pure(())
@@ -4377,6 +4409,21 @@ agent Widget {
 
   on call shadowedName(items: Box, x: Int) -> Effect[()] {
     let _ <- items.put(x)
+    Effect.pure(())
+  }
+
+  on call cellUpdate() -> Effect[()] {
+    let _ <- active.update((b) => !b)
+    Effect.pure(())
+  }
+
+  on call setAdd(t: String) -> Effect[()] {
+    let _ <- tags.add(t)
+    Effect.pure(())
+  }
+
+  on call logAppend(t: String) -> Effect[()] given Clock {
+    let _ <- history.append(t)
     Effect.pure(())
   }
 }
@@ -4466,5 +4513,77 @@ agent Widget {
             commit_shape_of(&program, "shadowedName"),
             CommitShape::ReadOnly
         ));
+    }
+
+    #[test]
+    fn commit_shape_transactional_for_a_cell_update_method_call() {
+        // `active.update(f)` (ADR 0125) is the one `Cell` write that reaches
+        // this walk as a method call rather than `Statement::Assign` — pins
+        // `MUTATING_CELL_OPS`, otherwise unexercised by `bareAssign`'s own
+        // `:=` case.
+        let program = commit_shape_fixture();
+        assert!(matches!(
+            commit_shape_of(&program, "cellUpdate"),
+            CommitShape::Transactional { .. }
+        ));
+    }
+
+    #[test]
+    fn commit_shape_transactional_for_a_set_add_method_call() {
+        // Pins `MUTATING_SET_OPS`, otherwise unexercised — `nestedMutation`'s
+        // own write is a `Map.put`.
+        let program = commit_shape_fixture();
+        assert!(matches!(
+            commit_shape_of(&program, "setAdd"),
+            CommitShape::Transactional { .. }
+        ));
+    }
+
+    #[test]
+    fn commit_shape_transactional_for_a_log_append_method_call() {
+        // Pins `MUTATING_LOG_OPS`, otherwise unexercised.
+        let program = commit_shape_fixture();
+        assert!(matches!(
+            commit_shape_of(&program, "logAppend"),
+            CommitShape::Transactional { .. }
+        ));
+    }
+
+    #[test]
+    fn commit_shape_transactional_carries_its_own_invariants_and_transitions_unswapped() {
+        // The only place this constructor moves data rather than deciding a
+        // boolean: `Transactional { invariants, transitions }` must carry
+        // exactly the slices it was given, in the field they were given
+        // under — not swapped, not dropped.
+        let program = commit_shape_fixture();
+        let agent = find_agent(&program, "Widget");
+        let handler = find_handler(agent, "bareAssign");
+        let bool_ty = program
+            .program()
+            .ty_intern
+            .intern(Ty::Base(bynk_syntax::ast::BaseType::Bool));
+        let mk = |name: &str| IrPredicate {
+            name: name.to_string(),
+            predicate: IrExpr {
+                kind: IrExprKind::Const(ConstVal::Bool(true)),
+                ty: bool_ty,
+                span: Span::new(0, 0),
+            },
+        };
+        let invariants = vec![mk("invOnly")];
+        let transitions = vec![mk("transitionOnly")];
+        let shape =
+            lower_commit_shape_ir(&handler.body, &invariants, &transitions, false, &program);
+        let CommitShape::Transactional {
+            invariants: got_inv,
+            transitions: got_tr,
+        } = shape
+        else {
+            panic!("expected Transactional, got a different CommitShape")
+        };
+        assert_eq!(got_inv.len(), 1);
+        assert_eq!(got_inv[0].name, "invOnly");
+        assert_eq!(got_tr.len(), 1);
+        assert_eq!(got_tr[0].name, "transitionOnly");
     }
 }
