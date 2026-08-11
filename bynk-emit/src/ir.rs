@@ -470,14 +470,49 @@ pub(crate) enum IrStmt {
 /// own Decision D — `Service`'s own two blockers, closed by #1170/#1171,
 /// are recorded on `IrItem::Service`'s own doc comment rather than kept
 /// here as a stale bullet):
-/// - `Actor` has no emitted artefact of its own today (R8.1: "no
-///   declaration; drives the boundary wrapper in `compose.ts`") — genuinely
-///   unsettled how `auth`/`identity`/`claims` map onto the reference's own
-///   sketch, not safely guessable from the reference alone. Tracked as
-///   [#1172](https://github.com/accuser/bynk/issues/1172).
+/// - `Actor` — #1172's own investigation settled this one as a **non-build
+///   decision**, not an unbuilt gap: the reference's own sketch
+///   (`Actor { def, scheme: AuthScheme, identity: Option<TyId>, claims:
+///   Option<IrExpr> }`, `bynk-greenfield-compiler.md:1133`) is the wrong
+///   shape for this codebase, on three independent findings. (1) `claims:
+///   Option<IrExpr>` is unbuildable, not merely unbuilt: an actor
+///   refinement's own predicate (`hasClaim`/`claimEquals`,
+///   `ActorRefinement::predicate`) is validated only *structurally*
+///   (`bynk-check/src/actors.rs`'s `parse_claim_predicate`) — no `Callee`,
+///   no `expr_types` entry, no typing at all, because claims are
+///   deliberately untyped JSON (`context_checks.rs`'s own
+///   `check_actor_contracts` doc) and lowered straight to a JS string by
+///   `claim_predicate_to_js`. An `IrExpr` here would mean inventing a
+///   typing for a surface the checker deliberately never gave one. (2)
+///   `scheme: AuthScheme` names a type the reference defines nowhere else
+///   (`:1133`/`:1847` only) — same "referenced, not specified" gap
+///   `Capability`'s own `OpSig` carries below, except here a real 5-variant
+///   candidate already ships (`bynk-check::actors::Scheme`), so this piece
+///   alone is specifiable. (3) The decisive finding: every real consumer of
+///   actor data — the shipped emitter's own five seam resolvers
+///   (`bearer_seam_for`/`oidc_seam_for`/`signature_seam_for`/
+///   `sum_members_for`/`caller_binder_for`, `bynk-check/src/actors.rs`) and
+///   the reference's own R8.11 (`deps` derivation)/R8.13 (boundary-wrapper
+///   verification) — is **handler-keyed, not declaration-keyed**: binder
+///   presence, sum-member ordering, and which scheme's config applies are
+///   all facts about a handler's own `by` clause, not the `actor`
+///   declaration in isolation. This is exactly why the two actor-shaped IR
+///   additions that *did* have a real consumer ([`ActorBinder`], and
+///   `IrHandler`'s own `actors: Vec<String>`, review of #1180) both landed
+///   on [`IrHandler`], not a new `IrItem` variant — a `{def, scheme,
+///   identity}` record beside `IrItem::Service`'s handlers would have zero
+///   consumers and would not discharge R6.13 for actors at all, the "carve
+///   when a dependency arrives, not on appetite" anti-pattern R10.3 already
+///   argues against elsewhere in this track. Revisit only if a real
+///   phase-7 printer needs declaration-level actor data beyond what
+///   `IrHandler::binder`/`IrHandler::actors` already carry — not before.
 /// - `Capability`'s own `ops: Vec<OpSig>` names a type (`OpSig`) the
 ///   reference never defines anywhere — the same "referenced, not
-///   specified" gap as `Actor`'s `AuthScheme`. Tracked as
+///   specified" naming gap `Actor`'s own `AuthScheme` carried (above), but
+///   without a settled real-vs-wrong-shape finding of its own yet: unlike
+///   `Actor`, no investigation has shown whether `Capability`'s real
+///   consumers are declaration-keyed (matching the reference's own sketch)
+///   or need a different shape entirely. Tracked as
 ///   [#1173](https://github.com/accuser/bynk/issues/1173).
 /// - `Provider`'s `body: ProviderBody` needs modelling `ProviderDecl`'s own
 ///   `Bynk`/`External(module)` dispatch — not named closely enough in the
