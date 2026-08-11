@@ -1914,6 +1914,15 @@ fn check_service_decls(
             // v0.45: the `by`-bound actor identity, in scope for the body.
             let actor_binding =
                 handler_actor_binding(handler, &service.protocol, table, resolved, tys);
+            // #1170: persist it, keyed by this handler's own span — the
+            // "no arena identity" substitute `TypedCommons::actor_bindings`'s
+            // own doc comment names — so a post-`certify` consumer
+            // (`bynk-emit::ir::lower`) can read it back once one exists.
+            if let Some((binder, ty)) = &actor_binding {
+                typed
+                    .actor_bindings
+                    .insert(handler.span, (binder.clone(), *ty));
+            }
             // v0.103 (real-time track slice 3): an `on open` handler receives a
             // fresh owned `Connection[out]` named `connection`. Inject it as a
             // synthetic first parameter so the body type-checks against it and
@@ -3953,5 +3962,295 @@ pub fn reject_fn_types(
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
+    }
+}
+
+/// #1170: `TypedCommons::actor_bindings` persistence — every case
+/// `handler_actor_binding` itself distinguishes (Some vs. None, single
+/// actor vs. sum, the binder-shadows-param suppression), pinned through
+/// the real `check_context_declarations` entry point on a certified
+/// program, not by calling `handler_actor_binding` directly.
+#[cfg(test)]
+mod actor_binding_persistence_tests {
+    use super::*;
+    use crate::checker::CheckedProgram;
+    use crate::{resolver, symbols};
+    use bynk_project::UnitKind;
+    use bynk_syntax::ast::{ActorDecl, Commons, CommonsItem, ServiceDecl, SourceUnit};
+    use bynk_syntax::{lexer, parser};
+
+    /// Parse+resolve+check+context-check a whole `context` unit from
+    /// source, stopping short of `certify` — mirrors `bynk-emit`'s own
+    /// `checked_context_program` test helper (`bynk-emit/src/ir/lower.rs`)
+    /// closely, but populates `services`/`actors` on the `UnitTable` too
+    /// (that helper's own agent-only scope never needed them). Returns the
+    /// raw `(TypedCommons, errors)` pair rather than a `CheckedProgram` so
+    /// [`binder_shadowing_a_param_persists_no_binding`] can inspect
+    /// `actor_bindings` even on a source that *cannot* certify (a hard
+    /// `bynk.actor.binder_shadows_param` error) — every other test here
+    /// wraps this in [`checked_context_program`] instead.
+    fn checked_context_commons(source: &str) -> (checker::TypedCommons, Vec<CompileError>) {
+        let tokens = lexer::tokenize(source).expect("lex");
+        let unit = parser::parse_unit(&tokens, source).expect("parse");
+        let SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit, got {unit:?}")
+        };
+        let commons = Commons {
+            name: ctx.name,
+            items: ctx.items,
+            uses: ctx.uses,
+            documentation: ctx.documentation,
+            form: ctx.form,
+            span: ctx.span,
+            trivia: ctx.trivia,
+            trailing_comments: ctx.trailing_comments,
+        };
+        let resolved = resolver::resolve(commons).expect("resolve");
+        let mut typed = checker::check(resolved).expect("check");
+        let services: HashMap<String, ServiceDecl> = typed
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Service(s) => Some((s.name.name.clone(), s.clone())),
+                _ => None,
+            })
+            .collect();
+        let actors: HashMap<String, ActorDecl> = typed
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Actor(a) => Some((a.name.name.clone(), a.clone())),
+                _ => None,
+            })
+            .collect();
+        let table = symbols::UnitTable {
+            kind: Some(UnitKind::Context),
+            types: typed.types.clone(),
+            services,
+            actors,
+            ..symbols::UnitTable::default()
+        };
+        let tys = typed.ty_intern.clone();
+        let errors = check_context_declarations(
+            &mut typed,
+            &table,
+            &resolver::CrossContextInfo::default(),
+            true,
+            &HashSet::new(),
+            &HashMap::new(),
+            &mut RefSink::new(),
+            &mut HintSink::new(),
+            &mut LocalsSink::new(),
+            &mut RequirementSink::new(),
+            &tys,
+        );
+        (typed, errors)
+    }
+
+    fn checked_context_program(source: &str) -> CheckedProgram {
+        let (typed, errors) = checked_context_commons(source);
+        checker::certify(typed, errors).expect("certify")
+    }
+
+    fn find_service<'a>(typed: &'a checker::TypedCommons, name: &str) -> &'a ServiceDecl {
+        typed
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Service(s) if s.name.name == name => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no service named `{name}` in this fixture"))
+    }
+
+    #[test]
+    fn single_actor_by_clause_persists_the_binder_and_sealed_identity_ty() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor Buyer { auth = Internal, identity = UserId }
+
+service Api {
+  on call(ping: String) -> Effect[String] by u: Buyer {
+    Effect.pure(ping)
+  }
+}
+"#,
+        );
+        let handler = &find_service(program.program(), "Api").handlers[0];
+        let (binder, ty) = program
+            .program()
+            .actor_bindings
+            .get(&handler.span)
+            .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
+        assert_eq!(binder, "u");
+        let tys = &program.program().ty_intern;
+        let Ty::Actor(identity_ty) = &*tys.get(*ty) else {
+            panic!("expected Ty::Actor, got {:?}", tys.get(*ty))
+        };
+        assert_eq!(
+            identity_ty.display(tys),
+            "UserId",
+            "the actor's own declared `identity = UserId` type, sealed"
+        );
+    }
+
+    #[test]
+    fn prelude_caller_actor_persists_a_string_identity_binding() {
+        // `Caller` (v0.54) is a prelude actor — no local `actor` declaration
+        // needed — whose identity is the calling-context id, `String`.
+        let program = checked_context_program(
+            r#"
+context demo
+
+service Api {
+  on call(ping: String) -> Effect[String] by c: Caller {
+    Effect.pure(c.identity)
+  }
+}
+"#,
+        );
+        let handler = &find_service(program.program(), "Api").handlers[0];
+        let (binder, ty) = program
+            .program()
+            .actor_bindings
+            .get(&handler.span)
+            .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
+        assert_eq!(binder, "c");
+        let string_ty = program
+            .program()
+            .ty_intern
+            .intern(Ty::Base(bynk_syntax::ast::BaseType::String));
+        let expected = program.program().ty_intern.intern(Ty::Actor(string_ty));
+        assert_eq!(*ty, expected);
+    }
+
+    #[test]
+    fn sum_by_clause_persists_an_actor_sum_binding() {
+        // Mirrors `bynkc/tests/fixtures/positive/916_bytes_http_sum_body`:
+        // an HTTP route's `by who: User | Visitor` sum, `User` a real
+        // `Bearer`-scheme local actor, `Visitor` the prelude unit-identity
+        // actor — a sum's own peers must carry distinguishable schemes
+        // (`bynk.actor.duplicate_sum_scheme`), which two `Internal`-scheme
+        // actors (the only scheme a `call` handler admits) cannot, so this
+        // one case needs `from http` rather than the plain `call` protocol
+        // every other test here uses.
+        let program = checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor User { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+service Api from http {
+  on GET("/whoami") () -> Effect[HttpResult[String]] by who: User | Visitor {
+    match who {
+      User(_) => Ok("user")
+      Visitor => Ok("visitor")
+    }
+  }
+}
+"#,
+        );
+        let handler = &find_service(program.program(), "Api").handlers[0];
+        let (binder, ty) = program
+            .program()
+            .actor_bindings
+            .get(&handler.span)
+            .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
+        assert_eq!(binder, "who");
+        let tys = &program.program().ty_intern;
+        let Ty::ActorSum(members) = &*tys.get(*ty) else {
+            panic!("expected Ty::ActorSum, got {:?}", tys.get(*ty))
+        };
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].0, "User");
+        assert_eq!(members[0].1.display(tys), "UserId");
+        assert_eq!(members[1].0, "Visitor");
+        assert_eq!(
+            members[1].1.display(tys),
+            "()",
+            "Visitor is a unit-identity prelude actor"
+        );
+    }
+
+    #[test]
+    fn binderless_by_clause_persists_no_binding() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor Buyer { auth = Internal, identity = UserId }
+
+service Api {
+  on call(ping: String) -> Effect[String] by Buyer {
+    Effect.pure(ping)
+  }
+}
+"#,
+        );
+        let handler = &find_service(program.program(), "Api").handlers[0];
+        assert!(
+            !program.program().actor_bindings.contains_key(&handler.span),
+            "a binder-less `by <Actor>` clause verifies-and-discards — no identity is bound, \
+             so no persisted entry should exist for it either"
+        );
+    }
+
+    #[test]
+    fn no_by_clause_persists_no_binding() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+service Api {
+  on call(ping: String) -> Effect[String] {
+    Effect.pure(ping)
+  }
+}
+"#,
+        );
+        let handler = &find_service(program.program(), "Api").handlers[0];
+        assert!(!program.program().actor_bindings.contains_key(&handler.span));
+    }
+
+    #[test]
+    fn binder_shadowing_a_param_persists_no_binding() {
+        // `handler_actor_binding` suppresses the binding when the binder name
+        // collides with a declared param (`bynk.actor.binder_shadows_param`)
+        // — the body scope keeps the real parameter, not the actor. Pinning
+        // this through persistence too, not just through the in-scope type.
+        //
+        // The shadow is a *hard* diagnostic — this source never certifies —
+        // so this test reads `typed.actor_bindings` straight off the
+        // pre-`certify` `TypedCommons` ([`checked_context_commons`]) rather
+        // than going through [`checked_context_program`], which would panic
+        // on `.expect("certify")` before this assertion ever ran.
+        let (typed, _errors) = checked_context_commons(
+            r#"
+context demo
+
+type UserId = String
+
+actor Buyer { auth = Internal, identity = UserId }
+
+service Api {
+  on call(u: String) -> Effect[String] by u: Buyer {
+    Effect.pure(u)
+  }
+}
+"#,
+        );
+        let handler = &find_service(&typed, "Api").handlers[0];
+        assert!(!typed.actor_bindings.contains_key(&handler.span));
     }
 }

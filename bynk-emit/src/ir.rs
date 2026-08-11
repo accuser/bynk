@@ -763,9 +763,9 @@ pub(crate) enum CommitShape {
 /// No dedicated `lower_actor_binder_ir` constructor: the pair has no
 /// further structure to derive, mirroring [`EmbedIr`]'s/[`IndexIr`]'s own
 /// "no further structure, plain tuple/alias" precedent — a future caller
-/// with the resolved pair in hand (once the `bynk-check` change
-/// [`IrHandler`]'s own doc comment names persists `handler_actor_binding`'s
-/// own output) writes `ActorBinder { binder, ty }` directly.
+/// with the resolved pair in hand (`TypedCommons::actor_bindings`, #1170 —
+/// see [`IrHandler`]'s own doc comment for why `lower::lower_handler_ir`
+/// doesn't read it back yet) writes `ActorBinder { binder, ty }` directly.
 #[derive(Debug, Clone)]
 pub(crate) struct ActorBinder {
     pub binder: String,
@@ -803,15 +803,19 @@ pub(crate) struct ActorBinder {
 ///
 /// [`lower::lower_handler_ir`] is agent-only this slice ([DECISION D]) — a
 /// real service handler's `IrHandler` (specifically, a non-`None` `binder`)
-/// is not constructed here: `handler_actor_binding`'s own resolved
-/// `(String, TyId)` (`bynk-check/src/context_checks.rs`) is checking-time-
-/// only scratch with no persisted home in `TypedCommons`/`CheckedProgram`
-/// today, so closing that is a `bynk-check` change this lowering-only slice
-/// does not make speculatively. Not a functional gap for R6.16's own claim
-/// (invocation origin-independence is specifically about an *agent*
-/// handler): an agent handler's own `binder` is `None` unconditionally and
-/// by construction — `bynk.actor.by_on_agent`
-/// (`context_checks.rs:2986-2996`) rejects any `by` clause on an agent
+/// is not constructed here. As of #1170, `handler_actor_binding`'s own
+/// resolved `(String, TyId)` (`bynk-check/src/context_checks.rs`) is no
+/// longer checking-time-only scratch — it survives into
+/// `TypedCommons::actor_bindings`/`CheckedProgram`, keyed by the handler's
+/// own `span` — but `lower::lower_handler_ir` itself does not yet read it
+/// back: widening this constructor past agent-only, and the surrounding
+/// `IrItem::Service` assembly it feeds, is tracked separately
+/// ([#1171](https://github.com/accuser/bynk/issues/1171)), not built here.
+/// Not a functional gap for R6.16's own claim (invocation
+/// origin-independence is specifically about an *agent* handler): an agent
+/// handler's own `binder` is `None` unconditionally and by construction —
+/// `bynk.actor.by_on_agent` (`context_checks.rs:2986-2996`) rejects any
+/// `by` clause on an agent
 /// handler outright, so [`lower::lower_handler_ir`] never has one to lower
 /// in the first place.
 #[derive(Debug, Clone)]
