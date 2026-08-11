@@ -410,6 +410,9 @@ pub(crate) fn lower_handler_ir(
         kind: h.kind.clone(),
         params,
         given,
+        // `h.by_clause.is_none()` was just asserted above — always empty,
+        // not merely usually so.
+        actors: Vec::new(),
         binder: None,
         body,
         commit,
@@ -578,6 +581,17 @@ pub(crate) fn lower_service_handler_ir(
     }
     let cx = LowerIrCtx::new(program, HashSet::new());
     let (params, given, effectful) = lower_handler_signature_ir(h, &cx);
+    // Read straight off `h.by_clause`, not derived from `binder` below —
+    // review of #1180: `binder` alone loses the gate itself for a
+    // binder-less `by <Actor>` (`ActorBinder`'s own doc comment already
+    // names `None` as legitimate there) and loses the actor's own *name*
+    // even in the single-actor happy path (`ActorBinder::ty` carries only
+    // the sealed identity type). See `IrHandler::actors`'s own doc comment.
+    let actors: Vec<String> = h
+        .by_clause
+        .as_ref()
+        .map(|by| by.actors.iter().map(|a| a.name.clone()).collect())
+        .unwrap_or_default();
     let binder = program
         .program()
         .actor_binding(h.span)
@@ -592,6 +606,7 @@ pub(crate) fn lower_service_handler_ir(
         kind: h.kind.clone(),
         params,
         given,
+        actors,
         binder,
         body,
         commit,
@@ -5744,7 +5759,17 @@ service Api {
 
         assert!(handlers[0].binder.is_none());
         assert!(handlers[0].given.is_empty());
+        assert!(
+            handlers[0].actors.is_empty(),
+            "no `by` clause at all on this handler"
+        );
         assert!(handlers[1].binder.is_some());
+        assert_eq!(
+            handlers[1].actors,
+            vec!["Buyer".to_string()],
+            "the gate itself, read straight off the `by` clause — see IrHandler::actors' own \
+             doc comment for why this can't be recovered from `binder` alone"
+        );
         assert_eq!(handlers[2].given, vec!["Clock".to_string()]);
 
         for h in handlers {
@@ -5786,6 +5811,7 @@ service Api {
             panic!("expected Ty::Actor, got {:?}", tys.get(binder.ty))
         };
         assert_eq!(identity_ty.display(tys), "String");
+        assert_eq!(ir.actors, vec!["Caller".to_string()]);
 
         // The load-bearing half: `binder` recorded on the struct is not the
         // same claim as `binder` actually reaching the body's own scope —
@@ -5869,6 +5895,12 @@ service Api from http {
             "()",
             "Visitor is a unit-identity prelude actor"
         );
+        assert_eq!(
+            ir.actors,
+            vec!["User".to_string(), "Visitor".to_string()],
+            "actors is redundant with Ty::ActorSum's own member names here, but present \
+             uniformly regardless of shape — see IrHandler::actors' own doc comment"
+        );
 
         // The body itself really did lower — a real `Match` node, not the
         // simpler single-arm body an earlier draft of this test used
@@ -5883,6 +5915,43 @@ service Api from http {
             matches!(&value.kind, IrExprKind::Match { .. }),
             "expected `match who {{ … }}` to lower to a real Match node, got {:?}",
             value.kind
+        );
+    }
+
+    #[test]
+    fn a_binderless_by_clause_still_records_the_actor_gate() {
+        // Review of #1180's own core scenario: `binder` alone erases a
+        // binder-less `by <Actor>` (verify-and-discard) entirely — nothing
+        // in `kind`/`params`/`given`/`binder` would otherwise distinguish
+        // this actor-gated handler from a public one with no `by` clause
+        // at all. `actors` is what a consumer must read to recover the
+        // gate.
+        let program = checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor Buyer { auth = Internal, identity = UserId }
+
+service Api {
+  on call(ping: String) -> Effect[String] by Buyer {
+    Effect.pure(ping)
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        let handler = find_service_handler(service, &HandlerKind::Call);
+        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+        assert!(
+            ir.binder.is_none(),
+            "a binder-less `by <Actor>` verifies-and-discards — no identity is bound"
+        );
+        assert_eq!(
+            ir.actors,
+            vec!["Buyer".to_string()],
+            "the gate itself survives even though no binder does"
         );
     }
 
@@ -6230,5 +6299,77 @@ service Api by u: Buyer given Clock {
             .unwrap_or_else(|| panic!("expected the service-level `by u: Buyer` to be inherited"));
         assert_eq!(binder.binder, "u");
         assert_eq!(handlers[0].given, vec!["Clock".to_string()]);
+    }
+
+    #[test]
+    fn lower_event_pattern_ir_reshapes_literal_and_variant_fields() {
+        // Review of #1180: the `Events` protocol path had zero coverage.
+        // `lower_protocol_ir`'s own `Events` arm genuinely can't be driven
+        // through `checked_context_program` — a real `from Events(E)`
+        // subscription needs `consumes bynk { Events }`, which this
+        // reduced harness's `CrossContextInfo::default()` doesn't support
+        // (the same limitation named in `checked_context_program`'s own
+        // doc comment, and in #1169's own Risks for `CommitShape::
+        // FlushEvents`). `lower_event_pattern_ir` itself has no such
+        // excuse: it takes no `&CheckedProgram`, resolves nothing, and
+        // cannot panic — pure AST reshaping — so it's pinned directly
+        // against a parsed (not checked or certified) `EventPattern`.
+        let source = r#"
+context demo
+
+type Status = | Active | Inactive
+
+event OrderPlaced = {
+  status: Status,
+  count: Int,
+}
+
+service Subscriber from Events(OrderPlaced { status: Active, count: 3, .. }) {
+  on event(o: OrderPlaced) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#;
+        let tokens = lexer::tokenize(source).expect("lex");
+        let unit = parser::parse_unit(&tokens, source).expect("parse");
+        let SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit, got {unit:?}")
+        };
+        let service = ctx
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Service(s) if s.name.name == "Subscriber" => Some(s),
+                _ => None,
+            })
+            .expect("no service named `Subscriber` in this fixture");
+        let ServiceProtocol::Events { pattern, .. } = &service.protocol else {
+            panic!(
+                "expected ServiceProtocol::Events, got {:?}",
+                service.protocol
+            )
+        };
+        let pattern = pattern
+            .as_ref()
+            .expect("expected a structural pattern on this Events subscription");
+
+        let ir = lower_event_pattern_ir(pattern);
+        assert_eq!(ir.fields.len(), 2, "declaration order preserved");
+        assert_eq!(ir.fields[0].0, "status");
+        assert!(
+            matches!(&ir.fields[0].1, EventPatternValueIr::Variant { tag } if tag == "Active"),
+            "expected a bare nullary variant tag (the AST's own optional qualifying type_name \
+             dropped), got {:?}",
+            ir.fields[0].1
+        );
+        assert_eq!(ir.fields[1].0, "count");
+        assert!(
+            matches!(
+                &ir.fields[1].1,
+                EventPatternValueIr::Const(ConstVal::Int(3))
+            ),
+            "expected a literal Int constant, got {:?}",
+            ir.fields[1].1
+        );
     }
 }

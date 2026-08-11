@@ -973,8 +973,8 @@ pub(crate) struct ActorBinder {
 
 /// P6.9's real `IrHandler` ([DECISION C], #1167) — an agent `on call`
 /// handler's own resolved shape, [`lower::lower_handler_ir`]'s own return
-/// value. Six of the eight fields are the reference's own verbatim sketch
-/// (`bynk-greenfield-compiler.md:1169-1177`) under this module's
+/// value. Six of the reference's own eight sketched fields are its
+/// verbatim shape (`bynk-greenfield-compiler.md:1169-1177`) under this module's
 /// already-established substitutions: `kind: HandlerKind` reused verbatim
 /// from `bynk_syntax::ast` (an ordinary `Clone`/`PartialEq` enum with no
 /// arena identity — the same "reused, not adapted" treatment
@@ -1000,6 +1000,29 @@ pub(crate) struct ActorBinder {
 /// agent's several `on call <name>` handlers this is. `None` for the shapes
 /// that have none today (a service's bare `on call`).
 ///
+/// **`actors: Vec<String>` is a second addition beyond the reference's own
+/// sketch** (review of #1171/#1180) — the actor name(s) a `by` clause
+/// itself names, read directly from `h.by_clause.as_ref().map(|by|
+/// &by.actors)` rather than from `binder`. Needed because `binder` alone
+/// cannot represent the gate: a binder-less `by <Actor>` (verify-and-
+/// discard, `ByClause::binder: Option<Ident>`) resolves to `binder: None`
+/// with nothing else distinguishing it from a handler with no `by` clause
+/// at all, and the same erasure hits a binder that shadowed a param and
+/// was suppressed (`context_checks.rs:2050-2055`) — in both cases the
+/// authorization gate is real even though no identity got bound to a
+/// local. Even the happy path loses information a single-actor `binder`
+/// alone can't recover: `ActorBinder::ty` is `Ty::Actor(identity_ty)`,
+/// which carries the *sealed identity type*, not the actor's own
+/// *declared name* — `by u: Buyer` and `by u: Seller` sharing one identity
+/// type would otherwise lower to byte-identical `ActorBinder`s. The sum
+/// path already avoids this (`Ty::ActorSum(Vec<(String, TyId)>)` retains
+/// member names); `actors` gives the single-actor and no-binder cases the
+/// same guarantee, uniformly, mirroring [`IrHandler::given`]'s own "read
+/// straight off the AST, not through any checker-persisted resolution"
+/// shape. Empty for an agent handler unconditionally — the same
+/// `bynk.actor.by_on_agent` guarantee [DECISION D] already grounds for
+/// `binder`.
+///
 /// [`lower::lower_handler_ir`] is agent-only **by design, still** ([DECISION
 /// D]) — a real service handler's `IrHandler` (specifically, a non-`None`
 /// `binder`) is never constructed by *this* function, and that stays true
@@ -1021,6 +1044,10 @@ pub(crate) struct IrHandler {
     pub kind: HandlerKind,
     pub params: Vec<(String, TyId)>,
     pub given: Vec<String>,
+    /// The actor name(s) a `by` clause names — see this struct's own doc
+    /// comment for why `binder` alone cannot represent the gate. Empty iff
+    /// `h.by_clause.is_none()`.
+    pub actors: Vec<String>,
     pub binder: Option<ActorBinder>,
     pub body: IrExpr,
     pub commit: CommitShape,
