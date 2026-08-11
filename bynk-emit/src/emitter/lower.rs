@@ -5778,6 +5778,7 @@ mod idempotency_scoping_tests {
             callees: HashMap::new(),
             warnings: Vec::new(),
             ty_intern: Arc::new(bynk_check::checker::Types::new()),
+            actor_bindings: HashMap::new(),
         }
     }
 

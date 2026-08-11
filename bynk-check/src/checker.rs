@@ -659,6 +659,26 @@ pub struct TypedCommons {
     /// alongside `partial_expr_types` on the error path, where no
     /// `TypedCommons` is built to own it.
     pub ty_intern: Arc<Types>,
+    /// #1170: a service handler's own resolved `by <binder>: <Actor>` actor
+    /// binding — `handler_actor_binding`'s own return value
+    /// (`context_checks.rs`), persisted here rather than discarded once
+    /// `check_service_decls`'s own per-handler loop moves on, the same
+    /// "recorded during checking, read afterward" shape [`callees`] already
+    /// established. Keyed by the handler's own `span`: a `Handler` has no
+    /// arena identity of its own (no `DefId`/`ExprId` — it is a
+    /// declaration, not an expression), and `Span` is already this
+    /// codebase's established "no arena" substitute for exactly this kind
+    /// of identity (`Copy`/`Eq`/`Hash`, already used as a diagnostic anchor
+    /// throughout `context_checks.rs`). No entry for a handler
+    /// `handler_actor_binding` itself resolves to `None` for: a
+    /// binder-less `by <Actor>` clause, or no `by` clause at all —
+    /// including every agent handler, which cannot carry one
+    /// (`bynk.actor.by_on_agent`). No consumer yet:
+    /// `bynk-emit::ir::lower`'s `lower_handler_ir` (P6.9, #1167) stays
+    /// agent-only until a future slice reads this back to build a real
+    /// service-handler `ActorBinder` (`bynk-emit::ir::IrHandler`'s own doc
+    /// comment names this precisely).
+    pub actor_bindings: HashMap<Span, (String, TyId)>,
 }
 
 impl TypedCommons {
@@ -878,6 +898,7 @@ pub fn check_record_in(
                 callees,
                 warnings,
                 ty_intern: Arc::clone(&ty_intern),
+                actor_bindings: HashMap::new(),
             }),
             partial_expr_types: HashMap::new(),
             ty_intern,

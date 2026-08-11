@@ -1016,6 +1016,7 @@ fn integration_typed_commons(
         // A table of its own would make every one of those reads a
         // wrong-table lookup.
         ty_intern: Arc::clone(tys),
+        actor_bindings: HashMap::new(),
     }
 }
 
@@ -2258,6 +2259,7 @@ fn synthetic_typed_commons_for_target(
         // A table of its own would make every one of those reads a
         // wrong-table lookup.
         ty_intern: Arc::clone(tys),
+        actor_bindings: HashMap::new(),
     }
 }
 
