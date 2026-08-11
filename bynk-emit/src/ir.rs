@@ -73,6 +73,18 @@
 //! (see [`IrHandler`]'s own doc comment). Same posture again: no `IrItem`
 //! variant references `IrHandler` yet — `IrItem::Agent`/`Service` remain
 //! unconstructed (see [`IrItem`]'s own doc comment).
+//!
+//! **P6.10 (#1169) adds [`IrItem::Agent`]** — the assembly P6.9's own Risks
+//! section named without numbering it: every ingredient (`StoreFieldIr`
+//! since P6.7, `CommitShape`/`IrPredicate` since P6.8, `IrHandler` since
+//! P6.9) was already real, but nothing combined them into one `IrItem`
+//! value, and `IrItem` had no variant to carry the result. This is the
+//! first `IrItem` variant with a real consumer shape below the top level —
+//! [`lower::lower_agent_item_ir`] calls every prior slice's own standalone
+//! constructor rather than re-deriving any of their logic, the same
+//! "wire, don't re-derive" posture this whole module has held since P6.0.
+//! `IrItem::Service`/`Actor`/`Capability`/`Provider` remain deferred, each
+//! for its own reason (see [`IrItem`]'s own doc comment).
 
 use std::sync::Arc;
 
@@ -423,7 +435,8 @@ pub(crate) enum IrStmt {
 /// (`DefId -> Arc<TypeDecl>`/`Arc<FnDecl>`, the same substitution
 /// `Record`/`GlobalRef` already made).
 ///
-/// **Only `Type` and `Fn` exist as variants this slice** (Decision D,
+/// **`Type`, `Fn` and (as of P6.10, #1169) `Agent` exist as variants.**
+/// `Service`/`Actor`/`Capability`/`Provider` are still deferred (Decision D,
 /// #1161, matching the issue's own title: "Agent/Service/Actor/Capability/
 /// Provider deferred"). This is a different posture from `Match`'s own
 /// payload (`IrPat`/`IrArm`/`Exhaustive`/`MatchForm`), which had to exist —
@@ -436,31 +449,28 @@ pub(crate) enum IrStmt {
 /// rather than needing a placeholder reserved here in advance. Each
 /// deferred variant has its own real, distinct blocker, not a shared
 /// "later" (full grounding in #1161's own Decision D):
-/// - `Agent`/`Service` both need `IrHandler`/`StoreFieldIr`/`CommitShape` —
-///   all three are real as of P6.9 (`StoreFieldIr`/`StoreKindIr` since P6.7,
-///   R6.14, #1163; `CommitShape` since P6.8, R6.15, #1165; `IrHandler`
-///   since P6.9, R6.16, #1167) — but assembling them into one
-///   `IrItem::Agent` value, and giving `IrItem` a variant to carry it at
-///   all, is nobody's row yet (`design/tracks/the-ir.md`'s own slice table
-///   has none past P6.9) — #1167's own Risks section names this gap
-///   precisely, the same "named, not silently absorbed" treatment #1163's
-///   and #1165's own Risks gave the gap each of them closed. `Service`
-///   additionally carries a materially larger surface than its own
-///   reference sketch shows at all (CORS/security-headers/request-body-size
-///   policy structs, `ServiceDecl.cors`/`security`/`limits`), and a real
-///   service `IrHandler` additionally needs the `binder`-persistence
-///   `bynk-check` change [`IrHandler`]'s own doc comment names — P6.9 built
-///   the agent-only path only ([`IrHandler`]'s own Decision D).
+/// - `Service` needs the same `IrHandler`/`StoreFieldIr`/`CommitShape` shape
+///   `Agent` just got, plus its own extra blockers: it carries a materially
+///   larger surface than its own reference sketch shows at all
+///   (CORS/security-headers/request-body-size policy structs,
+///   `ServiceDecl.cors`/`security`/`limits`), and a real service `IrHandler`
+///   additionally needs the `binder`-persistence `bynk-check` change
+///   [`IrHandler`]'s own doc comment names — P6.9 built the agent-only path
+///   only ([`IrHandler`]'s own Decision D). Tracked as
+///   [#1170](https://github.com/accuser/bynk/issues/1170)/[#1171](https://github.com/accuser/bynk/issues/1171).
 /// - `Actor` has no emitted artefact of its own today (R8.1: "no
 ///   declaration; drives the boundary wrapper in `compose.ts`") — genuinely
 ///   unsettled how `auth`/`identity`/`claims` map onto the reference's own
-///   sketch, not safely guessable from the reference alone.
+///   sketch, not safely guessable from the reference alone. Tracked as
+///   [#1172](https://github.com/accuser/bynk/issues/1172).
 /// - `Capability`'s own `ops: Vec<OpSig>` names a type (`OpSig`) the
 ///   reference never defines anywhere — the same "referenced, not
-///   specified" gap as `Actor`'s `AuthScheme`.
+///   specified" gap as `Actor`'s `AuthScheme`. Tracked as
+///   [#1173](https://github.com/accuser/bynk/issues/1173).
 /// - `Provider`'s `body: ProviderBody` needs modelling `ProviderDecl`'s own
 ///   `Bynk`/`External(module)` dispatch — not named closely enough in the
-///   reference to build without its own grounding pass.
+///   reference to build without its own grounding pass. Tracked as
+///   [#1174](https://github.com/accuser/bynk/issues/1174).
 #[derive(Debug, Clone)]
 pub(crate) enum IrItem {
     /// A `type` declaration. `shape` covers all three real [`TypeShape`]
@@ -504,6 +514,48 @@ pub(crate) enum IrItem {
         /// single-source-of-truth discipline this module already follows
         /// for [`BindingMode`]/[`Exhaustive`].
         effectful: bool,
+    },
+    /// P6.10's real `IrItem::Agent` (Part 6.6, R6.13, #1169) —
+    /// [`lower::lower_agent_item_ir`]'s own return value, assembling every
+    /// P6.7–P6.9 ingredient (`StoreFieldIr`, `CommitShape`/`IrPredicate`,
+    /// `IrHandler`) that had no `IrItem` variant to land in until now.
+    /// Matches the reference's own sketch
+    /// (`bynk-greenfield-compiler.md:1129-1131`) field-for-field, under this
+    /// module's already-established substitutions.
+    Agent {
+        /// The agent's own declared name — this module's usual "no arena"
+        /// substitution for the reference's own `DefId`, but *not* the same
+        /// substitution [`IrItem::Type`]/[`IrItem::Fn`] made
+        /// (`Arc<TypeDecl>`/`Arc<FnDecl>`): unlike `types`/`fns`,
+        /// `TypedCommons` carries no `Arc`-wrapped agents table to source a
+        /// cheap pointer from (`UnitTable::agents`/`CommonsItem::Agent` are
+        /// both a plain, owned `AgentDecl`), and `Callee::Agent { agent:
+        /// String, handler: String }` already establishes bare-name
+        /// identity as sufficient for this checked output — a full
+        /// `AgentDecl` clone (its own handler bodies included) would be
+        /// needless weight this module's other `String`-identity fields
+        /// (`GlobalRef::tag`, `Callee::Store::field`, …) don't carry either.
+        def: String,
+        /// `key id: Type` adapted from the reference's own bare `(LocalId,
+        /// TyId)` (Decision B extended): the bound name plus its resolved
+        /// type, the same `Vec<(String, TyId)>`-per-entry substitution
+        /// [`IrItem::Fn::params`] already made for a `Vec<LocalId>`.
+        key: (String, TyId),
+        /// Every `store` field, [`lower::lower_store_field_ir`]'s own
+        /// return value, in declaration order.
+        state: Vec<StoreFieldIr>,
+        /// Every `on call` handler, [`lower::lower_handler_ir`]'s own
+        /// return value, in declaration order.
+        handlers: Vec<IrHandler>,
+        /// Every invariant, [`lower::lower_invariant_ir`]'s own return
+        /// value, in declaration order — the same already-lowered list each
+        /// `handlers` entry's own `commit: CommitShape::Transactional`
+        /// (when it is one) carries a copy of, not a fresh lowering.
+        invariants: Vec<IrPredicate>,
+        /// Every transition, [`lower::lower_transition_ir`]'s own return
+        /// value, in declaration order — same relationship to `handlers` as
+        /// `invariants`.
+        transitions: Vec<IrPredicate>,
     },
 }
 

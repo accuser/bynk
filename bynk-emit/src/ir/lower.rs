@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, Invariant,
+    AgentDecl, BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, Invariant,
     LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, Statement,
     StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
 };
@@ -910,6 +910,88 @@ pub(crate) fn lower_commit_shape_ir(
         CommitShape::FlushEvents
     } else {
         CommitShape::ReadOnly
+    }
+}
+
+/// P6.10 (#1169): assemble an agent declaration into a real
+/// [`crate::ir::IrItem::Agent`] — wires every prior slice's own standalone
+/// constructor ([`lower_store_field_ir`] since P6.7, [`lower_invariant_ir`]/
+/// [`lower_transition_ir`]/[`lower_commit_shape_ir`] since P6.8,
+/// [`lower_handler_ir`] since P6.9) rather than re-deriving any of their
+/// logic — the first `IrItem` variant assembled from other already-real IR
+/// data rather than lowered fresh from the AST by itself.
+///
+/// Computes `state`/`store_cells`/`state_ty` once and reuses them for every
+/// downstream call that needs them — the "future `IrItem::Agent` builder"
+/// every one of those constructors' own doc comments already named as the
+/// job that would do this. `store_cells` is derived from `state`'s own
+/// already-lowered [`StoreKindIr::Cell`] entries, not re-resolved
+/// independently a second time from the AST — the one place this function
+/// could have re-derived something it already has, and doesn't.
+/// `invariants`/`transitions` are lowered once, then passed to *every*
+/// handler's own [`lower_handler_ir`] call, not just the store-writing
+/// ones: [`lower_commit_shape_ir`] only ever reads them for a
+/// `Transactional` shape, so a read-only or event-flushing handler simply
+/// carries the slices it was handed without using them, the same "pass
+/// what a callee needs, let it decide whether to use it" posture
+/// [`lower_commit_shape_ir`]'s own `emits` parameter already established.
+pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -> IrItem {
+    let cx = LowerIrCtx::new(program, HashSet::new());
+    let key_ty = cx.resolve_type_ref(&agent.key_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): agent `{}`'s own key type does not resolve in \
+             this pass's own scope, but the checker already accepted this declaration",
+            agent.name.name
+        )
+    });
+    let state: Vec<StoreFieldIr> = agent
+        .store_fields
+        .iter()
+        .map(|f| lower_store_field_ir(f, program))
+        .collect();
+    let store_cells: HashMap<String, TyId> = state
+        .iter()
+        .filter_map(|f| match f.kind {
+            StoreKindIr::Cell(ty) => Some((f.field.clone(), ty)),
+            _ => None,
+        })
+        .collect();
+    let state_ty = program.program().ty_intern.intern(Ty::Named {
+        name: format!("{}State", agent.name.name),
+        kind: checker::NamedKind::Record,
+        args: Vec::new(),
+    });
+    let invariants: Vec<IrPredicate> = agent
+        .invariants
+        .iter()
+        .map(|inv| lower_invariant_ir(inv, &store_cells, program))
+        .collect();
+    let transitions: Vec<IrPredicate> = agent
+        .transitions
+        .iter()
+        .map(|tr| lower_transition_ir(tr, state_ty, program))
+        .collect();
+    let handlers: Vec<IrHandler> = agent
+        .handlers
+        .iter()
+        .map(|h| {
+            lower_handler_ir(
+                h,
+                &store_cells,
+                state_ty,
+                &invariants,
+                &transitions,
+                program,
+            )
+        })
+        .collect();
+    IrItem::Agent {
+        def: agent.name.name.clone(),
+        key: (agent.key_name.name.clone(), key_ty),
+        state,
+        handlers,
+        invariants,
+        transitions,
     }
 }
 
@@ -2070,7 +2152,7 @@ mod tests {
     use bynk_check::requirements::RequirementSink;
     use bynk_check::{checker, context_checks, resolver, symbols};
     use bynk_project::UnitKind;
-    use bynk_syntax::ast::{AgentDecl, Commons, CommonsItem, FnDecl, HandlerKind, SourceUnit};
+    use bynk_syntax::ast::{Commons, CommonsItem, FnDecl, HandlerKind, SourceUnit};
     use bynk_syntax::{lexer, parser};
 
     fn checked_program(source: &str) -> CheckedProgram {
@@ -5016,5 +5098,144 @@ agent Ledger {
         assert_eq!(got_inv[0].name, "invOnly");
         assert_eq!(got_tr.len(), 1);
         assert_eq!(got_tr[0].name, "transitionOnly");
+    }
+
+    /// Every [`IrItem::Agent`] "Done when" case (#1169) lives on one agent —
+    /// a `Cell` field an invariant/transition and a handler all reference by
+    /// bare name, a `Map` field only a handler reaches (via `Callee::Store`),
+    /// one read-only handler, and one store-writing handler whose own
+    /// `commit` must carry the agent's real invariants/transitions, not an
+    /// empty pair.
+    fn agent_item_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+agent Ledger {
+  key id: String
+  store active: Cell[Bool] = true
+  store balance: Cell[Int] = 0
+  store entries: Map[String, Int]
+
+  invariant staysKnown: active
+
+  transition activeImplication: old.active implies new.active
+
+  on call peek() -> Effect[Int] {
+    Effect.pure(balance)
+  }
+
+  on call deposit(amount: Int) -> Effect[()] {
+    balance := amount
+    Effect.pure(())
+  }
+
+  on call addEntry(k: String, v: Int) -> Effect[()] {
+    let _ <- entries.put(k, v)
+    Effect.pure(())
+  }
+}
+"#,
+        )
+    }
+
+    #[test]
+    fn agent_item_ir_assembles_key_state_and_threads_invariants_transitions_into_handlers() {
+        let program = agent_item_fixture();
+        let agent = find_agent(&program, "Ledger");
+        let ir = lower_agent_item_ir(agent, &program);
+        let IrItem::Agent {
+            def,
+            key,
+            state,
+            handlers,
+            invariants,
+            transitions,
+        } = &ir
+        else {
+            panic!("expected IrItem::Agent, got {:?}", ir)
+        };
+
+        assert_eq!(def, "Ledger");
+        let string_ty = program
+            .program()
+            .ty_intern
+            .intern(Ty::Base(bynk_syntax::ast::BaseType::String));
+        assert_eq!(key, &("id".to_string(), string_ty));
+
+        assert_eq!(
+            state.len(),
+            3,
+            "active, balance, entries — declaration order"
+        );
+        assert!(matches!(state[0].kind, StoreKindIr::Cell(_)));
+        assert_eq!(state[0].field, "active");
+        assert!(matches!(state[1].kind, StoreKindIr::Cell(_)));
+        assert_eq!(state[1].field, "balance");
+        assert!(matches!(state[2].kind, StoreKindIr::Map(_, _)));
+        assert_eq!(state[2].field, "entries");
+
+        assert_eq!(invariants.len(), 1);
+        assert_eq!(invariants[0].name, "staysKnown");
+        assert_eq!(transitions.len(), 1);
+        assert_eq!(transitions[0].name, "activeImplication");
+
+        assert_eq!(handlers.len(), 3, "peek, deposit, addEntry");
+
+        let peek = handlers
+            .iter()
+            .find(|h| h.method_name.as_deref() == Some("peek"))
+            .expect("peek handler");
+        assert!(matches!(peek.commit, CommitShape::ReadOnly));
+
+        // The load-bearing assertion: `deposit`'s own commit carries the
+        // *agent's real* invariants/transitions, lowered once here and
+        // threaded through — not the empty pair `lower_handler_ir` would
+        // produce on its own if this function forgot to pass them.
+        let deposit = handlers
+            .iter()
+            .find(|h| h.method_name.as_deref() == Some("deposit"))
+            .expect("deposit handler");
+        let CommitShape::Transactional {
+            invariants: got_inv,
+            transitions: got_tr,
+        } = &deposit.commit
+        else {
+            panic!(
+                "expected deposit's own commit to be Transactional, got {:?}",
+                deposit.commit
+            )
+        };
+        assert_eq!(got_inv.len(), 1);
+        assert_eq!(got_inv[0].name, "staysKnown");
+        assert_eq!(got_tr.len(), 1);
+        assert_eq!(got_tr[0].name, "activeImplication");
+
+        // `addEntry` writes through `Callee::Store` (Map.put), not `:=` —
+        // pins that a non-Cell-field write also reaches Transactional and
+        // also carries the same real invariants/transitions, not just the
+        // `:=` case `deposit` already covers.
+        let add_entry = handlers
+            .iter()
+            .find(|h| h.method_name.as_deref() == Some("addEntry"))
+            .expect("addEntry handler");
+        let CommitShape::Transactional {
+            invariants: got_inv,
+            transitions: got_tr,
+        } = &add_entry.commit
+        else {
+            panic!(
+                "expected addEntry's own commit to be Transactional, got {:?}",
+                add_entry.commit
+            )
+        };
+        assert_eq!(got_inv.len(), 1);
+        assert_eq!(got_tr.len(), 1);
+
+        // Every `IrHandler` this slice builds is still agent-only —
+        // pinning Decision D's own guarantee one level up, through the
+        // assembled `IrItem::Agent` rather than only through
+        // `lower_handler_ir` directly.
+        assert!(handlers.iter().all(|h| h.binder.is_none()));
     }
 }
