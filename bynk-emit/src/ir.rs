@@ -85,11 +85,29 @@
 //! "wire, don't re-derive" posture this whole module has held since P6.0.
 //! `IrItem::Service`/`Actor`/`Capability`/`Provider` remain deferred, each
 //! for its own reason (see [`IrItem`]'s own doc comment).
+//!
+//! **P6.11 (#1171) adds [`IrItem::Service`]** — the sibling assembly to
+//! P6.10's `Agent`, closing both blockers `IrItem`'s own doc comment named:
+//! #1170 made a service handler's `binder` readable post-`certify` for the
+//! first time, and this slice specifies the two types the reference names
+//! but never defines for a service ([`ProtocolIr`], [`PolicyIr`]).
+//! [`lower::lower_service_handler_ir`] is a new sibling of
+//! [`lower::lower_handler_ir`], not a widening of it — the two seed
+//! disjoint scopes, and widening would have deleted the agent-only `by`
+//! assertion that today catches a service handler reaching the wrong entry
+//! point. A `from websocket` lifecycle handler's own body
+//! (`on open`/`on message`/`on close`) is the one named exception: the
+//! checker-injected synthetic `connection` param has no IR target yet, so
+//! lowering one hits an explicit `todo!()` rather than a silently wrong
+//! tree — see [`lower::lower_service_handler_ir`]'s own doc comment.
+//! `IrItem::Actor`/`Capability`/`Provider` remain deferred, each with its
+//! own already-tracked, genuinely unsettled blocker (see [`IrItem`]'s own
+//! doc comment).
 
 use std::sync::Arc;
 
 use bynk_check::checker::{Callee, TyId};
-use bynk_syntax::ast::{BaseType, FnDecl, HandlerKind, Refinement, TypeDecl};
+use bynk_syntax::ast::{BaseType, FnDecl, HandlerKind, Refinement, SchemaVersionPattern, TypeDecl};
 use bynk_syntax::span::Span;
 
 pub(crate) mod lower;
@@ -435,29 +453,23 @@ pub(crate) enum IrStmt {
 /// (`DefId -> Arc<TypeDecl>`/`Arc<FnDecl>`, the same substitution
 /// `Record`/`GlobalRef` already made).
 ///
-/// **`Type`, `Fn` and (as of P6.10, #1169) `Agent` exist as variants.**
-/// `Service`/`Actor`/`Capability`/`Provider` are still deferred (Decision D,
-/// #1161, matching the issue's own title: "Agent/Service/Actor/Capability/
-/// Provider deferred"). This is a different posture from `Match`'s own
-/// payload (`IrPat`/`IrArm`/`Exhaustive`/`MatchForm`), which had to exist —
-/// even genuinely uninhabited — the moment `IrExprKind::Match`'s own field
-/// list was written, because `IrExprKind` is one enum whose whole Part 6.2
-/// shape landed in a single slice (P6.1) and never grows a new variant
-/// after. `IrItem` carries no such constraint: nothing outside this module
-/// matches on it exhaustively yet (no consumer at all, same posture as
-/// every prior P6.x slice), so a later slice can add a wholly new variant
-/// rather than needing a placeholder reserved here in advance. Each
-/// deferred variant has its own real, distinct blocker, not a shared
-/// "later" (full grounding in #1161's own Decision D):
-/// - `Service` needs the same `IrHandler`/`StoreFieldIr`/`CommitShape` shape
-///   `Agent` just got, plus its own extra blockers: it carries a materially
-///   larger surface than its own reference sketch shows at all
-///   (CORS/security-headers/request-body-size policy structs,
-///   `ServiceDecl.cors`/`security`/`limits`), and a real service `IrHandler`
-///   additionally needs the `binder`-persistence `bynk-check` change
-///   [`IrHandler`]'s own doc comment names — P6.9 built the agent-only path
-///   only ([`IrHandler`]'s own Decision D). Tracked as
-///   [#1170](https://github.com/accuser/bynk/issues/1170)/[#1171](https://github.com/accuser/bynk/issues/1171).
+/// **`Type`, `Fn`, `Agent` (P6.10, #1169) and `Service` (P6.11, #1171)
+/// exist as variants.** `Actor`/`Capability`/`Provider` are still deferred
+/// (Decision D, #1161, matching the issue's own title: "Agent/Service/
+/// Actor/Capability/Provider deferred"). This is a different posture from
+/// `Match`'s own payload (`IrPat`/`IrArm`/`Exhaustive`/`MatchForm`), which
+/// had to exist — even genuinely uninhabited — the moment
+/// `IrExprKind::Match`'s own field list was written, because `IrExprKind`
+/// is one enum whose whole Part 6.2 shape landed in a single slice (P6.1)
+/// and never grows a new variant after. `IrItem` carries no such
+/// constraint: nothing outside this module matches on it exhaustively yet
+/// (no consumer at all, same posture as every prior P6.x slice), so a
+/// later slice can add a wholly new variant rather than needing a
+/// placeholder reserved here in advance. Each deferred variant has its own
+/// real, distinct blocker, not a shared "later" (full grounding in #1161's
+/// own Decision D — `Service`'s own two blockers, closed by #1170/#1171,
+/// are recorded on `IrItem::Service`'s own doc comment rather than kept
+/// here as a stale bullet):
 /// - `Actor` has no emitted artefact of its own today (R8.1: "no
 ///   declaration; drives the boundary wrapper in `compose.ts`") — genuinely
 ///   unsettled how `auth`/`identity`/`claims` map onto the reference's own
@@ -557,6 +569,190 @@ pub(crate) enum IrItem {
         /// `invariants`.
         transitions: Vec<IrPredicate>,
     },
+    /// P6.11's real `IrItem::Service` (Part 6.6, R6.13, #1171) —
+    /// [`lower::lower_service_item_ir`]'s own return value, the sibling
+    /// assembly to [`IrItem::Agent`]. Matches the reference's own sketch
+    /// (`bynk-greenfield-compiler.md:1132`) field-for-field. Closes the two
+    /// blockers this variant carried while deferred: a real service
+    /// `IrHandler` needed the `binder`-persistence `bynk-check` change
+    /// #1170 made, and the CORS/security-headers/request-body-size policy
+    /// surface the reference sketch never shows at all now has a real,
+    /// specified shape ([`ProtocolIr`]/[`PolicyIr`]).
+    Service {
+        /// The service's own declared name — same reasoning as
+        /// `IrItem::Agent`'s own `def`: `UnitTable::services` is a plain
+        /// owned `HashMap<String, ServiceDecl>`, no `Arc` to borrow
+        /// cheaply, and bare-name identity is already sufficient for this
+        /// checked output.
+        def: String,
+        /// [`lower::lower_protocol_ir`]'s own return value.
+        protocol: ProtocolIr,
+        /// Every handler, [`lower::lower_service_handler_ir`]'s own return
+        /// value, in declaration order.
+        handlers: Vec<IrHandler>,
+        /// [`lower::lower_policy_ir`]'s own return value — `None` whenever
+        /// `protocol` is not [`ProtocolIr::Http`], not just when the source
+        /// declares none of `cors`/`security`/`limits`. See [`PolicyIr`]'s
+        /// own doc comment for why this is `Option`, not the reference's
+        /// own unconditional `PolicyIr` field.
+        policy: Option<PolicyIr>,
+    },
+}
+
+/// P6.11's real `ProtocolIr` ([DECISION A], #1171) — one variant per
+/// `bynk_syntax::ast::ServiceProtocol` variant, [`lower::lower_protocol_ir`]'s
+/// own return value. The reference's own sketch specifies only two of the
+/// six: `Events { event, pattern, schema_dispatch }`
+/// (`bynk-greenfield-compiler.md:1881`) and `WebSocket { in_ty, out_ty }`
+/// (`:1959`) — field names taken verbatim from those two rows. `Call`/
+/// `Http`/`Cron` carry no payload, not because one was dropped: the actual
+/// per-trigger binding (a route, a schedule) lives on each *handler*
+/// (`HandlerKind::Http { method, path }`/`Cron { expr }`), already
+/// reachable through `IrHandler::kind` — `ServiceProtocol`'s own doc
+/// comment says this in as many words ("the endpoint lives on each
+/// handler"), which is why the reference never spells these three out
+/// either. E2 (`:1737`) constrains the *set*, not the shape: "a closed
+/// nominal set … grows one variant per real trigger" — the AST's own closed
+/// `ServiceProtocol` already satisfies that exactly, so this type is total
+/// over what a certified program's own service can declare, the same claim
+/// [`StoreKindIr`]'s own doc makes about `Queue` being gated pre-`certify`.
+#[derive(Debug, Clone)]
+pub(crate) enum ProtocolIr {
+    Call,
+    Http,
+    Cron,
+    /// `from queue("name")`.
+    Queue {
+        name: String,
+    },
+    /// `from websocket(in: …, out: …)` — the two frame types, resolved.
+    /// [`lower::lower_service_handler_ir`] does not yet lower an `on
+    /// open`/`on message`/`on close` handler's own *body* for a service
+    /// carrying this protocol (a named, tracked gap — see that function's
+    /// own doc comment); this variant, the protocol *descriptor*, is real
+    /// regardless.
+    WebSocket {
+        in_ty: TyId,
+        out_ty: TyId,
+    },
+    /// `from Events(E)` — the subscribed event type, resolved, plus the
+    /// two independent, optional filters a subscription may carry.
+    Events {
+        event: TyId,
+        pattern: Option<EventPatternIr>,
+        /// [DECISION B]: `SchemaVersionPattern` reused verbatim from
+        /// `bynk_syntax::ast` rather than flattened to `Option<i64>` — an
+        /// ordinary `Clone` enum with no arena identity, the same "reused,
+        /// not adapted" treatment `IrHandler::kind` already gets, and its
+        /// own doc comment states that a future range pattern (`via
+        /// schema(2..)`) is additive to this exact enum, not a breaking
+        /// rename of whoever already matches on it. The `SchemaDispatch`
+        /// wrapper itself is dropped — it carries only this `pattern` plus
+        /// a parse-only `span`.
+        schema_dispatch: Option<SchemaVersionPattern>,
+    },
+}
+
+/// The payload of `ProtocolIr::Events`'s own `pattern` — a `from
+/// Events(E { field: value, .. })` structural filter, [DECISION C] (#1171).
+/// **Not** `bynk_syntax::ast::EventPattern` reused verbatim, unlike
+/// `SchemaVersionPattern`: that type carries `rest_span` (a parse artefact
+/// for the grammar-required trailing `..`, giving a later reader nothing to
+/// act on) and its own `EventPatternValue::Variant` is an *unresolved,
+/// optionally-qualified* name pair — exactly the shape this module's whole
+/// posture rejects everywhere else.
+#[derive(Debug, Clone)]
+pub(crate) struct EventPatternIr {
+    /// `(field name, matched value)`, in source order — no dedicated
+    /// `EventPatternFieldIr` struct, mirroring `IrPat::Variant`'s own
+    /// `fields: Vec<(String, Box<IrPat>)>` precedent for a two-part fact
+    /// with no further structure.
+    pub fields: Vec<(String, EventPatternValueIr)>,
+}
+
+/// One [`EventPatternIr`] field's own matched value.
+#[derive(Debug, Clone)]
+pub(crate) enum EventPatternValueIr {
+    /// Reuses [`ConstVal`] for the closed `Int`/`Str`/`Bool` literal set —
+    /// verbatim the same reuse `IrPat::Const` already made for
+    /// `Pattern::Literal`'s identical closed set.
+    Const(ConstVal),
+    /// A nullary sum-variant tag, resolved and unqualified — bare
+    /// `tag: String` mirrors `IrPat::Variant`'s own `tag`/[`GlobalRef`]'s
+    /// own `tag`. The AST's own optional qualifying `type_name` is
+    /// dropped, not lost: the sole existing consumer (the shipped
+    /// emitter's `event_pattern_guard`) already destructures down to the
+    /// bare tag alone — the qualification is disambiguation for the
+    /// *checker*, resolved against the field's declared sum type before
+    /// this point.
+    Variant { tag: String },
+}
+
+/// P6.11's real `PolicyIr`/`CorsIr`/`SecurityIr` ([DECISION D], #1171) —
+/// the interpreted (not passed-through) form of a `from http` service's
+/// `cors`/`security`/`limits` blocks, [`lower::lower_policy_ir`]'s own
+/// return value. The reference names `PolicyIr` once, in the
+/// `IrItem::Service` sketch itself (`:1132`), and never elsewhere — the
+/// same "referenced, not specified" gap every trailing struct in this
+/// module has carried before its own slice specified it.
+///
+/// **Interpreted, not passed through** — the one discipline this struct
+/// exists to enforce. Every AST policy type
+/// (`bynk_syntax::ast::CorsPolicy`/`SecurityPolicy`/`LimitsPolicy`) stores
+/// raw, unvalidated `{name, value: Expr}` pairs; meaning only exists
+/// through each type's own already-shipped typed accessor
+/// (`CorsPolicy::origins()`/`credentials()`/`allow_headers()`/
+/// `max_age_secs()`, `SecurityPolicy::nosniff()`/`hsts_max_age_secs()`,
+/// `LimitsPolicy::max_body()`) — carrying the raw AST struct here instead
+/// would embed exactly the kind of unresolved value this whole track
+/// (R6.13) exists to remove from the IR. The shipped emitter already never
+/// reads a policy's own `.fields` directly (`emitter/workers_entry.rs`),
+/// so this is that emitter's own already-established reading of the AST,
+/// moved upstream, not a new interpretation invented here.
+#[derive(Debug, Clone)]
+pub(crate) struct PolicyIr {
+    pub cors: Option<CorsIr>,
+    /// **Not `Option`** — unlike `cors`/`limits`, `security: None` on the
+    /// AST means *defaults* (`nosniff` on), not *no headers* (ADR 0164
+    /// Decision A) — keeping this `Option` here would re-export exactly
+    /// the ambiguity this struct exists to remove. The `None`-source arm
+    /// of [`lower::lower_policy_ir`] materialises `SecurityIr { nosniff:
+    /// true, hsts_max_age_secs: None }` — the emitter's own already-shipped
+    /// default, verbatim, not invented here.
+    pub security: SecurityIr,
+    /// `LimitsPolicy::max_body()`'s own return value, flattened directly —
+    /// no dedicated `LimitsIr` struct. `LimitsPolicy` has exactly one
+    /// accessor; a one-field wrapper would carry no more information than
+    /// this `Option<i64>` itself, the same "no further structure"
+    /// precedent [`EmbedIr`]/[`IndexIr`] already set.
+    pub max_body_bytes: Option<i64>,
+}
+
+/// The payload of `PolicyIr::cors` — present only when the source declares
+/// a `cors { }` block at all (ADR 0159's own opt-in posture); the
+/// asymmetry with `PolicyIr::security` is this struct's load-bearing
+/// content, not an inconsistency.
+#[derive(Debug, Clone)]
+pub(crate) struct CorsIr {
+    pub origins: Vec<String>,
+    pub credentials: bool,
+    /// The author's own explicit `headers:` override, kept `Option` rather
+    /// than materialising the emitter's own smart default (`content-type`
+    /// and `authorization` when a `Bearer`-authed route exists,
+    /// `emitter/workers_entry.rs`) — that default reads *route* facts
+    /// (whether any handler's actor is `Bearer`/OIDC-scheme), not policy
+    /// facts, the same reason `StoreFieldIr::init` stays `Option` rather
+    /// than a materialised zero value.
+    pub allow_headers: Option<Vec<String>>,
+    pub max_age_secs: Option<i64>,
+}
+
+/// The payload of `PolicyIr::security` — always present for an HTTP
+/// service (see `PolicyIr::security`'s own doc comment).
+#[derive(Debug, Clone)]
+pub(crate) struct SecurityIr {
+    pub nosniff: bool,
+    pub hsts_max_age_secs: Option<i64>,
 }
 
 /// P6.6's real `TypeShape` (Part 6.6, #1161) — a declared type's own
@@ -703,9 +899,10 @@ pub(crate) struct IrPredicate {
 /// (`bynk-greenfield-compiler.md:1179-1183`) — no substitution needed,
 /// `Transactional`'s own payload already reuses [`IrPredicate`] rather than
 /// carrying `Invariant`/`Transition` AST nodes directly. Shape-agnostic
-/// between an agent and a service handler ([DECISION F]): a service
-/// handler's own call site passes empty `invariants`/`transitions` slices,
-/// and the identical write-detection walk
+/// between an agent and a service handler ([DECISION F]): as of P6.11
+/// (#1171), [`lower::lower_service_handler_ir`] is the real service call
+/// site this decision predicted, passing empty `invariants`/`transitions`
+/// slices, and the identical write-detection walk
 /// ([`lower::lower_commit_shape_ir`]'s own doc comment) naturally finds
 /// neither a mutating `Callee::Store` nor a bare `:=` in a service body (a
 /// service declares no `store` fields to write), so `Transactional` is
@@ -740,8 +937,9 @@ pub(crate) enum CommitShape {
     /// already must ([DECISION D]: `crate::emitter::block_uses_emit(body)`),
     /// not from this variant. Named here rather than silently assumed lost:
     /// the fact is recoverable from `body`, which every real consumer holds
-    /// alongside a `CommitShape` in the first place ([`crate::ir::IrItem`]'s
-    /// own doc comment — no `IrHandler` exists yet to pin this against).
+    /// alongside a `CommitShape` in the first place — `IrHandler` itself
+    /// (real as of P6.9, #1167) is exactly that consumer, carrying both
+    /// `commit`/`body` side by side.
     Transactional {
         invariants: Vec<IrPredicate>,
         transitions: Vec<IrPredicate>,
@@ -762,10 +960,11 @@ pub(crate) enum CommitShape {
 /// synthetic type needed the way `<Agent>State` was for P6.8's `state_ty`.
 /// No dedicated `lower_actor_binder_ir` constructor: the pair has no
 /// further structure to derive, mirroring [`EmbedIr`]'s/[`IndexIr`]'s own
-/// "no further structure, plain tuple/alias" precedent — a future caller
-/// with the resolved pair in hand (`TypedCommons::actor_bindings`, #1170 —
-/// see [`IrHandler`]'s own doc comment for why `lower::lower_handler_ir`
-/// doesn't read it back yet) writes `ActorBinder { binder, ty }` directly.
+/// "no further structure, plain tuple/alias" precedent — as of P6.11
+/// (#1171), [`lower::lower_service_handler_ir`] is the real caller that
+/// reads `TypedCommons::actor_bindings` (#1170) and writes
+/// `ActorBinder { binder, ty }` directly; [`lower::lower_handler_ir`]
+/// (agent-only) still never does — see [`IrHandler`]'s own doc comment.
 #[derive(Debug, Clone)]
 pub(crate) struct ActorBinder {
     pub binder: String,
@@ -801,23 +1000,22 @@ pub(crate) struct ActorBinder {
 /// agent's several `on call <name>` handlers this is. `None` for the shapes
 /// that have none today (a service's bare `on call`).
 ///
-/// [`lower::lower_handler_ir`] is agent-only this slice ([DECISION D]) — a
-/// real service handler's `IrHandler` (specifically, a non-`None` `binder`)
-/// is not constructed here. As of #1170, `handler_actor_binding`'s own
-/// resolved `(String, TyId)` (`bynk-check/src/context_checks.rs`) is no
-/// longer checking-time-only scratch — it survives into
-/// `TypedCommons::actor_bindings`/`CheckedProgram`, keyed by the handler's
-/// own `span` — but `lower::lower_handler_ir` itself does not yet read it
-/// back: widening this constructor past agent-only, and the surrounding
-/// `IrItem::Service` assembly it feeds, is tracked separately
-/// ([#1171](https://github.com/accuser/bynk/issues/1171)), not built here.
-/// Not a functional gap for R6.16's own claim (invocation
+/// [`lower::lower_handler_ir`] is agent-only **by design, still** ([DECISION
+/// D]) — a real service handler's `IrHandler` (specifically, a non-`None`
+/// `binder`) is never constructed by *this* function, and that stays true
+/// even now that #1170 persisted `handler_actor_binding`'s own resolved
+/// `(String, TyId)` into `TypedCommons::actor_bindings`/`CheckedProgram`.
+/// P6.11 (#1171) built the real service-handler path as a **sibling**,
+/// [`lower::lower_service_handler_ir`], not a widening of this one —
+/// [`lower::lower_handler_ir`]'s own doc comment names exactly why
+/// (disjoint scopes, and widening would delete the `by_clause.is_none()`
+/// assertion that today catches a service handler reaching the wrong
+/// entry point). Not a functional gap for R6.16's own claim (invocation
 /// origin-independence is specifically about an *agent* handler): an agent
 /// handler's own `binder` is `None` unconditionally and by construction —
 /// `bynk.actor.by_on_agent` (`context_checks.rs:2986-2996`) rejects any
-/// `by` clause on an agent
-/// handler outright, so [`lower::lower_handler_ir`] never has one to lower
-/// in the first place.
+/// `by` clause on an agent handler outright, so [`lower::lower_handler_ir`]
+/// never has one to lower in the first place.
 #[derive(Debug, Clone)]
 pub(crate) struct IrHandler {
     pub kind: HandlerKind,

@@ -21,9 +21,10 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    AgentDecl, BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, Invariant,
-    LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, Statement,
-    StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
+    AgentDecl, BinOp, Block, EventPattern, EventPatternValue, Expr, ExprId, ExprKind, FieldInit,
+    FnDecl, FnName, Handler, HandlerKind, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody,
+    Pattern, PatternBindingKind, ServiceDecl, ServiceProtocol, Statement, StoreField, Transition,
+    TypeBody, TypeDecl, UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -32,8 +33,10 @@ use crate::emitter::{
     match_needs_if_chain,
 };
 use crate::ir::{
-    BindingMode, CommitShape, ConstVal, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind,
-    IrHandler, IrItem, IrPat, IrPredicate, IrStmt, MatchForm, StoreFieldIr, StoreKindIr, TypeShape,
+    ActorBinder, BindingMode, CommitShape, ConstVal, CorsIr, EventPatternIr, EventPatternValueIr,
+    Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind, IrHandler, IrItem, IrPat,
+    IrPredicate, IrStmt, MatchForm, PolicyIr, ProtocolIr, SecurityIr, StoreFieldIr, StoreKindIr,
+    TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -266,6 +269,9 @@ fn wrap_body_return(block: IrExpr) -> IrExpr {
 /// an agent handler seed genuinely different scopes (rigid type variables
 /// here, agent `self`/store cells there) that would otherwise have to
 /// coexist behind one signature for no shared benefit.
+/// [`lower_service_handler_body_ir`] (P6.11, #1171) is the third sibling on
+/// the same rule, not a second widening — a service handler's own scope
+/// (`params`/`binder` only) is disjoint from both of the other two.
 pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
     let type_vars = fn_rigid_type_vars(f, program.program());
     let mut cx = LowerIrCtx::new(program, type_vars);
@@ -306,9 +312,10 @@ pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
 /// [`lower_store_field_ir`]. `binder` is not bound into scope: this entry
 /// point is only ever reached from [`lower_handler_ir`]'s own agent-only
 /// path ([DECISION D]), where `binder` is `None` unconditionally
-/// ([`crate::ir::IrHandler`]'s own doc comment) — a future service-handler
-/// caller, once one exists, would need this function widened to accept and
-/// bind one, not merely to call it as-is.
+/// ([`crate::ir::IrHandler`]'s own doc comment). As of P6.11 (#1171) a real
+/// service-handler caller does exist — [`lower_service_handler_body_ir`] —
+/// and it is a sibling of this function, not a widening of it; that
+/// function's own doc comment names the scope-seeding differences in full.
 ///
 /// Once scope is seeded, every store-field method call and every bare `:=`
 /// in `h.body` reaches the *ordinary* [`lower_block_ir`]/[`lower_expr_ir`]/
@@ -367,6 +374,12 @@ fn lower_handler_body_ir(
 /// a correct lowering of an agent that genuinely declares neither, so an
 /// empty-by-construction `commit` would have been a silent-wrong-value trap
 /// for whatever future caller forgot to populate them for real.
+///
+/// Stays agent-only as of P6.11 (#1171) — [`lower_service_handler_ir`] is
+/// this function's own sibling for a service handler, not a widening of
+/// it; see that function's own doc comment for the three reasons the split
+/// is deliberate, and this function's own `by_clause.is_none()` assert
+/// below for the guard widening would have deleted.
 pub(crate) fn lower_handler_ir(
     h: &Handler,
     store_cells: &HashMap<String, TyId>,
@@ -389,6 +402,34 @@ pub(crate) fn lower_handler_ir(
          service handler reaching the wrong entry point"
     );
     let cx = LowerIrCtx::new(program, HashSet::new());
+    let (params, given, effectful) = lower_handler_signature_ir(h, &cx);
+    let emits = block_uses_emit(&h.body);
+    let commit = lower_commit_shape_ir(&h.body, invariants, transitions, emits, program);
+    let body = lower_handler_body_ir(h, store_cells, state_ty, program);
+    IrHandler {
+        kind: h.kind.clone(),
+        params,
+        given,
+        binder: None,
+        body,
+        commit,
+        effectful,
+        method_name: h.method_name.as_ref().map(|i| i.name.clone()),
+    }
+}
+
+/// A handler's own `params`/`given`/`effectful` — the one part of
+/// [`IrHandler`] construction genuinely identical between an agent handler
+/// ([`lower_handler_ir`]) and a service handler
+/// ([`lower_service_handler_ir`], P6.11, #1171), extracted so the two don't
+/// hand-duplicate it. Everything else about the two — scope seeding,
+/// `binder`, the WebSocket deferral — is genuinely different and stays
+/// unshared; see [`lower_handler_ir`]'s own doc comment for why that split
+/// is deliberate, not an oversight.
+fn lower_handler_signature_ir(
+    h: &Handler,
+    cx: &LowerIrCtx,
+) -> (Vec<(String, TyId)>, Vec<String>, bool) {
     let params: Vec<(String, TyId)> = h
         .params
         .iter()
@@ -411,15 +452,147 @@ pub(crate) fn lower_handler_ir(
              pass's own scope, but the checker already accepted this handler"
         )
     });
-    let effectful = matches!(&*program.program().ty_intern.get(ret), Ty::Effect(_));
+    let effectful = matches!(&*cx.program.ty_intern.get(ret), Ty::Effect(_));
+    (params, given, effectful)
+}
+
+/// P6.11 ([DECISION E], #1171): lower a service handler's own body — the
+/// sibling of [`lower_handler_body_ir`] the reasoning in
+/// [`lower_service_handler_ir`]'s own doc comment argues for, not a
+/// widening of it. Seeds scope from `h.params`, then `binder` if one was
+/// resolved — matching `check_handler_body`'s own `param_scope`
+/// construction order for a service (`checker.rs`: params, then
+/// `actor_binding`, then `agent_self_scope` only when present). Binder
+/// last has no observable effect today only because `handler_actor_binding`
+/// already suppresses a param-shadowing binder before this ever runs
+/// (`context_checks.rs:2050-2055`) — recorded here so the ordering isn't
+/// silently "fixed" by a later reader who doesn't know it's already
+/// load-bearing-adjacent. No rigid type variables: `ServiceDecl` carries no
+/// `type_params` of its own, the same fact
+/// [`resolve_store_field_ty`]'s own doc comment already grounds for
+/// [`lower_store_field_ir`].
+fn lower_service_handler_body_ir(
+    h: &Handler,
+    binder: Option<&ActorBinder>,
+    program: &CheckedProgram,
+) -> IrExpr {
+    let mut cx = LowerIrCtx::new(program, HashSet::new());
+    for p in &h.params {
+        let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
+            panic!(
+                "bynk internal error (ADR 0334): handler parameter `{}`'s type does not resolve \
+                 in this pass's own scope, but the checker already accepted this handler",
+                p.name.name
+            )
+        });
+        cx.bind(p.name.name.clone(), ty);
+    }
+    if let Some(binder) = binder {
+        cx.bind(binder.binder.clone(), binder.ty);
+    }
+    let block = lower_block_ir(&h.body, &mut cx);
+    wrap_body_return(block)
+}
+
+/// P6.11's real service-handler `IrHandler` constructor ([DECISION E],
+/// #1171) — the sibling to [`lower_handler_ir`], not a widening of it.
+/// [`lower_fn_body_ir`]'s own doc comment already states the governing
+/// rule ("a free fn/method and an agent handler seed genuinely different
+/// scopes … that would otherwise have to coexist behind one signature for
+/// no shared benefit"); the same reasoning gives the same answer here,
+/// more strongly:
+/// - The two scopes are disjoint, not overlapping — an agent handler body
+///   seeds `self`/`store_cells`; a service handler body seeds `params`/
+///   `binder` only. Not one of `store_cells`/`state_ty`/`invariants`/
+///   `transitions` means anything for a service.
+/// - [`lower_handler_ir`] asserts `h.by_clause.is_none()` — an explicit
+///   "agent-only by contract" guard. Widening would delete the one thing
+///   that today catches a service handler reaching the wrong entry point.
+///
+/// `protocol` is a parameter solely to disambiguate `HandlerKind::Message`
+/// — the same literal AST variant is a *queue* consumer under
+/// `ServiceProtocol::Queue` and a *WebSocket inbound frame* under
+/// `ServiceProtocol::WebSocket` (`HandlerKind::Close`'s own doc comment
+/// says so), and the checker itself dispatches on exactly this `(kind,
+/// protocol)` pair (`context_checks.rs:1938-1945`) — without `protocol`
+/// here, the WebSocket deferral below would wrongly capture every queue
+/// consumer in the language too.
+///
+/// **The named deferral.** A `from websocket` service's `on open`/`on
+/// message`/`on close` handler body is not lowered — the checker injects a
+/// synthetic leading `connection: Connection[out]` param into its own
+/// `params_for_check` (`open_connection_param`, `context_checks.rs:2023-
+/// 2032`, injected at `:1946-1954`) that never reaches `h.params`, and the
+/// owned-vs-borrowed linearity distinction the checker draws for it
+/// (`:1955-1962`) has no IR target either. Lowering the body anyway would
+/// silently produce a tree missing that binding — every `connection.…`
+/// read would surface as [`lower_ident_ir`]'s own unresolved-ident
+/// `todo!()`, naming the wrong cause. `todo!()`ing here instead follows
+/// this module's own established posture (`lower_fn_body_ir`'s doc: "no
+/// such entry point exists yet rather than one that would produce a wrong
+/// tree") — tracked as its own follow-up issue, the `ProtocolIr::WebSocket`
+/// descriptor itself (`lower_protocol_ir`) is unaffected and real.
+///
+/// **`binder` is read back, not threaded in as a parameter** — the
+/// deliberate inverse of [`lower_handler_ir`]'s own [DECISION E]
+/// (`store_cells`/`state_ty`/`invariants`/`transitions` are parameters
+/// *because* no persisted table survives `check_agent_decls`'s own
+/// transient scope). Here the opposite premise holds: #1170 persisted
+/// exactly this pair into `TypedCommons::actor_bindings`, so the opposite
+/// choice follows. `None` is a legitimate outcome, not an error — a
+/// binder-less `by <Actor>`, no `by` clause at all, or a binder that
+/// shadowed a param and was suppressed (`context_checks.rs:2050-2055`) all
+/// resolve to `None` here exactly as they do in `handler_actor_binding`
+/// itself; this function does not, and must not, assert `binder.is_some()`
+/// from `h.by_clause.is_some()`.
+///
+/// `commit` passes empty `invariants`/`transitions` slices to
+/// [`lower_commit_shape_ir`] — [DECISION F]'s own predicted service call
+/// site, real for the first time. `CommitShape::Transactional` is
+/// structurally unreachable here, not merely unproduced by convention: a
+/// service declares no `store` fields for `body_writes_state` to find a
+/// write against. No `is_service` flag is added anywhere — Decision F's
+/// whole point is that none is needed.
+pub(crate) fn lower_service_handler_ir(
+    h: &Handler,
+    protocol: &ServiceProtocol,
+    program: &CheckedProgram,
+) -> IrHandler {
+    if matches!(
+        (&h.kind, protocol),
+        (
+            HandlerKind::Open | HandlerKind::Message | HandlerKind::Close,
+            ServiceProtocol::WebSocket { .. }
+        )
+    ) {
+        todo!(
+            "a `from websocket` lifecycle handler's body needs the synthetic leading \
+             `connection: Connection[out]` parameter the checker injects into its own \
+             params_for_check only (open_connection_param, context_checks.rs:2023-2032; \
+             injection at :1946-1954) — it is never in h.params, so lowering this body would \
+             seed a scope missing `connection`, and every `connection.…` read would surface as \
+             lower_ident_ir's own unresolved-ident todo!() naming the wrong cause; the \
+             owned/borrowed linearity distinction (:1955-1962) has no IR target either — \
+             tracked as #1179"
+        )
+    }
+    let cx = LowerIrCtx::new(program, HashSet::new());
+    let (params, given, effectful) = lower_handler_signature_ir(h, &cx);
+    let binder = program
+        .program()
+        .actor_binding(h.span)
+        .map(|(name, ty)| ActorBinder {
+            binder: name.clone(),
+            ty: *ty,
+        });
     let emits = block_uses_emit(&h.body);
-    let commit = lower_commit_shape_ir(&h.body, invariants, transitions, emits, program);
-    let body = lower_handler_body_ir(h, store_cells, state_ty, program);
+    let commit = lower_commit_shape_ir(&h.body, &[], &[], emits, program);
+    let body = lower_service_handler_body_ir(h, binder.as_ref(), program);
     IrHandler {
         kind: h.kind.clone(),
         params,
         given,
-        binder: None,
+        binder,
         body,
         commit,
         effectful,
@@ -913,6 +1086,137 @@ pub(crate) fn lower_commit_shape_ir(
     }
 }
 
+/// P6.11 ([DECISION C], #1171): reshape a `from Events(E { … })` pattern
+/// into a real [`EventPatternIr`] — pure structural reshaping, no
+/// `&CheckedProgram` parameter and no resolution: every field's own
+/// matched value is either already a literal or an unresolved variant tag,
+/// neither needing a `TyId`. `EventPatternValue::Literal` lowers through
+/// the same `LiteralValue -> ConstVal` match [`lower_pattern_ir`] already
+/// uses for `Pattern::Literal`'s identical closed set.
+fn lower_event_pattern_ir(pattern: &EventPattern) -> EventPatternIr {
+    EventPatternIr {
+        fields: pattern
+            .fields
+            .iter()
+            .map(|f| {
+                let value = match &f.value {
+                    EventPatternValue::Literal { value, .. } => {
+                        EventPatternValueIr::Const(match value {
+                            LiteralValue::Int(n) => ConstVal::Int(*n),
+                            LiteralValue::Str(s) => ConstVal::Str(s.clone()),
+                            LiteralValue::Bool(b) => ConstVal::Bool(*b),
+                        })
+                    }
+                    EventPatternValue::Variant { variant, .. } => EventPatternValueIr::Variant {
+                        tag: variant.name.clone(),
+                    },
+                };
+                (f.name.name.clone(), value)
+            })
+            .collect(),
+    }
+}
+
+/// P6.11 ([DECISION A], #1171): lower a service's own `from <protocol>`
+/// header into a real [`ProtocolIr`] — standalone, takes the sub-node
+/// rather than the owning `ServiceDecl` (mirrors [`lower_store_field_ir`]),
+/// so a `from websocket`/`from Events` fixture can pin the descriptor by
+/// itself even where [`lower_service_handler_ir`] cannot yet lower every
+/// handler on the same service (the WebSocket lifecycle-body deferral —
+/// see that function's own doc comment).
+///
+/// `WebSocket`/`Events`'s own type refs resolve through the `Ty::Unit`
+/// fallback, not an ADR 0334 panic — deliberately, and for the same reason
+/// [`lower_agent_item_ir`]'s own `key_ty` does: `resolver.rs` skips
+/// `CommonsItem::Service` in every one of its own type-ref-resolution
+/// passes (`resolver.rs:303-304`/`493-494`/`577-578`), and the one checker
+/// site that does resolve a WebSocket frame type itself falls back to
+/// `Ty::Unit` on a miss rather than erroring (`context_checks.rs:775-778`).
+/// Panicking here would make this the second ADR-0334 site in this module
+/// asserting a guarantee the checker doesn't actually give — the first
+/// being `lower_agent_item_ir`'s own `key_ty`, review of #1169.
+pub(crate) fn lower_protocol_ir(
+    protocol: &ServiceProtocol,
+    program: &CheckedProgram,
+) -> ProtocolIr {
+    let cx = LowerIrCtx::new(program, HashSet::new());
+    match protocol {
+        ServiceProtocol::Call => ProtocolIr::Call,
+        ServiceProtocol::Http => ProtocolIr::Http,
+        ServiceProtocol::Cron => ProtocolIr::Cron,
+        ServiceProtocol::Queue { name } => ProtocolIr::Queue { name: name.clone() },
+        ServiceProtocol::WebSocket { in_type, out_type } => ProtocolIr::WebSocket {
+            in_ty: cx.resolve_type_ref(in_type).unwrap_or_else(|| cx.unit_ty()),
+            out_ty: cx
+                .resolve_type_ref(out_type)
+                .unwrap_or_else(|| cx.unit_ty()),
+        },
+        ServiceProtocol::Events {
+            event_type,
+            pattern,
+            schema_dispatch,
+        } => ProtocolIr::Events {
+            event: cx
+                .resolve_type_ref(event_type)
+                .unwrap_or_else(|| cx.unit_ty()),
+            pattern: pattern.as_ref().map(lower_event_pattern_ir),
+            schema_dispatch: schema_dispatch.as_ref().map(|d| d.pattern.clone()),
+        },
+    }
+}
+
+/// P6.11 ([DECISION D], #1171): interpret a service's own `cors`/
+/// `security`/`limits` blocks into a real [`PolicyIr`] — private and takes
+/// no `&CheckedProgram`, deliberately: this function resolves no type,
+/// reads no `expr_types`, and cannot panic, so threading a `&CheckedProgram`
+/// through it just to satisfy this module's own "every entry point takes a
+/// certified program" header rule would be cargo-culting a rule about
+/// *which failures may panic*, not about which fields are read (the same
+/// distinction [`lower_type_item_ir`]'s own doc comment already draws).
+/// Precedent for a private, non-`&CheckedProgram` helper in this module:
+/// [`body_writes_state`], [`duration_millis_annotation`].
+///
+/// `None` whenever `service.protocol` is not `ServiceProtocol::Http` — the
+/// checker itself gates all three blocks to HTTP only
+/// (`bynk.http.cors_not_http`/`security_not_http`/`limits_not_http`,
+/// `context_checks.rs`), so a `cors { }` block on, say, a `from cron`
+/// service parses but never certifies as meaningful; not just when the
+/// source declares none of the three blocks.
+///
+/// Every field here is exactly one already-shipped typed accessor's return
+/// value (`CorsPolicy::origins()`/`credentials()`/`allow_headers()`/
+/// `max_age_secs()`, `SecurityPolicy::nosniff()`/`hsts_max_age_secs()`,
+/// `LimitsPolicy::max_body()`) — see [`crate::ir::PolicyIr`]'s own doc
+/// comment for why interpreting through these, not passing the raw AST
+/// struct through, is the point of this constructor. The `security: None`
+/// arm materialises `SecurityIr { nosniff: true, hsts_max_age_secs: None }`
+/// — the shipped emitter's own already-established default
+/// (`emitter/workers_entry.rs`), reproduced verbatim, not invented here.
+fn lower_policy_ir(service: &ServiceDecl) -> Option<PolicyIr> {
+    if !matches!(service.protocol, ServiceProtocol::Http) {
+        return None;
+    }
+    Some(PolicyIr {
+        cors: service.cors.as_ref().map(|p| CorsIr {
+            origins: p.origins(),
+            credentials: p.credentials(),
+            allow_headers: p.allow_headers(),
+            max_age_secs: p.max_age_secs(),
+        }),
+        security: match &service.security {
+            Some(p) => SecurityIr {
+                nosniff: p.nosniff(),
+                hsts_max_age_secs: p.hsts_max_age_secs(),
+            },
+            None => SecurityIr {
+                nosniff: true,
+                hsts_max_age_secs: None,
+            },
+        },
+        max_body_bytes: service.limits.as_ref().and_then(|p| p.max_body()),
+    })
+}
+
 /// P6.10 (#1169): assemble an agent declaration into a real
 /// [`crate::ir::IrItem::Agent`] — wires every prior slice's own standalone
 /// constructor ([`lower_store_field_ir`] since P6.7, [`lower_invariant_ir`]/
@@ -998,6 +1302,41 @@ pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -
         handlers,
         invariants,
         transitions,
+    }
+}
+
+/// P6.11 (#1171): assemble a service declaration into a real
+/// [`crate::ir::IrItem::Service`] — structural mirror of
+/// [`lower_agent_item_ir`], wiring [`lower_protocol_ir`],
+/// [`lower_service_handler_ir`] and [`lower_policy_ir`] rather than
+/// re-deriving any of their logic. Unlike the agent case, there is no
+/// shared per-declaration context to compute once: a service has no
+/// `store_cells`/`state_ty`/invariants/transitions (none of those concepts
+/// exist for a service at all), so `&service.protocol`, already on the
+/// declaration, is threaded to each handler call directly — the "compute
+/// once, reuse" step [`lower_agent_item_ir`]'s own doc comment describes
+/// degenerates to a borrow here, not because this function skips a step,
+/// but because a service's own handlers have nothing else to share.
+///
+/// **No default-`by`/default-`given` inheritance logic, deliberately.**
+/// `project_model::inject_service_defaults` (`bynk-check/src/project_model.rs`)
+/// already mutated `handler.by_clause`/`handler.given` in place at pipeline
+/// phase 2b (`bynk-check/src/analysis.rs`), overriding — not merging —
+/// before `check_service_decls`, let alone this pass, ever runs. `h.by_clause`/
+/// `h.given` are already final by the time [`lower_service_handler_ir`] sees
+/// them; this is stated so a future reader who sees `ServiceDecl::default_by`/
+/// `default_given` unread by this function knows that is correct, not an
+/// omission.
+pub(crate) fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProgram) -> IrItem {
+    IrItem::Service {
+        def: service.name.name.clone(),
+        protocol: lower_protocol_ir(&service.protocol, program),
+        handlers: service
+            .handlers
+            .iter()
+            .map(|h| lower_service_handler_ir(h, &service.protocol, program))
+            .collect(),
+        policy: lower_policy_ir(service),
     }
 }
 
@@ -2158,7 +2497,7 @@ mod tests {
     use bynk_check::requirements::RequirementSink;
     use bynk_check::{checker, context_checks, resolver, symbols};
     use bynk_project::UnitKind;
-    use bynk_syntax::ast::{Commons, CommonsItem, FnDecl, HandlerKind, SourceUnit};
+    use bynk_syntax::ast::{Commons, CommonsItem, FnDecl, SourceUnit};
     use bynk_syntax::{lexer, parser};
 
     fn checked_program(source: &str) -> CheckedProgram {
@@ -4116,30 +4455,53 @@ commons demo {
         ));
     }
 
-    /// Like [`checked_program`], but for source that declares an `agent` —
-    /// `agent` is only legal inside a `context`, not a bare `commons`
-    /// (`bynk.agent.outside_context`), so `source` is parsed as a context
-    /// unit and its items re-wrapped into a [`Commons`] value before
-    /// re-using the same `resolve`/`check` pipeline `checked_program` does.
+    /// Like [`checked_program`], but for source that declares an `agent`
+    /// and/or a `service` — both are only legal inside a `context`, not a
+    /// bare `commons` (`bynk.agent.outside_context`/the service
+    /// equivalent), so `source` is parsed as a context unit and its items
+    /// re-wrapped into a [`Commons`] value before re-using the same
+    /// `resolve`/`check` pipeline `checked_program` does.
     /// `resolver::resolve`/`checker::check` both already treat
-    /// `CommonsItem::Agent` as inert (v0.5 declaration kinds "go through
-    /// the context-level v0.5 path", `resolver.rs`'s own comment) — real
-    /// agent checking (`store` field kinds, handler bodies, `expr_types`
-    /// for a `Cell` initialiser) only happens via
-    /// `context_checks::check_context_declarations`, called here by hand
-    /// with a [`symbols::UnitTable`] built directly from the checked
-    /// commons' own agent and local `capability` items (a handler's `given
-    /// <Cap>` resolves against `table.capabilities` — populated here so a
-    /// fixture can declare its own local capability, but still no
-    /// cross-context `uses`/`consumes` in any fixture this helper is given,
-    /// so `resolver::CrossContextInfo::default()` is exact, not an
-    /// approximation).
+    /// `CommonsItem::Agent`/`Service` as inert (v0.5 declaration kinds "go
+    /// through the context-level v0.5 path", `resolver.rs`'s own comment)
+    /// — real agent/service checking (`store` field kinds, handler bodies,
+    /// `expr_types` for a `Cell` initialiser, actor bindings) only happens
+    /// via `context_checks::check_context_declarations`, called here by
+    /// hand with a [`symbols::UnitTable`] built directly from the checked
+    /// commons' own agent/service/actor and local `capability` items (a
+    /// handler's `given <Cap>` resolves against `table.capabilities` —
+    /// populated here so a fixture can declare its own local capability,
+    /// but still no cross-context `uses`/`consumes` in any fixture this
+    /// helper is given, so `resolver::CrossContextInfo::default()` is
+    /// exact, not an approximation — in particular, no `from Events(E)`
+    /// fixture is possible here, since a real subscription needs
+    /// `consumes bynk { Events }`).
+    ///
+    /// **P6.11 (#1171) adds `services`/`actors` to the table and a
+    /// pre-`resolve` `inject_service_defaults` pass.** `table.actors`
+    /// matters even for a fixture using only the prelude (`Caller`,
+    /// `Visitor`): `actor_identity_ty` resolves a *local* `actor`
+    /// declaration through `table.actors` and silently falls through to
+    /// the prelude/`Ty::Unit` otherwise
+    /// (`context_checks.rs::actor_identity_ty`), so a `by u: Buyer`
+    /// fixture without this would assert against a wrong `TyId` with no
+    /// error at all. `inject_service_defaults` stands in for
+    /// `bynk-check/src/analysis.rs`'s own pipeline-phase-2b call — this
+    /// reduced harness has no such phase — so a fixture relying on a
+    /// service-level `by`/`given` default (rather than declaring one per
+    /// handler) would otherwise silently see it un-inherited, pinning the
+    /// wrong fact with no failure to signal it.
     fn checked_context_program(source: &str) -> CheckedProgram {
         let tokens = lexer::tokenize(source).expect("lex");
         let unit = parser::parse_unit(&tokens, source).expect("parse");
-        let SourceUnit::Context(ctx) = unit else {
+        let SourceUnit::Context(mut ctx) = unit else {
             panic!("expected a context unit, got {unit:?}")
         };
+        for item in &mut ctx.items {
+            if let CommonsItem::Service(svc) = item {
+                bynk_check::project_model::inject_service_defaults(svc);
+            }
+        }
         let commons = Commons {
             name: ctx.name,
             items: ctx.items,
@@ -4158,6 +4520,24 @@ commons demo {
             .iter()
             .filter_map(|item| match item {
                 CommonsItem::Agent(a) => Some((a.name.name.clone(), a.clone())),
+                _ => None,
+            })
+            .collect();
+        let services: HashMap<String, ServiceDecl> = typed
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Service(s) => Some((s.name.name.clone(), s.clone())),
+                _ => None,
+            })
+            .collect();
+        let actors: HashMap<String, bynk_syntax::ast::ActorDecl> = typed
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Actor(a) => Some((a.name.name.clone(), a.clone())),
                 _ => None,
             })
             .collect();
@@ -4181,6 +4561,8 @@ commons demo {
             kind: Some(UnitKind::Context),
             types: typed.types.clone(),
             agents,
+            services,
+            actors,
             capabilities,
             ..symbols::UnitTable::default()
         };
@@ -4212,6 +4594,39 @@ commons demo {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no agent named `{name}` in this fixture"))
+    }
+
+    fn find_service<'a>(program: &'a CheckedProgram, name: &str) -> &'a ServiceDecl {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Service(s) if s.name.name == name => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no service named `{name}` in this fixture"))
+    }
+
+    /// `find_handler` (below) matches on `method_name`, which is always
+    /// `None` for a service handler — useless here. Matches on
+    /// `HandlerKind` equality instead; not a unique identity on its own (a
+    /// service may declare several handlers sharing one `HandlerKind`, all
+    /// `on call`), so a fixture with more than one same-kind handler must
+    /// index `service.handlers`/the lowered `handlers` slice directly
+    /// instead of calling this twice.
+    fn find_service_handler<'a>(service: &'a ServiceDecl, kind: &HandlerKind) -> &'a Handler {
+        service
+            .handlers
+            .iter()
+            .find(|h| &h.kind == kind)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no handler of kind {kind:?} on service `{}`",
+                    service.name.name
+                )
+            })
     }
 
     fn find_store_field<'a>(agent: &'a AgentDecl, name: &str) -> &'a StoreField {
@@ -5261,5 +5676,559 @@ agent Ledger {
         // assembled `IrItem::Agent` rather than only through
         // `lower_handler_ir` directly.
         assert!(handlers.iter().all(|h| h.binder.is_none()));
+    }
+
+    /// P6.11's own `IrItem::Service` "Done when" case (#1171): a plain
+    /// `call`-protocol service, three handlers — one bare, one with a real
+    /// actor binder, one with a `given` capability actually called in the
+    /// body. Every service handler's return type is protocol-mandated to a
+    /// sum for HTTP/queue/cron fixtures elsewhere in this module — `Call`
+    /// is the one protocol that isn't, so this fixture needs none of the
+    /// free-`fn` indirection those do.
+    fn call_service_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor Buyer { auth = Internal, identity = UserId }
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    42
+  }
+}
+
+service Api {
+  on call(ping: String) -> Effect[String] {
+    Effect.pure(ping)
+  }
+  on call(ping: String) -> Effect[String] by u: Buyer {
+    Effect.pure(ping)
+  }
+  on call() -> Effect[Int] given Clock {
+    let t <- Clock.now()
+    Effect.pure(t)
+  }
+}
+"#,
+        )
+    }
+
+    #[test]
+    fn service_item_ir_assembles_a_call_protocol_service() {
+        let program = call_service_fixture();
+        let service = find_service(&program, "Api");
+        let ir = lower_service_item_ir(service, &program);
+        let IrItem::Service {
+            def,
+            protocol,
+            handlers,
+            policy,
+        } = &ir
+        else {
+            panic!("expected IrItem::Service, got {:?}", ir)
+        };
+        assert_eq!(def, "Api");
+        assert!(matches!(protocol, ProtocolIr::Call));
+        assert!(
+            policy.is_none(),
+            "policy is only ever Some for a from http service"
+        );
+        assert_eq!(handlers.len(), 3, "declaration order preserved");
+
+        assert!(handlers[0].binder.is_none());
+        assert!(handlers[0].given.is_empty());
+        assert!(handlers[1].binder.is_some());
+        assert_eq!(handlers[2].given, vec!["Clock".to_string()]);
+
+        for h in handlers {
+            assert!(
+                h.method_name.is_none(),
+                "a service's on call handler carries no method_name"
+            );
+            assert!(h.effectful, "every service handler returns Effect[T]");
+            assert!(matches!(h.commit, CommitShape::ReadOnly));
+        }
+    }
+
+    #[test]
+    fn service_handler_binder_is_recorded_and_bound_into_the_body_scope() {
+        // `Caller` (v0.54) is a prelude actor — no local `actor` declaration
+        // needed — whose identity is the calling-context id, `String`.
+        let program = checked_context_program(
+            r#"
+context demo
+
+service Api {
+  on call(ping: String) -> Effect[String] by c: Caller {
+    Effect.pure(c.identity)
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        let handler = find_service_handler(service, &HandlerKind::Call);
+        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+
+        let binder = ir
+            .binder
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
+        assert_eq!(binder.binder, "c");
+        let tys = &program.program().ty_intern;
+        let Ty::Actor(identity_ty) = &*tys.get(binder.ty) else {
+            panic!("expected Ty::Actor, got {:?}", tys.get(binder.ty))
+        };
+        assert_eq!(identity_ty.display(tys), "String");
+
+        // The load-bearing half: `binder` recorded on the struct is not the
+        // same claim as `binder` actually reaching the body's own scope —
+        // walk the lowered body and confirm a real `Local("c")` read
+        // reached the tree where `c.identity` was written, rather than
+        // `lower_ident_ir`'s own unresolved-ident `todo!()`.
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Pure { value } = &value.kind else {
+            panic!("expected Pure, got {:?}", value.kind)
+        };
+        let IrExprKind::Field { base, field } = &value.kind else {
+            panic!(
+                "expected `c.identity` to lower to Field, got {:?}",
+                value.kind
+            )
+        };
+        assert_eq!(field, "identity");
+        assert!(
+            matches!(&base.kind, IrExprKind::Local(n) if n == "c"),
+            "expected the binder to be bound into the body's own scope as Local(\"c\"), got {:?}",
+            base.kind
+        );
+    }
+
+    #[test]
+    fn sum_actor_binder_lowers_an_actor_sum() {
+        // Mirrors `bynk-check`'s own `sum_by_clause_persists_an_actor_sum_binding`
+        // test: a sum needs distinguishable schemes, so it must be
+        // `from http`. The free `fn ok` indirection (see
+        // `http_service_fixture`'s own doc comment) works around the
+        // pre-existing `Ok`/`Err`/`Some`/`None` construction gap in
+        // `lower_expr_ir`. The body's own `match who { … }` was initially
+        // planned as a separate, riskier claim — no existing test drove
+        // pattern lowering over an `ActorSum` scrutinee — but verified
+        // empirically during implementation to lower correctly (`User(_)`'s
+        // own positional payload binding included), so it stays in rather
+        // than being degraded away.
+        let program = checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor User { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+fn ok(s: String) -> HttpResult[String] { Ok(s) }
+
+service Api from http {
+  on GET("/whoami") () -> Effect[HttpResult[String]] by who: User | Visitor {
+    match who {
+      User(_) => Effect.pure(ok("user"))
+      Visitor => Effect.pure(ok("visitor"))
+    }
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        let handler = &service.handlers[0];
+        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+        let binder = ir
+            .binder
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
+        assert_eq!(binder.binder, "who");
+        let tys = &program.program().ty_intern;
+        let Ty::ActorSum(members) = &*tys.get(binder.ty) else {
+            panic!("expected Ty::ActorSum, got {:?}", tys.get(binder.ty))
+        };
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].0, "User");
+        assert_eq!(members[0].1.display(tys), "UserId");
+        assert_eq!(members[1].0, "Visitor");
+        assert_eq!(
+            members[1].1.display(tys),
+            "()",
+            "Visitor is a unit-identity prelude actor"
+        );
+
+        // The body itself really did lower — a real `Match` node, not the
+        // simpler single-arm body an earlier draft of this test used
+        // before the `ActorSum`-scrutinee path was verified.
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected Return, got {:?}", tail.kind)
+        };
+        assert!(
+            matches!(&value.kind, IrExprKind::Match { .. }),
+            "expected `match who {{ … }}` to lower to a real Match node, got {:?}",
+            value.kind
+        );
+    }
+
+    /// Every `from http` policy test lives on one service — a full `cors`/
+    /// `security`/`limits` block, asserted against the *interpreted*
+    /// `PolicyIr`, not the raw AST. The handler body goes through a free
+    /// `fn ok` rather than a bare `Ok(s)` construction: `HttpResult` is a
+    /// built-in sum, and `Ok`/`Err`/`Some`/`None` construction is still
+    /// `todo!()` in `lower_expr_ir` (a pre-existing P6.1-era gap `IrItem::Agent`
+    /// already carries too, just reached far more often here since every
+    /// service handler's return type is protocol-mandated to a sum) — an
+    /// ordinary `Callee::Fn` call through `ok(...)` already lowers
+    /// correctly and sidesteps it entirely.
+    fn http_service_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+fn ok(s: String) -> HttpResult[String] { Ok(s) }
+
+service Api from http {
+  cors { origins: ["https://app.example.com"], credentials: true, maxAge: 1.hours }
+  security { hsts: 365.days }
+  limits { maxBody: 1048576 }
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
+    Effect.pure(ok("pong"))
+  }
+}
+"#,
+        )
+    }
+
+    #[test]
+    fn http_policy_lowers_every_accessor_to_interpreted_values() {
+        let program = http_service_fixture();
+        let service = find_service(&program, "Api");
+        let ir = lower_service_item_ir(service, &program);
+        let IrItem::Service {
+            protocol,
+            handlers,
+            policy,
+            ..
+        } = &ir
+        else {
+            panic!("expected IrItem::Service, got {:?}", ir)
+        };
+        assert!(matches!(protocol, ProtocolIr::Http));
+        assert_eq!(
+            handlers[0].kind,
+            HandlerKind::Http {
+                method: bynk_syntax::ast::HttpMethod::Get,
+                path: "/ping".to_string(),
+            },
+            "the route binding lives per-handler — this is why ProtocolIr::Http itself \
+             carries no payload"
+        );
+
+        let policy = policy
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected a real PolicyIr for a from http service"));
+        let cors = policy
+            .cors
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected Some(CorsIr) — this fixture declares cors {{ }}"));
+        assert_eq!(cors.origins, vec!["https://app.example.com".to_string()]);
+        assert!(cors.credentials);
+        assert_eq!(
+            cors.allow_headers, None,
+            "no `headers:` field written — the author-override distinction, not the \
+             emitter's own smart default"
+        );
+        assert_eq!(cors.max_age_secs, Some(3600), "1.hours in whole seconds");
+
+        assert!(policy.security.nosniff);
+        assert_eq!(
+            policy.security.hsts_max_age_secs,
+            Some(365 * 24 * 60 * 60),
+            "365.days in whole seconds"
+        );
+        assert_eq!(policy.max_body_bytes, Some(1_048_576));
+    }
+
+    #[test]
+    fn an_http_service_with_no_security_block_still_lowers_the_safe_defaults() {
+        // The single test pinning ADR 0164's own asymmetry: `security: None`
+        // on the AST means *defaults*, not *no headers* — a real, easy
+        // regression if `PolicyIr::security` were ever "simplified" to
+        // `Option<SecurityIr>`.
+        let program = checked_context_program(
+            r#"
+context demo
+
+fn ok(s: String) -> HttpResult[String] { Ok(s) }
+
+service Api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
+    Effect.pure(ok("pong"))
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        let ir = lower_service_item_ir(service, &program);
+        let IrItem::Service { policy, .. } = &ir else {
+            panic!("expected IrItem::Service, got {:?}", ir)
+        };
+        let policy = policy
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected Some(PolicyIr) for a from http service"));
+        assert!(policy.cors.is_none(), "no cors {{ }} block was declared");
+        assert!(
+            policy.security.nosniff,
+            "the safe default, even with no security {{ }} block"
+        );
+        assert_eq!(policy.security.hsts_max_age_secs, None);
+        assert_eq!(
+            policy.max_body_bytes, None,
+            "no limits {{ }} block was declared"
+        );
+    }
+
+    /// A queue consumer's own body is the one shape this module's own
+    /// pre-existing gaps make genuinely unlowerable today, not just
+    /// awkward to fixture around: `Effect[QueueResult]` is mandatory
+    /// (`bynk.queue.return_not_https`-adjacent gate, `context_checks.rs:
+    /// 3730-3744`), and every `QueueResult` value — `Ack`, `NotFound`,
+    /// `Retry(reason)` — is a bare or qualified built-in-sum variant
+    /// reference, the exact case `GlobalRef`'s own doc comment (`ir.rs`)
+    /// already names as dropped from P6.1's Decision C on purpose
+    /// (contextual, `expected`-type-driven disambiguation this pass has no
+    /// sink to read back). Unlike `HttpResult`'s `Ok`/`Err`, `QueueResult`'s
+    /// own variants also don't resolve inside an ordinary free `fn` body at
+    /// all (confirmed empirically: `bynk.resolve.unknown_name`) — the
+    /// checker's own special-case for them (`checker.rs:3507`) is reached
+    /// only via a real handler body's own `Ctx::return_ty`, which the
+    /// resolver's eager pass over an ordinary `fn` never sets up — so the
+    /// `fn ok(s) -> HttpResult[String] { Ok(s) }` indirection every other
+    /// HTTP/cron fixture in this module uses has no queue-shaped
+    /// equivalent. Two tests, not one, cover what's actually true here.
+    fn queue_service_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+type EmailJob = { to: String }
+
+service Outbox from queue("orders") {
+  on message(m: EmailJob) -> Effect[QueueResult] {
+    Ack
+  }
+}
+"#,
+        )
+    }
+
+    #[test]
+    fn a_queue_services_protocol_and_handler_signature_lower_correctly() {
+        // Everything that *doesn't* need the handler body lowered: the
+        // protocol descriptor (standalone, mirroring `lower_protocol_ir`'s
+        // own precedent for `from websocket`) and the handler's own
+        // `params`/`given`/`effectful` via `lower_handler_signature_ir`
+        // directly, the same shared helper `lower_service_handler_ir`
+        // itself calls before ever reaching the body.
+        let program = queue_service_fixture();
+        let service = find_service(&program, "Outbox");
+        assert!(matches!(
+            lower_protocol_ir(&service.protocol, &program),
+            ProtocolIr::Queue { name } if name == "orders"
+        ));
+        let handler = find_service_handler(service, &HandlerKind::Message);
+        let cx = LowerIrCtx::new(&program, HashSet::new());
+        let (params, given, effectful) = lower_handler_signature_ir(handler, &cx);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].0, "m");
+        assert!(given.is_empty());
+        assert!(effectful, "every service handler returns Effect[T]");
+    }
+
+    #[test]
+    #[should_panic(expected = "neither a locally-bound name")]
+    fn a_queue_services_on_message_handler_reaches_ordinary_body_lowering_not_the_websocket_deferral()
+     {
+        // The highest-value protocol test: proves the WebSocket deferral
+        // gate in `lower_service_handler_ir` keys on the `(kind, protocol)`
+        // *pair*, not on `HandlerKind::Message` alone — the same literal
+        // variant is also a WebSocket inbound frame. This panics on the
+        // pre-existing bare-nullary-built-in-variant gap (`Ack`,
+        // `lower_ident_ir`'s own final `todo!()` — see
+        // `queue_service_fixture`'s own doc comment), **not** on the
+        // WebSocket-specific "synthetic leading" message — proof this
+        // handler got past the gate the WebSocket deferral guards, not
+        // caught by it.
+        let program = queue_service_fixture();
+        let service = find_service(&program, "Outbox");
+        let handler = find_service_handler(service, &HandlerKind::Message);
+        let _ = lower_service_handler_ir(handler, &service.protocol, &program);
+    }
+
+    #[test]
+    fn a_cron_service_lowers_its_schedule_from_the_handler_not_the_protocol() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+fn done() -> Result[(), String] { Ok(()) }
+
+service Sweeper from cron {
+  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
+    Effect.pure(done())
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Sweeper");
+        let ir = lower_service_item_ir(service, &program);
+        let IrItem::Service {
+            protocol, handlers, ..
+        } = &ir
+        else {
+            panic!("expected IrItem::Service, got {:?}", ir)
+        };
+        assert!(matches!(protocol, ProtocolIr::Cron));
+        assert_eq!(
+            handlers[0].kind,
+            HandlerKind::Cron {
+                expr: "*/5 * * * *".to_string()
+            }
+        );
+    }
+
+    /// Mirrors `bynkc/tests/fixtures/positive/236_websocket_chatroom`,
+    /// trimmed to the one `on open` handler a `from websocket` service must
+    /// declare (exactly one, `context_checks.rs`) — `on message`/`on close`
+    /// are optional and add nothing this fixture's own two WebSocket tests
+    /// need. A held `Connection` needs real disposal to certify (the
+    /// linearity pass), so `on open` transfers it into a trivial `Room`
+    /// agent rather than dropping it, the same shape the real fixture uses.
+    fn websocket_service_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+type RoomId = String
+type UserId = String
+type ServerFrame = { text: String }
+type ClientFrame = { text: String }
+
+actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
+    let _ <- Room(roomId).join(user.identity, connection)
+    ()
+  }
+}
+
+agent Room {
+  key id: RoomId
+  store members: Set[UserId]
+  store conns: Map[UserId, Connection[ServerFrame]]
+
+  on call join(u: UserId, conn: Connection[ServerFrame]) -> Effect[()] {
+    let _ <- members.add(u)
+    let _ <- conns.put(u, conn)
+    ()
+  }
+}
+"#,
+        )
+    }
+
+    #[test]
+    fn websocket_protocol_descriptor_lowers_its_frame_types() {
+        // The *only* way to get real WebSocket protocol-descriptor
+        // coverage: a full `lower_service_item_ir` on this fixture is
+        // impossible (its own `on open` handler always hits the named
+        // deferral below), so this calls the standalone constructor
+        // directly — the same posture P6.7/P6.8/P6.9 each held, testing
+        // every constructor before any assembly could consume it.
+        let program = websocket_service_fixture();
+        let service = find_service(&program, "ChatGateway");
+        let ir = lower_protocol_ir(&service.protocol, &program);
+        let ProtocolIr::WebSocket { in_ty, out_ty } = ir else {
+            panic!("expected ProtocolIr::WebSocket, got {:?}", ir)
+        };
+        let tys = &program.program().ty_intern;
+        assert_eq!(in_ty.display(tys), "ClientFrame");
+        assert_eq!(out_ty.display(tys), "ServerFrame");
+    }
+
+    #[test]
+    #[should_panic(expected = "synthetic leading")]
+    fn websocket_lifecycle_handler_is_a_named_deferral() {
+        let program = websocket_service_fixture();
+        let service = find_service(&program, "ChatGateway");
+        let handler = find_service_handler(service, &HandlerKind::Open);
+        // Panics — pinning that it is *this* named deferral doing the
+        // panicking, not some other failure (an ADR 0334 resolution panic,
+        // say) accidentally satisfying `#[should_panic]`.
+        let _ = lower_service_handler_ir(handler, &service.protocol, &program);
+    }
+
+    #[test]
+    fn service_level_by_and_given_defaults_are_already_injected_before_lowering() {
+        // Pins the *harness* change (the `inject_service_defaults` call in
+        // `checked_context_program`) as much as the lowering itself:
+        // without it, this test would fail, silently pinning the wrong
+        // fact instead of catching a real gap. `lower_service_item_ir`
+        // itself contains no default-inheritance logic at all — see its
+        // own doc comment.
+        let program = checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor Buyer { auth = Internal, identity = UserId }
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    42
+  }
+}
+
+service Api by u: Buyer given Clock {
+  on call(ping: String) -> Effect[String] {
+    Effect.pure(ping)
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        let ir = lower_service_item_ir(service, &program);
+        let IrItem::Service { handlers, .. } = &ir else {
+            panic!("expected IrItem::Service, got {:?}", ir)
+        };
+        assert_eq!(handlers.len(), 1);
+        let binder = handlers[0]
+            .binder
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected the service-level `by u: Buyer` to be inherited"));
+        assert_eq!(binder.binder, "u");
+        assert_eq!(handlers[0].given, vec!["Clock".to_string()]);
     }
 }
