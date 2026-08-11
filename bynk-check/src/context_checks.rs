@@ -2663,10 +2663,14 @@ fn store_field_scopes(
 }
 
 /// v0.87 (ADR 0113 D2): a `Cache` field must carry `@ttl(<Duration literal>)`;
-/// return its value in milliseconds. A missing `@ttl` is
-/// `bynk.store.cache_ttl_required` (steering to a `Map`); a non-`Duration`
-/// argument is caught by the annotation-argument checker, so here a malformed
-/// `@ttl` simply yields `None`.
+/// return its value in milliseconds. A missing `@ttl`, or one present whose
+/// first argument isn't itself a `Duration` literal (`@ttl(5)`, or
+/// `@ttl(-5.minutes)` — unary negation over a `DurationLit` is not one), is
+/// `bynk.store.cache_ttl_required`. Grounded during P6.7's own review
+/// (#1163): no annotation-argument checker validates `@ttl`'s shape anywhere
+/// else — this doc comment previously claimed otherwise — so leaving the
+/// malformed case undiagnosed would let a `Cache` field with no resolvable
+/// TTL reach a certified program.
 fn cache_ttl_millis(f: &StoreField, errors: &mut Vec<CompileError>) -> Option<i64> {
     let ttl = f.annotations.iter().find(|a| a.name.name == "ttl");
     let Some(ttl) = ttl else {
@@ -2682,7 +2686,18 @@ fn cache_ttl_millis(f: &StoreField, errors: &mut Vec<CompileError>) -> Option<i6
     };
     match ttl.args.first().map(|a| &a.value.kind) {
         Some(ExprKind::DurationLit { millis, .. }) => Some(*millis),
-        _ => None,
+        _ => {
+            let span = ttl.args.first().map_or(ttl.span, |a| a.span);
+            errors.push(
+                CompileError::new(
+                    "bynk.store.cache_ttl_required",
+                    span,
+                    "`@ttl`'s argument must be a duration literal, e.g. `5.minutes`",
+                )
+                .with_note("a keyed store with no expiry is a `Map`, not a `Cache`"),
+            );
+            None
+        }
     }
 }
 
