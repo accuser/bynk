@@ -50,6 +50,15 @@
 //! slice: no `IrItem` variant references these yet — `IrItem::Agent`/
 //! `Service` remain unconstructed (see [`IrItem`]'s own doc comment for
 //! exactly what still blocks them).
+//!
+//! **P6.8 (#1165) adds [`CommitShape`]/[`IrPredicate`]** (Part 6.7's own
+//! trailing two types, R6.15) — a handler body's own resolved one-of-three
+//! commit shape, decided once here from a mutating `Callee::Store` write or
+//! a bare `:=`, rather than re-derived at emission time by the shipped
+//! emitter's own name-matching `block_writes_state` (R6.5). Same posture
+//! again: no `IrItem` variant references either yet — `IrHandler` itself
+//! still does not exist, and no rule in `design/tracks/the-ir.md`'s own
+//! slice table commissions it (see [`IrItem`]'s own doc comment).
 
 use std::sync::Arc;
 
@@ -573,3 +582,62 @@ pub(crate) enum StoreKindIr {
 /// the indexed field's, so the indexed field's resolved type is not needed
 /// downstream — mirrors `EmbedIr`'s own "no further structure" precedent.
 pub(crate) type IndexIr = String;
+
+/// P6.8's real `IrPredicate` ([DECISION A], #1165) — referenced by the
+/// reference's own `CommitShape::Transactional { invariants: Vec<IrPredicate>,
+/// transitions: Vec<IrPredicate> }` and `IrItem::Agent`'s own sketch
+/// (`bynk-greenfield-compiler.md:1130-1131`/`1182`), but never defined
+/// anywhere in the document — the same "referenced, not specified" gap
+/// #1161's own Decision C named for [`EmbedIr`] and #1163's own Decision C
+/// named for [`IndexIr`]. One type serves both an agent's own `invariants`
+/// and `transitions` fields, rather than two near-identical structs:
+/// `Invariant`/`Transition` (`bynk_syntax::ast`) already share this exact
+/// shape — a name plus a `Bool`-typed predicate expression — and
+/// [`lower::lower_invariant_ir`]/[`lower::lower_transition_ir`] differ only
+/// in how they seed the predicate's own scope (an invariant over the
+/// agent's `store` `Cell` fields, a transition over `old`/`new`), not in
+/// what they produce. `name: String` is this module's own "no arena"
+/// substitution ([DECISION B] extended) — a predicate has no `DefId` of its
+/// own in the reference either, referenced only by position within its
+/// owning `Vec`.
+#[derive(Debug, Clone)]
+pub(crate) struct IrPredicate {
+    pub name: String,
+    pub predicate: IrExpr,
+}
+
+/// P6.8's real `CommitShape` (Part 6.7, R6.15, #1165) — a handler body's own
+/// resolved one-of-three commit shape, [`lower::lower_commit_shape_ir`]'s own
+/// return value. Matches the reference's own three-variant shape verbatim
+/// (`bynk-greenfield-compiler.md:1179-1183`) — no substitution needed,
+/// `Transactional`'s own payload already reuses [`IrPredicate`] rather than
+/// carrying `Invariant`/`Transition` AST nodes directly. Shape-agnostic
+/// between an agent and a service handler ([DECISION F]): a service
+/// handler's own call site passes empty `invariants`/`transitions` slices,
+/// and the identical write-detection walk
+/// ([`lower::lower_commit_shape_ir`]'s own doc comment) naturally finds
+/// neither a mutating `Callee::Store` nor a bare `:=` in a service body (a
+/// service declares no `store` fields to write), so `Transactional` is
+/// never constructed for one — the shipped emitter's own `emit_service`
+/// already only ever produces the other two shapes, for the same reason.
+#[derive(Debug, Clone)]
+pub(crate) enum CommitShape {
+    /// No store write and no `Events.emit` — the body splices flat, no
+    /// commit or flush of any kind.
+    ReadOnly,
+    /// No store write, but the body emits at least one event — `__events`
+    /// is flushed at the end of the handler, state is not copied.
+    FlushEvents,
+    /// A mutating `Callee::Store` write or a bare `:=` reaches this body —
+    /// state is snapshotted, the body runs in an IIFE, then the snapshot is
+    /// committed (and `__events`, if any, flushed alongside it). Carries
+    /// the agent's own already-lowered invariants/transitions
+    /// ([`lower::lower_invariant_ir`]/[`lower::lower_transition_ir`]), not
+    /// the raw AST lists — a future consumer checking them at commit time
+    /// reads real `IrPredicate`s, not `Invariant`/`Transition` nodes it
+    /// would have to lower itself.
+    Transactional {
+        invariants: Vec<IrPredicate>,
+        transitions: Vec<IrPredicate>,
+    },
+}

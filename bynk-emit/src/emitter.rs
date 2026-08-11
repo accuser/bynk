@@ -684,6 +684,29 @@ pub(crate) fn block_uses_emit(b: &Block) -> bool {
     found
 }
 
+/// Decision C (#1165): the closed sets of mutating storage-op names, one
+/// `pub(crate)` constant per kind group — shared by this module's own
+/// `mutating_op` (which additionally gates on a bare-`Ident` receiver's own
+/// name, since that is all this syntactic walk has to go on) and
+/// `ir::lower`'s own `Callee::Store`-keyed write-detection walk (P6.8,
+/// Decision B), which needs no receiver-name gate at all: a `Callee::Store`
+/// already carries the field's own resolved identity, not a name that could
+/// be shadowed. A single shared source avoids the class of drift #1164's
+/// own review caught twice for a different pair of independently
+/// hand-maintained copies (`cache_ttl_millis`'s `DurationLit` extraction,
+/// `store_map_indexes`'s dedup). `Map`/`Cache` share one list — both
+/// support the same four entry ops — rather than two identical ones.
+pub(crate) const MUTATING_MAP_CACHE_OPS: &[&str] = &["put", "remove", "update", "upsert"];
+/// v0.83: `<set>.add`/`<set>.remove` mutate a `store Set[T]` field.
+pub(crate) const MUTATING_SET_OPS: &[&str] = &["add", "remove"];
+/// v0.95: `<log>.append` mutates the durable array (ADR 0121) — every other
+/// `Log` method is a query-lifting read.
+pub(crate) const MUTATING_LOG_OPS: &[&str] = &["append"];
+/// v0.98 (ADR 0125): `<cell>.update(f)` is a read-modify-write of the
+/// working state — the bare `:=` write form is `Statement::Assign`, checked
+/// separately and unconditionally, no method name involved.
+pub(crate) const MUTATING_CELL_OPS: &[&str] = &["update"];
+
 /// v0.81–v0.87: does this block write durable state — a `:=` `Cell` write, a
 /// mutating storage-`Map`/`Cache` op (`put`/`remove`/`update`/`upsert`), or a
 /// The names of an agent's `store` fields grouped by kind:
@@ -709,21 +732,21 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
             && let ExprKind::Ident(id) = &receiver.kind
         {
             if (maps.contains(&id.name) || caches.contains(&id.name))
-                && matches!(method.name.as_str(), "put" | "remove" | "update" | "upsert")
+                && MUTATING_MAP_CACHE_OPS.contains(&method.name.as_str())
             {
                 return true;
             }
-            if sets.contains(&id.name) && matches!(method.name.as_str(), "add" | "remove") {
+            if sets.contains(&id.name) && MUTATING_SET_OPS.contains(&method.name.as_str()) {
                 return true;
             }
             // v0.95: `Log.append` mutates the durable array.
-            if logs.contains(&id.name) && method.name == "append" {
+            if logs.contains(&id.name) && MUTATING_LOG_OPS.contains(&method.name.as_str()) {
                 return true;
             }
             // v0.98 (ADR 0125): `Cell.update` is a read-modify-write of the
             // working state, so a handler whose only mutation is `cell.update`
             // still needs the end-of-handler commit flush.
-            if cells.contains(&id.name) && method.name == "update" {
+            if cells.contains(&id.name) && MUTATING_CELL_OPS.contains(&method.name.as_str()) {
                 return true;
             }
         }

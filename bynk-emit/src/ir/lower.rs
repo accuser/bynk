@@ -21,16 +21,19 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, LambdaExpr, LiteralValue,
-    MatchArm, MatchBody, Pattern, PatternBindingKind, Statement, StoreField, TypeBody, TypeDecl,
-    UnaryOp,
+    BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Invariant, LambdaExpr,
+    LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, Statement, StoreField,
+    Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
-use crate::emitter::match_needs_if_chain;
+use crate::emitter::{
+    MUTATING_CELL_OPS, MUTATING_LOG_OPS, MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS,
+    match_needs_if_chain,
+};
 use crate::ir::{
-    BindingMode, ConstVal, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind, IrItem,
-    IrPat, IrStmt, MatchForm, StoreFieldIr, StoreKindIr, TypeShape,
+    BindingMode, CommitShape, ConstVal, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind,
+    IrItem, IrPat, IrPredicate, IrStmt, MatchForm, StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -598,6 +601,165 @@ pub(crate) fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> 
         kind,
         init,
         indexed,
+    }
+}
+
+/// P6.8 ([DECISION A]/[DECISION E], #1165): lower an agent invariant into a
+/// real [`IrPredicate`] — seeds the predicate's own scope from `store_cells`
+/// exactly as `checker::check_invariants` does (`bynk-check/src/checker.rs`:
+/// each `store` `Cell` field in scope by bare name, reading as its element
+/// type), then lowers `predicate` through the ordinary [`lower_expr_ir`]
+/// machinery unchanged. Takes `store_cells` as a parameter rather than
+/// re-deriving it from `program` ([DECISION E]) — a certified
+/// `CheckedProgram` carries no persisted "this agent's store cells" table;
+/// that scope is `check_agent_decls`'s own transient scratch, never
+/// persisted to `TypedCommons`. Called once per agent's own invariant list,
+/// by whichever future slice builds `IrItem::Agent` for real — not once per
+/// handler, mirroring `check_invariants`'s own once-per-agent posture.
+pub(crate) fn lower_invariant_ir(
+    inv: &Invariant,
+    store_cells: &HashMap<String, TyId>,
+    program: &CheckedProgram,
+) -> IrPredicate {
+    let mut cx = LowerIrCtx::new(program, HashSet::new());
+    for (name, ty) in store_cells {
+        cx.bind(name.clone(), *ty);
+    }
+    IrPredicate {
+        name: inv.name.name.clone(),
+        predicate: lower_expr_ir(&inv.predicate, &mut cx),
+    }
+}
+
+/// P6.8 ([DECISION A]/[DECISION E], #1165): lower a step invariant
+/// (`Transition`) into a real [`IrPredicate`] — seeds `old`/`new`, both
+/// bound to the agent's own synthetic state-record type, exactly as
+/// `checker::check_transitions` does. `state_ty` is a parameter, not
+/// re-derived, for the same reason [`lower_invariant_ir`]'s own
+/// `store_cells` is: no persisted "this agent's state type" table survives
+/// past `check_agent_decls`'s own transient scope. Called once per agent's
+/// own transition list, by the same future caller [`lower_invariant_ir`]
+/// names.
+pub(crate) fn lower_transition_ir(
+    tr: &Transition,
+    state_ty: TyId,
+    program: &CheckedProgram,
+) -> IrPredicate {
+    let mut cx = LowerIrCtx::new(program, HashSet::new());
+    cx.bind("old".to_string(), state_ty);
+    cx.bind("new".to_string(), state_ty);
+    IrPredicate {
+        name: tr.name.name.clone(),
+        predicate: lower_expr_ir(&tr.predicate, &mut cx),
+    }
+}
+
+/// [DECISION B]/[DECISION C] (#1165): does `body` reach a mutating
+/// `Callee::Store` write, or an unconditional `Statement::Assign` (`:=`),
+/// anywhere — including inside a nested `if`/`match`/lambda? Drives
+/// [`lower_commit_shape_ir`]'s own `Transactional` decision. The walk's own
+/// shape is `block_writes_state`'s own already-correct skeleton
+/// (`emitter.rs`) reused structurally, not re-derived: `Block`/`If`/`Match`
+/// are hand-matched so crossing a nested block re-enters the
+/// statement-aware case (an `expr_children` descent alone flattens a block
+/// straight to its statements' *values*, losing the `Statement::Assign`
+/// tag), everywhere else recurses over `expr_children`'s total child
+/// iterator.
+///
+/// Unlike `block_writes_state`'s own name-based `mutating_op`, this walk
+/// needs no per-kind receiver-name set: a `Callee::Store { op, .. }` already
+/// carries the field's own resolved identity (the checker only ever records
+/// one for a method the field's own kind actually declares), so `op`'s
+/// membership in the shared mutating-verb constants ([DECISION C],
+/// `emitter.rs`) is unambiguous checked flat, across all four kinds' lists
+/// at once — a locally-shadowed name that would false-positive
+/// `mutating_op` cannot false-positive here at all, the exact fix Decision
+/// B's own Risk names.
+fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
+    fn is_mutating_store_write(e: &Expr, program: &TypedCommons) -> bool {
+        match program.callees.get(&e.id) {
+            Some(Callee::Store { op, .. }) => {
+                MUTATING_MAP_CACHE_OPS.contains(&op.as_str())
+                    || MUTATING_SET_OPS.contains(&op.as_str())
+                    || MUTATING_LOG_OPS.contains(&op.as_str())
+                    || MUTATING_CELL_OPS.contains(&op.as_str())
+            }
+            _ => false,
+        }
+    }
+    fn stmt(s: &Statement, program: &TypedCommons) -> bool {
+        match s {
+            Statement::Assign(_) => true,
+            Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value, program),
+            Statement::Expect(a) => expr(&a.value, program),
+            Statement::Send(s) => expr(&s.value, program),
+            Statement::Do(d) => expr(&d.value, program),
+        }
+    }
+    fn expr(e: &Expr, program: &TypedCommons) -> bool {
+        if is_mutating_store_write(e, program) {
+            return true;
+        }
+        match &e.kind {
+            ExprKind::Block(b) => body_writes_state(b, program),
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                expr(cond, program)
+                    || body_writes_state(then_block, program)
+                    || body_writes_state(else_block, program)
+            }
+            ExprKind::Match { discriminant, arms } => {
+                expr(discriminant, program)
+                    || arms.iter().any(|a| match &a.body {
+                        MatchBody::Expr(e) => expr(e, program),
+                        MatchBody::Block(b) => body_writes_state(b, program),
+                    })
+            }
+            _ => expr_children(e).into_iter().any(|c| expr(c, program)),
+        }
+    }
+    body.statements.iter().any(|s| stmt(s, program)) || expr(&body.tail, program)
+}
+
+/// P6.8 ([DECISION B]/[DECISION D]/[DECISION F], #1165): decide a handler
+/// body's own one-of-three [`CommitShape`] from resolved data —
+/// [`body_writes_state`]'s own write-detection walk, plus `emits` ([DECISION
+/// D]: the caller's own `crate::emitter::block_uses_emit(body)` call, not
+/// re-derived here — no `Callee` classification exists for `Events.emit` to
+/// consume instead, see that decision's own grounding). Does not lower
+/// `body` into an `IrExpr` tree first ([DECISION B]) — deciding the shape
+/// only needs the two booleans, and lowering the whole body just to throw
+/// the result away would be pure waste; a real `IrHandler.body` lowering is
+/// a separate, not-yet-commissioned step (see [`crate::ir::IrItem`]'s own
+/// doc comment).
+///
+/// Shape-agnostic between an agent and a service handler ([DECISION F]) — no
+/// `is_store_agent` flag: a service handler's own call site simply passes
+/// empty `invariants`/`transitions` slices (a service has no `store` block
+/// to declare them against), and [`body_writes_state`] naturally finds
+/// neither a mutating `Callee::Store` nor a bare `:=` in a service body (no
+/// store fields to write), so `Transactional` is never constructed for one —
+/// matching the shipped emitter's own `emit_service`, which already only
+/// ever produces the other two shapes.
+pub(crate) fn lower_commit_shape_ir(
+    body: &Block,
+    invariants: &[IrPredicate],
+    transitions: &[IrPredicate],
+    emits: bool,
+    program: &CheckedProgram,
+) -> CommitShape {
+    if body_writes_state(body, program.program()) {
+        CommitShape::Transactional {
+            invariants: invariants.to_vec(),
+            transitions: transitions.to_vec(),
+        }
+    } else if emits {
+        CommitShape::FlushEvents
+    } else {
+        CommitShape::ReadOnly
     }
 }
 
@@ -1752,6 +1914,7 @@ fn lower_exhaustive_ir(arms: &[MatchArm]) -> Exhaustive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::emitter::block_uses_emit;
     use bynk_check::checker::CheckedProgram;
     use bynk_check::hints::HintSink;
     use bynk_check::index::RefSink;
@@ -1759,7 +1922,7 @@ mod tests {
     use bynk_check::requirements::RequirementSink;
     use bynk_check::{checker, context_checks, resolver, symbols};
     use bynk_project::UnitKind;
-    use bynk_syntax::ast::{AgentDecl, Commons, CommonsItem, FnDecl, SourceUnit};
+    use bynk_syntax::ast::{AgentDecl, Commons, CommonsItem, FnDecl, Handler, SourceUnit};
     use bynk_syntax::{lexer, parser};
 
     fn checked_program(source: &str) -> CheckedProgram {
@@ -4034,5 +4197,274 @@ agent Inventory {
             panic!("expected StoreKindIr::Log, got {:?}", ir.kind)
         };
         assert_eq!(retain, None, "@retain is genuinely optional on Log");
+    }
+
+    fn find_handler<'a>(agent: &'a AgentDecl, name: &str) -> &'a Handler {
+        agent
+            .handlers
+            .iter()
+            .find(|h| h.method_name.as_ref().is_some_and(|m| m.name == name))
+            .unwrap_or_else(|| panic!("no handler named `{name}` on agent `{}`", agent.name.name))
+    }
+
+    /// The agent's own synthetic `<Agent>State` record type — re-derives
+    /// `context_checks.rs`'s own `state_ty` construction (`tys.intern(Ty::Named {
+    /// name: "<Agent>State", .. })`) rather than looking it up: the synthetic
+    /// declaration itself lives only in `check_agent_decls`'s own transient
+    /// `types_for_handler` clone, never persisted to `TypedCommons::types`, but
+    /// `Types::intern` is content-addressed, so re-interning the identical `Ty`
+    /// value here returns the exact `TyId` the checker already minted.
+    fn agent_state_ty(program: &CheckedProgram, agent_name: &str) -> TyId {
+        program.program().ty_intern.intern(Ty::Named {
+            name: format!("{agent_name}State"),
+            kind: checker::NamedKind::Record,
+            args: Vec::new(),
+        })
+    }
+
+    /// [`lower_invariant_ir`]'s own `store_cells` parameter, built the same
+    /// way [`lower_invariant_ir`]'s own doc comment says a future `IrItem::Agent`
+    /// caller must: from each `Cell` field's own already-lowered
+    /// [`StoreFieldIr::kind`], not re-resolved independently.
+    fn agent_store_cells(program: &CheckedProgram, agent: &AgentDecl) -> HashMap<String, TyId> {
+        agent
+            .store_fields
+            .iter()
+            .filter(|f| f.kind.head.name == "Cell")
+            .map(|f| {
+                let ir = lower_store_field_ir(f, program);
+                let StoreKindIr::Cell(ty) = ir.kind else {
+                    unreachable!("filtered to Cell fields above")
+                };
+                (ir.field, ty)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn invariant_ir_references_a_store_cell_by_bare_name() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Counter {
+  key id: String
+  store active: Cell[Bool] = true
+
+  invariant staysKnown: active
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Counter");
+        let store_cells = agent_store_cells(&program, agent);
+        let inv = agent
+            .invariants
+            .iter()
+            .find(|i| i.name.name == "staysKnown")
+            .expect("invariant `staysKnown` in this fixture");
+        let ir = lower_invariant_ir(inv, &store_cells, &program);
+        assert_eq!(ir.name, "staysKnown");
+        assert!(
+            matches!(&ir.predicate.kind, IrExprKind::Local(n) if n == "active"),
+            "a bare-name read of a store Cell field lowers to Local, got {:?}",
+            ir.predicate.kind
+        );
+    }
+
+    #[test]
+    fn transition_ir_references_both_old_and_new() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Counter {
+  key id: String
+  store active: Cell[Bool] = true
+
+  transition activeImplication: old.active implies new.active
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Counter");
+        let state_ty = agent_state_ty(&program, "Counter");
+        let tr = agent
+            .transitions
+            .iter()
+            .find(|t| t.name.name == "activeImplication")
+            .expect("transition `activeImplication` in this fixture");
+        let ir = lower_transition_ir(tr, state_ty, &program);
+        assert_eq!(ir.name, "activeImplication");
+        // `p implies q` lowers to `Or { lhs: Not(p), rhs: q }` (P6.3) — pin
+        // that both `old`/`new` reach this predicate as `Field` accesses on
+        // a `Local` bound to `state_ty`, not left unresolved.
+        let IrExprKind::Or { lhs, rhs } = &ir.predicate.kind else {
+            panic!(
+                "expected `implies` to lower to Or, got {:?}",
+                ir.predicate.kind
+            )
+        };
+        let IrExprKind::Not { operand } = &lhs.kind else {
+            panic!("expected Or's own lhs to be Not, got {:?}", lhs.kind)
+        };
+        let IrExprKind::Field { base, field } = &operand.kind else {
+            panic!(
+                "expected `old.active` to lower to Field, got {:?}",
+                operand.kind
+            )
+        };
+        assert!(matches!(&base.kind, IrExprKind::Local(n) if n == "old"));
+        assert_eq!(field, "active");
+        let IrExprKind::Field { base, field } = &rhs.kind else {
+            panic!(
+                "expected `new.active` to lower to Field, got {:?}",
+                rhs.kind
+            )
+        };
+        assert!(matches!(&base.kind, IrExprKind::Local(n) if n == "new"));
+        assert_eq!(field, "active");
+    }
+
+    /// Every [`CommitShape`] "Done when" case (#1165) lives on one agent —
+    /// each handler exercises exactly one classification so a failing
+    /// assertion names its own scenario unambiguously.
+    fn commit_shape_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+type Box = { n: Int }
+
+fn Box.put(self, x: Int) -> Effect[()] {
+  Effect.pure(())
+}
+
+agent Widget {
+  key id: String
+  store items: Map[String, Int]
+  store active: Cell[Bool] = true
+
+  on call readOnlyPlain() -> Effect[()] {
+    Effect.pure(())
+  }
+
+  on call readOnlyQuery() -> Effect[Int] {
+    items.size()
+  }
+
+  on call nestedMutation(xs: List[String], flag: Bool) -> Effect[()] {
+    if flag {
+      match flag {
+        true => xs.forEach((x) => items.put(x, 1))
+        false => Effect.pure(())
+      }
+    } else {
+      Effect.pure(())
+    }
+  }
+
+  on call bareAssign(v: Bool) -> Effect[()] {
+    active := v
+    Effect.pure(())
+  }
+
+  on call shadowedName(items: Box, x: Int) -> Effect[()] {
+    let _ <- items.put(x)
+    Effect.pure(())
+  }
+}
+"#,
+        )
+    }
+
+    fn commit_shape_of(program: &CheckedProgram, handler_name: &str) -> CommitShape {
+        let agent = find_agent(program, "Widget");
+        let handler = find_handler(agent, handler_name);
+        let emits = block_uses_emit(&handler.body);
+        lower_commit_shape_ir(&handler.body, &[], &[], emits, program)
+    }
+
+    #[test]
+    fn commit_shape_read_only_for_a_plain_body() {
+        let program = commit_shape_fixture();
+        assert!(matches!(
+            commit_shape_of(&program, "readOnlyPlain"),
+            CommitShape::ReadOnly
+        ));
+    }
+
+    #[test]
+    fn commit_shape_read_only_for_a_non_mutating_store_read() {
+        // `items.size()` records a `Callee::Store { op: "size", .. }` — not in
+        // any of the shared mutating-verb constants — so this pins that a
+        // real, resolved store read never false-positives into `Transactional`.
+        let program = commit_shape_fixture();
+        assert!(matches!(
+            commit_shape_of(&program, "readOnlyQuery"),
+            CommitShape::ReadOnly
+        ));
+    }
+
+    #[test]
+    fn commit_shape_flush_events_for_an_emit_only_body() {
+        // `emits` is a plain parameter ([DECISION D]) — the shipped
+        // `crate::emitter::block_uses_emit(body)` is the real caller's own
+        // computation, reused verbatim rather than re-derived here, so this
+        // pins `lower_commit_shape_ir`'s own decision given a non-writing
+        // body and `emits: true` directly, independent of exercising
+        // `block_uses_emit` itself (which has no `Events` capability to
+        // resolve in this reduced test harness — `checked_context_program`'s
+        // own doc comment names the `uses`/`consumes` limitation).
+        let program = commit_shape_fixture();
+        let agent = find_agent(&program, "Widget");
+        let handler = find_handler(agent, "readOnlyPlain");
+        let shape = lower_commit_shape_ir(&handler.body, &[], &[], true, &program);
+        assert!(matches!(shape, CommitShape::FlushEvents));
+    }
+
+    #[test]
+    fn commit_shape_transactional_for_a_write_nested_in_if_match_lambda() {
+        // Reaches `items.put(x, 1)` through If -> Match -> Lambda (forEach's
+        // own closure argument) — pins that this walk's descent matches
+        // `block_writes_state`'s already-correct one, including through a
+        // lambda (R6.5's own `#54` worked example).
+        let program = commit_shape_fixture();
+        assert!(matches!(
+            commit_shape_of(&program, "nestedMutation"),
+            CommitShape::Transactional { .. }
+        ));
+    }
+
+    #[test]
+    fn commit_shape_transactional_for_a_bare_cell_assign() {
+        let program = commit_shape_fixture();
+        assert!(matches!(
+            commit_shape_of(&program, "bareAssign"),
+            CommitShape::Transactional { .. }
+        ));
+    }
+
+    #[test]
+    fn commit_shape_read_only_for_a_locally_shadowed_store_field_name() {
+        // `shadowedName`'s own `items: Box` parameter shadows the agent's
+        // `items` store field for the checker's own store-dispatch guard
+        // (`ctx.lookup(id.name).is_none()`, `checker.rs`) — `items.put(x)`
+        // resolves to `Box`'s own user-declared `put` method, `Callee::Method`,
+        // never `Callee::Store`. Pins Decision B's own named improvement over
+        // `block_writes_state`'s receiver-name matching, which cannot tell
+        // this apart from a real store write and would over-approximate to
+        // `Transactional`.
+        let program = commit_shape_fixture();
+        assert!(matches!(
+            commit_shape_of(&program, "shadowedName"),
+            CommitShape::ReadOnly
+        ));
     }
 }
