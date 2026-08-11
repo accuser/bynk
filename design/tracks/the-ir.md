@@ -262,6 +262,20 @@ hand-building a `Handler`"), the probe could carry its own small residue the way
 longer exist or call only into `bynk-emit::ir`'s lowering pass; every declaration-emission site reads
 `IrItem`, never `AgentDecl`/`ServiceDecl`/`ActorDecl`/`TypeDecl` directly.
 
+**P6.9's own grounding pass (#1167) found a stated exclusion is needed here, not merely a possible
+future carve-out.** `ast_importers`'s own definition (`xtask/src/greenfield_status.rs`) counts every
+file in `bynk-emit/src` whose contents match the literal string `bynk_syntax::ast` — a set that, by
+construction, includes `bynk-emit::ir`/`ir/lower.rs` themselves, since an `Ast → Ir` lowering pass
+reading `bynk_syntax::ast` is not a defect this track is closing, it is the pass's entire job.
+Confirmed live: the probe's own crate-wide grep reads **11** files as of P6.9, not the **9** this
+section's own estimate carried forward (that count predates P6.1, #1141 — `ir.rs`/`ir/lower.rs` did not
+exist yet when it was taken). This is a probe/goal mismatch, not a track failure: the prose criterion
+above (`emitter/`'s AST-walking functions gone) remains the right target and is unchanged by this
+correction — but the probe itself needs a stated exclusion for `bynk-emit::ir`'s own legitimate import
+(or a differently-scoped successor probe reading only `emitter/`) before "`ast_importers` = 0" can be
+read as this track's own true finish line, rather than a bar this track's own IR module structurally
+cannot clear.
+
 ---
 
 ## 6. Slice decomposition
@@ -283,8 +297,11 @@ longer exist or call only into `bynk-emit::ir`'s lowering pass; every declaratio
 | **P6.8** | `CommitShape` as IR data, not emitter control flow | R6.15 | P6.6, P6.7 |
 | **P6.9** | Handler-invocation origin-independence — no IR node branches on caller kind | R6.16 | P6.6, P6.8 (needs its own investigation at proposal time — this settling pass did not trace the shipped wrapper-selection rule R6.16's own rationale names in full) |
 
-**Completion probe:** `ast_importers` = **0** (§5) — live today at **9**, gated
-(`greenfield_status_table_is_current`).
+**Completion probe:** `ast_importers` = **0** (§5) — live today at **11**, gated
+(`greenfield_status_table_is_current`). §5's own P6.9 correction (#1167) names why this crate-wide
+count cannot reach 0 while `bynk-emit::ir` exists at all under its current definition — the prose
+criterion (§5) is the true target; a reader of this or any later P6.x slice should not read "last row
+in the table" as "this slice reaches the completion probe."
 
 ---
 

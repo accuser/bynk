@@ -21,19 +21,19 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Invariant, LambdaExpr,
-    LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, Statement, StoreField,
-    Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
+    BinOp, Block, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, Invariant,
+    LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, Statement,
+    StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
 use crate::emitter::{
-    MUTATING_CELL_OPS, MUTATING_LOG_OPS, MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS,
+    MUTATING_CELL_OPS, MUTATING_LOG_OPS, MUTATING_MAP_CACHE_OPS, MUTATING_SET_OPS, block_uses_emit,
     match_needs_if_chain,
 };
 use crate::ir::{
     BindingMode, CommitShape, ConstVal, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind,
-    IrItem, IrPat, IrPredicate, IrStmt, MatchForm, StoreFieldIr, StoreKindIr, TypeShape,
+    IrHandler, IrItem, IrPat, IrPredicate, IrStmt, MatchForm, StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -213,24 +213,59 @@ fn fn_receiver_ty(f: &FnDecl, program: &TypedCommons) -> Option<TyId> {
     ))
 }
 
+/// Wrap a lowered body block's own tail in [`IrExprKind::Return`] — the one
+/// place this pass builds a `Return` node (Bynk has no `return` keyword; see
+/// that variant's own doc comment). Shared by [`lower_fn_body_ir`] and
+/// [`lower_handler_body_ir`] (P6.9, #1167) — both are body-lowering entry
+/// points that produce a `Block` and need the exact same tail-wrapping, and
+/// hand-duplicating it a second time is exactly the kind of re-derivation
+/// this module's own header doc (`Callee`, P6.0) already avoids elsewhere.
+fn wrap_body_return(block: IrExpr) -> IrExpr {
+    let IrExpr {
+        kind: IrExprKind::Block { stmts, tail },
+        ty,
+        span,
+    } = block
+    else {
+        unreachable!("lower_block_ir always returns IrExprKind::Block");
+    };
+    let tail_ty = tail.ty;
+    let tail_span = tail.span;
+    IrExpr {
+        kind: IrExprKind::Block {
+            stmts,
+            tail: Box::new(IrExpr {
+                kind: IrExprKind::Return { value: tail },
+                ty: tail_ty,
+                span: tail_span,
+            }),
+        },
+        ty,
+        span,
+    }
+}
+
 /// Lower a function/method body: seeds scope from `f`'s params (and its own
 /// rigid type variables — its own `[T, ...]` type parameters, plus a
 /// generic receiver's, for a method), lowers the body as an ordinary value
-/// block, then wraps the tail in [`IrExprKind::Return`] — the one place
-/// this pass builds a `Return` node (Bynk has no `return` keyword; see that
-/// variant's own doc comment). Distinct from [`lower_block_ir`], which
-/// lowers a *nested* block as a bare value with no such wrapping.
+/// block, then wraps the tail via [`wrap_body_return`]. Distinct from
+/// [`lower_block_ir`], which lowers a *nested* block as a bare value with no
+/// such wrapping.
 ///
 /// Handler bodies are out of scope for this entry point: a handler's own
 /// non-local bare-ident forms (store-field/cell reads, agent `self`, the
 /// actor binder, transition `old`/`new`) need resolved-identity plumbing
 /// (`store_fields`, `agent_state_ty`, `actor_binding` — the `Ctx` fields
-/// `check_handler_body` seeds, `checker.rs:930-960`) this pass has no
-/// parameter for and does not commission (Decision C) — calling this on a
-/// handler body would silently misclassify any bare ident matching one of
-/// those forms as a `Local`/`Global` miss (`todo!()`) rather than the
-/// specific kind it actually is, which is why no such entry point exists
-/// yet rather than one that would produce a wrong tree.
+/// `check_handler_body` seeds, `checker.rs:930-960`) this entry point has no
+/// parameter for and does not commission (P6.1's own Decision C) — calling
+/// this on a handler body would silently misclassify any bare ident
+/// matching one of those forms as a `Local`/`Global` miss (`todo!()`)
+/// rather than the specific kind it actually is. [`lower_handler_body_ir`]
+/// (P6.9, #1167) is that dedicated entry point, finally closing this gap —
+/// it is *not* built by widening this function, since a free fn/method and
+/// an agent handler seed genuinely different scopes (rigid type variables
+/// here, agent `self`/store cells there) that would otherwise have to
+/// coexist behind one signature for no shared benefit.
 pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
     let type_vars = fn_rigid_type_vars(f, program.program());
     let mut cx = LowerIrCtx::new(program, type_vars);
@@ -253,27 +288,132 @@ pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
         cx.bind(p.name.name.clone(), ty);
     }
     let block = lower_block_ir(&f.body, &mut cx);
-    let IrExpr {
-        kind: IrExprKind::Block { stmts, tail },
-        ty,
-        span,
-    } = block
-    else {
-        unreachable!("lower_block_ir always returns IrExprKind::Block");
-    };
-    let tail_ty = tail.ty;
-    let tail_span = tail.span;
-    IrExpr {
-        kind: IrExprKind::Block {
-            stmts,
-            tail: Box::new(IrExpr {
-                kind: IrExprKind::Return { value: tail },
-                ty: tail_ty,
-                span: tail_span,
-            }),
-        },
-        ty,
-        span,
+    wrap_body_return(block)
+}
+
+/// Lower an agent `on call` handler's own body ([DECISION E], P6.9, #1167) —
+/// [`lower_fn_body_ir`]'s own doc comment names exactly why that entry point
+/// cannot be reused here: seeds a fresh scope from `self` (bound to
+/// `state_ty`, mirroring `check_handler_body`'s own `agent_self_scope`
+/// construction, `context_checks.rs:2900-2915`), every `store_cells` entry
+/// by bare name (the v0.81 "implicit deref in read position" rule the
+/// checker's own `self_scope` loop applies, `context_checks.rs:2910-2915`),
+/// and `h`'s own `params` — then lowers the body as an ordinary value block
+/// and wraps the tail via [`wrap_body_return`], same as
+/// [`lower_fn_body_ir`]. No rigid type variables: `AgentDecl` carries no
+/// `type_params` of its own, the same fact
+/// [`resolve_store_field_ty`]'s own doc comment already grounds for
+/// [`lower_store_field_ir`]. `binder` is not bound into scope: this entry
+/// point is only ever reached from [`lower_handler_ir`]'s own agent-only
+/// path ([DECISION D]), where `binder` is `None` unconditionally
+/// ([`crate::ir::IrHandler`]'s own doc comment) — a future service-handler
+/// caller, once one exists, would need this function widened to accept and
+/// bind one, not merely to call it as-is.
+///
+/// Once scope is seeded, every store-field method call and every bare `:=`
+/// in `h.body` reaches the *ordinary* [`lower_block_ir`]/[`lower_expr_ir`]/
+/// [`lower_stmt_ir`] path and lowers correctly with no new call-lowering
+/// logic ([DECISION F]): [`lower_call_ir`]'s own existing, already-shipped
+/// generic `Callee`-wrapping (P6.2) already lowers a `Callee::Store`- or
+/// `Callee::Capability`-classified call the moment it's reached, and
+/// [`lower_stmt_ir`]'s own `Statement::Assign` arm ([DECISION B]) is real as
+/// of this same slice — this function's only job is making both reachable
+/// on a handler body at all, by seeding the scope [`lower_ident_ir`] needs
+/// to classify `self`/a store cell as `Local` rather than falling through to
+/// its own unresolved-ident `todo!()`.
+fn lower_handler_body_ir(
+    h: &Handler,
+    store_cells: &HashMap<String, TyId>,
+    state_ty: TyId,
+    program: &CheckedProgram,
+) -> IrExpr {
+    let mut cx = LowerIrCtx::new(program, HashSet::new());
+    cx.bind("self".to_string(), state_ty);
+    for (name, ty) in store_cells {
+        cx.bind(name.clone(), *ty);
+    }
+    for p in &h.params {
+        let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
+            panic!(
+                "bynk internal error (ADR 0334): handler parameter `{}`'s type does not resolve \
+                 in this pass's own scope, but the checker already accepted this handler",
+                p.name.name
+            )
+        });
+        cx.bind(p.name.name.clone(), ty);
+    }
+    let block = lower_block_ir(&h.body, &mut cx);
+    wrap_body_return(block)
+}
+
+/// P6.9's real `IrHandler` constructor ([DECISION C]/[DECISION D]/
+/// [DECISION E], #1167) — lowers an agent `on call` handler `h` into a real
+/// [`IrHandler`]. `store_cells`/`state_ty` are parameters, not re-derived
+/// ([DECISION E], mirroring [`lower_invariant_ir`]'s/[`lower_transition_ir`]'s
+/// own precedent, P6.8): no persisted "this agent's store cells / state
+/// type" table survives `check_agent_decls`'s own transient scope. A future
+/// `IrItem::Agent` builder (not commissioned by this slice — see
+/// [`crate::ir::IrItem`]'s own doc comment) computes both once per agent and
+/// calls this function once per handler, not re-deriving either per call.
+///
+/// `commit`'s own `invariants`/`transitions` are always empty for every
+/// `IrHandler` this function constructs: this function's own signature
+/// carries `store_cells`/`state_ty` only ([DECISION E]'s own scope), not the
+/// agent's already-lowered [`IrPredicate`] lists, so there is nothing here
+/// to pass [`lower_commit_shape_ir`] beyond the empty slices its own
+/// signature already accepts — a real `Transactional` handler's `commit`
+/// still classifies correctly (the *shape* comes from
+/// [`body_writes_state`]'s own walk over `h.body`, not from the lists), it
+/// just carries no predicates yet. Populating them for real is the same
+/// future `IrItem::Agent` builder's job, once it has both this handler's
+/// `IrHandler` and the agent's own once-lowered invariants/transitions in
+/// hand at the same call site.
+///
+/// Agent-only this slice ([DECISION D]): `binder` is always `None` — see
+/// [`IrHandler`]'s own doc comment for exactly why a real service handler's
+/// `IrHandler` is out of scope here.
+pub(crate) fn lower_handler_ir(
+    h: &Handler,
+    store_cells: &HashMap<String, TyId>,
+    state_ty: TyId,
+    program: &CheckedProgram,
+) -> IrHandler {
+    let cx = LowerIrCtx::new(program, HashSet::new());
+    let params: Vec<(String, TyId)> = h
+        .params
+        .iter()
+        .map(|p| {
+            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): handler parameter `{}`'s type does not \
+                     resolve in this pass's own scope, but the checker already accepted this \
+                     handler",
+                    p.name.name
+                )
+            });
+            (p.name.name.clone(), ty)
+        })
+        .collect();
+    let given: Vec<String> = h.given.iter().map(|c| c.key().to_string()).collect();
+    let ret = cx.resolve_type_ref(&h.return_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): a handler's return type does not resolve in this \
+             pass's own scope, but the checker already accepted this handler"
+        )
+    });
+    let effectful = matches!(&*program.program().ty_intern.get(ret), Ty::Effect(_));
+    let emits = block_uses_emit(&h.body);
+    let commit = lower_commit_shape_ir(&h.body, &[], &[], emits, program);
+    let body = lower_handler_body_ir(h, store_cells, state_ty, program);
+    IrHandler {
+        kind: h.kind.clone(),
+        params,
+        given,
+        binder: None,
+        body,
+        commit,
+        effectful,
+        method_name: h.method_name.as_ref().map(|i| i.name.clone()),
     }
 }
 
@@ -882,20 +1022,19 @@ fn lower_stmt_ir(s: &Statement, cx: &mut LowerIrCtx) -> IrStmt {
         Statement::Expect(_) => todo!(
             "Statement::Expect has no IrStmt target — not named by any rule this track commissions"
         ),
-        // `cell := expr` — the unconditional `Cell` write. `Callee::Store`
-        // now exists (P6.2, #1143), but `Statement` carries no `ExprId` of
-        // its own to key a `Callee` sink by (the sink is `HashMap<ExprId,
-        // Callee>`) — `:=`'s own checker-side validation
-        // (`checker.rs`'s `Statement::Assign` arm) never reaches an
-        // `Expr`-shaped call site the way a `.put(...)`-style store method
-        // call does. A real `IrStmt` target for this needs its own
-        // identity/sink shape, which P6.7 ("store-field state shape and
-        // index tables derived in the IR") is better positioned to design
-        // deliberately than re-deriving one here from a single statement
-        // kind.
-        Statement::Assign(_) => {
-            todo!("Statement::Assign (a Cell `:=` write) has no ExprId to key a Callee by — P6.7")
-        }
+        // `cell := expr` — the unconditional `Cell` write ([DECISION B],
+        // P6.9, #1167). `checker.rs`'s own `Statement::Assign` arm resolves
+        // `a.target.name` directly against `ctx.store_fields` by bare name
+        // and never keys a `Callee` at all (only `a.value`, an ordinary
+        // sub-expression, ever gets one) — no `ExprId`-keyed sink was ever
+        // actually necessary, on a premise two prior slices (P6.7/P6.8) held
+        // without re-checking it. `field` is this module's usual "no arena"
+        // substitution; `value` lowers through the ordinary
+        // [`lower_expr_ir`] path unchanged.
+        Statement::Assign(a) => IrStmt::Assign {
+            field: a.target.name.clone(),
+            value: lower_expr_ir(&a.value, cx),
+        },
     }
 }
 
@@ -1914,7 +2053,6 @@ fn lower_exhaustive_ir(arms: &[MatchArm]) -> Exhaustive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emitter::block_uses_emit;
     use bynk_check::checker::CheckedProgram;
     use bynk_check::hints::HintSink;
     use bynk_check::index::RefSink;
@@ -1922,7 +2060,7 @@ mod tests {
     use bynk_check::requirements::RequirementSink;
     use bynk_check::{checker, context_checks, resolver, symbols};
     use bynk_project::UnitKind;
-    use bynk_syntax::ast::{AgentDecl, Commons, CommonsItem, FnDecl, Handler, SourceUnit};
+    use bynk_syntax::ast::{AgentDecl, Commons, CommonsItem, FnDecl, HandlerKind, SourceUnit};
     use bynk_syntax::{lexer, parser};
 
     fn checked_program(source: &str) -> CheckedProgram {
@@ -4585,5 +4723,172 @@ agent Widget {
         assert_eq!(got_inv[0].name, "invOnly");
         assert_eq!(got_tr.len(), 1);
         assert_eq!(got_tr[0].name, "transitionOnly");
+    }
+
+    /// Every [`IrHandler`] "Done when" case (#1167) lives on one agent — a
+    /// read-only handler, a store-writing handler exercising `:=` with a
+    /// declared param, and a handler with a `given` capability actually
+    /// called in the body.
+    fn handler_ir_fixture() -> CheckedProgram {
+        checked_context_program(
+            r#"
+context demo
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    42
+  }
+}
+
+agent Ledger {
+  key id: String
+  store balance: Cell[Int] = 0
+
+  on call peek() -> Effect[Int] {
+    Effect.pure(balance)
+  }
+
+  on call deposit(amount: Int) -> Effect[()] {
+    balance := amount
+    Effect.pure(())
+  }
+
+  on call touchClock() -> Effect[Int] given Clock {
+    let t <- Clock.now()
+    Effect.pure(t)
+  }
+}
+"#,
+        )
+    }
+
+    fn handler_ir_of(program: &CheckedProgram, handler_name: &str) -> IrHandler {
+        let agent = find_agent(program, "Ledger");
+        let handler = find_handler(agent, handler_name);
+        let store_cells = agent_store_cells(program, agent);
+        let state_ty = agent_state_ty(program, "Ledger");
+        lower_handler_ir(handler, &store_cells, state_ty, program)
+    }
+
+    #[test]
+    fn handler_ir_read_only_handler_has_no_binder_and_read_only_commit() {
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "peek");
+        assert!(
+            ir.binder.is_none(),
+            "Decision D: an agent handler's own binder is always None, pinned explicitly rather \
+             than left to omission"
+        );
+        assert_eq!(ir.kind, HandlerKind::Call);
+        assert!(matches!(ir.commit, CommitShape::ReadOnly));
+        assert_eq!(ir.method_name.as_deref(), Some("peek"));
+        assert!(ir.effectful, "peek returns Effect[Int]");
+        assert!(ir.params.is_empty());
+        assert!(ir.given.is_empty());
+        let IrExprKind::Block { stmts, tail } = &ir.body.kind else {
+            panic!("expected a Block, got {:?}", ir.body.kind)
+        };
+        assert!(stmts.is_empty());
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!(
+                "expected the tail to be wrapped in Return, got {:?}",
+                tail.kind
+            )
+        };
+        let IrExprKind::Pure { value } = &value.kind else {
+            panic!(
+                "expected `Effect.pure(balance)` to lower to Pure, got {:?}",
+                value.kind
+            )
+        };
+        assert!(
+            matches!(&value.kind, IrExprKind::Local(n) if n == "balance"),
+            "a bare-name read of a store Cell field lowers to Local, got {:?}",
+            value.kind
+        );
+    }
+
+    #[test]
+    fn handler_ir_store_writing_handler_lowers_assign_and_transactional_commit() {
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "deposit");
+        assert!(ir.binder.is_none());
+        let int_ty = program
+            .program()
+            .ty_intern
+            .intern(Ty::Base(bynk_syntax::ast::BaseType::Int));
+        assert_eq!(
+            ir.params,
+            vec![("amount".to_string(), int_ty)],
+            "a declared param's type must resolve and bind into the body's own scope"
+        );
+        assert_eq!(ir.method_name.as_deref(), Some("deposit"));
+        let CommitShape::Transactional {
+            invariants,
+            transitions,
+        } = &ir.commit
+        else {
+            panic!("expected Transactional, got {:?}", ir.commit)
+        };
+        // This function's own signature carries no agent-level predicate
+        // lists (see its own doc comment) — every `IrHandler` it builds
+        // carries an empty pair, not yet the agent's own lowered ones.
+        assert!(invariants.is_empty());
+        assert!(transitions.is_empty());
+        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
+            panic!("expected a Block, got {:?}", ir.body.kind)
+        };
+        assert_eq!(
+            stmts.len(),
+            1,
+            "the `:=` write is the body's only statement"
+        );
+        let IrStmt::Assign { field, value } = &stmts[0] else {
+            panic!("expected IrStmt::Assign, got {:?}", stmts[0])
+        };
+        assert_eq!(field, "balance");
+        assert!(
+            matches!(&value.kind, IrExprKind::Local(n) if n == "amount"),
+            "the assigned value reads the handler's own `amount` param, got {:?}",
+            value.kind
+        );
+    }
+
+    #[test]
+    fn handler_ir_given_capability_recorded_and_call_lowers_as_ordinary_callee() {
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "touchClock");
+        assert!(ir.binder.is_none());
+        assert_eq!(ir.given, vec!["Clock".to_string()]);
+        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
+            panic!("expected a Block, got {:?}", ir.body.kind)
+        };
+        assert_eq!(stmts.len(), 1);
+        let IrStmt::Let { local, value } = &stmts[0] else {
+            panic!("expected IrStmt::Let, got {:?}", stmts[0])
+        };
+        assert_eq!(local, "t");
+        let IrExprKind::Await { effect } = &value.kind else {
+            panic!(
+                "expected `let t <- Clock.now()` to lower to Await, got {:?}",
+                value.kind
+            )
+        };
+        let IrExprKind::Call { callee, args, .. } = &effect.kind else {
+            panic!(
+                "expected `Clock.now()` to lower as an ordinary Callee-classified Call \
+                 (Decision F — no new call-lowering logic needed), got {:?}",
+                effect.kind
+            )
+        };
+        assert!(
+            matches!(callee, Callee::Capability { cap, op } if cap == "Clock" && op == "now"),
+            "expected Callee::Capability {{ cap: \"Clock\", op: \"now\" }}, got {callee:?}"
+        );
+        assert!(args.is_empty());
     }
 }
