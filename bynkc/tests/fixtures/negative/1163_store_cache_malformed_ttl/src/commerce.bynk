@@ -1,0 +1,11 @@
+context commerce
+
+agent Sessions {
+  key id: String
+  store live: Cache[String, Int] @ttl(5)
+
+  on call put(token: String, userId: Int) -> Effect[()] {
+    let _ <- live.put(token, userId)
+    Effect.pure(())
+  }
+}

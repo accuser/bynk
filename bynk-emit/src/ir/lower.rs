@@ -502,9 +502,13 @@ fn duration_millis_annotation(
 /// this function the `@ttl`/`@retain` cases at least share one call each to
 /// [`duration_millis_annotation`], rather than repeating the extraction
 /// inline a second time. `indexed` keeps the annotation's own declaration
-/// order — no sort, unlike the shipped emitter's own doubly-sorted
-/// `HashMap` intermediate ([DECISION E]'s own structural fix, `ir.rs`'s own
-/// `StoreFieldIr::indexed` doc comment).
+/// order, deduplicated — no sort, unlike the shipped emitter's own
+/// doubly-sorted `HashMap` intermediate ([DECISION E]'s own structural fix,
+/// `ir.rs`'s own `StoreFieldIr::indexed` doc comment), but still guarding
+/// against a duplicate `by:` key the checker admits (`validate_indexed_keys`
+/// validates each `by:` argument independently, so `@indexed(by: k, by: k)`
+/// certifies), mirroring the shipped emitter's own `store_map_indexes`
+/// dedup guard.
 ///
 /// `init` is constructed only for a `Cell` field ([DECISION D]) — no
 /// checker pass types a non-`Cell` field's `init` expression (a real,
@@ -542,7 +546,8 @@ pub(crate) fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> 
                 panic!(
                     "bynk internal error (ADR 0334): `Cache` field `{}` has no resolvable \
                      `@ttl` millis, but the checker already accepted this declaration — \
-                     bynk.store.cache_ttl_required gates a missing `@ttl` before certify",
+                     bynk.store.cache_ttl_required gates a missing or malformed `@ttl` \
+                     before certify",
                     f.name.name
                 )
             });
@@ -560,19 +565,29 @@ pub(crate) fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> 
             f.name.name
         ),
     };
-    // [DECISION C]/[DECISION E]: one entry per `by:` argument, declaration
-    // order, no dedup/sort — legal only on `Map` (`ANNOTATIONS`'s own
+    // [DECISION C]/[DECISION E]: one entry per distinct `by:` argument,
+    // declaration order, no sort — legal only on `Map` (`ANNOTATIONS`'s own
     // registry), so this is empty by construction for every other kind.
-    let indexed: Vec<IndexIr> = f
+    // Deduplicated: `validate_indexed_keys` (`context_checks.rs`) validates
+    // each `by:` argument independently with no duplicate check, so
+    // `@indexed(by: k, by: k)` certifies — mirrors the shipped emitter's own
+    // `store_map_indexes` guard (`emit.rs`'s `!fields.contains(&k.name)`),
+    // grounded during P6.7's own review (#1163): dropping this would mean a
+    // duplicate `by:` produces the same sibling index table twice.
+    let mut indexed: Vec<IndexIr> = Vec::new();
+    for arg in f
         .annotations
         .iter()
         .filter(|a| a.name.name == "indexed")
         .flat_map(|a| &a.args)
-        .filter_map(|arg| match (&arg.label, &arg.value.kind) {
-            (Some(l), ExprKind::Ident(k)) if l.name == "by" => Some(k.name.clone()),
-            _ => None,
-        })
-        .collect();
+    {
+        if let (Some(l), ExprKind::Ident(k)) = (&arg.label, &arg.value.kind)
+            && l.name == "by"
+            && !indexed.contains(&k.name)
+        {
+            indexed.push(k.name.clone());
+        }
+    }
     // [DECISION D]: only a `Cell` field's `init` is ever lowered.
     let init = match &kind {
         StoreKindIr::Cell(_) => f.init.as_ref().map(|e| lower_expr_ir(e, &mut cx)),
@@ -3886,6 +3901,7 @@ agent Inventory {
   store noIndex: Map[String, Reservation]
   store oneIndex: Map[String, Reservation] @indexed(by: orderId)
   store twoIndex: Map[String, Reservation] @indexed(by: orderId, by: status)
+  store dupIndex: Map[String, Reservation] @indexed(by: orderId, by: orderId)
 
   on call touch() -> Effect[()] {
     Effect.pure(())
@@ -3914,6 +3930,20 @@ agent Inventory {
             ir.indexed,
             vec!["orderId".to_string(), "status".to_string()],
             "Vec<IndexIr>'s own multi-entry case, in the annotation's own by: order"
+        );
+
+        // `validate_indexed_keys` (bynk-check) validates each `by:`
+        // argument independently with no duplicate check, so
+        // `@indexed(by: orderId, by: orderId)` certifies — this pins that
+        // lowering still dedupes, mirroring the shipped emitter's own
+        // `store_map_indexes` guard, rather than emitting the same sibling
+        // index table twice.
+        let dup_index = find_store_field(agent, "dupIndex");
+        let ir = lower_store_field_ir(dup_index, &program);
+        assert_eq!(
+            ir.indexed,
+            vec!["orderId".to_string()],
+            "a duplicate by: key collapses to one sibling-table entry"
         );
     }
 

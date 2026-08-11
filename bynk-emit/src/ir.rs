@@ -530,10 +530,14 @@ pub(crate) struct StoreFieldIr {
     /// so on a certified program it has no `expr_types` entry to lower.
     pub init: Option<IrExpr>,
     /// `@indexed(by: …)` sibling-table keys, in the annotation's own
-    /// `by:`-argument order — one entry per `by:` argument ([DECISION C]),
-    /// no sort ([DECISION E]). Empty for every kind but `Map`, the only
-    /// kind `@indexed` attaches to (`ANNOTATIONS`'s own registry,
-    /// `bynk-check/src/context_checks.rs`).
+    /// `by:`-argument order — one entry per *distinct* `by:` argument
+    /// ([DECISION C]), no sort ([DECISION E]). Deduplicated: the checker
+    /// validates each `by:` argument independently with no duplicate check
+    /// (`validate_indexed_keys`), so `@indexed(by: k, by: k)` certifies —
+    /// [`lower::lower_store_field_ir`] guards against it, mirroring the
+    /// shipped emitter's own `store_map_indexes` dedup. Empty for every kind
+    /// but `Map`, the only kind `@indexed` attaches to (`ANNOTATIONS`'s own
+    /// registry, `bynk-check/src/context_checks.rs`).
     pub indexed: Vec<IndexIr>,
 }
 
