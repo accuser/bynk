@@ -636,6 +636,21 @@ pub(crate) enum CommitShape {
     /// the raw AST lists — a future consumer checking them at commit time
     /// reads real `IrPredicate`s, not `Invariant`/`Transition` nodes it
     /// would have to lower itself.
+    ///
+    /// **Does not carry its own `emits` bit** — matches the reference's own
+    /// verbatim shape (`bynk-greenfield-compiler.md:1182`), which gives
+    /// `Transactional` no such field even though a writing handler that also
+    /// emits is real (the shipped emitter's own `writes_state`/
+    /// `body_emits_directly`, `emitter/emit.rs:3124`/`3290`, are independent
+    /// booleans — a store write does not preclude an emit). A future
+    /// `IrHandler` consumer that needs both facts at once — to decide
+    /// whether *this* `Transactional` handler also flushes `__events` —
+    /// re-derives it the same way `lower_commit_shape_ir`'s own caller
+    /// already must ([DECISION D]: `crate::emitter::block_uses_emit(body)`),
+    /// not from this variant. Named here rather than silently assumed lost:
+    /// the fact is recoverable from `body`, which every real consumer holds
+    /// alongside a `CommitShape` in the first place ([`crate::ir::IrItem`]'s
+    /// own doc comment — no `IrHandler` exists yet to pin this against).
     Transactional {
         invariants: Vec<IrPredicate>,
         transitions: Vec<IrPredicate>,
