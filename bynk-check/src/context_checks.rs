@@ -4086,8 +4086,7 @@ service Api {
         let handler = &find_service(program.program(), "Api").handlers[0];
         let (binder, ty) = program
             .program()
-            .actor_bindings
-            .get(&handler.span)
+            .actor_binding(handler.span)
             .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
         assert_eq!(binder, "u");
         let tys = &program.program().ty_intern;
@@ -4119,8 +4118,7 @@ service Api {
         let handler = &find_service(program.program(), "Api").handlers[0];
         let (binder, ty) = program
             .program()
-            .actor_bindings
-            .get(&handler.span)
+            .actor_binding(handler.span)
             .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
         assert_eq!(binder, "c");
         let string_ty = program
@@ -4162,8 +4160,7 @@ service Api from http {
         let handler = &find_service(program.program(), "Api").handlers[0];
         let (binder, ty) = program
             .program()
-            .actor_bindings
-            .get(&handler.span)
+            .actor_binding(handler.span)
             .unwrap_or_else(|| panic!("expected a persisted actor binding for this handler"));
         assert_eq!(binder, "who");
         let tys = &program.program().ty_intern;
@@ -4200,7 +4197,7 @@ service Api {
         );
         let handler = &find_service(program.program(), "Api").handlers[0];
         assert!(
-            !program.program().actor_bindings.contains_key(&handler.span),
+            program.program().actor_binding(handler.span).is_none(),
             "a binder-less `by <Actor>` clause verifies-and-discards — no identity is bound, \
              so no persisted entry should exist for it either"
         );
@@ -4220,7 +4217,7 @@ service Api {
 "#,
         );
         let handler = &find_service(program.program(), "Api").handlers[0];
-        assert!(!program.program().actor_bindings.contains_key(&handler.span));
+        assert!(program.program().actor_binding(handler.span).is_none());
     }
 
     #[test]
@@ -4251,6 +4248,63 @@ service Api {
 "#,
         );
         let handler = &find_service(&typed, "Api").handlers[0];
-        assert!(!typed.actor_bindings.contains_key(&handler.span));
+        assert!(typed.actor_binding(handler.span).is_none());
+    }
+
+    #[test]
+    fn multiple_handlers_persist_distinct_bindings_keyed_per_handler() {
+        // Review of #1170: every fixture above declares exactly one handler,
+        // so none of them can tell "keyed per handler" apart from "keyed per
+        // service" (or from an over-broad insert) — a single span in play
+        // reads the same either way. Three handlers, only two with a `by`
+        // binder, pins both: each binder lands on its own handler's own
+        // span, and the binder-less handler contributes no entry at all.
+        let program = checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor Buyer { auth = Internal, identity = UserId }
+
+service Api {
+  on call(ping: String) -> Effect[String] by u: Buyer {
+    Effect.pure(ping)
+  }
+  on call(ping: String) -> Effect[String] by v: Buyer {
+    Effect.pure(ping)
+  }
+  on call(ping: String) -> Effect[String] {
+    Effect.pure(ping)
+  }
+}
+"#,
+        );
+        let service = find_service(program.program(), "Api");
+        assert_eq!(service.handlers.len(), 3);
+        let (first, second, third) = (
+            &service.handlers[0],
+            &service.handlers[1],
+            &service.handlers[2],
+        );
+        let (binder, _) = program
+            .program()
+            .actor_binding(first.span)
+            .unwrap_or_else(|| panic!("expected a persisted binding for the first handler"));
+        assert_eq!(binder, "u");
+        let (binder, _) = program
+            .program()
+            .actor_binding(second.span)
+            .unwrap_or_else(|| panic!("expected a persisted binding for the second handler"));
+        assert_eq!(binder, "v");
+        assert!(
+            program.program().actor_binding(third.span).is_none(),
+            "the third handler declares no `by` clause at all"
+        );
+        assert_eq!(
+            program.program().actor_bindings.len(),
+            2,
+            "exactly the two `by`-bearing handlers, nothing extra persisted for the third"
+        );
     }
 }
