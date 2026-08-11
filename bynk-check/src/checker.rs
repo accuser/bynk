@@ -663,8 +663,9 @@ pub struct TypedCommons {
     /// binding — `handler_actor_binding`'s own return value
     /// (`context_checks.rs`), persisted here rather than discarded once
     /// `check_service_decls`'s own per-handler loop moves on, the same
-    /// "recorded during checking, read afterward" shape [`callees`] already
-    /// established. Keyed by the handler's own `span`: a `Handler` has no
+    /// "recorded during checking, read afterward" shape `callees` (above)
+    /// already established. Keyed by the handler's own `span`: a `Handler`
+    /// has no
     /// arena identity of its own (no `DefId`/`ExprId` — it is a
     /// declaration, not an expression), and `Span` is already this
     /// codebase's established "no arena" substitute for exactly this kind
