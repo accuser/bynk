@@ -937,13 +937,19 @@ pub(crate) fn lower_commit_shape_ir(
 /// [`lower_commit_shape_ir`]'s own `emits` parameter already established.
 pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -> IrItem {
     let cx = LowerIrCtx::new(program, HashSet::new());
-    let key_ty = cx.resolve_type_ref(&agent.key_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): agent `{}`'s own key type does not resolve in \
-             this pass's own scope, but the checker already accepted this declaration",
-            agent.name.name
-        )
-    });
+    // Not an ADR 0334 `.expect()`-style panic, deliberately: unlike a
+    // handler param/return type, `agent.key_type` is never actually
+    // resolution-checked by the checker at all — `resolver.rs` skips
+    // `CommonsItem::Agent` in every one of its own `check_type_ref_resolves*`
+    // passes, and `context_checks.rs:2854` itself falls back to `Ty::Unit`
+    // on a miss rather than erroring (`agent Ledger { key id: Bogus … }`
+    // certifies today, silently). Panicking here on a state the checker
+    // itself accepts would make this the first ADR 0334 site in this module
+    // to assert a guarantee that does not actually hold — mirror the
+    // checker's own fallback instead (review of #1169).
+    let key_ty = cx
+        .resolve_type_ref(&agent.key_type)
+        .unwrap_or_else(|| cx.unit_ty());
     let state: Vec<StoreFieldIr> = agent
         .store_fields
         .iter()
@@ -5106,6 +5112,24 @@ agent Ledger {
     /// one read-only handler, and one store-writing handler whose own
     /// `commit` must carry the agent's real invariants/transitions, not an
     /// empty pair.
+    ///
+    /// **Named gap, not silently absorbed (review of #1169):** no handler
+    /// here exercises `CommitShape::FlushEvents` (a non-writing handler that
+    /// emits) — the one arm [`lower_commit_shape_ir`] can produce that this
+    /// fixture never reaches. A real `Events.emit` call needs an `event`
+    /// declaration plus `consumes bynk { Events }`, which
+    /// [`checked_context_program`]'s own doc comment already names as out
+    /// of scope for this reduced harness (`resolver::CrossContextInfo`
+    /// hardcoded to `::default()`) — extending it is a deliberate, separate
+    /// change, not a two-line addition here. The risk this would pin —
+    /// threading real, non-empty `invariants`/`transitions` into every
+    /// handler somehow pushing a non-writing one into `Transactional` — is
+    /// already structurally impossible: [`lower_commit_shape_ir`]'s own
+    /// branch is decided by [`body_writes_state`] alone, never by whether
+    /// `invariants`/`transitions` are empty, and `peek`'s own `ReadOnly`
+    /// assertion below already exercises exactly that (non-empty
+    /// predicates, still `ReadOnly`) for the `body_writes_state == false`
+    /// case `FlushEvents` shares.
     fn agent_item_fixture() -> CheckedProgram {
         checked_context_program(
             r#"
