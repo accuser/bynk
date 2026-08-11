@@ -665,8 +665,7 @@ pub struct TypedCommons {
     /// `check_service_decls`'s own per-handler loop moves on, the same
     /// "recorded during checking, read afterward" shape `callees` (above)
     /// already established. Keyed by the handler's own `span`: a `Handler`
-    /// has no
-    /// arena identity of its own (no `DefId`/`ExprId` — it is a
+    /// has no arena identity of its own (no `DefId`/`ExprId` — it is a
     /// declaration, not an expression), and `Span` is already this
     /// codebase's established "no arena" substitute for exactly this kind
     /// of identity (`Copy`/`Eq`/`Hash`, already used as a diagnostic anchor
@@ -679,6 +678,18 @@ pub struct TypedCommons {
     /// agent-only until a future slice reads this back to build a real
     /// service-handler `ActorBinder` (`bynk-emit::ir::IrHandler`'s own doc
     /// comment names this precisely).
+    ///
+    /// **Unit-wide, not per-file** (review of #1170, unlike `callees`/
+    /// `expr_types`, which are genuinely per-file — keyed by `ExprId`s this
+    /// file's own checking pass minted): `check_service_decls` walks
+    /// `table.services`, the whole unit's own `UnitTable`, not just this
+    /// file's declarations, so every file of a multi-file `context` ends up
+    /// with the *entire unit's* bindings in its own `TypedCommons`. Harmless
+    /// for a by-span lookup (a span is only ever looked up in the file that
+    /// actually owns it), but a future consumer that *iterates* this map
+    /// rather than looking up one known `span` would see sibling files'
+    /// handlers too — worth knowing before writing that consumer, not
+    /// discovering it by surprise.
     pub actor_bindings: HashMap<Span, (String, TyId)>,
 }
 
@@ -707,6 +718,16 @@ impl TypedCommons {
     /// `id`. Mirrors [`Self::expr_ty`]'s shape.
     pub fn callee(&self, id: ExprId) -> Option<&Callee> {
         self.callees.get(&id)
+    }
+
+    /// #1170: a service handler's own resolved actor binding, if
+    /// `handler_actor_binding` (`context_checks.rs`) resolved one for the
+    /// handler at `span`. Mirrors [`Self::callee`]'s shape — the single
+    /// documented read point for `actor_bindings`, kept symmetric with
+    /// `expr_ty`/`callee` rather than leaving every future consumer to
+    /// reach into the `HashMap` directly.
+    pub fn actor_binding(&self, span: Span) -> Option<&(String, TyId)> {
+        self.actor_bindings.get(&span)
     }
 }
 
