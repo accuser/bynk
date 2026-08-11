@@ -59,11 +59,25 @@
 //! again: no `IrItem` variant references either yet — `IrHandler` itself
 //! still does not exist, and no rule in `design/tracks/the-ir.md`'s own
 //! slice table commissions it (see [`IrItem`]'s own doc comment).
+//!
+//! **P6.9 (#1167) adds [`IrStmt::Assign`]/[`ActorBinder`]/[`IrHandler`]**
+//! (Part 6.7's own trailing construct, R6.16) — a real, standalone,
+//! constructible agent `on call` handler, plus the `Statement::Assign`
+//! prerequisite gap (`todo!()` since P6.1, twice deferred by P6.7/P6.8's own
+//! Risks) it needed closed first: [`lower::lower_handler_ir`] cannot lower a
+//! store-writing handler body without a real `IrStmt` target for `:=`.
+//! `binder: Option<ActorBinder>` is always `None` from
+//! [`lower::lower_handler_ir`] this slice — an agent handler structurally
+//! cannot carry one (`bynk.actor.by_on_agent`); a real service handler's own
+//! non-`None` `binder` needs a `bynk-check` change this slice does not make
+//! (see [`IrHandler`]'s own doc comment). Same posture again: no `IrItem`
+//! variant references `IrHandler` yet — `IrItem::Agent`/`Service` remain
+//! unconstructed (see [`IrItem`]'s own doc comment).
 
 use std::sync::Arc;
 
 use bynk_check::checker::{Callee, TyId};
-use bynk_syntax::ast::{BaseType, FnDecl, Refinement, TypeDecl};
+use bynk_syntax::ast::{BaseType, FnDecl, HandlerKind, Refinement, TypeDecl};
 use bynk_syntax::span::Span;
 
 pub(crate) mod lower;
@@ -369,17 +383,37 @@ pub(crate) enum IrExprKind {
 
 /// A lowered statement — Bynk's real statement surface
 /// (`Let`/`EffectLet`/`Expect`/`Send`/`Do`/`Assign`) folds down onto the
-/// reference's own two-variant `IrStmt` (Part 6.2): `Send`/`Do` become
-/// `Expr` wrapping [`IrExprKind::Send`]/[`IrExprKind::Await`]; `EffectLet`
-/// becomes `Let` wrapping an `Await`. `Assign` (a `Cell` store write) and
-/// `Expect` (test-only) have no target here — `Assign` is `Callee::Store`
-/// territory (P6.2/P6.7), and `Expect` is not named by any rule this track
-/// commissions — both are `todo!()` in the lowering pass, not silently
-/// dropped.
+/// reference's own two-variant `IrStmt` (Part 6.2), extended by P6.9
+/// (#1167) with a third: `Send`/`Do` become `Expr` wrapping
+/// [`IrExprKind::Send`]/[`IrExprKind::Await`]; `EffectLet` becomes `Let`
+/// wrapping an `Await`. `Assign` (a `Cell` `:=` write) is real as of P6.9
+/// ([DECISION B], #1167) — this comment used to (twice) forward-reference
+/// `Callee::Store` territory for it, on a premise P6.9's own grounding pass
+/// found false: `checker.rs`'s own `Statement::Assign` arm resolves
+/// `a.target.name` directly against `ctx.store_fields` by bare name and
+/// never keys a `Callee` at all (only `a.value`, an ordinary sub-expression,
+/// ever gets one), so no `ExprId`-keyed sink was ever actually needed —
+/// [`IrStmt::Assign`] is the ordinary two-field `Let`-shaped fix that was
+/// available the whole time. `Expect` (test-only) has no target here — not
+/// named by any rule this track commissions — and stays `todo!()` in the
+/// lowering pass, not silently dropped.
 #[derive(Debug, Clone)]
 pub(crate) enum IrStmt {
-    Let { local: String, value: IrExpr },
-    Expr { value: IrExpr },
+    Let {
+        local: String,
+        value: IrExpr,
+    },
+    Expr {
+        value: IrExpr,
+    },
+    /// `cell := value` — [DECISION B] (#1167). `field` is the target
+    /// `Cell` field's own bare name (`AssignStmt.target.name`, this
+    /// module's usual "no arena" substitution); `value` is the ordinary
+    /// lowered RHS.
+    Assign {
+        field: String,
+        value: IrExpr,
+    },
 }
 
 /// P6.6's real declaration IR (`design/bynk-greenfield-compiler.md` §6.6,
@@ -403,15 +437,20 @@ pub(crate) enum IrStmt {
 /// deferred variant has its own real, distinct blocker, not a shared
 /// "later" (full grounding in #1161's own Decision D):
 /// - `Agent`/`Service` both need `IrHandler`/`StoreFieldIr`/`CommitShape` —
-///   `StoreFieldIr`/`StoreKindIr` are real as of P6.7 (R6.14, #1163), but
-///   `CommitShape` (R6.15) is P6.8's own row and `IrHandler` is named by
-///   neither row (`design/tracks/the-ir.md`'s own slice table never
-///   assigns it a slice at all) — P6.7's own Risks section names this gap
-///   precisely: even once `CommitShape` lands, `handlers: Vec<IrHandler>`
-///   still has no value to construct. `Service` additionally carries a
-///   materially larger surface than its own reference sketch shows at all
-///   (CORS/security-headers/request-body-size policy structs,
-///   `ServiceDecl.cors`/`security`/`limits`).
+///   all three are real as of P6.9 (`StoreFieldIr`/`StoreKindIr` since P6.7,
+///   R6.14, #1163; `CommitShape` since P6.8, R6.15, #1165; `IrHandler`
+///   since P6.9, R6.16, #1167) — but assembling them into one
+///   `IrItem::Agent` value, and giving `IrItem` a variant to carry it at
+///   all, is nobody's row yet (`design/tracks/the-ir.md`'s own slice table
+///   has none past P6.9) — #1167's own Risks section names this gap
+///   precisely, the same "named, not silently absorbed" treatment #1163's
+///   and #1165's own Risks gave the gap each of them closed. `Service`
+///   additionally carries a materially larger surface than its own
+///   reference sketch shows at all (CORS/security-headers/request-body-size
+///   policy structs, `ServiceDecl.cors`/`security`/`limits`), and a real
+///   service `IrHandler` additionally needs the `binder`-persistence
+///   `bynk-check` change [`IrHandler`]'s own doc comment names — P6.9 built
+///   the agent-only path only ([`IrHandler`]'s own Decision D).
 /// - `Actor` has no emitted artefact of its own today (R8.1: "no
 ///   declaration; drives the boundary wrapper in `compose.ts`") — genuinely
 ///   unsettled how `auth`/`identity`/`claims` map onto the reference's own
@@ -655,4 +694,82 @@ pub(crate) enum CommitShape {
         invariants: Vec<IrPredicate>,
         transitions: Vec<IrPredicate>,
     },
+}
+
+/// P6.9's real `ActorBinder` ([DECISION A], #1167) — referenced by the
+/// reference's own `IrHandler` sketch (`bynk-greenfield-compiler.md:1169-1177`,
+/// `binder: Option<ActorBinder>`) but never defined anywhere in the
+/// document — the same "referenced, not specified" gap #1161's own
+/// Decision C named for [`EmbedIr`], #1163's own Decision C named for
+/// [`IndexIr`], and #1165's own Decision A named for [`IrPredicate`].
+/// Mirrors the checker's own already-resolved
+/// `actor_binding: Option<(String, TyId)>` shape
+/// (`bynk-check/src/checker.rs`'s `HandlerBodyCheck::actor_binding`):
+/// `binder` is the bound name, `ty` the sealed `Ty::Actor(identity)` or
+/// `Ty::ActorSum(members)` — both ordinary, already-real `TyId`s, no
+/// synthetic type needed the way `<Agent>State` was for P6.8's `state_ty`.
+/// No dedicated `lower_actor_binder_ir` constructor: the pair has no
+/// further structure to derive, mirroring [`EmbedIr`]'s/[`IndexIr`]'s own
+/// "no further structure, plain tuple/alias" precedent — a future caller
+/// with the resolved pair in hand (once the `bynk-check` change
+/// [`IrHandler`]'s own doc comment names persists `handler_actor_binding`'s
+/// own output) writes `ActorBinder { binder, ty }` directly.
+#[derive(Debug, Clone)]
+pub(crate) struct ActorBinder {
+    pub binder: String,
+    pub ty: TyId,
+}
+
+/// P6.9's real `IrHandler` ([DECISION C], #1167) — an agent `on call`
+/// handler's own resolved shape, [`lower::lower_handler_ir`]'s own return
+/// value. Six of the eight fields are the reference's own verbatim sketch
+/// (`bynk-greenfield-compiler.md:1169-1177`) under this module's
+/// already-established substitutions: `kind: HandlerKind` reused verbatim
+/// from `bynk_syntax::ast` (an ordinary `Clone`/`PartialEq` enum with no
+/// arena identity — the same "reused, not adapted" treatment
+/// [`IrExprKind::Call`]'s own `Callee` payload already got); `params`/
+/// `given` are this module's standard "no arena" substitution (`params:
+/// Vec<(String, TyId)>` mirrors [`IrItem::Fn::params`] exactly; `given:
+/// Vec<String>` reads each `CapRef::key()`, the same identity
+/// `Callee::Capability` already uses); `binder: Option<ActorBinder>` per
+/// [`ActorBinder`]'s own doc comment; `body: IrExpr` is
+/// [`lower::lower_handler_ir`]'s own new handler-body lowering entry point
+/// (parallel to, but distinct from, [`lower::lower_fn_body_ir`] — that
+/// entry point's own doc comment names exactly why a handler body cannot
+/// reuse it); `commit: CommitShape` calls [`lower::lower_commit_shape_ir`]
+/// (P6.8, unchanged); `effectful: bool` reuses [`IrItem::Fn::effectful`]'s
+/// own derivation (`Ty::Fn`'s doc: effectful iff `ret` is `Effect[_]`)
+/// unchanged.
+///
+/// **`method_name: Option<String>` is added beyond the reference's own
+/// sketch** — the same class of addition #1162's own review made for
+/// [`IrItem::Fn::receiver`] (#1161): the reference sketch has no slot for a
+/// handler's own declared name at all, but a future printer (or R8.10's own
+/// handler-key mangling) structurally needs it to know *which* of an
+/// agent's several `on call <name>` handlers this is. `None` for the shapes
+/// that have none today (a service's bare `on call`).
+///
+/// [`lower::lower_handler_ir`] is agent-only this slice ([DECISION D]) — a
+/// real service handler's `IrHandler` (specifically, a non-`None` `binder`)
+/// is not constructed here: `handler_actor_binding`'s own resolved
+/// `(String, TyId)` (`bynk-check/src/context_checks.rs`) is checking-time-
+/// only scratch with no persisted home in `TypedCommons`/`CheckedProgram`
+/// today, so closing that is a `bynk-check` change this lowering-only slice
+/// does not make speculatively. Not a functional gap for R6.16's own claim
+/// (invocation origin-independence is specifically about an *agent*
+/// handler): an agent handler's own `binder` is `None` unconditionally and
+/// by construction — `bynk.actor.by_on_agent`
+/// (`context_checks.rs:2986-2996`) rejects any `by` clause on an agent
+/// handler outright, so [`lower::lower_handler_ir`] never has one to lower
+/// in the first place.
+#[derive(Debug, Clone)]
+pub(crate) struct IrHandler {
+    pub kind: HandlerKind,
+    pub params: Vec<(String, TyId)>,
+    pub given: Vec<String>,
+    pub binder: Option<ActorBinder>,
+    pub body: IrExpr,
+    pub commit: CommitShape,
+    pub effectful: bool,
+    pub method_name: Option<String>,
 }
