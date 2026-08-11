@@ -348,36 +348,46 @@ fn lower_handler_body_ir(
 
 /// P6.9's real `IrHandler` constructor ([DECISION C]/[DECISION D]/
 /// [DECISION E], #1167) — lowers an agent `on call` handler `h` into a real
-/// [`IrHandler`]. `store_cells`/`state_ty` are parameters, not re-derived
-/// ([DECISION E], mirroring [`lower_invariant_ir`]'s/[`lower_transition_ir`]'s
-/// own precedent, P6.8): no persisted "this agent's store cells / state
-/// type" table survives `check_agent_decls`'s own transient scope. A future
-/// `IrItem::Agent` builder (not commissioned by this slice — see
-/// [`crate::ir::IrItem`]'s own doc comment) computes both once per agent and
-/// calls this function once per handler, not re-deriving either per call.
+/// [`IrHandler`]. `store_cells`/`state_ty`/`invariants`/`transitions` are
+/// parameters, not re-derived ([DECISION E], mirroring
+/// [`lower_invariant_ir`]'s/[`lower_transition_ir`]'s own precedent, P6.8):
+/// no persisted "this agent's store cells / state type" table survives
+/// `check_agent_decls`'s own transient scope, and `invariants`/`transitions`
+/// are themselves already-lowered [`IrPredicate`]s a caller must have
+/// produced via those same two functions — this function only threads them
+/// into [`lower_commit_shape_ir`], never lowers or re-derives them itself. A
+/// future `IrItem::Agent` builder (not commissioned by this slice — see
+/// [`crate::ir::IrItem`]'s own doc comment) computes all four once per agent
+/// and calls this function once per handler, not re-deriving any of them per
+/// call.
 ///
-/// `commit`'s own `invariants`/`transitions` are always empty for every
-/// `IrHandler` this function constructs: this function's own signature
-/// carries `store_cells`/`state_ty` only ([DECISION E]'s own scope), not the
-/// agent's already-lowered [`IrPredicate`] lists, so there is nothing here
-/// to pass [`lower_commit_shape_ir`] beyond the empty slices its own
-/// signature already accepts — a real `Transactional` handler's `commit`
-/// still classifies correctly (the *shape* comes from
-/// [`body_writes_state`]'s own walk over `h.body`, not from the lists), it
-/// just carries no predicates yet. Populating them for real is the same
-/// future `IrItem::Agent` builder's job, once it has both this handler's
-/// `IrHandler` and the agent's own once-lowered invariants/transitions in
-/// hand at the same call site.
-///
-/// Agent-only this slice ([DECISION D]): `binder` is always `None` — see
-/// [`IrHandler`]'s own doc comment for exactly why a real service handler's
-/// `IrHandler` is out of scope here.
+/// Threading real `invariants`/`transitions` through (review of #1167,
+/// replacing this function's own original empty-slices posture) matters
+/// beyond completeness: an empty pair is structurally indistinguishable from
+/// a correct lowering of an agent that genuinely declares neither, so an
+/// empty-by-construction `commit` would have been a silent-wrong-value trap
+/// for whatever future caller forgot to populate them for real.
 pub(crate) fn lower_handler_ir(
     h: &Handler,
     store_cells: &HashMap<String, TyId>,
     state_ty: TyId,
+    invariants: &[IrPredicate],
+    transitions: &[IrPredicate],
     program: &CheckedProgram,
 ) -> IrHandler {
+    // [DECISION D] is agent-only by contract, not merely by convention — an
+    // agent handler is checker-guaranteed to carry no `by` clause
+    // (`bynk.actor.by_on_agent`, `context_checks.rs:2986-2996`), so a
+    // `Handler` that has one has reached this entry point in error (a future
+    // service-handler caller silently dropping the binder), the same
+    // "assert the checker's invariant loudly" idiom this module's own ADR
+    // 0334 panics already use throughout.
+    assert!(
+        h.by_clause.is_none(),
+        "bynk internal error (ADR 0334): lower_handler_ir is agent-only (DECISION D) — an agent \
+         handler cannot carry a `by` clause (bynk.actor.by_on_agent), so a handler that does is a \
+         service handler reaching the wrong entry point"
+    );
     let cx = LowerIrCtx::new(program, HashSet::new());
     let params: Vec<(String, TyId)> = h
         .params
@@ -403,7 +413,7 @@ pub(crate) fn lower_handler_ir(
     });
     let effectful = matches!(&*program.program().ty_intern.get(ret), Ty::Effect(_));
     let emits = block_uses_emit(&h.body);
-    let commit = lower_commit_shape_ir(&h.body, &[], &[], emits, program);
+    let commit = lower_commit_shape_ir(&h.body, invariants, transitions, emits, program);
     let body = lower_handler_body_ir(h, store_cells, state_ty, program);
     IrHandler {
         kind: h.kind.clone(),
@@ -4727,8 +4737,14 @@ agent Widget {
 
     /// Every [`IrHandler`] "Done when" case (#1167) lives on one agent — a
     /// read-only handler, a store-writing handler exercising `:=` with a
-    /// declared param, and a handler with a `given` capability actually
-    /// called in the body.
+    /// declared param, a handler with a `given` capability actually called
+    /// in the body, and (review of #1167) a handler exercising a
+    /// `Callee::Store` method call on a non-`Cell` field — the one
+    /// [DECISION F] claim the other three don't reach, since none of them
+    /// calls a store method at all, and `entries` (a `Map`, never bound into
+    /// [`lower_handler_body_ir`]'s own scope — only `Cell` fields are) pins
+    /// that the never-bound path really is unreachable rather than merely
+    /// untested.
     fn handler_ir_fixture() -> CheckedProgram {
         checked_context_program(
             r#"
@@ -4747,6 +4763,7 @@ provides Clock = FixedClock {
 agent Ledger {
   key id: String
   store balance: Cell[Int] = 0
+  store entries: Map[String, Int]
 
   on call peek() -> Effect[Int] {
     Effect.pure(balance)
@@ -4761,17 +4778,38 @@ agent Ledger {
     let t <- Clock.now()
     Effect.pure(t)
   }
+
+  on call addEntry(k: String, v: Int) -> Effect[()] {
+    let _ <- entries.put(k, v)
+    Effect.pure(())
+  }
 }
 "#,
         )
     }
 
     fn handler_ir_of(program: &CheckedProgram, handler_name: &str) -> IrHandler {
+        handler_ir_of_with_predicates(program, handler_name, &[], &[])
+    }
+
+    fn handler_ir_of_with_predicates(
+        program: &CheckedProgram,
+        handler_name: &str,
+        invariants: &[IrPredicate],
+        transitions: &[IrPredicate],
+    ) -> IrHandler {
         let agent = find_agent(program, "Ledger");
         let handler = find_handler(agent, handler_name);
         let store_cells = agent_store_cells(program, agent);
         let state_ty = agent_state_ty(program, "Ledger");
-        lower_handler_ir(handler, &store_cells, state_ty, program)
+        lower_handler_ir(
+            handler,
+            &store_cells,
+            state_ty,
+            invariants,
+            transitions,
+            program,
+        )
     }
 
     #[test]
@@ -4834,9 +4872,11 @@ agent Ledger {
         else {
             panic!("expected Transactional, got {:?}", ir.commit)
         };
-        // This function's own signature carries no agent-level predicate
-        // lists (see its own doc comment) — every `IrHandler` it builds
-        // carries an empty pair, not yet the agent's own lowered ones.
+        // `handler_ir_of` (unlike `handler_ir_of_with_predicates`) passes no
+        // predicates — empty here reflects this test's own call, not a
+        // limit of `lower_handler_ir` itself; see
+        // `handler_ir_threads_invariants_and_transitions_into_commit_unswapped`
+        // for the threading pin.
         assert!(invariants.is_empty());
         assert!(transitions.is_empty());
         let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
@@ -4890,5 +4930,91 @@ agent Ledger {
             "expected Callee::Capability {{ cap: \"Clock\", op: \"now\" }}, got {callee:?}"
         );
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn handler_ir_store_method_call_on_a_non_cell_field_lowers_as_ordinary_callee() {
+        // The one Decision F claim `peek`/`deposit`/`touchClock` don't reach:
+        // a `Callee::Store` method call, on a `Map` field never bound into
+        // `lower_handler_body_ir`'s own scope (only `Cell` fields are) —
+        // pins that `entries` is never looked up as an ident at all, not
+        // merely that it happens not to be, since `receiver_is_a_value`
+        // excludes `Callee::Store` from ever lowering its own receiver.
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "addEntry");
+        assert!(ir.binder.is_none());
+        assert!(
+            matches!(ir.commit, CommitShape::Transactional { .. }),
+            "Map.put is a mutating Callee::Store op"
+        );
+        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
+            panic!("expected a Block, got {:?}", ir.body.kind)
+        };
+        assert_eq!(stmts.len(), 1);
+        let IrStmt::Let { local, value } = &stmts[0] else {
+            panic!("expected IrStmt::Let, got {:?}", stmts[0])
+        };
+        assert_eq!(local, "_");
+        let IrExprKind::Await { effect } = &value.kind else {
+            panic!(
+                "expected `let _ <- entries.put(k, v)` to lower to Await, got {:?}",
+                value.kind
+            )
+        };
+        let IrExprKind::Call { callee, args, .. } = &effect.kind else {
+            panic!(
+                "expected `entries.put(k, v)` to lower as an ordinary Callee-classified Call, \
+                 got {:?}",
+                effect.kind
+            )
+        };
+        assert!(
+            matches!(callee, Callee::Store { field, op } if field == "entries" && op == "put"),
+            "expected Callee::Store {{ field: \"entries\", op: \"put\" }}, got {callee:?}"
+        );
+        assert_eq!(
+            args.len(),
+            2,
+            "the receiver is never prepended for Callee::Store"
+        );
+        assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "k"));
+        assert!(matches!(&args[1].kind, IrExprKind::Local(n) if n == "v"));
+    }
+
+    #[test]
+    fn handler_ir_threads_invariants_and_transitions_into_commit_unswapped() {
+        // Review of #1167: `lower_handler_ir` originally passed
+        // `lower_commit_shape_ir` empty `invariants`/`transitions` slices
+        // unconditionally — indistinguishable from an agent that genuinely
+        // declares neither. Now threaded through as ordinary parameters,
+        // mirroring `commit_shape_transactional_carries_its_own_invariants_and_transitions_unswapped`'s
+        // own pin one layer up.
+        let program = handler_ir_fixture();
+        let bool_ty = program
+            .program()
+            .ty_intern
+            .intern(Ty::Base(bynk_syntax::ast::BaseType::Bool));
+        let mk = |name: &str| IrPredicate {
+            name: name.to_string(),
+            predicate: IrExpr {
+                kind: IrExprKind::Const(ConstVal::Bool(true)),
+                ty: bool_ty,
+                span: Span::new(0, 0),
+            },
+        };
+        let invariants = vec![mk("invOnly")];
+        let transitions = vec![mk("transitionOnly")];
+        let ir = handler_ir_of_with_predicates(&program, "deposit", &invariants, &transitions);
+        let CommitShape::Transactional {
+            invariants: got_inv,
+            transitions: got_tr,
+        } = ir.commit
+        else {
+            panic!("expected Transactional, got {:?}", ir.commit)
+        };
+        assert_eq!(got_inv.len(), 1);
+        assert_eq!(got_inv[0].name, "invOnly");
+        assert_eq!(got_tr.len(), 1);
+        assert_eq!(got_tr[0].name, "transitionOnly");
     }
 }
