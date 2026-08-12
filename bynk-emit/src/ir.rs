@@ -723,11 +723,11 @@ pub(crate) enum ProtocolIr {
         name: String,
     },
     /// `from websocket(in: …, out: …)` — the two frame types, resolved.
-    /// [`lower::lower_service_handler_ir`] does not yet lower an `on
-    /// open`/`on message`/`on close` handler's own *body* for a service
-    /// carrying this protocol (a named, tracked gap — see that function's
-    /// own doc comment); this variant, the protocol *descriptor*, is real
-    /// regardless.
+    /// As of P6.13 (#1179), [`lower::lower_service_handler_ir`] lowers an
+    /// `on open`/`on message`/`on close` handler's own *body* for a
+    /// service carrying this protocol too — see [`ConnectionBinder`]'s own
+    /// doc comment for how the synthetic `connection` binding reaches that
+    /// body's scope.
     WebSocket {
         in_ty: TyId,
         out_ty: TyId,
@@ -1068,6 +1068,47 @@ pub(crate) struct ActorBinder {
     pub ty: TyId,
 }
 
+/// P6.13's real `ConnectionBinder` ([DECISION G], #1179) — the synthetic
+/// leading `connection: Connection[out]` binding a `from websocket`
+/// lifecycle handler's body receives, [`lower::lower_service_handler_ir`]'s
+/// own return value for exactly the `on open`/`on message`/`on close`
+/// handlers of a `ServiceProtocol::WebSocket` service. Mirrors the
+/// checker's own `open_connection_param`
+/// (`bynk-check/src/context_checks.rs:2020-2032`): `ty` is the resolved
+/// `Ty::Connection(out_ty)`, always present regardless of handler kind —
+/// unlike `ActorBinder`, there is no `None` case here, since a websocket
+/// lifecycle handler is checker-guaranteed to receive this binding
+/// (`bynk.service.websocket_open_arity`, `context_checks.rs:742-763`, plus
+/// the unconditional injection at `context_checks.rs:1944-1954`).
+///
+/// Deliberately **not** folded into `IrHandler::params`: the checker keeps
+/// this binding out of `handler.params` itself (only `params_for_check`,
+/// a check-local, carries it) — `IrHandler::params` mirrors `h.params`
+/// exactly for every handler kind, and widening it here would be a real
+/// behavior change beyond what this slice asks for, not a faithful mirror
+/// of the checker's own asymmetry. Consumers that need "does this handler
+/// have a connection" read `IrHandler::connection` instead.
+///
+/// `borrowed` is this slice's own IR target for the checker's own
+/// owned-vs-borrowed linearity distinction (`borrowed_held`,
+/// `context_checks.rs:1955-1963`): `false` for `on open` (a fresh owned
+/// socket the handler must dispose/transfer), `true` for `on message`/
+/// `on close` (the borrowed firing socket, no disposal obligation). A
+/// bare `bool`, not a richer type: `borrowed_held` itself is only ever a
+/// `HashSet<String>` keyed by binding name on the checker side, so there
+/// is no further structure to represent for a type that names exactly one
+/// binding (`"connection"`, never persisted as a field here — every
+/// reader already knows the name statically, the same reasoning
+/// `ActorBinder`'s own doc comment gives for omitting a redundant
+/// discriminant). No dedicated `lower_connection_binder_ir` constructor,
+/// following `ActorBinder`'s own precedent: the pair has no further
+/// structure to derive.
+#[derive(Debug, Clone)]
+pub(crate) struct ConnectionBinder {
+    pub ty: TyId,
+    pub borrowed: bool,
+}
+
 /// P6.9's real `IrHandler` ([DECISION C], #1167) — an agent `on call`
 /// handler's own resolved shape, [`lower::lower_handler_ir`]'s own return
 /// value. Six of the reference's own eight sketched fields are its
@@ -1146,6 +1187,13 @@ pub(crate) struct IrHandler {
     /// `h.by_clause.is_none()`.
     pub actors: Vec<String>,
     pub binder: Option<ActorBinder>,
+    /// P6.13 ([DECISION G], #1179): `Some` iff this handler is a `from
+    /// websocket` service's `on open`/`on message`/`on close` — see
+    /// [`ConnectionBinder`]'s own doc comment. `None` unconditionally for
+    /// every other handler kind/protocol, including an agent handler
+    /// (`binder`'s own sibling gate: [`lower::lower_handler_ir`] never
+    /// sets this either).
+    pub connection: Option<ConnectionBinder>,
     pub body: IrExpr,
     pub commit: CommitShape,
     pub effectful: bool,
