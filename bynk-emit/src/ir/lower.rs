@@ -34,10 +34,10 @@ use crate::emitter::{
     match_needs_if_chain,
 };
 use crate::ir::{
-    ActorBinder, BindingMode, CapRefIr, CommitShape, ConstVal, CorsIr, EventPatternIr,
-    EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind, IrHandler,
-    IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody,
-    ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
+    ActorBinder, BindingMode, CapRefIr, CommitShape, ConnectionBinder, ConstVal, CorsIr,
+    EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind,
+    IrHandler, IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr,
+    ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -415,6 +415,11 @@ pub(crate) fn lower_handler_ir(
         // not merely usually so.
         actors: Vec::new(),
         binder: None,
+        // Agent-only by contract (asserted above): the synthetic
+        // `connection` binding is a `from websocket` service-handler
+        // concept exclusively — see [`ConnectionBinder`]'s own doc
+        // comment.
+        connection: None,
         body,
         commit,
         effectful,
@@ -463,24 +468,30 @@ fn lower_handler_signature_ir(
 /// P6.11 ([DECISION E], #1171): lower a service handler's own body — the
 /// sibling of [`lower_handler_body_ir`] the reasoning in
 /// [`lower_service_handler_ir`]'s own doc comment argues for, not a
-/// widening of it. Seeds scope from `h.params`, then `binder` if one was
-/// resolved — matching `check_handler_body`'s own `param_scope`
-/// construction order for a service (`checker.rs`: params, then
-/// `actor_binding`, then `agent_self_scope` only when present). Binder
-/// last has no observable effect today only because `handler_actor_binding`
-/// already suppresses a param-shadowing binder before this ever runs
-/// (`context_checks.rs:2050-2055`) — recorded here so the ordering isn't
-/// silently "fixed" by a later reader who doesn't know it's already
-/// load-bearing-adjacent. No rigid type variables: `ServiceDecl` carries no
-/// `type_params` of its own, the same fact
-/// [`resolve_store_field_ty`]'s own doc comment already grounds for
-/// [`lower_store_field_ir`].
+/// widening of it. Seeds scope from `connection` (P6.13, #1179) if this
+/// handler carries one, then `h.params`, then `binder` if one was resolved
+/// — matching `check_handler_body`'s own `param_scope` construction order
+/// for a service (`checker.rs`: `params_for_check` — synthetic `connection`
+/// prepended first when present, `open_connection_param`,
+/// `context_checks.rs:1944-1954` — then `actor_binding`, then
+/// `agent_self_scope` only when present). Binder last has no observable
+/// effect today only because `handler_actor_binding` already suppresses a
+/// param-shadowing binder before this ever runs (`context_checks.rs:2050-
+/// 2055`) — recorded here so the ordering isn't silently "fixed" by a later
+/// reader who doesn't know it's already load-bearing-adjacent. No rigid
+/// type variables: `ServiceDecl` carries no `type_params` of its own, the
+/// same fact [`resolve_store_field_ty`]'s own doc comment already grounds
+/// for [`lower_store_field_ir`].
 fn lower_service_handler_body_ir(
     h: &Handler,
     binder: Option<&ActorBinder>,
+    connection: Option<&ConnectionBinder>,
     program: &CheckedProgram,
 ) -> IrExpr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
+    if let Some(connection) = connection {
+        cx.bind("connection".to_string(), connection.ty);
+    }
     for p in &h.params {
         let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
             panic!(
@@ -519,23 +530,8 @@ fn lower_service_handler_body_ir(
 /// `ServiceProtocol::WebSocket` (`HandlerKind::Close`'s own doc comment
 /// says so), and the checker itself dispatches on exactly this `(kind,
 /// protocol)` pair (`context_checks.rs:1938-1945`) — without `protocol`
-/// here, the WebSocket deferral below would wrongly capture every queue
-/// consumer in the language too.
-///
-/// **The named deferral.** A `from websocket` service's `on open`/`on
-/// message`/`on close` handler body is not lowered — the checker injects a
-/// synthetic leading `connection: Connection[out]` param into its own
-/// `params_for_check` (`open_connection_param`, `context_checks.rs:2023-
-/// 2032`, injected at `:1946-1954`) that never reaches `h.params`, and the
-/// owned-vs-borrowed linearity distinction the checker draws for it
-/// (`:1955-1962`) has no IR target either. Lowering the body anyway would
-/// silently produce a tree missing that binding — every `connection.…`
-/// read would surface as [`lower_ident_ir`]'s own unresolved-ident
-/// `todo!()`, naming the wrong cause. `todo!()`ing here instead follows
-/// this module's own established posture (`lower_fn_body_ir`'s doc: "no
-/// such entry point exists yet rather than one that would produce a wrong
-/// tree") — tracked as its own follow-up issue, the `ProtocolIr::WebSocket`
-/// descriptor itself (`lower_protocol_ir`) is unaffected and real.
+/// here, the `ConnectionBinder` derivation below would wrongly capture
+/// every queue consumer in the language too.
 ///
 /// **`binder` is read back, not threaded in as a parameter** — the
 /// deliberate inverse of [`lower_handler_ir`]'s own [DECISION E]
@@ -557,29 +553,34 @@ fn lower_service_handler_body_ir(
 /// service declares no `store` fields for `body_writes_state` to find a
 /// write against. No `is_service` flag is added anywhere — Decision F's
 /// whole point is that none is needed.
+///
+/// **The websocket lifecycle case, closed (P6.13, [DECISION G], #1179).**
+/// A `from websocket` service's `on open`/`on message`/`on close` handler
+/// receives the synthetic leading `connection: Connection[out]` binding
+/// the checker injects into its own `params_for_check` only
+/// (`open_connection_param`, `context_checks.rs:2020-2032`, injected at
+/// `:1944-1954`) — never into `h.params`, so `params`/`given` above stay
+/// derived from `h.params` alone, exactly mirroring the checker's own
+/// asymmetry (`handler.params` itself is never mutated either). This
+/// function re-derives the same `Connection[out]` type via
+/// `cx.resolve_type_ref` over a freshly-built `TypeRef::Connection`, the
+/// same construction `open_connection_param` performs, since that function
+/// is private to `bynk-check` and there is no persisted `TypedCommons`
+/// table to read it back from (contrast `binder`, below, which #1170 did
+/// persist). `borrowed` mirrors the checker's own `borrowed_held`
+/// distinction (`context_checks.rs:1955-1963`): `false` for `on open` (a
+/// fresh owned socket, disposed via transfer to an agent), `true` for `on
+/// message`/`on close` (the borrowed firing socket). The resulting
+/// [`ConnectionBinder`] is threaded into
+/// [`lower_service_handler_body_ir`] so `connection.…` reads resolve via
+/// `cx.lookup` like any other bound name, and carried on [`IrHandler`]
+/// itself for any consumer that needs the owned/borrowed distinction
+/// without re-deriving it from `kind`/`protocol`.
 pub(crate) fn lower_service_handler_ir(
     h: &Handler,
     protocol: &ServiceProtocol,
     program: &CheckedProgram,
 ) -> IrHandler {
-    if matches!(
-        (&h.kind, protocol),
-        (
-            HandlerKind::Open | HandlerKind::Message | HandlerKind::Close,
-            ServiceProtocol::WebSocket { .. }
-        )
-    ) {
-        todo!(
-            "a `from websocket` lifecycle handler's body needs the synthetic leading \
-             `connection: Connection[out]` parameter the checker injects into its own \
-             params_for_check only (open_connection_param, context_checks.rs:2023-2032; \
-             injection at :1946-1954) — it is never in h.params, so lowering this body would \
-             seed a scope missing `connection`, and every `connection.…` read would surface as \
-             lower_ident_ir's own unresolved-ident todo!() naming the wrong cause; the \
-             owned/borrowed linearity distinction (:1955-1962) has no IR target either — \
-             tracked as #1179"
-        )
-    }
     let cx = LowerIrCtx::new(program, HashSet::new());
     let (params, given, effectful) = lower_handler_signature_ir(h, &cx);
     // Read straight off `h.by_clause`, not derived from `binder` below —
@@ -600,15 +601,37 @@ pub(crate) fn lower_service_handler_ir(
             binder: name.clone(),
             ty: *ty,
         });
+    let connection = match (&h.kind, protocol) {
+        (
+            HandlerKind::Open | HandlerKind::Message | HandlerKind::Close,
+            ServiceProtocol::WebSocket { out_type, .. },
+        ) => {
+            let conn_ref =
+                bynk_syntax::ast::TypeRef::Connection(Box::new(out_type.clone()), h.span);
+            let ty = cx.resolve_type_ref(&conn_ref).unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): a `from websocket` lifecycle handler's \
+                     synthetic `connection: Connection[out]` type does not resolve in this \
+                     pass's own scope, but the checker already accepted this handler"
+                )
+            });
+            Some(ConnectionBinder {
+                ty,
+                borrowed: matches!(h.kind, HandlerKind::Message | HandlerKind::Close),
+            })
+        }
+        _ => None,
+    };
     let emits = block_uses_emit(&h.body);
     let commit = lower_commit_shape_ir(&h.body, &[], &[], emits, program);
-    let body = lower_service_handler_body_ir(h, binder.as_ref(), program);
+    let body = lower_service_handler_body_ir(h, binder.as_ref(), connection.as_ref(), program);
     IrHandler {
         kind: h.kind.clone(),
         params,
         given,
         actors,
         binder,
+        connection,
         body,
         commit,
         effectful,
@@ -6404,13 +6427,13 @@ service Sweeper from cron {
         );
     }
 
-    /// Mirrors `bynkc/tests/fixtures/positive/236_websocket_chatroom`,
-    /// trimmed to the one `on open` handler a `from websocket` service must
-    /// declare (exactly one, `context_checks.rs`) — `on message`/`on close`
-    /// are optional and add nothing this fixture's own two WebSocket tests
-    /// need. A held `Connection` needs real disposal to certify (the
-    /// linearity pass), so `on open` transfers it into a trivial `Room`
-    /// agent rather than dropping it, the same shape the real fixture uses.
+    /// Mirrors `bynkc/tests/fixtures/positive/236_websocket_chatroom` in
+    /// full — `on open`/`on message`/`on close` all present, the same
+    /// shape the real fixture uses — so this fixture's own tests can cover
+    /// both the owned (`on open`) and borrowed (`on message`/`on close`,
+    /// P6.13, #1179) `connection` cases. A held `Connection` needs real
+    /// disposal to certify (the linearity pass), so `on open` transfers it
+    /// into a trivial `Room` agent rather than dropping it.
     fn websocket_service_fixture() -> CheckedProgram {
         checked_context_program(
             r#"
@@ -6425,7 +6448,19 @@ actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 
 service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant {
+    let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
+    ()
+  }
+
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
+    let _ <- connection.send(ServerFrame { text: frame.text })
+    let _ <- Room(roomId).post(user.identity, frame.text)
+    ()
+  }
+
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
+    let _ <- Room(roomId).leave(user.identity)
     ()
   }
 }
@@ -6440,6 +6475,17 @@ agent Room {
     let _ <- conns.put(u, conn)
     ()
   }
+
+  on call leave(u: UserId) -> Effect[()] {
+    let _ <- members.remove(u)
+    let _ <- conns.remove(u)
+    ()
+  }
+
+  on call post(sender: UserId, text: String) -> Effect[()] {
+    let _ <- conns.parTraverse((c: Connection[ServerFrame]) => c.send(ServerFrame { text: text }))
+    ()
+  }
 }
 "#,
         )
@@ -6447,12 +6493,6 @@ agent Room {
 
     #[test]
     fn websocket_protocol_descriptor_lowers_its_frame_types() {
-        // The *only* way to get real WebSocket protocol-descriptor
-        // coverage: a full `lower_service_item_ir` on this fixture is
-        // impossible (its own `on open` handler always hits the named
-        // deferral below), so this calls the standalone constructor
-        // directly — the same posture P6.7/P6.8/P6.9 each held, testing
-        // every constructor before any assembly could consume it.
         let program = websocket_service_fixture();
         let service = find_service(&program, "ChatGateway");
         let ir = lower_protocol_ir(&service.protocol, &program);
@@ -6465,15 +6505,94 @@ agent Room {
     }
 
     #[test]
-    #[should_panic(expected = "synthetic leading")]
-    fn websocket_lifecycle_handler_is_a_named_deferral() {
+    fn websocket_open_handler_lowers_an_owned_connection_binding() {
+        // P6.13 (#1179): the named deferral is gone — `on open` now
+        // assembles a real `IrHandler` whose body's `connection.send(…)`
+        // read resolves through the synthetic binding, and whose own
+        // `connection` field records the owned (non-borrowed) case.
         let program = websocket_service_fixture();
         let service = find_service(&program, "ChatGateway");
         let handler = find_service_handler(service, &HandlerKind::Open);
-        // Panics — pinning that it is *this* named deferral doing the
-        // panicking, not some other failure (an ADR 0334 resolution panic,
-        // say) accidentally satisfying `#[should_panic]`.
-        let _ = lower_service_handler_ir(handler, &service.protocol, &program);
+        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+        let conn = ir
+            .connection
+            .as_ref()
+            .expect("on open must carry a ConnectionBinder");
+        assert!(
+            !conn.borrowed,
+            "on open's connection is a fresh owned socket, not borrowed"
+        );
+        let tys = &program.program().ty_intern;
+        assert_eq!(conn.ty.display(tys), "Connection[ServerFrame]");
+        // `connection` is never in the AST-derived params — mirrors the
+        // checker's own `handler.params`/`params_for_check` asymmetry.
+        assert!(ir.params.iter().all(|(name, _)| name != "connection"));
+        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
+            panic!("expected a Block body, got {:?}", ir.body.kind)
+        };
+        let has_connection_local = stmts
+            .iter()
+            .any(|stmt| format!("{stmt:?}").contains("Local(\"connection\")"));
+        assert!(
+            has_connection_local,
+            "expected the lowered body to resolve `connection` as a Local, got {stmts:?}"
+        );
+    }
+
+    #[test]
+    fn websocket_message_and_close_handlers_lower_a_borrowed_connection_binding() {
+        // P6.13 (#1179): `on message`/`on close` receive the same
+        // `connection` binding as `on open`, but borrowed — no disposal
+        // obligation, mirroring the checker's own `borrowed_held`.
+        let program = websocket_service_fixture();
+        let service = find_service(&program, "ChatGateway");
+        for kind in [HandlerKind::Message, HandlerKind::Close] {
+            let handler = find_service_handler(service, &kind);
+            let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+            let conn = ir
+                .connection
+                .as_ref()
+                .unwrap_or_else(|| panic!("{kind:?} must carry a ConnectionBinder"));
+            assert!(
+                conn.borrowed,
+                "{kind:?}'s connection is the borrowed firing socket"
+            );
+        }
+        // Review of #1185: `on open`'s own test already pins that a
+        // `connection.…` read resolves to `Local("connection")` in the
+        // lowered body — but that alone only proves the *owned* case
+        // reaches scope. `on message`'s own non-consuming
+        // `connection.send(…)` (`borrowed_held`'s whole reason to exist)
+        // pins the borrowed case identically, so a future change that
+        // gated `cx.bind` on `!borrowed` would fail here, not just leave
+        // an unused synthetic binding.
+        let handler = find_service_handler(service, &HandlerKind::Message);
+        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
+            panic!("expected a Block body, got {:?}", ir.body.kind)
+        };
+        let has_connection_local = stmts
+            .iter()
+            .any(|stmt| format!("{stmt:?}").contains("Local(\"connection\")"));
+        assert!(
+            has_connection_local,
+            "expected on message's lowered body to resolve `connection` as a Local, got {stmts:?}"
+        );
+    }
+
+    #[test]
+    fn websocket_service_item_assembles_with_every_lifecycle_handler_lowered() {
+        // The named deferral used to make `lower_service_item_ir`
+        // unbuildable for any real websocket service (issue #1179's own
+        // framing) — this is that end-to-end assembly, now real.
+        let program = websocket_service_fixture();
+        let service = find_service(&program, "ChatGateway");
+        let ir = lower_service_item_ir(service, &program);
+        let IrItem::Service { handlers, .. } = &ir else {
+            panic!("expected IrItem::Service, got {:?}", ir)
+        };
+        assert_eq!(handlers.len(), 3);
+        assert!(handlers.iter().all(|h| h.connection.is_some()));
     }
 
     #[test]
