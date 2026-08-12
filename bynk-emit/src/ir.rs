@@ -118,6 +118,22 @@
 //! op (`context_checks.rs`'s `build_capability_op_info`). `IrItem::Actor`/
 //! `Provider` remain deferred, each with its own already-tracked,
 //! genuinely unsettled blocker (see [`IrItem`]'s own doc comment).
+//!
+//! **P6.14 (#1174) adds [`IrItem::Provider`]** — #1174's own grounding pass
+//! found this buildable, unlike its sibling `Actor`: the reference's own
+//! `body: ProviderBody // Bynk ops | External(module)` comment names a type
+//! it never defines, the same gap [`OpSig`] closed for `Capability`, and
+//! `ProviderDecl::external` already carries the exact dispatch it needs.
+//! [`lower::lower_provider_op_ir`] is a new sibling of
+//! [`lower::lower_fn_body_ir`], not a widening of it, for the same "each
+//! body-lowering entry point seeds its own scope" reason
+//! [`lower::lower_handler_body_ir`]'s own doc comment already gives: no
+//! `self`, no store cells, just a provider op's own params — `given`
+//! capability calls need no scope entry of their own, the same
+//! already-generic `Callee`-wrapping [`lower::lower_handler_body_ir`]'s own
+//! doc comment credits for handler bodies. `IrItem::Actor` remains
+//! deferred, its own already-tracked blocker unchanged by this slice (see
+//! [`IrItem`]'s own doc comment).
 
 use std::sync::Arc;
 
@@ -468,10 +484,11 @@ pub(crate) enum IrStmt {
 /// (`DefId -> Arc<TypeDecl>`/`Arc<FnDecl>`, the same substitution
 /// `Record`/`GlobalRef` already made).
 ///
-/// **`Type`, `Fn`, `Agent` (P6.10, #1169), `Service` (P6.11, #1171) and
-/// `Capability` (P6.12, #1173) exist as variants.** `Actor`/`Provider` are
-/// still deferred (Decision D, #1161, matching the issue's own title: "Agent/Service/
-/// Actor/Capability/Provider deferred"). This is a different posture from
+/// **`Type`, `Fn`, `Agent` (P6.10, #1169), `Service` (P6.11, #1171),
+/// `Capability` (P6.12, #1173) and `Provider` (P6.14, #1174) exist as
+/// variants.** `Actor` is still deferred (Decision D, #1161, matching the
+/// issue's own title: "Agent/Service/Actor/Capability/Provider deferred").
+/// This is a different posture from
 /// `Match`'s own payload (`IrPat`/`IrArm`/`Exhaustive`/`MatchForm`), which
 /// had to exist — even genuinely uninhabited — the moment
 /// `IrExprKind::Match`'s own field list was written, because `IrExprKind`
@@ -522,10 +539,47 @@ pub(crate) enum IrStmt {
 ///   argues against elsewhere in this track. Revisit only if a real
 ///   phase-7 printer needs declaration-level actor data beyond what
 ///   `IrHandler::binder`/`IrHandler::actors` already carry — not before.
-/// - `Provider`'s `body: ProviderBody` needs modelling `ProviderDecl`'s own
-///   `Bynk`/`External(module)` dispatch — not named closely enough in the
-///   reference to build without its own grounding pass. Tracked as
-///   [#1174](https://github.com/accuser/bynk/issues/1174).
+/// - `Provider` — #1174's own investigation found this one buildable this
+///   slice, unlike `Actor`: the real `ProviderDecl`
+///   (`bynk-syntax/src/ast.rs:582-600`) already carries the exact
+///   `Bynk`/`External` dispatch the reference's own `// Bynk ops |
+///   External(module)` comment names (never a real Rust enum in the
+///   document itself — the same "referenced, not specified" gap
+///   `Capability`'s own `OpSig` carried before #1173 settled it), via
+///   `external: bool` plus `ops: Vec<ProviderOp>` (empty exactly when
+///   `external` is `true`, per the field's own doc comment,
+///   `bynk-syntax/src/ast.rs:592-595`). And unlike `CapabilityOp`, a
+///   `ProviderOp`'s own body is a **real, fully type-checked** handler
+///   body — `check_provider_decls`
+///   (`bynk-check/src/context_checks.rs:626`) pushes every op through
+///   `checker::check_handler_body` (`:667`) with the provider's own
+///   `given` as its capability scope and no `self`/state/store binding at
+///   all (`HandlerBodyCheck::new`'s own "everything optional empty"
+///   default, `bynk-check/src/checker.rs:1055`) — so
+///   [`lower::lower_provider_op_ir`] mirrors [`lower::lower_fn_body_ir`]
+///   (ADR 0334 panic-on-miss, not [`lower::lower_op_sig_ir`]'s lenient
+///   `Ty::Unit` fallback: this body's types are checker-guaranteed to
+///   resolve, same as a fn's) with no receiver/self and no rigid type
+///   variables (`ProviderOp` carries none of its own,
+///   `bynk-syntax/src/ast.rs:604-611`). [`ProviderBody::Bynk`]'s own `ops:
+///   Vec<ProviderOpIr>` is real per-op signature-plus-body, one
+///   `ProviderOpIr` per [`lower::lower_provider_op_ir`] call, in
+///   declaration order. [`ProviderBody::External`] deliberately carries
+///   **no** `module` field, despite the reference's own parenthetical —
+///   that name lives one phase up from this per-context `CheckedProgram`,
+///   on the adapter's own `binding "<module>"` clause
+///   (`BindingDecl::module`, `bynk-syntax/src/ast.rs:186`), resolved only
+///   by the whole-project pass into `adapter_bindings: HashMap<String,
+///   AdapterBinding>` (`bynk-check/src/project_model.rs:729`) — data no
+///   other `lower_X_item_ir` function in this module reaches either.
+///   Nothing needs it yet: R8.1's own emission table already gives
+///   `Provider{External}` "nothing — the binding module supplies it"
+///   (`bynk-greenfield-compiler.md:1310`), i.e. even phase 7's own per-item
+///   printer does not consume a module name — only the still-AST-driven
+///   `project.rs`'s existing import wiring does
+///   (`bynk-emit/src/project.rs:2675-2678`), untouched by this slice.
+///   Revisit only once a real project-level IR/linking phase gives this
+///   module something to thread the module name through.
 #[derive(Debug, Clone)]
 pub(crate) enum IrItem {
     /// A `type` declaration. `shape` covers all three real [`TypeShape`]
@@ -658,6 +712,77 @@ pub(crate) enum IrItem {
         /// in declaration order.
         ops: Vec<OpSig>,
     },
+    /// P6.14's real `IrItem::Provider` (Part 6.6, R6.13, #1174) —
+    /// [`lower::lower_provider_item_ir`]'s own return value. Matches the
+    /// reference's own sketch (`bynk-greenfield-compiler.md:1135`)
+    /// field-for-field, once [`ProviderBody`] fills in the type the
+    /// sketch's own comment names but never defines as a real Rust enum.
+    Provider {
+        /// The provider's own declared name (`ProviderDecl::provider_name`,
+        /// "used in tests/config to select impls",
+        /// `bynk-syntax/src/ast.rs:586`) — distinct from `cap` below even
+        /// though `UnitTable::providers` happens to key by capability name
+        /// today ("one provider per capability in v0.5",
+        /// `bynk-check/src/symbols.rs`): the reference's own sketch keeps
+        /// `def`/`cap` as two separate `DefId`s, and a provider's own
+        /// identity is never actually the capability it implements. Same
+        /// "no arena, bare name is enough" substitution as
+        /// `IrItem::Agent`/`Service`/`Capability`'s own `def`.
+        def: String,
+        /// The capability this provider implements
+        /// (`ProviderDecl::capability`) — same bare-name substitution as
+        /// `def`; resolves against `Callee::Capability`'s own `cap: String`
+        /// the identical way `IrItem::Capability::def` does.
+        cap: String,
+        /// [`lower::lower_provider_item_ir`]'s own `Bynk`/`External`
+        /// dispatch, read straight off `ProviderDecl::external`.
+        body: ProviderBody,
+    },
+}
+
+/// P6.14's real `ProviderBody` ([DECISION A], #1174) — referenced by the
+/// reference's own `IrItem::Provider` sketch
+/// (`bynk-greenfield-compiler.md:1135`, `body: ProviderBody // Bynk ops |
+/// External(module)`) but never defined anywhere in the document as a real
+/// Rust type, the same "referenced, not specified" gap `Capability`'s own
+/// `OpSig` carried before #1173 settled it. Mirrors `ProviderDecl::external`
+/// (`bynk-syntax/src/ast.rs:592-595`) exactly: `true` (no brace block, an
+/// adapter-supplied binding) becomes `External`, `false` (a real Bynk-
+/// authored implementation) becomes `Bynk`. See [`IrItem`]'s own doc
+/// comment for why `External` carries no `module` field despite the
+/// reference's own parenthetical.
+#[derive(Debug, Clone)]
+pub(crate) enum ProviderBody {
+    /// A real Bynk-authored implementation — every operation,
+    /// [`lower::lower_provider_op_ir`]'s own return value, in declaration
+    /// order. Never empty: `ProviderDecl::ops` is only ever empty when
+    /// `external` is `true`, which lowers to [`ProviderBody::External`]
+    /// instead.
+    Bynk { ops: Vec<ProviderOpIr> },
+    /// `provides Cap = Name` with no brace block — the adapter's own
+    /// binding supplies the implementation; the emitter produces no class
+    /// (`bynk-greenfield-compiler.md:1310`, `Provider{External} | nothing`).
+    External,
+}
+
+/// P6.14's real `ProviderOpIr` ([DECISION A], #1174) — one `ProviderOp`
+/// (`bynk-syntax/src/ast.rs:604-611`), signature *and* body, unlike
+/// [`OpSig`]'s signature-only shape: a `CapabilityOp` never carries a body
+/// (a capability is a contract), but a `ProviderOp` always does. No
+/// `type_params`, unlike `OpSig`: `ProviderOp` carries none of its own
+/// (#1173's own `OpSig::type_params` doc comment names the same absence for
+/// `CapabilityDecl`, but a capability op's `[T, …]` (#926) has no
+/// provider-op equivalent — nothing in the grammar or the checker's own
+/// `check_provider_decls` gives a provider op a `[T, …]` list to parse).
+#[derive(Debug, Clone)]
+pub(crate) struct ProviderOpIr {
+    pub name: String,
+    pub params: Vec<(String, TyId)>,
+    pub return_ty: TyId,
+    /// [`lower::lower_provider_op_ir`]'s own return value — a real,
+    /// checker-guaranteed-to-resolve body (see [`IrItem`]'s own doc
+    /// comment for why this differs from [`OpSig`]'s lenient treatment).
+    pub body: IrExpr,
 }
 
 /// P6.12's real `OpSig` ([DECISION A], #1173) — referenced by the

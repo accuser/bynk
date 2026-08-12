@@ -23,8 +23,9 @@ use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
     AgentDecl, BinOp, Block, CapabilityDecl, CapabilityOp, EventPattern, EventPatternValue, Expr,
     ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind, Invariant, LambdaExpr,
-    LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, ServiceDecl, ServiceProtocol,
-    Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
+    LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, ProviderDecl, ProviderOp,
+    ServiceDecl, ServiceProtocol, Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp,
+    expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -35,8 +36,8 @@ use crate::emitter::{
 use crate::ir::{
     ActorBinder, BindingMode, CommitShape, ConstVal, CorsIr, EventPatternIr, EventPatternValueIr,
     Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind, IrHandler, IrItem, IrPat,
-    IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, SecurityIr, StoreFieldIr,
-    StoreKindIr, TypeShape,
+    IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr,
+    SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -1430,6 +1431,88 @@ fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
             .collect(),
         params,
         return_ty,
+    }
+}
+
+/// P6.14 (#1174): assemble a provider declaration into a real
+/// [`crate::ir::IrItem::Provider`] — reads `ProviderDecl::external`
+/// straight into [`ProviderBody`]'s own `Bynk`/`External` dispatch
+/// ([`crate::ir::IrItem`]'s own doc comment has the full grounding for why
+/// this, unlike `Actor`, was buildable this slice). `external: true` means
+/// `ops` is empty by the field's own doc comment
+/// (`bynk-syntax/src/ast.rs:592-595`) — nothing to lower.
+pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedProgram) -> IrItem {
+    let body = if provider.external {
+        ProviderBody::External
+    } else {
+        ProviderBody::Bynk {
+            ops: provider
+                .ops
+                .iter()
+                .map(|op| lower_provider_op_ir(op, program))
+                .collect(),
+        }
+    };
+    IrItem::Provider {
+        def: provider.provider_name.name.clone(),
+        cap: provider.capability.name.clone(),
+        body,
+    }
+}
+
+/// P6.14 (#1174): lower one provider operation's own signature *and* body
+/// into a real [`crate::ir::ProviderOpIr`] — a new sibling of
+/// [`lower_fn_body_ir`], not a widening of it, seeding a scope with just
+/// this op's own `params` (no `self`, no store cells: `check_provider_decls`
+/// checks every op via `checker::check_handler_body` with
+/// `HandlerBodyCheck::new`'s own "everything optional empty" default,
+/// `bynk-check/src/checker.rs:1055` — a provider op's `given` capabilities
+/// need no scope entry of their own, resolved the same already-generic
+/// `Callee`-wrapping [`lower_handler_body_ir`]'s own doc comment credits for
+/// handler bodies). No rigid type variables: `ProviderOp` carries no
+/// `type_params` of its own ([`crate::ir::ProviderOpIr`]'s own doc comment
+/// has the full contrast with [`OpSig::type_params`]).
+///
+/// **ADR 0334 panic-on-miss, not [`lower_op_sig_ir`]'s lenient `Ty::Unit`
+/// fallback** — unlike a bare `CapabilityOp` signature, a `ProviderOp`'s
+/// `params`/`return_type` are resolved for real by `check_handler_body`
+/// (the same machinery a fn body or handler body goes through), so a
+/// resolve miss here is exactly the "checker accepted this, this pass
+/// disagrees" internal-error case [`lower_fn_item_ir`]'s own panics guard
+/// against, not a state the checker is known to accept silently.
+fn lower_provider_op_ir(op: &ProviderOp, program: &CheckedProgram) -> ProviderOpIr {
+    let mut cx = LowerIrCtx::new(program, HashSet::new());
+    let params: Vec<(String, TyId)> = op
+        .params
+        .iter()
+        .map(|p| {
+            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): parameter `{}`'s type does not resolve in \
+                     this pass's own scope, but the checker already accepted this provider op's \
+                     body via check_handler_body — bynk-emit::ir::lower's resolution disagrees \
+                     with bynk-check's",
+                    p.name.name
+                )
+            });
+            cx.bind(p.name.name.clone(), ty);
+            (p.name.name.clone(), ty)
+        })
+        .collect();
+    let return_ty = cx.resolve_type_ref(&op.return_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): the return type of provider op `{}` does not \
+             resolve in this pass's own scope, but the checker already accepted this provider \
+             op's body via check_handler_body",
+            op.name.name
+        )
+    });
+    let body = wrap_body_return(lower_block_ir(&op.body, &mut cx));
+    ProviderOpIr {
+        name: op.name.name.clone(),
+        params,
+        return_ty,
+        body,
     }
 }
 
@@ -4650,6 +4733,24 @@ commons demo {
                 _ => None,
             })
             .collect();
+        // P6.14 (#1174): `check_provider_decls` (the pass that actually
+        // type-checks a `ProviderOp`'s own body via `check_handler_body`)
+        // reads `table.providers`, keyed by capability name — same "one
+        // provider per capability in v0.5" convention
+        // `symbols::UnitTable::providers`'s own doc comment names. Populated
+        // here for the same reason `capabilities` is (above): without it, a
+        // fixture's own `provides` declaration is silently never checked at
+        // all, not merely under-checked (feedback memory
+        // "bynk-emit test harness scope").
+        let providers: HashMap<String, ProviderDecl> = typed
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Provider(p) => Some((p.capability.name.clone(), p.clone())),
+                _ => None,
+            })
+            .collect();
         let table = symbols::UnitTable {
             kind: Some(UnitKind::Context),
             types: typed.types.clone(),
@@ -4657,6 +4758,7 @@ commons demo {
             services,
             actors,
             capabilities,
+            providers,
             ..symbols::UnitTable::default()
         };
         let tys = typed.ty_intern.clone();
@@ -4713,6 +4815,19 @@ commons demo {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no capability named `{name}` in this fixture"))
+    }
+
+    fn find_provider<'a>(program: &'a CheckedProgram, name: &str) -> &'a ProviderDecl {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Provider(p) if p.provider_name.name == name => Some(p),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no provider named `{name}` in this fixture"))
     }
 
     /// `find_handler` (below) matches on `method_name`, which is always
@@ -6680,5 +6795,152 @@ capability Store {
             info.params
         );
         assert_eq!(op.return_ty, info.return_ty);
+    }
+
+    #[test]
+    fn lower_provider_item_ir_assembles_bynk_ops_in_declaration_order() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get(key: String) -> Effect[Int]
+  fn put(key: String, value: Int) -> Effect[()]
+}
+
+provides Store = MemStore {
+  fn get(key: String) -> Effect[Int] {
+    Effect.pure(0)
+  }
+  fn put(key: String, value: Int) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let provider = find_provider(&program, "MemStore");
+        let ir = lower_provider_item_ir(provider, &program);
+        let IrItem::Provider { def, cap, body } = &ir else {
+            panic!("expected IrItem::Provider, got {:?}", ir)
+        };
+        assert_eq!(def, "MemStore");
+        assert_eq!(cap, "Store");
+        let ProviderBody::Bynk { ops } = body else {
+            panic!("expected ProviderBody::Bynk, got {:?}", body)
+        };
+        assert_eq!(ops.len(), 2, "declaration order preserved");
+
+        assert_eq!(ops[0].name, "get");
+        assert_eq!(ops[0].params.len(), 1);
+        assert_eq!(ops[0].params[0].0, "key");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].params[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
+        ));
+        // `return_ty` mirrors `OpSig::return_ty`'s own convention
+        // (Effect-wrapped, not peeled).
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].return_ty),
+            Ty::Effect(inner) if matches!(
+                &*program.program().ty_intern.get(*inner),
+                Ty::Base(bynk_syntax::ast::BaseType::Int)
+            )
+        ));
+
+        assert_eq!(ops[1].name, "put");
+        assert_eq!(ops[1].params.len(), 2);
+        assert_eq!(ops[1].params[0].0, "key");
+        assert_eq!(ops[1].params[1].0, "value");
+    }
+
+    #[test]
+    fn lower_provider_item_ir_external_provider_has_no_ops() {
+        // v0.17: an external (bodiless) provider is only legal inside an
+        // `adapter` unit (`bynk-check/src/symbols.rs:438`), which this test
+        // harness's own `checked_context_program` cannot build (it only
+        // ever parses a `context` — feedback memory "bynk-emit test harness
+        // scope"). `lower_provider_item_ir`'s own `External` branch never
+        // reads `program` at all, so this hand-constructs the `ProviderDecl`
+        // the parser would produce for `provides Store = ExternalStore`
+        // inside an adapter, the same way `project_model.rs`'s own
+        // `provider()` test helper does, rather than growing a second,
+        // adapter-shaped fixture builder for a branch this pass never
+        // touches `program` on.
+        let program = checked_context_program("context demo\n");
+        let provider = ProviderDecl {
+            capability: bynk_syntax::ast::Ident {
+                name: "Store".to_string(),
+                span: Span::default(),
+            },
+            provider_name: bynk_syntax::ast::Ident {
+                name: "ExternalStore".to_string(),
+                span: Span::default(),
+            },
+            given: Vec::new(),
+            ops: Vec::new(),
+            external: true,
+            documentation: None,
+            span: Span::default(),
+            trivia: Default::default(),
+        };
+
+        let ir = lower_provider_item_ir(&provider, &program);
+        let IrItem::Provider { def, cap, body } = &ir else {
+            panic!("expected IrItem::Provider, got {:?}", ir)
+        };
+        assert_eq!(def, "ExternalStore");
+        assert_eq!(cap, "Store");
+        assert!(
+            matches!(body, ProviderBody::External),
+            "expected ProviderBody::External, got {:?}",
+            body
+        );
+    }
+
+    #[test]
+    fn lower_provider_op_ir_lowers_a_given_capability_call_via_the_ordinary_callee_path() {
+        // Pins `IrItem`'s own doc comment: a provider op's `given`
+        // capabilities need no scope entry of their own — a
+        // `Callee::Capability`-classified call already lowers correctly
+        // through the ordinary `lower_block_ir`/`lower_expr_ir` path, the
+        // same claim `lower_handler_body_ir`'s own doc comment makes for
+        // handler bodies.
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+capability Store {
+  fn get(key: String) -> Effect[Int]
+}
+
+provides Store = MemStore given Clock {
+  fn get(key: String) -> Effect[Int] {
+    Clock.now()
+  }
+}
+"#,
+        );
+        let provider = find_provider(&program, "MemStore");
+        let ir = lower_provider_item_ir(provider, &program);
+        let IrItem::Provider { body, .. } = &ir else {
+            panic!("expected IrItem::Provider, got {:?}", ir)
+        };
+        let ProviderBody::Bynk { ops } = body else {
+            panic!("expected ProviderBody::Bynk, got {:?}", body)
+        };
+        let get = &ops[0];
+        let tail = fn_tail(&get.body);
+        let IrExprKind::Call { callee, args, .. } = &tail.kind else {
+            panic!("expected Call, got {:?}", tail.kind)
+        };
+        assert!(matches!(
+            callee,
+            Callee::Capability { cap, op } if cap == "Clock" && op == "now"
+        ));
+        assert!(args.is_empty());
     }
 }
