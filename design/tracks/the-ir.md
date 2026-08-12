@@ -235,6 +235,64 @@ argument for *why* E7 will eventually be buildable ("the participation points ha
 something other than the emitter before a provider can opt into them") is this phase's business; adding
 the opt-in contract itself, gated on an actual durable-provider proposal appearing, is not.
 
+### 3.7 Q7 — §5's completion criterion says `emitter/lower.rs`'s AST-walking functions "call only into `bynk-emit::ir`'s lowering pass." Given the printer (reference Part 7, R7.2/R7.3) is phase 7's, not this phase's, what does that require of `emitter/lower.rs`'s own string output? **Settled.**
+
+> **Provenance.** Unlike Q1–Q6, this question does not originate in the spine issue (#1137) — it is
+> [#1175](https://github.com/accuser/bynk/issues/1175), opened after this track's own §3 settling pass
+> closed, once P6.0–P6.9 and the `IrItem`-variant slices (#1169/#1171/#1172/#1173) made the gap between
+> "the IR exists" and "the emitter reads it" concrete enough to name precisely. Argued here for the same
+> reason Q1–Q6 were argued under this doc rather than left as open bullets on the spine issue.
+
+**Decision: `emitter/lower.rs` keeps writing strings — the cutover changes what its functions read, not
+what they return.** #1175 named the genuine ambiguity directly: does the cutover leave
+`emitter/lower.rs` doing its own string-splicing but *driven by* IR-computed decisions, or something
+else? "Something else" would mean this phase building an ad hoc `Ir -> TsProgram`-shaped intermediate to
+route through — and that is ruled out, not merely undecided, by two things this track has already
+committed to. First, §2's own exclusion: "Not phase 7 (the TypeScript tree and printer) … this phase
+only replaces what feeds emission." Second, the reference's own R7.2/R7.3 (`bynk-greenfield-compiler.md`
+Part 7.1) name the printer split precisely — "Emission is `Ir -> TsProgram`. It performs no string
+formatting, owns no buffer, and has no notion of indentation" / "Printing is `TsProgram -> Artefacts`.
+The printer owns the buffer … it is the only code in the compiler that writes a character" — and no
+`TsProgram`, no printer, and no `bynk-ts` crate exist yet (confirmed live: no `bynk-ts` directory in the
+workspace). Building a phase-6-local stand-in for either would take on R7.1–R7.8's job early, on a shape
+phase 7 would then have to either inherit unreviewed or redo, exactly the "carve before the dependency
+arrives" anti-pattern R10.3 already argues against elsewhere in this track (§3.3, Q3).
+
+`Lowered { pre: Vec<String>, expr: String }` (`bynk-emit/src/emitter/lower.rs:844`, T2.1/R6.2, phase 2)
+is the concrete shape this settles: every `lower_*` function in `emitter/lower.rs` returns a `Lowered`
+today and will keep doing so after the cutover — the T2.1 statement-sink signature is untouched, because
+it already satisfies R6.2 and nothing about consuming `bynk-emit::ir` instead of `bynk_syntax::ast`
+requires revisiting it. What changes is the *argument* type and the logic inside: today `lower_expr(e:
+&Expr, cx: &mut LowerCtx) -> Lowered` walks a `bynk_syntax::ast::Expr` and re-derives its own dispatch
+decisions — `lower_method_call`/`lower_call`'s own "the order is load-bearing" guard chains,
+`block_writes_state`'s name-matched receiver (§9's still-live R6.5 defect) — from the AST node in front
+of it. Post-cutover, the equivalent function takes an `&IrExpr` (`bynk-emit/src/ir.rs:134`) and reads a
+decision `bynk_emit::ir::lower` already made once — `Callee` for dispatch (P6.0, #1139),
+`CommitShape`/`IrPredicate` for a handler's commit shape (P6.8, #1165), `StoreFieldIr`/`StoreKindIr` for
+a store write's real target (P6.7, #1163) — rather than re-classifying anything. The function still
+hand-writes TypeScript source text into `Lowered.expr`/`Lowered.pre`; it just no longer decides *what* to
+write by walking AST shape, only *how* to render a decision the IR already recorded. This makes
+`emitter/lower.rs` this phase's own de facto interim `Ir -> String` pass — not a violation of R7.2/R7.3,
+which gate the real, shipped `TsProgram`/printer split phase 7 commissions, not an interim state this
+phase is expected to avoid leaving behind. `IrItem::Fn`'s own doc comment (`bynk-emit/src/ir.rs`, P6.6)
+already treats this as established: "which `IrItem::Fn`s a future printer re-attaches under which
+`IrItem::Type`'s own namespace (R8.1) is phase 7's own concern, not decided here" — written before this
+settling pass, on exactly this assumption, not after it.
+
+**Confirmed live** (12 August 2026, `main`@`7f5115ee`): zero `crate::ir`/`use crate::ir` references
+anywhere in `bynk-emit/src/emitter.rs` or any `bynk-emit/src/emitter/*.rs` file — the cutover named in
+#1175 has not started on any file. `bynk-emit/src/ir.rs` + `bynk-emit/src/ir/lower.rs` together are
+7,837 lines (1,153 + 6,684) — up from nothing at this track's own 9 August opening — and now assemble
+`IrItem::Type`/`Fn` (P6.1/P6.6), `Agent` (P6.10, #1169), `Service` (P6.11, #1171) and `Capability`
+(P6.12, #1173), with `Actor` settled as a deliberate non-build decision (#1172) and `Provider` still open
+(#1174). `emitter.rs` (4,676 lines) and `emitter/lower.rs` (5,978 lines) have each grown slightly past
+§1's own 9 August measurement (4,653/5,970) under ordinary unrelated traffic, not shrunk — the cutover
+itself remains fully ahead of this settling pass, exactly as #1175 described it, and this Q only settles
+its operational shape, not its slicing. Slicing the cutover itself is not attempted here — per #1175's
+own framing it stays a scoping placeholder until the remaining deferred `IrItem` variant (`Provider`,
+#1174) and the `ast_importers` probe redefinition (#1176) are far enough along that a real proposal can
+cite a stable IR surface to cut over to.
+
 ---
 
 ## 4. Posture
@@ -275,6 +333,16 @@ correction — but the probe itself needs a stated exclusion for `bynk-emit::ir`
 (or a differently-scoped successor probe reading only `emitter/`) before "`ast_importers` = 0" can be
 read as this track's own true finish line, rather than a bar this track's own IR module structurally
 cannot clear.
+
+**§3.7 (Q7, #1175) settles what "calls only into `bynk-emit::ir`'s lowering pass" requires structurally,
+a second correction of the same kind as the one above.** The phrase does not mean `emitter/lower.rs`
+stops writing TypeScript source text — it cannot, until phase 7's own printer (R7.2/R7.3) exists to take
+over, which this track's own §2 already excludes. It means the AST-walking *decisions* those
+string-writing functions currently re-derive (`Callee` dispatch, commit shape, store-write target) get
+replaced by reads off an already-lowered `IrExpr`/`IrItem`/`CommitShape`/`StoreFieldIr` value; the
+functions' own `Lowered`-returning, string-writing shape survives the cutover unchanged. A slice proposal
+for the cutover itself is not commissioned by this correction — per #1175's own framing, it remains a
+scoping placeholder pending `Provider` (#1174) and the `ast_importers` redefinition (#1176).
 
 ---
 
