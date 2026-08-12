@@ -103,6 +103,21 @@
 //! `IrItem::Actor`/`Capability`/`Provider` remain deferred, each with its
 //! own already-tracked, genuinely unsettled blocker (see [`IrItem`]'s own
 //! doc comment).
+//!
+//! **P6.12 (#1173) adds [`IrItem::Capability`]** — the reference's own
+//! `ops: Vec<OpSig>` sketch (`bynk-greenfield-compiler.md:1134`) named a
+//! type it never defined anywhere in the document; [`OpSig`] is that
+//! missing shape, adapted from `bynk_syntax::ast::CapabilityOp` under this
+//! module's own "no arena" substitution (`Vec<(String, TyId)>` for
+//! `params`, mirroring [`IrItem::Fn::params`] exactly).
+//! [`lower::lower_capability_item_ir`] resolves each op's own `params`/
+//! `return_type` in that op's own rigid-variable scope (`op.type_params`)
+//! — a capability op's type parameters are scoped to the op itself, not
+//! the capability, unlike a method's generic receiver — the same per-op
+//! treatment the checker's own `CapabilityOpInfo` already gives a generic
+//! op (`context_checks.rs`'s `build_capability_op_info`). `IrItem::Actor`/
+//! `Provider` remain deferred, each with its own already-tracked,
+//! genuinely unsettled blocker (see [`IrItem`]'s own doc comment).
 
 use std::sync::Arc;
 
@@ -453,9 +468,9 @@ pub(crate) enum IrStmt {
 /// (`DefId -> Arc<TypeDecl>`/`Arc<FnDecl>`, the same substitution
 /// `Record`/`GlobalRef` already made).
 ///
-/// **`Type`, `Fn`, `Agent` (P6.10, #1169) and `Service` (P6.11, #1171)
-/// exist as variants.** `Actor`/`Capability`/`Provider` are still deferred
-/// (Decision D, #1161, matching the issue's own title: "Agent/Service/
+/// **`Type`, `Fn`, `Agent` (P6.10, #1169), `Service` (P6.11, #1171) and
+/// `Capability` (P6.12, #1173) exist as variants.** `Actor`/`Provider` are
+/// still deferred (Decision D, #1161, matching the issue's own title: "Agent/Service/
 /// Actor/Capability/Provider deferred"). This is a different posture from
 /// `Match`'s own payload (`IrPat`/`IrArm`/`Exhaustive`/`MatchForm`), which
 /// had to exist — even genuinely uninhabited — the moment
@@ -485,11 +500,12 @@ pub(crate) enum IrStmt {
 ///   `claim_predicate_to_js`. An `IrExpr` here would mean inventing a
 ///   typing for a surface the checker deliberately never gave one. (2)
 ///   `scheme: AuthScheme` names a type the reference defines nowhere else
-///   (`:1133`/`:1847` only) — same "referenced, not specified" gap
-///   `Capability`'s own `OpSig` carries below, except here a real 5-variant
-///   candidate already ships (`bynk-check::actors::Scheme`), so this piece
-///   alone is specifiable. (3) The decisive finding: every real consumer of
-///   actor data — the five `bynk-check` seam resolvers the shipped emitter
+///   (`:1133`/`:1847` only) — the same "referenced, not specified" gap
+///   `Capability`'s own `OpSig` carried before [`OpSig`] settled it (P6.12,
+///   #1173), except here a real 5-variant candidate already ships
+///   (`bynk-check::actors::Scheme`), so this piece alone is specifiable.
+///   (3) The decisive finding: every real consumer of actor data — the
+///   five `bynk-check` seam resolvers the shipped emitter
 ///   consumes (`bearer_seam_for`/`oidc_seam_for`/`signature_seam_for`/
 ///   `sum_members_for`/`caller_binder_for`, `bynk-check/src/actors.rs`) and
 ///   the reference's own R8.11 (`deps` derivation)/R8.13 (boundary-wrapper
@@ -506,14 +522,6 @@ pub(crate) enum IrStmt {
 ///   argues against elsewhere in this track. Revisit only if a real
 ///   phase-7 printer needs declaration-level actor data beyond what
 ///   `IrHandler::binder`/`IrHandler::actors` already carry — not before.
-/// - `Capability`'s own `ops: Vec<OpSig>` names a type (`OpSig`) the
-///   reference never defines anywhere — the same "referenced, not
-///   specified" naming gap `Actor`'s own `AuthScheme` carried (above), but
-///   without a settled real-vs-wrong-shape finding of its own yet: unlike
-///   `Actor`, no investigation has shown whether `Capability`'s real
-///   consumers are declaration-keyed (matching the reference's own sketch)
-///   or need a different shape entirely. Tracked as
-///   [#1173](https://github.com/accuser/bynk/issues/1173).
 /// - `Provider`'s `body: ProviderBody` needs modelling `ProviderDecl`'s own
 ///   `Bynk`/`External(module)` dispatch — not named closely enough in the
 ///   reference to build without its own grounding pass. Tracked as
@@ -632,6 +640,58 @@ pub(crate) enum IrItem {
         /// own unconditional `PolicyIr` field.
         policy: Option<PolicyIr>,
     },
+    /// P6.12's real `IrItem::Capability` (Part 6.6, R6.13, #1173) —
+    /// [`lower::lower_capability_item_ir`]'s own return value. Matches the
+    /// reference's own sketch (`bynk-greenfield-compiler.md:1134`)
+    /// field-for-field, once [`OpSig`] fills in the type the sketch names
+    /// but never defines.
+    Capability {
+        /// The capability's own declared name — same reasoning as
+        /// `IrItem::Agent`/`IrItem::Service`'s own `def`:
+        /// `UnitTable::capabilities` is a plain owned `HashMap<String,
+        /// CapabilityDecl>`, no `Arc` to borrow cheaply, and bare-name
+        /// identity is already sufficient — `Callee::Capability { cap:
+        /// String, op: String }` (`bynk-check/src/checker.rs`) already
+        /// resolves a same-context capability call by name alone.
+        def: String,
+        /// Every operation, [`lower::lower_op_sig_ir`]'s own return value,
+        /// in declaration order.
+        ops: Vec<OpSig>,
+    },
+}
+
+/// P6.12's real `OpSig` ([DECISION A], #1173) — referenced by the
+/// reference's own `IrItem::Capability` sketch
+/// (`bynk-greenfield-compiler.md:1134`, `ops: Vec<OpSig>`) but never
+/// defined anywhere in the document — the same "referenced, not specified"
+/// gap #1161's own Decision C named for [`EmbedIr`], #1163's own Decision C
+/// named for [`IndexIr`], #1165's own Decision A named for [`IrPredicate`],
+/// and #1167's own Decision A named for [`ActorBinder`]. Adapted from
+/// `bynk_syntax::ast::CapabilityOp` — a signature only, no body — under
+/// this module's already-established "no arena" substitutions: `params:
+/// Vec<(String, TyId)>` mirrors [`IrItem::Fn::params`] exactly (Decision E,
+/// #1161), and `type_params: Vec<String>` mirrors the checker's own
+/// already-resolved `CapabilityOpInfo::type_params`
+/// (`bynk-check/src/checker.rs`) — a bare rigid-variable name, not a
+/// `TypeParam` AST node, since nothing here re-derives bounds a capability
+/// op's own `[T, …]` list never carries in the first place (#926).
+/// [`lower::lower_op_sig_ir`] resolves `params`/`return_ty` in the scope
+/// `type_params` names, mirroring `context_checks::build_capability_op_info`'s
+/// own `vars` treatment (`bynk-check/src/context_checks.rs`) so a generic
+/// op's own `T` survives as `Ty::Var("T")` rather than collapsing to
+/// `Ty::Unit`, the same failure mode that treatment's own doc comment
+/// warns against.
+#[derive(Debug, Clone)]
+pub(crate) struct OpSig {
+    pub name: String,
+    /// The op's own type parameters (#926) — empty for a non-generic op.
+    /// Scoped to the op itself, not the capability: `CapabilityDecl` carries
+    /// no `type_params` of its own (`bynk-syntax/src/ast.rs:556-562`), so
+    /// this is never merged with anything above it, unlike
+    /// [`IrItem::Fn::receiver`]'s generic-receiver treatment for a method.
+    pub type_params: Vec<String>,
+    pub params: Vec<(String, TyId)>,
+    pub return_ty: TyId,
 }
 
 /// P6.11's real `ProtocolIr` ([DECISION A], #1171) — one variant per
