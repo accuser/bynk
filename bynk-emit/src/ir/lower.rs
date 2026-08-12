@@ -21,10 +21,10 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    AgentDecl, BinOp, Block, EventPattern, EventPatternValue, Expr, ExprId, ExprKind, FieldInit,
-    FnDecl, FnName, Handler, HandlerKind, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody,
-    Pattern, PatternBindingKind, ServiceDecl, ServiceProtocol, Statement, StoreField, Transition,
-    TypeBody, TypeDecl, UnaryOp, expr_children,
+    AgentDecl, BinOp, Block, CapabilityDecl, CapabilityOp, EventPattern, EventPatternValue, Expr,
+    ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind, Invariant, LambdaExpr,
+    LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, ServiceDecl, ServiceProtocol,
+    Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -35,8 +35,8 @@ use crate::emitter::{
 use crate::ir::{
     ActorBinder, BindingMode, CommitShape, ConstVal, CorsIr, EventPatternIr, EventPatternValueIr,
     Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind, IrHandler, IrItem, IrPat,
-    IrPredicate, IrStmt, MatchForm, PolicyIr, ProtocolIr, SecurityIr, StoreFieldIr, StoreKindIr,
-    TypeShape,
+    IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, SecurityIr, StoreFieldIr,
+    StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -1352,6 +1352,77 @@ pub(crate) fn lower_service_item_ir(service: &ServiceDecl, program: &CheckedProg
             .map(|h| lower_service_handler_ir(h, &service.protocol, program))
             .collect(),
         policy: lower_policy_ir(service),
+    }
+}
+
+/// P6.12 (#1173): assemble a capability declaration into a real
+/// [`crate::ir::IrItem::Capability`] — structural mirror of
+/// [`lower_service_item_ir`]/[`lower_agent_item_ir`], but with nothing to
+/// compute once and share: `CapabilityDecl` carries no state/invariants/
+/// transitions/protocol of its own, only `ops`, so each op lowers
+/// independently through [`lower_op_sig_ir`].
+pub(crate) fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedProgram) -> IrItem {
+    IrItem::Capability {
+        def: cap.name.name.clone(),
+        ops: cap
+            .ops
+            .iter()
+            .map(|op| lower_op_sig_ir(op, program))
+            .collect(),
+    }
+}
+
+/// P6.12 (#1173): lower one capability operation's own signature into a real
+/// [`crate::ir::OpSig`] — the reference's own `IrItem::Capability` sketch
+/// names this type (`ops: Vec<OpSig>`) but never defines it. Resolves
+/// `params`/`return_ty` in the scope `op.type_params` names, the same
+/// per-op rigid-variable seeding [`context_checks::build_capability_op_info`]
+/// (`bynk-check/src/context_checks.rs`) already gives a generic op for the
+/// checker-facing `CapabilityOpInfo` — an op's own `[T, …]` list is scoped to
+/// the op itself, not the capability (`CapabilityDecl` carries no
+/// `type_params` of its own), so this seeds a fresh [`LowerIrCtx`] per op
+/// rather than reusing [`fn_rigid_type_vars`]'s fn/method-shaped
+/// receiver-widening, which does not apply here.
+fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
+    let type_vars: HashSet<String> = op
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
+    let cx = LowerIrCtx::new(program, type_vars);
+    let params: Vec<(String, TyId)> = op
+        .params
+        .iter()
+        .map(|p| {
+            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): capability op `{}`'s parameter `{}` does \
+                     not resolve in this pass's own rigid-variable scope, but the checker \
+                     already accepted this capability — bynk-emit::ir::lower's type_vars \
+                     disagrees with bynk-check's Ctx::type_vars",
+                    op.name.name, p.name.name
+                )
+            });
+            (p.name.name.clone(), ty)
+        })
+        .collect();
+    let return_ty = cx.resolve_type_ref(&op.return_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): the return type of capability op `{}` does not \
+             resolve in this pass's own rigid-variable scope, but the checker already accepted \
+             this capability",
+            op.name.name
+        )
+    });
+    OpSig {
+        name: op.name.name.clone(),
+        type_params: op
+            .type_params
+            .iter()
+            .map(|tp| tp.name.name.clone())
+            .collect(),
+        params,
+        return_ty,
     }
 }
 
@@ -4624,6 +4695,19 @@ commons demo {
             .unwrap_or_else(|| panic!("no service named `{name}` in this fixture"))
     }
 
+    fn find_capability<'a>(program: &'a CheckedProgram, name: &str) -> &'a CapabilityDecl {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Capability(c) if c.name.name == name => Some(c),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no capability named `{name}` in this fixture"))
+    }
+
     /// `find_handler` (below) matches on `method_name`, which is always
     /// `None` for a service handler — useless here. Matches on
     /// `HandlerKind` equality instead; not a unique identity on its own (a
@@ -6370,6 +6454,103 @@ service Subscriber from Events(OrderPlaced { status: Active, count: 3, .. }) {
             ),
             "expected a literal Int constant, got {:?}",
             ir.fields[1].1
+        );
+    }
+
+    #[test]
+    fn lower_capability_item_ir_assembles_ops_in_declaration_order() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get(key: String) -> Effect[Int]
+  fn put(key: String, value: Int) -> Effect[()]
+}
+"#,
+        );
+        let cap = find_capability(&program, "Store");
+        let ir = lower_capability_item_ir(cap, &program);
+        let IrItem::Capability { def, ops } = &ir else {
+            panic!("expected IrItem::Capability, got {:?}", ir)
+        };
+        assert_eq!(def, "Store");
+        assert_eq!(ops.len(), 2, "declaration order preserved");
+
+        assert_eq!(ops[0].name, "get");
+        assert!(ops[0].type_params.is_empty());
+        assert_eq!(ops[0].params.len(), 1);
+        assert_eq!(ops[0].params[0].0, "key");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].params[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
+        ));
+        // `return_ty` mirrors `IrItem::Fn::ret`'s own convention (Effect-
+        // wrapped, not peeled) — `get`'s declared `Effect[Int]` resolves
+        // whole, same as a fn's `ret`.
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].return_ty),
+            Ty::Effect(inner) if matches!(
+                &*program.program().ty_intern.get(*inner),
+                Ty::Base(bynk_syntax::ast::BaseType::Int)
+            )
+        ));
+
+        assert_eq!(ops[1].name, "put");
+        assert_eq!(ops[1].params.len(), 2);
+        assert_eq!(ops[1].params[0].0, "key");
+        assert_eq!(ops[1].params[1].0, "value");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[1].params[1].1),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn lower_op_sig_ir_resolves_generic_op_type_params_as_rigid_vars() {
+        // Review-relevant: a capability op's own `[T, …]` list is scoped to
+        // the op, not the capability (`CapabilityDecl` has no `type_params`
+        // of its own) — pins that `lower_op_sig_ir` seeds a fresh rigid-var
+        // scope per op rather than sharing one across every op on the same
+        // capability, and that a wrong scope would show up as `Ty::Unit`
+        // (ADR 0334's own silent-wrong-answer failure mode), not a panic.
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get[T](key: String) -> Effect[T]
+  fn now() -> Effect[Int]
+}
+"#,
+        );
+        let cap = find_capability(&program, "Store");
+        let ir = lower_capability_item_ir(cap, &program);
+        let IrItem::Capability { ops, .. } = &ir else {
+            panic!("expected IrItem::Capability, got {:?}", ir)
+        };
+
+        let get = ops.iter().find(|o| o.name == "get").expect("op `get`");
+        assert_eq!(get.type_params, vec!["T".to_string()]);
+        assert!(matches!(
+            &*program.program().ty_intern.get(get.params[0].1),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
+        ));
+        assert!(
+            matches!(
+                &*program.program().ty_intern.get(get.return_ty),
+                Ty::Effect(inner) if matches!(
+                    &*program.program().ty_intern.get(*inner),
+                    Ty::Var(n) if n == "T"
+                )
+            ),
+            "expected the op's own `T` to survive as Ty::Var, not collapse to Ty::Unit"
+        );
+
+        let now = ops.iter().find(|o| o.name == "now").expect("op `now`");
+        assert!(
+            now.type_params.is_empty(),
+            "a sibling non-generic op must not see `get`'s own `T` in scope"
         );
     }
 }
