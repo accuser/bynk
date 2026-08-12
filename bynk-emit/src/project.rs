@@ -1228,7 +1228,7 @@ fn emit_unit(
     // path the debugger loads (project-relative would resolve against the output
     // `.ts`'s directory — the wrong place). Synthetic units fall back to relative.
     let source_name = pf.map_source_name();
-    let (ts, source_map) = emitter::emit_project(typed, &emit_ctx, pf.source(), &source_name);
+    let (ts, source_map) = emitter::emit_project(program, &emit_ctx, pf.source(), &source_name);
     // Slice 3: the handler-label sidecar for this unit (ADR 0105) — names stack
     // frames by their Bynk operation. `None` for units with no handlers.
     let debug_metadata = emitter::collect_handler_labels(typed);

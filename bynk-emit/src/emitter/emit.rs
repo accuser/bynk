@@ -14,11 +14,21 @@ use std::sync::Arc;
 use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
 
+use crate::ir::TypeShape;
+
 use super::*;
 
+/// P6.x (#1188): reads `shape` — `t`'s already-lowered `bynk-emit::ir::TypeShape`
+/// — instead of walking `t.body` (`bynk_syntax::ast::TypeBody`) directly.
+/// `t` itself is still read for what `TypeShape` deliberately doesn't carry:
+/// `.documentation`/`.name`/`.type_params` (header/namespace-object emission,
+/// including this type's own attached methods via `emit_attached_methods`,
+/// which stays on the untouched, unconverted body-lowering path — see that
+/// function's own doc comment).
 pub(crate) fn emit_type(
     out: &mut String,
     t: &TypeDecl,
+    shape: &TypeShape,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
 ) {
@@ -31,44 +41,38 @@ pub(crate) fn emit_type(
         .as_deref()
         .map(|c| format!("{c}."))
         .unwrap_or_default();
-    match &t.body {
-        TypeBody::Refined {
-            base, refinement, ..
+    match shape {
+        // `Opaque` and `Refined` lower almost identically: a branded base type
+        // alias plus an `of` constructor object. The one difference (ADR 0182)
+        // is `unsafe`: opaque exposes it (its defining commons needs a
+        // representation-level constructor), a refined/alias type does not —
+        // `TypeShape::Refined::opaque` already carries that distinction
+        // (P6.6's own Decision A unified the AST's two `TypeBody` variants
+        // into this one `TypeShape` variant).
+        TypeShape::Refined {
+            base,
+            refinement,
+            opaque,
         } => emit_refined_type(
             out,
             t,
             RefinedShape {
                 base: *base,
                 refinement: refinement.as_ref(),
-                is_opaque: false,
+                is_opaque: *opaque,
             },
             commons,
             &brand_prefix,
             &ctx.runtime_use,
         ),
-        TypeBody::Opaque {
-            base, refinement, ..
-        } => {
-            // Opaque types lower almost identically to refined types: a branded
-            // base type alias plus an `of` constructor object. The one
-            // difference (ADR 0182) is `unsafe`: opaque exposes it (its defining
-            // commons needs a representation-level constructor), a refined/alias
-            // type does not (`is_opaque = true` below vs `false` above).
-            emit_refined_type(
-                out,
-                t,
-                RefinedShape {
-                    base: *base,
-                    refinement: refinement.as_ref(),
-                    is_opaque: true,
-                },
-                commons,
-                &brand_prefix,
-                &ctx.runtime_use,
-            );
+        TypeShape::Record { fields } => emit_record_type(out, t, fields, commons, &ctx.runtime_use),
+        // `embeds` is not read here — today's emitter has no reader for
+        // `SumBody::embeds` anywhere (confirmed by grep; `embeds` is checker-
+        // enforced construction-time only), so `TypeShape::Sum::embeds` stays
+        // unread by this slice too, not a gap introduced by it.
+        TypeShape::Sum { variants, .. } => {
+            emit_sum_type(out, t, variants, commons, &ctx.runtime_use)
         }
-        TypeBody::Record(r) => emit_record_type(out, t, r, commons, &ctx.runtime_use),
-        TypeBody::Sum(s) => emit_sum_type(out, t, s, commons, &ctx.runtime_use),
     }
 }
 
@@ -234,7 +238,7 @@ pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
 fn emit_record_type(
     out: &mut String,
     t: &TypeDecl,
-    r: &RecordBody,
+    fields: &[(String, TyId)],
     commons: &TypedCommons,
     runtime_use: &RuntimeUse,
 ) {
@@ -245,12 +249,11 @@ fn emit_record_type(
         params = ts_type_params(&t.type_params),
     )
     .unwrap();
-    for f in &r.fields {
+    for (name, ty) in fields {
         writeln!(
             out,
             "  readonly {name}: {ty};",
-            name = f.name.name,
-            ty = ts_type_ref(&f.type_ref),
+            ty = ts_ty(*ty, &commons.ty_intern),
         )
         .unwrap();
     }
@@ -265,7 +268,7 @@ fn emit_record_type(
 fn emit_sum_type(
     out: &mut String,
     t: &TypeDecl,
-    s: &SumBody,
+    variants: &[(String, Vec<(String, TyId)>)],
     commons: &TypedCommons,
     runtime_use: &RuntimeUse,
 ) {
@@ -290,33 +293,20 @@ fn emit_sum_type(
         )
     };
     writeln!(out, "export type {name}{params} =", name = t.name.name).unwrap();
-    for (i, v) in s.variants.iter().enumerate() {
+    for (i, (tag, payload)) in variants.iter().enumerate() {
         let pipe = if i == 0 { " " } else { "|" };
-        if v.payload.is_empty() {
-            let term = if i == s.variants.len() - 1 { ";" } else { "" };
-            writeln!(
-                out,
-                "  {pipe} {{ readonly tag: \"{tag}\" }}{term}",
-                tag = v.name.name
-            )
-            .unwrap();
+        if payload.is_empty() {
+            let term = if i == variants.len() - 1 { ";" } else { "" };
+            writeln!(out, "  {pipe} {{ readonly tag: \"{tag}\" }}{term}").unwrap();
         } else {
-            let fields: Vec<String> = v
-                .payload
+            let fields: Vec<String> = payload
                 .iter()
-                .map(|f| {
-                    format!(
-                        "readonly {name}: {ty}",
-                        name = f.name.name,
-                        ty = ts_type_ref(&f.type_ref)
-                    )
-                })
+                .map(|(name, ty)| format!("readonly {name}: {}", ts_ty(*ty, &commons.ty_intern)))
                 .collect();
-            let term = if i == s.variants.len() - 1 { ";" } else { "" };
+            let term = if i == variants.len() - 1 { ";" } else { "" };
             writeln!(
                 out,
                 "  {pipe} {{ readonly tag: \"{tag}\"; {fields} }}{term}",
-                tag = v.name.name,
                 fields = fields.join("; "),
             )
             .unwrap();
@@ -324,32 +314,23 @@ fn emit_sum_type(
     }
     writeln!(out).unwrap();
     writeln!(out, "export const {name} = {{", name = t.name.name).unwrap();
-    for v in &s.variants {
-        if v.payload.is_empty() {
+    for (tag, payload) in variants {
+        if payload.is_empty() {
             writeln!(
                 out,
                 "  {tag}: {{ tag: \"{tag}\" }} as {name}{never_args},",
-                tag = v.name.name,
                 name = t.name.name,
             )
             .unwrap();
         } else {
-            let ctor_params: Vec<String> = v
-                .payload
+            let ctor_params: Vec<String> = payload
                 .iter()
-                .map(|f| {
-                    format!(
-                        "{name}: {ty}",
-                        name = f.name.name,
-                        ty = ts_type_ref(&f.type_ref)
-                    )
-                })
+                .map(|(name, ty)| format!("{name}: {}", ts_ty(*ty, &commons.ty_intern)))
                 .collect();
-            let obj_fields: Vec<String> = v.payload.iter().map(|f| f.name.name.clone()).collect();
+            let obj_fields: Vec<String> = payload.iter().map(|(name, _)| name.clone()).collect();
             writeln!(
                 out,
                 "  {tag}: {params}({ctor_params}): {name}{params} => ({{ tag: \"{tag}\", {fields} }}),",
-                tag = v.name.name,
                 params = params,
                 ctor_params = ctor_params.join(", "),
                 name = t.name.name,
@@ -4175,6 +4156,155 @@ mod messages_template_tests {
         assert_eq!(
             placeholder_names("{ n , plural, one {#} other {#}}"),
             BTreeSet::from(["n"])
+        );
+    }
+}
+
+/// Differential coverage for `emit_type`/`emit_record_type`/`emit_sum_type`/
+/// `emit_refined_type` reading `bynk-emit::ir::TypeShape` instead of walking
+/// `TypeDecl`/`TypeBody` directly (P6.x, #1188). Every expected string below
+/// was captured from this slice's own converted output and cross-checked by
+/// hand against `ts_type_ref_with`'s formatting (the pre-existing `TypeRef`
+/// renderer `ts_ty`, `emitter.rs:4130`, replaces for record/sum field types) —
+/// the two produce identical text for every shape exercised here (base types,
+/// a bare generic type variable, a named cross-type reference).
+#[cfg(test)]
+mod type_shape_emission_tests {
+    use crate::testkit::{emit_bundle, emit_source};
+
+    const TYPES_FIXTURE: &str = r#"
+commons demo {
+  type Order = { id: String, total: Int }
+  type Box[T] = { value: T }
+  type PaymentError = enum { Declined, InsufficientFunds }
+  type OrderError =
+    | OutOfStock(sku: String, qty: Int)
+    | Payment(reason: PaymentError)
+    embeds PaymentError as Payment
+  type Age = Int where Positive
+  type UserId = opaque Int
+}
+"#;
+
+    #[test]
+    fn record_type_emits_interface_and_namespace_object() {
+        let ts = emit_source(TYPES_FIXTURE);
+        assert!(
+            ts.contains(
+                "export interface Order {\n  readonly id: string;\n  readonly total: number;\n}\n"
+            ),
+            "{ts}"
+        );
+        assert!(ts.contains("export const Order = {\n};\n"), "{ts}");
+    }
+
+    #[test]
+    fn generic_record_type_erases_its_type_parameter() {
+        let ts = emit_source(TYPES_FIXTURE);
+        assert!(
+            ts.contains("export interface Box<T> {\n  readonly value: T;\n}\n"),
+            "{ts}"
+        );
+    }
+
+    #[test]
+    fn sum_type_emits_discriminated_union_and_nullary_constants() {
+        let ts = emit_source(TYPES_FIXTURE);
+        assert!(
+            ts.contains(
+                "export type PaymentError =\n    { readonly tag: \"Declined\" }\n  | \
+                 { readonly tag: \"InsufficientFunds\" };\n"
+            ),
+            "{ts}"
+        );
+        assert!(
+            ts.contains(
+                "export const PaymentError = {\n  \
+                 Declined: { tag: \"Declined\" } as PaymentError,\n  \
+                 InsufficientFunds: { tag: \"InsufficientFunds\" } as PaymentError,\n};\n"
+            ),
+            "{ts}"
+        );
+    }
+
+    #[test]
+    fn sum_type_payload_variants_emit_typed_fields_and_constructors() {
+        let ts = emit_source(TYPES_FIXTURE);
+        assert!(
+            ts.contains(
+                "export type OrderError =\n    \
+                 { readonly tag: \"OutOfStock\"; readonly sku: string; readonly qty: number }\n  | \
+                 { readonly tag: \"Payment\"; readonly reason: PaymentError };\n"
+            ),
+            "{ts}"
+        );
+        assert!(
+            ts.contains(
+                "export const OrderError = {\n  \
+                 OutOfStock: (sku: string, qty: number): OrderError => ({ tag: \"OutOfStock\", sku, qty }),\n  \
+                 Payment: (reason: PaymentError): OrderError => ({ tag: \"Payment\", reason }),\n};\n"
+            ),
+            "{ts}"
+        );
+    }
+
+    #[test]
+    fn refined_type_emits_branded_alias_and_of_constructor_without_unsafe() {
+        let ts = emit_source(TYPES_FIXTURE);
+        assert!(
+            ts.contains("export type Age = number & { readonly __brand: \"Age\" };\n"),
+            "{ts}"
+        );
+        assert!(
+            ts.contains(
+                "export const Age = {\n  of(value: number): Result<Age, ValidationError> {\n    \
+                 if (!Number.isInteger(value)) {\n      \
+                 return Err({ field: \"Age\", message: \"must be an integer\", value });\n    }\n    \
+                 if (!(value > 0)) {\n      \
+                 return Err({ field: \"Age\", message: \"must be positive\", value });\n    }\n    \
+                 return Ok(value as Age);\n  },\n};\n"
+            ),
+            "{ts}"
+        );
+        assert!(!ts.contains("unsafe(value: number): Age"), "{ts}");
+    }
+
+    #[test]
+    fn opaque_type_emits_branded_alias_and_unsafe_constructor() {
+        let ts = emit_source(TYPES_FIXTURE);
+        assert!(
+            ts.contains("export type UserId = number & { readonly __brand: \"UserId\" };\n"),
+            "{ts}"
+        );
+        assert!(
+            ts.contains("  unsafe(value: number): UserId {\n    return value as UserId;\n  },\n"),
+            "{ts}"
+        );
+    }
+
+    /// Exercises `emit_project`'s own Type/Event loops (Decision A/B, #1188) —
+    /// a separate call site from `emit_source`'s single-file `emit()` path
+    /// above, going through the full multi-file project pipeline instead.
+    #[test]
+    fn record_and_sum_types_emit_identically_through_the_project_pipeline() {
+        let ts = emit_bundle(
+            r#"
+type Order = { id: String, total: Int }
+type PaymentError = enum { Declined, InsufficientFunds }
+"#,
+        );
+        assert!(
+            ts.contains(
+                "export interface Order {\n  readonly id: string;\n  readonly total: number;\n}\n"
+            ),
+            "{ts}"
+        );
+        assert!(
+            ts.contains(
+                "export type PaymentError =\n    { readonly tag: \"Declined\" }\n  | \
+                 { readonly tag: \"InsufficientFunds\" };\n"
+            ),
+            "{ts}"
         );
     }
 }

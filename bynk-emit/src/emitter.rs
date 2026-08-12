@@ -23,6 +23,8 @@ use std::sync::Arc;
 
 use self::source_map::SourceMapBuilder;
 
+use crate::ir::lower::lower_type_item_ir;
+use crate::ir::{IrItem, TypeShape};
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
 use bynk_check::builtin_names::map_query;
 use bynk_check::builtin_names::methods::{
@@ -184,7 +186,8 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
     // Types come first (they define interfaces and namespaces).
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
-            emit_type(&mut body, t, commons, &dummy_ctx);
+            let shape = type_shape_for(t, commons, program);
+            emit_type(&mut body, t, &shape, commons, &dummy_ctx);
         }
     }
     // Free functions afterward.
@@ -212,6 +215,28 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
     write_header_single(&mut out, commons, dummy_ctx.runtime_use.bytes(), uses_http);
     out.push_str(&body);
     out
+}
+
+/// `t`'s already-lowered `TypeShape` (`bynk-emit::ir`, P6.6/#1188) — reuses the
+/// canonical `Arc<TypeDecl>` `TypedCommons::types` already holds for `t` rather
+/// than a fresh `Arc::new(t.clone())` per call (Decision B, #1188). `types`
+/// holds an entry for every `CommonsItem::Type` *and* every `CommonsItem::Event`
+/// (`resolver.rs`'s own resolve pass inserts both under the same table, the
+/// event's own synthetic `TypeDecl` — `EventDecl::as_type_decl` — keyed
+/// identically), so this one helper serves both emission loops below with no
+/// special-casing for the event mirror.
+fn type_shape_for(t: &TypeDecl, commons: &TypedCommons, program: &CheckedProgram) -> TypeShape {
+    let def = commons.types.get(&t.name.name).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): type `{}` is not in TypedCommons::types, but the \
+             checker already accepted this declaration",
+            t.name.name
+        )
+    });
+    let IrItem::Type { shape, .. } = lower_type_item_ir(def, program) else {
+        unreachable!("lower_type_item_ir always returns IrItem::Type")
+    };
+    shape
 }
 
 /// A no-op project context for single-file emission. Single-file mode never
@@ -259,11 +284,12 @@ fn single_file_ctx() -> EmitProjectCtx {
 /// generated TS and the serialised source-map v3 JSON (`None` when nothing
 /// mapped — e.g. a unit whose items all came from sibling files).
 pub(crate) fn emit_project(
-    commons: &TypedCommons,
+    program: &CheckedProgram,
     ctx: &EmitProjectCtx,
     source_text: &str,
     source_name: &str,
 ) -> (String, Option<String>) {
+    let commons = program.program();
     let mut out = String::new();
     // The file's source-map builder. The free-function bodies record statement /
     // match-arm checkpoints through their `LowerCtx`; the declaration loops below
@@ -297,7 +323,8 @@ pub(crate) fn emit_project(
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
             smb.borrow_mut().record(out.len(), t.span);
-            emit_type(&mut out, t, commons, ctx);
+            let shape = type_shape_for(t, commons, program);
+            emit_type(&mut out, t, &shape, commons, ctx);
         }
     }
     // Events track, slice 0 (spine #936): an `event` is checker-visible as
@@ -312,7 +339,8 @@ pub(crate) fn emit_project(
         if let CommonsItem::Event(e) = item {
             let t = e.as_type_decl();
             smb.borrow_mut().record(out.len(), t.span);
-            emit_type(&mut out, &t, commons, ctx);
+            let shape = type_shape_for(&t, commons, program);
+            emit_type(&mut out, &t, &shape, commons, ctx);
         }
     }
     for item in &commons.commons.items {
