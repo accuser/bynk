@@ -103,10 +103,10 @@ R6.2–R6.4/R6.6 are correctly attributed away from it (they were never on this 
 
 ## 3. Design questions — settled
 
-> **Provenance.** All six questions below originate in the spine issue (#1137); none was closed there
-> — opening a spine issue states the questions, it does not argue them (`design/tracks/README.md`'s
-> own lifecycle step 1 vs. step 2). This settling pass is where each is actually argued, under this
-> draft PR.
+> **Provenance.** Q1–Q6 below originate in the spine issue (#1137); none was closed there — opening a
+> spine issue states the questions, it does not argue them (`design/tracks/README.md`'s own lifecycle
+> step 1 vs. step 2). This settling pass is where each is actually argued, under this draft PR. Q7
+> (§3.7) was opened later, from #1175 rather than the spine issue, and carries its own Provenance note.
 
 ### 3.1 Q1 — Freeze scope: `emitter/lower.rs`/`emitter.rs` track-wide, or per-slice? **Settled.**
 
@@ -418,10 +418,11 @@ for R6.5 per the reference's own text — is not closed by this settling pass; i
 future slice. Named here so a reviewer of any interim state knows the gap is real, not latent.
 
 **The evidence ages.** Every fact, line number and quotation in this doc was measured against `main`
-at the commit this settling PR is opened from, 9 August 2026. Re-check before a slice proposal cites
-one, per every prior track's own §9 — this doc's own §1 is a direct demonstration of why that
-discipline exists, having found and corrected an imprecision in the spine issue that opened this same
-track only hours earlier.
+at the commit this settling PR is opened from, 9 August 2026 — except §3.7 (Q7), measured separately
+against `main`@`7f5115ee`, 12 August 2026, and stamped inline with its own date for exactly this reason.
+Re-check before a slice proposal cites one, per every prior track's own §9 — this doc's own §1 is a
+direct demonstration of why that discipline exists, having found and corrected an imprecision in the
+spine issue that opened this same track only hours earlier.
 
 ---
 
