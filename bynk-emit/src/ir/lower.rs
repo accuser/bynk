@@ -21,11 +21,11 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    AgentDecl, BinOp, Block, CapabilityDecl, CapabilityOp, EventPattern, EventPatternValue, Expr,
-    ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind, Invariant, LambdaExpr,
+    AgentDecl, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp, EventPattern, EventPatternValue,
+    Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind, Invariant, LambdaExpr,
     LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, ProviderDecl, ProviderOp,
-    ServiceDecl, ServiceProtocol, Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp,
-    expr_children,
+    QualifiedName, ServiceDecl, ServiceProtocol, Statement, StoreField, Transition, TypeBody,
+    TypeDecl, UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -34,10 +34,10 @@ use crate::emitter::{
     match_needs_if_chain,
 };
 use crate::ir::{
-    ActorBinder, BindingMode, CommitShape, ConstVal, CorsIr, EventPatternIr, EventPatternValueIr,
-    Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind, IrHandler, IrItem, IrPat,
-    IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr,
-    SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
+    ActorBinder, BindingMode, CapRefIr, CommitShape, ConstVal, CorsIr, EventPatternIr,
+    EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind, IrHandler,
+    IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody,
+    ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -1440,12 +1440,17 @@ fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
 /// ([`crate::ir::IrItem`]'s own doc comment has the full grounding for why
 /// this, unlike `Actor`, was buildable this slice). `external: true` means
 /// `ops` is empty by the field's own doc comment
-/// (`bynk-syntax/src/ast.rs:592-595`) — nothing to lower.
+/// (`bynk-syntax/src/ast.rs:592-595`) — nothing to lower. `given` lowers
+/// unconditionally (review of #1186): `provider.given` is populated the
+/// same way regardless of `external` (a provider's own dependency list,
+/// not something the brace block gates), and [`ProviderBody::Bynk`]'s own
+/// doc comment names why it, unlike `module`, is not deferrable.
 pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedProgram) -> IrItem {
     let body = if provider.external {
         ProviderBody::External
     } else {
         ProviderBody::Bynk {
+            given: provider.given.iter().map(lower_cap_ref_ir).collect(),
             ops: provider
                 .ops
                 .iter()
@@ -1457,6 +1462,17 @@ pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedP
         def: provider.provider_name.name.clone(),
         cap: provider.capability.name.clone(),
         body,
+    }
+}
+
+/// P6.14 (#1174, review of #1186): adapt one `given` entry into a real
+/// [`crate::ir::CapRefIr`] — [`CapRefIr`]'s own doc comment has the full
+/// grounding for the `QualifiedName -> String` flattening and for why a
+/// `Some` prefix is preserved unresolved.
+fn lower_cap_ref_ir(cap_ref: &CapRef) -> CapRefIr {
+    CapRefIr {
+        context: cap_ref.context.as_ref().map(QualifiedName::joined),
+        name: cap_ref.name.name.clone(),
     }
 }
 
@@ -6798,17 +6814,30 @@ capability Store {
     }
 
     #[test]
-    fn lower_provider_item_ir_assembles_bynk_ops_in_declaration_order() {
+    fn lower_provider_item_ir_assembles_bynk_ops_and_given_in_declaration_order() {
+        // `given Random, Clock` (reverse-alphabetical, deliberately) pins
+        // that `given`'s own declaration order survives — neither op body
+        // below calls either capability, pinning review of #1186's point
+        // that an *unused* `given` entry must still appear (it feeds R8.1's
+        // own `deps` constructor, not anything the op bodies reference).
         let program = checked_context_program(
             r#"
 context demo
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+capability Random {
+  fn next() -> Effect[Int]
+}
 
 capability Store {
   fn get(key: String) -> Effect[Int]
   fn put(key: String, value: Int) -> Effect[()]
 }
 
-provides Store = MemStore {
+provides Store = MemStore given Random, Clock {
   fn get(key: String) -> Effect[Int] {
     Effect.pure(0)
   }
@@ -6825,9 +6854,15 @@ provides Store = MemStore {
         };
         assert_eq!(def, "MemStore");
         assert_eq!(cap, "Store");
-        let ProviderBody::Bynk { ops } = body else {
+        let ProviderBody::Bynk { given, ops } = body else {
             panic!("expected ProviderBody::Bynk, got {:?}", body)
         };
+        assert_eq!(
+            given.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(),
+            vec!["Random", "Clock"],
+            "given's own declaration order preserved, unused entries included"
+        );
+        assert!(given.iter().all(|g| g.context.is_none()));
         assert_eq!(ops.len(), 2, "declaration order preserved");
 
         assert_eq!(ops[0].name, "get");
@@ -6929,9 +6964,11 @@ provides Store = MemStore given Clock {
         let IrItem::Provider { body, .. } = &ir else {
             panic!("expected IrItem::Provider, got {:?}", ir)
         };
-        let ProviderBody::Bynk { ops } = body else {
+        let ProviderBody::Bynk { given, ops } = body else {
             panic!("expected ProviderBody::Bynk, got {:?}", body)
         };
+        assert_eq!(given.len(), 1);
+        assert_eq!(given[0].name, "Clock");
         let get = &ops[0];
         let tail = fn_tail(&get.body);
         let IrExprKind::Call { callee, args, .. } = &tail.kind else {
@@ -6942,5 +6979,100 @@ provides Store = MemStore given Clock {
             Callee::Capability { cap, op } if cap == "Clock" && op == "now"
         ));
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn lower_cap_ref_ir_local_capability_has_no_context() {
+        let cap_ref = CapRef {
+            context: None,
+            name: bynk_syntax::ast::Ident {
+                name: "Clock".to_string(),
+                span: Span::default(),
+            },
+            span: Span::default(),
+        };
+        let ir = lower_cap_ref_ir(&cap_ref);
+        assert_eq!(ir.context, None);
+        assert_eq!(ir.name, "Clock");
+    }
+
+    #[test]
+    fn lower_cap_ref_ir_preserves_a_cross_context_prefix() {
+        // `given B.Cap` (v0.15) is out of `checked_context_program`'s own
+        // fixture scope (no cross-context `uses`/`consumes`, feedback
+        // memory "bynk-emit test harness scope") — pins `lower_cap_ref_ir`'s
+        // own `QualifiedName -> String` flattening directly against a
+        // hand-built `CapRef`, the same posture the external-provider test
+        // above already takes for a branch the fixture cannot reach.
+        let cap_ref = CapRef {
+            context: Some(QualifiedName {
+                parts: vec![bynk_syntax::ast::Ident {
+                    name: "Billing".to_string(),
+                    span: Span::default(),
+                }],
+                span: Span::default(),
+            }),
+            name: bynk_syntax::ast::Ident {
+                name: "Ledger".to_string(),
+                span: Span::default(),
+            },
+            span: Span::default(),
+        };
+        let ir = lower_cap_ref_ir(&cap_ref);
+        assert_eq!(ir.context.as_deref(), Some("Billing"));
+        assert_eq!(ir.name, "Ledger");
+    }
+
+    #[test]
+    fn lower_provider_op_ir_binds_its_own_param_into_scope() {
+        // Review of #1186: every other provider-op test's own body ignores
+        // its params, so `cx.bind` (the one line seeding the scope
+        // `lower_ident_ir` needs — the reason this function is a sibling of
+        // `lower_fn_body_ir` rather than a widening of it) could regress
+        // silently. Pins a param reference resolving to `Local`, not the
+        // unresolved-ident `todo!()` or a same-named-global misclassification.
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get(key: String) -> Effect[String]
+}
+
+provides Store = MemStore {
+  fn get(key: String) -> Effect[String] {
+    Effect.pure(key)
+  }
+}
+"#,
+        );
+        let provider = find_provider(&program, "MemStore");
+        let ir = lower_provider_item_ir(provider, &program);
+        let IrItem::Provider { body, .. } = &ir else {
+            panic!("expected IrItem::Provider, got {:?}", ir)
+        };
+        let ProviderBody::Bynk { ops, .. } = body else {
+            panic!("expected ProviderBody::Bynk, got {:?}", body)
+        };
+        let get = &ops[0];
+        let key_ty = get.params[0].1;
+        let tail = fn_tail(&get.body);
+        // `Effect.pure(key)` desugars to `IrExprKind::Pure`, wrapping `key`
+        // as its own sole value.
+        let IrExprKind::Pure { value } = &tail.kind else {
+            panic!("expected Pure, got {:?}", tail.kind)
+        };
+        assert!(
+            matches!(
+                &value.kind,
+                IrExprKind::Local(name) if name == "key"
+            ),
+            "expected the op's own `key` param to resolve as a bound Local, got {:?}",
+            value.kind
+        );
+        assert_eq!(
+            value.ty, key_ty,
+            "the resolved Local's type must be the same TyId bind() seeded"
+        );
     }
 }

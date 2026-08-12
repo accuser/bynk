@@ -564,8 +564,28 @@ pub(crate) enum IrStmt {
 ///   `bynk-syntax/src/ast.rs:604-611`). [`ProviderBody::Bynk`]'s own `ops:
 ///   Vec<ProviderOpIr>` is real per-op signature-plus-body, one
 ///   `ProviderOpIr` per [`lower::lower_provider_op_ir`] call, in
-///   declaration order. [`ProviderBody::External`] deliberately carries
-///   **no** `module` field, despite the reference's own parenthetical —
+///   declaration order.
+///
+///   **`given` is carried, `module` is not — the two omissions are not
+///   symmetric** (review of #1186). R8.1's own `Provider{Bynk}` row is
+///   `export class` with a **`deps` constructor**
+///   (`bynk-greenfield-compiler.md:1309`), built today straight off
+///   `ProviderDecl::given` (`bynk-emit/src/project.rs:2608-2620`) — unlike
+///   `module`, `given` is not one-phase-up data, it lives on the very
+///   `ProviderDecl` this function already holds, and it is not
+///   reconstructible from the lowered op bodies alone: an unused `given`
+///   capability, a cross-context `given B.Cap` prefix (`CapRef::context`,
+///   v0.15), and declaration order would all silently vanish if this
+///   variant carried only `ops`. So [`ProviderBody::Bynk`] also carries
+///   `given: Vec<CapRefIr>` — [`CapRefIr`] adapts `CapRef` under this
+///   module's usual "no arena, bare name" substitution (`context`'s own
+///   `QualifiedName` flattened via `.joined()`), leaving *resolving* a
+///   prefix against `consumes`/aliases to whichever future project-level
+///   pass also resolves `module` — [`lower::lower_provider_item_ir`] does
+///   no more than [`lower::lower_capability_item_ir`] already declines to
+///   do for a capability op's own type refs. [`ProviderBody::External`]
+///   deliberately carries **no** `module` field, despite the reference's
+///   own parenthetical —
 ///   that name lives one phase up from this per-context `CheckedProgram`,
 ///   on the adapter's own `binding "<module>"` clause
 ///   (`BindingDecl::module`, `bynk-syntax/src/ast.rs:186`), resolved only
@@ -750,19 +770,51 @@ pub(crate) enum IrItem {
 /// adapter-supplied binding) becomes `External`, `false` (a real Bynk-
 /// authored implementation) becomes `Bynk`. See [`IrItem`]'s own doc
 /// comment for why `External` carries no `module` field despite the
-/// reference's own parenthetical.
+/// reference's own parenthetical, and why it carries `given` instead of
+/// omitting that too.
 #[derive(Debug, Clone)]
 pub(crate) enum ProviderBody {
-    /// A real Bynk-authored implementation — every operation,
-    /// [`lower::lower_provider_op_ir`]'s own return value, in declaration
-    /// order. Never empty: `ProviderDecl::ops` is only ever empty when
-    /// `external` is `true`, which lowers to [`ProviderBody::External`]
-    /// instead.
-    Bynk { ops: Vec<ProviderOpIr> },
+    /// A real Bynk-authored implementation.
+    Bynk {
+        /// `ProviderDecl::given`, adapted to [`CapRefIr`] — needed to build
+        /// R8.1's own `Provider{Bynk}` `deps` constructor, and not
+        /// reconstructible from `ops` alone ([`IrItem`]'s own doc comment
+        /// has the full grounding, review of #1186). In declaration order.
+        given: Vec<CapRefIr>,
+        /// Every operation, [`lower::lower_provider_op_ir`]'s own return
+        /// value, in declaration order. **Not** guaranteed non-empty
+        /// (review of #1186): `external` is set purely by brace-block
+        /// *absence*, not emptiness (`bynk-syntax/src/parser/declarations.rs:1795-1811`),
+        /// so `provides Cap = P {}` also lowers here, with `ops: vec![]` —
+        /// the `bynk.provider.missing_operation` check that would reject
+        /// it is a whole-project pass (`bynk-check/src/project_model.rs:2468`),
+        /// not part of `check_provider_decls`, so a bare `CheckedProgram`
+        /// (this function's only input) is certified without it.
+        ops: Vec<ProviderOpIr>,
+    },
     /// `provides Cap = Name` with no brace block — the adapter's own
     /// binding supplies the implementation; the emitter produces no class
     /// (`bynk-greenfield-compiler.md:1310`, `Provider{External} | nothing`).
     External,
+}
+
+/// P6.14's real `CapRefIr` ([DECISION A], #1174, review of #1186) — one
+/// `bynk_syntax::ast::CapRef` entry of a provider's own `given` clause,
+/// under this module's usual "no arena, bare name" substitution:
+/// `context: Option<QualifiedName>` flattens to `Option<String>` via
+/// `QualifiedName::joined()` (the same `.`-joined form
+/// `resolve_consume_prefix` — `bynk-emit/src/project.rs` — already
+/// resolves against `consumes`/aliases), and `name: Ident` flattens to
+/// `String`, mirroring every other bare-name identity field in this module.
+/// Deliberately **not** resolved further here: which context a `Some`
+/// prefix actually names is whole-project `consumes`/alias data, the same
+/// phase boundary [`IrItem`]'s own doc comment already names for
+/// `ProviderBody::External`'s missing `module` field — this type only
+/// preserves what `CapRef` itself carries, unresolved.
+#[derive(Debug, Clone)]
+pub(crate) struct CapRefIr {
+    pub context: Option<String>,
+    pub name: String,
 }
 
 /// P6.14's real `ProviderOpIr` ([DECISION A], #1174) — one `ProviderOp`
