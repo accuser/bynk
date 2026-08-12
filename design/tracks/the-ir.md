@@ -395,6 +395,20 @@ gap with a named exclusion for `ir.rs`/`ir/lower.rs`, so the probe can now genui
 remaining slices land. The prose criterion (§5) is still the true target — a reader of this or any
 later P6.x slice should not read "last row in the table" as "this slice reaches the completion probe."
 
+**The table above is the "build the IR" decomposition — every row shipped** (P6.0–P6.9 as listed,
+plus `Agent`/`Service`/`Capability`/`Provider`/the websocket lifecycle slices §3.7 names as landed
+past this table's own original scope, `Actor` settled as a deliberate non-build). It is not the
+**cutover** decomposition §5's own completion criterion actually needs — the slice order for
+switching `emitter.rs`/`emitter/lower.rs` themselves over to read `bynk-emit::ir` is scoped
+separately in #1187 (opened once `Provider` and the `ast_importers` redefinition — the two blockers
+§3.7 named — landed). First slice: `Type` (#1188, `emit_type`/`emit_record_type`/`emit_sum_type`/
+`emit_refined_type` now read `TypeShape` instead of `TypeDecl`/`TypeBody`) — landed. `ast_importers`
+itself does not move from this slice (`emitter/emit.rs` reaches AST types via `use super::*` without
+ever spelling `bynk_syntax::ast` literally, the same invisible-to-the-probe shape this section's own
+"known gap" paragraph above already names for `IrItem`'s fields) — see #1187 for the remaining
+slice order (`Capability`/`Provider`, then `Agent`, then `Service`, each gated on #1189's
+comparison/arithmetic `IrExprKind` gap where the slice lowers real predicate or body expressions).
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
