@@ -186,7 +186,7 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
     // Types come first (they define interfaces and namespaces).
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
-            let shape = type_shape_for(t, commons, program);
+            let shape = type_shape_for(t, program);
             emit_type(&mut body, t, &shape, commons, &dummy_ctx);
         }
     }
@@ -225,7 +225,17 @@ pub(crate) fn emit(program: &CheckedProgram) -> String {
 /// event's own synthetic `TypeDecl` — `EventDecl::as_type_decl` — keyed
 /// identically), so this one helper serves both emission loops below with no
 /// special-casing for the event mirror.
-fn type_shape_for(t: &TypeDecl, commons: &TypedCommons, program: &CheckedProgram) -> TypeShape {
+///
+/// Derives `commons` from `program` itself rather than taking it as a
+/// separate parameter (review on #1190): the `TyId`s this returns are minted
+/// from `program.program().ty_intern`, and every caller renders them straight
+/// back through that same `commons.ty_intern` (`emit_record_type`/
+/// `emit_sum_type`'s `ts_ty` calls) — a caller free to pass a `TypedCommons`
+/// from a *different* check run would hit `Types::get`'s cross-table panic
+/// instead of a diagnostic. One parameter makes that invariant
+/// unrepresentable instead of merely true today.
+fn type_shape_for(t: &TypeDecl, program: &CheckedProgram) -> TypeShape {
+    let commons = program.program();
     let def = commons.types.get(&t.name.name).unwrap_or_else(|| {
         panic!(
             "bynk internal error (ADR 0334): type `{}` is not in TypedCommons::types, but the \
@@ -323,7 +333,7 @@ pub(crate) fn emit_project(
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
             smb.borrow_mut().record(out.len(), t.span);
-            let shape = type_shape_for(t, commons, program);
+            let shape = type_shape_for(t, program);
             emit_type(&mut out, t, &shape, commons, ctx);
         }
     }
@@ -339,7 +349,7 @@ pub(crate) fn emit_project(
         if let CommonsItem::Event(e) = item {
             let t = e.as_type_decl();
             smb.borrow_mut().record(out.len(), t.span);
-            let shape = type_shape_for(&t, commons, program);
+            let shape = type_shape_for(&t, program);
             emit_type(&mut out, &t, &shape, commons, ctx);
         }
     }
