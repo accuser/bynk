@@ -343,6 +343,7 @@ rejected — `project.rs`/`project/tests_emit.rs` also import `bynk_syntax::ast`
 both files along with `ir/`'s legitimate two. `ast_importers` now reads **9** with the exclusion
 applied (11 minus `ir.rs`/`ir/lower.rs`) and can structurally reach **0** once every remaining
 counted file's AST-declaration reads move to `IrItem`.
+
 **§3.7 (Q7, #1175) settles what "calls only into `bynk-emit::ir`'s lowering pass" requires structurally,
 a second correction of the same kind as the one above.** The phrase does not mean `emitter/lower.rs`
 stops writing TypeScript source text — it cannot, until phase 7's own printer (R7.2/R7.3) exists to take
