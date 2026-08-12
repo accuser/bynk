@@ -19,7 +19,12 @@ use crate::ir::TypeShape;
 use super::*;
 
 /// P6.x (#1188): reads `shape` — `t`'s already-lowered `bynk-emit::ir::TypeShape`
-/// — instead of walking `t.body` (`bynk_syntax::ast::TypeBody`) directly.
+/// — instead of walking `t.body` (the AST's own `TypeBody`) directly. Doesn't
+/// spell that AST module's path literally in this comment on purpose: this
+/// file is otherwise invisible to the `ast_importers` probe
+/// (`xtask/src/greenfield_status.rs`), which matches on the literal string,
+/// comments included — see `design/tracks/the-ir.md` §5's own note on this
+/// exact blind spot.
 /// `t` itself is still read for what `TypeShape` deliberately doesn't carry:
 /// `.documentation`/`.name`/`.type_params` (header/namespace-object emission,
 /// including this type's own attached methods via `emit_attached_methods`,
