@@ -481,7 +481,7 @@ pub(crate) enum IrStmt {
 ///   (`bynk-check/src/actors.rs`'s `parse_claim_predicate`) — no `Callee`,
 ///   no `expr_types` entry, no typing at all, because claims are
 ///   deliberately untyped JSON (`context_checks.rs`'s own
-///   `check_actor_contracts` doc) and lowered straight to a JS string by
+///   `refinement_predicate_unsupported` note) and lowered straight to a JS string by
 ///   `claim_predicate_to_js`. An `IrExpr` here would mean inventing a
 ///   typing for a surface the checker deliberately never gave one. (2)
 ///   `scheme: AuthScheme` names a type the reference defines nowhere else
@@ -489,8 +489,8 @@ pub(crate) enum IrStmt {
 ///   `Capability`'s own `OpSig` carries below, except here a real 5-variant
 ///   candidate already ships (`bynk-check::actors::Scheme`), so this piece
 ///   alone is specifiable. (3) The decisive finding: every real consumer of
-///   actor data — the shipped emitter's own five seam resolvers
-///   (`bearer_seam_for`/`oidc_seam_for`/`signature_seam_for`/
+///   actor data — the five `bynk-check` seam resolvers the shipped emitter
+///   consumes (`bearer_seam_for`/`oidc_seam_for`/`signature_seam_for`/
 ///   `sum_members_for`/`caller_binder_for`, `bynk-check/src/actors.rs`) and
 ///   the reference's own R8.11 (`deps` derivation)/R8.13 (boundary-wrapper
 ///   verification) — is **handler-keyed, not declaration-keyed**: binder
