@@ -679,8 +679,10 @@ pub(crate) enum IrItem {
 /// `type_params` names, mirroring `context_checks::build_capability_op_info`'s
 /// own `vars` treatment (`bynk-check/src/context_checks.rs`) so a generic
 /// op's own `T` survives as `Ty::Var("T")` rather than collapsing to
-/// `Ty::Unit`, the same failure mode that treatment's own doc comment
-/// warns against.
+/// `Ty::Unit`. On a genuinely unresolvable name a `params`/`return_ty` entry
+/// *is* `Ty::Unit`, deliberately — see [`lower::lower_op_sig_ir`]'s own doc
+/// comment for why that mirrors the checker's own fallback rather than
+/// panicking.
 #[derive(Debug, Clone)]
 pub(crate) struct OpSig {
     pub name: String,

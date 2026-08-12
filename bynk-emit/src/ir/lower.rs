@@ -1376,13 +1376,31 @@ pub(crate) fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedPr
 /// [`crate::ir::OpSig`] — the reference's own `IrItem::Capability` sketch
 /// names this type (`ops: Vec<OpSig>`) but never defines it. Resolves
 /// `params`/`return_ty` in the scope `op.type_params` names, the same
-/// per-op rigid-variable seeding [`context_checks::build_capability_op_info`]
+/// per-op rigid-variable seeding `context_checks::build_capability_op_info`
 /// (`bynk-check/src/context_checks.rs`) already gives a generic op for the
 /// checker-facing `CapabilityOpInfo` — an op's own `[T, …]` list is scoped to
 /// the op itself, not the capability (`CapabilityDecl` carries no
 /// `type_params` of its own), so this seeds a fresh [`LowerIrCtx`] per op
 /// rather than reusing [`fn_rigid_type_vars`]'s fn/method-shaped
 /// receiver-widening, which does not apply here.
+///
+/// **Not an ADR 0334 `.expect()`-style panic on a resolve miss,
+/// deliberately** — the same posture [`lower_agent_item_ir`]'s own `key_ty`
+/// doc comment already argues for `agent.key_type`, and for the identical
+/// reason: a capability op's own `params`/`return_type` are never actually
+/// resolution-checked by the checker at all. The resolver skips
+/// `CommonsItem::Capability` outright (`resolver.rs:301/491/575`, "v0.5
+/// items are resolved via a separate context-level pass"); the context-level
+/// pass that replaces it, `check_capability_decls`, only calls
+/// `checker::record_type_refs`, which silently does nothing on a name absent
+/// from `types` rather than erroring (`checker.rs:2593-2597`); and
+/// `build_capability_op_info` itself, the checker-facing constructor this
+/// pass mirrors, degrades to `Ty::Unit` on the same miss rather than
+/// treating it as impossible (`context_checks.rs:36,40`). `capability Store
+/// { fn get(k: Bogus) -> Effect[Int] }` certifies today, silently. Panicking
+/// here on a state the checker itself accepts would make this the first ADR
+/// 0334 site in this module to assert a guarantee that does not actually
+/// hold — mirror the checker's own fallback instead (review of #1182).
 fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
     let type_vars: HashSet<String> = op
         .type_params
@@ -1394,26 +1412,15 @@ fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
         .params
         .iter()
         .map(|p| {
-            let ty = cx.resolve_type_ref(&p.type_ref).unwrap_or_else(|| {
-                panic!(
-                    "bynk internal error (ADR 0334): capability op `{}`'s parameter `{}` does \
-                     not resolve in this pass's own rigid-variable scope, but the checker \
-                     already accepted this capability — bynk-emit::ir::lower's type_vars \
-                     disagrees with bynk-check's Ctx::type_vars",
-                    op.name.name, p.name.name
-                )
-            });
+            let ty = cx
+                .resolve_type_ref(&p.type_ref)
+                .unwrap_or_else(|| cx.unit_ty());
             (p.name.name.clone(), ty)
         })
         .collect();
-    let return_ty = cx.resolve_type_ref(&op.return_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): the return type of capability op `{}` does not \
-             resolve in this pass's own rigid-variable scope, but the checker already accepted \
-             this capability",
-            op.name.name
-        )
-    });
+    let return_ty = cx
+        .resolve_type_ref(&op.return_type)
+        .unwrap_or_else(|| cx.unit_ty());
     OpSig {
         name: op.name.name.clone(),
         type_params: op
@@ -6552,5 +6559,126 @@ capability Store {
             now.type_params.is_empty(),
             "a sibling non-generic op must not see `get`'s own `T` in scope"
         );
+    }
+
+    #[test]
+    fn lower_op_sig_ir_resolves_a_generic_op_type_param_inside_a_type_argument() {
+        // Review of #1182: `Effect[T]` alone only exercises `TypeRef::Effect`'s
+        // arm — a bare wrapper around the var. `Box[T]` exercises
+        // `TypeRef::App`'s arm instead, where `T` is a *type argument*, not
+        // the whole ref, and a wrong rigid-var scope fails differently
+        // (`types.get(&name.name)?` on the *bare var itself*, not on the
+        // outer `Box`) — the other half of the resolution surface
+        // `lower_op_sig_ir`'s own doc comment claims to cover.
+        let program = checked_context_program(
+            r#"
+context demo
+
+type Box[A] = { value: A }
+
+capability Store {
+  fn get[T](box: Box[T]) -> Effect[T]
+}
+"#,
+        );
+        let cap = find_capability(&program, "Store");
+        let ir = lower_capability_item_ir(cap, &program);
+        let IrItem::Capability { ops, .. } = &ir else {
+            panic!("expected IrItem::Capability, got {:?}", ir)
+        };
+        let get = &ops[0];
+        assert!(
+            matches!(
+                &*program.program().ty_intern.get(get.params[0].1),
+                Ty::Named { name, args, .. }
+                    if name == "Box"
+                        && args.len() == 1
+                        && matches!(
+                            &*program.program().ty_intern.get(args[0]),
+                            Ty::Var(n) if n == "T"
+                        )
+            ),
+            "expected Box[T] with T resolved as a rigid Ty::Var argument, got {:?}",
+            program.program().ty_intern.get(get.params[0].1)
+        );
+    }
+
+    #[test]
+    fn lower_op_sig_ir_falls_back_to_unit_on_an_unresolvable_type_like_the_checker_does() {
+        // Review of #1182: a capability op's own param/return types are
+        // never actually resolution-checked upstream (the resolver skips
+        // `CommonsItem::Capability`, and `check_capability_decls` only
+        // records refs, never errors on a miss) — so `Bogus` here
+        // certifies today, and `lower_op_sig_ir` must mirror the checker's
+        // own `build_capability_op_info` fallback (`Ty::Unit`) rather than
+        // panic on a state that is, in fact, reachable from source.
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get(key: Bogus) -> Effect[Bogus]
+}
+"#,
+        );
+        let cap = find_capability(&program, "Store");
+        // Would already have panicked inside `checked_context_program`'s own
+        // `.expect("certify")` if this were rejected upstream — reaching
+        // here at all is part of what this test pins.
+        let ir = lower_capability_item_ir(cap, &program);
+        let IrItem::Capability { ops, .. } = &ir else {
+            panic!("expected IrItem::Capability, got {:?}", ir)
+        };
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].params[0].1),
+            Ty::Unit
+        ));
+        assert!(matches!(
+            &*program.program().ty_intern.get(ops[0].return_ty),
+            Ty::Unit
+        ));
+    }
+
+    #[test]
+    fn lower_op_sig_ir_agrees_with_the_checkers_own_capability_op_info() {
+        // Review of #1182: `OpSig`'s own doc comment states this mirrors
+        // `CapabilityOpInfo` — same per-op var seeding, same `types` map,
+        // same non-peeled `return_ty`. Checks the stated invariant directly
+        // against the checker's own constructor rather than leaving it only
+        // asserted in prose, so a later change to either side's rigid-var
+        // seeding fails this test instead of silently drifting.
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Store {
+  fn get[T](key: String) -> Effect[T]
+}
+"#,
+        );
+        let cap = find_capability(&program, "Store");
+        let ir = lower_capability_item_ir(cap, &program);
+        let IrItem::Capability { ops, .. } = &ir else {
+            panic!("expected IrItem::Capability, got {:?}", ir)
+        };
+        let op = &ops[0];
+
+        let info = context_checks::build_capability_op_info(
+            &cap.ops[0],
+            &program.program().types,
+            &program.program().ty_intern,
+        );
+
+        assert_eq!(op.name, info.name);
+        assert_eq!(op.type_params, info.type_params);
+        assert_eq!(
+            op.params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+            info.param_names
+        );
+        assert_eq!(
+            op.params.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
+            info.params
+        );
+        assert_eq!(op.return_ty, info.return_ty);
     }
 }
