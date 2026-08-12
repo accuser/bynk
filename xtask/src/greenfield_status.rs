@@ -1315,13 +1315,38 @@ fn ide_emit_edge(root: &Path) -> Probe {
 
 // --- Gated probe 8: ast_importers -----------------------------------------
 
-/// R6.13. Files in `bynk-emit/src` that import `bynk_syntax::ast` — phase 6 (the AST
-/// import surface `bynk-emit` still depends on directly).
+/// #1176: `bynk-emit::ir`'s own two files — named exactly, not by path prefix, the same
+/// permanent-carve-out discipline [`NAMED_FS_EXCEPTIONS`] and [`emit_diagnostics`]'s
+/// registry cross-reference already use. An `Ast → Ir` lowering pass importing
+/// `bynk_syntax::ast` is that pass's entire job, not the AST-walking this track is
+/// closing (`the-ir.md` §5's own P6.9 correction, #1167) — but `project.rs` and
+/// `project/tests_emit.rs` also import `bynk_syntax::ast` today (`EmitProjectCtx`
+/// holding `ActorDecl`/`AgentDecl` fields directly; test/suite emission reading
+/// `TypeRef`/`HandlerKind`), and that *is* exactly the still-open R6.13 defect this
+/// probe tracks (P6.6: "closes the emitter reading AST declarations directly"). A
+/// path-prefix rule scoped to `emitter/**` would exclude those two files right along
+/// with `ir/`'s legitimate ones, silently undercounting real remaining work — see
+/// [`is_named_ast_importer`].
+const AST_IMPORTER_EXCEPTIONS: &[&str] = &["ir.rs", "ir/lower.rs"];
+
+/// Is `rel_path` (relative to `bynk-emit/src`) one of [`AST_IMPORTER_EXCEPTIONS`]?
+fn is_named_ast_importer(rel_path: &Path) -> bool {
+    let rel = rel_path.to_string_lossy().replace('\\', "/");
+    AST_IMPORTER_EXCEPTIONS.contains(&rel.as_str())
+}
+
+/// R6.13. Files in `bynk-emit/src` that import `bynk_syntax::ast`, excluding
+/// [`AST_IMPORTER_EXCEPTIONS`] — phase 6 (the AST import surface `bynk-emit` still
+/// depends on directly). #1176: the unexcluded, crate-wide count could never reach 0
+/// while `bynk-emit::ir`'s lowering pass exists at all; this exclusion is what lets the
+/// probe track the track's real completion criterion (`the-ir.md` §5) instead of a
+/// floor this track's own IR module structurally cannot clear.
 fn ast_importers(root: &Path) -> Probe {
     let dir = root.join("bynk-emit/src");
     let files = rust_files(&dir)
         .into_iter()
         .filter(|(_, contents)| contents.contains("bynk_syntax::ast"))
+        .filter(|(path, _)| !is_named_ast_importer(path.strip_prefix(&dir).unwrap_or(path)))
         .count();
     Probe {
         name: "ast_importers",
@@ -1753,6 +1778,24 @@ mod tests {
         assert!(registry.contains("bynk.parse.expected_expression"));
         // A commons/namespace path, not a diagnostic code — #999's own verified survey.
         assert!(!registry.contains("bynk.locale"));
+    }
+
+    // --- ast_importers (#1176) ------------------------------------------------
+
+    /// The exclusion is named, not prefixed: `ir.rs`/`ir/lower.rs` are the lowering
+    /// pass's own legitimate `Ast → Ir` import, but `project.rs`/`project/tests_emit.rs`
+    /// (which also import `bynk_syntax::ast`, via `EmitProjectCtx` and test/suite
+    /// emission) must stay counted — that's exactly the still-open R6.13 defect this
+    /// probe tracks. A path-prefix rule (e.g. "only `emitter/**` counts") would have
+    /// excluded those two right along with `ir/`'s, silently undercounting real work.
+    #[test]
+    fn ast_importer_exclusion_is_named_not_prefixed() {
+        assert!(is_named_ast_importer(Path::new("ir.rs")));
+        assert!(is_named_ast_importer(Path::new("ir/lower.rs")));
+        assert!(!is_named_ast_importer(Path::new("project.rs")));
+        assert!(!is_named_ast_importer(Path::new("project/tests_emit.rs")));
+        assert!(!is_named_ast_importer(Path::new("emitter/lower.rs")));
+        assert!(!is_named_ast_importer(Path::new("ir/other.rs")));
     }
 
     // --- fs_below_driver / test_density (trailing `#[cfg(test)] mod tests {}`) ---

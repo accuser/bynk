@@ -276,6 +276,16 @@ correction — but the probe itself needs a stated exclusion for `bynk-emit::ir`
 read as this track's own true finish line, rather than a bar this track's own IR module structurally
 cannot clear.
 
+**#1176 lands that stated exclusion**, settling the "or" above: a small, named exclusion list
+(`ir.rs`, `ir/lower.rs`) rather than a path-prefix rule scoped to `emitter/`. A prefix rule was
+rejected — `project.rs`/`project/tests_emit.rs` also import `bynk_syntax::ast` today
+(`EmitProjectCtx` holding `ActorDecl`/`AgentDecl` fields directly, and test/suite emission reading
+`TypeRef`/`HandlerKind`), and that import *is* the still-open R6.13 defect this probe exists to track
+(§6's P6.6 row), not a lowering-pass import; scoping to `emitter/**` would have silently excluded
+both files along with `ir/`'s legitimate two. `ast_importers` now reads **9** with the exclusion
+applied (11 minus `ir.rs`/`ir/lower.rs`) and can structurally reach **0** once every remaining
+counted file's AST-declaration reads move to `IrItem`.
+
 ---
 
 ## 6. Slice decomposition
@@ -297,11 +307,12 @@ cannot clear.
 | **P6.8** | `CommitShape` as IR data, not emitter control flow | R6.15 | P6.6, P6.7 |
 | **P6.9** | Handler-invocation origin-independence — no IR node branches on caller kind | R6.16 | P6.6, P6.8 (needs its own investigation at proposal time — this settling pass did not trace the shipped wrapper-selection rule R6.16's own rationale names in full) |
 
-**Completion probe:** `ast_importers` = **0** (§5) — live today at **11**, gated
-(`greenfield_status_table_is_current`). §5's own P6.9 correction (#1167) names why this crate-wide
-count cannot reach 0 while `bynk-emit::ir` exists at all under its current definition — the prose
-criterion (§5) is the true target; a reader of this or any later P6.x slice should not read "last row
-in the table" as "this slice reaches the completion probe."
+**Completion probe:** `ast_importers` = **0** (§5) — live today at **9**, gated
+(`greenfield_status_table_is_current`). §5's own P6.9 correction (#1167) named why the prior,
+unexcluded crate-wide count could never reach 0 while `bynk-emit::ir` exists at all; #1176 closed that
+gap with a named exclusion for `ir.rs`/`ir/lower.rs`, so the probe can now genuinely reach 0 as the
+remaining slices land. The prose criterion (§5) is still the true target — a reader of this or any
+later P6.x slice should not read "last row in the table" as "this slice reaches the completion probe."
 
 ---
 
