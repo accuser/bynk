@@ -529,23 +529,8 @@ fn lower_service_handler_body_ir(
 /// `ServiceProtocol::WebSocket` (`HandlerKind::Close`'s own doc comment
 /// says so), and the checker itself dispatches on exactly this `(kind,
 /// protocol)` pair (`context_checks.rs:1938-1945`) — without `protocol`
-/// here, the WebSocket deferral below would wrongly capture every queue
-/// consumer in the language too.
-///
-/// **The named deferral.** A `from websocket` service's `on open`/`on
-/// message`/`on close` handler body is not lowered — the checker injects a
-/// synthetic leading `connection: Connection[out]` param into its own
-/// `params_for_check` (`open_connection_param`, `context_checks.rs:2023-
-/// 2032`, injected at `:1946-1954`) that never reaches `h.params`, and the
-/// owned-vs-borrowed linearity distinction the checker draws for it
-/// (`:1955-1962`) has no IR target either. Lowering the body anyway would
-/// silently produce a tree missing that binding — every `connection.…`
-/// read would surface as [`lower_ident_ir`]'s own unresolved-ident
-/// `todo!()`, naming the wrong cause. `todo!()`ing here instead follows
-/// this module's own established posture (`lower_fn_body_ir`'s doc: "no
-/// such entry point exists yet rather than one that would produce a wrong
-/// tree") — tracked as its own follow-up issue, the `ProtocolIr::WebSocket`
-/// descriptor itself (`lower_protocol_ir`) is unaffected and real.
+/// here, the `ConnectionBinder` derivation below would wrongly capture
+/// every queue consumer in the language too.
 ///
 /// **`binder` is read back, not threaded in as a parameter** — the
 /// deliberate inverse of [`lower_handler_ir`]'s own [DECISION E]
@@ -6338,6 +6323,7 @@ service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
   }
 
   on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
+    let _ <- connection.send(ServerFrame { text: frame.text })
     let _ <- Room(roomId).post(user.identity, frame.text)
     ()
   }
@@ -6441,6 +6427,26 @@ agent Room {
                 "{kind:?}'s connection is the borrowed firing socket"
             );
         }
+        // Review of #1185: `on open`'s own test already pins that a
+        // `connection.…` read resolves to `Local("connection")` in the
+        // lowered body — but that alone only proves the *owned* case
+        // reaches scope. `on message`'s own non-consuming
+        // `connection.send(…)` (`borrowed_held`'s whole reason to exist)
+        // pins the borrowed case identically, so a future change that
+        // gated `cx.bind` on `!borrowed` would fail here, not just leave
+        // an unused synthetic binding.
+        let handler = find_service_handler(service, &HandlerKind::Message);
+        let ir = lower_service_handler_ir(handler, &service.protocol, &program);
+        let IrExprKind::Block { stmts, .. } = &ir.body.kind else {
+            panic!("expected a Block body, got {:?}", ir.body.kind)
+        };
+        let has_connection_local = stmts
+            .iter()
+            .any(|stmt| format!("{stmt:?}").contains("Local(\"connection\")"));
+        assert!(
+            has_connection_local,
+            "expected on message's lowered body to resolve `connection` as a Local, got {stmts:?}"
+        );
     }
 
     #[test]
