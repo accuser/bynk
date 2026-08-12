@@ -1327,12 +1327,35 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// path-prefix rule scoped to `emitter/**` would exclude those two files right along
 /// with `ir/`'s legitimate ones, silently undercounting real remaining work — see
 /// [`is_named_ast_importer`].
+///
+/// #1184 review: this exclusion is necessary but not sufficient for R6.13. `ir.rs`
+/// itself still holds several AST types directly in `IrItem`-adjacent struct fields
+/// (`Arc<TypeDecl>`, `Arc<FnDecl>`, `HandlerKind`, `Refinement`, `SchemaVersionPattern`)
+/// rather than IR-native equivalents — an emitter reading e.g. `IrHandler::kind`, which
+/// *is* `ast::HandlerKind`, touches the AST without ever spelling `bynk_syntax::ast`
+/// itself, so it is invisible to this probe by construction. `ast_importers` = 0 proves
+/// no *remaining* file outside these two imports the AST module directly; it does not
+/// by itself prove every `IrItem` field is AST-free (`the-ir.md` §5's own added note).
 const AST_IMPORTER_EXCEPTIONS: &[&str] = &["ir.rs", "ir/lower.rs"];
 
 /// Is `rel_path` (relative to `bynk-emit/src`) one of [`AST_IMPORTER_EXCEPTIONS`]?
 fn is_named_ast_importer(rel_path: &Path) -> bool {
     let rel = rel_path.to_string_lossy().replace('\\', "/");
     AST_IMPORTER_EXCEPTIONS.contains(&rel.as_str())
+}
+
+/// The files [`ast_importers`] counts: `bynk-emit/src` files whose contents match
+/// `bynk_syntax::ast`, excluding [`AST_IMPORTER_EXCEPTIONS`]. Split out from
+/// [`ast_importers`] so a test can assert on the actual survivor set, not just its
+/// length (#1184 review).
+fn ast_importer_files(root: &Path) -> Vec<PathBuf> {
+    let dir = root.join("bynk-emit/src");
+    rust_files(&dir)
+        .into_iter()
+        .filter(|(_, contents)| contents.contains("bynk_syntax::ast"))
+        .filter(|(path, _)| !is_named_ast_importer(path.strip_prefix(&dir).unwrap_or(path)))
+        .map(|(path, _)| path)
+        .collect()
 }
 
 /// R6.13. Files in `bynk-emit/src` that import `bynk_syntax::ast`, excluding
@@ -1342,16 +1365,10 @@ fn is_named_ast_importer(rel_path: &Path) -> bool {
 /// probe track the track's real completion criterion (`the-ir.md` §5) instead of a
 /// floor this track's own IR module structurally cannot clear.
 fn ast_importers(root: &Path) -> Probe {
-    let dir = root.join("bynk-emit/src");
-    let files = rust_files(&dir)
-        .into_iter()
-        .filter(|(_, contents)| contents.contains("bynk_syntax::ast"))
-        .filter(|(path, _)| !is_named_ast_importer(path.strip_prefix(&dir).unwrap_or(path)))
-        .count();
     Probe {
         name: "ast_importers",
         gated: true,
-        reads: files.to_string(),
+        reads: ast_importer_files(root).len().to_string(),
     }
 }
 
@@ -1796,6 +1813,50 @@ mod tests {
         assert!(!is_named_ast_importer(Path::new("project/tests_emit.rs")));
         assert!(!is_named_ast_importer(Path::new("emitter/lower.rs")));
         assert!(!is_named_ast_importer(Path::new("ir/other.rs")));
+    }
+
+    /// #1184 review: an `AST_IMPORTER_EXCEPTIONS` entry going stale (renamed or split,
+    /// e.g. `ir/lower.rs` becoming `ir/lower/mod.rs`) must fail loud here, not surface
+    /// as a silent `ast_importers` regression in `greenfield_status_table_is_current` —
+    /// mirrors [`file_is_named_fs_floor`]'s own "fail loud, not quiet" discipline.
+    #[test]
+    fn ast_importer_exceptions_still_exist_and_still_import_the_ast() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("bynk-emit/src");
+        for rel in AST_IMPORTER_EXCEPTIONS {
+            let contents = std::fs::read_to_string(dir.join(rel)).unwrap_or_else(|e| {
+                panic!("AST_IMPORTER_EXCEPTIONS entry {rel:?} does not exist: {e}")
+            });
+            assert!(
+                contents.contains("bynk_syntax::ast"),
+                "AST_IMPORTER_EXCEPTIONS entry {rel:?} no longer imports bynk_syntax::ast \
+                 — it excludes nothing and should be removed"
+            );
+        }
+    }
+
+    /// #1184 review: exercises the real filter over the live tree, not just the pure
+    /// predicate — the survivor set the PR's own named-vs-prefix argument depends on:
+    /// `ir/`'s two files drop out, `project.rs`/`project/tests_emit.rs` (R6.13's
+    /// still-open AST-declaration reads) do not.
+    #[test]
+    fn ast_importers_excludes_the_ir_lowering_pass_but_counts_project_rs() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let dir = root.join("bynk-emit/src");
+        let counted: BTreeSet<String> = ast_importer_files(&root)
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(&dir)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert!(!counted.contains("ir.rs"));
+        assert!(!counted.contains("ir/lower.rs"));
+        assert!(counted.contains("project.rs"));
+        assert!(counted.contains("project/tests_emit.rs"));
     }
 
     // --- fs_below_driver / test_density (trailing `#[cfg(test)] mod tests {}`) ---

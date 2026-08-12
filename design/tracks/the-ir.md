@@ -286,6 +286,19 @@ both files along with `ir/`'s legitimate two. `ast_importers` now reads **9** wi
 applied (11 minus `ir.rs`/`ir/lower.rs`) and can structurally reach **0** once every remaining
 counted file's AST-declaration reads move to `IrItem`.
 
+**Known gap the exclusion accepts, not closes (#1176 review):** `ir.rs` itself still holds several
+AST types directly in `IrItem`-adjacent struct fields today — `Arc<TypeDecl>`, `Arc<FnDecl>`,
+`HandlerKind`, `Refinement`, `SchemaVersionPattern` — not yet lowered to IR-native equivalents. An
+emitter reading one of those fields (e.g. `IrHandler::kind`, which *is* `ast::HandlerKind`) touches
+the AST without ever spelling `bynk_syntax::ast` itself, so it is invisible to this probe by
+construction — rewriting a match like `emitter/wrangler.rs`'s own `bynk_syntax::ast::HandlerKind::Cron`
+pattern to bring the type in under a local, unqualified import would drop the probe by one with zero
+movement on R6.13. So `ast_importers` = 0 proves no *remaining* file outside `ir.rs`/`ir/lower.rs`
+imports the AST module directly; it does not by itself prove every `IrItem` field is AST-free. Closing
+R6.13 in full still needs the same manual confirmation §5's own "Confirm, don't assume" discipline
+already calls for on the test-residue question above — inspecting `IrItem`'s own field types, not just
+reading this probe's count.
+
 ---
 
 ## 6. Slice decomposition
