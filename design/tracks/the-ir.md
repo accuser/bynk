@@ -334,6 +334,16 @@ correction — but the probe itself needs a stated exclusion for `bynk-emit::ir`
 read as this track's own true finish line, rather than a bar this track's own IR module structurally
 cannot clear.
 
+**#1176 lands that stated exclusion**, settling the "or" above: a small, named exclusion list
+(`ir.rs`, `ir/lower.rs`) rather than a path-prefix rule scoped to `emitter/`. A prefix rule was
+rejected — `project.rs`/`project/tests_emit.rs` also import `bynk_syntax::ast` today
+(`EmitProjectCtx` holding `ActorDecl`/`AgentDecl` fields directly, and test/suite emission reading
+`TypeRef`/`HandlerKind`), and that import *is* the still-open R6.13 defect this probe exists to track
+(§6's P6.6 row), not a lowering-pass import; scoping to `emitter/**` would have silently excluded
+both files along with `ir/`'s legitimate two. `ast_importers` now reads **9** with the exclusion
+applied (11 minus `ir.rs`/`ir/lower.rs`) and can structurally reach **0** once every remaining
+counted file's AST-declaration reads move to `IrItem`.
+
 **§3.7 (Q7, #1175) settles what "calls only into `bynk-emit::ir`'s lowering pass" requires structurally,
 a second correction of the same kind as the one above.** The phrase does not mean `emitter/lower.rs`
 stops writing TypeScript source text — it cannot, until phase 7's own printer (R7.2/R7.3) exists to take
@@ -343,6 +353,19 @@ replaced by reads off an already-lowered `IrExpr`/`IrItem`/`CommitShape`/`StoreF
 functions' own `Lowered`-returning, string-writing shape survives the cutover unchanged. A slice proposal
 for the cutover itself is not commissioned by this correction — per #1175's own framing, it remains a
 scoping placeholder pending `Provider` (#1174) and the `ast_importers` redefinition (#1176).
+
+**Known gap the exclusion accepts, not closes (#1176 review):** `ir.rs` itself still holds several
+AST types directly in `IrItem`-adjacent struct fields today — `Arc<TypeDecl>`, `Arc<FnDecl>`,
+`HandlerKind`, `Refinement`, `SchemaVersionPattern` — not yet lowered to IR-native equivalents. An
+emitter reading one of those fields (e.g. `IrHandler::kind`, which *is* `ast::HandlerKind`) touches
+the AST without ever spelling `bynk_syntax::ast` itself, so it is invisible to this probe by
+construction — rewriting a match like `emitter/wrangler.rs`'s own `bynk_syntax::ast::HandlerKind::Cron`
+pattern to bring the type in under a local, unqualified import would drop the probe by one with zero
+movement on R6.13. So `ast_importers` = 0 proves no *remaining* file outside `ir.rs`/`ir/lower.rs`
+imports the AST module directly; it does not by itself prove every `IrItem` field is AST-free. Closing
+R6.13 in full still needs the same manual confirmation §5's own "Confirm, don't assume" discipline
+already calls for on the test-residue question above — inspecting `IrItem`'s own field types, not just
+reading this probe's count.
 
 ---
 
@@ -365,11 +388,12 @@ scoping placeholder pending `Provider` (#1174) and the `ast_importers` redefinit
 | **P6.8** | `CommitShape` as IR data, not emitter control flow | R6.15 | P6.6, P6.7 |
 | **P6.9** | Handler-invocation origin-independence — no IR node branches on caller kind | R6.16 | P6.6, P6.8 (needs its own investigation at proposal time — this settling pass did not trace the shipped wrapper-selection rule R6.16's own rationale names in full) |
 
-**Completion probe:** `ast_importers` = **0** (§5) — live today at **11**, gated
-(`greenfield_status_table_is_current`). §5's own P6.9 correction (#1167) names why this crate-wide
-count cannot reach 0 while `bynk-emit::ir` exists at all under its current definition — the prose
-criterion (§5) is the true target; a reader of this or any later P6.x slice should not read "last row
-in the table" as "this slice reaches the completion probe."
+**Completion probe:** `ast_importers` = **0** (§5) — live today at **9**, gated
+(`greenfield_status_table_is_current`). §5's own P6.9 correction (#1167) named why the prior,
+unexcluded crate-wide count could never reach 0 while `bynk-emit::ir` exists at all; #1176 closed that
+gap with a named exclusion for `ir.rs`/`ir/lower.rs`, so the probe can now genuinely reach 0 as the
+remaining slices land. The prose criterion (§5) is still the true target — a reader of this or any
+later P6.x slice should not read "last row in the table" as "this slice reaches the completion probe."
 
 ---
 
