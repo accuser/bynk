@@ -4171,8 +4171,11 @@ mod messages_template_tests {
 /// was captured from this slice's own converted output and cross-checked by
 /// hand against `ts_type_ref_with`'s formatting (the pre-existing `TypeRef`
 /// renderer `ts_ty`, `emitter.rs:4130`, replaces for record/sum field types) —
-/// the two produce identical text for every shape exercised here (base types,
-/// a bare generic type variable, a named cross-type reference).
+/// the two produce identical text for every shape exercised here (base types
+/// including `Bytes`, a bare generic type variable, a bare named cross-type
+/// reference, a `List`/`Option` wrapper, a generic application (`Box[Int]`),
+/// and a refined type's brand surviving as a field type rather than
+/// collapsing to its base).
 #[cfg(test)]
 mod type_shape_emission_tests {
     use crate::testkit::{emit_bundle, emit_source};
@@ -4188,8 +4191,33 @@ commons demo {
     embeds PaymentError as Payment
   type Age = Int where Positive
   type UserId = opaque Int
+  type Extras = { tags: List[String], blob: Bytes, note: Option[String], boxed: Box[Int], age: Age }
 }
 "#;
+
+    /// Pins the `ts_type_ref` → `ts_ty` equivalence claim past the four
+    /// shapes `Order`/`Box`/`OrderError` already exercise (review on #1190):
+    /// a collection wrapper (`List`), a non-`number` base (`Bytes`), another
+    /// wrapper (`Option`), a *generic application* (`Box[Int]` — the
+    /// `TypeRef::App`/`Ty::Named{args: non-empty}` arm, distinct from the
+    /// bare `Named` arm `OrderError`'s `reason: PaymentError` field already
+    /// covers), and a refined field (`Age`) to assert its brand survives
+    /// rather than collapsing to its base `number`.
+    #[test]
+    fn record_field_types_cover_wrappers_generics_and_refined_brands() {
+        let ts = emit_source(TYPES_FIXTURE);
+        assert!(
+            ts.contains(
+                "export interface Extras {\n  \
+                 readonly tags: readonly string[];\n  \
+                 readonly blob: Uint8Array;\n  \
+                 readonly note: Option<string>;\n  \
+                 readonly boxed: Box<number>;\n  \
+                 readonly age: Age;\n}\n"
+            ),
+            "{ts}"
+        );
+    }
 
     #[test]
     fn record_type_emits_interface_and_namespace_object() {
@@ -4309,6 +4337,36 @@ type PaymentError = enum { Declined, InsufficientFunds }
                 "export type PaymentError =\n    { readonly tag: \"Declined\" }\n  | \
                  { readonly tag: \"InsufficientFunds\" };\n"
             ),
+            "{ts}"
+        );
+    }
+
+    /// Exercises `emit_project`'s **Event** mirror loop specifically (review
+    /// on #1190) — the one call site whose correctness this slice's own
+    /// `type_shape_for` leans on without a fallback: that `TypedCommons::types`
+    /// already holds an entry keyed `e.name.name` for every `CommonsItem::
+    /// Event`, the same table an ordinary declared type resolves through
+    /// (Decision B, #1188's own doc comment on `type_shape_for`). The prior
+    /// test above only reaches the Type loop; `emit_bundle` can't express an
+    /// event at all (it wraps its body in `commons app.bundle`, and `event`
+    /// outside a `context` is `bynk.event.outside_context`), so this drives
+    /// `project::compile_in_memory` directly with a context source instead.
+    #[test]
+    fn event_type_emits_through_the_project_pipelines_event_mirror_loop() {
+        let out = crate::project::compile_in_memory(
+            "context demo {\n  event Notified = { id: String }\n}\n",
+            crate::project::BuildTarget::Bundle,
+            Default::default(),
+        )
+        .unwrap_or_else(|_| panic!("event-in-context fixture should compile"));
+        let ts = out
+            .files
+            .iter()
+            .find(|f| f.output_path.to_string_lossy().contains("demo"))
+            .map(|f| f.typescript.clone())
+            .unwrap_or_else(|| panic!("the demo context's own module should be in the output"));
+        assert!(
+            ts.contains("export interface Notified {\n  readonly id: string;\n}\n"),
             "{ts}"
         );
     }
