@@ -2173,8 +2173,38 @@ fn build_output(
                         .map(|(sub_ctx, _)| sub_ctx.clone()),
                 );
                 let service_consumes: Vec<String> = service_consumes.into_iter().collect();
-                let wrangler =
-                    emitter::emit_wrangler_toml(ctx_name, table, &service_consumes, needs_kv);
+                // P6.x cutover slice 2 (#1191): collected here, not inside
+                // `emit_wrangler_toml` itself, so that function's own file
+                // needs no `bynk_syntax::ast` match — `project.rs` already
+                // does (this loop is the relocated match, unchanged in
+                // substance: same `HandlerKind::Cron`/`ServiceProtocol::Queue`
+                // shapes, same sort+dedup, just one call frame up).
+                let mut crons: Vec<String> = Vec::new();
+                let mut queues: Vec<String> = Vec::new();
+                for service in table.services.values() {
+                    for handler in &service.handlers {
+                        if let HandlerKind::Cron { expr } = &handler.kind {
+                            crons.push(expr.clone());
+                        }
+                    }
+                    // v0.44: one queue binding per service, on the
+                    // `from queue("name")` header.
+                    if let ServiceProtocol::Queue { name } = &service.protocol {
+                        queues.push(name.clone());
+                    }
+                }
+                crons.sort();
+                crons.dedup();
+                queues.sort();
+                queues.dedup();
+                let wrangler = emitter::emit_wrangler_toml(
+                    ctx_name,
+                    table,
+                    &service_consumes,
+                    needs_kv,
+                    &crons,
+                    &queues,
+                );
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<index>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/index.ts")),
