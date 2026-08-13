@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use self::source_map::SourceMapBuilder;
 
-use crate::ir::lower::lower_type_item_ir;
+use crate::ir::lower::{lower_capability_item_ir, lower_type_item_ir};
 use crate::ir::{IrItem, TypeShape};
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
 use bynk_check::builtin_names::map_query;
@@ -396,7 +396,14 @@ pub(crate) fn emit_project(
         match item {
             CommonsItem::Capability(c) => {
                 smb.borrow_mut().record(out.len(), c.span);
-                emit_capability(&mut out, c);
+                // P6.x (#1193, slice 3 of #1187): `emit_capability` reads
+                // each op's resolved types off `ops`, not `c`'s own raw
+                // `TypeRef`s (Decision B, #1193) — no separate helper, this
+                // is `emit_capability`'s one and only call site.
+                let IrItem::Capability { ops, .. } = lower_capability_item_ir(c, program) else {
+                    unreachable!("lower_capability_item_ir always returns IrItem::Capability")
+                };
+                emit_capability(&mut out, c, &ops, commons);
             }
             CommonsItem::Provider(p) => {
                 smb.borrow_mut().record(out.len(), p.span);

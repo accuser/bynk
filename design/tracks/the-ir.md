@@ -416,9 +416,20 @@ to route through instead (`IrHandler::kind` reuses `HandlerKind` unchanged, so a
 version would still have matched it). `runtime_use.rs` did not land with it: its `TypeRef` field is
 downstream of `emitter/serialisation.rs`'s still-`TypeRef`-driven JSON-codec renderer, a real
 conversion #1191 found while scoping, not a relocation — deferred, unscoped, until a future slice
-proposes converting that renderer. See #1187 for the remaining slice order (`Capability`/`Provider`,
-then `Agent`, then `Service`, each gated on #1189's comparison/arithmetic `IrExprKind` gap where the
-slice lowers real predicate or body expressions).
+proposes converting that renderer.
+
+Third slice: `Capability` (#1193, narrowed from #1187's own pairing with `Provider` — a correction
+comment posted on #1187) — `emit_capability` now reads each op's resolved `params`/`return_ty` off
+`OpSig` (`bynk-emit::ir`, built by `lower_capability_item_ir`/`lower_op_sig_ir`) through `ts_ty`,
+instead of walking `CapabilityOp::params`/`return_type` `TypeRef`s through `ts_type_ref` directly.
+`Provider` did **not** land with it, despite #1187's own candidate pairing: unlike a capability op (a
+signature only, no body), a `ProviderOp` always carries a real body, and `lower_provider_op_ir` routes
+it through `lower_expr_ir` — the same general expression-lowering pass that still hits #1189's open
+comparison/arithmetic `IrExprKind` gap. `ast_importers` does not move from this slice, the same
+invisible-to-the-probe shape slice 1 already established (`emitter/emit.rs` reaches AST types via `use
+super::*` without spelling `bynk_syntax::ast` literally). See #1187 for the remaining slice order
+(`Provider`, then `Agent`, then `Service`, each gated on #1189's comparison/arithmetic `IrExprKind` gap
+where the slice lowers real predicate or body expressions).
 
 ---
 
