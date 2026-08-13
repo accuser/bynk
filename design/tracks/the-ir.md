@@ -405,9 +405,20 @@ separately in #1187 (opened once `Provider` and the `ast_importers` redefinition
 `emit_refined_type` now read `TypeShape` instead of `TypeDecl`/`TypeBody`) — landed. `ast_importers`
 itself does not move from this slice (`emitter/emit.rs` reaches AST types via `use super::*` without
 ever spelling `bynk_syntax::ast` literally, the same invisible-to-the-probe shape this section's own
-"known gap" paragraph above already names for `IrItem`'s fields) — see #1187 for the remaining
-slice order (`Capability`/`Provider`, then `Agent`, then `Service`, each gated on #1189's
-comparison/arithmetic `IrExprKind` gap where the slice lowers real predicate or body expressions).
+"known gap" paragraph above already names for `IrItem`'s fields).
+
+Second slice: `wrangler.rs` (#1191, narrowed from #1187's own pairing with `runtime_use.rs`) —
+`emit_wrangler_toml`'s two raw matches on a handler's cron kind and a service's queue-binding
+protocol relocate to its one call site in `project.rs`, which already imports `bynk_syntax::ast` and
+is already counted. Unlike slice 1, `ast_importers` does move here — 9 to 8 — because this slice's
+whole AST footprint was exactly those two matches, with no equivalent living on inside `bynk-emit::ir`
+to route through instead (`IrHandler::kind` reuses `HandlerKind` unchanged, so an `IrItem`-based
+version would still have matched it). `runtime_use.rs` did not land with it: its `TypeRef` field is
+downstream of `emitter/serialisation.rs`'s still-`TypeRef`-driven JSON-codec renderer, a real
+conversion #1191 found while scoping, not a relocation — deferred, unscoped, until a future slice
+proposes converting that renderer. See #1187 for the remaining slice order (`Capability`/`Provider`,
+then `Agent`, then `Service`, each gated on #1189's comparison/arithmetic `IrExprKind` gap where the
+slice lowers real predicate or body expressions).
 
 ---
 

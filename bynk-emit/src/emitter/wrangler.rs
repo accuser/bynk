@@ -33,6 +33,19 @@ pub(crate) const EVENTS_FANOUT_CLASS_NAME: &str = "__EventsFanout";
 /// remote Wrangler command runs.
 pub const KV_NAMESPACE_ID_PLACEHOLDER: &str = "<KV_NAMESPACE_ID>";
 
+/// P6.x cutover slice 2 (#1191, narrowed from #1187): `crons`/`queues` arrive
+/// pre-collected, sorted and deduped by the caller (`project.rs`'s own
+/// `emit_wrangler_toml` call site) rather than being walked here off
+/// `table.services`. Both used to match a handler's cron-schedule kind and a
+/// service's queue-binding protocol directly, straight off the syntax tree —
+/// this file's entire raw-syntax footprint, per #1191's own grounding.
+/// `table` already only needs `agents`/`unit_table_uses_emit` (neither
+/// syntax-typed from this file's perspective), so relocating just these two
+/// matches removes `wrangler.rs` from the `ast_importers` probe outright — no
+/// `bynk-emit::ir` equivalent exists to route through instead (#1191's
+/// Framing: no project-wide `IrItem::Service` is built at the call site, and
+/// `IrHandler::kind` reuses the syntax-tree handler kind unchanged even where
+/// one is).
 pub(crate) fn emit_wrangler_toml(
     context: &str,
     table: &UnitTable,
@@ -40,6 +53,11 @@ pub(crate) fn emit_wrangler_toml(
     // v0.19 (C1): this Worker's closure reaches bynk.cloudflare — declare the
     // KV namespace binding (the `id` is a deploy-time placeholder).
     needs_kv: bool,
+    // v0.10a: every `on cron "expr"` schedule in the context, sorted+deduped.
+    crons: &[String],
+    // v0.10b/v0.44: every `from queue("name")` service's bound queue name,
+    // sorted+deduped.
+    queues: &[String],
 ) -> String {
     let name = worker_dir_name(context);
     let mut out = String::new();
@@ -101,16 +119,7 @@ pub(crate) fn emit_wrangler_toml(
 
     // v0.10a: cron triggers. Cloudflare uses a single `[triggers]` table with a
     // `crons` array aggregating every `on cron` schedule in the context.
-    let mut crons: Vec<&String> = Vec::new();
-    for service in table.services.values() {
-        for handler in &service.handlers {
-            if let bynk_syntax::ast::HandlerKind::Cron { expr } = &handler.kind {
-                crons.push(expr);
-            }
-        }
-    }
-    crons.sort();
-    crons.dedup();
+    // Already sorted+deduped by the caller (#1191).
     if !crons.is_empty() {
         let quoted: Vec<String> = crons
             .iter()
@@ -122,17 +131,9 @@ pub(crate) fn emit_wrangler_toml(
     }
 
     // v0.10b: queue consumers. Each `on queue "name"` becomes a
-    // `[[queues.consumers]]` binding.
-    let mut queues: Vec<&String> = Vec::new();
-    for service in table.services.values() {
-        // v0.44: one queue binding per service, on the `from queue("name")` header.
-        if let bynk_syntax::ast::ServiceProtocol::Queue { name } = &service.protocol {
-            queues.push(name);
-        }
-    }
-    queues.sort();
-    queues.dedup();
-    for name in &queues {
+    // `[[queues.consumers]]` binding. Already sorted+deduped by the caller
+    // (#1191).
+    for name in queues {
         let _ = writeln!(out, "[[queues.consumers]]");
         let _ = writeln!(out, "queue = \"{}\"", escape_toml_basic_string(name));
         let _ = writeln!(out, "max_batch_size = 10");
