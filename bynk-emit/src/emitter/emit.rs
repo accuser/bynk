@@ -1077,6 +1077,15 @@ pub(crate) fn emit_messages_bundle(
 /// `ops`/`c.ops` are zipped by index: both are built in declaration order
 /// (`IrItem::Capability::ops`'s own doc comment), never reordered by either
 /// side.
+///
+/// Accepted divergence (review of #1194, widening #1193's own disclosure):
+/// `resolve_type_ref` returns `None` — falling back to `Unit`/`void` here —
+/// for two shapes `ts_type_ref` rendered directly before this slice: an
+/// unresolvable type name (`void` instead of the raw bad name) and
+/// `TypeRef::History` (`void` instead of `ts_type_ref`'s own `"never"`,
+/// `emitter.rs:4127`). Both are reachable only through a capability op,
+/// since the resolver skips `CommonsItem::Capability` outright — no program
+/// the checker actually validates can reach either.
 pub(crate) fn emit_capability(
     out: &mut String,
     c: &CapabilityDecl,
@@ -1085,6 +1094,16 @@ pub(crate) fn emit_capability(
 ) {
     emit_doc_block(out, c.documentation.as_deref(), 0);
     writeln!(out, "export interface {name} {{", name = c.name.name).unwrap();
+    // Review of #1194: `zip` silently truncates to the shorter side — this
+    // guards the by-index pairing invariant `ops`/`c.ops` are documented
+    // (not enforced) to share, so a future second caller that passes a
+    // mismatched `ops` loses trailing interface methods loudly instead of
+    // silently.
+    debug_assert_eq!(
+        c.ops.len(),
+        ops.len(),
+        "`ops` is zipped with `c.ops` by index — the two must be the same lowering"
+    );
     for (op, sig) in c.ops.iter().zip(ops) {
         emit_doc_block(out, op.documentation.as_deref(), INDENT_STEP);
         let params: Vec<String> = sig
