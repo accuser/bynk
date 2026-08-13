@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
 
-use crate::ir::TypeShape;
+use crate::ir::{OpSig, TypeShape};
 
 use super::*;
 
@@ -1066,15 +1066,31 @@ pub(crate) fn emit_messages_bundle(
 
 // -- v0.5 emission --
 
-pub(crate) fn emit_capability(out: &mut String, c: &CapabilityDecl) {
+/// P6.x (#1193, slice 3 of #1187, narrowed — `Provider` deferred, see this
+/// issue's own Framing): reads each op's resolved `params`/`return_ty` off
+/// `ops` (`bynk-emit::ir::OpSig`, `lower_capability_item_ir`'s own return
+/// value) through `ts_ty`, instead of walking `CapabilityOp::params`/
+/// `return_type` `TypeRef`s through `ts_type_ref` directly. `c` is still
+/// needed alongside `ops` — `IrItem::Capability::def` is a bare `String`,
+/// carrying neither `c.documentation`/`op.documentation` nor the `Arc` back
+/// to the declaration #1188 could rely on for `Type` ([DECISION A]).
+/// `ops`/`c.ops` are zipped by index: both are built in declaration order
+/// (`IrItem::Capability::ops`'s own doc comment), never reordered by either
+/// side.
+pub(crate) fn emit_capability(
+    out: &mut String,
+    c: &CapabilityDecl,
+    ops: &[OpSig],
+    commons: &TypedCommons,
+) {
     emit_doc_block(out, c.documentation.as_deref(), 0);
     writeln!(out, "export interface {name} {{", name = c.name.name).unwrap();
-    for op in &c.ops {
+    for (op, sig) in c.ops.iter().zip(ops) {
         emit_doc_block(out, op.documentation.as_deref(), INDENT_STEP);
-        let params: Vec<String> = op
+        let params: Vec<String> = sig
             .params
             .iter()
-            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+            .map(|(name, ty)| format!("{}: {}", ts_ident(name), ts_ty(*ty, &commons.ty_intern)))
             .collect();
         writeln!(
             out,
@@ -1082,10 +1098,15 @@ pub(crate) fn emit_capability(out: &mut String, c: &CapabilityDecl) {
             name = op.name.name,
             // #926 (Decision C): a genuine generic TS interface method, no
             // monomorphisation/erasure — `ts_type_params` is the same helper
-            // a generic record's own methods use (`emit_method`).
+            // a generic record's own methods use (`emit_method`). Reads
+            // `op.type_params` (not `sig.type_params`): it only extracts
+            // each `TypeParam`'s own name, no type resolution, and
+            // `OpSig::type_params` exists for `lower_op_sig_ir`'s own rigid-
+            // variable scoping, not for this to render from (Decision A/B,
+            // #1193).
             generics = ts_type_params(&op.type_params),
             params = params.join(", "),
-            ret = ts_type_ref(&op.return_type),
+            ret = ts_ty(sig.return_ty, &commons.ty_intern),
         )
         .unwrap();
     }
@@ -4367,6 +4388,83 @@ type PaymentError = enum { Declined, InsufficientFunds }
             .unwrap_or_else(|| panic!("the demo context's own module should be in the output"));
         assert!(
             ts.contains("export interface Notified {\n  readonly id: string;\n}\n"),
+            "{ts}"
+        );
+    }
+}
+
+/// Differential coverage for `emit_capability` reading `bynk-emit::ir::OpSig`
+/// (built by `lower_capability_item_ir`/`lower_op_sig_ir`) instead of
+/// walking `CapabilityOp::params`/`return_type` `TypeRef`s directly (P6.x,
+/// #1193, slice 3 of #1187). `STORE_FIXTURE` covers a multi-op capability, a
+/// named return/param type (`Order`), and — new relative to #1188's own
+/// corpus — a generic op (`get[T]`), whose `Effect[Option[T]]` return type
+/// exercises `ts_ty`'s `Ty::Var` arm the way no pre-existing capability
+/// fixture's own emitted-TS assertions did. `capability` is a context-only
+/// construct (`bynk.capability.outside_context`), so — like the Event mirror
+/// test above — this drives `project::compile_in_memory` directly with a
+/// context source rather than `emit_source`/`emit_bundle`.
+#[cfg(test)]
+mod capability_op_sig_emission_tests {
+    const STORE_FIXTURE: &str = r#"
+context demo {
+  type Order = { id: String, total: Int }
+
+  capability Store {
+    fn get[T](key: String) -> Effect[Option[T]]
+    fn put(key: String, value: Order) -> Effect[()]
+    fn count() -> Effect[Int]
+  }
+}
+"#;
+
+    fn emit_store_context(src: &str) -> String {
+        let out = crate::project::compile_in_memory(
+            src,
+            crate::project::BuildTarget::Bundle,
+            Default::default(),
+        )
+        .unwrap_or_else(|_| panic!("capability fixture should compile:\n{src}"));
+        out.files
+            .iter()
+            .find(|f| f.output_path.to_string_lossy().contains("demo"))
+            .map(|f| f.typescript.clone())
+            .unwrap_or_else(|| panic!("the demo context's own module should be in the output"))
+    }
+
+    /// A non-generic op's param/return types (`Order`, a named record type,
+    /// and `Effect[()]`/`Effect[Int]`, both base-type-adjacent) render
+    /// identically to `ts_type_ref`'s pre-cutover output.
+    #[test]
+    fn named_and_base_return_types_render_through_ts_ty() {
+        let ts = emit_store_context(STORE_FIXTURE);
+        assert!(
+            ts.contains("put(key: string, value: Order): Promise<void>;\n"),
+            "{ts}"
+        );
+        assert!(ts.contains("count(): Promise<number>;\n"), "{ts}");
+    }
+
+    /// The generic op: `get[T]`'s own rigid type variable renders bare
+    /// (`ts_ty`'s `Ty::Var` arm) inside the `Effect[Option[T]]` return type's
+    /// `Option<…>` wrapper — `<T>` on the interface method itself still
+    /// comes from `op.type_params` (`ts_type_params`), not `sig.type_params`
+    /// (Decision A/B, #1193).
+    #[test]
+    fn generic_op_renders_its_rigid_type_var_and_type_param_list() {
+        let ts = emit_store_context(STORE_FIXTURE);
+        assert!(
+            ts.contains("get<T>(key: string): Promise<Option<T>>;\n"),
+            "{ts}"
+        );
+    }
+
+    #[test]
+    fn interface_and_injection_token_frame_the_ops() {
+        let ts = emit_store_context(STORE_FIXTURE);
+        assert!(ts.contains("export interface Store {\n"), "{ts}");
+        assert!(
+            ts.contains("export const StoreToken: unique symbol = Symbol(\"Store\");\n"),
             "{ts}"
         );
     }
