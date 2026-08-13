@@ -54,9 +54,12 @@ pub(crate) fn emit_wrangler_toml(
     // KV namespace binding (the `id` is a deploy-time placeholder).
     needs_kv: bool,
     // v0.10a: every `on cron "expr"` schedule in the context, sorted+deduped.
+    // Sorting is load-bearing, not cosmetic (review of #1192): the caller
+    // walks `table.services`, a `HashMap`, so unsorted input makes
+    // `wrangler.toml` non-reproducible across runs.
     crons: &[String],
     // v0.10b/v0.44: every `from queue("name")` service's bound queue name,
-    // sorted+deduped.
+    // sorted+deduped (same reproducibility requirement as `crons`).
     queues: &[String],
 ) -> String {
     let name = worker_dir_name(context);

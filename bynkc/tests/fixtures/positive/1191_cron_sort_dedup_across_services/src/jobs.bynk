@@ -1,0 +1,13 @@
+context jobs
+
+service sweeper from cron {
+  on schedule("0 0 * * *") () -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}
+
+service pruner from cron {
+  on schedule("*/15 * * * *") () -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}
