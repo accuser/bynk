@@ -27,6 +27,9 @@ pub(crate) fn emit_worker_entry(
     // `scheduled`/`queue`, so the two entry points need distinct compose
     // calls, not one shared string.
     needs_locale_request: bool,
+    // #1187's slice 6 plumbing — see `emit_worker_compose`'s own matching
+    // parameter (`emitter/workers.rs`) for the full grounding.
+    uses_emit: bool,
 ) -> String {
     let mut out = String::new();
     // Which conditional runtime helpers the entry's own inbound/outbound codecs
@@ -280,7 +283,7 @@ pub(crate) fn emit_worker_entry(
     // requirement, for the fan-out DO — it lives in its own file
     // (`events_fanout.ts`, not `handlers.ts`; a fan-out DO has no backing
     // `AgentDecl` for `emit_agent` to emit it from).
-    if crate::project::unit_table_uses_emit(table) {
+    if uses_emit {
         let _ = writeln!(
             out,
             "export {{ {} }} from \"./events_fanout.js\";",

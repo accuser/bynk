@@ -6,7 +6,7 @@
 
 use std::fmt::Write as _;
 
-use crate::project::{UnitTable, unit_table_uses_emit, worker_dir_name};
+use crate::project::{UnitTable, worker_dir_name};
 
 /// Compile-time pinned compatibility date. Cloudflare uses this to lock
 /// Workers runtime behaviour. Bump cautiously when changing the runtime
@@ -61,6 +61,12 @@ pub(crate) fn emit_wrangler_toml(
     // v0.10b/v0.44: every `from queue("name")` service's bound queue name,
     // sorted+deduped (same reproducibility requirement as `crons`).
     queues: &[String],
+    // #1187's slice 6 plumbing: `unit_table_uses_emit(table, callees)`,
+    // precomputed by the caller — passing a bare `bool` rather than the
+    // `Callee` map itself keeps this file's own hard-won zero `bynk_syntax::
+    // ast` footprint (#1191) intact; the map's own element type would have
+    // reintroduced exactly the literal spelling that slice removed.
+    uses_emit: bool,
 ) -> String {
     let name = worker_dir_name(context);
     let mut out = String::new();
@@ -101,7 +107,7 @@ pub(crate) fn emit_wrangler_toml(
     // only cares that `index.ts` (this Worker's `main`) exports a class with
     // this name, not which generated file it came from.
     let mut class_names: Vec<String> = table.agents.keys().cloned().collect();
-    if unit_table_uses_emit(table) {
+    if uses_emit {
         class_names.push(EVENTS_FANOUT_CLASS_NAME.to_string());
     }
     class_names.sort();
