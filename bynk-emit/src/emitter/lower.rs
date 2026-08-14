@@ -5392,7 +5392,7 @@ fn pattern_match_tests(
 /// `Int`/`Str`/`Bool` set `literal_case_label` covers, and `Variant { tag }`
 /// already carries exactly the bare, unqualified tag the AST version's
 /// `variant.name` destructured down to). No `Ty`/`LowerCtx` needed:
-/// `check_event_pattern` (`bynk-emit/src/project/validate.rs`) has already
+/// `check_event_pattern` (`bynk-check/src/project_model.rs`) has already
 /// proven every field exists and every value type-checks, so this is total
 /// and cannot panic. Returns `None` for a pattern-less subscription (nothing
 /// to guard).
@@ -5423,6 +5423,54 @@ pub(crate) fn event_pattern_guard_ir(
         })
         .collect();
     Some(tests.join(" && "))
+}
+
+#[cfg(test)]
+mod event_pattern_guard_ir_tests {
+    use super::*;
+
+    /// Review of #1198: the byte-identity evidence against the deleted
+    /// AST-driven `event_pattern_guard` was entirely fixture-level. This
+    /// pins the guard text format directly, over a hand-built
+    /// `EventPatternIr` covering all four cases `EventPatternValueIr` can
+    /// hold (`Int`/`Str`/`Bool`/`Variant`).
+    #[test]
+    fn covers_every_value_shape() {
+        let pattern = EventPatternIr {
+            fields: vec![
+                (
+                    "n".to_string(),
+                    EventPatternValueIr::Const(ConstVal::Int(3)),
+                ),
+                (
+                    "s".to_string(),
+                    EventPatternValueIr::Const(ConstVal::Str("a\"b".to_string())),
+                ),
+                (
+                    "b".to_string(),
+                    EventPatternValueIr::Const(ConstVal::Bool(true)),
+                ),
+                (
+                    "status".to_string(),
+                    EventPatternValueIr::Variant {
+                        tag: "Active".to_string(),
+                    },
+                ),
+            ],
+        };
+        assert_eq!(
+            event_pattern_guard_ir("e", Some(&pattern)),
+            Some(
+                "e.n === 3 && e.s === \"a\\\"b\" && e.b === true && e.status.tag === \"Active\""
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            event_pattern_guard_ir("e", None),
+            None,
+            "a pattern-less subscription has nothing to guard"
+        );
+    }
 }
 
 /// Emit `const` declarations binding the names in `pattern` from runtime `path`,
