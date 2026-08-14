@@ -2730,7 +2730,7 @@ pub(crate) struct ModuleCtx<'a> {
     /// #527: agent → method → the method's `given` caps (mirrors
     /// [`crate::project::EmitProjectCtx::agent_method_givens`]). Consulted by
     /// the agent-call lowering to record capability requirements.
-    agent_method_givens: HashMap<String, HashMap<String, Vec<bynk_syntax::ast::CapRef>>>,
+    agent_method_givens: HashMap<String, HashMap<String, Vec<crate::ir::CapRefIr>>>,
     /// Events slice 3b (#978): each locally-declared event's resolved
     /// `@schema(N)` version (mirrors
     /// [`crate::project::EmitProjectCtx::event_schema_versions`]). Default-
@@ -2843,7 +2843,7 @@ pub(crate) struct HandlerShared {
     /// #527: capabilities required by agent methods this body calls, keyed by
     /// deps key. After body lowering these widen the handler's deps *type* to
     /// match the runtime value compose builds (which always carried them).
-    agent_given_caps_used: std::collections::BTreeMap<String, bynk_syntax::ast::CapRef>,
+    agent_given_caps_used: std::collections::BTreeMap<String, crate::ir::CapRefIr>,
 }
 
 impl Default for HandlerShared {
@@ -3296,7 +3296,7 @@ impl<'a> LowerCtx<'a> {
     /// #527: capabilities required by agent methods this body calls.
     pub(crate) fn agent_given_caps_used(
         &self,
-    ) -> Option<&std::collections::BTreeMap<String, bynk_syntax::ast::CapRef>> {
+    ) -> Option<&std::collections::BTreeMap<String, crate::ir::CapRefIr>> {
         self.handler().map(|h| &h.agent_given_caps_used)
     }
 
@@ -3662,9 +3662,7 @@ impl<'a> LowerCtx<'a> {
             .unwrap_or_default();
         if let Some(h) = self.handler_mut() {
             for c in givens {
-                h.agent_given_caps_used
-                    .entry(c.key().to_string())
-                    .or_insert(c);
+                h.agent_given_caps_used.entry(c.name.clone()).or_insert(c);
             }
         }
     }

@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use crate::emitter;
 use crate::ir::CapRefIr;
-use crate::ir::lower::lower_provider_given_ir;
+use crate::ir::lower::{lower_handler_given_ir, lower_provider_given_ir};
 use bynk_check::check_pipeline::{self, prepare_unit_check_ctx};
 use bynk_check::checker;
 use bynk_check::checker::{TyId, Types};
@@ -1187,7 +1187,7 @@ fn emit_unit(
                         .filter_map(|h| {
                             h.method_name
                                 .as_ref()
-                                .map(|m| (m.name.clone(), h.given.clone()))
+                                .map(|m| (m.name.clone(), lower_handler_given_ir(h)))
                         })
                         .collect(),
                 )
@@ -2561,20 +2561,26 @@ fn plan_agent_given_deps(
         info.table.agents.iter().collect();
     agents.sort_by_key(|(n, _)| (*n).clone());
     for (agent, a) in agents {
-        let mut caps: std::collections::BTreeMap<String, bynk_syntax::ast::CapRef> =
+        // #1187's slice 6 (Agent/Service given wiring): reads bynk-emit::ir's
+        // own CapRefIr (lower_handler_given_ir — a standalone reader mirroring
+        // lower_provider_given_ir, #1200) instead of walking
+        // bynk_syntax::ast::CapRef directly. `caps` stays keyed by bare name
+        // (declaration-order-first dedup across every handler), just storing
+        // CapRefIr instead of CapRef.
+        let mut caps: std::collections::BTreeMap<String, CapRefIr> =
             std::collections::BTreeMap::new();
         for h in &a.handlers {
-            for g in &h.given {
+            for g in lower_handler_given_ir(h) {
                 // Events track, slice 0 (spine #936): see the matching skip
                 // in `handler_cross_caps` — no `EventsProvider` exists for
                 // compose (or a synthesised DO's own reconstructed deps) to
                 // build.
-                if g.key() == "Events"
-                    && info.flattened.get(g.key()).map(String::as_str) == Some("bynk")
+                if g.name == "Events"
+                    && info.flattened.get(g.name.as_str()).map(String::as_str) == Some("bynk")
                 {
                     continue;
                 }
-                caps.entry(g.key().to_string()).or_insert_with(|| g.clone());
+                caps.entry(g.name.clone()).or_insert(g);
             }
         }
         if caps.is_empty() {
@@ -2583,8 +2589,8 @@ fn plan_agent_given_deps(
         let parts: Vec<String> = caps
             .iter()
             .map(|(key, g)| {
-                let target_ctx = match g.prefix() {
-                    Some(p) => resolve_consume_prefix(&p, &info.consumes, &info.aliases)
+                let target_ctx = match &g.context {
+                    Some(p) => resolve_consume_prefix(p, &info.consumes, &info.aliases)
                         .unwrap_or_else(|| name.to_string()),
                     None => info
                         .flattened
@@ -3337,7 +3343,7 @@ pub(crate) struct EmitProjectCtx {
     /// list. The lowering records which agent methods a handler body calls so
     /// the handler's emitted deps *type* carries the callee's capabilities —
     /// the runtime deps value (built by compose) always did.
-    pub agent_method_givens: HashMap<String, HashMap<String, Vec<bynk_syntax::ast::CapRef>>>,
+    pub agent_method_givens: HashMap<String, HashMap<String, Vec<CapRefIr>>>,
     /// v0.47: the context's actor declarations (merged across files), keyed by
     /// name. Used to resolve a handler's Bearer verification seam in `emit.rs`
     /// regardless of which file declares the actor.

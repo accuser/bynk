@@ -1588,6 +1588,18 @@ pub(crate) fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> 
     provider.given.iter().map(lower_cap_ref_ir).collect()
 }
 
+/// #1187's slice 6 plumbing (sibling of [`lower_provider_given_ir`]): a
+/// handler's own `given` clause, resolved independent of any full
+/// `IrHandler`/`IrItem` assembly — the standalone entry point for
+/// `project.rs`'s `plan_agent_given_deps`, `EmitProjectCtx::
+/// agent_method_givens`, and `emitter/workers.rs`'s own `given` collection.
+/// Reuses [`lower_cap_ref_ir`] verbatim; a handler's `given` is syntactically
+/// identical to a provider's (`bynk_syntax::ast::CapRef`), so this is the
+/// same one-line adapter, not a new design.
+pub(crate) fn lower_handler_given_ir(h: &Handler) -> Vec<CapRefIr> {
+    h.given.iter().map(lower_cap_ref_ir).collect()
+}
+
 /// P6.14 (#1174, review of #1186): adapt one `given` entry into a real
 /// [`crate::ir::CapRefIr`] — [`CapRefIr`]'s own doc comment has the full
 /// grounding for the `QualifiedName -> String` flattening and for why a
