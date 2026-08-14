@@ -3140,7 +3140,7 @@ pub(crate) fn emit_agent(
         // record `__state`; a state-record handler uses `currentState`/`self.state`.
         // A store handler that performs any `:=` wraps its body in a closure so an
         // implicit commit runs at handler end on every (success) return path.
-        // #1195/R6.5: write detection reads the checker's own resolved
+        // #1196/R6.5: write detection reads the checker's own resolved
         // `Callee::Store` classification (`ir::lower::body_writes_state`)
         // rather than matching a bare-identifier receiver name against this
         // agent's own field-name sets — a locally-shadowed field name (a
