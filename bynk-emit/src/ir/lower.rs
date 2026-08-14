@@ -22,10 +22,10 @@ use std::sync::Arc;
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
     AgentDecl, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp, EventPattern, EventPatternValue,
-    Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind, Invariant, LambdaExpr,
-    LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, ProviderDecl, ProviderOp,
-    QualifiedName, ServiceDecl, ServiceProtocol, Statement, StoreField, Transition, TypeBody,
-    TypeDecl, UnaryOp, expr_children,
+    Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind, InterpPart, Invariant,
+    LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, ProviderDecl,
+    ProviderOp, QualifiedName, ServiceDecl, ServiceProtocol, Statement, StoreField, Transition,
+    TypeBody, TypeDecl, UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -35,9 +35,10 @@ use crate::emitter::{
 };
 use crate::ir::{
     ActorBinder, BindingMode, CapRefIr, CommitShape, ConnectionBinder, ConstVal, CorsIr,
-    EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrExpr, IrExprKind,
-    IrHandler, IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr,
-    ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
+    EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrBinOp, IrExpr,
+    IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig,
+    PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr,
+    TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -1867,10 +1868,15 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             span,
         },
 
-        // Every arm below is genuinely out of this slice's scope — see
-        // design/tracks/the-ir.md §6 for which future slice covers it.
+        // Comparison/arithmetic (#1189, ir.rs's own Decision-D-extension
+        // note): a shared `IrExprKind::BinOp { op, .. }` node, not ten
+        // near-duplicate variants — see `IrExprKind::BinOp`'s own doc
+        // comment for why that shape (not one variant per operator, unlike
+        // `And`/`Or`/`Not` above) is the right call here. `lhs`/`rhs` lower
+        // independently; no `is`-binding propagation applies (that's
+        // `Implies`/`And`'s own concern, unaffected by this arm).
         ExprKind::BinOp(
-            BinOp::Eq
+            op @ (BinOp::Eq
             | BinOp::NotEq
             | BinOp::Lt
             | BinOp::LtEq
@@ -1879,18 +1885,53 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             | BinOp::Add
             | BinOp::Sub
             | BinOp::Mul
-            | BinOp::Div,
-            ..,
-        ) => todo!(
-            "comparison/arithmetic BinOp has no dedicated IrExprKind in Part 6.2 and no Callee \
-             classification either — P6.2 (#1143) confirmed neither exists, and P6.3 (#1145) \
-             didn't name it either (only Implies, the row's one BinOp, was in scope); stays a gap \
-             for whichever future slice actually names it"
-        ),
-        ExprKind::UnaryOp(UnaryOp::Neg, _) => {
-            todo!("UnaryOp::Neg has no Callee classification — same gap as arithmetic BinOp above")
+            | BinOp::Div),
+            lhs,
+            rhs,
+        ) => {
+            let ir_op = match op {
+                BinOp::Eq => IrBinOp::Eq,
+                BinOp::NotEq => IrBinOp::NotEq,
+                BinOp::Lt => IrBinOp::Lt,
+                BinOp::LtEq => IrBinOp::LtEq,
+                BinOp::Gt => IrBinOp::Gt,
+                BinOp::GtEq => IrBinOp::GtEq,
+                BinOp::Add => IrBinOp::Add,
+                BinOp::Sub => IrBinOp::Sub,
+                BinOp::Mul => IrBinOp::Mul,
+                BinOp::Div => IrBinOp::Div,
+                BinOp::And | BinOp::Or | BinOp::Implies => {
+                    unreachable!("And/Or/Implies are matched by their own arms above")
+                }
+            };
+            IrExpr {
+                kind: IrExprKind::BinOp {
+                    op: ir_op,
+                    lhs: Box::new(lower_expr_ir(lhs, cx)),
+                    rhs: Box::new(lower_expr_ir(rhs, cx)),
+                },
+                ty,
+                span,
+            }
         }
-        ExprKind::InterpStr(_) => todo!("interpolated strings — not named by any P6.x rule yet"),
+        // `-operand` (#1189) — `Not`'s own arithmetic counterpart, same
+        // shape.
+        ExprKind::UnaryOp(UnaryOp::Neg, inner) => IrExpr {
+            kind: IrExprKind::Neg {
+                operand: Box::new(lower_expr_ir(inner, cx)),
+            },
+            ty,
+            span,
+        },
+        // Interpolated strings (#1189) — each hole lowers through the
+        // ordinary `lower_expr_ir` machinery; chunks carry over verbatim.
+        ExprKind::InterpStr(parts) => IrExpr {
+            kind: IrExprKind::InterpStr {
+                parts: parts.iter().map(|p| lower_interp_part_ir(p, cx)).collect(),
+            },
+            ty,
+            span,
+        },
         ExprKind::Call {
             type_args, args, ..
         } => lower_call_ir(e, None, type_args, args, cx),
@@ -2000,6 +2041,16 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             "`trace(...)` — test-body-only, same unreachable-through-this-harness gap as \
              `expect` above (P6.3, #1145, Decision C)"
         ),
+    }
+}
+
+/// [`IrExprKind::InterpStr`]'s own per-part lowering (#1189) — a literal
+/// chunk carries over verbatim; a hole lowers through the ordinary
+/// [`lower_expr_ir`] machinery, same as any other subexpression.
+fn lower_interp_part_ir(part: &InterpPart, cx: &mut LowerIrCtx) -> IrInterpPart {
+    match part {
+        InterpPart::Chunk(s) => IrInterpPart::Chunk(s.clone()),
+        InterpPart::Hole(e) => IrInterpPart::Hole(Box::new(lower_expr_ir(e, cx))),
     }
 }
 
@@ -3464,6 +3515,90 @@ commons demo {
         assert!(matches!(
             &*program.program().ty_intern.get(lhs.ty),
             Ty::Base(bynk_syntax::ast::BaseType::Bool)
+        ));
+    }
+
+    // #1189: comparison/arithmetic `BinOp`, `UnaryOp::Neg`, `InterpStr` —
+    // the gap P6.2/P6.3 each confirmed and left `todo!()`, closed here.
+
+    #[test]
+    fn comparison_and_arithmetic_binops_lower_to_a_shared_dedicated_node() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn nonneg(balance: Int) -> Bool { balance >= 0 }
+  fn total(a: Int, b: Int) -> Int { a + b }
+}
+"#,
+        );
+        let cmp_ir = lower_fn(&program, "nonneg");
+        let IrExprKind::BinOp { op, lhs, rhs } = &fn_tail(&cmp_ir).kind else {
+            panic!("expected BinOp, got {:?}", fn_tail(&cmp_ir).kind)
+        };
+        assert_eq!(*op, IrBinOp::GtEq);
+        assert!(matches!(&lhs.kind, IrExprKind::Local(n) if n == "balance"));
+        assert!(matches!(&rhs.kind, IrExprKind::Const(ConstVal::Int(0))));
+        assert!(matches!(
+            &*program.program().ty_intern.get(fn_tail(&cmp_ir).ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Bool)
+        ));
+
+        let arith_ir = lower_fn(&program, "total");
+        let IrExprKind::BinOp { op, lhs, rhs } = &fn_tail(&arith_ir).kind else {
+            panic!("expected BinOp, got {:?}", fn_tail(&arith_ir).kind)
+        };
+        assert_eq!(*op, IrBinOp::Add);
+        assert!(matches!(&lhs.kind, IrExprKind::Local(n) if n == "a"));
+        assert!(matches!(&rhs.kind, IrExprKind::Local(n) if n == "b"));
+        assert!(matches!(
+            &*program.program().ty_intern.get(fn_tail(&arith_ir).ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn unary_neg_lowers_to_its_own_dedicated_node() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn negate(x: Int) -> Int { -x }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "negate");
+        let IrExprKind::Neg { operand } = &fn_tail(&ir).kind else {
+            panic!("expected Neg, got {:?}", fn_tail(&ir).kind)
+        };
+        assert!(matches!(&operand.kind, IrExprKind::Local(n) if n == "x"));
+        assert!(matches!(
+            &*program.program().ty_intern.get(fn_tail(&ir).ty),
+            Ty::Base(bynk_syntax::ast::BaseType::Int)
+        ));
+    }
+
+    #[test]
+    fn interp_str_lowers_chunks_verbatim_and_holes_as_ordinary_expressions() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn greet(name: String) -> String { "hi \(name)!" }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "greet");
+        let IrExprKind::InterpStr { parts } = &fn_tail(&ir).kind else {
+            panic!("expected InterpStr, got {:?}", fn_tail(&ir).kind)
+        };
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[0], IrInterpPart::Chunk(s) if s == "hi "));
+        let IrInterpPart::Hole(hole) = &parts[1] else {
+            panic!("expected Hole, got {:?}", parts[1])
+        };
+        assert!(matches!(&hole.kind, IrExprKind::Local(n) if n == "name"));
+        assert!(matches!(&parts[2], IrInterpPart::Chunk(s) if s == "!"));
+        assert!(matches!(
+            &*program.program().ty_intern.get(fn_tail(&ir).ty),
+            Ty::Base(bynk_syntax::ast::BaseType::String)
         ));
     }
 
@@ -5936,6 +6071,45 @@ agent Ledger {
         // assembled `IrItem::Agent` rather than only through
         // `lower_handler_ir` directly.
         assert!(handlers.iter().all(|h| h.binder.is_none()));
+    }
+
+    /// #1189's own named breakage point: `agent_item_fixture`'s own
+    /// invariant/transition are deliberately comparison-free
+    /// (`active`/`old.active implies new.active`) — hand-picked, per #1189's
+    /// own finding, the same way every P6.4-P6.9 fixture happened to avoid
+    /// the gap. This is the real shape #1189 named as blocked before this
+    /// slice (`balance >= 0`, `bynkc/tests/fixtures/positive/248_history_property`'s
+    /// own `nonneg` invariant) — pins that `lower_agent_item_ir` no longer
+    /// panics on it.
+    #[test]
+    fn agent_invariant_with_a_real_comparison_lowers_without_panicking() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Ledger {
+  key id: String
+  store balance: Cell[Int] = 0
+
+  invariant nonneg: balance >= 0
+
+  on call deposit(amount: Int) -> Effect[()] {
+    balance := amount
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Ledger");
+        let ir = lower_agent_item_ir(agent, &program);
+        let IrItem::Agent { invariants, .. } = &ir else {
+            panic!("expected IrItem::Agent, got {:?}", ir)
+        };
+        assert_eq!(invariants.len(), 1);
+        let IrExprKind::BinOp { op, .. } = &invariants[0].predicate.kind else {
+            panic!("expected BinOp, got {:?}", invariants[0].predicate.kind)
+        };
+        assert_eq!(*op, IrBinOp::GtEq);
     }
 
     /// P6.11's own `IrItem::Service` "Done when" case (#1171): a plain
