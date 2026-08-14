@@ -1370,7 +1370,22 @@ fn check_unit_files(
         // classification into the unit's accumulator before `program` (and
         // the `TypedCommons` it wraps) is dropped at the end of this
         // iteration — the only point in this pipeline that ever holds it.
-        unit_callees.extend(program.program().callees.clone());
+        // Filtered to the two variants either reader actually matches on
+        // (review of #1202): every other `Callee` variant would otherwise
+        // sit retained project-wide, for the rest of the build, to answer
+        // two boolean-ish questions — a real `String`/`Arc` cost on a large
+        // project with nothing reading the rest yet. Widen this filter (or
+        // drop it) the moment a future reader needs a different variant.
+        unit_callees.extend(program.program().callees.iter().filter_map(|(id, c)| {
+            let keep = match c {
+                bynk_check::checker::Callee::Cross { .. } => true,
+                bynk_check::checker::Callee::Capability { cap, op } => {
+                    cap == "Events" && op == "emit"
+                }
+                _ => false,
+            };
+            keep.then(|| (*id, c.clone()))
+        }));
         emit_unit(
             name,
             kind,
@@ -1438,7 +1453,15 @@ enum RunChecks {
         // already-resolved `Callee::Capability`/`Callee::Cross` instead of
         // re-deriving the same fact by walking raw AST method-call syntax —
         // `check_unit_files`'s own per-file `CheckedProgram` was previously
-        // built and dropped before any such later pass ever ran.
+        // built and dropped before any such later pass ever ran. Filtered at
+        // merge time (`check_unit_files`'s own `unit_callees.extend` call,
+        // review of #1202) to only `Callee::Cross` and
+        // `Callee::Capability{cap:"Events",op:"emit"}` — the two variants
+        // `unit_table_uses_emit`/`called_cross_context_services` actually
+        // read today; widen the filter (or drop it) the moment a future
+        // reader needs a different variant, rather than paying to retain
+        // every call site's full classification project-wide for the rest
+        // of the build on spec.
         unit_callees: HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
         unit_flattened: HashMap<String, HashMap<String, String>>,
         adapter_bindings: HashMap<String, AdapterBinding>,
@@ -2765,13 +2788,48 @@ pub(crate) fn instantiate_provider_expr(
 /// op:"emit"}` (`Events.emit[...]` dispatches through the ordinary
 /// capability-call path, `bynk-check/src/checker/calls.rs`) instead of
 /// `emitter::block_uses_emit`'s bare-`Ident("Events")`-receiver name match.
-/// `callees` is `None` only defensively (a unit whose own check never ran);
-/// treated as "found nothing", the same as an empty map would be.
+/// `callees` is `None` only defensively (a unit whose own check never ran) —
+/// every call site this function actually reaches has already certified
+/// (review of #1202: traced live, confirmed unreachable on the build path
+/// today). A silent `false` here disables four emission gates at once (no
+/// fan-out DO, no `dispatchToEventsFanout` import, no `EVENTS_FANOUT`
+/// binding, no `__eventsDispatch` field) with no diagnostic — `debug_assert`
+/// makes that invariant enforced, not just documented, so a future caller
+/// that violates it fails loudly in tests rather than shipping a publishing
+/// context that silently drops every emitted event.
+///
+/// **Known follow-on, found while adding a regression fixture for this PR,
+/// deliberately not attempted here:** `emitter::block_uses_emit` — the
+/// still-AST-driven, per-*handler* twin this function used to share its own
+/// name-matching logic with — decides `emit_service`/`emit_agent`'s own
+/// `deps.__eventsDispatch` *parameter* threading (`emit.rs`'s
+/// `needs_events_dispatch`/`body_emits_directly`), a genuinely different
+/// call site from this project-wide compose-gating one. Before this PR both
+/// checks used the same syntactic bare-`Ident("Events")` match, so a
+/// locally-declared type also named `Events` with its own static `emit`
+/// (legal, resolves to `Callee::Static`) fooled both identically —
+/// needlessly wiring up real event-fanout machinery for a call that has
+/// nothing to do with the capability, but *consistently*, so the emitted
+/// TypeScript still type-checked. Now that this function reads the
+/// checker's own resolved `Callee` and `block_uses_emit` still does not,
+/// the two can disagree on exactly that shadowed-name case: this function
+/// correctly says "no real emit here" (skips compose/fan-out generation),
+/// while a handler's own body still gets a `deps.__eventsDispatch` call
+/// site with nothing left to supply it — a `tsc` type error, confirmed by
+/// hand (a fixture hitting this shape was written for review of #1202,
+/// found to fail `tsc --strict`, and removed rather than landed broken).
+/// Closing this needs `block_uses_emit`'s own several call sites
+/// (`emit.rs`, `emitter.rs`, `ir/lower.rs`) converted too — a real, larger,
+/// separately-scoped slice, not attempted here.
 pub(crate) fn unit_table_uses_emit(
     table: &UnitTable,
     callees: Option<&HashMap<ExprId, bynk_check::checker::Callee>>,
 ) -> bool {
     let Some(callees) = callees else {
+        debug_assert!(
+            false,
+            "unit_table_uses_emit: no Callee map for a checked unit"
+        );
         return false;
     };
     fn body_uses_emit(
@@ -3391,7 +3449,17 @@ fn called_cross_context_services(
     if consumed.is_empty() {
         return out;
     }
+    // See `unit_table_uses_emit`'s own matching `debug_assert` (review of
+    // #1202) — `consumed` non-empty means this unit certified with a real
+    // `consumes`, so `callees` missing here is the same "invariant broke a
+    // thousand lines away" case, just silently thinning the contracts
+    // manifest's `expects` instead of silently disabling emission.
     let Some(callees) = callees else {
+        debug_assert!(
+            false,
+            "called_cross_context_services: no Callee map for a checked unit with a non-empty \
+             consumes list"
+        );
         return out;
     };
     let mut visit = |e: &bynk_syntax::ast::Expr| {

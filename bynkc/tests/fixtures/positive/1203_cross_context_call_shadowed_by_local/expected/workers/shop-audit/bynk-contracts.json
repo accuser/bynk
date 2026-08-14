@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "log": "d35a05f56e7920e1"
+  },
+  "expects": {}
+}
