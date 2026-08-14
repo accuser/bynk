@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
 
+use crate::ir::lower::body_writes_state;
 use crate::ir::{OpSig, TypeShape};
 
 use super::*;
@@ -2671,7 +2672,6 @@ pub(crate) fn emit_agent(
         .iter()
         .map(|(n, _, ttl)| (n.name.clone(), *ttl))
         .collect();
-    let cache_names: HashSet<String> = cache_ttls.keys().cloned().collect();
     // v0.95 (ADR 0121): `store Log[T] [@retain(d)]` fields — an ordered array of
     // `{ t, v }` entries. `(name, T, optional retain-millis)`; the retain (from
     // `@retain`) prunes on append.
@@ -2698,7 +2698,6 @@ pub(crate) fn emit_agent(
         .iter()
         .map(|(n, _, r)| (n.name.clone(), *r))
         .collect();
-    let log_names: HashSet<String> = log_retains.keys().cloned().collect();
     // 1) State record type.
     writeln!(out, "export interface {state_ty} {{").unwrap();
     for f in &effective_fields {
@@ -3141,23 +3140,20 @@ pub(crate) fn emit_agent(
         // record `__state`; a state-record handler uses `currentState`/`self.state`.
         // A store handler that performs any `:=` wraps its body in a closure so an
         // implicit commit runs at handler end on every (success) return path.
-        // v0.105 (slice 3b-ii): a held `Map[K, Connection]` is persisted (a connId
-        // record), so writing one (`put`/`remove`) must trigger the commit flush —
-        // include the held maps in the write-detection set. (They are *not* in
-        // `AgentStoreState::maps`: their entry ops use the connId-resolution
-        // lowering, not the plain `Record<string, V>` ops.)
-        let writes_map_names: HashSet<String> = map_names.union(&held_map_names).cloned().collect();
-        let writes_state = is_store_agent
-            && block_writes_state(
-                &h.body,
-                (
-                    &writes_map_names,
-                    &set_names,
-                    &cache_names,
-                    &log_names,
-                    &cell_names,
-                ),
-            );
+        // #1195/R6.5: write detection reads the checker's own resolved
+        // `Callee::Store` classification (`ir::lower::body_writes_state`)
+        // rather than matching a bare-identifier receiver name against this
+        // agent's own field-name sets — a locally-shadowed field name (a
+        // handler param, say) can no longer false-positive into an
+        // unnecessary implicit-commit wrapper the way the deleted
+        // `block_writes_state` could (`1196_agent_write_detection_via_
+        // resolved_callee`'s own fixture pins the fix). A held `Map[K,
+        // Connection]`'s own `put`/`remove` still triggers the commit flush
+        // (v0.105, slice 3b-ii) with no extra name-set union needed here —
+        // a held map is an ordinary `store Map` field as far as the checker's
+        // own `Callee::Store` resolution is concerned, "held" being purely
+        // this emitter's own downstream connection-resolution concern.
+        let writes_state = is_store_agent && body_writes_state(&h.body, commons);
         let store = is_store_agent.then(|| {
             Box::new(AgentStoreState {
                 state: ("__state".to_string(), cell_names.clone()),
