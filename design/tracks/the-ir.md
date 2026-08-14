@@ -427,9 +427,65 @@ signature only, no body), a `ProviderOp` always carries a real body, and `lower_
 it through `lower_expr_ir` — the same general expression-lowering pass that still hits #1189's open
 comparison/arithmetic `IrExprKind` gap. `ast_importers` does not move from this slice, the same
 invisible-to-the-probe shape slice 1 already established (`emitter/emit.rs` reaches AST types via `use
-super::*` without spelling `bynk_syntax::ast` literally). See #1187 for the remaining slice order
-(`Provider`, then `Agent`, then `Service`, each gated on #1189's comparison/arithmetic `IrExprKind` gap
-where the slice lowers real predicate or body expressions).
+super::*` without spelling `bynk_syntax::ast` literally).
+
+#1189 (comparison/arithmetic/unary-negation/string-interpolation `IrExprKind`) landed next, settling the
+gap named above — real `IrExprKind::BinOp`/`Neg`/`InterpStr` variants, deliberately extending P6.1's own
+Decision D (that row's own "the whole Part 6.2 shape lands in one piece, never widens again" framing):
+#1189's own resolution found the reference's Part 6.2 node-set listing never named these four constructs
+at all, a true omission, not a deliberately-out-of-scope row this track chose to defer. This unblocked
+real predicate/handler-body lowering for `Agent`/`Service` — but did not, on its own, make either slice
+small; each still needed its own narrowing once scoped.
+
+Fourth slice: `Agent` (#1196, narrowed hard — not the structural `IrItem::Agent` cutover this table's
+own row implies). Scoping found the R6.5 defect (`block_writes_state`'s bare-identifier write-detection,
+superseded by `bynk-emit::ir`'s already-correct `body_writes_state`) was cuttable on its own, with zero
+dependency on `IrItem::Agent`'s full construction — `body_writes_state` takes a bare
+`&Block`/`&TypedCommons`, no `StoreFieldIr`/`CommitShape`/`IrHandler` needed. That was the whole slice:
+`emit_agent`'s implicit-commit-wrapper decision now reads `body_writes_state`; `block_writes_state`/
+`StoreKinds`/`mutating_op` deleted. `emit_agent`'s own state-field emission (~350 lines threading raw
+AST `RecordField`/`TypeRef` through interface/zero-factory/load-commit/held-connection-map rendering, no
+`StoreFieldIr` equivalent for held maps) and its handler-body rendering (still the emitter's own
+`LowerCtx`/`Pre` machinery — no `IrExpr → TS` printer exists anywhere in this crate) both stay fully
+AST-driven, unscoped. `ast_importers` unaffected.
+
+Fifth slice: `Service` (#1198, similarly narrowed). `emit_service`'s handler param/return-type/
+effectful-ness and protocol-driven special params (WebSocket connection type, Events pattern/
+schema-dispatch guards) now read `bynk-emit::ir` (`IrHandler`'s own new `ret: TyId` field, `ProtocolIr`,
+a new `event_pattern_guard_ir`). Scoping (and a live repro during review) found building a real
+`IrItem::Service`/`IrHandler` at the call site is not viable yet: `lower_service_handler_ir`
+unconditionally lowers the whole handler body into `IrExpr`, and an ordinary `from http` handler
+routinely constructs `Ok`/`Err`/`Some`/`None` — still `todo!()` in `lower_expr_ir`, confirmed independent
+of #1189's own fix. A new standalone `lower_service_handler_signature_ir` reads only the signature,
+never the body, mirroring `body_writes_state`'s own narrow-reader precedent (and, per review, needed its
+own non-panicking fallback for service handlers specifically — the checker does not guarantee a service
+handler's own param/return types resolve the way it does for an agent's). Handler body rendering,
+actor-seam/deps-identity resolution (`bearer_seam_for`/`oidc_seam_for`/`caller_binder_for`/
+`sum_members_for` — `IrHandler::binder`'s own `ActorBinder` doesn't distinguish Bearer/OIDC/Caller/
+multi-actor-sum), `given` cross-context qualification (`IrHandler::given` is bare names only, no
+`CapRefIr`-style qualification), and WebSocket DO-method generation (confirmed to live inside
+`emit_agent`, not `emit_service`) all stay deferred. `ast_importers` unaffected.
+
+**`Provider` remains entirely unscoped** — the deferral above still stands; no issue or PR has attempted
+it since.
+
+**Slice 6 (`project.rs` cleanup) is not yet ready, contrary to this table's own "once (1)–(5) land,
+whatever's left here is residue" framing.** A scoping pass (2026-08-14) found `project.rs` holds zero
+references to `bynk-emit::ir` anywhere in its ~4,200 lines; its substantive AST coupling
+(`plan_agent_given_deps`, `instantiate_provider_expr`, `unit_table_uses_emit`,
+`called_cross_context_services`, `own_contract_hashes`) is project-wide cross-cutting plumbing —
+given-deps wiring, cross-context call detection, contract hashing — reading handler **bodies** and
+**`given`/params** straight off `bynk_check::symbols::UnitTable`'s raw AST decls. That is exactly the
+surface `Provider` (never started), `Agent`'s state/body (deferred by #1196), and `Service`'s
+body/actor-seam/`given` (deferred by #1198) all still own — not residue left over once those slices
+land, but a direct downstream dependent of them. One data point against "shrinks incrementally": the
+`wrangler.rs` sweep (slice 2) *relocated* two AST matches into `project.rs` rather than eliminating
+them, since `project.rs` was already counted — the file can grow as a landing spot, not just shrink.
+`emitter/workers.rs`/`emitter/workers_entry.rs` (this table's own "trail `Agent`+`Service`" framing) are
+likewise untouched since this section was written, for the same reason: what they trail hasn't landed
+yet. Recommended next real slice: `Provider`'s own `given`/deps wiring (`instantiate_provider_expr`,
+`project.rs`) — the smallest of the deferred pieces, and the one that most directly unblocks `project.rs`
+itself.
 
 ---
 
