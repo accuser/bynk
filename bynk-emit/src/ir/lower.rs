@@ -488,12 +488,54 @@ fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureI
 /// reader of already-resolved data, not the full `IrItem`/`IrHandler`
 /// assembly — the same posture, applied to signature data instead of a
 /// single boolean.
+/// Deliberately **not** `lower_handler_signature_ir(h, &cx)` (review of
+/// #1198) — that helper's own ADR 0334 `.unwrap_or_else(|| panic!(..))` on a
+/// resolution miss is correct for an *agent* handler (the checker
+/// guarantees resolution there) but not for a *service* one:
+/// `resolver.rs` skips `CommonsItem::Service` in every type-ref-resolution
+/// pass, `check_handler_body` silently skips a param whose type doesn't
+/// resolve and silently returns on an unresolvable return type (no
+/// diagnostic either way), and `check_http_handler` only constrains a
+/// param's *name* (path segment or `body`), never validates a `body:`
+/// param's own declared type. A service handler naming an undeclared type
+/// certifies today (and previously just emitted that bad name verbatim, a
+/// `tsc`-only failure) — reusing the strict helper here would turn that
+/// pre-existing, real-but-harmless-to-the-compiler gap into an ICE on the
+/// production emit path for every service in every project (confirmed live:
+/// `on POST("/x") (body: Nope) -> Effect[HttpResult[String]] by v: Visitor
+/// { ... }` panics `bynkc` before this fix). Mirrors [`lower_protocol_ir`]'s
+/// own `Ty::Unit`-on-miss posture, for the identical underlying reason (that
+/// function's own doc comment already documents the checker's Service-wide
+/// resolution gap).
+///
+/// `effectful` is computed from `h.return_type`'s own AST shape
+/// (`TypeRef::Effect(..)`, matching [`crate::emitter::is_effectful_return`]
+/// exactly), not from the *resolved* `ret`'s `Ty::Effect(_)` shape — a
+/// resolution miss on `ret` (falling back to `Ty::Unit` below) must not
+/// silently flip an `Effect[Nope]`-returning handler to non-effectful; the
+/// top-level `Effect[...]` wrapper is always syntactically determinable
+/// regardless of whether its own inner type resolves.
 pub(crate) fn lower_service_handler_signature_ir(
     h: &Handler,
     program: &CheckedProgram,
 ) -> HandlerSignatureIr {
     let cx = LowerIrCtx::new(program, HashSet::new());
-    lower_handler_signature_ir(h, &cx)
+    let params: Vec<(String, TyId)> = h
+        .params
+        .iter()
+        .map(|p| {
+            let ty = cx
+                .resolve_type_ref(&p.type_ref)
+                .unwrap_or_else(|| cx.unit_ty());
+            (p.name.name.clone(), ty)
+        })
+        .collect();
+    let given: Vec<String> = h.given.iter().map(|c| c.key().to_string()).collect();
+    let ret = cx
+        .resolve_type_ref(&h.return_type)
+        .unwrap_or_else(|| cx.unit_ty());
+    let effectful = crate::emitter::is_effectful_return(&h.return_type);
+    (params, given, ret, effectful)
 }
 
 /// P6.11 ([DECISION E], #1171): lower a service handler's own body — the

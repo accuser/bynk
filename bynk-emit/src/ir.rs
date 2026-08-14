@@ -1039,11 +1039,11 @@ pub(crate) enum EventPatternValueIr {
     /// A nullary sum-variant tag, resolved and unqualified — bare
     /// `tag: String` mirrors `IrPat::Variant`'s own `tag`/[`GlobalRef`]'s
     /// own `tag`. The AST's own optional qualifying `type_name` is
-    /// dropped, not lost: the sole existing consumer (the shipped
-    /// emitter's `event_pattern_guard`) already destructures down to the
-    /// bare tag alone — the qualification is disambiguation for the
-    /// *checker*, resolved against the field's declared sum type before
-    /// this point.
+    /// dropped, not lost: the sole consumer
+    /// ([`crate::emitter::lower::event_pattern_guard_ir`], #1187's slice 5)
+    /// already destructures down to the bare tag alone — the qualification
+    /// is disambiguation for the *checker*, resolved against the field's
+    /// declared sum type before this point.
     Variant { tag: String },
 }
 
