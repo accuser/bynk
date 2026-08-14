@@ -32,6 +32,27 @@
 //! slice, each for a reason specific to it (see [`lower`]'s own `todo!()`
 //! text for each).
 //!
+//! **Decision D's own "never widens beyond the reference's Part 6.2 shape"
+//! is not absolute — it held only as long as the reference's own node set
+//! was complete** ([`IrExprKind::BinOp`]/[`Neg`]/[`InterpStr`], #1189).
+//! `design/bynk-greenfield-compiler.md` §6.2's own listing (`Const, Local,
+//! Global, Record, Variant, Field, List, Block, If, Match, And, Or, Not,
+//! Return, Call, Lambda, Await, Send, Pure`) never names comparison,
+//! arithmetic, unary negation, or string interpolation at all — confirmed a
+//! true omission, not a deliberately-out-of-scope row this track chose to
+//! defer (unlike, say, `Question`/`Is` above, each of which the reference
+//! *does* name and this slice explicitly declines). P6.2 (#1143) and P6.3
+//! (#1145) each independently confirmed the gap and left it a `todo!()`
+//! rather than force-fitting it under `Decision D`'s closed-shape framing;
+//! #1189 settled it as buildable, three new variants, added here rather than
+//! deferred indefinitely — real programs use `+`/`-`/`<`/`==` routinely (a
+//! certified `.bynk` invariant like `balance >= 0` is ordinary, not an edge
+//! case), and the checker already resolves every one of these expressions'
+//! types (`bynk-check/src/checker/expressions.rs`'s `check_binop`/
+//! `check_unary`, and `checker.rs`'s own `InterpStr` hole-checking) — nothing
+//! about them was actually blocked on new checker work, only on this type
+//! gaining a place to land them.
+//!
 //! **P6.6 (#1161) adds [`IrItem`]/[`TypeShape`] (Part 6.6)** — a *separate*
 //! top-level type from [`IrExpr`], not a new [`IrExprKind`] variant:
 //! declarations and expressions are different node families in the
@@ -412,6 +433,33 @@ pub(crate) enum IrExprKind {
     Or { lhs: Box<IrExpr>, rhs: Box<IrExpr> },
     /// `!operand`.
     Not { operand: Box<IrExpr> },
+    /// Comparison/arithmetic (#1189): `Eq`/`NotEq`/`Lt`/`LtEq`/`Gt`/`GtEq`/
+    /// `Add`/`Sub`/`Mul`/`Div` — every [`bynk_syntax::ast::BinOp`] member
+    /// *except* `And`/`Or`/`Implies`, which stay their own dedicated
+    /// variants above (Decision A, #1189: `And`/`Or` exist as their own
+    /// nodes specifically to make short-circuit evaluation a structural
+    /// property of the tree — R6.3 — and `Implies` desugars away entirely;
+    /// none of that applies to a strict, both-operands-always-evaluated
+    /// arithmetic/comparison operator, so one shared, `op`-tagged variant
+    /// covers all ten without ten near-duplicate variants/lowering arms).
+    /// `lhs`/`rhs` are lowered independently — no `is`-binding propagation
+    /// exists for these operators, unlike `And`.
+    BinOp {
+        op: IrBinOp,
+        lhs: Box<IrExpr>,
+        rhs: Box<IrExpr>,
+    },
+    /// `-operand` (#1189) — `bynk_syntax::ast::UnaryOp::Neg`'s own
+    /// counterpart to `Not` above; the checker requires an `Int` operand and
+    /// returns `Int` (`check_unary`, `bynk-check/src/checker/expressions.rs`).
+    Neg { operand: Box<IrExpr> },
+    /// An interpolated string (#1189) — `bynk_syntax::ast::ExprKind::InterpStr`'s
+    /// alternating chunk/hole run, each hole an ordinary lowered expression
+    /// (the checker's own hole rule restricts a hole to a scalar or
+    /// scalar-refinement type; this module does not re-derive that
+    /// restriction, only carries the already-checked result). Always typed
+    /// `String`.
+    InterpStr { parts: Vec<IrInterpPart> },
     /// A function/handler body's own tail value, in return position. Built,
     /// not parsed — Bynk has no `return` keyword; this node is constructed
     /// only by `lower::lower_fn_body_ir` wrapping a body block's tail (the
@@ -475,6 +523,40 @@ pub(crate) enum IrStmt {
         field: String,
         value: IrExpr,
     },
+}
+
+/// [`IrExprKind::BinOp`]'s own operator tag (#1189) — every
+/// [`bynk_syntax::ast::BinOp`] member that lowers into `BinOp` rather than
+/// its own dedicated `IrExprKind` variant or a desugar (see `BinOp`'s own
+/// doc comment for which and why). Deliberately a plain tag with no payload
+/// of its own — `lhs`/`rhs` already carry their own resolved `ty`, and
+/// unlike, say, [`StoreKindIr`], no variant here needs anything beyond its
+/// own identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IrBinOp {
+    Eq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// [`IrExprKind::InterpStr`]'s own per-part payload (#1189) — the IR-side
+/// mirror of [`bynk_syntax::ast::InterpPart`], substituting `Hole`'s raw
+/// `Box<Expr>` for an already-lowered `Box<IrExpr>` under this module's
+/// usual "carry the lowered form, not the source form" discipline (the same
+/// substitution every other `IrExprKind` payload already makes).
+#[derive(Debug, Clone)]
+pub(crate) enum IrInterpPart {
+    /// Literal text between holes, verbatim from the source chunk.
+    Chunk(String),
+    /// An interpolated expression, already lowered.
+    Hole(Box<IrExpr>),
 }
 
 /// P6.6's real declaration IR (`design/bynk-greenfield-compiler.md` §6.6,
