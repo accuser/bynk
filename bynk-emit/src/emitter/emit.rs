@@ -14,8 +14,8 @@ use std::sync::Arc;
 use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
 
-use crate::ir::lower::body_writes_state;
-use crate::ir::{OpSig, TypeShape};
+use crate::ir::lower::{HandlerSignatureIr, body_writes_state};
+use crate::ir::{OpSig, ProtocolIr, TypeShape};
 
 use super::*;
 
@@ -1274,16 +1274,25 @@ pub(crate) fn emit_provider(
 pub(crate) fn emit_service(
     out: &mut String,
     s: &ServiceDecl,
+    protocol: &ProtocolIr,
+    signatures: &[HandlerSignatureIr],
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
+    let tys = commons.tys();
     emit_doc_block(out, s.documentation.as_deref(), 0);
     writeln!(out, "export const {name} = {{", name = s.name.name).unwrap();
     let mut cron_idx = 0usize;
     let mut queue_idx = 0usize;
-    let ws_proto = matches!(s.protocol, ServiceProtocol::WebSocket { .. });
-    for handler in &s.handlers {
+    let ws_proto = matches!(protocol, ProtocolIr::WebSocket { .. });
+    // #1187's slice 5: `s.handlers`/`signatures` are the same list in the
+    // same declaration order — `signatures` is built by mapping `s.handlers`
+    // 1:1 at the one call site (`emitter.rs`) — the same zip-by-index
+    // precedent `emit_capability`'s own `c.ops`/`ops` pairing already
+    // established (#1193).
+    for (handler, (ir_params, _ir_given, ir_ret, ir_effectful)) in s.handlers.iter().zip(signatures)
+    {
         // v0.104/v0.106 (real-time track slice 3b): on Workers a `from websocket`
         // lifecycle handler (`on open`/`on message`/`on close`) does not emit a
         // service-surface method — its body runs inside the hosting Durable Object
@@ -1330,19 +1339,18 @@ pub(crate) fn emit_service(
         // For service handlers the operation name is the handler kind
         // (e.g. `call`). v0.5 has only one handler kind, so the service is a
         // single-operation object literal.
-        let mut params: Vec<String> = handler
-            .params
+        let mut params: Vec<String> = ir_params
             .iter()
-            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
+            .map(|(name, ty)| format!("{}: {}", ts_ident(name), ts_ty(*ty, tys)))
             .collect();
         // v0.103/v0.106: a `from websocket` lifecycle handler receives the
         // `connection` as its first parameter (the synthetic binding the checker
         // added — the fresh socket for `on open`, the firing socket for `on
         // message`/`on close`); emit it so the lowered body's `connection` resolves.
-        if is_ws_handler && let ServiceProtocol::WebSocket { out_type, .. } = &s.protocol {
+        if is_ws_handler && let ProtocolIr::WebSocket { out_ty, .. } = protocol {
             params.insert(
                 0,
-                format!("connection: Connection<{}>", ts_type_ref(out_type)),
+                format!("connection: Connection<{}>", ts_ty(*out_ty, tys)),
             );
         }
         // Events track, slice 4 (spine #936): a `via schema(N)` guard needs
@@ -1355,10 +1363,10 @@ pub(crate) fn emit_service(
         // envelope-forwarding call sites (`workers.rs`, `project.rs`) widen
         // their own condition to match, so the value actually arrives here.
         let schema_dispatch_env_binder = if handler.kind == HandlerKind::Event
-            && let ServiceProtocol::Events {
+            && let ProtocolIr::Events {
                 schema_dispatch: Some(_),
                 ..
-            } = &s.protocol
+            } = protocol
         {
             match handler.params.get(1) {
                 Some(env_param) => Some(ts_ident(&env_param.name.name)),
@@ -1452,7 +1460,7 @@ pub(crate) fn emit_service(
         )
         .with_source_map(Some(&body_smb));
         cx.local_agents = ctx.local_agents.clone();
-        let async_tail = is_effectful_return(&handler.return_type);
+        let async_tail = *ir_effectful;
         emit_block_as_function_body_with_return(
             &mut body_out,
             &handler.body,
@@ -1473,12 +1481,12 @@ pub(crate) fn emit_service(
         // event type by `check_service_protocols`'s param-type-agreement
         // check, so testing its fields here is sound.
         if handler.kind == HandlerKind::Event
-            && let ServiceProtocol::Events {
+            && let ProtocolIr::Events {
                 pattern: Some(pattern),
                 ..
-            } = &s.protocol
+            } = protocol
             && let Some(param) = handler.params.first()
-            && let Some(guard) = event_pattern_guard(&ts_ident(&param.name.name), Some(pattern))
+            && let Some(guard) = event_pattern_guard_ir(&ts_ident(&param.name.name), Some(pattern))
         {
             let prologue = format!(
                 "{}if (!({guard})) return undefined;\n",
@@ -1492,13 +1500,13 @@ pub(crate) fn emit_service(
         // prologue technique, same three-delivery-path coverage. The
         // envelope binder is either the user's own declared `env` name or
         // the synthetic one inserted above.
-        if let ServiceProtocol::Events {
+        if let ProtocolIr::Events {
             schema_dispatch: Some(dispatch),
             ..
-        } = &s.protocol
+        } = protocol
             && let Some(env_binder) = &schema_dispatch_env_binder
         {
-            let SchemaVersionPattern::Literal(version) = &dispatch.pattern;
+            let SchemaVersionPattern::Literal(version) = dispatch;
             let prologue = format!(
                 "{}if (!({env_binder}.schemaVersion === {version})) return undefined;\n",
                 " ".repeat(INDENT_STEP * 2)
@@ -1624,12 +1632,8 @@ pub(crate) fn emit_service(
             };
         }
         params.push(format!("deps: {deps_ty}"));
-        let ret = ts_type_ref(&handler.return_type);
-        let async_kw = if is_effectful_return(&handler.return_type) {
-            "async "
-        } else {
-            ""
-        };
+        let ret = ts_ty(*ir_ret, tys);
+        let async_kw = if *ir_effectful { "async " } else { "" };
         writeln!(
             out,
             "  {async_kw}{op}({params}): {ret} {{",
