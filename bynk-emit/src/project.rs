@@ -25,6 +25,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use crate::emitter;
+use crate::ir::CapRefIr;
+use crate::ir::lower::lower_provider_given_ir;
 use bynk_check::check_pipeline::{self, prepare_unit_check_ctx};
 use bynk_check::checker;
 use bynk_check::checker::{TyId, Types};
@@ -2636,7 +2638,12 @@ pub(crate) fn instantiate_provider_expr(
         return format!("new {bodied_ns}.{cap}()");
     };
     // Build the by-name deps object from the provider's `given`, if any.
-    let deps_obj = if provider.given.is_empty() {
+    // #1187's Provider given/deps-wiring slice: reads bynk-emit::ir's own
+    // CapRefIr (lower_provider_given_ir — a standalone reader, never a full
+    // IrItem::Provider; see that function's own doc comment for why) instead
+    // of walking bynk_syntax::ast::CapRef directly.
+    let given: Vec<CapRefIr> = lower_provider_given_ir(provider);
+    let deps_obj = if given.is_empty() {
         None
     } else {
         let consumed = unit_consumes.get(provider_ctx).cloned().unwrap_or_default();
@@ -2648,21 +2655,20 @@ pub(crate) fn instantiate_provider_expr(
             .get(provider_ctx)
             .cloned()
             .unwrap_or_default();
-        let deps: Vec<String> = provider
-            .given
+        let deps: Vec<String> = given
             .iter()
             .map(|g| {
-                let target_ctx = match g.prefix() {
-                    Some(p) => resolve_consume_prefix(&p, &consumed, &aliases)
+                let target_ctx = match &g.context {
+                    Some(p) => resolve_consume_prefix(p, &consumed, &aliases)
                         .unwrap_or_else(|| provider_ctx.to_string()),
                     None => flattened
-                        .get(g.key())
+                        .get(&g.name)
                         .cloned()
                         .unwrap_or_else(|| provider_ctx.to_string()),
                 };
                 let expr = instantiate_provider_expr(
                     &target_ctx,
-                    g.key(),
+                    &g.name,
                     unit_tables,
                     unit_consumes,
                     unit_consumes_aliases,
@@ -2672,7 +2678,7 @@ pub(crate) fn instantiate_provider_expr(
                     locale_negotiation,
                     referenced_units,
                 );
-                format!("{}: {}", g.key(), expr)
+                format!("{}: {}", g.name, expr)
             })
             .collect();
         Some(format!("{{ {} }}", deps.join(", ")))
