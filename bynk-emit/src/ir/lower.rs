@@ -1020,16 +1020,20 @@ pub(crate) fn lower_transition_ir(
 /// [DECISION B]/[DECISION C] (#1165): does `body` reach a mutating
 /// `Callee::Store` write, or an unconditional `Statement::Assign` (`:=`),
 /// anywhere — including inside a nested `if`/`match`/lambda? Drives
-/// [`lower_commit_shape_ir`]'s own `Transactional` decision. The walk's own
-/// shape is `block_writes_state`'s own already-correct skeleton
-/// (`emitter.rs`) reused structurally, not re-derived: `Block`/`If`/`Match`
-/// are hand-matched so crossing a nested block re-enters the
-/// statement-aware case (an `expr_children` descent alone flattens a block
-/// straight to its statements' *values*, losing the `Statement::Assign`
-/// tag), everywhere else recurses over `expr_children`'s total child
-/// iterator.
+/// [`lower_commit_shape_ir`]'s own `Transactional` decision, and, as of
+/// #1195 (the #1187 emitter-cutover track's own R6.5 stake), `emit_agent`'s
+/// (`bynk-emit/src/emitter/emit.rs`) own real implicit-commit-wrapper
+/// decision too — its previous own name-matching `block_writes_state`
+/// (`emitter.rs`) is deleted, this function is its sole, direct
+/// replacement. The walk's own shape is that deleted function's own
+/// already-correct skeleton reused structurally, not re-derived:
+/// `Block`/`If`/`Match` are hand-matched so crossing a nested block
+/// re-enters the statement-aware case (an `expr_children` descent alone
+/// flattens a block straight to its statements' *values*, losing the
+/// `Statement::Assign` tag), everywhere else recurses over
+/// `expr_children`'s total child iterator.
 ///
-/// Unlike `block_writes_state`'s own name-based `mutating_op`, this walk
+/// Unlike the deleted function's own name-based `mutating_op`, this walk
 /// needs no per-kind receiver-name set: a `Callee::Store { op, .. }` already
 /// carries the field's own resolved identity (the checker only ever records
 /// one for a method the field's own kind actually declares), so `op`'s
@@ -1037,8 +1041,9 @@ pub(crate) fn lower_transition_ir(
 /// `emitter.rs`) is unambiguous checked flat, across all four kinds' lists
 /// at once — a locally-shadowed name that would false-positive
 /// `mutating_op` cannot false-positive here at all, the exact fix Decision
-/// B's own Risk names.
-fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
+/// B's own Risk names, and the exact defect `#1196_agent_write_detection_
+/// via_resolved_callee`'s own fixture pins at the emitted-output level.
+pub(crate) fn body_writes_state(body: &Block, program: &TypedCommons) -> bool {
     fn is_mutating_store_write(e: &Expr, program: &TypedCommons) -> bool {
         match program.callees.get(&e.id) {
             Some(Callee::Store { op, .. }) => {
