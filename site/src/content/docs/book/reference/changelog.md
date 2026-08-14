@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.61** | "project.rs's unit_table_uses_emit and called_cross_context_services now read the checker's own already-resolved Callee classification (threaded forward from per-unit checking as a new RunChecks::Checked::unit_callees field) instead of re-deriving Events.emit/cross-context-call detection from raw AST method-call syntax (internal only, byte-identical output)" |
 | **v0.247.60** | "project.rs's instantiate_provider_expr now reads a provider's given clause from bynk-emit::ir (CapRefIr) instead of walking bynk_syntax::ast::CapRef directly; ProviderBody::External also gains the given field it was silently dropping (internal only, byte-identical output)" |
 | **v0.247.59** | "design/tracks/the-ir.md §6 reconciled with how slices 4/5 of #1187 actually landed (both narrowed hard, not the structural cutovers the table's own row implied) and how Provider and slice 6 (project.rs cleanup) still stand — no Rust code changes" |
 | **v0.247.58** | "emit_service now reads a handler's resolved signature (params/return type/effectful-ness) and a service's protocol data from bynk-emit::ir instead of walking bynk_syntax::ast TypeRefs/ServiceProtocol directly (internal only, byte-identical output — no language surface change)" |
