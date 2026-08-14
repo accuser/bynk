@@ -207,8 +207,7 @@ pub(crate) fn emit_worker_compose(
     // `deps.__eventsDispatch` that calls into it — mirrors `unit_table_uses_
     // emit`'s Bundle-mode gate on `composeApp`'s `__eventsDispatch` closure,
     // so the two targets agree on when the field exists.
-    let ctx_uses_emit = uses_emit;
-    if ctx_uses_emit {
+    if uses_emit {
         runtime_imports.push("dispatchToEventsFanout");
     }
     let _ = writeln!(
@@ -266,14 +265,14 @@ pub(crate) fn emit_worker_compose(
         let bind = agent_binding_name(a);
         let _ = writeln!(out, "  {bind}: DurableObjectNamespace;");
     }
-    if ctx_uses_emit {
+    if uses_emit {
         let bind = agent_binding_name(EVENTS_FANOUT_CLASS_NAME);
         let _ = writeln!(out, "  {bind}: DurableObjectNamespace;");
     }
     let _ = writeln!(out, "}}");
     writeln!(out).unwrap();
 
-    if !agent_names.is_empty() || ctx_uses_emit {
+    if !agent_names.is_empty() || uses_emit {
         let _ = writeln!(
             out,
             "type DurableObjectNamespace = {{ idFromName(name: string): {{ toString(): string }}; get(id: any): any }};"
@@ -359,7 +358,7 @@ pub(crate) fn emit_worker_compose(
     // release-at-commit event batch is handed to this context's own fan-out
     // DO — `env.<bind>` is typed by the `Env` interface built above, one
     // instance per publishing context.
-    if ctx_uses_emit {
+    if uses_emit {
         let bind = agent_binding_name(EVENTS_FANOUT_CLASS_NAME);
         deps_entries.push(format!(
             "__eventsDispatch: (events: Array<{}>) => dispatchToEventsFanout(env.{bind}, events)",
