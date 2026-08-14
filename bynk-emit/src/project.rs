@@ -2798,29 +2798,14 @@ pub(crate) fn instantiate_provider_expr(
 /// that violates it fails loudly in tests rather than shipping a publishing
 /// context that silently drops every emitted event.
 ///
-/// **Known follow-on, found while adding a regression fixture for this PR,
-/// deliberately not attempted here:** `emitter::block_uses_emit` — the
-/// still-AST-driven, per-*handler* twin this function used to share its own
-/// name-matching logic with — decides `emit_service`/`emit_agent`'s own
-/// `deps.__eventsDispatch` *parameter* threading (`emit.rs`'s
-/// `needs_events_dispatch`/`body_emits_directly`), a genuinely different
-/// call site from this project-wide compose-gating one. Before this PR both
-/// checks used the same syntactic bare-`Ident("Events")` match, so a
-/// locally-declared type also named `Events` with its own static `emit`
-/// (legal, resolves to `Callee::Static`) fooled both identically —
-/// needlessly wiring up real event-fanout machinery for a call that has
-/// nothing to do with the capability, but *consistently*, so the emitted
-/// TypeScript still type-checked. Now that this function reads the
-/// checker's own resolved `Callee` and `block_uses_emit` still does not,
-/// the two can disagree on exactly that shadowed-name case: this function
-/// correctly says "no real emit here" (skips compose/fan-out generation),
-/// while a handler's own body still gets a `deps.__eventsDispatch` call
-/// site with nothing left to supply it — a `tsc` type error, confirmed by
-/// hand (a fixture hitting this shape was written for review of #1202,
-/// found to fail `tsc --strict`, and removed rather than landed broken).
-/// Closing this needs `block_uses_emit`'s own several call sites
-/// (`emit.rs`, `emitter.rs`, `ir/lower.rs`) converted too — a real, larger,
-/// separately-scoped slice, not attempted here.
+/// `emitter::block_uses_emit` — the per-*handler* twin deciding
+/// `emit_service`/`emit_agent`'s own `deps.__eventsDispatch` *parameter*
+/// threading — reads the same resolved `Callee` now too (its own doc
+/// comment has the story: the two checks briefly disagreed on a
+/// locally-shadowed `Events` type between this function converting and
+/// that one following, confirmed by a fixture that failed `tsc --strict` in
+/// between, `1204_events_emit_shadowed_by_local_type`), so the two stay in
+/// agreement on every input, not just the ones existing fixtures cover.
 pub(crate) fn unit_table_uses_emit(
     table: &UnitTable,
     callees: Option<&HashMap<ExprId, bynk_check::checker::Callee>>,

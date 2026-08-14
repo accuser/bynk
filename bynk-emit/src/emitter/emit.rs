@@ -1613,7 +1613,7 @@ pub(crate) fn emit_service(
         // `Events` rides the same path since it's declared as an ordinary
         // `given Events` on the agent handler.
         let needs_events_dispatch = cx.is_first_party_events()
-            && (crate::emitter::block_uses_emit(&handler.body)
+            && (crate::emitter::block_uses_emit(&handler.body, &commons.callees)
                 || cx
                     .agent_given_caps_used()
                     .is_some_and(|m| m.contains_key("Events")));
@@ -1652,7 +1652,7 @@ pub(crate) fn emit_service(
         // `__eventsDispatch` to an agent it calls has nothing of its own to
         // buffer or flush, so it keeps byte-identical output, mirroring
         // `__exec`'s gate on `block_uses_send`.
-        let body_emits_directly = crate::emitter::block_uses_emit(&handler.body);
+        let body_emits_directly = crate::emitter::block_uses_emit(&handler.body, &commons.callees);
         if body_emits_directly {
             writeln!(
                 out,
@@ -1708,11 +1708,11 @@ pub(crate) fn commons_uses_emit(commons: &TypedCommons) -> bool {
         CommonsItem::Service(s) => s
             .handlers
             .iter()
-            .any(|h| crate::emitter::block_uses_emit(&h.body)),
+            .any(|h| crate::emitter::block_uses_emit(&h.body, &commons.callees)),
         CommonsItem::Agent(a) => a
             .handlers
             .iter()
-            .any(|h| crate::emitter::block_uses_emit(&h.body)),
+            .any(|h| crate::emitter::block_uses_emit(&h.body, &commons.callees)),
         _ => false,
     })
 }
@@ -2988,7 +2988,7 @@ pub(crate) fn emit_agent(
     let agent_uses_emit = a
         .handlers
         .iter()
-        .any(|h| crate::emitter::block_uses_emit(&h.body));
+        .any(|h| crate::emitter::block_uses_emit(&h.body, &commons.callees));
     let needs_env_ctor = given_deps_expr.is_some() || agent_uses_emit;
     if needs_env_ctor {
         writeln!(out, "  private __env: unknown;").unwrap();
@@ -3240,7 +3240,7 @@ pub(crate) fn emit_agent(
         // that calls another local agent method which itself emits, gets
         // the same compose-supplied `__eventsDispatch` callback.
         let needs_events_dispatch = cx.is_first_party_events()
-            && (crate::emitter::block_uses_emit(&h.body)
+            && (crate::emitter::block_uses_emit(&h.body, &commons.callees)
                 || cx
                     .agent_given_caps_used()
                     .is_some_and(|m| m.contains_key("Events")));
@@ -3313,7 +3313,7 @@ pub(crate) fn emit_agent(
         // a handler that only *forwards* `__eventsDispatch` to another
         // local agent it calls has nothing of its own to buffer or flush;
         // `deps` (typed with the field) simply passes through unchanged.
-        let body_emits_directly = crate::emitter::block_uses_emit(&h.body);
+        let body_emits_directly = crate::emitter::block_uses_emit(&h.body, &commons.callees);
         let events_decl = format!(
             "    const __events: Array<{}> = [];",
             crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE

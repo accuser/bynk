@@ -405,7 +405,7 @@ pub(crate) fn lower_handler_ir(
     );
     let cx = LowerIrCtx::new(program, HashSet::new());
     let (params, given, ret, effectful) = lower_handler_signature_ir(h, &cx);
-    let emits = block_uses_emit(&h.body);
+    let emits = block_uses_emit(&h.body, &program.program().callees);
     let commit = lower_commit_shape_ir(&h.body, invariants, transitions, emits, program);
     let body = lower_handler_body_ir(h, store_cells, state_ty, program);
     IrHandler {
@@ -695,7 +695,7 @@ pub(crate) fn lower_service_handler_ir(
         }
         _ => None,
     };
-    let emits = block_uses_emit(&h.body);
+    let emits = block_uses_emit(&h.body, &program.program().callees);
     let commit = lower_commit_shape_ir(&h.body, &[], &[], emits, program);
     let body = lower_service_handler_body_ir(h, binder.as_ref(), connection.as_ref(), program);
     IrHandler {
@@ -5670,7 +5670,7 @@ agent Widget {
     fn commit_shape_of(program: &CheckedProgram, handler_name: &str) -> CommitShape {
         let agent = find_agent(program, "Widget");
         let handler = find_handler(agent, handler_name);
-        let emits = block_uses_emit(&handler.body);
+        let emits = block_uses_emit(&handler.body, &program.program().callees);
         lower_commit_shape_ir(&handler.body, &[], &[], emits, program)
     }
 

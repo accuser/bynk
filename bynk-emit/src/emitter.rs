@@ -713,7 +713,7 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
     b.statements.iter().any(stmt) || expr(&b.tail)
 }
 
-/// Events track, slice 0 (spine #936): does this block contain an
+/// Events track, slice 0 (spine #936): does this block contain a real
 /// `Events.emit[...]` call anywhere — including nested branches, match arms,
 /// lambdas, and any other expression position (a `Paren`, an `Ok`/`Err`
 /// wrapper, a `Call`/`RecordConstruction` argument, a `BinOp` operand, …)?
@@ -731,23 +731,32 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
 /// can't drift from the lowering again: a new `ExprKind` variant fails to
 /// compile here until `walk_exprs` itself is taught to visit it.
 ///
-/// Syntactic, like `block_uses_send`: matches a bare-`Events`-receiver
-/// `.emit` call by name, not by resolving the receiver against `given` — a
-/// locally-shadowed `Events` would be a false positive, an accepted
-/// approximation matching `block_uses_send`'s own precedent (it doesn't
-/// verify `~>`'s target either).
-pub(crate) fn block_uses_emit(b: &Block) -> bool {
-    fn is_events_emit_call(receiver: &Expr, method: &Ident) -> bool {
-        matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "Events")
-            && method.name == "emit"
-    }
+/// #1187's slice 6 plumbing (review of #1202): reads the checker's own
+/// already-resolved `Callee::Capability{cap:"Events",op:"emit"}` for each
+/// visited call site instead of a bare-`Ident("Events")`-receiver name
+/// match. Was deliberately syntactic before this — this function's own
+/// prior doc comment named the locally-shadowed-`Events` false positive an
+/// "accepted approximation," matching `block_uses_send`'s own precedent —
+/// but that approximation stopped being harmless once `crate::project::
+/// unit_table_uses_emit` (the project-wide compose-gating twin this
+/// function's own callers must agree with) became precise first: the two
+/// disagreeing on exactly the shadowed case produces a real `tsc` type
+/// error (a `deps.__eventsDispatch` call site with nothing supplying it),
+/// not just an unused interface field. `block_uses_send` needs no matching
+/// fix — a `~>` send is a real `Statement::Send` AST variant, not a method
+/// call that could be shadowed, so it was never approximate to begin with.
+pub(crate) fn block_uses_emit(
+    b: &Block,
+    callees: &HashMap<ExprId, bynk_check::checker::Callee>,
+) -> bool {
     let mut found = false;
     walk_block_exprs(b, &mut |e| {
         if !found
-            && let ExprKind::MethodCall {
-                receiver, method, ..
-            } = &e.kind
-            && is_events_emit_call(receiver, method)
+            && matches!(
+                callees.get(&e.id),
+                Some(bynk_check::checker::Callee::Capability { cap, op })
+                    if cap == "Events" && op == "emit"
+            )
         {
             found = true;
         }
@@ -2477,7 +2486,10 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         // provider does.
         let has_agent_uses_emit = workers
             && commons.commons.items.iter().any(|i| match i {
-                CommonsItem::Agent(a) => a.handlers.iter().any(|h| block_uses_emit(&h.body)),
+                CommonsItem::Agent(a) => a
+                    .handlers
+                    .iter()
+                    .any(|h| block_uses_emit(&h.body, &commons.callees)),
                 _ => false,
             });
         if has_agent_uses_emit {
