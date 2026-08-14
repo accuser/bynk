@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.247.62** | "emitter::block_uses_emit now reads the checker's own resolved Callee classification instead of a bare-Ident(\"Events\") receiver name match, closing a real disagreement with project.rs's own unit_table_uses_emit (#1202) on a locally-shadowed Events type that could previously produce TypeScript failing tsc --strict" |
 | **v0.247.61** | "project.rs's unit_table_uses_emit and called_cross_context_services now read the checker's own already-resolved Callee classification (threaded forward from per-unit checking as a new RunChecks::Checked::unit_callees field) instead of re-deriving Events.emit/cross-context-call detection from raw AST method-call syntax (internal only, byte-identical output)" |
 | **v0.247.60** | "project.rs's instantiate_provider_expr now reads a provider's given clause from bynk-emit::ir (CapRefIr) instead of walking bynk_syntax::ast::CapRef directly; ProviderBody::External also gains the given field it was silently dropping (internal only, byte-identical output)" |
 | **v0.247.59** | "design/tracks/the-ir.md §6 reconciled with how slices 4/5 of #1187 actually landed (both narrowed hard, not the structural cutovers the table's own row implied) and how Provider and slice 6 (project.rs cleanup) still stand — no Rust code changes" |
