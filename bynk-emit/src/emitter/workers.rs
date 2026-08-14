@@ -486,41 +486,38 @@ fn worker_cross_caps(
         None
     }
     let mut out = std::collections::BTreeMap::new();
-    let mut givens: Vec<&[CapRef]> = Vec::new();
+    let mut givens: Vec<crate::ir::CapRefIr> = Vec::new();
     for s in table.services.values() {
         for h in &s.handlers {
-            givens.push(&h.given);
+            givens.extend(crate::ir::lower::lower_handler_given_ir(h));
         }
     }
     for a in table.agents.values() {
         for h in &a.handlers {
-            givens.push(&h.given);
+            givens.extend(crate::ir::lower::lower_handler_given_ir(h));
         }
     }
     for p in table.providers.values() {
-        givens.push(&p.given);
+        givens.extend(crate::ir::lower::lower_provider_given_ir(p));
     }
-    for given in givens {
-        for c in given {
-            // Events track, slice 0 (spine #936): `Events.emit` is
-            // intercepted entirely at the call site (release-at-commit
-            // buffering) and never calls through a constructed provider —
-            // see the matching skip in `bynk-emit/src/project.rs`'s
-            // `handler_cross_caps`. Without this, Workers-mode compose
-            // tries to construct a `bynk__binding.EventsProvider` that
-            // does not exist.
-            if c.key() == "Events" && flattened.get(c.key()).map(String::as_str) == Some("bynk") {
-                continue;
+    for c in &givens {
+        // Events track, slice 0 (spine #936): `Events.emit` is
+        // intercepted entirely at the call site (release-at-commit
+        // buffering) and never calls through a constructed provider —
+        // see the matching skip in `bynk-emit/src/project.rs`'s
+        // `handler_cross_caps`. Without this, Workers-mode compose
+        // tries to construct a `bynk__binding.EventsProvider` that
+        // does not exist.
+        if c.name == "Events" && flattened.get(&c.name).map(String::as_str) == Some("bynk") {
+            continue;
+        }
+        if let Some(p) = c.context.clone() {
+            if let Some(ctx) = resolve(&p, consumes, aliases) {
+                out.entry(c.name.clone()).or_insert(ctx);
             }
-            if let Some(p) = c.prefix() {
-                if let Some(ctx) = resolve(&p, consumes, aliases) {
-                    out.entry(c.key().to_string()).or_insert(ctx);
-                }
-            } else if let Some(unit) = flattened.get(c.key()) {
-                // v0.17: a bare flattened capability is provided by its source unit.
-                out.entry(c.key().to_string())
-                    .or_insert_with(|| unit.clone());
-            }
+        } else if let Some(unit) = flattened.get(&c.name) {
+            // v0.17: a bare flattened capability is provided by its source unit.
+            out.entry(c.name.clone()).or_insert_with(|| unit.clone());
         }
     }
     out

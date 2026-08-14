@@ -1167,10 +1167,9 @@ pub(crate) fn emit_provider(
     // constructor; its bodies call them as `this.deps.<cap>`. The deps object
     // type lists exactly the provider's `given` capabilities.
     if !p.given.is_empty() {
-        let deps_ty = p
-            .given
+        let deps_ty = crate::ir::lower::lower_provider_given_ir(p)
             .iter()
-            .map(|c| format!("{}: {}", c.key(), cap_ref_ty(c, &ctx.cross_context)))
+            .map(|c| format!("{}: {}", c.name, cap_ref_ty(c, &ctx.cross_context)))
             .collect::<Vec<_>>()
             .join("; ");
         // The field is declared separately and assigned in the constructor body
@@ -1518,7 +1517,7 @@ pub(crate) fn emit_service(
         // the seam-minted `identity` — but only when a binder captures it
         // (v0.50: a binder-less Bearer handler verifies but mints no identity).
         let mut deps_ty = build_deps_object_ty_with_surface(
-            &effective_given(&handler.given, &cx),
+            &effective_given(&crate::ir::lower::lower_handler_given_ir(handler), &cx),
             &cx,
             &ctx.cross_context,
             ctx.target,
@@ -1686,14 +1685,14 @@ pub(crate) fn emit_service(
 /// A local capability uses its bare interface name; a cross-context one is
 /// qualified with the providing context's import namespace
 /// (`platform_time.Clock`).
-fn cap_ref_ty(c: &CapRef, info: &bynk_check::resolver::CrossContextInfo) -> String {
-    match c.prefix().and_then(|p| info.resolve_prefix(&p)) {
-        Some(consumed) => format!("{}.{}", qualified_to_ns(&consumed), c.key()),
+fn cap_ref_ty(c: &crate::ir::CapRefIr, info: &bynk_check::resolver::CrossContextInfo) -> String {
+    match c.context.clone().and_then(|p| info.resolve_prefix(&p)) {
+        Some(consumed) => format!("{}.{}", qualified_to_ns(&consumed), c.name),
         // v0.17: a bare flattened capability (`consumes U { Cap }`) keeps its
         // interface in the consumed unit's module — qualify the type there.
-        None => match info.flattened_caps.get(c.key()) {
-            Some(unit) => format!("{}.{}", qualified_to_ns(unit), c.key()),
-            None => c.key().to_string(),
+        None => match info.flattened_caps.get(&c.name) {
+            Some(unit) => format!("{}.{}", qualified_to_ns(unit), c.name),
+            None => c.name.clone(),
         },
     }
 }
@@ -1802,9 +1801,12 @@ pub(crate) fn cross_context_cap_namespaces(
 /// into the runtime deps value, so this widening only brings the deps *type*
 /// in line with the value; without it, forwarding `deps` to an agent method
 /// with `given` failed `tsc --strict` (and under-documented the dependency).
-fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
+fn effective_given(
+    declared: &[crate::ir::CapRefIr],
+    cx: &LowerCtx<'_>,
+) -> Vec<crate::ir::CapRefIr> {
     let mut out = declared.to_vec();
-    let have: HashSet<String> = declared.iter().map(|c| c.key().to_string()).collect();
+    let have: HashSet<String> = declared.iter().map(|c| c.name.clone()).collect();
     for (key, cap) in cx.agent_given_caps_used().into_iter().flatten() {
         if !have.contains(key) {
             out.push(cap.clone());
@@ -1819,12 +1821,12 @@ fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
     // doesn't exist. Filtered the same way #934 distinguishes a genuine
     // first-party `Events` from an unrelated same-named capability.
     out.retain(|c| {
-        c.key() != "Events"
+        c.name != "Events"
             || !(cx.in_bynk_unit()
                 || cx
                     .cross_context()
                     .flattened_caps
-                    .get(c.key())
+                    .get(&c.name)
                     .map(String::as_str)
                     == Some("bynk"))
     });
@@ -1832,14 +1834,14 @@ fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
 }
 
 fn build_deps_object_ty_with_surface(
-    given: &[CapRef],
+    given: &[crate::ir::CapRefIr],
     cx: &LowerCtx<'_>,
     cross_context: &bynk_check::resolver::CrossContextInfo,
     target: BuildTarget,
 ) -> String {
     let mut parts: Vec<String> = given
         .iter()
-        .map(|c| format!("{}: {}", c.key(), cap_ref_ty(c, cross_context)))
+        .map(|c| format!("{}: {}", c.name, cap_ref_ty(c, cross_context)))
         .collect();
     match target {
         BuildTarget::Bundle => {
@@ -3230,7 +3232,7 @@ pub(crate) fn emit_agent(
             Some(&h.return_type),
         );
         let mut deps_ty = build_deps_object_ty_with_surface(
-            &effective_given(&h.given, &cx),
+            &effective_given(&crate::ir::lower::lower_handler_given_ir(h), &cx),
             &cx,
             &ctx.cross_context,
             ctx.target,
@@ -3809,7 +3811,7 @@ fn emit_ws_do_method(
         Some(&h.return_type),
     );
     let mut deps_ty = build_deps_object_ty_with_surface(
-        &effective_given(&h.given, &cx),
+        &effective_given(&crate::ir::lower::lower_handler_given_ir(h), &cx),
         &cx,
         &ctx.cross_context,
         ctx.target,
