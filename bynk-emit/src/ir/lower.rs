@@ -1839,9 +1839,9 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
 
         // `p implies q` -> `Or { lhs: Not(p), rhs: q }` (P6.3, design/tracks/
         // the-ir.md §6, R6.7 — the reference's own Part 6.4 table). Peeled off
-        // the bundled comparison/arithmetic `todo!()` below, which P6.2
-        // (#1143) already confirmed has no dedicated IrExprKind and no Callee
-        // classification either.
+        // the comparison/arithmetic `BinOp` arm below (real as of #1189) —
+        // `Implies` desugars away entirely rather than sharing that arm's
+        // `IrBinOp` shape.
         //
         // This flat `Or`/`Not` pair has nowhere to carry an `is` binding from
         // the antecedent into the consequent (`p is Foo(x) implies f(x)`,
@@ -3577,6 +3577,50 @@ commons demo {
     }
 
     #[test]
+    fn every_binop_tag_maps_to_its_own_ir_binop_variant() {
+        // The hand-written ten-arm `BinOp -> IrBinOp` mapping is the one
+        // place this change can be silently wrong (a transposition compiles
+        // and clippy-passes) — every tag gets its own assertion here, not
+        // just the two `comparison_and_arithmetic_binops_lower_to_a_shared_
+        // dedicated_node` happens to cover incidentally (review of #1195).
+        let program = checked_program(
+            r#"
+commons demo {
+  fn eq(a: Int, b: Int) -> Bool { a == b }
+  fn neq(a: Int, b: Int) -> Bool { a != b }
+  fn lt(a: Int, b: Int) -> Bool { a < b }
+  fn lteq(a: Int, b: Int) -> Bool { a <= b }
+  fn gt(a: Int, b: Int) -> Bool { a > b }
+  fn gteq(a: Int, b: Int) -> Bool { a >= b }
+  fn add(a: Int, b: Int) -> Int { a + b }
+  fn sub(a: Int, b: Int) -> Int { a - b }
+  fn mul(a: Int, b: Int) -> Int { a * b }
+  fn div(a: Int, b: Int) -> Int { a / b }
+}
+"#,
+        );
+        let cases = [
+            ("eq", IrBinOp::Eq),
+            ("neq", IrBinOp::NotEq),
+            ("lt", IrBinOp::Lt),
+            ("lteq", IrBinOp::LtEq),
+            ("gt", IrBinOp::Gt),
+            ("gteq", IrBinOp::GtEq),
+            ("add", IrBinOp::Add),
+            ("sub", IrBinOp::Sub),
+            ("mul", IrBinOp::Mul),
+            ("div", IrBinOp::Div),
+        ];
+        for (fn_name, expected_op) in cases {
+            let ir = lower_fn(&program, fn_name);
+            let IrExprKind::BinOp { op, .. } = &fn_tail(&ir).kind else {
+                panic!("{fn_name}: expected BinOp, got {:?}", fn_tail(&ir).kind)
+            };
+            assert_eq!(*op, expected_op, "{fn_name}: wrong IrBinOp tag");
+        }
+    }
+
+    #[test]
     fn interp_str_lowers_chunks_verbatim_and_holes_as_ordinary_expressions() {
         let program = checked_program(
             r#"
@@ -3600,6 +3644,53 @@ commons demo {
             &*program.program().ty_intern.get(fn_tail(&ir).ty),
             Ty::Base(bynk_syntax::ast::BaseType::String)
         ));
+    }
+
+    #[test]
+    fn interp_str_covers_leading_hole_hole_only_and_adjacent_holes() {
+        // `split_interp` (`bynk-syntax/src/lexer.rs`) never pushes an empty
+        // `Chunk` — a leading/trailing/adjacent hole has no empty-string
+        // sibling segment either side of it. Pins that `lower_interp_part_ir`
+        // sees exactly the segments the lexer produces, not a padded shape.
+        let program = checked_program(
+            r#"
+commons demo {
+  fn lead(name: String) -> String { "\(name) hi" }
+  fn only(name: String) -> String { "\(name)" }
+  fn adjacent(a: String, b: String) -> String { "\(a)\(b)" }
+}
+"#,
+        );
+
+        let lead = lower_fn(&program, "lead");
+        let IrExprKind::InterpStr { parts } = &fn_tail(&lead).kind else {
+            panic!("expected InterpStr, got {:?}", fn_tail(&lead).kind)
+        };
+        assert_eq!(parts.len(), 2, "no leading empty Chunk before the hole");
+        assert!(matches!(&parts[0], IrInterpPart::Hole(h)
+            if matches!(&h.kind, IrExprKind::Local(n) if n == "name")));
+        assert!(matches!(&parts[1], IrInterpPart::Chunk(s) if s == " hi"));
+
+        let only = lower_fn(&program, "only");
+        let IrExprKind::InterpStr { parts } = &fn_tail(&only).kind else {
+            panic!("expected InterpStr, got {:?}", fn_tail(&only).kind)
+        };
+        assert_eq!(
+            parts.len(),
+            1,
+            "a hole-only string is just the one Hole segment"
+        );
+        assert!(matches!(&parts[0], IrInterpPart::Hole(_)));
+
+        let adjacent = lower_fn(&program, "adjacent");
+        let IrExprKind::InterpStr { parts } = &fn_tail(&adjacent).kind else {
+            panic!("expected InterpStr, got {:?}", fn_tail(&adjacent).kind)
+        };
+        assert_eq!(parts.len(), 2, "no empty Chunk between adjacent holes");
+        assert!(matches!(&parts[0], IrInterpPart::Hole(h)
+            if matches!(&h.kind, IrExprKind::Local(n) if n == "a")));
+        assert!(matches!(&parts[1], IrInterpPart::Hole(h)
+            if matches!(&h.kind, IrExprKind::Local(n) if n == "b")));
     }
 
     #[test]
@@ -4042,10 +4133,10 @@ commons demo {
     fn pattern_ir_arm_guard_lowers_and_sees_the_patterns_own_bindings() {
         // R5.4's ordering claim (a guard must be able to read the pattern's
         // own bound names) needs a guard that is itself an expression this
-        // pass can lower — comparison/arithmetic BinOps are still `todo!()`
-        // (P6.2, #1143), so `score > 0` isn't available yet. A `Bool`
-        // payload field read straight back as the guard exercises the exact
-        // same scope-ordering property without depending on either.
+        // pass can lower. A `Bool` payload field read straight back as the
+        // guard exercises the exact same scope-ordering property with the
+        // simplest possible guard expression — no need for a comparison
+        // (real as of #1189) to pin this claim.
         let program = checked_program(
             r#"
 commons demo {

@@ -34,7 +34,8 @@
 //!
 //! **Decision D's own "never widens beyond the reference's Part 6.2 shape"
 //! is not absolute — it held only as long as the reference's own node set
-//! was complete** ([`IrExprKind::BinOp`]/[`Neg`]/[`InterpStr`], #1189).
+//! was complete** ([`IrExprKind::BinOp`]/[`IrExprKind::Neg`]/
+//! [`IrExprKind::InterpStr`], #1189).
 //! `design/bynk-greenfield-compiler.md` §6.2's own listing (`Const, Local,
 //! Global, Record, Variant, Field, List, Block, If, Match, And, Or, Not,
 //! Return, Call, Lambda, Await, Send, Pure`) never names comparison,
@@ -553,7 +554,9 @@ pub(crate) enum IrBinOp {
 /// substitution every other `IrExprKind` payload already makes).
 #[derive(Debug, Clone)]
 pub(crate) enum IrInterpPart {
-    /// Literal text between holes, verbatim from the source chunk.
+    /// Literal text between holes, escapes already resolved (as in
+    /// [`bynk_syntax::ast::InterpPart::Chunk`]) — an emitter must escape it
+    /// for its own target string syntax, as `escape_ts_template` does today.
     Chunk(String),
     /// An interpolated expression, already lowered.
     Hole(Box<IrExpr>),
