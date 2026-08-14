@@ -23,7 +23,10 @@ use std::sync::Arc;
 
 use self::source_map::SourceMapBuilder;
 
-use crate::ir::lower::{lower_capability_item_ir, lower_type_item_ir};
+use crate::ir::lower::{
+    lower_capability_item_ir, lower_protocol_ir, lower_service_handler_signature_ir,
+    lower_type_item_ir,
+};
 use crate::ir::{IrItem, TypeShape};
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
 use bynk_check::builtin_names::map_query;
@@ -411,7 +414,30 @@ pub(crate) fn emit_project(
             }
             CommonsItem::Service(s) => {
                 smb.borrow_mut().record(out.len(), s.span);
-                emit_service(&mut out, s, commons, ctx, Some(&smb));
+                // #1187's slice 5: `emit_service` reads the protocol's own
+                // resolved data (`ProtocolIr`) and each handler's resolved
+                // signature (params/ret/effectful) instead of `s`'s own raw
+                // `ServiceProtocol`/`TypeRef`s — not a full `IrItem::Service`
+                // (see `lower_service_handler_signature_ir`'s own doc
+                // comment for why: a real `IrHandler` would unconditionally
+                // lower every handler's body, panicking on an ordinary
+                // `Ok`/`Err`-returning Http handler). No separate helper,
+                // this is `emit_service`'s one and only call site.
+                let protocol = lower_protocol_ir(&s.protocol, program);
+                let signatures: Vec<_> = s
+                    .handlers
+                    .iter()
+                    .map(|h| lower_service_handler_signature_ir(h, program))
+                    .collect();
+                emit_service(
+                    &mut out,
+                    s,
+                    &protocol,
+                    &signatures,
+                    commons,
+                    ctx,
+                    Some(&smb),
+                );
             }
             CommonsItem::Agent(a) => {
                 smb.borrow_mut().record(out.len(), a.span);

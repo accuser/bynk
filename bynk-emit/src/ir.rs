@@ -1458,6 +1458,15 @@ pub(crate) struct IrHandler {
     pub connection: Option<ConnectionBinder>,
     pub body: IrExpr,
     pub commit: CommitShape,
+    /// The handler's own declared return type, resolved (#1187's slice 5,
+    /// the `Service` emitter cutover) — mirrors [`IrItem::Fn::ret`]'s
+    /// identical field, added here
+    /// for the identical reason: [`lower::lower_handler_signature_ir`]
+    /// already resolved this value to compute `effectful` below and
+    /// discarded it, leaving a service emitter with no IR-native way to
+    /// render a handler's own return-type annotation without re-walking
+    /// `Handler::return_type` (`bynk_syntax::ast::TypeRef`) itself.
+    pub ret: TyId,
     pub effectful: bool,
     pub method_name: Option<String>,
 }

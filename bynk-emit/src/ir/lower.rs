@@ -404,7 +404,7 @@ pub(crate) fn lower_handler_ir(
          service handler reaching the wrong entry point"
     );
     let cx = LowerIrCtx::new(program, HashSet::new());
-    let (params, given, effectful) = lower_handler_signature_ir(h, &cx);
+    let (params, given, ret, effectful) = lower_handler_signature_ir(h, &cx);
     let emits = block_uses_emit(&h.body);
     let commit = lower_commit_shape_ir(&h.body, invariants, transitions, emits, program);
     let body = lower_handler_body_ir(h, store_cells, state_ty, program);
@@ -423,10 +423,18 @@ pub(crate) fn lower_handler_ir(
         connection: None,
         body,
         commit,
+        ret,
         effectful,
         method_name: h.method_name.as_ref().map(|i| i.name.clone()),
     }
 }
+
+/// `(params, given, ret, effectful)` — [`lower_handler_signature_ir`]'s own
+/// return shape, and [`lower_service_handler_signature_ir`]'s (#1187's slice
+/// 5), reused as a named alias rather than a bare tuple at both call sites
+/// once one of them (`emit_service`, `bynk-emit/src/emitter/emit.rs`) had to
+/// spell it out in a function signature.
+pub(crate) type HandlerSignatureIr = (Vec<(String, TyId)>, Vec<String>, TyId, bool);
 
 /// A handler's own `params`/`given`/`effectful` — the one part of
 /// [`IrHandler`] construction genuinely identical between an agent handler
@@ -436,10 +444,7 @@ pub(crate) fn lower_handler_ir(
 /// `binder`, the WebSocket deferral — is genuinely different and stays
 /// unshared; see [`lower_handler_ir`]'s own doc comment for why that split
 /// is deliberate, not an oversight.
-fn lower_handler_signature_ir(
-    h: &Handler,
-    cx: &LowerIrCtx,
-) -> (Vec<(String, TyId)>, Vec<String>, bool) {
+fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureIr {
     let params: Vec<(String, TyId)> = h
         .params
         .iter()
@@ -463,7 +468,32 @@ fn lower_handler_signature_ir(
         )
     });
     let effectful = matches!(&*cx.program.ty_intern.get(ret), Ty::Effect(_));
-    (params, given, effectful)
+    (params, given, ret, effectful)
+}
+
+/// #1187's slice 5 (the `Service` emitter cutover): `emit_service`'s own
+/// standalone entry point for a handler's resolved *signature* only —
+/// `params`/`ret`/`effectful`, never the body. Deliberately does not build
+/// a real [`IrHandler`]/[`crate::ir::IrItem::Service`]: both
+/// [`lower_handler_ir`]/[`lower_service_handler_ir`] unconditionally lower
+/// the handler's own body into a real `IrExpr` (`IrHandler::body` is not
+/// `Option`), and an ordinary `from http` handler's body routinely
+/// constructs `Ok`/`Err`/`Some`/`None` (an `HttpResult`/`Option` return) —
+/// still `todo!()` in `lower_expr_ir` (P6.2/P6.3, #1143/#1145 — a gap
+/// independent of #1189's own BinOp/Neg/InterpStr fix, see that issue's own
+/// "confirmed independent" finding). Building a real `IrHandler` at
+/// `emit_service`'s own call site would panic on exactly the ordinary Http
+/// services this slice needs to keep working. Mirrors
+/// [`body_writes_state`]'s own precedent (#1196): a narrow, standalone
+/// reader of already-resolved data, not the full `IrItem`/`IrHandler`
+/// assembly — the same posture, applied to signature data instead of a
+/// single boolean.
+pub(crate) fn lower_service_handler_signature_ir(
+    h: &Handler,
+    program: &CheckedProgram,
+) -> HandlerSignatureIr {
+    let cx = LowerIrCtx::new(program, HashSet::new());
+    lower_handler_signature_ir(h, &cx)
 }
 
 /// P6.11 ([DECISION E], #1171): lower a service handler's own body — the
@@ -583,7 +613,7 @@ pub(crate) fn lower_service_handler_ir(
     program: &CheckedProgram,
 ) -> IrHandler {
     let cx = LowerIrCtx::new(program, HashSet::new());
-    let (params, given, effectful) = lower_handler_signature_ir(h, &cx);
+    let (params, given, ret, effectful) = lower_handler_signature_ir(h, &cx);
     // Read straight off `h.by_clause`, not derived from `binder` below —
     // review of #1180: `binder` alone loses the gate itself for a
     // binder-less `by <Actor>` (`ActorBinder`'s own doc comment already
@@ -635,6 +665,7 @@ pub(crate) fn lower_service_handler_ir(
         connection,
         body,
         commit,
+        ret,
         effectful,
         method_name: h.method_name.as_ref().map(|i| i.name.clone()),
     }
@@ -6638,11 +6669,52 @@ service Outbox from queue("orders") {
         ));
         let handler = find_service_handler(service, &HandlerKind::Message);
         let cx = LowerIrCtx::new(&program, HashSet::new());
-        let (params, given, effectful) = lower_handler_signature_ir(handler, &cx);
+        let (params, given, _ret, effectful) = lower_handler_signature_ir(handler, &cx);
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].0, "m");
         assert!(given.is_empty());
         assert!(effectful, "every service handler returns Effect[T]");
+    }
+
+    /// #1187's slice 5 (the `Service` emitter cutover, review of #1196):
+    /// `lower_service_handler_signature_ir` is `emit_service`'s own real
+    /// call site's entry point, not `lower_handler_signature_ir` directly —
+    /// this pins it against the exact shape that motivated it: an ordinary
+    /// `from http` handler body constructing `Ok(...)` directly (not routed
+    /// through the `fn ok(s) -> HttpResult[String] { Ok(s) }` indirection
+    /// every other fixture in this module uses to dodge P6.2/P6.3's own
+    /// still-open `Ok`/`Err`/`Some`/`None` gap, #1143/#1145). Building a real
+    /// `IrHandler` here (`lower_service_handler_ir`) would panic on this
+    /// exact body — `lower_service_handler_signature_ir` never touches it.
+    #[test]
+    fn service_handler_signature_lowers_without_touching_a_body_that_constructs_ok() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+service Api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
+    Effect.pure(Ok("pong"))
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        let handler = find_service_handler(
+            service,
+            &HandlerKind::Http {
+                method: bynk_syntax::ast::HttpMethod::Get,
+                path: "/ping".to_string(),
+            },
+        );
+        let (params, _given, ret, effectful) =
+            lower_service_handler_signature_ir(handler, &program);
+        assert!(params.is_empty(), "`() -> ...` declares no parameters");
+        assert!(effectful, "an `Effect[...]` return type");
+        assert!(matches!(
+            &*program.program().ty_intern.get(ret),
+            Ty::Effect(_)
+        ));
     }
 
     #[test]
