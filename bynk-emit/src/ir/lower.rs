@@ -1543,16 +1543,19 @@ fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
 /// this, unlike `Actor`, was buildable this slice). `external: true` means
 /// `ops` is empty by the field's own doc comment
 /// (`bynk-syntax/src/ast.rs:592-595`) — nothing to lower. `given` lowers
-/// unconditionally (review of #1186): `provider.given` is populated the
-/// same way regardless of `external` (a provider's own dependency list,
-/// not something the brace block gates), and [`ProviderBody::Bynk`]'s own
-/// doc comment names why it, unlike `module`, is not deferrable.
+/// unconditionally via [`lower_provider_given_ir`] (#1187's Provider
+/// `given`/deps-wiring slice, fixing a real gap the `External` variant's own
+/// bare-unit shape used to leave: `provider.given` is populated the same way
+/// regardless of `external`, and [`ProviderBody::Bynk`]'s own doc comment
+/// names why it, unlike `module`, is not deferrable — that reasoning always
+/// applied to `External` too, just wasn't wired through).
 pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedProgram) -> IrItem {
+    let given = lower_provider_given_ir(provider);
     let body = if provider.external {
-        ProviderBody::External
+        ProviderBody::External { given }
     } else {
         ProviderBody::Bynk {
-            given: provider.given.iter().map(lower_cap_ref_ir).collect(),
+            given,
             ops: provider
                 .ops
                 .iter()
@@ -1565,6 +1568,24 @@ pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedP
         cap: provider.capability.name.clone(),
         body,
     }
+}
+
+/// A provider's own `given` clause, resolved independent of
+/// [`ProviderBody`]'s `external`/`Bynk` dispatch and independent of
+/// [`lower_provider_item_ir`]'s own full assembly (#1187's Provider
+/// `given`/deps-wiring slice) — the standalone entry point
+/// `bynk-emit/src/project.rs`'s `instantiate_provider_expr` actually calls.
+/// Building a real `IrItem::Provider` there would be unsafe for a `Bynk`
+/// provider specifically: `ProviderBody::Bynk::ops` unconditionally lowers
+/// every op's body through `lower_provider_op_ir` → `lower_expr_ir`, which
+/// still can't handle `Ok`/`Err`/`Some`/`None` construction — the identical
+/// gap that made `Agent`/`Service`'s own full `IrItem` construction
+/// impractical at their emitter call sites (#1196/#1198's own findings).
+/// This function never touches `ops`/bodies, so it carries none of that
+/// risk; [`lower_provider_item_ir`] itself now calls it too, rather than
+/// hand-duplicating the one-line `map`.
+pub(crate) fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> {
+    provider.given.iter().map(lower_cap_ref_ir).collect()
 }
 
 /// P6.14 (#1174, review of #1186): adapt one `given` entry into a real
@@ -7414,7 +7435,20 @@ provides Store = MemStore given Random, Clock {
                 name: "ExternalStore".to_string(),
                 span: Span::default(),
             },
-            given: Vec::new(),
+            // Review of #1187's own Provider given/deps-wiring slice: an
+            // external provider's own `given` is populated the same way a
+            // Bynk one's is (nothing in the grammar or checker gates it on
+            // `external`) — non-empty here specifically to pin that
+            // `ProviderBody::External` now carries it, where it used to be
+            // silently dropped (a bare-unit variant with nowhere to put it).
+            given: vec![CapRef {
+                context: None,
+                name: bynk_syntax::ast::Ident {
+                    name: "Clock".to_string(),
+                    span: Span::default(),
+                },
+                span: Span::default(),
+            }],
             ops: Vec::new(),
             external: true,
             documentation: None,
@@ -7428,11 +7462,12 @@ provides Store = MemStore given Random, Clock {
         };
         assert_eq!(def, "ExternalStore");
         assert_eq!(cap, "Store");
-        assert!(
-            matches!(body, ProviderBody::External),
-            "expected ProviderBody::External, got {:?}",
-            body
-        );
+        let ProviderBody::External { given } = body else {
+            panic!("expected ProviderBody::External, got {:?}", body)
+        };
+        assert_eq!(given.len(), 1);
+        assert_eq!(given[0].context, None);
+        assert_eq!(given[0].name, "Clock");
     }
 
     #[test]

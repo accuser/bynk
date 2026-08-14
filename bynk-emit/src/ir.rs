@@ -880,7 +880,16 @@ pub(crate) enum ProviderBody {
     /// `provides Cap = Name` with no brace block — the adapter's own
     /// binding supplies the implementation; the emitter produces no class
     /// (`bynk-greenfield-compiler.md:1310`, `Provider{External} | nothing`).
-    External,
+    /// Carries `given` too (added #1187's Provider `given`/deps-wiring
+    /// slice, correcting a real gap this bare-unit shape left): an external
+    /// provider's own `given` clause is populated the same way `Bynk`'s is
+    /// (`ProviderDecl::given` is not gated on `external` anywhere in the
+    /// grammar or checker) and `instantiate_provider_expr`
+    /// (`bynk-emit/src/project.rs`) needs it to build an external
+    /// provider's own `deps` constructor argument — this variant's own doc
+    /// comment already claimed `given` "lowers unconditionally" (P6.14's
+    /// own review of #1186) before this fix actually made that true.
+    External { given: Vec<CapRefIr> },
 }
 
 /// P6.14's real `CapRefIr` ([DECISION A], #1174, review of #1186) — one
