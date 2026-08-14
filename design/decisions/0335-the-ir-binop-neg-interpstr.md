@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "bynk-emit::ir gains IrExprKind::BinOp/Neg/InterpStr — comparison, arithmetic, unary negation, and string interpolation now lower to real IR nodes instead of panicking (internal only, no language surface change)"
----
+# 0335 — bynk-emit::ir's IrExprKind grows BinOp/Neg/InterpStr beyond P6.1's own Decision D
 
-## ADR: the-ir-binop-neg-interpstr
-title: bynk-emit::ir's IrExprKind grows BinOp/Neg/InterpStr beyond P6.1's own Decision D
-summary: Comparison/arithmetic, unary negation, and string interpolation get real IrExprKind nodes, extending IrExprKind past the reference's own Part 6.2 node set
+- **Status:** Accepted (v0.247.56)
 
 **Context.** P6.1 (#1141, `bynk-emit/src/ir.rs`) decided `IrExprKind`'s whole shape lands in one
 piece — every variant the reference's `design/bynk-greenfield-compiler.md` §6.2 node-set listing names
