@@ -687,6 +687,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             unit_consumes,
             unit_consumes_aliases,
             unit_tables,
+            unit_callees,
             unit_uses,
             unit_flattened,
             adapter_bindings,
@@ -706,6 +707,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
                 unit_consumes,
                 unit_consumes_aliases,
                 unit_tables,
+                unit_callees,
                 unit_uses,
                 unit_flattened,
                 adapter_bindings,
@@ -1296,6 +1298,11 @@ fn check_unit_files(
     // through to `EventDecl::schema_version()`) when it is off.
     schema_effective_versions: &HashMap<String, i64>,
     tys: &Arc<Types>,
+    // #1187's slice 6 plumbing — this unit's own accumulator; merged into
+    // per file below, from each file's own certified `CheckedProgram`
+    // (`RunChecks::Checked::unit_callees`'s own doc comment has the full
+    // grounding for why this exists).
+    unit_callees: &mut HashMap<ExprId, bynk_check::checker::Callee>,
 ) {
     // Emit-prologue tables invariant across every file of this unit — built
     // once here rather than once per file (see `EmitUnitCtx`).
@@ -1359,6 +1366,11 @@ fn check_unit_files(
         let program = checker::certify(typed, Vec::new()).unwrap_or_else(|_| {
             panic!("bynk internal error: unit already passed every per-unit gate above")
         });
+        // #1187's slice 6 plumbing: merge this file's own resolved `Callee`
+        // classification into the unit's accumulator before `program` (and
+        // the `TypedCommons` it wraps) is dropped at the end of this
+        // iteration — the only point in this pipeline that ever holds it.
+        unit_callees.extend(program.program().callees.clone());
         emit_unit(
             name,
             kind,
@@ -1417,6 +1429,17 @@ enum RunChecks {
         unit_consumes: HashMap<String, Vec<String>>,
         unit_consumes_aliases: HashMap<String, HashMap<String, String>>,
         unit_tables: HashMap<String, UnitTable>,
+        // #1187's slice 6 plumbing: each unit's own `Callee` classification,
+        // merged across its files (`ExprId` is a single project-wide
+        // counter, `project_model.rs`'s `next_expr_id`, so merging different
+        // files' maps never collides) — checked, resolved data the pre-check
+        // `unit_tables` above cannot carry. Exists so a later, project-wide
+        // pass (`build_output`/`emit_composition_root`) can read an
+        // already-resolved `Callee::Capability`/`Callee::Cross` instead of
+        // re-deriving the same fact by walking raw AST method-call syntax —
+        // `check_unit_files`'s own per-file `CheckedProgram` was previously
+        // built and dropped before any such later pass ever ran.
+        unit_callees: HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
         unit_flattened: HashMap<String, HashMap<String, String>>,
         adapter_bindings: HashMap<String, AdapterBinding>,
         npm_deps: std::collections::BTreeMap<String, String>,
@@ -1752,6 +1775,11 @@ fn run_checks(
     // -- 8. For each unit, build the combined symbol space and run
     //       resolve+check per source file. --
     let mut compiled: Vec<CompiledFile> = Vec::new();
+    // #1187's slice 6 plumbing (see `RunChecks::Checked::unit_callees`'s own
+    // doc comment) — one `Callee` map per unit, merged across that unit's
+    // own files inside the loop below.
+    let mut unit_callees: HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>> =
+        HashMap::new();
 
     // v0.119 (testing track slice 7, ADR 0155): a project-wide fold over every
     // parsed file, producing the identical `HashSet` regardless of which unit
@@ -1843,6 +1871,7 @@ fn run_checks(
             &mut compiled,
             &schema_effective_versions,
             tys,
+            unit_callees.entry(name.clone()).or_default(),
         );
     }
 
@@ -1954,6 +1983,7 @@ fn run_checks(
         unit_consumes,
         unit_consumes_aliases,
         unit_tables,
+        unit_callees,
         unit_flattened,
         adapter_bindings,
         npm_deps,
@@ -1978,6 +2008,7 @@ fn build_output(
     unit_consumes: HashMap<String, Vec<String>>,
     unit_consumes_aliases: HashMap<String, HashMap<String, String>>,
     unit_tables: HashMap<String, UnitTable>,
+    unit_callees: HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
     // v0.177 (#643): needed to build each context's *own* combined type table,
     // so its contract hashes are computed from the same namespace a caller sees.
     unit_uses: HashMap<String, Vec<String>>,
@@ -2048,6 +2079,7 @@ fn build_output(
                 &unit_consumes,
                 &unit_consumes_aliases,
                 &unit_tables,
+                &unit_callees,
                 &adapter_bindings,
                 &unit_flattened,
                 // D1: thread `env` through composeApp only when a native
@@ -2128,6 +2160,9 @@ fn build_output(
                     }
                     _ => None,
                 };
+                // #1187's slice 6 plumbing: computed once, reused by every
+                // Workers-target emitter below that needs it.
+                let ctx_uses_emit = unit_table_uses_emit(table, unit_callees.get(ctx_name));
                 let (compose_ts, needs_locale_request) = emitter::emit_worker_compose(
                     ctx_name,
                     table,
@@ -2142,12 +2177,14 @@ fn build_output(
                     needs_kv,
                     locale_bundle_info,
                     import_ext,
+                    ctx_uses_emit,
                 );
                 let entry_ts = emitter::emit_worker_entry(
                     ctx_name,
                     table,
                     &own_contracts,
                     needs_locale_request,
+                    ctx_uses_emit,
                 );
                 // Adapters are not Workers, so they get no Service Binding in
                 // the consumer's wrangler config — drop them from the list.
@@ -2206,6 +2243,7 @@ fn build_output(
                     needs_kv,
                     &crons,
                     &queues,
+                    ctx_uses_emit,
                 );
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<index>")),
@@ -2219,7 +2257,7 @@ fn build_output(
                 // `emit_worker_compose`'s own `unit_table_uses_emit` gate on
                 // `deps.__eventsDispatch`, so the two never disagree about
                 // whether `env.EVENTS_FANOUT` is real).
-                if unit_table_uses_emit(table) {
+                if ctx_uses_emit {
                     let fanout_ts = emitter::emit_events_fanout_do(ctx_name, &own_event_routes);
                     compiled.push(CompiledFile {
                         source_path: PathBuf::from(format!("workers/{dashes}/<events-fanout>")),
@@ -2275,7 +2313,7 @@ fn build_output(
                         .get(ctx_name)
                         .map(Vec::as_slice)
                         .unwrap_or(&[]),
-                    &aliases,
+                    unit_callees.get(ctx_name),
                 );
                 let mut expects: std::collections::BTreeMap<
                     String,
@@ -2722,17 +2760,46 @@ pub(crate) fn instantiate_provider_expr(
 /// Events track, slice 0 (spine #936): does any handler in this unit emit —
 /// the `UnitTable`-level analogue of `emitter::commons_uses_emit`, needed
 /// here because compose works from the project-wide `UnitTable` map, not a
-/// single unit's `TypedCommons`.
-pub(crate) fn unit_table_uses_emit(table: &UnitTable) -> bool {
-    table.services.values().any(|s| {
-        s.handlers
-            .iter()
-            .any(|h| crate::emitter::block_uses_emit(&h.body))
-    }) || table.agents.values().any(|a| {
-        a.handlers
-            .iter()
-            .any(|h| crate::emitter::block_uses_emit(&h.body))
-    })
+/// single unit's `TypedCommons`. #1187's slice 6 plumbing: reads the
+/// checker's own already-resolved `Callee::Capability{cap:"Events",
+/// op:"emit"}` (`Events.emit[...]` dispatches through the ordinary
+/// capability-call path, `bynk-check/src/checker/calls.rs`) instead of
+/// `emitter::block_uses_emit`'s bare-`Ident("Events")`-receiver name match.
+/// `callees` is `None` only defensively (a unit whose own check never ran);
+/// treated as "found nothing", the same as an empty map would be.
+pub(crate) fn unit_table_uses_emit(
+    table: &UnitTable,
+    callees: Option<&HashMap<ExprId, bynk_check::checker::Callee>>,
+) -> bool {
+    let Some(callees) = callees else {
+        return false;
+    };
+    fn body_uses_emit(
+        body: &Block,
+        callees: &HashMap<ExprId, bynk_check::checker::Callee>,
+    ) -> bool {
+        let mut found = false;
+        crate::emitter::walk_block_exprs(body, &mut |e| {
+            if !found
+                && matches!(
+                    callees.get(&e.id),
+                    Some(bynk_check::checker::Callee::Capability { cap, op })
+                        if cap == "Events" && op == "emit"
+                )
+            {
+                found = true;
+            }
+        });
+        found
+    }
+    table
+        .services
+        .values()
+        .any(|s| s.handlers.iter().any(|h| body_uses_emit(&h.body, callees)))
+        || table
+            .agents
+            .values()
+            .any(|a| a.handlers.iter().any(|h| body_uses_emit(&h.body, callees)))
 }
 
 /// Events track, slice 0 (spine #936): project-wide "who subscribes to
@@ -2798,6 +2865,7 @@ fn emit_composition_root(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_tables: &HashMap<String, UnitTable>,
+    unit_callees: &HashMap<String, HashMap<ExprId, bynk_check::checker::Callee>>,
     adapter_bindings: &HashMap<String, AdapterBinding>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     // v0.19 (decision 0025, D1): when the program's closure reaches a
@@ -2858,7 +2926,7 @@ fn emit_composition_root(
                 // (there is no `EventsProvider`), so without this check a
                 // publish-only context would never get a compose entry and
                 // its service would simply never be called.
-                || unit_table_uses_emit(table)
+                || unit_table_uses_emit(table, unit_callees.get(name))
             {
                 needs_compose = true;
                 break;
@@ -2996,7 +3064,7 @@ fn emit_composition_root(
         // has run, so declaration order here doesn't matter). A publisher
         // with no subscribers still gets the field — its type is required —
         // just with an empty switch.
-        if unit_table_uses_emit(table) {
+        if unit_table_uses_emit(table, unit_callees.get(ctx_name)) {
             let mut cases = String::new();
             for name in table.events.keys() {
                 let Some(subs) = event_subscribers.get(&(ctx_name.clone(), name.clone())) else {
@@ -3307,30 +3375,28 @@ fn _ensure_components_used(_p: &Path) {
 fn called_cross_context_services(
     table: &UnitTable,
     consumed: &[String],
-    aliases: &HashMap<String, String>,
+    // #1187's slice 6 plumbing: reads the checker's own already-resolved
+    // `Callee::Cross { unit, service }` (`RunChecks::Checked::unit_callees`'s
+    // own doc comment has the full grounding) instead of re-deriving
+    // cross-context-ness by flattening a receiver's own ident chain and
+    // string-matching it against `consumed`/`aliases` — the identical
+    // resolution `CrossContextInfo::resolve_prefix` already did once, at
+    // check time, per call site. `consumed` stays, purely as the cheap
+    // early-out below: an empty `consumes` list means no `Callee::Cross`
+    // could exist in this unit's own bodies regardless, so skip the walk.
+    callees: Option<&HashMap<ExprId, bynk_check::checker::Callee>>,
 ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
     let mut out: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         std::collections::BTreeMap::new();
     if consumed.is_empty() {
         return out;
     }
-    // Resolve a receiver chain to a consumed context: an alias, or the dotted
-    // name itself. Mirrors `CrossContextInfo::resolve_prefix`, over the maps
-    // `build_output` already holds.
-    let resolve = |chain: &str| -> Option<String> {
-        if let Some(target) = aliases.get(chain) {
-            return Some(target.clone());
-        }
-        consumed.iter().find(|c| *c == chain).cloned()
+    let Some(callees) = callees else {
+        return out;
     };
     let mut visit = |e: &bynk_syntax::ast::Expr| {
-        if let bynk_syntax::ast::ExprKind::MethodCall {
-            receiver, method, ..
-        } = &e.kind
-            && let Some(chain) = emitter::flatten_emit_ident_chain(receiver)
-            && let Some(target) = resolve(&chain)
-        {
-            out.entry(target).or_default().insert(method.name.clone());
+        if let Some(bynk_check::checker::Callee::Cross { unit, service }) = callees.get(&e.id) {
+            out.entry(unit.clone()).or_default().insert(service.clone());
         }
     };
     for service in table.services.values() {
