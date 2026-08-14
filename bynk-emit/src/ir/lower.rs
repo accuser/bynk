@@ -1021,7 +1021,7 @@ pub(crate) fn lower_transition_ir(
 /// `Callee::Store` write, or an unconditional `Statement::Assign` (`:=`),
 /// anywhere — including inside a nested `if`/`match`/lambda? Drives
 /// [`lower_commit_shape_ir`]'s own `Transactional` decision, and, as of
-/// #1195 (the #1187 emitter-cutover track's own R6.5 stake), `emit_agent`'s
+/// #1196 (the #1187 emitter-cutover track's own R6.5 stake), `emit_agent`'s
 /// (`bynk-emit/src/emitter/emit.rs`) own real implicit-commit-wrapper
 /// decision too — its previous own name-matching `block_writes_state`
 /// (`emitter.rs`) is deleted, this function is its sole, direct

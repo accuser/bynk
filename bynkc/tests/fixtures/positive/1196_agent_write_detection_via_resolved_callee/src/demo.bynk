@@ -1,6 +1,6 @@
 context demo
 
--- Regression (#1189/#1195/R6.5): a handler parameter that shadows a `store`
+-- Regression (#1196/R6.5): a handler parameter that shadows a `store`
 -- field's own name, calling a method with a mutating-verb *name* the field's
 -- kind would recognise (`Map.put`), must not be classified as a store write
 -- when the resolved `Callee` says otherwise. `items` here is a `Box`

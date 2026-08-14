@@ -734,7 +734,7 @@ pub(crate) fn block_uses_emit(b: &Block) -> bool {
 /// `Callee::Store`-keyed write-detection walk (P6.8, Decision B;
 /// [`crate::ir::lower::body_writes_state`]), which needs no receiver-name
 /// gate at all: a `Callee::Store` already carries the field's own resolved
-/// identity, not a name that could be shadowed. Until #1195, this module
+/// identity, not a name that could be shadowed. Until #1196, this module
 /// also had its own bare-`Ident`-receiver-name-matching reader
 /// (`block_writes_state`'s own `mutating_op`, deleted) — a single shared
 /// source avoided the class of drift #1164's own review caught twice for a
