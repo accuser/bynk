@@ -2456,6 +2456,79 @@ pub(crate) fn held_map_fields(a: &AgentDecl) -> Vec<(&Ident, &TypeRef)> {
         .collect()
 }
 
+/// #1187's Agent state-field slice 2c: a held `Map[K, V]`'s own frame type
+/// `F`, resolved at the `TyId` level — `V` may be a bare `Connection[F]`, or
+/// `F` may sit behind an `Option`/`Effect` wrapper (`Map[K,
+/// Option[Connection[F]]]` is checker-legal: `type_ref_is_held`,
+/// `bynk-check/src/context_checks.rs`, recurses through both to decide
+/// storage admission). Mirrors that recursion at the `TyId` level rather
+/// than reusing `Ty::is_held()`/`Ty::held_inner()` (`bynk-check/src/
+/// checker.rs`): neither recurses past a bare `Connection` today (both are
+/// otherwise dead code — no caller anywhere in this workspace), so using
+/// them as-is here would silently reintroduce the same Option-blind gap
+/// this slice fixes.
+///
+/// Tested at the `Types`/`TyId` level directly ([`held_frame_ty_tests`]),
+/// not through a full end-to-end fixture: a real `store x: Map[K,
+/// Option[Connection[F]]]` program certifies (`bynkc check` exits 0), but
+/// `bynkc compile` panics before reaching this function at all —
+/// `bynk-check::wire::codec_suffix`'s `TypeRef::Connection(..) =>
+/// unreachable!(...)` arm, reached because whatever builds this project's
+/// wire/codec instantiation table walks every store field's value type
+/// looking for boundary-codec names, `Option`-recursing into a held
+/// `Connection` it should have excluded. Confirmed pre-existing and
+/// unrelated to this slice (reproduces identically on `main`, before this
+/// function existed) — a real `bynk-check` bug, out of scope for this
+/// emitter-only cutover; worth its own follow-up issue.
+fn held_frame_ty(ty: TyId, tys: &Types) -> Option<TyId> {
+    match &*tys.get(ty) {
+        Ty::Connection(inner) => Some(*inner),
+        Ty::Option(inner) | Ty::Effect(inner) => held_frame_ty(*inner, tys),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod held_frame_ty_tests {
+    use super::*;
+
+    #[test]
+    fn unwraps_a_bare_connection() {
+        let tys = Types::new();
+        let frame = tys.intern(Ty::Base(BaseType::String));
+        let conn = tys.intern(Ty::Connection(frame));
+        assert!(matches!(held_frame_ty(conn, &tys), Some(f) if f == frame));
+    }
+
+    /// The shape a naive, non-recursive port of `Ty::held_inner()` would
+    /// get wrong — the same gap this slice found in the pre-existing
+    /// `held_maps_ts` construction (a bare `match v { TypeRef::Connection
+    /// (inner, _) => …, _ => ts_type_ref(v) }` that rendered the whole
+    /// `Option<Connection<F>>` wrapper instead of unwrapping to `F`).
+    #[test]
+    fn unwraps_through_option_and_effect_like_type_ref_is_held_does() {
+        let tys = Types::new();
+        let frame = tys.intern(Ty::Base(BaseType::String));
+        let conn = tys.intern(Ty::Connection(frame));
+        let opt = tys.intern(Ty::Option(conn));
+        assert!(matches!(held_frame_ty(opt, &tys), Some(f) if f == frame));
+        let eff = tys.intern(Ty::Effect(conn));
+        assert!(matches!(held_frame_ty(eff, &tys), Some(f) if f == frame));
+        // `Effect[Option[Connection[F]]]` — nested wrapping, both layers unwrap.
+        let opt_eff = tys.intern(Ty::Effect(opt));
+        assert!(matches!(held_frame_ty(opt_eff, &tys), Some(f) if f == frame));
+    }
+
+    #[test]
+    fn a_non_held_type_returns_none_even_wrapped() {
+        let tys = Types::new();
+        let s = tys.intern(Ty::Base(BaseType::String));
+        assert!(held_frame_ty(s, &tys).is_none());
+        let opt_s = tys.intern(Ty::Option(s));
+        assert!(held_frame_ty(opt_s, &tys).is_none());
+    }
+}
+
 /// The key type (`K`) of a two-argument store field (`Map`/`Cache`) named
 /// `field`, used by the rehydration gate to validate textual keys (ADR 0124).
 fn store_field_key_type<'a>(a: &'a AgentDecl, field: &str) -> Option<&'a TypeRef> {
@@ -2593,14 +2666,38 @@ pub(crate) fn emit_agent(
     let held_map_names: HashSet<String> = held_maps.iter().map(|(n, _)| n.name.clone()).collect();
     // The held map's lowering needs the connection's **frame type** `F` (for
     // `resolveConnection<F>`), not the `Connection<F>` wrapper — extract it.
+    // #1187's Agent state-field slice 2c: the field's own membership in
+    // `held_maps` still comes from `held_map_fields`'s AST-based
+    // `type_ref_is_held` (unchanged — its caller, `write_header`
+    // (`emitter.rs`), has no `CheckedProgram` in scope, so this and that
+    // predicate stay deliberately parallel, not unified), but the frame
+    // type itself is now read off `state`'s already-resolved `TyId` via
+    // `held_frame_ty`, through `ts_ty` — fixing a real, previously
+    // uncovered gap: the old `match v { TypeRef::Connection(inner, _) =>
+    // ts_type_ref(inner), _ => ts_type_ref(v) }` only ever unwrapped a
+    // *bare* `Connection`; a `Map[K, Option[Connection[F]]]` value — legal
+    // per the checker's own `type_ref_is_held`, which recurses through
+    // `Option`/`Effect` (`bynk-check/src/context_checks.rs`) — fell into
+    // the `_` arm and rendered the whole `Option<Connection<F>>` wrapper,
+    // not `F`. No existing fixture exercised this shape to catch it.
     let held_maps_ts: HashMap<String, String> = held_maps
         .iter()
-        .map(|(n, v)| {
-            let f_ts = match v {
-                TypeRef::Connection(inner, _) => ts_type_ref(inner),
-                _ => ts_type_ref(v),
-            };
-            (n.name.clone(), f_ts)
+        .map(|(n, _)| {
+            let frame_ty = state
+                .iter()
+                .find(|sf| sf.field == n.name)
+                .and_then(|sf| match sf.kind {
+                    StoreKindIr::Map(_, v_ty) => held_frame_ty(v_ty, tys),
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "bynk internal error: held map field `{}` has no resolved held \
+                         Map value TyId in this function's own state reader",
+                        n.name
+                    )
+                });
+            (n.name.clone(), ts_ty(frame_ty, tys))
         })
         .collect();
     let store_map_fields: Vec<(&Ident, &TypeRef)> = if is_store_agent {
