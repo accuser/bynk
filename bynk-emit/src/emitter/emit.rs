@@ -2488,6 +2488,24 @@ fn held_frame_ty(ty: TyId, tys: &Types) -> Option<TyId> {
     }
 }
 
+/// [`held_frame_ty`]'s `TypeRef`-level mirror, and `held_maps_ts`'s own
+/// fallback when the frame's `TyId` doesn't resolve (a held field's own
+/// type reference is never checker-validated, only its shape — see that
+/// call site's own doc comment). Same `Connection`/`Option`/`Effect`
+/// recursion as `type_ref_is_held` (`bynk-check/src/context_checks.rs`),
+/// applied here at the AST level instead of just to a bare `Connection` the
+/// way this function's own pre-#1187 shape did — so the fallback path
+/// renders the same frame type the `TyId` path would have, not the whole
+/// `Option<Connection<F>>`/`Effect<Connection<F>>` wrapper.
+fn held_frame_ty_ref(t: &TypeRef) -> &TypeRef {
+    match t {
+        TypeRef::Connection(inner, _) | TypeRef::Option(inner, _) | TypeRef::Effect(inner, _) => {
+            held_frame_ty_ref(inner)
+        }
+        _ => t,
+    }
+}
+
 #[cfg(test)]
 mod held_frame_ty_tests {
     use super::*;
@@ -2682,22 +2700,30 @@ pub(crate) fn emit_agent(
     // not `F`. No existing fixture exercised this shape to catch it.
     let held_maps_ts: HashMap<String, String> = held_maps
         .iter()
-        .map(|(n, _)| {
-            let frame_ty = state
-                .iter()
-                .find(|sf| sf.field == n.name)
-                .and_then(|sf| match sf.kind {
-                    StoreKindIr::Map(_, v_ty) => held_frame_ty(v_ty, tys),
+        .map(|(n, v)| {
+            // Review of #1187's slice 2c: no checker pass validates a store
+            // field's own type reference (only its shape —
+            // `resolve_store_field_ty`'s own doc comment, `ir/lower.rs`,
+            // names this explicitly), so `store x: Map[K, Connection[Bogus]]`
+            // certifies today with an unresolvable frame type; the whole
+            // `Connection[Bogus]` then fails to resolve too
+            // (`resolve_type_ref_in`'s `?` propagation, `bynk-check/src/
+            // checker.rs`), so `StoreKindIr::Map`'s own value `TyId` falls
+            // back to `Ty::Unit` — `held_frame_ty` legitimately returns
+            // `None` on a certified program here, not an internal
+            // inconsistency. Fall back to the AST-level frame type (still
+            // Option/Effect-unwrapped, via `held_frame_ty_ref`) instead of
+            // panicking, mirroring `resolve_store_field_ty`'s own posture
+            // for the identical reason.
+            let ts = store_field_ty
+                .get(n.name.as_str())
+                .and_then(|kind| match kind {
+                    StoreKindIr::Map(_, v_ty) => held_frame_ty(*v_ty, tys),
                     _ => None,
                 })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "bynk internal error: held map field `{}` has no resolved held \
-                         Map value TyId in this function's own state reader",
-                        n.name
-                    )
-                });
-            (n.name.clone(), ts_ty(frame_ty, tys))
+                .map(|frame_ty| ts_ty(frame_ty, tys))
+                .unwrap_or_else(|| ts_type_ref(held_frame_ty_ref(v)));
+            (n.name.clone(), ts)
         })
         .collect();
     let store_map_fields: Vec<(&Ident, &TypeRef)> = if is_store_agent {
