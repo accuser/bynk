@@ -15,7 +15,7 @@ use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
 
 use crate::ir::lower::{HandlerSignatureIr, body_writes_state};
-use crate::ir::{OpSig, ProtocolIr, TypeShape};
+use crate::ir::{OpSig, ProtocolIr, StoreFieldIr, StoreKindIr, TypeShape};
 
 use super::*;
 
@@ -2533,11 +2533,19 @@ fn history_variant_tag(handler: &str) -> String {
 pub(crate) fn emit_agent(
     out: &mut String,
     a: &AgentDecl,
+    state: &[StoreFieldIr],
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
     let tys = commons.tys();
+    // #1187's Agent state-field slice: the checker-resolved TyId for each
+    // Cell/Map/Cache/Log field's element type, keyed by field name — read
+    // once here so the state-interface block below can render through
+    // `ts_ty` (TyId) instead of `ts_type_ref` (raw AST) without repeating
+    // this lookup at every one of its four sites.
+    let store_field_ty: HashMap<&str, &StoreKindIr> =
+        state.iter().map(|f| (f.field.as_str(), &f.kind)).collect();
     emit_doc_block(out, a.documentation.as_deref(), 0);
     let state_ty = format!("{}State", a.name.name);
     // v0.81 (storage track, ADR 0109): an agent's `Cell` fields ARE its state
@@ -2707,20 +2715,36 @@ pub(crate) fn emit_agent(
     // 1) State record type.
     writeln!(out, "export interface {state_ty} {{").unwrap();
     for f in &effective_fields {
+        let cell_ty = match store_field_ty.get(f.name.name.as_str()) {
+            Some(StoreKindIr::Cell(t)) => *t,
+            other => panic!(
+                "bynk internal error: state field `{}` is not a resolved Cell in this \
+                 function's own state reader, found {other:?}",
+                f.name.name
+            ),
+        };
         writeln!(
             out,
             "  readonly {name}: {ty};",
             name = f.name.name,
-            ty = ts_type_ref(&f.type_ref),
+            ty = ts_ty(cell_ty, tys),
         )
         .unwrap();
     }
-    for (name, v) in &store_map_fields {
+    for (name, _) in &store_map_fields {
+        let value_ty = match store_field_ty.get(name.name.as_str()) {
+            Some(StoreKindIr::Map(_, v)) => *v,
+            other => panic!(
+                "bynk internal error: state field `{}` is not a resolved Map in this \
+                 function's own state reader, found {other:?}",
+                name.name
+            ),
+        };
         writeln!(
             out,
             "  readonly {name}: Record<string, {v}>;",
             name = name.name,
-            v = ts_type_ref(v),
+            v = ts_ty(value_ty, tys),
         )
         .unwrap();
     }
@@ -2749,21 +2773,37 @@ pub(crate) fn emit_agent(
             writeln!(out, "  readonly {map}__idx_{f}: Record<string, string[]>;").unwrap();
         }
     }
-    for (name, v, _) in &store_cache_fields {
+    for (name, _, _) in &store_cache_fields {
+        let value_ty = match store_field_ty.get(name.name.as_str()) {
+            Some(StoreKindIr::Cache(_, v, _)) => *v,
+            other => panic!(
+                "bynk internal error: state field `{}` is not a resolved Cache in this \
+                 function's own state reader, found {other:?}",
+                name.name
+            ),
+        };
         writeln!(
             out,
             "  readonly {name}: Record<string, {{ v: {v}; exp: number }}>;",
             name = name.name,
-            v = ts_type_ref(v),
+            v = ts_ty(value_ty, tys),
         )
         .unwrap();
     }
-    for (name, v, _) in &store_log_fields {
+    for (name, _, _) in &store_log_fields {
+        let elem_ty = match store_field_ty.get(name.name.as_str()) {
+            Some(StoreKindIr::Log(t, _)) => *t,
+            other => panic!(
+                "bynk internal error: state field `{}` is not a resolved Log in this \
+                 function's own state reader, found {other:?}",
+                name.name
+            ),
+        };
         writeln!(
             out,
             "  readonly {name}: Array<{{ t: number; v: {v} }}>;",
             name = name.name,
-            v = ts_type_ref(v),
+            v = ts_ty(elem_ty, tys),
         )
         .unwrap();
     }

@@ -25,7 +25,7 @@ use self::source_map::SourceMapBuilder;
 
 use crate::ir::lower::{
     lower_capability_item_ir, lower_protocol_ir, lower_service_handler_signature_ir,
-    lower_type_item_ir,
+    lower_store_field_shape_ir, lower_type_item_ir,
 };
 use crate::ir::{IrItem, TypeShape};
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
@@ -441,7 +441,12 @@ pub(crate) fn emit_project(
             }
             CommonsItem::Agent(a) => {
                 smb.borrow_mut().record(out.len(), a.span);
-                emit_agent(&mut out, a, commons, ctx, Some(&smb));
+                let state: Vec<_> = a
+                    .store_fields
+                    .iter()
+                    .map(|f| lower_store_field_shape_ir(f, program))
+                    .collect();
+                emit_agent(&mut out, a, &state, commons, ctx, Some(&smb));
             }
             _ => {}
         }
