@@ -1339,6 +1339,47 @@ pub(crate) struct ActorBinder {
     pub ty: TyId,
 }
 
+/// #1187's slice 3: a handler's resolved actor-verification seam, wrapping
+/// `bynk-check`'s own five already-resolved seam structs
+/// (`bynk-check/src/actors.rs`) by value — confirmed none carry any
+/// `bynk_syntax::ast`/`TypeRef`/`Expr`: every field is `String`/`bool`/
+/// `i64`/`Option`/`Vec` (or, for `BearerSeam::authorization`,
+/// `ClaimPredicate`, itself a plain recursive `String`/`Box` enum). Built by
+/// [`lower::lower_actor_seam_ir`], which tries the five resolvers in the one
+/// priority order that actually matters — `sum_members_for` first, since
+/// it's the only resolver whose result can otherwise collide with
+/// `bearer_seam_for`'s (a sum's own first peer can itself be Bearer-schemed;
+/// `bearer_seam_for` has no `by.is_sum()` guard of its own to prevent that).
+/// The other three pairs are mutually exclusive by construction — each
+/// single-actor resolver requires the primary actor's own `auth` scheme to
+/// match one specific `Scheme` variant, a closed set — so their relative
+/// order here is a no-op, not a second load-bearing decision.
+///
+/// No `Signature` variant, deliberately: neither call site this slice
+/// converts (`emit_service`'s `deps`-identity-binder chain, `emit.rs`;
+/// `emit_worker_compose`'s HTTP-dispatch match, `workers.rs`) ever consults
+/// `signature_seam_for` as part of this priority chain — Signature is a
+/// separate, request-verification-only concept there (see
+/// `workers_entry.rs`'s own `HttpRoute.signature` field), not one this
+/// enum's callers need. Adding an unreachable variant this slice's own
+/// `lower_actor_seam_ir` never constructs would be exactly the kind of
+/// premature surface `bynk-design-notes.md`'s own conventions ask this
+/// codebase to avoid.
+#[derive(Debug, Clone)]
+pub(crate) enum ActorSeamIr {
+    /// No `by` clause resolves to any of the four seams below (`Visitor`/
+    /// `None`-schemed, or no `by` clause at all).
+    None,
+    /// `by who: A | B` — an ordered sum of peer actors, first-wins.
+    Sum(Vec<bynk_check::actors::SumMember>),
+    Bearer(bynk_check::actors::BearerSeam),
+    Oidc(bynk_check::actors::OidcSeam),
+    /// A cross-context `on call … by c: Caller` handler's own binder name —
+    /// `caller_binder_for`'s return type is already the bare `Option<String>`
+    /// the other four resolvers reduce a whole struct down to one field for.
+    Caller(String),
+}
+
 /// P6.13's real `ConnectionBinder` ([DECISION G], #1179) — the synthetic
 /// leading `connection: Connection[out]` binding a `from websocket`
 /// lifecycle handler's body receives, [`lower::lower_service_handler_ir`]'s
