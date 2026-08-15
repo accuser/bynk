@@ -511,8 +511,8 @@ fn worker_cross_caps(
         if c.name == "Events" && flattened.get(&c.name).map(String::as_str) == Some("bynk") {
             continue;
         }
-        if let Some(p) = c.context.clone() {
-            if let Some(ctx) = resolve(&p, consumes, aliases) {
+        if let Some(p) = &c.context {
+            if let Some(ctx) = resolve(p, consumes, aliases) {
                 out.entry(c.name.clone()).or_insert(ctx);
             }
         } else if let Some(unit) = flattened.get(&c.name) {

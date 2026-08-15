@@ -1686,7 +1686,7 @@ pub(crate) fn emit_service(
 /// qualified with the providing context's import namespace
 /// (`platform_time.Clock`).
 fn cap_ref_ty(c: &crate::ir::CapRefIr, info: &bynk_check::resolver::CrossContextInfo) -> String {
-    match c.context.clone().and_then(|p| info.resolve_prefix(&p)) {
+    match c.context.as_deref().and_then(|p| info.resolve_prefix(p)) {
         Some(consumed) => format!("{}.{}", qualified_to_ns(&consumed), c.name),
         // v0.17: a bare flattened capability (`consumes U { Cap }`) keeps its
         // interface in the consumed unit's module — qualify the type there.
