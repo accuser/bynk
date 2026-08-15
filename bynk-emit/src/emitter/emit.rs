@@ -2621,24 +2621,22 @@ pub(crate) fn emit_agent(
     // gets a maintained secondary index. `map name → [field, …]` (a deduped,
     // declaration-ordered list). The keys are validated against `V` in
     // `project::validate`; here we only read the surface to drive emission.
+    // #1187's Agent state-field slice 2b: which `Map` fields have an
+    // `@indexed(by: …)` key list, IR-sourced — `StoreFieldIr::indexed` is
+    // already the deduped, declaration-order key list
+    // `store_field_kind_and_indexed` built from the same annotations this
+    // used to re-walk here. Deliberately still keyed and filtered exactly
+    // like the AST walk it replaces: no held-map exclusion (a held
+    // `Map[K, Connection]` is an ordinary `StoreKindIr::Map` as far as the
+    // checker/IR are concerned — "held" is purely this function's own
+    // downstream Workers-mode concern, applied separately to `store_map_fields`
+    // above), so a held map's own indexes are still emitted here exactly as
+    // before.
     let store_map_indexes: HashMap<String, Vec<String>> = if is_store_agent {
-        a.store_fields
+        state
             .iter()
-            .filter(|f| f.kind.head.name == "Map" && f.kind.args.len() == 2)
-            .filter_map(|f| {
-                let mut fields: Vec<String> = Vec::new();
-                for an in f.annotations.iter().filter(|an| an.name.name == "indexed") {
-                    for arg in &an.args {
-                        if arg.label.as_ref().map(|l| l.name.as_str()) == Some("by")
-                            && let ExprKind::Ident(k) = &arg.value.kind
-                            && !fields.contains(&k.name)
-                        {
-                            fields.push(k.name.clone());
-                        }
-                    }
-                }
-                (!fields.is_empty()).then(|| (f.name.name.clone(), fields))
-            })
+            .filter(|f| matches!(f.kind, StoreKindIr::Map(..)) && !f.indexed.is_empty())
+            .map(|f| (f.field.clone(), f.indexed.clone()))
             .collect()
     } else {
         HashMap::new()
@@ -2646,7 +2644,10 @@ pub(crate) fn emit_agent(
     // v0.83 (ADR 0110): `store Set[T]` fields are state-record fields too,
     // persisted as a JSON-serialisable `Record<string, boolean>` (a JS `Set`
     // does not serialise). `(name, T)`; the element type is unused in the TS
-    // representation but kept for symmetry with maps.
+    // representation but kept for symmetry with maps — needed only for the
+    // rehydration check below, which still validates against a raw `TypeRef`
+    // (`serialisation.rs`'s own `TypeRef`-driven boundary, out of this
+    // slice's scope).
     let store_set_fields: Vec<(&Ident, &TypeRef)> = if is_store_agent {
         a.store_fields
             .iter()
@@ -2656,10 +2657,16 @@ pub(crate) fn emit_agent(
     } else {
         Vec::new()
     };
-    let set_names: HashSet<String> = store_set_fields
+    // #1187's Agent state-field slice 2b: which fields are Sets, IR-sourced
+    // (declaration order preserved — `state` is built from `a.store_fields`
+    // in order) — every consumer below except the rehydration check, which
+    // alone needs `store_set_fields`'s own `TypeRef`.
+    let set_field_names: Vec<&str> = state
         .iter()
-        .map(|(n, _)| n.name.clone())
+        .filter(|f| matches!(f.kind, StoreKindIr::Set(_)))
+        .map(|f| f.field.as_str())
         .collect();
+    let set_names: HashSet<String> = set_field_names.iter().map(|s| s.to_string()).collect();
     // v0.87 (ADR 0113): `store Cache[K, V] @ttl(d)` fields — a value record plus
     // a per-entry expiry instant. `(name, V, ttl-millis)`; the ttl is the field's
     // `@ttl` Duration literal (validated by the checker).
@@ -2757,13 +2764,8 @@ pub(crate) fn emit_agent(
         )
         .unwrap();
     }
-    for (name, _) in &store_set_fields {
-        writeln!(
-            out,
-            "  readonly {name}: Record<string, boolean>;",
-            name = name.name,
-        )
-        .unwrap();
+    for name in &set_field_names {
+        writeln!(out, "  readonly {name}: Record<string, boolean>;").unwrap();
     }
     // v0.93 (ADR 0118): a sibling posting-list per `@indexed(by: f)` — field
     // value (stringified) → the primary keys whose value has it. Persisted and
@@ -2870,8 +2872,8 @@ pub(crate) fn emit_agent(
                 parts.push(format!("{map}__idx_{f}: {{}}"));
             }
         }
-        for (name, _) in &store_set_fields {
-            parts.push(format!("{}: {{}}", name.name));
+        for name in &set_field_names {
+            parts.push(format!("{name}: {{}}"));
         }
         for (name, _, _) in &store_cache_fields {
             parts.push(format!("{}: {{}}", name.name));
