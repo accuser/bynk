@@ -1270,6 +1270,24 @@ pub(crate) fn emit_provider(
     writeln!(out).unwrap();
 }
 
+/// Append one field to a `deps` object-type string under construction —
+/// `emit_service`'s own actor-seam/`__exec`/events-dispatch widening all
+/// repeat this exact splice: `{}` becomes `{ field }`; anything else gets
+/// `field` spliced in before the closing brace. Review of #1209: gathering
+/// the actor-seam widening into one `match` (below) made this splice's own
+/// repetition newly visible — six copies in `emit_service` alone before
+/// this helper.
+fn append_deps_field(deps_ty: &str, field: &str) -> String {
+    if deps_ty == "{}" {
+        format!("{{ {field} }}")
+    } else {
+        format!(
+            "{}; {field} }}",
+            deps_ty.trim_end().trim_end_matches('}').trim_end()
+        )
+    }
+}
+
 pub(crate) fn emit_service(
     out: &mut String,
     s: &ServiceDecl,
@@ -1514,40 +1532,17 @@ pub(crate) fn emit_service(
         // rather than the type system).
         match &seam {
             ActorSeamIr::Bearer(s) if s.binder.is_some() => {
-                let field = format!("identity: {}", s.identity_type);
-                deps_ty = if deps_ty == "{}" {
-                    format!("{{ {field} }}")
-                } else {
-                    format!(
-                        "{}; {field} }}",
-                        deps_ty.trim_end().trim_end_matches('}').trim_end()
-                    )
-                };
+                deps_ty = append_deps_field(&deps_ty, &format!("identity: {}", s.identity_type));
             }
             // v0.151: an `Oidc`-binding handler threads its `sub`-minted
             // identity into deps exactly like Bearer.
             ActorSeamIr::Oidc(s) if s.binder.is_some() => {
-                let field = format!("identity: {}", s.identity_type);
-                deps_ty = if deps_ty == "{}" {
-                    format!("{{ {field} }}")
-                } else {
-                    format!(
-                        "{}; {field} }}",
-                        deps_ty.trim_end().trim_end_matches('}').trim_end()
-                    )
-                };
+                deps_ty = append_deps_field(&deps_ty, &format!("identity: {}", s.identity_type));
             }
             // v0.54: a Caller-binding call handler's deps carries the
             // caller's context name as its `CallerId` identity (a `string`).
             ActorSeamIr::Caller(_) => {
-                deps_ty = if deps_ty == "{}" {
-                    "{ identity: string }".to_string()
-                } else {
-                    format!(
-                        "{}; identity: string }}",
-                        deps_ty.trim_end().trim_end_matches('}').trim_end()
-                    )
-                };
+                deps_ty = append_deps_field(&deps_ty, "identity: string");
             }
             // v0.52: a sum handler's deps carries the resolved-actor tagged
             // union (`who`), which the body `match`es. A binder-less sum is
@@ -1561,15 +1556,7 @@ pub(crate) fn emit_service(
                     })
                     .collect::<Vec<_>>()
                     .join(" | ");
-                let field = format!("who: {union}");
-                deps_ty = if deps_ty == "{}" {
-                    format!("{{ {field} }}")
-                } else {
-                    format!(
-                        "{}; {field} }}",
-                        deps_ty.trim_end().trim_end_matches('}').trim_end()
-                    )
-                };
+                deps_ty = append_deps_field(&deps_ty, &format!("who: {union}"));
             }
             // A binder-less Bearer/Oidc, or no seam at all — nothing to widen.
             ActorSeamIr::Bearer(_) | ActorSeamIr::Oidc(_) | ActorSeamIr::None => {}
@@ -1578,15 +1565,10 @@ pub(crate) fn emit_service(
         // (`__exec`) in its deps, so the fire-and-forget send can hand its promise
         // to `waitUntil`. Gated on the body so non-sending handlers are unchanged.
         if crate::emitter::block_uses_send(&handler.body) {
-            let field = "__exec: { waitUntil(promise: Promise<unknown>): void }";
-            deps_ty = if deps_ty == "{}" {
-                format!("{{ {field} }}")
-            } else {
-                format!(
-                    "{}; {field} }}",
-                    deps_ty.trim_end().trim_end_matches('}').trim_end()
-                )
-            };
+            deps_ty = append_deps_field(
+                &deps_ty,
+                "__exec: { waitUntil(promise: Promise<unknown>): void }",
+            );
         }
         // Events track, slice 0 (spine #936): a handler whose body uses
         // `Events.emit` receives a compose-supplied `__eventsDispatch`
@@ -1611,18 +1593,13 @@ pub(crate) fn emit_service(
                     .agent_given_caps_used()
                     .is_some_and(|m| m.contains_key("Events")));
         if needs_events_dispatch {
-            let field = format!(
-                "__eventsDispatch: (events: Array<{}>) => Promise<void>",
-                crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+            deps_ty = append_deps_field(
+                &deps_ty,
+                &format!(
+                    "__eventsDispatch: (events: Array<{}>) => Promise<void>",
+                    crate::emitter::EVENTS_WIRE_EVENT_TS_TYPE
+                ),
             );
-            deps_ty = if deps_ty == "{}" {
-                format!("{{ {field} }}")
-            } else {
-                format!(
-                    "{}; {field} }}",
-                    deps_ty.trim_end().trim_end_matches('}').trim_end()
-                )
-            };
         }
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_ty(*ir_ret, tys);

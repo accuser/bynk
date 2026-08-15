@@ -385,16 +385,21 @@ pub(crate) fn emit_worker_compose(
                     // v0.151: a single-actor `Oidc` handler gets the JWKS
                     // verification wrapper. v0.52: a multi-actor sum handler gets
                     // the first-wins resolution wrapper; otherwise the
-                    // single-actor Bearer/plain path. `lower_actor_seam_ir`'s own
-                    // doc comment (`crate::ir::ActorSeamIr`) has the full
-                    // grounding for why trying sum ahead of Bearer internally
-                    // (rather than this site's own former oidc-then-sum-then-
-                    // bearer order) resolves identically: Oidc/Bearer are
-                    // mutually exclusive by construction, so which of the two
-                    // is tried first never changes the outcome. `Caller` never
-                    // arises here — `caller_binder_for` only ever resolves for
-                    // `HandlerKind::Call` — so it shares the plain path with
-                    // `None`.
+                    // single-actor Bearer/plain path. Review of #1209: this site
+                    // used to check `oidc` ahead of `sum`; `lower_actor_seam_ir`
+                    // checks `sum` ahead of `oidc` (matching `ActorSeamIr`'s own
+                    // canonical order). That swap is licensed by
+                    // `oidc_seam_for`'s own `by.is_sum()` early return
+                    // (`bynk-check/src/actors.rs`) — Oidc and a sum can never
+                    // both resolve for one handler, so which is tried first is a
+                    // no-op, unlike the sum-vs-Bearer order `ActorSeamIr`'s own
+                    // doc comment is about (Bearer was already checked last at
+                    // this site, so that pair's order didn't change here).
+                    // `Caller` never arises here — `caller_binder_for` only ever
+                    // resolves for `HandlerKind::Call` — so it shares the plain
+                    // path with `None`, exactly like the old fallthrough
+                    // (`bearer_seam_for` also misses on a `Caller` handler, since
+                    // `Caller` is a prelude actor, not a key of `table.actors`).
                     match crate::ir::lower::lower_actor_seam_ir(h, &table.actors) {
                         crate::ir::ActorSeamIr::Oidc(oidc) => {
                             emit_http_oidc_wrapper(&mut out, sname, h, *method, path, &oidc);

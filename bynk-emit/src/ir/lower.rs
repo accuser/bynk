@@ -5243,6 +5243,24 @@ commons demo {
             .unwrap_or_else(|| panic!("no agent named `{name}` in this fixture"))
     }
 
+    /// `lower_actor_seam_ir`'s own `actors` map — rebuilt the same way
+    /// `checked_context_program` builds its own throwaway `table.actors`
+    /// (not itself exposed on `CheckedProgram`), since the resolvers it
+    /// wraps take the same `HashMap<String, ActorDecl>` shape the real
+    /// `table.actors`/`ctx.actors` emitter-side callers already carry.
+    fn actors_map(program: &CheckedProgram) -> HashMap<String, ActorDecl> {
+        program
+            .program()
+            .commons
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                CommonsItem::Actor(a) => Some((a.name.name.clone(), a.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn find_service<'a>(program: &'a CheckedProgram, name: &str) -> &'a ServiceDecl {
         program
             .program()
@@ -6719,6 +6737,44 @@ service Api from http {
             "expected `match who {{ … }}` to lower to a real Match node, got {:?}",
             value.kind
         );
+    }
+
+    /// Review of #1209: pins the one load-bearing ordering decision
+    /// `ActorSeamIr`'s own doc comment argues for — `sum_members_for`
+    /// ahead of `bearer_seam_for` — at `lower_actor_seam_ir` itself, not
+    /// only four fixture-hops away via a full `emit_service`/`bless` run.
+    /// `bearer_seam_for` has no `by.is_sum()` guard of its own and resolves
+    /// off `by.primary()`, so a Bearer-first sum (`by who: User | Visitor`
+    /// with `User`'s own scheme `Bearer`) would resolve as `ActorSeamIr::
+    /// Bearer` instead of `ActorSeamIr::Sum` if the two resolvers were ever
+    /// tried in the other order.
+    #[test]
+    fn lower_actor_seam_ir_tries_sum_ahead_of_bearer_for_a_bearer_first_sum() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+type UserId = String
+
+actor User { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+service Api from http {
+  on GET("/whoami") () -> Effect[HttpResult[String]] by who: User | Visitor {
+    Effect.pure(Ok("ok"))
+  }
+}
+"#,
+        );
+        let service = find_service(&program, "Api");
+        let handler = &service.handlers[0];
+        let actors = actors_map(&program);
+        let seam = lower_actor_seam_ir(handler, &actors);
+        let ActorSeamIr::Sum(members) = &seam else {
+            panic!("expected ActorSeamIr::Sum for a Bearer-first sum `by` clause, got {seam:?}");
+        };
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].actor_name, "User");
+        assert_eq!(members[1].actor_name, "Visitor");
     }
 
     #[test]
