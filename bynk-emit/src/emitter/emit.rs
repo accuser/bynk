@@ -14,8 +14,8 @@ use std::sync::Arc;
 use crate::project::EmitProjectCtx;
 use bynk_check::checker::{TypedCommons, Types};
 
-use crate::ir::lower::{HandlerSignatureIr, body_writes_state};
-use crate::ir::{OpSig, ProtocolIr, StoreFieldIr, StoreKindIr, TypeShape};
+use crate::ir::lower::{HandlerSignatureIr, body_writes_state, lower_actor_seam_ir};
+use crate::ir::{ActorSeamIr, OpSig, ProtocolIr, StoreFieldIr, StoreKindIr, TypeShape};
 
 use super::*;
 
@@ -1389,37 +1389,21 @@ pub(crate) fn emit_service(
         // `deps.who`; the binder ident lowers to it so the body can `match`. A
         // sum supersedes the single-actor Bearer identity path (the per-arm
         // identity comes from the match, not a single `deps.identity`).
-        let sum_members = bynk_check::actors::sum_members_for(handler, &ctx.actors);
-        // v0.47: a single Bearer handler's identity is threaded through `deps`;
-        // tell the body lowering so `<binder>.identity` reads `deps.identity`.
-        let bearer_seam = if sum_members.is_some() {
-            None
-        } else {
-            bynk_check::actors::bearer_seam_for(handler, &ctx.actors)
+        // v0.47/v0.151/v0.52/v0.54: a handler's own actor-verification seam —
+        // Bearer/Oidc/Caller thread their identity through `deps.identity`,
+        // a sum threads the resolved-actor tagged union through `deps.who`
+        // (the body `match`es it). `lower_actor_seam_ir`'s own doc comment
+        // (`crate::ir::ActorSeamIr`) has the full grounding for why sum is
+        // tried first (it can otherwise collide with Bearer) and why the
+        // other three are mutually exclusive by construction.
+        let seam = lower_actor_seam_ir(handler, &ctx.actors);
+        let deps_identity_binder = match &seam {
+            ActorSeamIr::Caller(binder) => Some(binder.clone()),
+            ActorSeamIr::Bearer(s) => s.binder.clone(),
+            ActorSeamIr::Oidc(s) => s.binder.clone(),
+            ActorSeamIr::Sum(_) | ActorSeamIr::None => None,
         };
-        // v0.151: a single-actor `Oidc` handler threads its `sub`-minted identity
-        // through `deps` exactly like Bearer — `<binder>.identity` reads
-        // `deps.identity`. Oidc and Bearer never both resolve for one handler.
-        let oidc_seam = if sum_members.is_some() || bearer_seam.is_some() {
-            None
-        } else {
-            bynk_check::actors::oidc_seam_for(handler, &ctx.actors)
-        };
-        // v0.54: a cross-context `on call … by c: Caller` handler reads a live
-        // `CallerId` (the calling context's name) threaded through
-        // `deps.identity`, exactly like the Bearer identity. Only when it binds.
-        let caller_binder = if bearer_seam.is_none() && sum_members.is_none() {
-            bynk_check::actors::caller_binder_for(handler, &ctx.actors)
-        } else {
-            None
-        };
-        let deps_identity_binder = caller_binder.clone().or_else(|| {
-            bearer_seam
-                .as_ref()
-                .and_then(|s| s.binder.clone())
-                .or_else(|| oidc_seam.as_ref().and_then(|s| s.binder.clone()))
-        });
-        let actor_sum_binder = if sum_members.is_some() {
+        let actor_sum_binder = if matches!(seam, ActorSeamIr::Sum(_)) {
             handler
                 .by_clause
                 .as_ref()
@@ -1522,63 +1506,73 @@ pub(crate) fn emit_service(
             &ctx.cross_context,
             ctx.target,
         );
-        if let Some(seam) = bearer_seam.as_ref().filter(|s| s.binder.is_some()) {
-            let field = format!("identity: {}", seam.identity_type);
-            deps_ty = if deps_ty == "{}" {
-                format!("{{ {field} }}")
-            } else {
-                format!(
-                    "{}; {field} }}",
-                    deps_ty.trim_end().trim_end_matches('}').trim_end()
-                )
-            };
-        }
-        // v0.151: an `Oidc`-binding handler threads its `sub`-minted identity into
-        // deps exactly like Bearer.
-        if let Some(seam) = oidc_seam.as_ref().filter(|s| s.binder.is_some()) {
-            let field = format!("identity: {}", seam.identity_type);
-            deps_ty = if deps_ty == "{}" {
-                format!("{{ {field} }}")
-            } else {
-                format!(
-                    "{}; {field} }}",
-                    deps_ty.trim_end().trim_end_matches('}').trim_end()
-                )
-            };
-        }
-        // v0.54: a Caller-binding call handler's deps carries the caller's
-        // context name as its `CallerId` identity (a `string`).
-        if caller_binder.is_some() {
-            deps_ty = if deps_ty == "{}" {
-                "{ identity: string }".to_string()
-            } else {
-                format!(
-                    "{}; identity: string }}",
-                    deps_ty.trim_end().trim_end_matches('}').trim_end()
-                )
-            };
-        }
-        // v0.52: a sum handler's deps carries the resolved-actor tagged union
-        // (`who`), which the body `match`es. A binder-less sum is rejected by the
-        // checker, so a sum handler always captures `who`.
-        if let Some(members) = sum_members.as_ref() {
-            let union = members
-                .iter()
-                .map(|m| match m.identity_type() {
-                    Some(id) => format!("{{ tag: \"{}\", identity: {id} }}", m.actor_name),
-                    None => format!("{{ tag: \"{}\" }}", m.actor_name),
-                })
-                .collect::<Vec<_>>()
-                .join(" | ");
-            let field = format!("who: {union}");
-            deps_ty = if deps_ty == "{}" {
-                format!("{{ {field} }}")
-            } else {
-                format!(
-                    "{}; {field} }}",
-                    deps_ty.trim_end().trim_end_matches('}').trim_end()
-                )
-            };
+        // v0.47/v0.151/v0.52/v0.54: widen `deps` for whichever actor seam
+        // this handler resolved to — at most one arm ever fires, `seam`
+        // being an enum rather than four independent optionals (a stronger
+        // guarantee than the four-`if`-in-a-row shape this replaced, whose
+        // mutual exclusion depended on the resolver-priority `if`s above
+        // rather than the type system).
+        match &seam {
+            ActorSeamIr::Bearer(s) if s.binder.is_some() => {
+                let field = format!("identity: {}", s.identity_type);
+                deps_ty = if deps_ty == "{}" {
+                    format!("{{ {field} }}")
+                } else {
+                    format!(
+                        "{}; {field} }}",
+                        deps_ty.trim_end().trim_end_matches('}').trim_end()
+                    )
+                };
+            }
+            // v0.151: an `Oidc`-binding handler threads its `sub`-minted
+            // identity into deps exactly like Bearer.
+            ActorSeamIr::Oidc(s) if s.binder.is_some() => {
+                let field = format!("identity: {}", s.identity_type);
+                deps_ty = if deps_ty == "{}" {
+                    format!("{{ {field} }}")
+                } else {
+                    format!(
+                        "{}; {field} }}",
+                        deps_ty.trim_end().trim_end_matches('}').trim_end()
+                    )
+                };
+            }
+            // v0.54: a Caller-binding call handler's deps carries the
+            // caller's context name as its `CallerId` identity (a `string`).
+            ActorSeamIr::Caller(_) => {
+                deps_ty = if deps_ty == "{}" {
+                    "{ identity: string }".to_string()
+                } else {
+                    format!(
+                        "{}; identity: string }}",
+                        deps_ty.trim_end().trim_end_matches('}').trim_end()
+                    )
+                };
+            }
+            // v0.52: a sum handler's deps carries the resolved-actor tagged
+            // union (`who`), which the body `match`es. A binder-less sum is
+            // rejected by the checker, so a sum handler always captures `who`.
+            ActorSeamIr::Sum(members) => {
+                let union = members
+                    .iter()
+                    .map(|m| match m.identity_type() {
+                        Some(id) => format!("{{ tag: \"{}\", identity: {id} }}", m.actor_name),
+                        None => format!("{{ tag: \"{}\" }}", m.actor_name),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                let field = format!("who: {union}");
+                deps_ty = if deps_ty == "{}" {
+                    format!("{{ {field} }}")
+                } else {
+                    format!(
+                        "{}; {field} }}",
+                        deps_ty.trim_end().trim_end_matches('}').trim_end()
+                    )
+                };
+            }
+            // A binder-less Bearer/Oidc, or no seam at all — nothing to widen.
+            ActorSeamIr::Bearer(_) | ActorSeamIr::Oidc(_) | ActorSeamIr::None => {}
         }
         // v0.79: a handler whose body uses `~>` receives the execution context
         // (`__exec`) in its deps, so the fire-and-forget send can hand its promise

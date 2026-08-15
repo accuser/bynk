@@ -385,24 +385,37 @@ pub(crate) fn emit_worker_compose(
                     // v0.151: a single-actor `Oidc` handler gets the JWKS
                     // verification wrapper. v0.52: a multi-actor sum handler gets
                     // the first-wins resolution wrapper; otherwise the
-                    // single-actor Bearer/plain path.
-                    if let Some(oidc) = bynk_check::actors::oidc_seam_for(h, &table.actors) {
-                        emit_http_oidc_wrapper(&mut out, sname, h, *method, path, &oidc);
-                    } else if let Some(members) =
-                        bynk_check::actors::sum_members_for(h, &table.actors)
-                    {
-                        emit_http_sum_wrapper(
-                            &mut out,
-                            sname,
-                            h,
-                            *method,
-                            path,
-                            &members,
-                            &runtime_use,
-                        );
-                    } else {
-                        let seam = bynk_check::actors::bearer_seam_for(h, &table.actors);
-                        emit_http_wrapper(&mut out, sname, h, *method, path, seam.as_ref());
+                    // single-actor Bearer/plain path. `lower_actor_seam_ir`'s own
+                    // doc comment (`crate::ir::ActorSeamIr`) has the full
+                    // grounding for why trying sum ahead of Bearer internally
+                    // (rather than this site's own former oidc-then-sum-then-
+                    // bearer order) resolves identically: Oidc/Bearer are
+                    // mutually exclusive by construction, so which of the two
+                    // is tried first never changes the outcome. `Caller` never
+                    // arises here — `caller_binder_for` only ever resolves for
+                    // `HandlerKind::Call` — so it shares the plain path with
+                    // `None`.
+                    match crate::ir::lower::lower_actor_seam_ir(h, &table.actors) {
+                        crate::ir::ActorSeamIr::Oidc(oidc) => {
+                            emit_http_oidc_wrapper(&mut out, sname, h, *method, path, &oidc);
+                        }
+                        crate::ir::ActorSeamIr::Sum(members) => {
+                            emit_http_sum_wrapper(
+                                &mut out,
+                                sname,
+                                h,
+                                *method,
+                                path,
+                                &members,
+                                &runtime_use,
+                            );
+                        }
+                        crate::ir::ActorSeamIr::Bearer(seam) => {
+                            emit_http_wrapper(&mut out, sname, h, *method, path, Some(&seam));
+                        }
+                        crate::ir::ActorSeamIr::Caller(_) | crate::ir::ActorSeamIr::None => {
+                            emit_http_wrapper(&mut out, sname, h, *method, path, None);
+                        }
                     }
                 }
                 HandlerKind::Cron { .. } => {

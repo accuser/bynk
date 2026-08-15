@@ -21,11 +21,11 @@ use std::sync::Arc;
 
 use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
-    AgentDecl, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp, EventPattern, EventPatternValue,
-    Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind, InterpPart, Invariant,
-    LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern, PatternBindingKind, ProviderDecl,
-    ProviderOp, QualifiedName, ServiceDecl, ServiceProtocol, Statement, StoreField, Transition,
-    TypeBody, TypeDecl, UnaryOp, expr_children,
+    ActorDecl, AgentDecl, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp, EventPattern,
+    EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind,
+    InterpPart, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern,
+    PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName, ServiceDecl, ServiceProtocol,
+    Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -34,10 +34,10 @@ use crate::emitter::{
     match_needs_if_chain,
 };
 use crate::ir::{
-    ActorBinder, BindingMode, CapRefIr, CommitShape, ConnectionBinder, ConstVal, CorsIr,
-    EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrBinOp, IrExpr,
-    IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig,
-    PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr,
+    ActorBinder, ActorSeamIr, BindingMode, CapRefIr, CommitShape, ConnectionBinder, ConstVal,
+    CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrBinOp,
+    IrExpr, IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MatchForm,
+    OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr,
     TypeShape,
 };
 
@@ -1634,6 +1634,46 @@ pub(crate) fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> 
 /// same one-line adapter, not a new design.
 pub(crate) fn lower_handler_given_ir(h: &Handler) -> Vec<CapRefIr> {
     h.given.iter().map(lower_cap_ref_ir).collect()
+}
+
+/// #1187's slice 3: a handler's resolved actor-verification seam — the same
+/// "narrow, standalone reader of already-resolved data" precedent
+/// [`body_writes_state`]/[`lower_service_handler_signature_ir`] established,
+/// applied to `bynk-check`'s own five actor-seam resolvers
+/// (`bynk-check/src/actors.rs`) instead of a full `IrHandler` assembly.
+/// [`ActorSeamIr`]'s own doc comment has the full grounding for the
+/// priority order and for the deliberately-missing `Signature` variant.
+///
+/// Replaces the hand-duplicated "try N resolvers, branch on which
+/// returned `Some`" call sites this slice converts: `emit_service`
+/// (`emitter/emit.rs`) and `emit_worker_compose`'s HTTP-dispatch match
+/// (`emitter/workers.rs`). Deliberately does **not** yet replace every
+/// caller of the five resolvers — `secrets.rs`'s `declared_secrets` unions
+/// *all* matching seams' secrets rather than picking one (a different
+/// shape this enum doesn't model), and the remaining call sites
+/// (`emitter/workers_entry.rs`, `emitter/workers.rs`'s other two sites,
+/// `emitter/emit.rs`'s `any_service_binds_caller`/`emit_make_surface`/
+/// `ws_open_hosts_for`, `project/tests_emit.rs`) each call exactly one
+/// resolver with nothing to collapse against — converting them to build a
+/// five-variant enum just to immediately match out one arm would add
+/// indirection without removing any real duplication.
+pub(crate) fn lower_actor_seam_ir(
+    handler: &Handler,
+    actors: &HashMap<String, ActorDecl>,
+) -> ActorSeamIr {
+    if let Some(members) = bynk_check::actors::sum_members_for(handler, actors) {
+        return ActorSeamIr::Sum(members);
+    }
+    if let Some(seam) = bynk_check::actors::bearer_seam_for(handler, actors) {
+        return ActorSeamIr::Bearer(seam);
+    }
+    if let Some(seam) = bynk_check::actors::oidc_seam_for(handler, actors) {
+        return ActorSeamIr::Oidc(seam);
+    }
+    if let Some(binder) = bynk_check::actors::caller_binder_for(handler, actors) {
+        return ActorSeamIr::Caller(binder);
+    }
+    ActorSeamIr::None
 }
 
 /// P6.14 (#1174, review of #1186): adapt one `given` entry into a real
