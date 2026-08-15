@@ -876,21 +876,22 @@ pub(crate) fn lower_fn_item_ir(f: &Arc<FnDecl>, program: &CheckedProgram) -> IrI
 /// (its own struct shape, `bynk-syntax/src/ast.rs:908-934`), so
 /// [`lower_store_field_ir`] never needs the `fn_rigid_type_vars`-shaped
 /// seeding every fn/method-level constructor here does. Shared by every
-/// arm of that function's own kind dispatch so a resolution failure panics
-/// with one consistent message naming the field, not five hand-duplicated
-/// copies.
-fn resolve_store_field_ty(
-    cx: &LowerIrCtx,
-    r: &bynk_syntax::ast::TypeRef,
-    field_name: &str,
-) -> TyId {
-    cx.resolve_type_ref(r).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): store field `{field_name}`'s type does not \
-             resolve in this pass's own scope, but the checker already accepted this \
-             declaration"
-        )
-    })
+/// arm of that function's own kind dispatch, and by [`lower_store_field_shape_ir`].
+///
+/// **Not an ADR 0334 `.expect()`-style panic on a resolve miss, deliberately**
+/// — the same posture [`lower_op_sig_ir`]'s own doc comment already argues
+/// for a capability op's `params`/`return_type`, confirmed empirically for
+/// store fields specifically (#1187's Agent state-field slice, step 0):
+/// `store x: Cell[Bogus] = "hello"` certifies today (exit 0, no diagnostic),
+/// so a `Bogus` store-field type — undeclared, and of the wrong kind for the
+/// `= "hello"` initializer besides — reaches this pass with no `expr_types`/
+/// `types` entry at all. Nothing in `context_checks.rs`'s store-field
+/// checking validates the *type reference* itself (only its shape, e.g.
+/// `Cell`/`Map`/`Set`/`Cache`/`Log`, and `@ttl`/`@indexed` legality). Mirror
+/// the checker's own silent-fallback posture instead of asserting a
+/// guarantee that does not hold.
+fn resolve_store_field_ty(cx: &LowerIrCtx, r: &bynk_syntax::ast::TypeRef) -> TyId {
+    cx.resolve_type_ref(r).unwrap_or_else(|| cx.unit_ty())
 }
 
 /// A `@name(<duration literal>)` annotation's own millisecond value — the
@@ -970,17 +971,37 @@ fn duration_millis_annotation(
 /// duplication (#1163's own Risks), not a gap this slice closes.
 pub(crate) fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
+    let (kind, indexed) = store_field_kind_and_indexed(f, &cx);
+    // [DECISION D]: only a `Cell` field's `init` is ever lowered.
+    let init = match &kind {
+        StoreKindIr::Cell(_) => f.init.as_ref().map(|e| lower_expr_ir(e, &mut cx)),
+        _ => None,
+    };
+    StoreFieldIr {
+        field: f.name.name.clone(),
+        kind,
+        init,
+        indexed,
+    }
+}
+
+/// The shape half of [`lower_store_field_ir`] — its `kind`/`indexed`
+/// computation, factored out so [`lower_store_field_shape_ir`] can share it
+/// without either duplicating the `Cell`/`Map`/`Set`/`Cache`/`Log` dispatch
+/// or paying for a `&mut LowerIrCtx` it never needs (nothing here lowers an
+/// expression).
+fn store_field_kind_and_indexed(f: &StoreField, cx: &LowerIrCtx) -> (StoreKindIr, Vec<IndexIr>) {
     let head = f.kind.head.name.as_str();
     let kind = match head {
-        "Cell" => StoreKindIr::Cell(resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name)),
+        "Cell" => StoreKindIr::Cell(resolve_store_field_ty(cx, &f.kind.args[0])),
         "Map" => StoreKindIr::Map(
-            resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name),
-            resolve_store_field_ty(&cx, &f.kind.args[1], &f.name.name),
+            resolve_store_field_ty(cx, &f.kind.args[0]),
+            resolve_store_field_ty(cx, &f.kind.args[1]),
         ),
-        "Set" => StoreKindIr::Set(resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name)),
+        "Set" => StoreKindIr::Set(resolve_store_field_ty(cx, &f.kind.args[0])),
         "Cache" => {
-            let k = resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name);
-            let v = resolve_store_field_ty(&cx, &f.kind.args[1], &f.name.name);
+            let k = resolve_store_field_ty(cx, &f.kind.args[0]);
+            let v = resolve_store_field_ty(cx, &f.kind.args[1]);
             let ttl = duration_millis_annotation(&f.annotations, "ttl").unwrap_or_else(|| {
                 panic!(
                     "bynk internal error (ADR 0334): `Cache` field `{}` has no resolvable \
@@ -993,7 +1014,7 @@ pub(crate) fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> 
             StoreKindIr::Cache(k, v, ttl)
         }
         "Log" => {
-            let elem = resolve_store_field_ty(&cx, &f.kind.args[0], &f.name.name);
+            let elem = resolve_store_field_ty(cx, &f.kind.args[0]);
             let retain = duration_millis_annotation(&f.annotations, "retain");
             StoreKindIr::Log(elem, retain)
         }
@@ -1027,15 +1048,30 @@ pub(crate) fn lower_store_field_ir(f: &StoreField, program: &CheckedProgram) -> 
             indexed.push(k.name.clone());
         }
     }
-    // [DECISION D]: only a `Cell` field's `init` is ever lowered.
-    let init = match &kind {
-        StoreKindIr::Cell(_) => f.init.as_ref().map(|e| lower_expr_ir(e, &mut cx)),
-        _ => None,
-    };
+    (kind, indexed)
+}
+
+/// #1187's Agent state-field slice: [`lower_store_field_ir`]'s shape-only
+/// sibling — same `kind`/`indexed` (via [`store_field_kind_and_indexed`]),
+/// `init` always `None`. This is the entry point `emit_agent`'s own state
+/// section actually needs: a field's storage *shape* (its `Cell`/`Map`/
+/// `Set`/`Cache`/`Log` kind and `@indexed` keys), never its `Cell` zero/
+/// initial value expression. Deliberately never lowers `init`, unlike
+/// [`lower_store_field_ir`] — a `Cell` field's initializer can be an
+/// `ExprKind::None` or an `is`-expression (`= None`, `= x is SomeVariant`),
+/// both of which hit this module's own `Ok`/`Err`/`Some`/`None`
+/// `IrExprKind` gap (no `Arc<TypeDecl>` identity for built-in `Option`/
+/// `Result`, `todo!()`s a few hundred lines below) — two real fixtures,
+/// `223_store_cell_agent` and `1029_agent_static_init_hoist`, hit exactly
+/// this on `lower_store_field_ir`'s own `init` arm. This function's callers
+/// never need `init` at all, so it is never at risk of that gap.
+pub(crate) fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
+    let cx = LowerIrCtx::new(program, HashSet::new());
+    let (kind, indexed) = store_field_kind_and_indexed(f, &cx);
     StoreFieldIr {
         field: f.name.name.clone(),
         kind,
-        init,
+        init: None,
         indexed,
     }
 }
@@ -5277,6 +5313,112 @@ agent Counter {
             "Decision D's own boundary: a Cell field with no initialiser lowers to None, \
              not merely reached by omission"
         );
+    }
+
+    /// #1187's Agent state-field slice: [`lower_store_field_shape_ir`]
+    /// exists precisely because [`lower_store_field_ir`] cannot lower these
+    /// two shapes without hitting this module's own `Ok`/`Err`/`Some`/`None`
+    /// `IrExprKind` gap — `= None` (`ExprKind::None`) and an `is`-expression
+    /// initialiser (`ExprKind::Is`) both `todo!()` a few hundred lines below.
+    /// Both are real, certified fixtures, not hypothetical: `223_store_cell_agent`
+    /// (`store paymentRef: Cell[Option[AuthId]] = None`) and
+    /// `1029_agent_static_init_hoist`
+    /// (`store active: Cell[Bool] = if true { 5 is PositiveInt } else { false }`).
+    /// This pins that the shape-only reader never touches `init` at all, so
+    /// it lowers both fields cleanly where `lower_store_field_ir` would panic.
+    #[test]
+    fn store_field_shape_ir_does_not_panic_on_none_or_is_initialisers() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+type AuthId = String where NonEmpty
+
+agent Order {
+  key id: String
+  store paymentRef: Cell[Option[AuthId]] = None
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Order");
+        let payment_ref = find_store_field(agent, "paymentRef");
+        let ir = lower_store_field_shape_ir(payment_ref, &program);
+        assert_eq!(ir.field, "paymentRef");
+        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
+        assert!(
+            ir.init.is_none(),
+            "the shape-only reader never lowers init, regardless of the source field"
+        );
+
+        let program = checked_context_program(
+            r#"
+context demo
+
+type PositiveInt = Int where Positive
+
+agent Meter {
+  key id: String
+  store active: Cell[Bool] = if true { 5 is PositiveInt } else { false }
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Meter");
+        let active = find_store_field(agent, "active");
+        let ir = lower_store_field_shape_ir(active, &program);
+        assert_eq!(ir.field, "active");
+        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
+        assert!(ir.init.is_none());
+    }
+
+    #[test]
+    fn store_field_falls_back_to_unit_on_an_unresolvable_type_like_the_checker_does() {
+        // #1187's Agent state-field slice, step 0: no checker pass validates
+        // a store field's own type reference (only its shape — `Cell`/`Map`/
+        // `Set`/`Cache`/`Log` — and `@ttl`/`@indexed` legality), so
+        // `store x: Cell[Bogus] = "hello"` certifies today (exit 0, no
+        // diagnostic, verified empirically against the real `bynkc` binary)
+        // even though `Bogus` is undeclared and the initialiser's own type
+        // doesn't match it. `resolve_store_field_ty` must mirror
+        // `lower_op_sig_ir`'s own `Ty::Unit` fallback rather than panic on a
+        // state that is, in fact, reachable from source — shared by
+        // `lower_store_field_ir` and `lower_store_field_shape_ir` alike.
+        // Only the shape reader is exercised end-to-end here: with the
+        // field's own type unresolved, the checker's init-checking loop
+        // leaves `"hello"` untyped too (a second, separate gap in the
+        // dormant, not-yet-wired `lower_store_field_ir`'s `init` arm — out
+        // of scope for this slice, which never lowers `init` at all).
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Widget {
+  key id: String
+  store x: Cell[Bogus] = "hello"
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Widget");
+        let x = find_store_field(agent, "x");
+        // Would already have panicked inside `checked_context_program`'s own
+        // `.expect("certify")` if this were rejected upstream — reaching
+        // here at all is part of what this test pins.
+        let shape = lower_store_field_shape_ir(x, &program);
+        let StoreKindIr::Cell(ty) = shape.kind else {
+            panic!("expected StoreKindIr::Cell, got {:?}", shape.kind)
+        };
+        assert!(matches!(&*program.program().ty_intern.get(ty), Ty::Unit));
     }
 
     #[test]
