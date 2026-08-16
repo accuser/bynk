@@ -1336,35 +1336,34 @@ fn ide_emit_edge(root: &Path) -> Probe {
 /// no *remaining* file outside these two imports the AST module directly; it does not
 /// by itself prove every `IrItem` field is AST-free (`the-ir.md` §5's own added note).
 ///
-/// #1187's own closing scoping pass adds three more, on different grounds than the
-/// `ir.rs`/`ir/lower.rs` pair above: `the-ir.md` §3.7 (Q7) settled that
-/// `emitter.rs`/`emitter/lower.rs` keep hand-writing TypeScript source text after this
-/// track's cutover — the printer that would let them stop reading raw
-/// `Handler`/`ServiceDecl`/`AgentDecl` parameters for header/body-rendering surface is
-/// phase 7's, explicitly out of this track's own §2 scope. Their function signatures
-/// will therefore always spell `bynk_syntax::ast` for that surface; `ast_importers = 0`
-/// is unreachable for either file the same way it is for `ir.rs`/`ir/lower.rs`, just for
-/// the opposite half of the `Ast ⇄ Ir` boundary. `project/tests_emit.rs` was
-/// deliberately *not* added alongside `project.rs` when this list was first cut (the
+/// #1187's own closing scoping pass adds one more, on different grounds than the
+/// `ir.rs`/`ir/lower.rs` pair above: `project/tests_emit.rs` was deliberately *not*
+/// added alongside `project.rs` when this list was first cut (the
 /// `ast_importer_exclusion_is_named_not_prefixed` test below used to assert exactly
 /// that) — #1187's own scoping pass found new evidence changing that: its test/suite
 /// case bodies call `emitter::lower_block_to_async_body`/`lower_test_case_body`/
-/// `lower_integration_case_body` directly (the same Q7-settled body-rendering pass),
-/// and its own `driver_param_ty`/`strip_effect_httpresult` read a handler's *declared*
-/// param/return `TypeRef` with no corresponding `TyId` available at that call site (the
-/// same caller-reads-callee's-raw-declared-shape pattern #661 established for
-/// cross-context codec generation, and the same blocker a parallel scoping pass found
-/// for `emitter/emit.rs`'s own cross-context call sites while scoping #1187's own
-/// codec-naming slice). Both are the Q7/printer kind of unreachable, not the "still
-/// open, real work" kind the original exclusion list deliberately left this file out
-/// of — the correction is new evidence, not a reversal of that reasoning.
-const AST_IMPORTER_EXCEPTIONS: &[&str] = &[
-    "ir.rs",
-    "ir/lower.rs",
-    "emitter.rs",
-    "emitter/lower.rs",
-    "project/tests_emit.rs",
-];
+/// `lower_integration_case_body` directly (the Q7-settled body-rendering pass,
+/// `the-ir.md` §3.7 — `emitter/lower.rs` keeps hand-writing TypeScript source text
+/// after this track's cutover, the printer that would change that is phase 7's), and
+/// its own `driver_param_ty`/`strip_effect_httpresult` read a handler's *declared*
+/// param/return `TypeRef` with no corresponding `TyId` available at that call site
+/// (the same caller-reads-callee's-raw-declared-shape pattern #661 established for
+/// cross-context codec generation). Both are the Q7/printer kind of unreachable, not
+/// the "still open, real work" kind the original exclusion list deliberately left this
+/// file out of — the correction is new evidence, not a reversal of that reasoning.
+///
+/// Review of #1210: `emitter.rs`/`emitter/lower.rs` themselves were considered for
+/// this same exclusion and **rejected** — Q7 settles that these files' *body-rendering*
+/// surface stays AST-parameter-driven, but both files also hold live, currently
+/// untouched AST-*declaration* reads with no such gate: `emitter.rs`'s own
+/// `CommonsItem::Service`/`svc.protocol` walk (consumed-event-root collection) and
+/// `emitter/lower.rs`'s own `cap_op_param_names` (`CommonsItem::Capability`/`c.ops`)
+/// are exactly the P6.2/P6.6-class conversions this track's own §6 table still lists
+/// as in scope, not body-rendering. Excluding either file would have hidden that real,
+/// fixable surface from this probe the same way a path-prefix rule would — the harm
+/// the named-not-prefixed discipline above exists to prevent, just at file granularity
+/// instead of directory granularity.
+const AST_IMPORTER_EXCEPTIONS: &[&str] = &["ir.rs", "ir/lower.rs", "project/tests_emit.rs"];
 
 /// Is `rel_path` (relative to `bynk-emit/src`) one of [`AST_IMPORTER_EXCEPTIONS`]?
 fn is_named_ast_importer(rel_path: &Path) -> bool {
@@ -1828,22 +1827,29 @@ mod tests {
     // --- ast_importers (#1176) ------------------------------------------------
 
     /// The exclusion is named, not prefixed: `ir.rs`/`ir/lower.rs` are the lowering
-    /// pass's own legitimate `Ast → Ir` import, `emitter.rs`/`emitter/lower.rs`/
-    /// `project/tests_emit.rs` are the Q7-settled (`the-ir.md` §3.7) `Ir → String`
-    /// half that keeps hand-writing TypeScript and so keeps reading raw AST
-    /// header/body-rendering parameters — but `project.rs` (which also imports
-    /// `bynk_syntax::ast`, via `EmitProjectCtx`) must stay counted — that's exactly
-    /// the still-open R6.13 defect this probe tracks. A path-prefix rule (e.g. "only
-    /// `emitter/**` counts") would have excluded `project.rs` right along with the
-    /// legitimate five, silently undercounting real work.
+    /// pass's own legitimate `Ast → Ir` import; `project/tests_emit.rs` is the
+    /// Q7-settled (`the-ir.md` §3.7) `Ir → String` half that keeps hand-writing
+    /// TypeScript by calling straight into `emitter.rs`'s own body-rendering, and
+    /// keeps reading a handler's declared param/return `TypeRef` with no `TyId`
+    /// available at that call site — but `project.rs` (which also imports
+    /// `bynk_syntax::ast`, via `EmitProjectCtx`) must stay counted, and so, per
+    /// review of #1210, must `emitter.rs`/`emitter/lower.rs` themselves: both still
+    /// hold live AST-*declaration* reads (`emitter.rs`'s `CommonsItem::Service`/
+    /// `svc.protocol` walk, `emitter/lower.rs`'s `cap_op_param_names`) that are the
+    /// still-open R6.13 defect this probe tracks, not the Q7 kind — excluding either
+    /// file would hide that real work the same way a path-prefix rule would. A
+    /// path-prefix rule (e.g. "only `emitter/**` counts") would have excluded
+    /// `project.rs` right along with the legitimate three, silently undercounting
+    /// real work.
     #[test]
     fn ast_importer_exclusion_is_named_not_prefixed() {
         assert!(is_named_ast_importer(Path::new("ir.rs")));
         assert!(is_named_ast_importer(Path::new("ir/lower.rs")));
-        assert!(is_named_ast_importer(Path::new("emitter.rs")));
-        assert!(is_named_ast_importer(Path::new("emitter/lower.rs")));
         assert!(is_named_ast_importer(Path::new("project/tests_emit.rs")));
         assert!(!is_named_ast_importer(Path::new("project.rs")));
+        assert!(!is_named_ast_importer(Path::new("emitter.rs")));
+        assert!(!is_named_ast_importer(Path::new("emitter/lower.rs")));
+        assert!(!is_named_ast_importer(Path::new("emitter/workers.rs")));
         assert!(!is_named_ast_importer(Path::new("ir/other.rs")));
     }
 
@@ -1868,13 +1874,15 @@ mod tests {
         }
     }
 
-    /// #1184 review, extended by #1187's own closing scoping pass: exercises the
-    /// real filter over the live tree, not just the pure predicate — the survivor
-    /// set the PR's own named-vs-prefix argument depends on: the five named
-    /// exclusions drop out (`ir/`'s legitimate `Ast → Ir` pair, plus
-    /// `emitter.rs`/`emitter/lower.rs`/`project/tests_emit.rs`'s Q7-settled
-    /// `Ir → String` trio), `project.rs` (R6.13's still-open AST-declaration reads)
-    /// does not.
+    /// #1184 review, extended by #1187's own closing scoping pass (and narrowed by
+    /// review of #1210, which found `emitter.rs`/`emitter/lower.rs` still hold live,
+    /// in-scope AST-declaration reads and must stay counted): exercises the real
+    /// filter over the live tree, not just the pure predicate — the survivor set the
+    /// PR's own named-vs-prefix argument depends on: the three named exclusions drop
+    /// out (`ir/`'s legitimate `Ast → Ir` pair, plus `project/tests_emit.rs`'s
+    /// Q7-settled `Ir → String` case), `project.rs` and `emitter/workers.rs` (R6.13's
+    /// still-open AST-declaration reads, the latter standing in for
+    /// `emitter.rs`/`emitter/lower.rs` themselves) do not.
     #[test]
     fn ast_importers_excludes_the_named_pairs_but_counts_project_rs() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -1890,10 +1898,11 @@ mod tests {
             .collect();
         assert!(!counted.contains("ir.rs"));
         assert!(!counted.contains("ir/lower.rs"));
-        assert!(!counted.contains("emitter.rs"));
-        assert!(!counted.contains("emitter/lower.rs"));
         assert!(!counted.contains("project/tests_emit.rs"));
         assert!(counted.contains("project.rs"));
+        assert!(counted.contains("emitter.rs"));
+        assert!(counted.contains("emitter/lower.rs"));
+        assert!(counted.contains("emitter/workers.rs"));
     }
 
     // --- fs_below_driver / test_density (trailing `#[cfg(test)] mod tests {}`) ---

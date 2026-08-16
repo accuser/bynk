@@ -367,29 +367,41 @@ R6.13 in full still needs the same manual confirmation §5's own "Confirm, don't
 already calls for on the test-residue question above — inspecting `IrItem`'s own field types, not just
 reading this probe's count.
 
-**#1187's own closing scoping pass (2026-08-16) extends the exclusion a second time, on Q7's own
-grounds rather than a new argument.** §3.7 (Q7) already settled that `emitter.rs`/`emitter/lower.rs`
-keep hand-writing TypeScript source text after this track's cutover — the printer that would let them
-stop reading raw `Handler`/`ServiceDecl`/`AgentDecl` parameters for header/body-rendering surface is
-phase 7's, out of this track's own §2 scope. Their own function signatures will therefore always spell
-`bynk_syntax::ast` for that surface, the same structural reason `ir.rs`/`ir/lower.rs` can never reach 0
-— just the opposite half of the `Ast ⇄ Ir` boundary (a lowering pass whose whole job is reading the AST,
-versus a still-string-writing pass whose whole *remaining* job, past this track's own scope, is reading
-it too). `project/tests_emit.rs` joins them, but on evidence this scoping pass found rather than a
-restatement of Q7: its test/suite case bodies call `emitter::lower_block_to_async_body`/
-`lower_test_case_body`/`lower_integration_case_body` directly (the same Q7-settled pass), and its own
+**#1187's own closing scoping pass (2026-08-16) extends the exclusion once more, on evidence rather
+than a restatement of Q7 — and, per review of #1210, narrower than first proposed.** The first draft of
+this correction also named `emitter.rs`/`emitter/lower.rs` themselves, reasoning that Q7 (§3.7) settles
+these files keep hand-writing TypeScript source text after this track's cutover, so their own function
+signatures will always spell `bynk_syntax::ast` for header/body-rendering parameters the same
+structural way `ir.rs`/`ir/lower.rs` always will for the opposite half of the `Ast ⇄ Ir` boundary.
+Review found that argument proves too much: both files also hold live, currently untouched AST-
+*declaration* reads with no such gate — `emitter.rs`'s own `CommonsItem::Service`/`svc.protocol` walk
+(consumed-event-root collection) and `emitter/lower.rs`'s own `cap_op_param_names`
+(`CommonsItem::Capability`/`c.ops`/`o.params`) are exactly the P6.2/P6.6-class conversions §6's own
+table still lists as in scope, not body-rendering Q7 already settled stays AST-parameter-driven.
+Excluding either file would have hidden that real, fixable surface from this probe the same way a
+path-prefix rule would — the harm the #1176 exclusion's own "named not prefixed" discipline exists to
+prevent, just at file granularity instead of directory granularity. Both stay counted.
+
+`project/tests_emit.rs` alone joins the exclusion, on its own, narrower evidence: its test/suite case
+bodies call `emitter::lower_block_to_async_body`/`lower_test_case_body`/`lower_integration_case_body`
+directly (the Q7-settled body-rendering pass itself, not a declaration read), and its own
 `driver_param_ty`/`strip_effect_httpresult` read a handler's *declared* param/return `TypeRef` with no
 corresponding `TyId` available at that call site — the same caller-reads-callee's-raw-declared-shape
 pattern #661 established for cross-context codec generation. This is a correction of the #1176-era
 exclusion's own explicit stance (`project/tests_emit.rs` was named there specifically as something that
 "must stay counted," and a test asserting exactly that existed until this pass), not a silent reversal:
-the evidence changed because #1187's own scoping work is what surfaced these three call sites, which
+the evidence changed because #1187's own scoping work is what surfaced these two call sites, which
 `project.rs` (still genuinely open R6.13 work — `plan_agent_given_deps`/`instantiate_provider_expr`/
-`unit_table_uses_emit`/`called_cross_context_services`/`own_contract_hashes`, none of it Q7-shaped) does
-not share. `ast_importers` reads **5** with all five names excluded (8 minus `emitter.rs`,
-`emitter/lower.rs`, `project/tests_emit.rs`) — `runtime_use.rs`, `emitter/workers.rs`,
-`emitter/serialisation.rs`, `emitter/workers_entry.rs`, and `project.rs` remain counted, all genuinely
-open R6.13 surface, not Q7-shaped.
+`unit_table_uses_emit`/`called_cross_context_services`/`own_contract_hashes`) and `emitter.rs`/
+`emitter/lower.rs`'s own declaration reads above do not share.
+
+`ast_importers` reads **7** with all three names excluded (8 minus `project/tests_emit.rs`) —
+`runtime_use.rs`, `emitter.rs`, `emitter/lower.rs`, `emitter/workers.rs`, `emitter/serialisation.rs`,
+`emitter/workers_entry.rs`, and `project.rs` remain counted. This is not a new floor — §5's own
+completion criterion (`ast_importers` = **0**) is unchanged by this correction, only what the probe
+excludes; `emitter.rs`/`emitter/lower.rs`'s own declaration-reading surface, and `project.rs` generally,
+remain genuinely reachable by future P6.2/P6.6-class slices the way this section's own slice history
+already documents.
 
 ---
 
@@ -614,14 +626,17 @@ reversal made clear the remaining candidate slices needed the same scrutiny befo
 investment; left for a future pass to scope fresh rather than carried forward on the original plan's own
 unverified estimate.
 
-**Thirteenth slice: the completion-criterion correction itself, §5's own addendum above.**
-`AST_IMPORTER_EXCEPTIONS` extends to `emitter.rs`/`emitter/lower.rs`/`project/tests_emit.rs`, bringing
-`ast_importers` to its corrected floor of **5** — `runtime_use.rs`, `emitter/workers.rs`,
-`emitter/serialisation.rs`, `emitter/workers_entry.rs`, and `project.rs` remain the genuinely open R6.13
-surface. This is the completion probe's own true floor, not a residual number expected to keep falling:
-none of the remaining tractable work identified across this track's own slice history moves it further
-without also landing `Provider`'s op bodies, `Agent`/`Service` handler-body rendering, or a phase-7
-printer — all explicitly out of scope (§7).
+**Thirteenth slice: the completion-criterion correction itself, §5's own addendum above (#1210).**
+`AST_IMPORTER_EXCEPTIONS` extends to `project/tests_emit.rs` alone, bringing `ast_importers` from 8 to
+**7** — `runtime_use.rs`, `emitter.rs`, `emitter/lower.rs`, `emitter/workers.rs`,
+`emitter/serialisation.rs`, `emitter/workers_entry.rs`, and `project.rs` remain counted. Review found
+the PR's first draft also excluded `emitter.rs`/`emitter/lower.rs` and was wrong to: both still hold
+live, in-scope AST-*declaration* reads (§5's own addendum has the detail) distinct from the Q7-settled
+body-rendering surface that motivated excluding them, and excluding a whole file to hide a genuinely
+open decision inside it is exactly the failure mode #1176's own named-not-prefixed argument exists to
+prevent. 7 is not a new floor — 0 remains the stated target (§5), and the remaining seven files
+(`emitter.rs`/`emitter/lower.rs` chief among them, per the two live sites just named) are real,
+untouched, in-scope surface, not residue.
 
 ---
 
