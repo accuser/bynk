@@ -367,6 +367,30 @@ R6.13 in full still needs the same manual confirmation §5's own "Confirm, don't
 already calls for on the test-residue question above — inspecting `IrItem`'s own field types, not just
 reading this probe's count.
 
+**#1187's own closing scoping pass (2026-08-16) extends the exclusion a second time, on Q7's own
+grounds rather than a new argument.** §3.7 (Q7) already settled that `emitter.rs`/`emitter/lower.rs`
+keep hand-writing TypeScript source text after this track's cutover — the printer that would let them
+stop reading raw `Handler`/`ServiceDecl`/`AgentDecl` parameters for header/body-rendering surface is
+phase 7's, out of this track's own §2 scope. Their own function signatures will therefore always spell
+`bynk_syntax::ast` for that surface, the same structural reason `ir.rs`/`ir/lower.rs` can never reach 0
+— just the opposite half of the `Ast ⇄ Ir` boundary (a lowering pass whose whole job is reading the AST,
+versus a still-string-writing pass whose whole *remaining* job, past this track's own scope, is reading
+it too). `project/tests_emit.rs` joins them, but on evidence this scoping pass found rather than a
+restatement of Q7: its test/suite case bodies call `emitter::lower_block_to_async_body`/
+`lower_test_case_body`/`lower_integration_case_body` directly (the same Q7-settled pass), and its own
+`driver_param_ty`/`strip_effect_httpresult` read a handler's *declared* param/return `TypeRef` with no
+corresponding `TyId` available at that call site — the same caller-reads-callee's-raw-declared-shape
+pattern #661 established for cross-context codec generation. This is a correction of the #1176-era
+exclusion's own explicit stance (`project/tests_emit.rs` was named there specifically as something that
+"must stay counted," and a test asserting exactly that existed until this pass), not a silent reversal:
+the evidence changed because #1187's own scoping work is what surfaced these three call sites, which
+`project.rs` (still genuinely open R6.13 work — `plan_agent_given_deps`/`instantiate_provider_expr`/
+`unit_table_uses_emit`/`called_cross_context_services`/`own_contract_hashes`, none of it Q7-shaped) does
+not share. `ast_importers` reads **5** with all five names excluded (8 minus `emitter.rs`,
+`emitter/lower.rs`, `project/tests_emit.rs`) — `runtime_use.rs`, `emitter/workers.rs`,
+`emitter/serialisation.rs`, `emitter/workers_entry.rs`, and `project.rs` remain counted, all genuinely
+open R6.13 surface, not Q7-shaped.
+
 ---
 
 ## 6. Slice decomposition
@@ -467,7 +491,7 @@ multi-actor-sum), `given` cross-context qualification (`IrHandler::given` is bar
 `emit_agent`, not `emit_service`) all stay deferred. `ast_importers` unaffected.
 
 **`Provider` remains entirely unscoped** — the deferral above still stands; no issue or PR has attempted
-it since.
+it since. (Superseded below: `Provider`'s own `given`/deps wiring landed as #1200.)
 
 **Slice 6 (`project.rs` cleanup) is not yet ready, contrary to this table's own "once (1)–(5) land,
 whatever's left here is residue" framing.** A scoping pass (2026-08-14) found `project.rs` holds zero
@@ -486,6 +510,118 @@ likewise untouched since this section was written, for the same reason: what the
 yet. Recommended next real slice: `Provider`'s own `given`/deps wiring (`instantiate_provider_expr`,
 `project.rs`) — the smallest of the deferred pieces, and the one that most directly unblocks `project.rs`
 itself.
+
+**Sixth slice: `Provider`'s `given`/deps wiring (#1200)**, exactly the recommendation above.
+`instantiate_provider_expr` now reads `lower_provider_given_ir` instead of walking `ProviderDecl::given`
+directly. Scoping found a real, pre-existing data-loss bug in `ProviderBody::External`'s own construction
+(a provider's `given` was silently dropped for the external/bodiless case) — fixed as part of landing the
+reader, not filed separately, the same "narrow reader surfaces a real bug" shape this track's later
+slices repeat throughout. `ast_importers` unaffected (`project.rs` was already counted).
+
+**Seventh slice: per-unit `Callee` plumbing (#1202) and `emitter::block_uses_emit` (#1203).** Scoping
+`project.rs`'s own cleanup (per the "not yet ready" finding above) found `unit_table_uses_emit`/
+`called_cross_context_services` could convert to reading the checker's own resolved `Callee`
+(`Callee::Capability`/`Callee::Static`, not a bare-`Ident("Events")` receiver-name match) once a new
+per-unit `Callee` table was threaded forward from `bynk-check` through `project.rs`. Review of #1202
+found a genuine cross-context-shadowing correctness bug this new plumbing fixed (pinned by fixture
+`1203_cross_context_call_shadowed_by_local`) and a live inconsistency it exposed: `emitter.rs`'s own
+per-handler `block_uses_emit` still matched on bare identifiers, disagreeing with `project.rs`'s now-
+`Callee`-based project-wide check on a locally-shadowed `Events` type — #1203 converted it too, pinned by
+fixture `1204_events_emit_shadowed_by_local_type`, which failed `tsc --strict` under #1202 alone. Neither
+`ast_importers` move — both files were already counted.
+
+**A formal completion plan for the remainder of #1187 was scoped and approved 2026-08-14/15/16**, after
+"what is left for #1187?" surfaced that five of the issue's own seven originally-proposed slices had
+narrowed hard (as this section already records) and the issue's own stated completion criterion
+(`ast_importers` = 0) was not actually reachable for `emitter.rs`/`emitter/lower.rs`/
+`project/tests_emit.rs` — the correction this section's own §5 addendum above now records. The plan
+found three well-scoped tractable slices plus Agent's state-field emission (initially read as "too
+entangled," a second pass found otherwise) and landed as follows:
+
+**Eighth slice: `lower_handler_given_ir` (#1204).** A handler's own `given` clause — syntactically
+identical to a provider's — reused `lower_cap_ref_ir` the same one-line-adapter way #1200 did. Scoping
+found the real call-site graph was wider than the three sites the plan named: `effective_given`/
+`build_deps_object_ty_with_surface`/`cap_ref_ty` (`emitter/emit.rs`) and `worker_cross_caps`
+(`emitter/workers.rs`) all fed from the same `agent_method_givens`/`agent_given_caps_used` pipeline and
+converted with it. `ast_importers` unaffected — real coupling removed at every site even though none of
+the touched files' own AST-import status changed.
+
+**Ninth, tenth, and eleventh slices: Agent state-field emission, in three ordered sub-slices (#1206,
+#1207, #1208)**, closing this track's own P6.7-adjacent gap (`emit_agent`'s state interface/zero-factory/
+rehydration rendering, deferred by the fourth slice above and never covered by `StoreFieldIr` in
+practice). A pre-flight check (empirically verified against the real `bynkc` binary, not assumed) found
+`store x: Cell[Bogus] = "hello"` certifies today — no checker pass validates a store field's own type
+reference, only its shape — confirming the fallback posture (not a panic) every sub-slice needed.
+- **2a (#1206):** `lower_store_field_shape_ir`, a shape-only sibling of `lower_store_field_ir` that never
+  lowers a Cell field's `init` (avoiding this track's own still-open `Ok`/`Err`/`Some`/`None`
+  `IrExprKind` gap, §7 below) — wired into `emit_agent`'s Cell/Map/Cache/Log interface rendering via
+  `ts_ty`. Found and fixed a real dormant ICE: `resolve_store_field_ty` panicked on an unresolvable
+  store-field type the checker silently accepts; falls back to `Ty::Unit` instead, mirroring
+  `lower_op_sig_ir`'s identical posture (#1182).
+- **2b (#1207):** Set fields and `@indexed` keys read off `StoreKindIr::Set`/`StoreFieldIr::indexed`
+  instead of a second AST walk. Review asked for, and got, real end-to-end fixture coverage of the
+  multi-key/dedup path (previously pinned only at the unit-test layer).
+- **2c (#1208):** held-map frame types resolve through a new `held_frame_ty` (`TyId`-level, recursing
+  through `Option`/`Effect` the same way the checker's own `type_ref_is_held` does) instead of a bare
+  `TypeRef::Connection` match — fixing a second real, previously-uncovered bug: a `Map[K,
+  Option[Connection[F]]]` value rendered the whole `Option<Connection<F>>` wrapper instead of unwrapping
+  to `F`. Review found the first version of the fix introduced a regression of its own — a reachable
+  panic on a checker-certified-but-unresolvable frame type (the same class of gap 2a's own preflight
+  check named) — fixed with an AST-level fallback (`held_frame_ty_ref`) mirroring `resolve_store_field_ty`'s
+  posture, pinned by a new fixture. None of the three moved `ast_importers`.
+
+**Twelfth slice: `ActorSeamIr` (#1209).** A new IR type wrapping `bynk-check`'s five already-resolved
+actor-seam structs (`bynk-check/src/actors.rs`) by value, and `lower_actor_seam_ir`, trying them in the
+one priority order that's actually load-bearing (`sum_members_for` ahead of `bearer_seam_for` — a sum's
+own first peer can itself be Bearer-schemed, since `bearer_seam_for` has no `by.is_sum()` guard of its
+own; every other pair is mutually exclusive by construction). Scoping found only 2 of the ~11 call sites
+across 5 files the original candidate named actually branch on which of several resolvers succeeded
+(`emit_service`, and `emit_worker_compose`'s HTTP-dispatch match) — the rest call exactly one resolver
+each or (`secrets.rs`) union all matching seams rather than picking one, nothing to collapse. Landed only
+those two, named the rest explicitly in `lower_actor_seam_ir`'s own doc comment rather than silently
+dropping them. Review found real latent value the PR undersold (the enum makes a duplicate-`identity:`-
+field emission structurally unrepresentable, where the old four-independent-optionals shape could in
+principle have produced one) and asked for, and got, a unit test pinning the one load-bearing ordering
+decision directly rather than only transitively through a fixture bless. `ast_importers` unaffected.
+
+**Slice 4 (`serialisation.rs`'s codec-name mangling to `TyId`), including its own `TypeBody → TypeShape`
+sub-step, was scoped in full and then explicitly abandoned (2026-08-16) rather than landed** — the two
+headline claims that motivated it both turned out false on inspection, not merely smaller than
+estimated. The `TypeBody → TypeShape` sub-step (mirroring #1188's own `emit_type` conversion) only
+changes *how* `emit_one`'s 3-way dispatch decision is made; the functions it dispatches to
+(`emit_refined`/`emit_record`/`emit_sum`) immediately re-derive their own shape via
+`bynk_check::wire::wire_type`, a separate, already-existing raw-AST-based unification untouched either
+way — and 2 of its 5 real call chains (cross-context codec generation, `project/tests_emit.rs`'s
+synthetic-commons path) have no `CheckedProgram`/`TyId` table available at all, so can't convert without
+new plumbing. The codec-naming half's own stated payoff — `runtime_use.rs`'s `json_codec_roots` field
+losing its `TypeRef` typing, moving `ast_importers` 8 → 6 — does not hold: `json_codec_roots`'s
+downstream consumer, `bynk_check::wire::collect_codec_closure`, discovers record/sum field types by
+walking `TypeDecl.body` (raw AST `TypeRef`, no resolved-field-type table anywhere in `bynk-check` to
+substitute), so the field stays `TypeRef`-typed regardless of what its two producer sites in
+`emitter/lower.rs` do. The one real, narrower win left after that correction — converting the leaf
+codec-naming functions for the one call path that already holds a `TyId` (`Json.decode`/`Json.encode` in
+`emitter/lower.rs`) — was found, on closer inspection, to buy only relocating one already-single
+`ty_to_type_ref` call a few lines later, not eliminating it: negligible real payoff against the real risk
+of new, hand-written, byte-for-byte-must-match codec-naming code (caller and callee independently derive
+matching codec names with no shared registry, #661's own pattern). Recorded here, not silently dropped,
+per this section's own "the evidence ages" discipline (§9) — a future slice revisiting this should start
+from `bynk_check::wire::codec_suffix`/`inst_codec_suffix` (the real shared naming kernel, confirmed to
+live in `bynk-check`, not `serialisation.rs`, contrary to where the original candidate pointed) and from
+`collect_codec_closure`'s own missing resolved-field-type table as the actual blocking dependency, not
+from `serialisation.rs`'s function list. Slice 5 (the event-subscriber envelope decision and `@cache`/
+`@limit` annotation IR — always marked optional/lower-priority) was not scoped at all once 4's own
+reversal made clear the remaining candidate slices needed the same scrutiny before any further
+investment; left for a future pass to scope fresh rather than carried forward on the original plan's own
+unverified estimate.
+
+**Thirteenth slice: the completion-criterion correction itself, §5's own addendum above.**
+`AST_IMPORTER_EXCEPTIONS` extends to `emitter.rs`/`emitter/lower.rs`/`project/tests_emit.rs`, bringing
+`ast_importers` to its corrected floor of **5** — `runtime_use.rs`, `emitter/workers.rs`,
+`emitter/serialisation.rs`, `emitter/workers_entry.rs`, and `project.rs` remain the genuinely open R6.13
+surface. This is the completion probe's own true floor, not a residual number expected to keep falling:
+none of the remaining tractable work identified across this track's own slice history moves it further
+without also landing `Provider`'s op bodies, `Agent`/`Service` handler-body rendering, or a phase-7
+printer — all explicitly out of scope (§7).
 
 ---
 
