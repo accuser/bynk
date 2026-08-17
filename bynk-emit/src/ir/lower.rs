@@ -2153,16 +2153,45 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             type_args, args, ..
         } => lower_call_ir(e, None, type_args, args, cx),
         ExprKind::Lambda(lambda) => lower_lambda_ir(e, lambda, cx),
-        ExprKind::Ok(_) | ExprKind::Err(_) | ExprKind::Some(_) | ExprKind::None => {
-            todo!(
-                "Result/Option constructors — P6.2 (#1143) confirmed these are not yet \
-                 Callee-classified by P6.0 either, so ir::lower still can't drive them; P6.3 \
-                 (#1145, Decision B) named the deeper blocker too — Option/Result are built-in \
-                 Ty variants with no Arc<TypeDecl> to put in IrExprKind::Variant's `sum` field \
-                 the way a user-declared sum has, and no ADR has decided how to represent that \
-                 identity yet"
-            )
-        }
+        // #1225's own ADR: the four built-in constructors lower to the same
+        // `IrExprKind::Variant` a user-declared sum's own `Callee::Ctor`
+        // does (`lower_call_ir`, above) — `IrExprKind::Variant`'s own doc
+        // comment has the full grounding for why no `Callee` classification
+        // is needed here either: `ty` (already resolved for every `IrExpr`,
+        // R6.1) already carries the constructed sum's own identity, the
+        // same way it does for a real `Callee::Ctor` call.
+        ExprKind::Ok(inner) => IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "Ok".to_string(),
+                payload: vec![lower_expr_ir(inner, cx)],
+            },
+            ty,
+            span,
+        },
+        ExprKind::Err(inner) => IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "Err".to_string(),
+                payload: vec![lower_expr_ir(inner, cx)],
+            },
+            ty,
+            span,
+        },
+        ExprKind::Some(inner) => IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "Some".to_string(),
+                payload: vec![lower_expr_ir(inner, cx)],
+            },
+            ty,
+            span,
+        },
+        ExprKind::None => IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "None".to_string(),
+                payload: Vec::new(),
+            },
+            ty,
+            span,
+        },
         ExprKind::Question(_) => todo!(
             "`?` propagation's real shipped desugar (emitter/lower.rs:1012-1042, ADR 0177/ADR \
              0178) branches on the operand's own checked type into three distinct shapes — an \
@@ -2314,7 +2343,7 @@ fn lower_call_ir(
              the production is_system_http_service address), or a genuine, newly-discovered gap"
         )
     };
-    if let Callee::Ctor { sum, tag } = callee {
+    if let Callee::Ctor { tag, .. } = callee {
         // `IrExprKind::Variant` has no `targs` slot, unlike `Call` below —
         // deliberate, not dropped: `type_args` can never be non-empty here.
         // `check_call`'s own gate rejects any explicit type argument before
@@ -2325,9 +2354,15 @@ fn lower_call_ir(
         // at all — a generic sum's own instantiation is inferred from the
         // payload's argument types instead (`check_variant_construction`),
         // never named explicitly at a call site.
+        //
+        // `Callee::Ctor`'s own `sum: Arc<TypeDecl>` field is read no
+        // further than this match's own destructure — #1225's own ADR
+        // (`IrExprKind::Variant`'s own doc comment has the full grounding)
+        // found `ty` (already computed above) already carries the
+        // identical identity as a `TyId`, so `IrExprKind::Variant` itself
+        // carries no separate `sum` field to populate.
         return IrExpr {
             kind: IrExprKind::Variant {
-                sum,
                 tag,
                 payload: args.iter().map(|a| lower_expr_ir(a, cx)).collect(),
             },
@@ -3615,13 +3650,57 @@ commons demo {
         for fn_name in ["bare", "qualified"] {
             let ir = lower_fn(&program, fn_name);
             let tail = fn_tail(&ir);
-            let IrExprKind::Variant { sum, tag, payload } = &tail.kind else {
+            let IrExprKind::Variant { tag, payload } = &tail.kind else {
                 panic!("{fn_name}: expected Variant, got {:?}", tail.kind)
             };
-            assert_eq!(sum.name.name, "Shape");
+            // #1225's own ADR: no `sum` field on `Variant` itself — the
+            // constructed sum's own identity is the wrapping `IrExpr::ty`.
+            assert!(
+                matches!(
+                    &*program.program().ty_intern.get(tail.ty),
+                    Ty::Named { name, .. } if name == "Shape"
+                ),
+                "{fn_name}: expected tail.ty to resolve to the Shape sum, got {:?}",
+                program.program().ty_intern.get(tail.ty)
+            );
             assert_eq!(tag, "Circle");
             assert_eq!(payload.len(), 1);
             assert!(matches!(&payload[0].kind, IrExprKind::Local(n) if n == "n"));
+        }
+    }
+
+    /// #1225's own ADR resolution: `Ok`/`Err`/`Some`/`None` each lower to a
+    /// real `IrExprKind::Variant`, the same node shape a user-declared
+    /// sum's own `Callee::Ctor` construction lowers to
+    /// (`bare_and_qualified_variant_construction_both_lower_to_variant`,
+    /// above) — no separate `IrExprKind` needed for the built-in case, and
+    /// no `Callee` classification either (confirmed during scoping: neither
+    /// `check_ok`/`check_err`/`check_some`/`check_none` ever records one).
+    #[test]
+    fn ok_err_some_none_all_lower_to_variant_by_tag() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn ok_case() -> Result[Int, String] { Ok(1) }
+  fn err_case() -> Result[Int, String] { Err("bad") }
+  fn some_case() -> Option[Int] { Some(1) }
+  fn none_case() -> Option[Int] { None }
+}
+"#,
+        );
+        for (fn_name, expect_tag, expect_payload_len) in [
+            ("ok_case", "Ok", 1),
+            ("err_case", "Err", 1),
+            ("some_case", "Some", 1),
+            ("none_case", "None", 0),
+        ] {
+            let ir = lower_fn(&program, fn_name);
+            let tail = fn_tail(&ir);
+            let IrExprKind::Variant { tag, payload } = &tail.kind else {
+                panic!("{fn_name}: expected Variant, got {:?}", tail.kind)
+            };
+            assert_eq!(tag, expect_tag, "{fn_name}");
+            assert_eq!(payload.len(), expect_payload_len, "{fn_name}");
         }
     }
 
@@ -5543,6 +5622,47 @@ agent Counter {
         let ir = lower_store_field_ir(n, &program);
         assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
         assert!(ir.init.is_some());
+    }
+
+    /// #1225's own ADR resolution, verified against the real regression it
+    /// closes: `223_store_cell_agent` (`bynkc/tests/fixtures/positive`) has
+    /// `store paymentRef: Cell[Option[AuthId]] = None` — before this ADR,
+    /// `lower_store_field_ir`'s own `init` lowering hit the `ExprKind::None`
+    /// `todo!()` this module used to carry (`lower_store_field_shape_ir`,
+    /// #1187's Agent state-field slice 2a, was built specifically to avoid
+    /// ever lowering `init` at all, precisely because of this gap — see its
+    /// own doc comment). This pins that the *full*, `init`-lowering
+    /// `lower_store_field_ir` no longer panics on the exact shape that
+    /// fixture carries.
+    #[test]
+    fn store_field_cell_option_init_none_lowers_without_panicking() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+type AuthId = String where NonEmpty
+
+agent Order {
+  key id: String
+  store paymentRef: Cell[Option[AuthId]] = None
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Order");
+        let payment_ref = find_store_field(agent, "paymentRef");
+        let ir = lower_store_field_ir(payment_ref, &program);
+        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
+        let Some(init) = &ir.init else {
+            panic!("expected a lowered `None` initialiser, got None")
+        };
+        assert!(matches!(
+            &init.kind,
+            IrExprKind::Variant { tag, payload } if tag == "None" && payload.is_empty()
+        ));
     }
 
     #[test]
