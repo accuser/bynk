@@ -492,7 +492,7 @@ pub(crate) fn emit_project(
     // v0.96 (ADR 0124): runs on both targets — workers emits service-call +
     // agent-rehydration boundary helpers; bundle emits only the agent-rehydration
     // ones (the gate's deserialisers), since in-process calls need no wire codec.
-    let (boundary_names, boundary_insts) = emit_boundary_helpers(&mut out, program, commons, ctx);
+    let (boundary_names, boundary_insts) = emit_boundary_helpers(&mut out, program, ctx);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
     emit_json_codec_helpers(&mut out, commons, ctx, &boundary_names, &boundary_insts);
@@ -1133,13 +1133,20 @@ fn emit_json_codec_helpers(
 fn emit_boundary_helpers(
     out: &mut String,
     program: &CheckedProgram,
-    commons: &TypedCommons,
     ctx: &EmitProjectCtx,
 ) -> (HashSet<String>, HashSet<String>) {
     use serialisation::{
         collect_boundary_types, collect_generic_instantiations, emit_generic_helpers,
         emit_helpers_for_owner,
     };
+    // Review of #1211: `commons` is always `program.program()` — derived
+    // rather than taken as a second parameter, so the two can never alias
+    // to different tables. `lower_protocol_ir`/`ty_to_type_ref` below mint
+    // and resolve `TyId`s against the same `program`, and `Types::get`'s
+    // own doc comment (`bynk-check/src/checker.rs`) names exactly what a
+    // mismatched pair would silently do in a release build: resolve an
+    // in-range foreign id to an unrelated `Ty`, not panic.
+    let commons = program.program();
 
     // For contexts: walk the local services to discover boundary types.
     // For commons: walk every consumer's services that reference us
@@ -1291,14 +1298,7 @@ fn emit_boundary_helpers(
                 emitted_names.extend(names.iter().cloned());
             }
             let mut emitted_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
-            emit_consumed_context_helpers(
-                out,
-                program,
-                commons,
-                ctx,
-                &mut emitted_names,
-                &mut emitted_insts,
-            )
+            emit_consumed_context_helpers(out, program, ctx, &mut emitted_names, &mut emitted_insts)
         } else {
             (Vec::new(), Vec::new())
         };
@@ -1379,7 +1379,6 @@ fn emit_boundary_helpers(
 fn emit_consumed_context_helpers(
     out: &mut String,
     program: &CheckedProgram,
-    commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     emitted_names: &mut HashSet<String>,
     emitted_insts: &mut HashSet<String>,
@@ -1387,6 +1386,9 @@ fn emit_consumed_context_helpers(
     use serialisation::{
         collect_codec_closure, emit_generic_helpers_qualified, emit_helpers_for_owner_qualified,
     };
+    // Review of #1211: derived, not taken as a second parameter — see
+    // `emit_boundary_helpers`'s own identical note.
+    let commons = program.program();
     let info = &ctx.cross_context;
     let mut consumed_names_out: Vec<String> = Vec::new();
     let mut consumed_insts_out: Vec<String> = Vec::new();
@@ -1428,7 +1430,27 @@ fn emit_consumed_context_helpers(
         else {
             continue;
         };
-        let Ty::Named { name, .. } = &*commons.tys().get(event) else {
+        // Review of #1211: unlike the raw-AST match this replaced, a
+        // resolve miss here (`lower_protocol_ir` degrades to `Ty::Unit`
+        // rather than propagating a failure, `ir/lower.rs`'s own
+        // `resolve_type_ref`/`unit_ty()` fallback) is indistinguishable
+        // from a legitimately non-`Named` header — a silent `continue`
+        // would reproduce #973's own regression shape (a subscriber module
+        // missing its `deserialise_<Payload>`) with no diagnostic. The
+        // event/handler param-type-agreement check (`context_checks.rs`'s
+        // `bynk.event.handler_param_type_mismatch`) makes this
+        // unreachable on a certified program, but that argument is longer
+        // than the old syntactic match needed — enforced here, not just
+        // narrated, so a day this stops holding fails loud in the bless
+        // suite (which runs debug) instead of quietly shipping a
+        // subscriber with no deserialiser.
+        let resolved = commons.tys().get(event);
+        debug_assert!(
+            matches!(&*resolved, Ty::Named { .. }),
+            "bynk internal error: a `from Events(...)` header resolved to a non-named \
+             type — a certified program cannot produce this (see #973)"
+        );
+        let Ty::Named { name, .. } = &*resolved else {
             continue;
         };
         let Some(event_type) = ty_to_type_ref(event, commons.tys()) else {
