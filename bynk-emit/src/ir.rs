@@ -245,7 +245,9 @@ pub(crate) enum IrPat {
     /// flattens a user sum, `Result`, `Option`, `ActorSum` and `HttpResult`
     /// into one uniform shape, rather than `Callee::Ctor`'s
     /// `Arc<TypeDecl>`-keyed identity scheme, which never fires for
-    /// `Ok`/`Err`/`Some`/`None` (`#1145`'s own Decision B, left open).
+    /// `Ok`/`Err`/`Some`/`None` at all (`#1145`'s own Decision B) —
+    /// [`IrExprKind::Variant`] later resolved the identical problem on the
+    /// *construction* side the same way, #1225's own ADR.
     Variant {
         /// The value this pattern matches against — resolved via
         /// `variants_of(scrutinee_ty, ..)` to find `tag`'s own payload
@@ -387,14 +389,42 @@ pub(crate) enum IrExprKind {
         def: Arc<TypeDecl>,
         fields: Vec<(String, IrExpr)>,
     },
-    /// Sum-variant construction. Lowering deferred to P6.2 (driven by
-    /// `Callee::Ctor`, alongside `Call`) — the variant exists now so `Call`'s
-    /// sibling shapes don't need a second widening later.
-    Variant {
-        sum: Arc<TypeDecl>,
-        tag: String,
-        payload: Vec<IrExpr>,
-    },
+    /// Sum-variant construction — a user-declared sum's own constructor
+    /// (`Circle(n)`/`Shape.Circle(n)`, driven by `Callee::Ctor`) *and*, as
+    /// of the #1225 ADR, the four built-in constructors `Ok`/`Err`/`Some`/
+    /// `None` too, which `Callee::Ctor` can never classify (no
+    /// `Arc<TypeDecl>` exists for `Option`/`Result` — `Callee::Ctor`'s own
+    /// two minting sites, `bynk-check/src/checker/calls.rs`, can only ever
+    /// resolve a real `TypeBody::Sum` declaration by name, and `Ok`/`Err`/
+    /// `Some`/`None` are dedicated `ExprKind` variants entirely, checked
+    /// through `check_ok`/`check_err`/`check_some`/`check_none` with no
+    /// `Callee` ever recorded).
+    ///
+    /// **No `sum` identity field, deliberately** — an earlier draft carried
+    /// `sum: Arc<TypeDecl>` (mirroring [`GlobalRef`]/`Record::def`'s own
+    /// declaration-identity convention), which is exactly what made
+    /// `Ok`/`Err`/`Some`/`None` unrepresentable: no `TypeDecl` exists for a
+    /// built-in sum, so a real fix would either need a synthetic decl (no
+    /// established path for one, and a new kind of "fake but not fake"
+    /// value this module would need to invent) or would have to widen `sum`
+    /// into an `Arc<TypeDecl>`-or-built-in enum for the sake of a case that
+    /// doesn't need declaration identity at all. #1225's own resolution: the
+    /// wrapping [`IrExpr::ty`] — already present on every node (R6.1) —
+    /// already carries this exact identity as a `TyId`, uniformly, for both
+    /// a user sum (`Ty::Named { kind: Sum, .. }`) and a built-in one
+    /// (`Ty::Option`/`Ty::Result`), since a constructor call's own checked
+    /// type *is* the sum it constructs. Mirrors [`IrPat::Variant`]'s own
+    /// `scrutinee_ty: TyId` precedent exactly — the one field this module
+    /// already had to solve the identical problem for, on the
+    /// pattern-matching side — rather than introducing a second, redundant
+    /// copy of the same `TyId` one level in. A consumer needing the sum's
+    /// own tag/payload shape calls `bynk_check::checker::variants_of`
+    /// (already `pub` for precisely this, `checker.rs:4323`) against the
+    /// enclosing `IrExpr::ty` — the same function [`IrPat::Variant`]'s own
+    /// lowering already calls, proven to resolve a user sum, `Result`,
+    /// `Option`, `ActorSum`, and `HttpResult` alike with no special-casing
+    /// gap for the built-in cases.
+    Variant { tag: String, payload: Vec<IrExpr> },
     /// Field access on a record value.
     Field { base: Box<IrExpr>, field: String },
     /// A list literal.

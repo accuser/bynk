@@ -485,13 +485,17 @@ fn lower_handler_signature_ir(h: &Handler, cx: &LowerIrCtx) -> HandlerSignatureI
 /// a real [`IrHandler`]/[`crate::ir::IrItem::Service`]: both
 /// [`lower_handler_ir`]/[`lower_service_handler_ir`] unconditionally lower
 /// the handler's own body into a real `IrExpr` (`IrHandler::body` is not
-/// `Option`), and an ordinary `from http` handler's body routinely
-/// constructs `Ok`/`Err`/`Some`/`None` (an `HttpResult`/`Option` return) —
-/// still `todo!()` in `lower_expr_ir` (P6.2/P6.3, #1143/#1145 — a gap
-/// independent of #1189's own BinOp/Neg/InterpStr fix, see that issue's own
-/// "confirmed independent" finding). Building a real `IrHandler` at
-/// `emit_service`'s own call site would panic on exactly the ordinary Http
-/// services this slice needs to keep working. Mirrors
+/// `Option`), and an ordinary `from http` handler's body routinely uses `?`
+/// propagation (`ExprKind::Question`, still `todo!()` — its own three-way
+/// desugar fork over `Option[T]?`/`Result[T,E]?`/an `embeds` conversion is
+/// its own separate design question, #1225) or an `is`-expression
+/// (`ExprKind::Is`, also still `todo!()`) — either still panics `lower_expr_ir`
+/// today. (The sibling `Ok`/`Err`/`Some`/`None` gap this comment used to cite
+/// alongside them is resolved as of #1225's own ADR — `Ok`/`Err`/`Some`/
+/// `None` construction alone no longer blocks a real `IrHandler`; `Question`/
+/// `Is` still do.) Building a real `IrHandler` at `emit_service`'s own call
+/// site would panic on exactly the ordinary Http services this slice needs
+/// to keep working. Mirrors
 /// [`body_writes_state`]'s own precedent (#1196): a narrow, standalone
 /// reader of already-resolved data, not the full `IrItem`/`IrHandler`
 /// assembly — the same posture, applied to signature data instead of a
@@ -1066,13 +1070,16 @@ fn store_field_kind_and_indexed(f: &StoreField, cx: &LowerIrCtx) -> (StoreKindIr
 /// `Set`/`Cache`/`Log` kind and `@indexed` keys), never its `Cell` zero/
 /// initial value expression. Deliberately never lowers `init`, unlike
 /// [`lower_store_field_ir`] — a `Cell` field's initializer can be an
-/// `ExprKind::None` or an `is`-expression (`= None`, `= x is SomeVariant`),
-/// both of which hit this module's own `Ok`/`Err`/`Some`/`None`
-/// `IrExprKind` gap (no `Arc<TypeDecl>` identity for built-in `Option`/
-/// `Result`, `todo!()`s a few hundred lines below) — two real fixtures,
-/// `223_store_cell_agent` and `1029_agent_static_init_hoist`, hit exactly
-/// this on `lower_store_field_ir`'s own `init` arm. This function's callers
-/// never need `init` at all, so it is never at risk of that gap.
+/// `is`-expression (`= x is SomeVariant`), which still hits `ExprKind::Is`'s
+/// own `todo!()` a few hundred lines below (`1029_agent_static_init_hoist`'s
+/// `store active: Cell[Bool] = if true { 5 is PositiveInt } else { false }`
+/// hits exactly this on `lower_store_field_ir`'s own `init` arm). The
+/// sibling `= None` shape (`223_store_cell_agent`'s own `store paymentRef:
+/// Cell[Option[AuthId]] = None`) no longer needs this workaround as of
+/// #1225's own ADR — `lower_store_field_ir` lowers it directly now
+/// (`store_field_cell_option_init_none_lowers_without_panicking`). This
+/// function's callers never need `init` at all regardless, so neither gap
+/// is a risk for them.
 pub(crate) fn lower_store_field_shape_ir(f: &StoreField, program: &CheckedProgram) -> StoreFieldIr {
     let cx = LowerIrCtx::new(program, HashSet::new());
     let (kind, indexed) = store_field_kind_and_indexed(f, &cx);
@@ -1644,11 +1651,16 @@ pub(crate) fn lower_provider_item_ir(provider: &ProviderDecl, program: &CheckedP
 /// Building a real `IrItem::Provider` there would be unsafe for a `Bynk`
 /// provider specifically: `ProviderBody::Bynk::ops` unconditionally lowers
 /// every op's body through `lower_provider_op_ir` → `lower_expr_ir`, which
-/// still can't handle `Ok`/`Err`/`Some`/`None` construction — the identical
-/// gap that made `Agent`/`Service`'s own full `IrItem` construction
-/// impractical at their emitter call sites (#1196/#1198's own findings).
-/// This function never touches `ops`/bodies, so it carries none of that
-/// risk; [`lower_provider_item_ir`] itself now calls it too, rather than
+/// still can't handle every expression shape a real op body can contain —
+/// `?` propagation (`ExprKind::Question`) and an `is`-expression
+/// (`ExprKind::Is`) both remain `todo!()`. (#1225's own ADR closed the
+/// sibling `Ok`/`Err`/`Some`/`None` construction gap this comment used to
+/// cite here — not itself sufficient to make a real op body safe to build,
+/// since `Question`/`Is` are unaffected, the identical remaining gap that
+/// keeps `Agent`/`Service`'s own full `IrItem` construction impractical at
+/// their emitter call sites, #1196/#1198's own findings.) This function
+/// never touches `ops`/bodies, so it carries none of that risk;
+/// [`lower_provider_item_ir`] itself now calls it too, rather than
 /// hand-duplicating the one-line `map`.
 pub(crate) fn lower_provider_given_ir(provider: &ProviderDecl) -> Vec<CapRefIr> {
     provider.given.iter().map(lower_cap_ref_ir).collect()
@@ -2153,16 +2165,45 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             type_args, args, ..
         } => lower_call_ir(e, None, type_args, args, cx),
         ExprKind::Lambda(lambda) => lower_lambda_ir(e, lambda, cx),
-        ExprKind::Ok(_) | ExprKind::Err(_) | ExprKind::Some(_) | ExprKind::None => {
-            todo!(
-                "Result/Option constructors — P6.2 (#1143) confirmed these are not yet \
-                 Callee-classified by P6.0 either, so ir::lower still can't drive them; P6.3 \
-                 (#1145, Decision B) named the deeper blocker too — Option/Result are built-in \
-                 Ty variants with no Arc<TypeDecl> to put in IrExprKind::Variant's `sum` field \
-                 the way a user-declared sum has, and no ADR has decided how to represent that \
-                 identity yet"
-            )
-        }
+        // #1225's own ADR: the four built-in constructors lower to the same
+        // `IrExprKind::Variant` a user-declared sum's own `Callee::Ctor`
+        // does (`lower_call_ir`, above) — `IrExprKind::Variant`'s own doc
+        // comment has the full grounding for why no `Callee` classification
+        // is needed here either: `ty` (already resolved for every `IrExpr`,
+        // R6.1) already carries the constructed sum's own identity, the
+        // same way it does for a real `Callee::Ctor` call.
+        ExprKind::Ok(inner) => IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "Ok".to_string(),
+                payload: vec![lower_expr_ir(inner, cx)],
+            },
+            ty,
+            span,
+        },
+        ExprKind::Err(inner) => IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "Err".to_string(),
+                payload: vec![lower_expr_ir(inner, cx)],
+            },
+            ty,
+            span,
+        },
+        ExprKind::Some(inner) => IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "Some".to_string(),
+                payload: vec![lower_expr_ir(inner, cx)],
+            },
+            ty,
+            span,
+        },
+        ExprKind::None => IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "None".to_string(),
+                payload: Vec::new(),
+            },
+            ty,
+            span,
+        },
         ExprKind::Question(_) => todo!(
             "`?` propagation's real shipped desugar (emitter/lower.rs:1012-1042, ADR 0177/ADR \
              0178) branches on the operand's own checked type into three distinct shapes — an \
@@ -2314,7 +2355,7 @@ fn lower_call_ir(
              the production is_system_http_service address), or a genuine, newly-discovered gap"
         )
     };
-    if let Callee::Ctor { sum, tag } = callee {
+    if let Callee::Ctor { tag, .. } = callee {
         // `IrExprKind::Variant` has no `targs` slot, unlike `Call` below —
         // deliberate, not dropped: `type_args` can never be non-empty here.
         // `check_call`'s own gate rejects any explicit type argument before
@@ -2325,9 +2366,15 @@ fn lower_call_ir(
         // at all — a generic sum's own instantiation is inferred from the
         // payload's argument types instead (`check_variant_construction`),
         // never named explicitly at a call site.
+        //
+        // `Callee::Ctor`'s own `sum: Arc<TypeDecl>` field is read no
+        // further than this match's own destructure — #1225's own ADR
+        // (`IrExprKind::Variant`'s own doc comment has the full grounding)
+        // found `ty` (already computed above) already carries the
+        // identical identity as a `TyId`, so `IrExprKind::Variant` itself
+        // carries no separate `sum` field to populate.
         return IrExpr {
             kind: IrExprKind::Variant {
-                sum,
                 tag,
                 payload: args.iter().map(|a| lower_expr_ir(a, cx)).collect(),
             },
@@ -3615,13 +3662,83 @@ commons demo {
         for fn_name in ["bare", "qualified"] {
             let ir = lower_fn(&program, fn_name);
             let tail = fn_tail(&ir);
-            let IrExprKind::Variant { sum, tag, payload } = &tail.kind else {
+            let IrExprKind::Variant { tag, payload } = &tail.kind else {
                 panic!("{fn_name}: expected Variant, got {:?}", tail.kind)
             };
-            assert_eq!(sum.name.name, "Shape");
+            // #1225's own ADR: no `sum` field on `Variant` itself — the
+            // constructed sum's own identity is the wrapping `IrExpr::ty`.
+            assert!(
+                matches!(
+                    &*program.program().ty_intern.get(tail.ty),
+                    Ty::Named { name, .. } if name == "Shape"
+                ),
+                "{fn_name}: expected tail.ty to resolve to the Shape sum, got {:?}",
+                program.program().ty_intern.get(tail.ty)
+            );
             assert_eq!(tag, "Circle");
             assert_eq!(payload.len(), 1);
             assert!(matches!(&payload[0].kind, IrExprKind::Local(n) if n == "n"));
+        }
+    }
+
+    /// #1225's own ADR resolution: `Ok`/`Err`/`Some`/`None` each lower to a
+    /// real `IrExprKind::Variant`, the same node shape a user-declared
+    /// sum's own `Callee::Ctor` construction lowers to
+    /// (`bare_and_qualified_variant_construction_both_lower_to_variant`,
+    /// above) — no separate `IrExprKind` needed for the built-in case, and
+    /// no `Callee` classification either (confirmed during scoping: neither
+    /// `check_ok`/`check_err`/`check_some`/`check_none` ever records one).
+    ///
+    /// Review of #1227: `tag`/`payload` alone would pass even if `tail.ty`
+    /// carried the wrong identity (or none at all) — the actual claim the
+    /// ADR rests on is that the *wrapping* `IrExpr::ty` is what a consumer
+    /// reads instead of a `sum` field, so each case also asserts `tail.ty`
+    /// resolves to the built-in sum actually constructed. `ok_http_case`
+    /// pins the fifth, easy-to-miss shape: `Ok` is overloaded between
+    /// `Result` and `HttpResult` (`check_ok`, `bynk-check/src/checker/
+    /// expressions.rs`, peels the surrounding return type to decide), so a
+    /// handler-shaped `Ok(...)` reaches this same arm with `ty =
+    /// Ty::HttpResult(_)`, a third sum identity the claim has to cover —
+    /// `variants_of`'s own `Ty::HttpResult` arm (`checker.rs`, backed by
+    /// `HTTP_VARIANTS`, `bynk-syntax/src/ast.rs`) resolves it the same way.
+    #[test]
+    fn ok_err_some_none_all_lower_to_variant_by_tag_and_carry_their_sum_identity_on_ty() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn ok_case() -> Result[Int, String] { Ok(1) }
+  fn err_case() -> Result[Int, String] { Err("bad") }
+  fn some_case() -> Option[Int] { Some(1) }
+  fn none_case() -> Option[Int] { None }
+  fn ok_http_case() -> HttpResult[Int] { Ok(1) }
+}
+"#,
+        );
+        for (fn_name, expect_tag, expect_payload_len) in [
+            ("ok_case", "Ok", 1),
+            ("err_case", "Err", 1),
+            ("some_case", "Some", 1),
+            ("none_case", "None", 0),
+            ("ok_http_case", "Ok", 1),
+        ] {
+            let ir = lower_fn(&program, fn_name);
+            let tail = fn_tail(&ir);
+            let IrExprKind::Variant { tag, payload } = &tail.kind else {
+                panic!("{fn_name}: expected Variant, got {:?}", tail.kind)
+            };
+            assert_eq!(tag, expect_tag, "{fn_name}");
+            assert_eq!(payload.len(), expect_payload_len, "{fn_name}");
+            let resolved = &*program.program().ty_intern.get(tail.ty);
+            let sum_matches = match fn_name {
+                "ok_case" | "err_case" => matches!(resolved, Ty::Result(..)),
+                "some_case" | "none_case" => matches!(resolved, Ty::Option(_)),
+                "ok_http_case" => matches!(resolved, Ty::HttpResult(_)),
+                _ => unreachable!(),
+            };
+            assert!(
+                sum_matches,
+                "{fn_name}: expected tail.ty to resolve to the constructed sum, got {resolved:?}"
+            );
         }
     }
 
@@ -5404,16 +5521,21 @@ agent Counter {
     }
 
     /// #1187's Agent state-field slice: [`lower_store_field_shape_ir`]
-    /// exists precisely because [`lower_store_field_ir`] cannot lower these
-    /// two shapes without hitting this module's own `Ok`/`Err`/`Some`/`None`
-    /// `IrExprKind` gap — `= None` (`ExprKind::None`) and an `is`-expression
-    /// initialiser (`ExprKind::Is`) both `todo!()` a few hundred lines below.
-    /// Both are real, certified fixtures, not hypothetical: `223_store_cell_agent`
-    /// (`store paymentRef: Cell[Option[AuthId]] = None`) and
-    /// `1029_agent_static_init_hoist`
-    /// (`store active: Cell[Bool] = if true { 5 is PositiveInt } else { false }`).
-    /// This pins that the shape-only reader never touches `init` at all, so
-    /// it lowers both fields cleanly where `lower_store_field_ir` would panic.
+    /// exists precisely because [`lower_store_field_ir`] could not lower
+    /// these two shapes without hitting an `IrExprKind` gap — `= None`
+    /// (`ExprKind::None`) hit the `Ok`/`Err`/`Some`/`None` gap, closed as of
+    /// #1225's own ADR; an `is`-expression initialiser (`ExprKind::Is`)
+    /// still hits its own separate, still-open `todo!()` a few hundred
+    /// lines below. Both are real, certified fixtures, not hypothetical:
+    /// `223_store_cell_agent` (`store paymentRef: Cell[Option[AuthId]] =
+    /// None`, now lowered directly by `lower_store_field_ir` too — see
+    /// `store_field_cell_option_init_none_lowers_without_panicking`) and
+    /// `1029_agent_static_init_hoist` (`store active: Cell[Bool] = if true
+    /// { 5 is PositiveInt } else { false }`, still `is`-blocked). This pins
+    /// that the shape-only reader never touches `init` at all regardless —
+    /// unconditionally true, not contingent on either gap's own status — so
+    /// it lowers both fields cleanly whether or not `lower_store_field_ir`
+    /// itself still would panic on them.
     #[test]
     fn store_field_shape_ir_does_not_panic_on_none_or_is_initialisers() {
         let program = checked_context_program(
@@ -5543,6 +5665,47 @@ agent Counter {
         let ir = lower_store_field_ir(n, &program);
         assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
         assert!(ir.init.is_some());
+    }
+
+    /// #1225's own ADR resolution, verified against the real regression it
+    /// closes: `223_store_cell_agent` (`bynkc/tests/fixtures/positive`) has
+    /// `store paymentRef: Cell[Option[AuthId]] = None` — before this ADR,
+    /// `lower_store_field_ir`'s own `init` lowering hit the `ExprKind::None`
+    /// `todo!()` this module used to carry (`lower_store_field_shape_ir`,
+    /// #1187's Agent state-field slice 2a, was built specifically to avoid
+    /// ever lowering `init` at all, precisely because of this gap — see its
+    /// own doc comment). This pins that the *full*, `init`-lowering
+    /// `lower_store_field_ir` no longer panics on the exact shape that
+    /// fixture carries.
+    #[test]
+    fn store_field_cell_option_init_none_lowers_without_panicking() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+type AuthId = String where NonEmpty
+
+agent Order {
+  key id: String
+  store paymentRef: Cell[Option[AuthId]] = None
+
+  on call touch() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+"#,
+        );
+        let agent = find_agent(&program, "Order");
+        let payment_ref = find_store_field(agent, "paymentRef");
+        let ir = lower_store_field_ir(payment_ref, &program);
+        assert!(matches!(ir.kind, StoreKindIr::Cell(_)));
+        let Some(init) = &ir.init else {
+            panic!("expected a lowered `None` initialiser, got None")
+        };
+        assert!(matches!(
+            &init.kind,
+            IrExprKind::Variant { tag, payload } if tag == "None" && payload.is_empty()
+        ));
     }
 
     #[test]
@@ -6697,9 +6860,10 @@ service Api {
         // Mirrors `bynk-check`'s own `sum_by_clause_persists_an_actor_sum_binding`
         // test: a sum needs distinguishable schemes, so it must be
         // `from http`. The free `fn ok` indirection (see
-        // `http_service_fixture`'s own doc comment) works around the
-        // pre-existing `Ok`/`Err`/`Some`/`None` construction gap in
-        // `lower_expr_ir`. The body's own `match who { … }` was initially
+        // `http_service_fixture`'s own doc comment) was originally a
+        // workaround for the `Ok`/`Err`/`Some`/`None` construction gap in
+        // `lower_expr_ir`, closed as of #1225's own ADR — kept as the
+        // fixture's own shape regardless. The body's own `match who { … }` was initially
         // planned as a separate, riskier claim — no existing test drove
         // pattern lowering over an `ActorSum` scrutinee — but verified
         // empirically during implementation to lower correctly (`User(_)`'s
@@ -6847,13 +7011,12 @@ service Api {
     /// Every `from http` policy test lives on one service — a full `cors`/
     /// `security`/`limits` block, asserted against the *interpreted*
     /// `PolicyIr`, not the raw AST. The handler body goes through a free
-    /// `fn ok` rather than a bare `Ok(s)` construction: `HttpResult` is a
-    /// built-in sum, and `Ok`/`Err`/`Some`/`None` construction is still
-    /// `todo!()` in `lower_expr_ir` (a pre-existing P6.1-era gap `IrItem::Agent`
-    /// already carries too, just reached far more often here since every
-    /// service handler's return type is protocol-mandated to a sum) — an
-    /// ordinary `Callee::Fn` call through `ok(...)` already lowers
-    /// correctly and sidesteps it entirely.
+    /// `fn ok` rather than a bare `Ok(s)` construction — a holdover from
+    /// when `Ok`/`Err`/`Some`/`None` construction was still `todo!()` in
+    /// `lower_expr_ir` (closed as of #1225's own ADR; kept as-is here since
+    /// it's still a correct, working fixture shape and every test built on
+    /// it is unaffected either way, not because a bare `Ok(s)` would fail
+    /// now).
     fn http_service_fixture() -> CheckedProgram {
         checked_context_program(
             r#"
@@ -7025,10 +7188,17 @@ service Outbox from queue("orders") {
     /// this pins it against the exact shape that motivated it: an ordinary
     /// `from http` handler body constructing `Ok(...)` directly (not routed
     /// through the `fn ok(s) -> HttpResult[String] { Ok(s) }` indirection
-    /// every other fixture in this module uses to dodge P6.2/P6.3's own
-    /// still-open `Ok`/`Err`/`Some`/`None` gap, #1143/#1145). Building a real
-    /// `IrHandler` here (`lower_service_handler_ir`) would panic on this
-    /// exact body — `lower_service_handler_signature_ir` never touches it.
+    /// every other fixture in this module uses). Originally chosen because
+    /// building a real `IrHandler` here (`lower_service_handler_ir`) would
+    /// panic on this exact body, on P6.2/P6.3's own `Ok`/`Err`/`Some`/`None`
+    /// gap (#1143/#1145) — closed as of #1225's own ADR, so this specific
+    /// body no longer panics `lower_service_handler_ir` either. The general
+    /// claim this test's own name makes still holds regardless (a real
+    /// `IrHandler` is still unsafe to build unconditionally at
+    /// `emit_service`'s call site — an ordinary `from http` body just as
+    /// routinely hits the still-open `?`/`is` gaps, `ExprKind::Question`/
+    /// `ExprKind::Is`, instead), so the fixture stays as-is rather than
+    /// chasing a body shape that still panics today.
     #[test]
     fn service_handler_signature_lowers_without_touching_a_body_that_constructs_ok() {
         let program = checked_context_program(
