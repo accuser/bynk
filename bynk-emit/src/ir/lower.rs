@@ -23,7 +23,7 @@ use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp, EventPattern,
     EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind,
-    InterpPart, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern,
+    HttpMethod, InterpPart, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern,
     PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName, ServiceDecl, ServiceProtocol,
     Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
 };
@@ -34,11 +34,11 @@ use crate::emitter::{
     match_needs_if_chain,
 };
 use crate::ir::{
-    ActorBinder, ActorSeamIr, BindingMode, CapRefIr, CommitShape, ConnectionBinder, ConstVal,
-    CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrBinOp,
-    IrExpr, IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MatchForm,
-    OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr,
-    TypeShape,
+    ActorBinder, ActorSeamIr, BindingMode, CacheIr, CapRefIr, CommitShape, ConnectionBinder,
+    ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm,
+    IrBinOp, IrExpr, IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt,
+    MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr,
+    StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -1384,6 +1384,79 @@ fn lower_policy_ir(service: &ServiceDecl) -> Option<PolicyIr> {
         },
         max_body_bytes: service.limits.as_ref().and_then(|p| p.max_body()),
     })
+}
+
+/// #1228: a GET handler's own `@cache(maxAge:, scope:)` freshness policy —
+/// [`crate::ir::CacheIr`]'s own doc comment has the full grounding for why
+/// this is a standalone reader rather than a `PolicyIr` field. Field-for-
+/// field the same extraction `emitter/workers_entry.rs`'s own (now
+/// superseded) `cache_policy_for` did: only a `GET` yields a policy;
+/// project validation (`bynk.http.cache_*`) has already rejected a
+/// `@cache` anywhere else, and a malformed `maxAge` there, so a missing or
+/// ill-formed annotation here simply yields `None` — no `&CheckedProgram`
+/// needed, the same posture [`lower_policy_ir`]'s own doc comment already
+/// argues for: `maxAge`/`scope` are already-resolved syntactic literals
+/// (`ExprKind::DurationLit`/`Ident`), not a type this pass would ever need
+/// to resolve.
+pub(crate) fn lower_route_cache_ir(h: &Handler) -> Option<CacheIr> {
+    if !matches!(
+        h.kind,
+        HandlerKind::Http {
+            method: HttpMethod::Get,
+            ..
+        }
+    ) {
+        return None;
+    }
+    let ann = h.annotations.iter().find(|a| a.name.name == "cache")?;
+    let mut max_age_millis: Option<i64> = None;
+    let mut scope = "private";
+    for arg in &ann.args {
+        match arg.label.as_ref().map(|l| l.name.as_str()) {
+            Some("maxAge") => {
+                if let ExprKind::DurationLit { millis, .. } = &arg.value.kind {
+                    max_age_millis = Some(*millis);
+                }
+            }
+            Some("scope") => {
+                if let ExprKind::Ident(id) = &arg.value.kind
+                    && id.name == "public"
+                {
+                    scope = "public";
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(CacheIr {
+        max_age_secs: max_age_millis? / 1000,
+        scope,
+    })
+}
+
+/// #1228: a route's own `@limit(maxBody:)` annotation, if present — the
+/// override half of `emitter/workers_entry.rs`'s own (now superseded)
+/// `effective_max_body`; the service-wide `limits { maxBody }` fallback
+/// stays that function's own concern (already IR-native via
+/// `PolicyIr::max_body_bytes`, but read from a *service*, not a per-route
+/// `Handler`, so it does not move here). Project validation
+/// (`bynk.http.limit_*`/`limits_*`) has already rejected a malformed or
+/// misplaced `@limit`, so an absent/ill-formed annotation here simply
+/// yields `None` — the caller's own service-default fallback still
+/// applies. No `&CheckedProgram` needed, same reasoning as
+/// [`lower_route_cache_ir`]: `maxBody` is an already-resolved
+/// `ExprKind::IntLit`, not a type.
+pub(crate) fn lower_route_limit_ir(h: &Handler) -> Option<i64> {
+    let ann = h.annotations.iter().find(|a| a.name.name == "limit")?;
+    for arg in &ann.args {
+        if arg.label.as_ref().map(|l| l.name.as_str()) == Some("maxBody")
+            && let ExprKind::IntLit { value: n, .. } = &arg.value.kind
+            && *n > 0
+        {
+            return Some(*n);
+        }
+    }
+    None
 }
 
 /// P6.10 (#1169): assemble an agent declaration into a real

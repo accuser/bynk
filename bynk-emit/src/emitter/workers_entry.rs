@@ -92,7 +92,7 @@ pub(crate) fn emit_worker_entry(
                     sum: bynk_check::actors::sum_members_for(h, &table.actors).is_some(),
                     // v0.140 (ADR 0163): the handler's `@cache` freshness policy, if
                     // any — lowered to a `Cache-Control` on this GET's responses.
-                    cache: cache_policy_for(h),
+                    cache: crate::ir::lower::lower_route_cache_ir(h),
                     // v0.142 (ADR 0165): the route's effective request-body ceiling
                     // in bytes — the handler's `@limit` if any, else the service's
                     // `limits { }`, else none. `Some` drives the synthesised `413`
@@ -1045,7 +1045,7 @@ struct HttpRoute {
     /// `Some` only for a `GET` carrying a well-formed `@cache`; drives the
     /// `applyCache` `Cache-Control` stamp. The conditional `ETag`/`304` half is
     /// automatic for every eligible GET and needs no policy.
-    cache: Option<CachePolicy>,
+    cache: Option<crate::ir::CacheIr>,
     /// v0.142 (ADR 0165): the route's effective request-body ceiling in bytes —
     /// the handler's `@limit(maxBody:)` if present, else the service's
     /// `limits { maxBody }`, else `None` (no cap). `Some` emits a `Content-Length`
@@ -1054,80 +1054,17 @@ struct HttpRoute {
     max_body: Option<i64>,
 }
 
-/// v0.140 (ADR 0163): a GET handler's opt-in freshness window, lowered from its
-/// `@cache(maxAge:, scope:)` annotation to a `Cache-Control` directive.
-#[derive(Debug, Clone)]
-struct CachePolicy {
-    /// `maxAge` in whole seconds (the `Cache-Control: max-age`).
-    max_age_secs: i64,
-    /// `public` or `private` — defaults to `private` so a *shared* cache never
-    /// stores unless the author opts into `public`.
-    scope: &'static str,
-}
-
-/// v0.140 (ADR 0163): extract a GET handler's `@cache` freshness policy from its
-/// annotations, if present. Returns the `max-age` in whole seconds and the cache
-/// scope (`private` by default). Only a `GET` yields a policy; project validation
-/// (`bynk.http.cache_*`) has already rejected a `@cache` anywhere else, and a
-/// malformed `maxAge` there, so a missing/ill-formed annotation here simply yields
-/// `None` — the conditional `ETag` half still applies to every eligible GET.
-fn cache_policy_for(h: &Handler) -> Option<CachePolicy> {
-    if !matches!(
-        h.kind,
-        HandlerKind::Http {
-            method: HttpMethod::Get,
-            ..
-        }
-    ) {
-        return None;
-    }
-    let ann = h.annotations.iter().find(|a| a.name.name == "cache")?;
-    let mut max_age_millis: Option<i64> = None;
-    let mut scope = "private";
-    for arg in &ann.args {
-        match arg.label.as_ref().map(|l| l.name.as_str()) {
-            Some("maxAge") => {
-                if let ExprKind::DurationLit { millis, .. } = &arg.value.kind {
-                    max_age_millis = Some(*millis);
-                }
-            }
-            Some("scope") => {
-                if let ExprKind::Ident(id) = &arg.value.kind
-                    && id.name == "public"
-                {
-                    scope = "public";
-                }
-            }
-            _ => {}
-        }
-    }
-    Some(CachePolicy {
-        max_age_secs: max_age_millis? / 1000,
-        scope,
-    })
-}
-
 /// v0.142 (ADR 0165): resolve a route's effective request-body ceiling in bytes.
 /// A route's `@limit(maxBody:)` annotation wins over the service's `limits { }`
 /// default (DECISION B); with neither, the route has no cap (`None`). Project
 /// validation (`bynk.http.limit_*` / `limits_*`) has already rejected a malformed
 /// or misplaced `@limit`/`limits`, so a bad/absent value here simply yields no
 /// cap. Only a body-taking method can carry a cap — a `@limit` on a GET/DELETE is
-/// a checker error, so it never reaches a live route here.
+/// a checker error, so it never reaches a live route here. The route-annotation
+/// half is `bynk-emit::ir`'s own [`crate::ir::lower::lower_route_limit_ir`]
+/// (#1228); only the service-wide fallback composition stays here.
 fn effective_max_body(service_limits: Option<&LimitsPolicy>, h: &Handler) -> Option<i64> {
-    // A route `@limit(maxBody:)` overrides the service default.
-    if let Some(ann) = h.annotations.iter().find(|a| a.name.name == "limit") {
-        for arg in &ann.args {
-            if arg.label.as_ref().map(|l| l.name.as_str()) == Some("maxBody")
-                && let ExprKind::IntLit { value: n, .. } = &arg.value.kind
-                && *n > 0
-            {
-                return Some(*n);
-            }
-        }
-    }
-    // Else fall back to the service-wide `limits { maxBody }`, if any.
-    service_limits.and_then(|p| p.max_body())
+    crate::ir::lower::lower_route_limit_ir(h).or_else(|| service_limits.and_then(|p| p.max_body()))
 }
 
 /// One `on cron` handler, identified by its service and per-service declaration

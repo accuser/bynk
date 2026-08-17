@@ -1153,6 +1153,35 @@ pub(crate) struct SecurityIr {
     pub hsts_max_age_secs: Option<i64>,
 }
 
+/// #1228's own `CacheIr` — a GET handler's own `@cache(maxAge:, scope:)`
+/// freshness policy, interpreted the same "raw `{name, value: Expr}` pairs
+/// mean nothing on their own" discipline [`PolicyIr`]'s own doc comment
+/// argues for, but **deliberately not a `PolicyIr` field**. `PolicyIr`
+/// itself is built only by [`lower::lower_policy_ir`], which only
+/// [`lower::lower_service_item_ir`] calls — and nothing in the shipped
+/// emitter constructs a real `IrItem::Service` yet (every call site is this
+/// module's own test suite). Nesting `CacheIr` under `PolicyIr` would land
+/// it inert: real in `ir::lower`'s own tests, with zero effect on any
+/// emitted route. `@cache` is also handler-scoped, not service-scoped
+/// (`PolicyIr`'s whole shape), so it was never a natural fit regardless.
+/// [`lower::lower_route_cache_ir`] is a standalone reader instead, wired
+/// directly into `emitter/workers_entry.rs`'s own route construction — the
+/// same live, standalone-consumer shape `lower_protocol_ir`/
+/// `lower_handler_given_ir`/`lower_actor_seam_ir` already established.
+#[derive(Debug, Clone)]
+pub(crate) struct CacheIr {
+    /// `maxAge` in whole seconds (the `Cache-Control: max-age`).
+    pub max_age_secs: i64,
+    /// `"public"` or `"private"` — defaults to `"private"` so a *shared*
+    /// cache never stores unless the author opts into `public`. Bare
+    /// `&'static str`, not an enum: mirrors `emitter/workers_entry.rs`'s
+    /// own former `CachePolicy::scope` shape verbatim (the two literal
+    /// values this route's own generated `Cache-Control` header ever
+    /// spells), not a new representation invented here — `CachePolicy`
+    /// itself is gone, superseded by this struct (#1228).
+    pub scope: &'static str,
+}
+
 /// P6.6's real `TypeShape` (Part 6.6, #1161) — a declared type's own
 /// resolved structure, the payload of [`IrItem::Type`]. Covers the AST's
 /// four `TypeBody` variants (`Refined`/`Record`/`Sum`/`Opaque`) with the
