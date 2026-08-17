@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "bynk-emit::ir's IrExprKind::Variant no longer carries a sum: Arc<TypeDecl> identity field; Ok/Err/Some/None now lower to it directly (closing the todo!() blocking their construction, #1225) since the constructed sum's own identity is already the wrapping IrExpr's own TyId, the same way IrPat::Variant's own scrutinee_ty already covers both a user-declared sum and a built-in one (internal only, no shipped emitter consumer of this dormant IR construction path exists yet — byte-identical output, confirmed by a zero-diff bless run)"
----
+# 0336 — `IrExprKind::Variant` carries no declaration identity — a constructed sum's own `TyId` is the wrapping node's own `ty`
 
-## ADR: option-result-variant-identity
-title: `IrExprKind::Variant` carries no declaration identity — a constructed sum's own `TyId` is the wrapping node's own `ty`
-summary: Resolves #1225 by dropping `Variant::sum: Arc<TypeDecl>` rather than widening it, so `Ok`/`Err`/`Some`/`None` (which have no `TypeDecl`) construct the same node a user-declared sum does
+- **Status:** Accepted (v0.247.70)
 
 **Context.** `IrExprKind::Variant` (`bynk-emit/src/ir.rs`), P6.2's own sum-variant-construction node, has
 carried `sum: Arc<TypeDecl>` since it was first sketched — a real user-declared sum's own constructor
