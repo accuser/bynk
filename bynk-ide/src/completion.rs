@@ -458,7 +458,7 @@ pub const LIMITS_FIELDS: &[(&str, &str)] = &[(
 pub const CACHE_ARGS: &[(&str, &str)] = &[
     (
         "maxAge",
-        "the freshness window — a `Duration` (e.g. `5.minutes`) lowered to `Cache-Control: max-age`",
+        "the freshness window — a whole-second `Duration` (e.g. `5.minutes`) lowered to `Cache-Control: max-age`",
     ),
     (
         "scope",

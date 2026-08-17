@@ -13,6 +13,9 @@ export const api = {
   async http_GET_private(deps: {}): Promise<HttpResult<string>> {
     return HttpResult.Ok("priv");
   },
+  async http_GET_edge(deps: {}): Promise<HttpResult<string>> {
+    return HttpResult.Ok("edge");
+  },
   async http_GET_ticks(deps: {}): Promise<HttpResult<void>> {
     return HttpResult.Streaming((async function* (__s) { const __n = 2; if (__n <= 0) { return; } let __i = 0; for await (const __e of __s) { yield __e; if (++__i >= __n) { return; } } })((async function* () { for (const __e of ["a", "b"]) { yield __e; } })()));
   },

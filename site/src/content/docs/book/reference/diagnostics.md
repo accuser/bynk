@@ -127,7 +127,7 @@ There are **457** codes in total.
 | `bynk.http.cache_bad_max_age` | A `@cache` annotation's `maxAge` is missing or not a positive `Duration` literal. |  | — |
 | `bynk.http.cache_bad_scope` | A `@cache` annotation's `scope` is not `public` or `private`. |  | — |
 | `bynk.http.cache_duplicate` | A handler carries more than one `@cache` annotation. |  | — |
-| `bynk.http.cache_max_age_sub_second` | A `@cache` annotation's `maxAge` is positive but resolves to less than one second. |  | — |
+| `bynk.http.cache_max_age_fractional_seconds` | A `@cache` annotation's `maxAge` is positive but does not resolve to a whole number of seconds. |  | — |
 | `bynk.http.cache_on_non_get` | A `@cache` annotation is placed on a handler that is not `on http GET`. |  | — |
 | `bynk.http.cache_unknown_arg` | A `@cache` annotation has an argument outside the closed set (`maxAge`/`scope`). |  | — |
 | `bynk.http.cors_invalid_field` | A `cors` policy field (`headers`/`credentials`/`maxAge`) has the wrong value shape. |  | — |

@@ -3,7 +3,7 @@ context api
 type View = { ok: Bool }
 
 service api from http {
-  @cache(maxAge: 500.milliseconds)
+  @cache(maxAge: 1500.milliseconds)
   on GET("/items") () -> Effect[HttpResult[View]] by Visitor {
     Ok(View { ok: true })
   }
