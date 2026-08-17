@@ -13,14 +13,14 @@ Track slice T0.0 (#999). Nine probes are gated — a disagreement between this f
 | `options_sources` | yes | present |
 | `hoist_sinks` | yes | 0 |
 | `span_keyed_maps` | yes | 4 |
-| `emit_diagnostics` | yes | bynk-emit=4/6, bynk-check=388/396 (true/naive) |
+| `emit_diagnostics` | yes | bynk-emit=4/6, bynk-check=389/397 (true/naive) |
 | `ide_emit_edge` | yes | absent |
 | `ast_importers` | yes | 7 |
 | `emit_abi_shapes` | yes | 1 (bynk-cloudflare.ts:negotiateLocale) |
 | `wildcard_arms` | no (trend) | 304 |
-| `keep_in_sync` | no (trend) | 196 |
-| `test_density` | no (trend) | bynk=13.7%, bynk-check=9.3%, bynk-driver=22.3%, bynk-emit=22.0%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-lsp=35.7%, bynk-project=34.0%, bynk-render=41.8%, bynk-strip=41.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-wasm=45.2%, bynkc=0.0%, xtask=34.9% |
-| `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=423 |
+| `keep_in_sync` | no (trend) | 198 |
+| `test_density` | no (trend) | bynk=13.7%, bynk-check=9.3%, bynk-driver=22.3%, bynk-emit=22.6%, bynk-fmt=15.6%, bynk-grammar=33.2%, bynk-ide=40.9%, bynk-lsp=35.7%, bynk-project=34.0%, bynk-render=41.8%, bynk-strip=41.5%, bynk-syntax=10.7%, bynk-testkit=0.0%, bynk-wasm=45.2%, bynkc=0.0%, xtask=34.9% |
+| `fixture_kinds` | no (trend) | contains=3, absent=2, diagnostics=5, error=424 |
 
 ## Rules closed
 

@@ -22,13 +22,20 @@ export default {
         }
       }
 
-      if (method === "OPTIONS" && request.headers.get("access-control-request-method") !== null && (path === "/config" || path === "/plain" || path === "/private" || path === "/ticks" || path === "/items")) {
+      if (method === "OPTIONS" && request.headers.get("access-control-request-method") !== null && (path === "/config" || path === "/edge" || path === "/plain" || path === "/private" || path === "/ticks" || path === "/items")) {
         return applySecurityHeaders(corsPreflightResponse(__cors_api, request.headers.get("origin")), __security_api);
       }
       {
         if ((method === "GET" || method === "HEAD") && path === "/config") {
           const result = await surface.http_GET_config();
           const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(applyCache(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), 300, "public"), request), __cors_api, request.headers.get("origin")), __security_api);
+          return method === "HEAD" ? headResponse(__response) : __response;
+        }
+      }
+      {
+        if ((method === "GET" || method === "HEAD") && path === "/edge") {
+          const result = await surface.http_GET_edge();
+          const __response = applySecurityHeaders(applyCors(notModifiedIfMatch(applyCache(httpResultToResponse(result, (__v: any) => __v as JsonValue, { weakEtag: true }), 1, "private"), request), __cors_api, request.headers.get("origin")), __security_api);
           return method === "HEAD" ? headResponse(__response) : __response;
         }
       }
@@ -69,6 +76,11 @@ export default {
         }
       }
       if (path === "/config") {
+        const __status = method === "OPTIONS" ? 204 : 405;
+        const __res = new Response(null, { status: __status, headers: { allow: "GET, HEAD, OPTIONS" } });
+        return applySecurityHeaders(applyCors(__res, __cors_api, request.headers.get("origin")), __security_api);
+      }
+      if (path === "/edge") {
         const __status = method === "OPTIONS" ? 204 : 405;
         const __res = new Response(null, { status: __status, headers: { allow: "GET, HEAD, OPTIONS" } });
         return applySecurityHeaders(applyCors(__res, __cors_api, request.headers.get("origin")), __security_api);

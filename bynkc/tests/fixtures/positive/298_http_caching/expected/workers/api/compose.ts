@@ -19,6 +19,9 @@ export function compose(env: Env) {
     async http_GET_private() {
       return handlers.api.http_GET_private(deps);
     },
+    async http_GET_edge() {
+      return handlers.api.http_GET_edge(deps);
+    },
     async http_GET_ticks() {
       return handlers.api.http_GET_ticks(deps);
     },

@@ -680,9 +680,13 @@ legal **only on an `on http GET` handler** — on any other method, protocol, or
 agent handler it is `bynk.http.cache_on_non_get` — and at most once per handler
 (`bynk.http.cache_duplicate`). Its arguments:
 
-- **`maxAge`** — REQUIRED; a positive `Duration` literal
-  (`bynk.http.cache_bad_max_age`). The freshness window, lowered to
-  `Cache-Control: max-age` in whole seconds.
+- **`maxAge`** — REQUIRED; a positive `Duration` literal resolving to a whole
+  number of seconds (`bynk.http.cache_bad_max_age` if not positive;
+  `bynk.http.cache_max_age_fractional_seconds` if positive but not an exact
+  multiple of one second — `Cache-Control: max-age` has no finer granularity,
+  so a fractional-second value would otherwise silently drop the remainder
+  rather than honour it). The freshness window, lowered to `Cache-Control:
+  max-age` in whole seconds.
 - **`scope`** — OPTIONAL; the bare identifier `public` or `private`
   (`bynk.http.cache_bad_scope`), defaulting to `private`.
 

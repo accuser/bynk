@@ -3546,9 +3546,34 @@ fn validate_cache_args(ann: &Annotation, errors: &mut Vec<CompileError>) {
         }
     }
     // `maxAge` is required and must be a *positive* `Duration` literal — the same
-    // positive-duration rule the `@ttl` store annotation uses.
+    // positive-duration rule the `@ttl` store annotation uses. It must also
+    // resolve to a *whole* number of seconds: `Cache-Control: max-age` has no
+    // finer granularity, so `lower_route_cache_ir` (`bynk-emit/src/ir/lower.rs`)
+    // divides by 1000 to get there — a value with any fractional-second
+    // remainder (`500.milliseconds`, or `1500.milliseconds`, which resolves to a
+    // real but wrong `max-age=1`) would previously type-check cleanly and then
+    // silently drop the remainder, with no diagnostic anywhere in the pipeline
+    // (#1230). `>= 1000` alone would only catch the *total-loss* case
+    // (`max-age=0`) and let the partial-loss case through, which is the same
+    // silent-truncation defect at a smaller magnitude, not a different one —
+    // review of #1231 is what found the guard needed to be exact-division, not
+    // a floor.
     match max_age.map(|a| &a.value.kind) {
-        Some(ExprKind::DurationLit { millis, .. }) if *millis > 0 => {}
+        Some(ExprKind::DurationLit { millis, .. }) if *millis > 0 && *millis % 1000 == 0 => {}
+        Some(ExprKind::DurationLit { millis, .. }) if *millis > 0 => {
+            errors.push(
+                CompileError::new(
+                    "bynk.http.cache_max_age_fractional_seconds",
+                    max_age.unwrap().span,
+                    "`@cache` `maxAge` must be a whole number of seconds",
+                )
+                .with_note(
+                    "`Cache-Control: max-age` is whole seconds — a value with a fractional \
+                     second would silently drop the remainder rather than round or reject, \
+                     so it is not honoured exactly",
+                ),
+            );
+        }
         Some(_) => {
             errors.push(CompileError::new(
                 "bynk.http.cache_bad_max_age",
