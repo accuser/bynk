@@ -3,7 +3,7 @@ title: Version compatibility & changelog
 ---
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.247**.
+written against **v0.248**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -28,6 +28,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.248.0** | "`@cache`'s `maxAge` must now resolve to an exact whole number of seconds — a positive-but-fractional value (e.g. `500.milliseconds`, or `1500.milliseconds`, which resolves to a real but wrong `max-age=1`) previously type-checked cleanly and then silently dropped the sub-second remainder at emit time rather than honouring it, with no diagnostic anywhere in the pipeline; now rejected at check time with a new `bynk.http.cache_max_age_fractional_seconds` diagnostic (#1230)" |
 | **v0.247.71** | "bynk-emit::emitter::workers_entry's @cache/@limit route-annotation reading moves to bynk-emit::ir (lower_route_cache_ir/lower_route_limit_ir, #1228), so the two remaining hand-rolled ExprKind::DurationLit/Ident/IntLit matches in that file read the same already-resolved-literal IR path lower_policy_ir already established, rather than walking Handler::annotations directly (internal only, no CheckedProgram needed since neither reads a type — byte-identical output, confirmed by a zero-diff bless run against 298_http_caching/300_http_limits)" |
 | **v0.247.70** | "bynk-emit::ir's IrExprKind::Variant no longer carries a sum: Arc<TypeDecl> identity field; Ok/Err/Some/None now lower to it directly (closing the todo!() blocking their construction, #1225) since the constructed sum's own identity is already the wrapping IrExpr's own TyId, the same way IrPat::Variant's own scrutinee_ty already covers both a user-declared sum and a built-in one (internal only, no shipped emitter consumer of this dormant IR construction path exists yet — byte-identical output, confirmed by a zero-diff bless run)" |
 | **v0.247.69** | "bynk-emit's emit_consumed_context_helpers now resolves a subscribed from Events(E) header's own event type through ProtocolIr::Events's already-resolved TyId (via lower_protocol_ir) instead of a raw match on ServiceProtocol::Events/TypeRef::Named, and emitter/lower.rs's cap_op_param_names (trace(Cap.op)/with-predicate observation lowering) now reads a capability op's parameter names off lower_op_sig_ir's already-resolved OpSig instead of a second, independent AST extraction; ast_importers stays at 7 (both files already counted for other reasons) (internal only, byte-identical output)" |
