@@ -3546,9 +3546,28 @@ fn validate_cache_args(ann: &Annotation, errors: &mut Vec<CompileError>) {
         }
     }
     // `maxAge` is required and must be a *positive* `Duration` literal — the same
-    // positive-duration rule the `@ttl` store annotation uses.
+    // positive-duration rule the `@ttl` store annotation uses. It must also
+    // resolve to at least one whole second: `Cache-Control: max-age` has no
+    // finer granularity, so a sub-second value (`@cache(maxAge: 500.milliseconds)`)
+    // would previously type-check cleanly and then silently round down to
+    // `max-age=0` at emit time — accepted syntax that disabled the very
+    // freshness window the author wrote it to declare, with no diagnostic
+    // anywhere in the pipeline (#1230).
     match max_age.map(|a| &a.value.kind) {
-        Some(ExprKind::DurationLit { millis, .. }) if *millis > 0 => {}
+        Some(ExprKind::DurationLit { millis, .. }) if *millis >= 1000 => {}
+        Some(ExprKind::DurationLit { millis, .. }) if *millis > 0 => {
+            errors.push(
+                CompileError::new(
+                    "bynk.http.cache_max_age_sub_second",
+                    max_age.unwrap().span,
+                    "`@cache` `maxAge` must be at least one second",
+                )
+                .with_note(
+                    "`Cache-Control: max-age` is whole seconds — a sub-second value would \
+                     silently round down to `max-age=0`, disabling the freshness window",
+                ),
+            );
+        }
         Some(_) => {
             errors.push(CompileError::new(
                 "bynk.http.cache_bad_max_age",

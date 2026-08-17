@@ -222,15 +222,17 @@ handler returning `Ok`.
 
 | Field | Meaning | Default |
 |---|---|---|
-| `maxAge` | The freshness window, as a [`Duration`](/book/reference/types/#duration) — emitted as `Cache-Control: max-age` in whole seconds. **Required.** | — |
+| `maxAge` | The freshness window, as a [`Duration`](/book/reference/types/#duration) of at least one second — emitted as `Cache-Control: max-age` in whole seconds. **Required.** | — |
 | `scope` | `public` or `private`. `private` lets only a client's own cache store the response; `public` also lets a **shared** cache / CDN store it. | `private` |
 
 The `private` default is the safe one: a shared cache never stores a response
 unless you opt into `public`. A `GET` with no `@cache` still carries its `ETag`
 (so it is revalidatable) but emits no `Cache-Control`. Duration units are plural —
 `5.minutes`, `1.hours`, `30.seconds` — so a singular `1.hour` is a
-`bynk.http.cache_bad_max_age` diagnostic; `@cache` on a non-`GET` (or streaming)
-handler is `bynk.http.cache_on_non_get`.
+`bynk.http.cache_bad_max_age` diagnostic; a sub-second window (`500.milliseconds`)
+is `bynk.http.cache_max_age_sub_second` — `Cache-Control: max-age` has no finer
+granularity, so it would otherwise silently round down to `max-age=0`; `@cache`
+on a non-`GET` (or streaming) handler is `bynk.http.cache_on_non_get`.
 
 ## Streamed responses
 

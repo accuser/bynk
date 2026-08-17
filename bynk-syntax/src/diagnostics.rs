@@ -798,6 +798,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A handler carries more than one `@cache` annotation.",
     ),
     d(
+        "bynk.http.cache_max_age_sub_second",
+        "A `@cache` annotation's `maxAge` is positive but resolves to less than one second.",
+    ),
+    d(
         "bynk.http.cache_on_non_get",
         "A `@cache` annotation is placed on a handler that is not `on http GET`.",
     ),
