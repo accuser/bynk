@@ -245,7 +245,9 @@ pub(crate) enum IrPat {
     /// flattens a user sum, `Result`, `Option`, `ActorSum` and `HttpResult`
     /// into one uniform shape, rather than `Callee::Ctor`'s
     /// `Arc<TypeDecl>`-keyed identity scheme, which never fires for
-    /// `Ok`/`Err`/`Some`/`None` (`#1145`'s own Decision B, left open).
+    /// `Ok`/`Err`/`Some`/`None` at all (`#1145`'s own Decision B) —
+    /// [`IrExprKind::Variant`] later resolved the identical problem on the
+    /// *construction* side the same way, #1225's own ADR.
     Variant {
         /// The value this pattern matches against — resolved via
         /// `variants_of(scrutinee_ty, ..)` to find `tag`'s own payload
