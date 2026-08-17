@@ -638,12 +638,51 @@ prevent. 7 is not a new floor — 0 remains the stated target (§5), and the rem
 (`emitter.rs`/`emitter/lower.rs` chief among them, per the two live sites just named) are real,
 untouched, in-scope surface, not residue.
 
+**Fourteenth: the `Ok`/`Err`/`Some`/`None` `IrExprKind` gap resolved (#1225, PR #1227)** — closing what
+this section's own 2a paragraph above named as a forward reference to "§7 below," a promise §7 never
+actually kept (no row was ever added there for it). Superseded here instead of there:
+`IrExprKind::Variant` drops its `sum: Arc<TypeDecl>` field rather than widening it, since the wrapping
+`IrExpr::ty` (already present by construction, R6.1) already carries the identical `TyId` identity a
+constructed sum's own checked type resolves to — mirroring `IrPat::Variant`'s own `scrutinee_ty: TyId`
+precedent exactly. `Ok`/`Err`/`Some`/`None` now lower to `IrExprKind::Variant` directly, closing the
+`todo!()` open since P6.2/P6.3. `ast_importers` unaffected — still no shipped emitter consumer of this
+construction path exists (P6.2's own `Call`/`Lambda` cutover has not landed), so this is a dormant-path
+correctness fix, not a probe-moving one; confirmed by a zero-diff bless run. `Question`'s own three-way
+desugar fork is a separate, still-open design question this resolution does not settle — moved to §7's
+own table below, since that is the "§7 below" pointer's actual correct destination now.
+
+**Fifteenth: Slice 5 scoped fresh, exactly as the paragraph above this one said a future pass would
+(#1226), and split rather than landed whole.** The event-subscriber envelope decision
+(`project.rs`'s own `wants_envelope`) stays open on #1226 itself: both its halves are pure syntax with
+zero `TyId` dependency, so it is *not* blocked by the type-resolution wall that killed slice 4 — it is
+blocked by missing plumbing, no project-wide, checker-verified channel yet carries a *foreign* unit's
+own declared handler shape forward to `emit_composition_root`'s cross-unit compose pass, and
+`bynk-check::resolver::CrossContextInfo` doesn't carry it either (wrong direction: a subscriber's own
+`CrossContextInfo` describes what it consumes *from* the publisher, never the reverse). Fixing this
+needs a new project-wide accumulator sized comparably to this track's own sixth slice
+(`unit_callees`, #1202) above — real, separate, not-yet-proposed work, not residue.
+
+**`@cache`/`@limit` route-annotation reading was the tractable half, split into its own issue and
+landed (#1228).** `bynk-emit/src/emitter/workers_entry.rs`'s `cache_policy_for`/the annotation-reading
+half of `effective_max_body` (raw `ExprKind::DurationLit`/`Ident`/`IntLit` matching) are gone, replaced
+by two standalone `ir::lower` readers (`lower_route_cache_ir`/`lower_route_limit_ir`, no
+`&CheckedProgram` parameter — `lower_policy_ir`'s own no-program precedent applies verbatim, since
+`maxAge`/`scope`/`maxBody` are already-resolved literals). One trap found and avoided: `PolicyIr` (the
+obvious-looking home) is dormant — `IrItem::Service`/`lower_service_item_ir` have zero non-test call
+sites anywhere in the shipped emitter — so the new readers are standalone, the same live-consumer shape
+`lower_protocol_ir`/`lower_handler_given_ir`/`lower_actor_seam_ir` already established, not a `PolicyIr`
+field. `ast_importers` unaffected — `workers_entry.rs` remains counted regardless, since real,
+untouched AST-declaration reads survive elsewhere in the file (its cron/queue-route and actor-seam
+matches among them); real coupling removed at both call sites even though the file's own count doesn't
+move, the same shape nearly every slice in this section shows.
+
 ---
 
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
 |---|---|---|
+| `Question`'s own three-way desugar fork — what `IrExprKind` an `expr?` lowers to | 6, unproposed | a slice proposal for P6.3's desugaring table (§6) reaches `Question` specifically; #1225 (§6, fourteenth slice) settled the *construction*-side identity question this depends on but explicitly does not settle this one |
 | The `bynk-ts` tree and printer | 7 | this track's probe (`ast_importers`) reads 0 (§5) |
 | Carving `bynk-ir`/`bynk-lower` as their own crates, per the reference's own target graph (Part 10) | 7 | `bynk-ts` exists and gives the IR a genuine second consumer — R10.3's own trigger, not this track's appetite (§3.3, Q3) |
 | Severing `bynk-emit`'s dependency on `bynk-check` | 7 or later | the IR is proven complete enough (post this track) that `bynk-emit`'s remaining `Ir → TsProgram` logic never falls back to a `bynk-check` type — not one of this phase's own reference rules (trajectory §3 omits R10.1/R10.2 from phase 6's list) |
