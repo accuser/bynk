@@ -8136,4 +8136,182 @@ provides Store = MemStore {
             "the resolved Local's type must be the same TyId bind() seeded"
         );
     }
+
+    /// Review of #1229 (#1228): `lower_route_cache_ir`/`lower_route_limit_ir`
+    /// take no `&CheckedProgram`, resolve nothing, and cannot panic — the same
+    /// posture `lower_event_pattern_ir`'s own test above already established a
+    /// parsed-not-checked fixture for, and for the identical reason here: their
+    /// defensive branches (a non-`GET` handler, a `maxAge`-less `@cache`, a
+    /// non-positive `maxBody`) are exactly the shapes `bynk-check`'s
+    /// `bynk.http.cache_on_non_get`/`cache_bad_max_age`/`limit_bad_max_body`
+    /// (`bynk-check/src/context_checks.rs`) already reject, so a real checked
+    /// program can never reach them and the fixture bless run never exercises
+    /// them either.
+    fn parsed_only_context(source: &str) -> bynk_syntax::ast::Context {
+        let tokens = lexer::tokenize(source).expect("lex");
+        let unit = parser::parse_unit(&tokens, source).expect("parse");
+        let SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit, got {unit:?}")
+        };
+        ctx
+    }
+
+    fn parsed_handler<'a>(
+        ctx: &'a bynk_syntax::ast::Context,
+        service: &str,
+        index: usize,
+    ) -> &'a Handler {
+        let service = ctx
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Service(s) if s.name.name == service => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no service named `{service}` in this fixture"));
+        &service.handlers[index]
+    }
+
+    #[test]
+    fn lower_route_cache_ir_reads_maxage_and_scope_off_a_get_handler() {
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @cache(maxAge: 5.minutes, scope: public)
+  on GET("/config") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("cfg")
+  }
+
+  @cache(maxAge: 30.seconds)
+  on GET("/private") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("priv")
+  }
+
+  on GET("/plain") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("plain")
+  }
+}
+"#,
+        );
+        let public_cache = lower_route_cache_ir(parsed_handler(&ctx, "Api", 0))
+            .unwrap_or_else(|| panic!("expected Some(CacheIr) for a well-formed @cache"));
+        assert_eq!(public_cache.max_age_secs, 300, "5.minutes in whole seconds");
+        assert_eq!(public_cache.scope, "public");
+
+        let default_scope_cache = lower_route_cache_ir(parsed_handler(&ctx, "Api", 1))
+            .unwrap_or_else(|| panic!("expected Some(CacheIr) with no explicit scope:"));
+        assert_eq!(default_scope_cache.max_age_secs, 30);
+        assert_eq!(
+            default_scope_cache.scope, "private",
+            "no scope: argument written — must default to private"
+        );
+
+        assert!(
+            lower_route_cache_ir(parsed_handler(&ctx, "Api", 2)).is_none(),
+            "no @cache annotation at all must yield None"
+        );
+    }
+
+    #[test]
+    fn lower_route_cache_ir_returns_none_for_a_non_get_handler_even_with_a_cache_annotation() {
+        // `bynk.http.cache_on_non_get` already rejects this at check time — this
+        // pins the lowering function's own independent guard, not reachable
+        // through a real certified program.
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @cache(maxAge: 5.minutes)
+  on POST("/items") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body)
+  }
+}
+"#,
+        );
+        assert!(
+            lower_route_cache_ir(parsed_handler(&ctx, "Api", 0)).is_none(),
+            "a @cache on a non-GET handler must not construct a CacheIr"
+        );
+    }
+
+    #[test]
+    fn lower_route_cache_ir_discards_an_otherwise_well_formed_scope_when_maxage_is_missing() {
+        // `bynk.http.cache_bad_max_age` already rejects a maxAge-less @cache at
+        // check time — this pins that `scope`'s own well-formedness does not
+        // rescue a missing `maxAge` into a partial CacheIr.
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @cache(scope: public)
+  on GET("/broken") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("x")
+  }
+}
+"#,
+        );
+        assert!(
+            lower_route_cache_ir(parsed_handler(&ctx, "Api", 0)).is_none(),
+            "a well-formed scope: must not survive a missing maxAge:"
+        );
+    }
+
+    #[test]
+    fn lower_route_limit_ir_reads_maxbody_off_a_route_annotation() {
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @limit(maxBody: 26_214_400)
+  on POST("/bulk") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body)
+  }
+
+  on POST("/upload") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body)
+  }
+}
+"#,
+        );
+        assert_eq!(
+            lower_route_limit_ir(parsed_handler(&ctx, "Api", 0)),
+            Some(26_214_400)
+        );
+        assert!(
+            lower_route_limit_ir(parsed_handler(&ctx, "Api", 1)).is_none(),
+            "no @limit annotation at all must yield None — the caller applies the \
+             service-wide default, this function does not know it"
+        );
+    }
+
+    #[test]
+    fn lower_route_limit_ir_returns_none_for_a_non_positive_maxbody() {
+        // `bynk.http.limit_bad_max_body` already rejects a non-positive maxBody
+        // at check time — this pins the lowering function's own independent
+        // guard. `None` here matters specifically because the caller's own
+        // fallback composition (`effective_max_body`) treats it as "no
+        // route-level override," falling through to the service-wide default —
+        // not as "an explicit zero-byte cap."
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @limit(maxBody: 0)
+  on POST("/zero") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body)
+  }
+}
+"#,
+        );
+        assert!(
+            lower_route_limit_ir(parsed_handler(&ctx, "Api", 0)).is_none(),
+            "a non-positive maxBody must not construct Some(0)"
+        );
+    }
 }
