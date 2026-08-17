@@ -23,7 +23,7 @@ use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons};
 use bynk_syntax::ast::{
     ActorDecl, AgentDecl, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp, EventPattern,
     EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind,
-    InterpPart, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern,
+    HttpMethod, InterpPart, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern,
     PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName, ServiceDecl, ServiceProtocol,
     Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
 };
@@ -34,11 +34,11 @@ use crate::emitter::{
     match_needs_if_chain,
 };
 use crate::ir::{
-    ActorBinder, ActorSeamIr, BindingMode, CapRefIr, CommitShape, ConnectionBinder, ConstVal,
-    CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm, IrBinOp,
-    IrExpr, IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt, MatchForm,
-    OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr,
-    TypeShape,
+    ActorBinder, ActorSeamIr, BindingMode, CacheIr, CapRefIr, CommitShape, ConnectionBinder,
+    ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, GlobalRef, IndexIr, IrArm,
+    IrBinOp, IrExpr, IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate, IrStmt,
+    MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr, StoreFieldIr,
+    StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -1384,6 +1384,79 @@ fn lower_policy_ir(service: &ServiceDecl) -> Option<PolicyIr> {
         },
         max_body_bytes: service.limits.as_ref().and_then(|p| p.max_body()),
     })
+}
+
+/// #1228: a GET handler's own `@cache(maxAge:, scope:)` freshness policy —
+/// [`crate::ir::CacheIr`]'s own doc comment has the full grounding for why
+/// this is a standalone reader rather than a `PolicyIr` field. Field-for-
+/// field the same extraction `emitter/workers_entry.rs`'s own (now
+/// superseded) `cache_policy_for` did: only a `GET` yields a policy;
+/// project validation (`bynk.http.cache_*`) has already rejected a
+/// `@cache` anywhere else, and a malformed `maxAge` there, so a missing or
+/// ill-formed annotation here simply yields `None` — no `&CheckedProgram`
+/// needed, the same posture [`lower_policy_ir`]'s own doc comment already
+/// argues for: `maxAge`/`scope` are already-resolved syntactic literals
+/// (`ExprKind::DurationLit`/`Ident`), not a type this pass would ever need
+/// to resolve.
+pub(crate) fn lower_route_cache_ir(h: &Handler) -> Option<CacheIr> {
+    if !matches!(
+        h.kind,
+        HandlerKind::Http {
+            method: HttpMethod::Get,
+            ..
+        }
+    ) {
+        return None;
+    }
+    let ann = h.annotations.iter().find(|a| a.name.name == "cache")?;
+    let mut max_age_millis: Option<i64> = None;
+    let mut scope = "private";
+    for arg in &ann.args {
+        match arg.label.as_ref().map(|l| l.name.as_str()) {
+            Some("maxAge") => {
+                if let ExprKind::DurationLit { millis, .. } = &arg.value.kind {
+                    max_age_millis = Some(*millis);
+                }
+            }
+            Some("scope") => {
+                if let ExprKind::Ident(id) = &arg.value.kind
+                    && id.name == "public"
+                {
+                    scope = "public";
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(CacheIr {
+        max_age_secs: max_age_millis? / 1000,
+        scope,
+    })
+}
+
+/// #1228: a route's own `@limit(maxBody:)` annotation, if present — the
+/// override half of `emitter/workers_entry.rs`'s own (now superseded)
+/// `effective_max_body`; the service-wide `limits { maxBody }` fallback
+/// stays that function's own concern (already IR-native via
+/// `PolicyIr::max_body_bytes`, but read from a *service*, not a per-route
+/// `Handler`, so it does not move here). Project validation
+/// (`bynk.http.limit_*`/`limits_*`) has already rejected a malformed or
+/// misplaced `@limit`, so an absent/ill-formed annotation here simply
+/// yields `None` — the caller's own service-default fallback still
+/// applies. No `&CheckedProgram` needed, same reasoning as
+/// [`lower_route_cache_ir`]: `maxBody` is an already-resolved
+/// `ExprKind::IntLit`, not a type.
+pub(crate) fn lower_route_limit_ir(h: &Handler) -> Option<i64> {
+    let ann = h.annotations.iter().find(|a| a.name.name == "limit")?;
+    for arg in &ann.args {
+        if arg.label.as_ref().map(|l| l.name.as_str()) == Some("maxBody")
+            && let ExprKind::IntLit { value: n, .. } = &arg.value.kind
+            && *n > 0
+        {
+            return Some(*n);
+        }
+    }
+    None
 }
 
 /// P6.10 (#1169): assemble an agent declaration into a real
@@ -8061,6 +8134,184 @@ provides Store = MemStore {
         assert_eq!(
             value.ty, key_ty,
             "the resolved Local's type must be the same TyId bind() seeded"
+        );
+    }
+
+    /// Review of #1229 (#1228): `lower_route_cache_ir`/`lower_route_limit_ir`
+    /// take no `&CheckedProgram`, resolve nothing, and cannot panic — the same
+    /// posture `lower_event_pattern_ir`'s own test above already established a
+    /// parsed-not-checked fixture for, and for the identical reason here: their
+    /// defensive branches (a non-`GET` handler, a `maxAge`-less `@cache`, a
+    /// non-positive `maxBody`) are exactly the shapes `bynk-check`'s
+    /// `bynk.http.cache_on_non_get`/`cache_bad_max_age`/`limit_bad_max_body`
+    /// (`bynk-check/src/context_checks.rs`) already reject, so a real checked
+    /// program can never reach them and the fixture bless run never exercises
+    /// them either.
+    fn parsed_only_context(source: &str) -> bynk_syntax::ast::Context {
+        let tokens = lexer::tokenize(source).expect("lex");
+        let unit = parser::parse_unit(&tokens, source).expect("parse");
+        let SourceUnit::Context(ctx) = unit else {
+            panic!("expected a context unit, got {unit:?}")
+        };
+        ctx
+    }
+
+    fn parsed_handler<'a>(
+        ctx: &'a bynk_syntax::ast::Context,
+        service: &str,
+        index: usize,
+    ) -> &'a Handler {
+        let service = ctx
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Service(s) if s.name.name == service => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no service named `{service}` in this fixture"));
+        &service.handlers[index]
+    }
+
+    #[test]
+    fn lower_route_cache_ir_reads_maxage_and_scope_off_a_get_handler() {
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @cache(maxAge: 5.minutes, scope: public)
+  on GET("/config") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("cfg")
+  }
+
+  @cache(maxAge: 30.seconds)
+  on GET("/private") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("priv")
+  }
+
+  on GET("/plain") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("plain")
+  }
+}
+"#,
+        );
+        let public_cache = lower_route_cache_ir(parsed_handler(&ctx, "Api", 0))
+            .unwrap_or_else(|| panic!("expected Some(CacheIr) for a well-formed @cache"));
+        assert_eq!(public_cache.max_age_secs, 300, "5.minutes in whole seconds");
+        assert_eq!(public_cache.scope, "public");
+
+        let default_scope_cache = lower_route_cache_ir(parsed_handler(&ctx, "Api", 1))
+            .unwrap_or_else(|| panic!("expected Some(CacheIr) with no explicit scope:"));
+        assert_eq!(default_scope_cache.max_age_secs, 30);
+        assert_eq!(
+            default_scope_cache.scope, "private",
+            "no scope: argument written — must default to private"
+        );
+
+        assert!(
+            lower_route_cache_ir(parsed_handler(&ctx, "Api", 2)).is_none(),
+            "no @cache annotation at all must yield None"
+        );
+    }
+
+    #[test]
+    fn lower_route_cache_ir_returns_none_for_a_non_get_handler_even_with_a_cache_annotation() {
+        // `bynk.http.cache_on_non_get` already rejects this at check time — this
+        // pins the lowering function's own independent guard, not reachable
+        // through a real certified program.
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @cache(maxAge: 5.minutes)
+  on POST("/items") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body)
+  }
+}
+"#,
+        );
+        assert!(
+            lower_route_cache_ir(parsed_handler(&ctx, "Api", 0)).is_none(),
+            "a @cache on a non-GET handler must not construct a CacheIr"
+        );
+    }
+
+    #[test]
+    fn lower_route_cache_ir_discards_an_otherwise_well_formed_scope_when_maxage_is_missing() {
+        // `bynk.http.cache_bad_max_age` already rejects a maxAge-less @cache at
+        // check time — this pins that `scope`'s own well-formedness does not
+        // rescue a missing `maxAge` into a partial CacheIr.
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @cache(scope: public)
+  on GET("/broken") () -> Effect[HttpResult[String]] by v: Visitor {
+    Ok("x")
+  }
+}
+"#,
+        );
+        assert!(
+            lower_route_cache_ir(parsed_handler(&ctx, "Api", 0)).is_none(),
+            "a well-formed scope: must not survive a missing maxAge:"
+        );
+    }
+
+    #[test]
+    fn lower_route_limit_ir_reads_maxbody_off_a_route_annotation() {
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @limit(maxBody: 26_214_400)
+  on POST("/bulk") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body)
+  }
+
+  on POST("/upload") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body)
+  }
+}
+"#,
+        );
+        assert_eq!(
+            lower_route_limit_ir(parsed_handler(&ctx, "Api", 0)),
+            Some(26_214_400)
+        );
+        assert!(
+            lower_route_limit_ir(parsed_handler(&ctx, "Api", 1)).is_none(),
+            "no @limit annotation at all must yield None — the caller applies the \
+             service-wide default, this function does not know it"
+        );
+    }
+
+    #[test]
+    fn lower_route_limit_ir_returns_none_for_a_non_positive_maxbody() {
+        // `bynk.http.limit_bad_max_body` already rejects a non-positive maxBody
+        // at check time — this pins the lowering function's own independent
+        // guard. `None` here matters specifically because the caller's own
+        // fallback composition (`effective_max_body`) treats it as "no
+        // route-level override," falling through to the service-wide default —
+        // not as "an explicit zero-byte cap."
+        let ctx = parsed_only_context(
+            r#"
+context demo
+
+service Api from http {
+  @limit(maxBody: 0)
+  on POST("/zero") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
+    Created(body)
+  }
+}
+"#,
+        );
+        assert!(
+            lower_route_limit_ir(parsed_handler(&ctx, "Api", 0)).is_none(),
+            "a non-positive maxBody must not construct Some(0)"
         );
     }
 }
