@@ -492,7 +492,7 @@ pub(crate) fn emit_project(
     // v0.96 (ADR 0124): runs on both targets — workers emits service-call +
     // agent-rehydration boundary helpers; bundle emits only the agent-rehydration
     // ones (the gate's deserialisers), since in-process calls need no wire codec.
-    let (boundary_names, boundary_insts) = emit_boundary_helpers(&mut out, commons, ctx);
+    let (boundary_names, boundary_insts) = emit_boundary_helpers(&mut out, program, commons, ctx);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
     emit_json_codec_helpers(&mut out, commons, ctx, &boundary_names, &boundary_insts);
@@ -1132,6 +1132,7 @@ fn emit_json_codec_helpers(
 /// the v0.22b codec emission can dedupe against them.
 fn emit_boundary_helpers(
     out: &mut String,
+    program: &CheckedProgram,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
 ) -> (HashSet<String>, HashSet<String>) {
@@ -1290,7 +1291,14 @@ fn emit_boundary_helpers(
                 emitted_names.extend(names.iter().cloned());
             }
             let mut emitted_insts: HashSet<String> = insts.iter().map(|i| i.ts_name()).collect();
-            emit_consumed_context_helpers(out, commons, ctx, &mut emitted_names, &mut emitted_insts)
+            emit_consumed_context_helpers(
+                out,
+                program,
+                commons,
+                ctx,
+                &mut emitted_names,
+                &mut emitted_insts,
+            )
         } else {
             (Vec::new(), Vec::new())
         };
@@ -1370,6 +1378,7 @@ fn emit_boundary_helpers(
 /// emitted, so the Json-codec pass dedupes against them too.
 fn emit_consumed_context_helpers(
     out: &mut String,
+    program: &CheckedProgram,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     emitted_names: &mut HashSet<String>,
@@ -1396,19 +1405,37 @@ fn emit_consumed_context_helpers(
     // it, and the `continue` below on an empty `called_here` would skip the
     // event's payload type entirely (the root cause of #973: a subscriber's
     // generated module had no `deserialise_<Payload>` at all).
+    // #1187's own closing scoping pass: the event's own identity now reads
+    // `ProtocolIr::Events`'s already-resolved `event: TyId` (via
+    // `lower_protocol_ir`) instead of a raw match on `svc.protocol`/
+    // `event_type`. `collect_codec_closure` below is still `TypeRef`-driven
+    // (confirmed: no resolved-field-type table exists anywhere in
+    // `bynk-check` to substitute), so `ty_to_type_ref` converts back at the
+    // end — the same TyId-in, TypeRef-out shape `lower_json_codec_call`
+    // already uses for the identical reason. `event`'s own type is always
+    // non-generic in practice: `context_checks.rs`'s own event/handler
+    // param-type-agreement check (`type_ref_named`) only ever admits a bare
+    // `Named` event type, so `ty_to_type_ref`'s generic-instantiation arm
+    // never actually fires here — not relied on silently, just not the
+    // shape a certified program can produce.
     let mut consumed_event_roots: HashMap<String, Vec<bynk_syntax::ast::TypeRef>> = HashMap::new();
     for item in &commons.commons.items {
         let CommonsItem::Service(svc) = item else {
             continue;
         };
-        let bynk_syntax::ast::ServiceProtocol::Events { event_type, .. } = &svc.protocol else {
+        let crate::ir::ProtocolIr::Events { event, .. } =
+            crate::ir::lower::lower_protocol_ir(&svc.protocol, program)
+        else {
             continue;
         };
-        let bynk_syntax::ast::TypeRef::Named(id) = event_type else {
+        let Ty::Named { name, .. } = &*commons.tys().get(event) else {
+            continue;
+        };
+        let Some(event_type) = ty_to_type_ref(event, commons.tys()) else {
             continue;
         };
         for (c, names) in &info.consumed_event_names {
-            if names.contains(&id.name) {
+            if names.contains(name) {
                 consumed_event_roots
                     .entry(c.clone())
                     .or_default()
