@@ -68,8 +68,16 @@ pub(crate) struct LowerIrCtx<'a> {
 
 impl<'a> LowerIrCtx<'a> {
     fn new(program: &'a CheckedProgram, type_vars: HashSet<String>) -> Self {
+        Self::from_commons(program.program(), type_vars)
+    }
+
+    /// #1187's own closing scoping pass: a `TypedCommons`-only constructor,
+    /// for the one real call path (`lower_op_sig_ir_from_commons`, below)
+    /// that never has a `&CheckedProgram` to unwrap. See that function's
+    /// own doc comment for why.
+    fn from_commons(commons: &'a TypedCommons, type_vars: HashSet<String>) -> Self {
         Self {
-            program: program.program(),
+            program: commons,
             scopes: vec![HashMap::new()],
             type_vars,
             spread_tmp_counter: 0,
@@ -1541,12 +1549,34 @@ pub(crate) fn lower_capability_item_ir(cap: &CapabilityDecl, program: &CheckedPr
 /// 0334 site in this module to assert a guarantee that does not actually
 /// hold — mirror the checker's own fallback instead (review of #1182).
 fn lower_op_sig_ir(op: &CapabilityOp, program: &CheckedProgram) -> OpSig {
+    lower_op_sig_ir_from_commons(op, program.program())
+}
+
+/// #1187's own closing scoping pass: a `TypedCommons`-only sibling of
+/// [`lower_op_sig_ir`], for the one real call site that never has a
+/// `&CheckedProgram` — `emitter/lower.rs`'s `cap_op_param_names`, feeding
+/// `trace(Cap.op)`/`with`-predicate observation lowering
+/// (`bynk.test`'s DSL). That call path's own `TypedCommons` is a synthetic,
+/// hand-assembled project-wide view (`project/tests_emit.rs`'s
+/// `synthetic_typed_commons_for_target`, merging every consumed unit's own
+/// `capability` declarations into one scratch commons for lookup) — never
+/// itself the output of `certify`, so wrapping it as a `CheckedProgram`
+/// here would misrepresent an uncertified value as certified
+/// (`CheckedProgram`'s own doc comment, `bynk-check/src/checker.rs`, warns
+/// against exactly this). Splitting this out is sound precisely because
+/// this function never calls `LowerIrCtx::expr_ty` — the one method whose
+/// `.expect()`-panic needs a genuinely certified program, the reason this
+/// module's own file-level doc comment gives for taking `&CheckedProgram`
+/// everywhere else. `resolve_type_ref`/`unit_ty()` (below) both degrade via
+/// `.unwrap_or_else` and read nothing `TypedCommons` doesn't already expose
+/// directly.
+pub(crate) fn lower_op_sig_ir_from_commons(op: &CapabilityOp, commons: &TypedCommons) -> OpSig {
     let type_vars: HashSet<String> = op
         .type_params
         .iter()
         .map(|tp| tp.name.name.clone())
         .collect();
-    let cx = LowerIrCtx::new(program, type_vars);
+    let cx = LowerIrCtx::from_commons(commons, type_vars);
     let params: Vec<(String, TyId)> = op
         .params
         .iter()
