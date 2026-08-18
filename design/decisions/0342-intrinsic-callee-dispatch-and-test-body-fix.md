@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.21 (partial, continued): a real bug fix plus the Intrinsic-branch conversion #1247 previously reverted. bynk-check::test_suites::typecheck_case_body now returns its own callees map instead of discarding it -- its emit-path callers (bynk-emit's synthetic_typed_commons_for_target consumers) previously received expr_types only, so Callee classification (Callee::Intrinsic, Callee::Store, etc.) was silently never recorded for anything inside a .test.bynk case/property body, even though this function computed it correctly all along. With that fixed, emitter/lower.rs's built-in static-constructor branches (List/Map.empty, Int/Float.parse, Duration.millis, Instant.fromEpochMillis, Bytes.fromUtf8/fromBase64/empty, Stream.of) now read Callee::Intrinsic instead of a bare id.name == X check -- closing the same latent shadowing gap the previous P6.21 PRs already closed elsewhere (List/Map/Duration/Instant/Bytes/Stream never checked cx.is_local(&id.name), unlike every other converted branch; the checker's own ctx.lookup(X).is_none() guard, present before every Callee::Intrinsic insertion, is strictly more correct). Verified by a full zero-diff bless against the entire e2e fixture corpus, including the two fixtures (814_messages_icu_date_styles, 917_bytes_in_test_case) that caught the original gap in #1247"
----
+# 0342 — `typecheck_case_body` returns its own `callees` map instead of discarding it — the real fix behind #1247's reverted `Callee::Intrinsic` conversion
 
-## ADR: intrinsic-callee-dispatch-and-test-body-fix
-
-title: `typecheck_case_body` returns its own `callees` map instead of discarding it — the real fix behind #1247's reverted `Callee::Intrinsic` conversion
+- **Status:** Accepted (v0.248.10)
 
 summary: Root-causes and fixes the test-body gap #1247 found and reverted around, then re-applies that PR's own conversion now that it's safe
 
