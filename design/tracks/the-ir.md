@@ -424,6 +424,29 @@ already documents.
 | **P6.8** | `CommitShape` as IR data, not emitter control flow | R6.15 | P6.6, P6.7 |
 | **P6.9** | Handler-invocation origin-independence — no IR node branches on caller kind | R6.16 | P6.6, P6.8 (needs its own investigation at proposal time — this settling pass did not trace the shipped wrapper-selection rule R6.16's own rationale names in full) |
 
+**Correction (2026-08-18): P6.3's own row landed partially, silently, without ever being recorded in
+this section's own slice-history prose below.** Confirmed live against `ir/lower.rs`: 3 of the row's
+10 desugar constructs are real — `Implies`/`RecordSpread` (`#1146`, 2026-08-10) and `EffectPure`
+(`ir/lower.rs:2130`). The other 7 are still `todo!()` (`ir/lower.rs:2280` `Question`, `:2340` `Is`,
+`:2352` `Expect`, `:2359` `Val`, `:2363` `Wire`, `:2367` `Observation`, `:2371` `Trace`, plus
+`lower_stmt`'s own `:1977` `Statement::Expect`) — but 5 of those 7 (`Expect`/`Val`/`Wire`/
+`Observation`/`Trace`, and the `Statement::Expect` gap) are reachable only when
+`ctx.in_test_body` is set, and `bynk-check/src/checker.rs:1325` is the *only* site that ever sets it —
+meaning those five are unreachable from any shipped handler/provider/agent body today, the same
+permanent-residue shape `project/tests_emit.rs` already has in `AST_IMPORTER_EXCEPTIONS` (§5), not
+open engineering work. Only **`Question`** and **`Is`** are real, production-reachable gaps — and per
+the two corrections above, they are the actual load-bearing prerequisite blocking `IrItem::Provider`
+(P6.14/#1186) from getting a real call site, and by the same reasoning would block any future
+`IrItem::Agent`/`Service` full-body cutover and the still-unlanded P6.2 emitter-side `Call`/`Lambda`
+dispatch cutover (`lower_method_call`/`lower_call`, `emitter/lower.rs:1449,4166`, still 100%
+raw-AST-driven — `bynk-emit::ir::lower` itself has had a fully `Callee`-driven Call/Lambda/Variant
+lowering since `a2bac9a8`/2026-08-09, but the emitter never calls into it). A slice proposal for
+`Question` should expect a real open design question, not a mechanical port: the shipped desugar
+(`emitter/lower.rs:1012-1042`) branches three ways on the operand's checked type, so it needs its own
+settled `IrExprKind` shape decided first, the same way #1225 settled `Ok`/`Err`/`Some`/`None`'s
+identity question before building it. `Is` additionally needs R5.9/R5.10 un-deferred (#1157's own
+Decision D) before it can land.
+
 **Completion probe:** `ast_importers` = **0** (§5) — live today at **9**, gated
 (`greenfield_status_table_is_current`). §5's own P6.9 correction (#1167) named why the prior,
 unexcluded crate-wide count could never reach 0 while `bynk-emit::ir` exists at all; #1176 closed that
@@ -503,7 +526,43 @@ multi-actor-sum), `given` cross-context qualification (`IrHandler::given` is bar
 `emit_agent`, not `emit_service`) all stay deferred. `ast_importers` unaffected.
 
 **`Provider` remains entirely unscoped** — the deferral above still stands; no issue or PR has attempted
-it since. (Superseded below: `Provider`'s own `given`/deps wiring landed as #1200.)
+it since. (Superseded below: `Provider`'s own `given`/deps wiring landed as #1200; superseded further
+by P6.14/#1186 below — the structural `IrItem::Provider` build did land, just with no emitter call
+site yet.)
+
+**Correction (2026-08-18): `IrItem::Provider` is no longer unbuilt — it has no emitter call site,
+which is a different, narrower claim.** P6.14 (#1186, `e87691ff`, 2026-08-12) landed
+`IrItem::Provider{def, cap, body: ProviderBody}` (`ir.rs:855-875`) with `ProviderBody::Bynk{given,
+ops: Vec<ProviderOpIr>}`/`ProviderBody::External{given}`, and `lower_provider_item_ir`/
+`lower_provider_op_ir` (`ir/lower.rs:1698,1719`) do lower a provider op's real body through
+`lower_expr_ir`, not just its signature. This landed *before* §3.7 (Q7)'s own snapshot date but was
+never folded into this doc's prose — confirmed live: `IrItem::Provider`/`lower_provider_item_ir`/
+`lower_provider_op_ir` have zero references anywhere in `emitter*.rs`/`project.rs` outside comments
+and `ir/lower.rs`'s own unit tests. The reason is named in `lower_provider_op_ir`'s own doc comment:
+`lower_expr_ir` still `todo!()`s on `ExprKind::Question` and `ExprKind::Is`, and a real provider op
+body routinely uses `?`. So the accurate status is: **built and tested, blocked on the same
+`Question`/`Is` gap this section's own P6.3 row left open** (see the P6.3 correction below), not
+"unscoped." Wiring a real call site at `project.rs`'s provider-instantiation site is real,
+well-defined future work once that gap closes — not a fresh design question the way the original
+build was.
+
+**Correction (2026-08-18): #1232/#1233 landed the event-subscriber envelope decision this section's
+own fifteenth-slice entry below still describes as open, and did so with evidence worth recording
+here.** `project.rs`'s `wants_envelope` (event-fanout envelope-forwarding decision) now reads a new
+project-wide `EventSubscriberShape` accumulator, populated at each unit's own check time — but that
+accumulator is a *bespoke*, purpose-built raw-AST walk (`project.rs:1266`, populated inside
+`check_unit_files`'s per-file loop), not a read off `IrItem::Service`/`ProtocolIr::Events`, even
+though the latter already carries materially the same two facts (`ProtocolIr::Events`'s
+`schema_dispatch: Option<SchemaVersionPattern>` field, `ir.rs:1018,1050`). The reason, confirmed by
+grep: `IrItem::Service`/`lower_service_item_ir` have **zero** shipped emitter call sites anywhere —
+the only two references outside `ir/lower.rs` itself are comments in `emitter.rs:420` and
+`emitter/wrangler.rs:46` explaining why those sites *don't* use it. This is independent, corroborating
+evidence for the same finding P6.14/#1186's own correction above makes for `Provider`: this track has
+now built real `IrItem` data for `Service` and `Provider` that nothing in the shipped emitter actually
+reads yet, and new slices are choosing to build fresh bespoke plumbing around that gap rather than
+close it. See the fresh completion-plan work opened after this landing for a proposed sequencing that
+treats closing the `Question`/`Is` gap as the load-bearing prerequisite for finally giving both real
+call sites.
 
 **Slice 6 (`project.rs` cleanup) is not yet ready, contrary to this table's own "once (1)–(5) land,
 whatever's left here is residue" framing.** A scoping pass (2026-08-14) found `project.rs` holds zero
@@ -675,6 +734,28 @@ field. `ast_importers` unaffected — `workers_entry.rs` remains counted regardl
 untouched AST-declaration reads survive elsewhere in the file (its cron/queue-route and actor-seam
 matches among them); real coupling removed at both call sites even though the file's own count doesn't
 move, the same shape nearly every slice in this section shows.
+
+**Sixteenth: the other half of slice 5 — the event-subscriber envelope decision — scoped in full and
+landed (#1232, PR #1233), closing the fifteenth entry's own "real, separate, not-yet-proposed work"
+above.** `EventSubscriberShape` (`project.rs:1266`), a small plain struct capturing
+`two_param_handler`/`schema_dispatch` at each unit's own check time, is exactly the "new project-wide
+accumulator sized comparably to `unit_callees`" the fifteenth entry called for — threaded
+`check_unit_files` → `RunChecks::Checked` → `build_output` → `emit_composition_root`, the same three-hop
+shape `unit_callees` (#1202) established. `wants_envelope` now reads it instead of a different,
+already-consumed unit's raw `UnitTable`. Review found the fix's zero-diff bless proved only the
+`two_param_handler` half of the predicate; a follow-up fixture
+(`1232_events_envelope_schema_dispatch_bare`) pins the `schema_dispatch` half specifically, confirmed
+to fail when that disjunct is reverted. `ast_importers` unaffected (`project.rs` was already counted).
+**Worth recording as its own finding, not just a landed slice:** this is the *second* time in this
+track a fresh accumulator got built to answer a cross-unit question `IrItem::Service` already carries
+the data for (`ProtocolIr::Events`'s `schema_dispatch` field, `ir.rs:1050`) — because
+`IrItem::Service`/`lower_service_item_ir` still have zero shipped emitter call sites, the same gap the
+`@cache`/`@limit` slice immediately above hit and the same one P6.14/#1186's `IrItem::Provider`
+correction (§6, "not yet ready" entry above) independently confirms for `Provider`. A future slice
+giving `IrItem::Service` its first real emitter call site (gated, per that correction, on closing the
+`Question`/`Is` gap in `lower_expr_ir` first) would let this accumulator — and the `@cache`/`@limit`
+readers above — collapse into ordinary IR reads instead of each inventing its own project-wide
+plumbing.
 
 ---
 
