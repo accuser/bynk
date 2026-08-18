@@ -2292,18 +2292,29 @@ fn emit_project_imports(
     // Events track, slice 0 (spine #936): the bare event-type names this
     // context's own `from Events(E)` service headers name — see the
     // Workers type-only-import narrowing below.
+    // P6.24a/P6.19: reads the protocol's own resolved `ProtocolIr::Events`
+    // instead of matching `ServiceProtocol::Events { event_type:
+    // TypeRef::Named(id), .. }` directly — a resolve miss (`lower_protocol_
+    // ir_from_commons` degrades to `Ty::Unit` on one, never panics) is
+    // indistinguishable from a legitimately non-`Named` header, so falls
+    // through to `None` exactly like the raw match's own `_ => None` arm
+    // did, not a new failure mode.
     let subscribed_event_type_names: HashSet<String> = commons
         .commons
         .items
         .iter()
         .filter_map(|item| match item {
-            CommonsItem::Service(s) => match &s.protocol {
-                ServiceProtocol::Events {
-                    event_type: TypeRef::Named(id),
-                    ..
-                } => Some(id.name.clone()),
-                _ => None,
-            },
+            CommonsItem::Service(s) => {
+                let crate::ir::ProtocolIr::Events { event, .. } =
+                    crate::ir::lower::lower_protocol_ir_from_commons(&s.protocol, commons)
+                else {
+                    return None;
+                };
+                match &*commons.tys().get(event) {
+                    Ty::Named { name, .. } => Some(name.clone()),
+                    _ => None,
+                }
+            }
             _ => None,
         })
         .collect();
@@ -2479,11 +2490,17 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         // (the `?`-Option lift makes a bare `fn -> HttpResult[T]` emit
         // `HttpResult.NotFound`) — the structural scan covers both, closing the
         // free-fn gap the single-file path already handles.
+        // P6.24a/P6.19: `h.kind`/`s.protocol` read through the IR-native
+        // `IrHandlerKind`/`ProtocolIr` readers below — pure syntax, no body
+        // lowering, safe regardless of the still-open `Question`/`Is` gap
+        // (design/tracks/the-ir.md's own P6.3 correction).
         let has_http = commons.commons.items.iter().any(|i| match i {
-            CommonsItem::Service(s) => s
-                .handlers
-                .iter()
-                .any(|h| matches!(h.kind, HandlerKind::Http { .. })),
+            CommonsItem::Service(s) => s.handlers.iter().any(|h| {
+                matches!(
+                    crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                    crate::ir::IrHandlerKind::Http { .. }
+                )
+            }),
             _ => false,
         }) || file_mentions_http_result(commons);
         // A `from queue` `on message` is the queue consumer (imports `QueueResult`);
@@ -2491,10 +2508,15 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         // is not a queue concern.
         let has_queue = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => {
-                !matches!(s.protocol, ServiceProtocol::WebSocket { .. })
-                    && s.handlers
-                        .iter()
-                        .any(|h| matches!(h.kind, HandlerKind::Message))
+                !matches!(
+                    crate::ir::lower::lower_protocol_ir_from_commons(&s.protocol, commons),
+                    crate::ir::ProtocolIr::WebSocket { .. }
+                ) && s.handlers.iter().any(|h| {
+                    matches!(
+                        crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                        crate::ir::IrHandlerKind::Message
+                    )
+                })
             }
             _ => false,
         });
@@ -2577,10 +2599,12 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         // hosting agent share the one Worker module, so these land in one
         // `handlers.ts`.)
         let hosts_ws_open = commons.commons.items.iter().any(|i| match i {
-            CommonsItem::Service(s) => s
-                .handlers
-                .iter()
-                .any(|h| matches!(h.kind, HandlerKind::Open)),
+            CommonsItem::Service(s) => s.handlers.iter().any(|h| {
+                matches!(
+                    crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                    crate::ir::IrHandlerKind::Open
+                )
+            }),
             _ => false,
         });
         if workers && hosts_ws_open {
@@ -2593,10 +2617,15 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         // `webSocketClose`.
         let hosts_ws_inbound = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => {
-                matches!(s.protocol, ServiceProtocol::WebSocket { .. })
-                    && s.handlers
-                        .iter()
-                        .any(|h| matches!(h.kind, HandlerKind::Message | HandlerKind::Close))
+                matches!(
+                    crate::ir::lower::lower_protocol_ir_from_commons(&s.protocol, commons),
+                    crate::ir::ProtocolIr::WebSocket { .. }
+                ) && s.handlers.iter().any(|h| {
+                    matches!(
+                        crate::ir::lower::lower_handler_kind_ir(&h.kind),
+                        crate::ir::IrHandlerKind::Message | crate::ir::IrHandlerKind::Close
+                    )
+                })
             }
             _ => false,
         });

@@ -36,9 +36,9 @@ use crate::emitter::{
 use crate::ir::{
     ActorBinder, ActorSeamIr, BindingMode, CacheIr, CapRefIr, CommitShape, ConnectionBinder,
     ConstVal, CorsIr, EventPatternIr, EventPatternValueIr, Exhaustive, FnSig, GlobalRef, IndexIr,
-    IrArm, IrBinOp, IrExpr, IrExprKind, IrHandler, IrInterpPart, IrItem, IrPat, IrPredicate,
-    IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody, ProviderOpIr, SecurityIr,
-    StoreFieldIr, StoreKindIr, TypeShape,
+    IrArm, IrBinOp, IrExpr, IrExprKind, IrHandler, IrHandlerKind, IrHttpMethod, IrInterpPart,
+    IrItem, IrPat, IrPredicate, IrStmt, MatchForm, OpSig, PolicyIr, ProtocolIr, ProviderBody,
+    ProviderOpIr, SecurityIr, StoreFieldIr, StoreKindIr, TypeShape,
 };
 
 /// The lowering pass's own working state: the certified program's typed
@@ -417,7 +417,7 @@ pub(crate) fn lower_handler_ir(
     let commit = lower_commit_shape_ir(&h.body, invariants, transitions, emits, program);
     let body = lower_handler_body_ir(h, store_cells, state_ty, program);
     IrHandler {
-        kind: h.kind.clone(),
+        kind: lower_handler_kind_ir(&h.kind),
         params,
         given,
         // `h.by_clause.is_none()` was just asserted above — always empty,
@@ -711,7 +711,7 @@ pub(crate) fn lower_service_handler_ir(
     let commit = lower_commit_shape_ir(&h.body, &[], &[], emits, program);
     let body = lower_service_handler_body_ir(h, binder.as_ref(), connection.as_ref(), program);
     IrHandler {
-        kind: h.kind.clone(),
+        kind: lower_handler_kind_ir(&h.kind),
         params,
         given,
         actors,
@@ -1308,7 +1308,22 @@ pub(crate) fn lower_protocol_ir(
     protocol: &ServiceProtocol,
     program: &CheckedProgram,
 ) -> ProtocolIr {
-    let cx = LowerIrCtx::new(program, HashSet::new());
+    lower_protocol_ir_from_commons(protocol, program.program())
+}
+
+/// P6.24a: a `TypedCommons`-only sibling of [`lower_protocol_ir`], the same
+/// split [`lower_op_sig_ir`]/[`lower_op_sig_ir_from_commons`] already
+/// established — for a call site holding only a unit's own `TypedCommons`,
+/// never a `&CheckedProgram` (`emitter.rs`'s `emit_project_imports`, a
+/// header-import-collection pass that runs well outside the per-declaration
+/// emission loop any `CheckedProgram` is threaded through). Sound for the
+/// identical reason: this function never calls `LowerIrCtx::expr_ty`, the
+/// one method whose `.expect()`-panic needs a genuinely certified program.
+pub(crate) fn lower_protocol_ir_from_commons(
+    protocol: &ServiceProtocol,
+    commons: &TypedCommons,
+) -> ProtocolIr {
+    let cx = LowerIrCtx::from_commons(commons, HashSet::new());
     match protocol {
         ServiceProtocol::Call => ProtocolIr::Call,
         ServiceProtocol::Http => ProtocolIr::Http,
@@ -1735,6 +1750,36 @@ pub(crate) fn lower_fn_sig_ir_from_types(
         has_self: f.has_self,
         params,
         return_ty,
+    }
+}
+
+/// P6.24a: pure, unconditional [`HandlerKind`] → [`IrHandlerKind`]
+/// conversion — every field is already fully resolved at parse time, so
+/// unlike almost every other function in this module this one takes no
+/// `&CheckedProgram`/`&TypedCommons` at all and can never miss.
+pub(crate) fn lower_handler_kind_ir(k: &HandlerKind) -> IrHandlerKind {
+    match k {
+        HandlerKind::Call => IrHandlerKind::Call,
+        HandlerKind::Http { method, path } => IrHandlerKind::Http {
+            method: lower_http_method_ir(*method),
+            path: path.clone(),
+        },
+        HandlerKind::Cron { expr } => IrHandlerKind::Cron { expr: expr.clone() },
+        HandlerKind::Message => IrHandlerKind::Message,
+        HandlerKind::Open => IrHandlerKind::Open,
+        HandlerKind::Close => IrHandlerKind::Close,
+        HandlerKind::Event => IrHandlerKind::Event,
+    }
+}
+
+/// [`lower_handler_kind_ir`]'s own `HttpMethod` half.
+fn lower_http_method_ir(m: HttpMethod) -> IrHttpMethod {
+    match m {
+        HttpMethod::Get => IrHttpMethod::Get,
+        HttpMethod::Post => IrHttpMethod::Post,
+        HttpMethod::Put => IrHttpMethod::Put,
+        HttpMethod::Patch => IrHttpMethod::Patch,
+        HttpMethod::Delete => IrHttpMethod::Delete,
     }
 }
 
@@ -6443,7 +6488,7 @@ agent Ledger {
             "Decision D: an agent handler's own binder is always None, pinned explicitly rather \
              than left to omission"
         );
-        assert_eq!(ir.kind, HandlerKind::Call);
+        assert_eq!(ir.kind, IrHandlerKind::Call);
         assert!(matches!(ir.commit, CommitShape::ReadOnly));
         assert_eq!(ir.method_name.as_deref(), Some("peek"));
         assert!(ir.effectful, "peek returns Effect[Int]");
@@ -7182,8 +7227,8 @@ service Api from http {
         assert!(matches!(protocol, ProtocolIr::Http));
         assert_eq!(
             handlers[0].kind,
-            HandlerKind::Http {
-                method: bynk_syntax::ast::HttpMethod::Get,
+            IrHandlerKind::Http {
+                method: IrHttpMethod::Get,
                 path: "/ping".to_string(),
             },
             "the route binding lives per-handler — this is why ProtocolIr::Http itself \
@@ -7405,7 +7450,7 @@ service Sweeper from cron {
         assert!(matches!(protocol, ProtocolIr::Cron));
         assert_eq!(
             handlers[0].kind,
-            HandlerKind::Cron {
+            IrHandlerKind::Cron {
                 expr: "*/5 * * * *".to_string()
             }
         );
