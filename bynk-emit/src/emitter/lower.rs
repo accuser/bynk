@@ -2161,12 +2161,21 @@ fn lower_method_call(
     // `__makeAgent(<key>).method(args, deps)`. Works in service and
     // agent-handler bodies (deps is the handler's deps parameter) and
     // test bodies (deps is the locally-built makeTestDeps record).
+    //
+    // P6.21 (partial, continued): reads `Callee::Agent` (P6.0) instead of
+    // `cx.local_agents.contains(&name.name)` — the checker's own
+    // `check_method_call` records this the moment a receiver's *checked
+    // type* resolves to an agent, uniformly for this shape, the let-bound
+    // shape below, and the self-agent WS-transfer case inside this branch —
+    // closing a real instance of R6.5's name-matched-receiver defect class
+    // (a free function or local sharing an agent's own name could misfire
+    // the old check; the checker's own type-driven resolution cannot).
     if let ExprKind::Call {
         name,
         args: ctor_args,
         ..
     } = &receiver.kind
-        && cx.local_agents.contains(&name.name)
+        && matches!(cx.commons().callee(e.id), Some(Callee::Agent { .. }))
     {
         // v0.104 (real-time track slice 3b): when lowering a `from websocket`
         // `on open` body inside its hosting Durable Object, a transfer to the
@@ -2206,8 +2215,16 @@ fn lower_method_call(
     // — the statement emitter recorded `x` as an agent variable when
     // it lowered the let. Method calls on `x` go straight to the
     // class instance with `deps` threaded through.
+    //
+    // P6.21 (partial, continued): reads `Callee::Agent` instead of
+    // `cx.local_agent_vars.contains_key(&id.name)` — see the inline
+    // agent-invocation branch above. `cx.local_agent_vars` stays: it still
+    // answers "which agent does this bind name refer to" (needed for
+    // `record_agent_call`'s own bookkeeping and the #908 rename-resolution
+    // below), a different question from "is this receiver really an agent
+    // instance at all," which `Callee` now settles.
     if let ExprKind::Ident(id) = &receiver.kind
-        && cx.local_agent_vars.contains_key(&id.name)
+        && matches!(cx.commons().callee(e.id), Some(Callee::Agent { .. }))
     {
         if let Some(agent) = cx.local_agent_vars.get(&id.name).cloned() {
             cx.record_agent_call(&agent, &method.name);
