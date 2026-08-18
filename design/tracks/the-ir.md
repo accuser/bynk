@@ -899,6 +899,35 @@ first case in this track where a proposed row's own answer turns out to be "alre
 build," the same "state the delta explicitly, don't imply it" discipline this track's own §5 already
 established for slices that land real conversions with zero probe movement.
 
+**Twenty-second: a bare `store Map` field used as a value gets a real `IrExprKind::StoreQuery`
+(P6.20-pre), closing a gap the completion plan flagged but did not resolve.** The plan's own risk
+section called for verifying, empirically, before P6.20 (a real `IrItem::Agent`/`Provider` enumerator)
+that fixture-corpus bodies don't hit `lower_ident_ir`'s other fallback `todo!()`s beyond
+`Question`/`Is`. That verification found 4 real panics across the full `bynkc` e2e corpus — `Sales`/
+`orders` (`231_query_joins`, a bare argument to `joinOn`, ADR 0120's own "not a method receiver" case),
+`Inventory`/`items` and `Ledger`/`balances` (`353_map_entries_query`, `.entries`/`.keys`/`.values`,
+ADR 0184) — all reaching the same root cause: only `Cell` store fields were ever bound into
+`lower_handler_body_ir`'s own scope (v0.81's implicit-deref rule); a `Map` field is not a value type at
+all (`StoreField`'s own doc comment), so a bare reference to one fell through `lower_ident_ir`'s ladder
+into a `todo!()` believed, until this probe, structurally unreachable. Fixed by mirroring the checker's
+own dispatch (`checker.rs:3477-3481`'s `ExprKind::Ident` arm, `Ty::Query(V)`, ADR 0120) rather than
+widening the `Cell`-only binding: a new `LowerIrCtx.store_queryable` table, set once by
+`lower_handler_body_ir`, and a new `IrExprKind::StoreQuery(String)` checked immediately after the
+existing `cx.lookup` guard, matching the checker's own precedence exactly. `Set`/`Cache`/`Log` fields
+stay excluded — the checker itself never accepts a bare reference to any of the three, so that residual
+`todo!()` case is still genuinely unreachable, not merely untested (`Log` was in the first draft's own
+`store_queryable`, on the strength of the shipped emitter's own `is_agent_store_log`; review of #1240
+found `bynk-check` itself never actually special-cases a bare `Log` value, so it was dropped alongside
+`Set`/`Cache` before merge — same review also caught and fixed the dispatch-ordering bug, checked last
+in the first draft rather than right after `cx.lookup`, which silently mis-resolved a store field
+colliding with a same-named free fn or nullary variant). Re-running the same panic probe against the
+full corpus afterward found zero remaining panics. Dormant as of landing, same posture as
+`Question`/`Is`. Full reasoning: `design/pending/p6-20-pre-store-query-ir-lowering.md`'s own ADR.
+
+This closes the completion plan's own open risk item ("verify empirically... before P6.20") with a
+real answer rather than an assumption — P6.20 itself is no longer blocked on an unknown safety gap,
+though it remains a separate, not-yet-started slice.
+
 ---
 
 ## 7. Out of scope — forward references, not refusals

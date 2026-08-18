@@ -94,6 +94,17 @@ pub(crate) struct LowerIrCtx<'a> {
     /// matches the enclosing function's own declared error type, or needs a
     /// declared `embeds` conversion first.
     return_ty: Option<TyId>,
+    /// P6.20-pre: the enclosing agent handler's own `store Map`/`store Log`
+    /// field names — the ones [`lower_handler_body_ir`] deliberately does
+    /// *not* bind into `scopes` (only `Cell` fields are, v0.81's "implicit
+    /// deref" rule) because they are not ordinary locals: a bare reference
+    /// lowers to [`crate::ir::IrExprKind::StoreQuery`], not
+    /// [`crate::ir::IrExprKind::Local`]. Set once via
+    /// [`LowerIrCtx::set_store_queryable`], empty (and never consulted) for
+    /// every other construction site — mirrors [`LowerIrCtx::return_ty`]'s
+    /// own "`None`/empty everywhere but the one real body-lowering entry
+    /// point that needs it" shape.
+    store_queryable: HashSet<String>,
 }
 
 impl<'a> LowerIrCtx<'a> {
@@ -112,6 +123,7 @@ impl<'a> LowerIrCtx<'a> {
             type_vars,
             tmp_counter: 0,
             return_ty: None,
+            store_queryable: HashSet::new(),
         }
     }
 
@@ -123,6 +135,14 @@ impl<'a> LowerIrCtx<'a> {
     /// crash.
     fn set_return_ty(&mut self, ty: Option<TyId>) {
         self.return_ty = ty;
+    }
+
+    /// P6.20-pre: called once, by [`lower_handler_body_ir`] only, right
+    /// after seeding `self`/`store_cells` — see
+    /// [`LowerIrCtx::store_queryable`]'s own doc comment for why this is a
+    /// separate table from `scopes` rather than an ordinary [`Self::bind`].
+    fn set_store_queryable(&mut self, names: HashSet<String>) {
+        self.store_queryable = names;
     }
 
     /// P6.15/P6.16 (review of #1238): the one shared synthetic-temp minter
@@ -386,15 +406,22 @@ pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
 /// of this same slice — this function's only job is making both reachable
 /// on a handler body at all, by seeding the scope [`lower_ident_ir`] needs
 /// to classify `self`/a store cell as `Local` rather than falling through to
-/// its own unresolved-ident `todo!()`.
+/// its own unresolved-ident `todo!()`. `store_queryable` (P6.20-pre) is the
+/// same idea one step further: a bare `store Map`/`store Log` field is not a
+/// `Local` (it is not bound into `scopes` at all — a `Map`/`Log` is not a
+/// value type, [`StoreField`]'s own doc comment), so [`lower_ident_ir`]
+/// needs a second table to classify it as [`crate::ir::IrExprKind::StoreQuery`]
+/// instead of falling through to the same `todo!()`.
 fn lower_handler_body_ir(
     h: &Handler,
     store_cells: &HashMap<String, TyId>,
+    store_queryable: &HashSet<String>,
     state_ty: TyId,
     program: &CheckedProgram,
 ) -> IrExpr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
     cx.set_return_ty(cx.resolve_type_ref(&h.return_type));
+    cx.set_store_queryable(store_queryable.clone());
     cx.bind("self".to_string(), state_ty);
     for (name, ty) in store_cells {
         cx.bind(name.clone(), *ty);
@@ -443,6 +470,7 @@ fn lower_handler_body_ir(
 pub(crate) fn lower_handler_ir(
     h: &Handler,
     store_cells: &HashMap<String, TyId>,
+    store_queryable: &HashSet<String>,
     state_ty: TyId,
     invariants: &[IrPredicate],
     transitions: &[IrPredicate],
@@ -465,7 +493,7 @@ pub(crate) fn lower_handler_ir(
     let (params, given, ret, effectful) = lower_handler_signature_ir(h, &cx);
     let emits = block_uses_emit(&h.body, &program.program().callees);
     let commit = lower_commit_shape_ir(&h.body, invariants, transitions, emits, program);
-    let body = lower_handler_body_ir(h, store_cells, state_ty, program);
+    let body = lower_handler_body_ir(h, store_cells, store_queryable, state_ty, program);
     IrHandler {
         kind: lower_handler_kind_ir(&h.kind),
         params,
@@ -1574,6 +1602,30 @@ pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -
             _ => None,
         })
         .collect();
+    // P6.20-pre (review of #1240): only `Map` fields, not `Log`/`Set`/
+    // `Cache`. The shipped emitter's own `is_agent_store_log`
+    // (`emitter/lower.rs:4117`, "v0.95 ADR 0121") suggested `Log` belonged
+    // here alongside `Map` — but `bynk-check` itself never special-cases
+    // `StoreField::Log` in a bare-value or `FieldAccess` dispatch the way it
+    // does `StoreField::Map` (`checker.rs:3477-3481` for the bare-value
+    // case, `checker/expressions.rs:2592` for `.entries`/`.keys`/`.values`,
+    // ADR 0184); grep confirms every other `StoreField::Log` site in
+    // `bynk-check` is an unrelated `:=`-target check, a method dispatch, or
+    // the table build. A bare `store Log` field used as a value is
+    // therefore not checker-legal today (`bynk.resolve.unknown_name` on a
+    // certified program) — the same bucket `Set`/`Cache` are already in,
+    // for the same reason: leaving it out of this table and falling through
+    // to `lower_ident_ir`'s own `todo!()` is correct, structurally
+    // unreachable rather than merely unhandled. If a future checker slice
+    // makes a bare `Log` value legal, this table (and `ir.rs`'s own
+    // `StoreQuery` doc comment) need revisiting alongside it.
+    let store_queryable: HashSet<String> = state
+        .iter()
+        .filter_map(|f| match f.kind {
+            StoreKindIr::Map(_, _) => Some(f.field.clone()),
+            _ => None,
+        })
+        .collect();
     let state_ty = program.program().ty_intern.intern(Ty::Named {
         name: format!("{}State", agent.name.name),
         kind: checker::NamedKind::Record,
@@ -1596,6 +1648,7 @@ pub(crate) fn lower_agent_item_ir(agent: &AgentDecl, program: &CheckedProgram) -
             lower_handler_ir(
                 h,
                 &store_cells,
+                &store_queryable,
                 state_ty,
                 &invariants,
                 &transitions,
@@ -3240,6 +3293,24 @@ fn lower_ident_ir(name: &str, cx: &LowerIrCtx) -> IrExprKind {
     if cx.lookup(name).is_some() {
         return IrExprKind::Local(name.to_string());
     }
+    // P6.20-pre (review of #1240): checked immediately after `cx.lookup`,
+    // matching the checker's own precedence — `checker.rs:3477-3481` runs
+    // `ctx.lookup(...).is_none() && ctx.store_fields.get(...)` and returns
+    // *before* `check_ident` (where a free-fn reference or a nullary variant
+    // resolve) ever sees the name; the shipped emitter's own
+    // `is_agent_store_map`/`is_agent_store_log` (`emitter/lower.rs:4111,4117`)
+    // put the same check ahead of its own variant-construction branch. This
+    // was originally checked *last* here, which only happens to agree with
+    // the checker when no other candidate shares the store field's name — a
+    // store `Map` field colliding with a free fn of the same name hit the
+    // free-fn `todo!()` below instead of `StoreQuery`, and colliding with a
+    // nullary variant silently returned the wrong node (`Global`) instead.
+    // The `cx.lookup(name).is_some()` guard just above already gives this
+    // check the one shadowing property it actually needs (a local or `Cell`
+    // field wins), so moving it here loses nothing.
+    if cx.store_queryable.contains(name) {
+        return IrExprKind::StoreQuery(name.to_string());
+    }
     if cx.program.fns.contains_key(name) {
         todo!(
             "bare ident `{name}` names a free function used as a value — Callee/Lambda-adjacent, \
@@ -4812,6 +4883,7 @@ agent Counter {
         let _ = lower_handler_ir(
             handler,
             &HashMap::new(),
+            &HashSet::new(),
             program.program().ty_intern.intern(Ty::Unit),
             &[],
             &[],
@@ -7169,6 +7241,19 @@ agent Inventory {
             .collect()
     }
 
+    /// [`lower_handler_ir`]'s own `store_queryable` parameter (P6.20-pre) —
+    /// the `Map` sibling of [`agent_store_cells`] above. `Log` is not
+    /// included — see [`lower_agent_item_ir`]'s own `store_queryable`
+    /// construction for why (review of #1240).
+    fn agent_store_queryable(_program: &CheckedProgram, agent: &AgentDecl) -> HashSet<String> {
+        agent
+            .store_fields
+            .iter()
+            .filter(|f| f.kind.head.name == "Map")
+            .map(|f| f.name.name.clone())
+            .collect()
+    }
+
     #[test]
     fn invariant_ir_references_a_store_cell_by_bare_name() {
         let program = checked_context_program(
@@ -7520,6 +7605,18 @@ provides Clock = FixedClock {
   }
 }
 
+fn passThroughQuery(q: Query[Int]) -> Query[Int] {
+  q
+}
+
+-- P6.20-pre (review of #1240): a free fn sharing a name with `Ledger`'s own
+-- `entries` store field — pins that the store-field dispatch wins (checked
+-- immediately after `cx.lookup`, ahead of the free-fn probe), not the other
+-- way around.
+fn entries(n: Int) -> Int {
+  n
+}
+
 agent Ledger {
   key id: String
   store balance: Cell[Int] = 0
@@ -7543,6 +7640,35 @@ agent Ledger {
     let _ <- entries.put(k, v)
     Effect.pure(())
   }
+
+  -- P6.20-pre: `.keys` on a bare store `Map` field — the FieldAccess
+  -- receiver-position shape (ADR 0184) that panicked as `Inventory`/`items`,
+  -- `Ledger`/`balances` in the real fixture corpus.
+  on call entryKeys() -> Effect[Query[String]] {
+    Effect.pure(entries.keys)
+  }
+
+  -- P6.20-pre: a bare store `Map` field passed as a plain argument — the
+  -- argument-position shape (ADR 0120) that panicked as `Sales`/`orders` in
+  -- the real fixture corpus (`lines.joinOn(orders, ...)`).
+  on call passEntries() -> Effect[Query[Int]] {
+    Effect.pure(passThroughQuery(entries))
+  }
+
+  -- P6.20-pre (review of #1240): the store field `entries` and the free fn
+  -- `entries` (declared above, colliding by name) both exist — the checker
+  -- resolves the bare reference to the store field's own `Query[Int]`
+  -- before `check_ident` (where a free-fn reference would resolve) ever
+  -- sees it, so this must lower to StoreQuery, not panic on the free-fn arm.
+  on call bareEntriesCollidesWithAFreeFn() -> Effect[Query[Int]] {
+    Effect.pure(entries)
+  }
+
+  -- P6.20-pre (review of #1240): a handler param named `entries` shadows
+  -- the store field of the same name — must lower to Local, not StoreQuery.
+  on call shadowedEntries(entries: Query[Int]) -> Effect[Query[Int]] {
+    Effect.pure(entries)
+  }
 }
 "#,
         )
@@ -7561,10 +7687,12 @@ agent Ledger {
         let agent = find_agent(program, "Ledger");
         let handler = find_handler(agent, handler_name);
         let store_cells = agent_store_cells(program, agent);
+        let store_queryable = agent_store_queryable(program, agent);
         let state_ty = agent_state_ty(program, "Ledger");
         lower_handler_ir(
             handler,
             &store_cells,
+            &store_queryable,
             state_ty,
             invariants,
             transitions,
@@ -7739,6 +7867,134 @@ agent Ledger {
         );
         assert!(matches!(&args[0].kind, IrExprKind::Local(n) if n == "k"));
         assert!(matches!(&args[1].kind, IrExprKind::Local(n) if n == "v"));
+    }
+
+    #[test]
+    fn handler_ir_bare_store_map_field_as_field_access_receiver_lowers_to_store_query() {
+        // P6.20-pre: `entries.keys` — `entries` is the *receiver* of a
+        // `FieldAccess`, not a method-call receiver (`Callee`-classified
+        // calls are the only receiver `lower_call_ir` excludes), so before
+        // this slice it fell straight through `lower_expr_ir`'s ordinary
+        // `ExprKind::Ident` arm into `lower_ident_ir`'s unresolved-ident
+        // `todo!()` — reproducing the real panic found empirically against
+        // `353_map_entries_query`'s `Inventory`/`items` and `Ledger`/
+        // `balances` agents.
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "entryKeys");
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Pure { value } = &value.kind else {
+            panic!(
+                "expected Effect.pure(...) to lower to Pure, got {:?}",
+                value.kind
+            )
+        };
+        let IrExprKind::Field { base, field } = &value.kind else {
+            panic!(
+                "expected entries.keys to lower to Field, got {:?}",
+                value.kind
+            )
+        };
+        assert_eq!(field, "keys");
+        assert!(
+            matches!(&base.kind, IrExprKind::StoreQuery(name) if name == "entries"),
+            "expected the receiver `entries` to lower to StoreQuery, got {:?}",
+            base.kind
+        );
+    }
+
+    #[test]
+    fn handler_ir_bare_store_map_field_as_plain_argument_lowers_to_store_query() {
+        // P6.20-pre: `passThroughQuery(entries)` — `entries` at a plain
+        // argument position, the exact shape that panicked as `Sales`/
+        // `orders` (`lines.joinOn(orders, ...)`) in the real fixture corpus.
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "passEntries");
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Pure { value } = &value.kind else {
+            panic!(
+                "expected Effect.pure(...) to lower to Pure, got {:?}",
+                value.kind
+            )
+        };
+        let IrExprKind::Call { args, .. } = &value.kind else {
+            panic!(
+                "expected passThroughQuery(entries) to lower to a Call, got {:?}",
+                value.kind
+            )
+        };
+        assert_eq!(args.len(), 1);
+        assert!(
+            matches!(&args[0].kind, IrExprKind::StoreQuery(name) if name == "entries"),
+            "expected the bare argument `entries` to lower to StoreQuery, got {:?}",
+            args[0].kind
+        );
+    }
+
+    #[test]
+    fn handler_ir_bare_store_map_field_wins_over_a_colliding_free_fn_of_the_same_name() {
+        // Review of #1240 (finding 1): the store-field dispatch must be
+        // checked *before* the free-fn probe in `lower_ident_ir`'s own
+        // ladder, matching the checker's own precedence
+        // (`checker.rs:3477-3481` returns before `check_ident` — where a
+        // free-fn reference resolves — ever sees the name). Before that
+        // fix, `entries` colliding with the free fn `entries` declared in
+        // `handler_ir_fixture` hit the free-fn `todo!()` instead.
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "bareEntriesCollidesWithAFreeFn");
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Pure { value } = &value.kind else {
+            panic!(
+                "expected Effect.pure(...) to lower to Pure, got {:?}",
+                value.kind
+            )
+        };
+        assert!(
+            matches!(&value.kind, IrExprKind::StoreQuery(name) if name == "entries"),
+            "expected the store field to win over the colliding free fn, got {:?}",
+            value.kind
+        );
+    }
+
+    #[test]
+    fn handler_ir_a_local_param_shadowing_a_store_map_field_name_lowers_to_local() {
+        // Review of #1240 (finding 1): the `cx.lookup(name).is_some()` guard
+        // at the very top of `lower_ident_ir` is the one shadowing property
+        // the store-field dispatch actually depends on — pin it directly,
+        // independent of where in the ladder the store-field check sits.
+        let program = handler_ir_fixture();
+        let ir = handler_ir_of(&program, "shadowedEntries");
+        let IrExprKind::Block { tail, .. } = &ir.body.kind else {
+            panic!("expected a Block with a tail, got {:?}", ir.body.kind)
+        };
+        let IrExprKind::Return { value } = &tail.kind else {
+            panic!("expected the tail to wrap in Return, got {:?}", tail.kind)
+        };
+        let IrExprKind::Pure { value } = &value.kind else {
+            panic!(
+                "expected Effect.pure(...) to lower to Pure, got {:?}",
+                value.kind
+            )
+        };
+        assert!(
+            matches!(&value.kind, IrExprKind::Local(name) if name == "entries"),
+            "expected the shadowing param to win over the store field, got {:?}",
+            value.kind
+        );
     }
 
     #[test]
