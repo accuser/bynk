@@ -821,9 +821,42 @@ bare Result propagation, declared-embeds conversion), not bless — dormant as o
 `Question` arm yet; P6.2's own emitter-side cutover, P6.21 in the completion plan, still hasn't landed).
 Full reasoning: `design/pending/p6-15-question-ir-lowering.md`'s own ADR before it's consumed at merge.
 
-`Is` remains open — its own R5.9/R5.10 deferral (#1157's own Decision D) is a distinct design question
-this slice does not settle, and per this track's own risk-tracking discipline should be re-verified
-before scoping rather than assumed still to hold.
+**Review of the Nineteenth slice's own PR found five real findings, one a genuine bug — fixed in a
+follow-up landing with the Twentieth slice below, not silently left for a later pass.** The most
+significant: all four `LowerIrCtx::set_return_ty` call sites panicked eagerly on a resolve miss,
+including for a body containing no `?` at all — a live hard-fail on exactly the path
+`lower_service_handler_signature_ir` (a sibling function, same `Handler.return_type` field) already
+documents as miss-possible and degrades gracefully for. `set_return_ty` now takes the resolved `Option`
+directly; every real consumer already handled `None`. Three smaller findings, also fixed: a swapped
+`checker::compatible` argument order in `embed_conversion_ir` (latent, not live — the flipped cases all
+happened to fall through to the same `None` result, but worth matching the checker's own `(operand_err,
+fn_err)` convention regardless); `Return`/`HttpResultNotFound` nodes typed `Unit` instead of the returned
+value's own type, unlike `wrap_body_return`'s established convention; and `Question`'s own synthetic temp
+names being fixed strings rather than routed through a shared counter (`LowerIrCtx::tmp_counter`,
+generalised from `lower_record_spread_ir`'s own pre-existing one) — harmless today, a duplicate-`const`
+hazard once a future printer hoists two `?`s in one function. A fifth finding (test coverage — the
+`Effect[Result[_,_]]` peeling arm and three of the four `set_return_ty` sites were never exercised)
+closed with four new tests. Full detail: `design/pending/p6-15-review-fixes.md`.
+
+**Twentieth: `is`'s real IR desugar lands (P6.16), landed alongside the review-fix above.** Traced the
+shipped `lower_is` directly rather than trusting #1157's own Decision D framing at face value: `lower_is`
+itself constructs only a forced receiver temp (R5.10) and a boolean test, never a narrowing *binding* —
+R5.9's own "narrowing is a scope operation … recorded in the IR" describes a *separate*, later concern
+(how `&&`/`if` apply `is`'s own result to introduce a binding into a following scope,
+`gather_is_bindings_for_emit`), not a prerequisite `Is`'s own lowering needs. So `Is` lowers fully here:
+a `Block` wrapping the forced-temp `Let` and a tail boolean expression, either a new
+`IrExprKind::RefinedCheck` (for `is DeclaredRefinedType` — `refinement`/`base` reused verbatim, the same
+posture `IrPat::Refined` already committed to) or a recursive boolean-test walk,
+`lower_pattern_test_ir`, over `IrPat` (P6.4, real since #1157 but never wired until now) — the IR-native
+sibling of `pattern_match_tests`, reading `IrPat`'s own already-resolved field names/types instead of
+re-deriving them. R5.9's own cross-site narrowing-propagation machinery stays open — a genuinely separate
+design question spanning `&&`/`implies`/`if`, not `Is` alone. Verified by four unit tests (declared
+refined type, bare variant, nested variant proving the field path roots at the resolved payload not the
+bare receiver, or-pattern). Full reasoning: `design/pending/p6-16-is-ir-lowering.md`'s own ADR.
+
+Both slices dormant as of landing — no shipped emitter path reaches `lower_expr_ir`'s `Question`/`Is`
+arms yet (P6.2's own emitter-side cutover, P6.21 in the completion plan, still hasn't landed). Zero-diff
+bless confirmed regardless.
 
 ---
 

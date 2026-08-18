@@ -19,13 +19,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bynk_check::checker::{self, Callee, CheckedProgram, Ty, TyId, TypedCommons, Types};
+use bynk_check::checker::{self, Callee, CheckedProgram, NamedKind, Ty, TyId, TypedCommons, Types};
 use bynk_syntax::ast::{
-    ActorDecl, AgentDecl, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp, EventPattern,
-    EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler, HandlerKind,
-    HttpMethod, InterpPart, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody, Pattern,
-    PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName, ServiceDecl, ServiceProtocol,
-    Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
+    ActorDecl, AgentDecl, BaseType, BinOp, Block, CapRef, CapabilityDecl, CapabilityOp,
+    EventPattern, EventPatternValue, Expr, ExprId, ExprKind, FieldInit, FnDecl, FnName, Handler,
+    HandlerKind, HttpMethod, InterpPart, Invariant, LambdaExpr, LiteralValue, MatchArm, MatchBody,
+    Pattern, PatternBindingKind, ProviderDecl, ProviderOp, QualifiedName, ServiceDecl,
+    ServiceProtocol, Statement, StoreField, Transition, TypeBody, TypeDecl, UnaryOp, expr_children,
 };
 use bynk_syntax::span::Span;
 
@@ -58,19 +58,35 @@ pub(crate) struct LowerIrCtx<'a> {
     program: &'a TypedCommons,
     scopes: Vec<HashMap<String, TyId>>,
     type_vars: HashSet<String>,
-    /// Bumped once per [`lower_record_spread_ir`] call — a fixed temp name
-    /// is unique against every *source-level* name (`__` is unlexable) but
-    /// not against another spread on the same nesting chain (a spread
-    /// inside an override value, e.g. `Point { ...p, x: (Point { ...q, x:
-    /// 0 }).x }`); a monotonic per-function suffix removes that hazard.
-    spread_tmp_counter: usize,
+    /// Bumped once per synthetic temp name this pass mints — originally
+    /// [`lower_record_spread_ir`]-only (`__spread_base_{n}`: a fixed name is
+    /// unique against every *source-level* name, `__` is unlexable, but not
+    /// against another spread on the same nesting chain), generalised by
+    /// P6.15/P6.16 (review of #1238) into the one shared counter every
+    /// synthetic-temp minter uses via [`LowerIrCtx::fresh_tmp`] — `?`'s own
+    /// receiver/error temps and `is`'s own forced-receiver temp included.
+    /// A per-purpose counter (the shape this field started as) only
+    /// guarantees uniqueness *within* one kind of temp; two different kinds
+    /// nested inside each other (a spread inside a `?`'s operand, two `?`s
+    /// in one function) need the same global monotonic guarantee a
+    /// hoisting printer's own flat `const` scope requires.
+    tmp_counter: usize,
     /// P6.15: the enclosing fn/handler/provider-op's own declared return
     /// type, resolved by whichever of the four real body-lowering entry
     /// points (`lower_fn_body_ir`, `lower_handler_body_ir`,
     /// `lower_service_handler_body_ir`, `lower_provider_op_ir`) constructed
     /// this `cx`, via [`LowerIrCtx::set_return_ty`] — `None` for every other
     /// construction site (a signature-only reader, which never lowers an
-    /// expression body and so never reaches `ExprKind::Question`). Mirrors
+    /// expression body and so never reaches `ExprKind::Question`), **and**
+    /// `None` on a genuine resolve miss (review of #1238) — mirroring
+    /// `lower_service_handler_signature_ir`'s own `.unwrap_or_else(|| cx.
+    /// unit_ty())` degrade one call away: a service handler's own
+    /// `return_type` is not checker-guaranteed to resolve (that function's
+    /// own doc comment gives the full grounding), so panicking here would
+    /// turn an existing, accepted, harmless-until-now gap into an eager
+    /// crash on every fn/handler/provider-op body this pass ever lowers,
+    /// including the overwhelming majority that never read `return_ty` at
+    /// all. Every real consumer already handles `None` — mirrors
     /// `bynk-emit/src/emitter/lower.rs`'s own `LowerCtx::return_ty`, the
     /// value [`embed_conversion_ir`] needs for the identical reason that
     /// function's string-emitter sibling, `embed_conversion`, needs
@@ -94,22 +110,32 @@ impl<'a> LowerIrCtx<'a> {
             program: commons,
             scopes: vec![HashMap::new()],
             type_vars,
-            spread_tmp_counter: 0,
+            tmp_counter: 0,
             return_ty: None,
         }
     }
 
     /// P6.15: called once, by a real body-lowering entry point only, right
     /// after resolving its own `return_type` — see [`LowerIrCtx::return_ty`]'s
-    /// own doc comment.
-    fn set_return_ty(&mut self, ty: TyId) {
-        self.return_ty = Some(ty);
+    /// own doc comment. Takes the resolve `Option` directly (review of
+    /// #1238) rather than a caller-side `.unwrap_or_else(|| panic!(..))` —
+    /// see that field's own doc comment for why a miss must degrade, not
+    /// crash.
+    fn set_return_ty(&mut self, ty: Option<TyId>) {
+        self.return_ty = ty;
+    }
+
+    /// P6.15/P6.16 (review of #1238): the one shared synthetic-temp minter
+    /// every caller uses — see [`LowerIrCtx::tmp_counter`]'s own doc comment
+    /// for why a shared counter, not one per purpose, is load-bearing here.
+    fn fresh_tmp(&mut self, prefix: &str) -> String {
+        let n = self.tmp_counter;
+        self.tmp_counter += 1;
+        format!("{prefix}_{n}")
     }
 
     fn fresh_spread_tmp(&mut self) -> String {
-        let n = self.spread_tmp_counter;
-        self.spread_tmp_counter += 1;
-        format!("__spread_base_{n}")
+        self.fresh_tmp("__spread_base")
     }
 
     /// A type reference resolved in this pass's own rigid-variable scope —
@@ -307,13 +333,7 @@ fn wrap_body_return(block: IrExpr) -> IrExpr {
 pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
     let type_vars = fn_rigid_type_vars(f, program.program());
     let mut cx = LowerIrCtx::new(program, type_vars);
-    cx.set_return_ty(cx.resolve_type_ref(&f.return_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): `{}`'s own return type does not resolve in this \
-             pass's own rigid-variable scope, but the checker already accepted this fn body",
-            f.name.display()
-        )
-    }));
+    cx.set_return_ty(cx.resolve_type_ref(&f.return_type));
     // `self` is never in `f.params` (`FnDecl::has_self` gates it) — mirrors
     // `check_fn`'s own binding (`checker.rs`, the `f.has_self` arm): a
     // generic receiver's `self` carries the receiver applied to its own
@@ -374,12 +394,7 @@ fn lower_handler_body_ir(
     program: &CheckedProgram,
 ) -> IrExpr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
-    cx.set_return_ty(cx.resolve_type_ref(&h.return_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): this handler's own return type does not resolve in \
-             this pass's own scope, but the checker already accepted this handler"
-        )
-    }));
+    cx.set_return_ty(cx.resolve_type_ref(&h.return_type));
     cx.bind("self".to_string(), state_ty);
     for (name, ty) in store_cells {
         cx.bind(name.clone(), *ty);
@@ -609,12 +624,7 @@ fn lower_service_handler_body_ir(
     program: &CheckedProgram,
 ) -> IrExpr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
-    cx.set_return_ty(cx.resolve_type_ref(&h.return_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): this handler's own return type does not resolve in \
-             this pass's own scope, but the checker already accepted this handler"
-        )
-    }));
+    cx.set_return_ty(cx.resolve_type_ref(&h.return_type));
     if let Some(connection) = connection {
         cx.bind("connection".to_string(), connection.ty);
     }
@@ -1966,13 +1976,14 @@ fn lower_cap_ref_ir(cap_ref: &CapRef) -> CapRefIr {
 /// against, not a state the checker is known to accept silently.
 fn lower_provider_op_ir(op: &ProviderOp, program: &CheckedProgram) -> ProviderOpIr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
-    cx.set_return_ty(cx.resolve_type_ref(&op.return_type).unwrap_or_else(|| {
-        panic!(
-            "bynk internal error (ADR 0334): provider op `{}`'s own return type does not \
-             resolve in this pass's own scope, but the checker already accepted this op's body",
-            op.name.name
-        )
-    }));
+    // Review of #1238: kept as a graceful degrade, not the panic this
+    // function's own params still use just below (that policy stands for
+    // params — see this function's own doc comment) — set_return_ty's own
+    // `None` case exists specifically so a `?`-adjacent metadata miss never
+    // crashes a body that does not even contain a `?`, and mixing panic/
+    // degrade across the four `set_return_ty` call sites for the same field
+    // is a hazard of its own, not a benefit.
+    cx.set_return_ty(cx.resolve_type_ref(&op.return_type));
     let params: Vec<(String, TyId)> = op
         .params
         .iter()
@@ -2171,7 +2182,7 @@ fn lower_question_ir(inner: &Expr, ty: TyId, span: Span, cx: &mut LowerIrCtx) ->
     let operand_ty = scrutinee.ty;
     let is_option = matches!(&*cx.program.ty_intern.get(operand_ty), Ty::Option(_));
 
-    let value_local = "__question_value".to_string();
+    let value_local = cx.fresh_tmp("__question_value");
     let (ok_tag, err_tag) = if is_option {
         ("Some", "None")
     } else {
@@ -2204,10 +2215,24 @@ fn lower_question_ir(inner: &Expr, ty: TyId, span: Span, cx: &mut LowerIrCtx) ->
         binding_mode: BindingMode::Direct,
     };
 
-    let err_local = "__question_error".to_string();
+    let err_local = cx.fresh_tmp("__question_error");
     let (err_fields, err_binds, err_body) = if is_option {
         // ADR 0177: `None` early-returns the synthesized `HttpResult.
-        // NotFound` sentinel — never an `Err` construction.
+        // NotFound` sentinel — never an `Err` construction. Review of
+        // #1238: the sentinel's own `.ty` is the enclosing fn/handler's own
+        // `HttpResult[_]` return type (peeled through `Effect`, the same
+        // check_question itself gates `Option[T]?` on, `bynk-check/src/
+        // checker.rs`'s own `peel_to_http_result`) — never `Unit` — and the
+        // wrapping `Return` node carries that same type, matching
+        // `wrap_body_return`'s own "Return's own ty is the returned value's
+        // ty" convention (the only other `Return` producer in this module).
+        // Falls back to `unit_ty()` only in the defensive, unreachable-in-
+        // practice case where `return_ty` is absent or doesn't peel to one.
+        let http_result_ty = cx
+            .return_ty
+            .map(|rt| peel_effect_ty(rt, cx.program.tys()))
+            .filter(|rt| matches!(&*cx.program.tys().get(*rt), Ty::HttpResult(_)))
+            .unwrap_or_else(|| cx.unit_ty());
         (
             Vec::new(),
             Vec::new(),
@@ -2215,11 +2240,11 @@ fn lower_question_ir(inner: &Expr, ty: TyId, span: Span, cx: &mut LowerIrCtx) ->
                 kind: IrExprKind::Return {
                     value: Box::new(IrExpr {
                         kind: IrExprKind::HttpResultNotFound,
-                        ty: cx.unit_ty(),
+                        ty: http_result_ty,
                         span,
                     }),
                 },
-                ty: cx.unit_ty(),
+                ty: http_result_ty,
                 span,
             },
         )
@@ -2279,9 +2304,12 @@ fn lower_question_ir(inner: &Expr, ty: TyId, span: Span, cx: &mut LowerIrCtx) ->
             vec![err_local],
             IrExpr {
                 kind: IrExprKind::Return {
+                    // Review of #1238: matches `wrap_body_return`'s own
+                    // "Return's ty is the returned value's ty" convention —
+                    // `result_ty`, not `Unit`.
                     value: Box::new(err_construction),
                 },
-                ty: cx.unit_ty(),
+                ty: result_ty,
                 span,
             },
         )
@@ -2342,12 +2370,329 @@ fn embed_conversion_ir(source_err_ty: TyId, cx: &LowerIrCtx) -> Option<(TyId, St
     let Ty::Result(_, target_err_ty) = &*tys.get(target_ty) else {
         return None;
     };
-    if checker::compatible(*target_err_ty, source_err_ty, tys) {
+    // Review of #1238: argument order matters — `compatible(t, u)` means "t
+    // usable where u is expected," and `check_question`'s own call
+    // (`bynk-check/src/checker/expressions.rs`) passes `(operand_err,
+    // fn_err)`, not the reverse.
+    if checker::compatible(source_err_ty, *target_err_ty, tys) {
         return None;
     }
     let (_ty_name, variant) =
         checker::embedding_for(*target_err_ty, source_err_ty, &cx.program.types, tys)?;
     Some((*target_err_ty, variant))
+}
+
+/// P6.16 (design/tracks/the-ir.md §6): `is`'s real IR desugar. Scoped
+/// narrower than R5.9/R5.10's own combined framing might suggest — traced
+/// directly against the shipped desugar (`emitter/lower.rs`'s `lower_is`)
+/// rather than assumed from #1157's own Decision D: `lower_is` itself
+/// constructs only a forced receiver temp (R5.10) plus a boolean test, and
+/// never a narrowing *binding* — R5.9's own "narrowing is a scope operation
+/// … recorded in the IR" describes a *separate*, later concern (how `&&`/
+/// `if` apply `is`'s own boolean result to introduce a binding into a
+/// following scope, `gather_is_bindings_for_emit`), not a prerequisite this
+/// function itself needs. So `Is` lowers fully here; R5.9's own cross-site
+/// narrowing-propagation machinery stays a distinct, still-open design
+/// question this function does not settle.
+///
+/// `value is Name` (no bindings) where `Name` is a *declared refined type*
+/// is a different check from `value is Variant(...)` (a sum-tag test) —
+/// mirrors `lower_is`'s own `is_refined_is_check` disambiguation exactly,
+/// since the two syntactically look identical (a bare name after `is`) and
+/// only the checker's own type information (via `Ty::Base`/`Ty::Named{kind:
+/// Refined, ..}`) tells them apart. Every other pattern shape routes through
+/// [`lower_pattern_ir`] (P6.4, #1157 — built for exactly this, never wired
+/// until now) plus [`lower_pattern_test_ir`], this function's own new
+/// boolean-test walk over the resulting `IrPat`.
+fn lower_is_ir(
+    value: &Expr,
+    pattern: &Pattern,
+    ty: TyId,
+    span: Span,
+    cx: &mut LowerIrCtx,
+) -> IrExpr {
+    let scrutinee = lower_expr_ir(value, cx);
+    let scrutinee_ty = scrutinee.ty;
+    let recv_local = cx.fresh_tmp("__is_receiver");
+    let recv = IrExpr {
+        kind: IrExprKind::Local(recv_local.clone()),
+        ty: scrutinee_ty,
+        span,
+    };
+
+    let bool_expr = match pattern {
+        Pattern::Wildcard(_) | Pattern::Binding(_) => IrExpr {
+            kind: IrExprKind::Const(ConstVal::Bool(true)),
+            ty,
+            span,
+        },
+        Pattern::Variant {
+            variant, bindings, ..
+        } if bindings.is_empty() && is_refined_is_check_ir(scrutinee_ty, &variant.name, cx) => {
+            refined_check_ir(&recv, &variant.name, ty, span, cx)
+        }
+        _ => {
+            let ir_pat = lower_pattern_ir(pattern, scrutinee_ty, cx.program);
+            let tests = lower_pattern_test_ir(&recv, scrutinee_ty, &ir_pat, ty, cx.program);
+            fold_and_ir(tests, ty, span)
+        }
+    };
+
+    IrExpr {
+        kind: IrExprKind::Block {
+            stmts: vec![IrStmt::Let {
+                local: recv_local,
+                value: scrutinee,
+            }],
+            tail: Box::new(bool_expr),
+        },
+        ty,
+        span,
+    }
+}
+
+/// [`lower_is_ir`]'s own refined-type-name disambiguation — a bare `is Name`
+/// tests a *refined type* rather than a sum variant when the operand's own
+/// checked type is base-ish and `Name` names a declared `TypeBody::Refined`.
+/// Mirrors `emitter.rs`'s `LowerCtx::is_refined_is_check` exactly.
+fn is_refined_is_check_ir(operand_ty: TyId, name: &str, cx: &LowerIrCtx) -> bool {
+    let value_baseish = matches!(
+        &*cx.program.ty_intern.get(operand_ty),
+        Ty::Base(_)
+            | Ty::Named {
+                kind: NamedKind::Refined(_),
+                ..
+            }
+    );
+    let name_refined = matches!(
+        cx.program.types.get(name).map(|d| &d.body),
+        Some(TypeBody::Refined { .. })
+    );
+    value_baseish && name_refined
+}
+
+/// [`lower_is_ir`]'s own refined-type-name check construction — reads the
+/// named refined type's own declared `base`/`refinement` and wraps them in
+/// [`IrExprKind::RefinedCheck`], the same reused-verbatim payload
+/// [`lower_pattern_test_ir`]'s own `IrPat::Refined` arm constructs for an
+/// inline `_ where predicate` clause.
+fn refined_check_ir(
+    recv: &IrExpr,
+    name: &str,
+    bool_ty: TyId,
+    span: Span,
+    cx: &LowerIrCtx,
+) -> IrExpr {
+    let Some(TypeBody::Refined {
+        base, refinement, ..
+    }) = cx.program.types.get(name).map(|d| &d.body)
+    else {
+        panic!(
+            "bynk internal error (ADR 0334): `{name}` does not resolve to a declared refined \
+             type, but is_refined_is_check_ir just confirmed it does"
+        )
+    };
+    IrExpr {
+        kind: IrExprKind::RefinedCheck {
+            value: Box::new(recv.clone()),
+            base: *base,
+            refinement: refinement.clone(),
+        },
+        ty: bool_ty,
+        span,
+    }
+}
+
+/// [`lower_is_ir`]'s own recursive boolean-test walk over an already-lowered
+/// [`IrPat`] — the IR-native sibling of `emitter/lower.rs`'s own
+/// `pattern_match_tests`, ported rather than duplicated: same recursive
+/// shape (one test per structural constraint, accumulated then AND-joined
+/// by the caller), same skip-irrefutable-payload rule, but reading
+/// `IrPat`'s own already-resolved `fields`/`scrutinee_ty` instead of
+/// re-deriving a positional field's name from `LowerCtx::positional_field_name`
+/// — `lower_pattern_ir` (P6.4, #1157) already did that resolution once, via
+/// the identical `variant_info_of`/`variants_of` this function's own
+/// `IrPat::Variant` arm re-derives payload *types* through (field *names*
+/// are already on the `IrPat` itself, nothing left to look up for those).
+fn lower_pattern_test_ir(
+    path: &IrExpr,
+    path_ty: TyId,
+    pat: &IrPat,
+    bool_ty: TyId,
+    program: &TypedCommons,
+) -> Vec<IrExpr> {
+    match pat {
+        IrPat::Wild | IrPat::Bind { .. } => Vec::new(),
+        IrPat::Const { value } => vec![IrExpr {
+            kind: IrExprKind::BinOp {
+                op: IrBinOp::Eq,
+                lhs: Box::new(path.clone()),
+                rhs: Box::new(IrExpr {
+                    kind: IrExprKind::Const(value.clone()),
+                    ty: path_ty,
+                    span: path.span,
+                }),
+            },
+            ty: bool_ty,
+            span: path.span,
+        }],
+        IrPat::Refined { inner, refinement } => {
+            let mut tests = lower_pattern_test_ir(path, path_ty, inner, bool_ty, program);
+            let base = literal_base_of_ty_ir(path_ty, program.tys()).unwrap_or_else(|| {
+                panic!(
+                    "bynk internal error (ADR 0334): a refined pattern's scrutinee must be \
+                     literal-kind (Int/Float/String/Bool), but the checker already accepted \
+                     this pattern"
+                )
+            });
+            tests.push(IrExpr {
+                kind: IrExprKind::RefinedCheck {
+                    value: Box::new(path.clone()),
+                    base,
+                    refinement: Some(refinement.clone()),
+                },
+                ty: bool_ty,
+                span: path.span,
+            });
+            tests
+        }
+        IrPat::Variant {
+            scrutinee_ty,
+            tag,
+            fields,
+        } => {
+            let string_ty = program.tys().intern(Ty::Base(BaseType::String));
+            let mut tests = vec![IrExpr {
+                kind: IrExprKind::BinOp {
+                    op: IrBinOp::Eq,
+                    lhs: Box::new(IrExpr {
+                        kind: IrExprKind::Field {
+                            base: Box::new(path.clone()),
+                            field: "tag".to_string(),
+                        },
+                        ty: string_ty,
+                        span: path.span,
+                    }),
+                    rhs: Box::new(IrExpr {
+                        kind: IrExprKind::Const(ConstVal::Str(tag.clone())),
+                        ty: string_ty,
+                        span: path.span,
+                    }),
+                },
+                ty: bool_ty,
+                span: path.span,
+            }];
+            let variant_info = variant_info_of(*scrutinee_ty, tag, program);
+            for (field_name, sub_pat) in fields {
+                if is_irrefutable_ir(sub_pat) {
+                    continue;
+                }
+                let field_ty = variant_info
+                    .payload
+                    .iter()
+                    .find(|(n, _)| n == field_name)
+                    .map(|(_, t)| *t)
+                    .unwrap_or(bool_ty);
+                let field_path = IrExpr {
+                    kind: IrExprKind::Field {
+                        base: Box::new(path.clone()),
+                        field: field_name.clone(),
+                    },
+                    ty: field_ty,
+                    span: path.span,
+                };
+                tests.extend(lower_pattern_test_ir(
+                    &field_path,
+                    field_ty,
+                    sub_pat,
+                    bool_ty,
+                    program,
+                ));
+            }
+            tests
+        }
+        IrPat::Or { alts } => {
+            let terms: Vec<IrExpr> = alts
+                .iter()
+                .map(|alt| {
+                    let t = lower_pattern_test_ir(path, path_ty, alt, bool_ty, program);
+                    fold_and_ir(t, bool_ty, path.span)
+                })
+                .collect();
+            vec![fold_or_ir(terms, bool_ty, path.span)]
+        }
+    }
+}
+
+/// [`lower_pattern_test_ir`]'s own `IrPat`-level mirror of
+/// `bynk_syntax::ast::Pattern::is_irrefutable` — `Wild`/`Bind` always match,
+/// an `Or` does iff any alternative does.
+fn is_irrefutable_ir(pat: &IrPat) -> bool {
+    match pat {
+        IrPat::Wild | IrPat::Bind { .. } => true,
+        IrPat::Or { alts } => alts.iter().any(is_irrefutable_ir),
+        _ => false,
+    }
+}
+
+/// [`lower_is_ir`]'s/[`lower_pattern_test_ir`]'s own IR-native mirror of
+/// `emitter/lower.rs`'s `literal_base_of_ty` — the literal-kind base a
+/// refined pattern's own scrutinee must resolve to.
+fn literal_base_of_ty_ir(ty: TyId, tys: &Types) -> Option<BaseType> {
+    let base = match &*tys.get(ty) {
+        Ty::Base(b) => *b,
+        Ty::Named {
+            kind: NamedKind::Refined(b),
+            ..
+        } => *b,
+        _ => return None,
+    };
+    matches!(base, BaseType::Int | BaseType::String | BaseType::Bool).then_some(base)
+}
+
+/// AND-folds a list of boolean tests — empty (a pattern with no structural
+/// constraints, e.g. a bare `Bind`) is vacuously `true`, matching
+/// `pattern_match_tests`' own `tests.is_empty()` → `"true"` fallback.
+fn fold_and_ir(tests: Vec<IrExpr>, bool_ty: TyId, span: Span) -> IrExpr {
+    let mut iter = tests.into_iter();
+    let Some(first) = iter.next() else {
+        return IrExpr {
+            kind: IrExprKind::Const(ConstVal::Bool(true)),
+            ty: bool_ty,
+            span,
+        };
+    };
+    iter.fold(first, |acc, next| IrExpr {
+        kind: IrExprKind::And {
+            lhs: Box::new(acc),
+            rhs: Box::new(next),
+        },
+        ty: bool_ty,
+        span,
+    })
+}
+
+/// OR-folds an `Or`-pattern's own per-alternative tests — never empty in
+/// practice (`Pattern::Or` always carries at least two alternatives), but
+/// degrades to `false` rather than panicking on the same "metadata with no
+/// runtime consequence" posture this module already applies elsewhere.
+fn fold_or_ir(terms: Vec<IrExpr>, bool_ty: TyId, span: Span) -> IrExpr {
+    let mut iter = terms.into_iter();
+    let Some(first) = iter.next() else {
+        return IrExpr {
+            kind: IrExprKind::Const(ConstVal::Bool(false)),
+            ty: bool_ty,
+            span,
+        };
+    };
+    iter.fold(first, |acc, next| IrExpr {
+        kind: IrExprKind::Or {
+            lhs: Box::new(acc),
+            rhs: Box::new(next),
+        },
+        ty: bool_ty,
+        span,
+    })
 }
 
 pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
@@ -2683,15 +3028,7 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
                 span,
             }
         }
-        ExprKind::Is { .. } => todo!(
-            "`is`'s real shipped desugar (`lower_is`, emitter/lower.rs:5615) already diverges \
-             from a plain two-arm boolean Match for a refined-type check: it skips \
-             pattern-match machinery entirely (refined_check_as_bool plus a forced receiver \
-             temp, is_receiver_ref_forced) — R5.9 (narrowing-scope recording) and R5.10 (the \
-             forced-receiver-temp as an explicit IR Let), both already explicitly deferred by \
-             #1157's own Decision D, unaffected by Match becoming real this slice (P6.5, #1159, \
-             Decision C)"
-        ),
+        ExprKind::Is { value, pattern } => lower_is_ir(value, pattern, ty, span, cx),
         ExprKind::RecordSpread {
             base, overrides, ..
         } => lower_record_spread_ir(ty, span, base, overrides, cx),
@@ -3446,6 +3783,7 @@ mod tests {
     use bynk_check::requirements::RequirementSink;
     use bynk_check::{checker, context_checks, resolver, symbols};
     use bynk_project::UnitKind;
+    use bynk_syntax::ast::PredKind;
     use bynk_syntax::ast::{Commons, CommonsItem, FnDecl, SourceUnit};
     use bynk_syntax::{lexer, parser};
 
@@ -4363,6 +4701,312 @@ commons demo {
             &*program.program().ty_intern.get(returned_payload[0].ty),
             Ty::Named { name, .. } if name == "OrderError"
         ));
+    }
+
+    #[test]
+    fn question_embeds_conversion_still_resolves_when_the_enclosing_return_is_effect_wrapped() {
+        // Review of #1238: duplicates the test above under `Effect[Result[..]]`
+        // specifically to exercise `peel_effect_ty`'s own recursive arm —
+        // every other test's `return_ty` hits the base case on the first call.
+        let program = checked_program(
+            r#"
+commons demo {
+  type PaymentError = enum { Declined, InsufficientFunds }
+
+  type OrderError =
+    | OutOfStock(sku: String, qty: Int)
+    | Payment(reason: PaymentError)
+    embeds PaymentError as Payment
+
+  fn charge() -> Result[Int, PaymentError] { Ok(1) }
+  fn embed_case() -> Effect[Result[Int, OrderError]] {
+    let v = charge()?
+    Ok(v)
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "embed_case");
+        let IrExprKind::Block { stmts, .. } = &ir.kind else {
+            panic!("expected Block, got {:?}", ir.kind)
+        };
+        let IrStmt::Let { value, .. } = &stmts[0] else {
+            panic!(
+                "expected the first statement to be a Let, got {:?}",
+                stmts[0]
+            )
+        };
+        let IrExprKind::Match { arms, .. } = &value.kind else {
+            panic!("expected Match, got {:?}", value.kind)
+        };
+        let IrExprKind::Return { value: returned } = &arms[1].body.kind else {
+            panic!(
+                "expected arm 1's body to be Return, got {:?}",
+                arms[1].body.kind
+            )
+        };
+        let IrExprKind::Variant {
+            tag: returned_tag,
+            payload: returned_payload,
+        } = &returned.kind
+        else {
+            panic!("expected a re-constructed Err, got {:?}", returned.kind)
+        };
+        assert_eq!(returned_tag, "Err");
+        let IrExprKind::Variant { tag: embed_tag, .. } = &returned_payload[0].kind else {
+            panic!(
+                "expected the propagated error wrapped in the declared embed construction \
+                 even through the Effect wrapper, got {:?}",
+                returned_payload[0].kind
+            )
+        };
+        assert_eq!(
+            embed_tag, "Payment",
+            "peel_effect_ty must peel through Effect[..] to find the Result[_, OrderError] \
+             underneath — an unpeeled Effect[Result[..]] would make target_err_ty resolve to \
+             something other than OrderError and this embed lookup would silently miss"
+        );
+        assert!(matches!(
+            &*program.program().ty_intern.get(returned_payload[0].ty),
+            Ty::Named { name, .. } if name == "OrderError"
+        ));
+    }
+
+    #[test]
+    fn question_reached_from_an_agent_handler_body_sets_return_ty_without_panicking() {
+        // Review of #1238: `lower_fn_body_ir`'s own set_return_ty call site
+        // was already exercised by every `Question`/`Is` test above (they
+        // all lower through `lower_fn`/`lower_fn_body_ir`) — this and the
+        // next two tests specifically reach the other three real
+        // body-lowering entry points (`lower_handler_body_ir`,
+        // `lower_service_handler_body_ir`, `lower_provider_op_ir`) that a
+        // panicking `set_return_ty` would have crashed on the resolve-miss
+        // path the review named, even for a body containing no `?` at all.
+        let program = checked_context_program(
+            r#"
+context demo
+
+agent Counter {
+  key id: String
+  store n: Cell[Int] = 0
+
+  on call bump() -> Effect[Result[Int, String]] {
+    Ok(1)
+  }
+}
+"#,
+        );
+        let agent = program
+            .program()
+            .commons
+            .items
+            .iter()
+            .find_map(|item| match item {
+                CommonsItem::Agent(a) if a.name.name == "Counter" => Some(a),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no agent named Counter in this fixture"));
+        let handler = &agent.handlers[0];
+        // Reaching this at all (rather than panicking on the handler's own
+        // return-type resolution) is the assertion.
+        let _ = lower_handler_ir(
+            handler,
+            &HashMap::new(),
+            program.program().ty_intern.intern(Ty::Unit),
+            &[],
+            &[],
+            &program,
+        );
+    }
+
+    #[test]
+    fn question_reached_from_a_provider_op_body_sets_return_ty_without_panicking() {
+        let program = checked_context_program(
+            r#"
+context demo
+
+capability Charge {
+  fn run() -> Effect[Result[Int, String]]
+}
+
+provides Charge = FakeCharge {
+  fn run() -> Effect[Result[Int, String]] {
+    Ok(1)
+  }
+}
+"#,
+        );
+        let provider = find_provider(&program, "FakeCharge");
+        // Reaching this at all (rather than panicking on the op's own
+        // return-type resolution) is the assertion.
+        let _ = lower_provider_item_ir(provider, &program);
+    }
+
+    #[test]
+    fn is_on_a_declared_refined_type_forces_a_receiver_temp_and_lowers_to_refined_check() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Quantity = Int where InRange(1, 100)
+
+  fn valid(n: Int) -> Bool {
+    n is Quantity
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "valid");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Block { stmts, tail: inner } = &tail.kind else {
+            panic!("expected Block, got {:?}", tail.kind)
+        };
+        let IrStmt::Let { local, value } = &stmts[0] else {
+            panic!(
+                "expected the first statement to be a Let, got {:?}",
+                stmts[0]
+            )
+        };
+        assert_eq!(local, "__is_receiver_0");
+        assert!(matches!(&value.kind, IrExprKind::Local(n) if n == "n"));
+        let IrExprKind::RefinedCheck {
+            value: checked,
+            base,
+            refinement,
+        } = &inner.kind
+        else {
+            panic!("expected RefinedCheck, got {:?}", inner.kind)
+        };
+        assert!(matches!(&checked.kind, IrExprKind::Local(n) if n == "__is_receiver_0"));
+        assert_eq!(*base, BaseType::Int);
+        let refinement = refinement
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected a real refinement, got None"));
+        assert_eq!(refinement.predicates.len(), 1);
+        assert!(matches!(
+            refinement.predicates[0].kind,
+            PredKind::InRange(..)
+        ));
+    }
+
+    #[test]
+    fn is_on_a_bare_variant_lowers_to_a_single_tag_test() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn check(r: Result[Int, String]) -> Bool {
+    r is Ok(_)
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "check");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Block { tail: inner, .. } = &tail.kind else {
+            panic!("expected Block, got {:?}", tail.kind)
+        };
+        let IrExprKind::BinOp { op, lhs, rhs } = &inner.kind else {
+            panic!("expected a single BinOp tag test, got {:?}", inner.kind)
+        };
+        assert_eq!(*op, IrBinOp::Eq);
+        assert!(matches!(
+            &lhs.kind,
+            IrExprKind::Field { field, .. } if field == "tag"
+        ));
+        assert!(matches!(&rhs.kind, IrExprKind::Const(ConstVal::Str(s)) if s == "Ok"));
+    }
+
+    #[test]
+    fn is_on_a_nested_variant_ands_the_outer_and_inner_tag_tests() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type Fault =
+    | NotFound
+    | Denied(reason: String)
+
+  fn describe(r: Result[Int, Fault]) -> Bool {
+    r is Err(Denied(_))
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "describe");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Block { tail: inner, .. } = &tail.kind else {
+            panic!("expected Block, got {:?}", tail.kind)
+        };
+        let IrExprKind::And { lhs, rhs } = &inner.kind else {
+            panic!(
+                "expected the outer+inner tag tests And-joined, got {:?}",
+                inner.kind
+            )
+        };
+        let IrExprKind::BinOp {
+            lhs: outer_field,
+            rhs: outer_tag,
+            ..
+        } = &lhs.kind
+        else {
+            panic!("expected the outer test to be a BinOp, got {:?}", lhs.kind)
+        };
+        assert!(
+            matches!(&outer_field.kind, IrExprKind::Field { base, field } if field == "tag" && matches!(&base.kind, IrExprKind::Local(n) if n == "__is_receiver_0"))
+        );
+        assert!(matches!(&outer_tag.kind, IrExprKind::Const(ConstVal::Str(s)) if s == "Err"));
+        let IrExprKind::BinOp {
+            lhs: inner_field,
+            rhs: inner_tag,
+            ..
+        } = &rhs.kind
+        else {
+            panic!("expected the inner test to be a BinOp, got {:?}", rhs.kind)
+        };
+        assert!(matches!(
+            &inner_field.kind,
+            IrExprKind::Field { field, .. } if field == "tag"
+        ));
+        assert!(matches!(&inner_tag.kind, IrExprKind::Const(ConstVal::Str(s)) if s == "Denied"));
+        // The nested field access is rooted at the outer `.error` payload, not
+        // the bare receiver — proves the payload field name/type came from
+        // `IrPat`'s own already-resolved `fields`, not a re-derived guess.
+        let IrExprKind::Field {
+            base: nested_base,
+            field: nested_field,
+        } = &inner_field.kind
+        else {
+            panic!("expected inner_field to be a Field access")
+        };
+        assert_eq!(nested_field, "tag");
+        assert!(matches!(
+            &nested_base.kind,
+            IrExprKind::Field { field, .. } if field == "error"
+        ));
+    }
+
+    #[test]
+    fn is_on_an_or_pattern_or_folds_each_alternatives_and_joined_tests() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn check(r: Result[Int, String]) -> Bool {
+    r is Ok(_) | Err(_)
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "check");
+        let tail = fn_tail(&ir);
+        let IrExprKind::Block { tail: inner, .. } = &tail.kind else {
+            panic!("expected Block, got {:?}", tail.kind)
+        };
+        let IrExprKind::Or { lhs, rhs } = &inner.kind else {
+            panic!(
+                "expected the two alternatives Or-joined, got {:?}",
+                inner.kind
+            )
+        };
+        assert!(matches!(&lhs.kind, IrExprKind::BinOp { .. }));
+        assert!(matches!(&rhs.kind, IrExprKind::BinOp { .. }));
     }
 
     #[test]

@@ -509,6 +509,28 @@ pub(crate) enum IrExprKind {
     /// ([`GlobalRef`]'s own doc comment already names this exact case as
     /// out of its scope, "dropped during implementation").
     HttpResultNotFound,
+    /// A refined-type/inline-predicate boolean check — `value is Quantity`
+    /// (`Quantity` a declared refined type) or `_ where predicate`'s own
+    /// predicate half. `refinement`/`base` are `bynk_syntax::ast` values
+    /// reused verbatim, not decomposed into `IrExprKind` boolean primitives
+    /// — the same "reused, not adapted" posture [`IrPat::Refined`] (P6.4,
+    /// #1157) already committed to for the identical payload, one variant
+    /// case at a time (`PredKind`'s own closed set — `InRange`/`MinLength`/
+    /// `Matches`/…) rather than an open-ended expression tree, so nothing
+    /// about this construction contradicts R6.7's own "desugar once"
+    /// mandate the way an *arbitrary* un-desugared sub-expression would;
+    /// decomposing `PredKind` itself into `BinOp`/`Call` primitives is real,
+    /// separate, deferred work (mirrors the base-type check the shipped
+    /// string emitter's own `refined_check_as_bool` always prepends when
+    /// `base` is `Int`/`Float` — folded into this one node rather than a
+    /// second sibling, since the two are never meaningfully separable at a
+    /// call site: every real reader wants "is this refined value valid," not
+    /// the base-type and predicate halves independently).
+    RefinedCheck {
+        value: Box<IrExpr>,
+        base: BaseType,
+        refinement: Option<Refinement>,
+    },
     /// A call, classified by P6.0's `Callee` — no adaptation needed here,
     /// `Callee` already resolves identity the way this module's other
     /// `DefId`-shaped slots do. Lowering deferred to P6.2.
