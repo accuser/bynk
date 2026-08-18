@@ -64,6 +64,20 @@ pub(crate) struct LowerIrCtx<'a> {
     /// inside an override value, e.g. `Point { ...p, x: (Point { ...q, x:
     /// 0 }).x }`); a monotonic per-function suffix removes that hazard.
     spread_tmp_counter: usize,
+    /// P6.15: the enclosing fn/handler/provider-op's own declared return
+    /// type, resolved by whichever of the four real body-lowering entry
+    /// points (`lower_fn_body_ir`, `lower_handler_body_ir`,
+    /// `lower_service_handler_body_ir`, `lower_provider_op_ir`) constructed
+    /// this `cx`, via [`LowerIrCtx::set_return_ty`] — `None` for every other
+    /// construction site (a signature-only reader, which never lowers an
+    /// expression body and so never reaches `ExprKind::Question`). Mirrors
+    /// `bynk-emit/src/emitter/lower.rs`'s own `LowerCtx::return_ty`, the
+    /// value [`embed_conversion_ir`] needs for the identical reason that
+    /// function's string-emitter sibling, `embed_conversion`, needs
+    /// `cx.return_ty` — deciding whether a `Result[T,E]?`'s error type
+    /// matches the enclosing function's own declared error type, or needs a
+    /// declared `embeds` conversion first.
+    return_ty: Option<TyId>,
 }
 
 impl<'a> LowerIrCtx<'a> {
@@ -81,7 +95,15 @@ impl<'a> LowerIrCtx<'a> {
             scopes: vec![HashMap::new()],
             type_vars,
             spread_tmp_counter: 0,
+            return_ty: None,
         }
+    }
+
+    /// P6.15: called once, by a real body-lowering entry point only, right
+    /// after resolving its own `return_type` — see [`LowerIrCtx::return_ty`]'s
+    /// own doc comment.
+    fn set_return_ty(&mut self, ty: TyId) {
+        self.return_ty = Some(ty);
     }
 
     fn fresh_spread_tmp(&mut self) -> String {
@@ -285,6 +307,13 @@ fn wrap_body_return(block: IrExpr) -> IrExpr {
 pub(crate) fn lower_fn_body_ir(f: &FnDecl, program: &CheckedProgram) -> IrExpr {
     let type_vars = fn_rigid_type_vars(f, program.program());
     let mut cx = LowerIrCtx::new(program, type_vars);
+    cx.set_return_ty(cx.resolve_type_ref(&f.return_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): `{}`'s own return type does not resolve in this \
+             pass's own rigid-variable scope, but the checker already accepted this fn body",
+            f.name.display()
+        )
+    }));
     // `self` is never in `f.params` (`FnDecl::has_self` gates it) — mirrors
     // `check_fn`'s own binding (`checker.rs`, the `f.has_self` arm): a
     // generic receiver's `self` carries the receiver applied to its own
@@ -345,6 +374,12 @@ fn lower_handler_body_ir(
     program: &CheckedProgram,
 ) -> IrExpr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
+    cx.set_return_ty(cx.resolve_type_ref(&h.return_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): this handler's own return type does not resolve in \
+             this pass's own scope, but the checker already accepted this handler"
+        )
+    }));
     cx.bind("self".to_string(), state_ty);
     for (name, ty) in store_cells {
         cx.bind(name.clone(), *ty);
@@ -574,6 +609,12 @@ fn lower_service_handler_body_ir(
     program: &CheckedProgram,
 ) -> IrExpr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
+    cx.set_return_ty(cx.resolve_type_ref(&h.return_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): this handler's own return type does not resolve in \
+             this pass's own scope, but the checker already accepted this handler"
+        )
+    }));
     if let Some(connection) = connection {
         cx.bind("connection".to_string(), connection.ty);
     }
@@ -1925,6 +1966,13 @@ fn lower_cap_ref_ir(cap_ref: &CapRef) -> CapRefIr {
 /// against, not a state the checker is known to accept silently.
 fn lower_provider_op_ir(op: &ProviderOp, program: &CheckedProgram) -> ProviderOpIr {
     let mut cx = LowerIrCtx::new(program, HashSet::new());
+    cx.set_return_ty(cx.resolve_type_ref(&op.return_type).unwrap_or_else(|| {
+        panic!(
+            "bynk internal error (ADR 0334): provider op `{}`'s own return type does not \
+             resolve in this pass's own scope, but the checker already accepted this op's body",
+            op.name.name
+        )
+    }));
     let params: Vec<(String, TyId)> = op
         .params
         .iter()
@@ -2092,6 +2140,214 @@ fn lower_stmt_ir(s: &Statement, cx: &mut LowerIrCtx) -> IrStmt {
             value: lower_expr_ir(&a.value, cx),
         },
     }
+}
+
+/// P6.15 (design/tracks/the-ir.md §6): `?`'s real IR desugar — a genuine
+/// design fork the reference's own sketch (`Question(e)` → `Match{scrutinee:
+/// e, arms: [Ok(v) => v, Err(e) => Return(Err(convert(e)))]}`) gets half
+/// right. Two of the shipped desugar's three shapes (`emitter/lower.rs:
+/// 1014-1061`, ADR 0177/ADR 0178) really are exactly that `Match{Ok, Err}`
+/// shape, `convert` either the identity (bare propagation) or a real
+/// `embeds` conversion — the reference's sketch already covers those. The
+/// third, `Option[T]?`, does not: it is a `Match{Some, None}`, not
+/// `Match{Ok, Err}`, and its early-return value is the synthesized
+/// `HttpResult.NotFound` sentinel (`IrExprKind::HttpResultNotFound`), never
+/// an `Err` construction at all. This function generalises the reference's
+/// own sketch to the real two-scrutinee-shape, `Match`-based desugar,
+/// reusing P6.4/P6.5's already-shipped `IrExprKind::Match`/`IrArm`/
+/// `IrPat::Variant` machinery rather than inventing a bespoke opaque
+/// `Question` node — R6.7's own "desugaring happens exactly once, in phase
+/// 6" mandate reads as a decomposition requirement, not license to defer
+/// the real work to a future printer behind an opaque node the way
+/// [`IrExprKind::HttpResultNotFound`] itself deliberately is not (that one
+/// has no further structure to decompose; a `Match` does).
+///
+/// Dormant as of this slice: no shipped emitter path calls into
+/// `lower_expr_ir`'s `Question` arm yet (P6.2's own emitter-side cutover has
+/// not landed) — verified by unit test only, the same posture #1225's own
+/// `Ok`/`Err`/`Some`/`None` construction landed under.
+fn lower_question_ir(inner: &Expr, ty: TyId, span: Span, cx: &mut LowerIrCtx) -> IrExpr {
+    let scrutinee = Box::new(lower_expr_ir(inner, cx));
+    let operand_ty = scrutinee.ty;
+    let is_option = matches!(&*cx.program.ty_intern.get(operand_ty), Ty::Option(_));
+
+    let value_local = "__question_value".to_string();
+    let (ok_tag, err_tag) = if is_option {
+        ("Some", "None")
+    } else {
+        ("Ok", "Err")
+    };
+    let ok_variant = variant_info_of(operand_ty, ok_tag, cx.program);
+    let ok_field_ty = ok_variant
+        .payload
+        .first()
+        .map(|(_, t)| *t)
+        .unwrap_or_else(|| cx.unit_ty());
+    let ok_arm = IrArm {
+        pat: IrPat::Variant {
+            scrutinee_ty: operand_ty,
+            tag: ok_tag.to_string(),
+            fields: vec![(
+                "value".to_string(),
+                Box::new(IrPat::Bind {
+                    local: value_local.clone(),
+                }),
+            )],
+        },
+        guard: None,
+        body: IrExpr {
+            kind: IrExprKind::Local(value_local.clone()),
+            ty: ok_field_ty,
+            span,
+        },
+        binds: vec![value_local],
+        binding_mode: BindingMode::Direct,
+    };
+
+    let err_local = "__question_error".to_string();
+    let (err_fields, err_binds, err_body) = if is_option {
+        // ADR 0177: `None` early-returns the synthesized `HttpResult.
+        // NotFound` sentinel — never an `Err` construction.
+        (
+            Vec::new(),
+            Vec::new(),
+            IrExpr {
+                kind: IrExprKind::Return {
+                    value: Box::new(IrExpr {
+                        kind: IrExprKind::HttpResultNotFound,
+                        ty: cx.unit_ty(),
+                        span,
+                    }),
+                },
+                ty: cx.unit_ty(),
+                span,
+            },
+        )
+    } else {
+        let err_variant = variant_info_of(operand_ty, "Err", cx.program);
+        let err_field_ty = err_variant
+            .payload
+            .first()
+            .map(|(_, t)| *t)
+            .unwrap_or_else(|| cx.unit_ty());
+        let err_value = IrExpr {
+            kind: IrExprKind::Local(err_local.clone()),
+            ty: err_field_ty,
+            span,
+        };
+        // ADR 0178: a declared `embeds` conversion wraps the propagated
+        // error; an exact/compatible match propagates it unchanged.
+        let converted = match embed_conversion_ir(err_field_ty, cx) {
+            Some((embed_ty, variant)) => IrExpr {
+                kind: IrExprKind::Variant {
+                    tag: variant,
+                    payload: vec![err_value],
+                },
+                ty: embed_ty,
+                span,
+            },
+            None => err_value,
+        };
+        // The constructed `Err(..)`'s own type is the enclosing fn/handler/
+        // op's own declared return type (peeled through `Effect`) — the
+        // real `Result[_, _]` this value is actually returned as. Falls
+        // back to the operand's own type on a defensive miss (no
+        // `return_ty` recorded, or it doesn't peel to a `Result`) — this
+        // branch is unreachable at runtime regardless (an early return),
+        // so a best-effort `.ty` here mirrors this module's own established
+        // non-panicking posture for metadata with no runtime consequence.
+        let result_ty = cx
+            .return_ty
+            .map(|rt| peel_effect_ty(rt, cx.program.tys()))
+            .filter(|rt| matches!(&*cx.program.tys().get(*rt), Ty::Result(..)))
+            .unwrap_or(operand_ty);
+        let err_construction = IrExpr {
+            kind: IrExprKind::Variant {
+                tag: "Err".to_string(),
+                payload: vec![converted],
+            },
+            ty: result_ty,
+            span,
+        };
+        (
+            vec![(
+                "error".to_string(),
+                Box::new(IrPat::Bind {
+                    local: err_local.clone(),
+                }),
+            )],
+            vec![err_local],
+            IrExpr {
+                kind: IrExprKind::Return {
+                    value: Box::new(err_construction),
+                },
+                ty: cx.unit_ty(),
+                span,
+            },
+        )
+    };
+    let err_arm = IrArm {
+        pat: IrPat::Variant {
+            scrutinee_ty: operand_ty,
+            tag: err_tag.to_string(),
+            fields: err_fields,
+        },
+        guard: None,
+        body: err_body,
+        binds: err_binds,
+        binding_mode: BindingMode::Direct,
+    };
+
+    IrExpr {
+        kind: IrExprKind::Match {
+            scrutinee,
+            arms: vec![ok_arm, err_arm],
+            exhaustive: Exhaustive::Total,
+            form: MatchForm::Flat,
+        },
+        ty,
+        span,
+    }
+}
+
+/// [`lower_question_ir`]'s own `Effect`-peeling half — mirrors
+/// `emitter/lower.rs`'s `peel_result_err` shape (peel through `Effect` to
+/// reach the real `Result[_, _]`) but stops one layer earlier, returning
+/// the whole peeled type rather than just its `Err` half, since
+/// [`lower_question_ir`] needs both (the full type for the constructed
+/// `Err(..)`'s own `.ty`, just the `Err` half for [`embed_conversion_ir`]'s
+/// own `target_err`).
+fn peel_effect_ty(ty: TyId, tys: &Types) -> TyId {
+    match &*tys.get(ty) {
+        Ty::Effect(inner) => peel_effect_ty(*inner, tys),
+        _ => ty,
+    }
+}
+
+/// [`lower_question_ir`]'s own IR-native sibling of `emitter/lower.rs`'s
+/// `embed_conversion` — same two checker primitives
+/// (`checker::compatible`/`checker::embedding_for`), same reasoning, ported
+/// rather than duplicated: `source_err_ty` (the `?` operand's own `Err`
+/// type) is passed in directly (this pass's caller already resolved it,
+/// unlike the string emitter's own `operand_ty: Option<TyId>` re-derivation
+/// from `expr_types`), and the enclosing return type comes from
+/// [`LowerIrCtx::return_ty`] instead of `LowerCtx::return_ty`. `None` on any
+/// miss along the way (no recorded `return_ty`, it doesn't peel to a
+/// `Result`, or the two error types are already compatible) — bare
+/// propagation, the same fallback the string emitter's own `?`-then-`?`
+/// chain already applies.
+fn embed_conversion_ir(source_err_ty: TyId, cx: &LowerIrCtx) -> Option<(TyId, String)> {
+    let tys = cx.program.tys();
+    let target_ty = peel_effect_ty(cx.return_ty?, tys);
+    let Ty::Result(_, target_err_ty) = &*tys.get(target_ty) else {
+        return None;
+    };
+    if checker::compatible(*target_err_ty, source_err_ty, tys) {
+        return None;
+    }
+    let (_ty_name, variant) =
+        checker::embedding_for(*target_err_ty, source_err_ty, &cx.program.types, tys)?;
+    Some((*target_err_ty, variant))
 }
 
 pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
@@ -2378,18 +2634,7 @@ pub(crate) fn lower_expr_ir(e: &Expr, cx: &mut LowerIrCtx) -> IrExpr {
             ty,
             span,
         },
-        ExprKind::Question(_) => todo!(
-            "`?` propagation's real shipped desugar (emitter/lower.rs:1012-1042, ADR 0177/ADR \
-             0178) branches on the operand's own checked type into three distinct shapes — an \
-             `Option[T]?` early-returns HttpResult.NotFound (not any Err construction at all), \
-             a `Result[T,E]?` either returns the scrutinee value unchanged or, under a declared \
-             `embeds` conversion, constructs a new Err(EmbedType.Variant(..)) — not the single \
-             generic Match{{Ok(v) => v, Err(e) => Return(Err(convert(e)))}} shape this comment \
-             used to claim; modelling three divergent per-operand-type shapes as one \
-             Match is its own design fork, not this row's own commission (P6.5, #1159, \
-             Decision C — Match itself is real as of this slice, this gap is Question's own, \
-             not a shared one)"
-        ),
+        ExprKind::Question(inner) => lower_question_ir(inner, ty, span, cx),
         ExprKind::ConstructorCall { args, .. } => lower_call_ir(e, None, &[], args, cx),
         ExprKind::MethodCall {
             receiver,
@@ -3914,6 +4159,210 @@ commons demo {
                 "{fn_name}: expected tail.ty to resolve to the constructed sum, got {resolved:?}"
             );
         }
+    }
+
+    #[test]
+    fn question_on_option_lowers_to_a_some_none_match_and_none_returns_http_result_not_found() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn maybe() -> Option[Int] { Some(1) }
+  fn lift() -> HttpResult[Int] {
+    let v = maybe()?
+    Ok(v)
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "lift");
+        let IrExprKind::Block { stmts, .. } = &ir.kind else {
+            panic!("expected Block, got {:?}", ir.kind)
+        };
+        let IrStmt::Let { value, .. } = &stmts[0] else {
+            panic!(
+                "expected the first statement to be a Let, got {:?}",
+                stmts[0]
+            )
+        };
+        let IrExprKind::Match {
+            scrutinee,
+            arms,
+            exhaustive,
+            form,
+        } = &value.kind
+        else {
+            panic!("expected Match, got {:?}", value.kind)
+        };
+        assert!(matches!(&scrutinee.kind, IrExprKind::Call { .. }));
+        assert!(matches!(
+            &*program.program().ty_intern.get(scrutinee.ty),
+            Ty::Option(_)
+        ));
+        assert_eq!(arms.len(), 2);
+        let IrPat::Variant {
+            tag: some_tag,
+            fields: some_fields,
+            ..
+        } = &arms[0].pat
+        else {
+            panic!("expected arm 0's pat to be Variant, got {:?}", arms[0].pat)
+        };
+        assert_eq!(some_tag, "Some");
+        assert_eq!(some_fields.len(), 1);
+        assert!(matches!(&arms[0].body.kind, IrExprKind::Local(_)));
+        let IrPat::Variant {
+            tag: none_tag,
+            fields: none_fields,
+            ..
+        } = &arms[1].pat
+        else {
+            panic!("expected arm 1's pat to be Variant, got {:?}", arms[1].pat)
+        };
+        assert_eq!(none_tag, "None");
+        assert!(none_fields.is_empty());
+        let IrExprKind::Return { value: returned } = &arms[1].body.kind else {
+            panic!(
+                "expected arm 1's body to be Return, got {:?}",
+                arms[1].body.kind
+            )
+        };
+        assert!(matches!(returned.kind, IrExprKind::HttpResultNotFound));
+        assert!(matches!(exhaustive, Exhaustive::Total));
+        assert_eq!(*form, MatchForm::Flat);
+    }
+
+    #[test]
+    fn question_on_result_with_a_compatible_error_type_propagates_the_scrutinee_unchanged() {
+        let program = checked_program(
+            r#"
+commons demo {
+  fn g() -> Result[Int, String] { Ok(1) }
+  fn bare_case() -> Result[Int, String] {
+    let v = g()?
+    Ok(v)
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "bare_case");
+        let IrExprKind::Block { stmts, .. } = &ir.kind else {
+            panic!("expected Block, got {:?}", ir.kind)
+        };
+        let IrStmt::Let { value, .. } = &stmts[0] else {
+            panic!(
+                "expected the first statement to be a Let, got {:?}",
+                stmts[0]
+            )
+        };
+        let IrExprKind::Match { arms, .. } = &value.kind else {
+            panic!("expected Match, got {:?}", value.kind)
+        };
+        let IrPat::Variant { tag: ok_tag, .. } = &arms[0].pat else {
+            panic!("expected arm 0's pat to be Variant, got {:?}", arms[0].pat)
+        };
+        assert_eq!(ok_tag, "Ok");
+        let IrPat::Variant {
+            tag: err_tag,
+            fields: err_fields,
+            ..
+        } = &arms[1].pat
+        else {
+            panic!("expected arm 1's pat to be Variant, got {:?}", arms[1].pat)
+        };
+        assert_eq!(err_tag, "Err");
+        assert_eq!(err_fields.len(), 1);
+        let IrExprKind::Return { value: returned } = &arms[1].body.kind else {
+            panic!(
+                "expected arm 1's body to be Return, got {:?}",
+                arms[1].body.kind
+            )
+        };
+        let IrExprKind::Variant {
+            tag: returned_tag,
+            payload: returned_payload,
+        } = &returned.kind
+        else {
+            panic!("expected a re-constructed Err, got {:?}", returned.kind)
+        };
+        assert_eq!(returned_tag, "Err");
+        assert_eq!(returned_payload.len(), 1);
+        let IrPat::Bind { local: bound_name } = &*err_fields[0].1 else {
+            panic!(
+                "expected arm 1's own payload pattern to be a Bind, got {:?}",
+                err_fields[0].1
+            )
+        };
+        // No embed conversion needed (both sides are `String`) — the propagated
+        // error is the bound local unchanged, not a wrapped construction.
+        assert!(matches!(&returned_payload[0].kind, IrExprKind::Local(n) if n == bound_name));
+    }
+
+    #[test]
+    fn question_on_result_with_a_declared_embeds_conversion_wraps_the_propagated_error() {
+        let program = checked_program(
+            r#"
+commons demo {
+  type PaymentError = enum { Declined, InsufficientFunds }
+
+  type OrderError =
+    | OutOfStock(sku: String, qty: Int)
+    | Payment(reason: PaymentError)
+    embeds PaymentError as Payment
+
+  fn charge() -> Result[Int, PaymentError] { Ok(1) }
+  fn embed_case() -> Result[Int, OrderError] {
+    let v = charge()?
+    Ok(v)
+  }
+}
+"#,
+        );
+        let ir = lower_fn(&program, "embed_case");
+        let IrExprKind::Block { stmts, .. } = &ir.kind else {
+            panic!("expected Block, got {:?}", ir.kind)
+        };
+        let IrStmt::Let { value, .. } = &stmts[0] else {
+            panic!(
+                "expected the first statement to be a Let, got {:?}",
+                stmts[0]
+            )
+        };
+        let IrExprKind::Match { arms, .. } = &value.kind else {
+            panic!("expected Match, got {:?}", value.kind)
+        };
+        let IrExprKind::Return { value: returned } = &arms[1].body.kind else {
+            panic!(
+                "expected arm 1's body to be Return, got {:?}",
+                arms[1].body.kind
+            )
+        };
+        let IrExprKind::Variant {
+            tag: returned_tag,
+            payload: returned_payload,
+        } = &returned.kind
+        else {
+            panic!("expected a re-constructed Err, got {:?}", returned.kind)
+        };
+        assert_eq!(returned_tag, "Err");
+        assert_eq!(returned_payload.len(), 1);
+        let IrExprKind::Variant {
+            tag: embed_tag,
+            payload: embed_payload,
+        } = &returned_payload[0].kind
+        else {
+            panic!(
+                "expected the propagated error to be wrapped in the declared embed \
+                 construction, got {:?}",
+                returned_payload[0].kind
+            )
+        };
+        assert_eq!(embed_tag, "Payment");
+        assert_eq!(embed_payload.len(), 1);
+        assert!(matches!(&embed_payload[0].kind, IrExprKind::Local(_)));
+        assert!(matches!(
+            &*program.program().ty_intern.get(returned_payload[0].ty),
+            Ty::Named { name, .. } if name == "OrderError"
+        ));
     }
 
     #[test]
