@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.21 (partial): emitter/lower.rs's lower_call now reads the checker's own Callee classification (P6.0) for agent construction (Callee::AgentInit) and sum-variant construction (Callee::Ctor) instead of re-deriving them — cx.local_agents.contains(&name.name) and call_is_sum_variant's own sum_name/call_name string comparison, both real instances of R6.5's name-matched-receiver defect class (the same one block_writes_state carried before #1196 converted it to read Callee::Store directly). call_is_sum_variant is retired (its one call site is gone). HttpResult/QueueResult bare-variant construction and Events.emit are deliberately left on the old Ty-based path — Decision C (#1143) never gave those a Callee classification at all (GlobalRef's own doc comment in ir.rs names why), so converting them needs a real checker-side design decision first (tracked separately), not attempted here. lower_method_call (the larger, ~900-line dispatcher) is also untouched — this is a bounded first step, not the full P6.21 cutover. Verified by a full zero-diff bless against the entire e2e fixture corpus: byte-identical generated output for every fixture, confirming the Callee-driven read produces the same dispatch decisions the name-matched code did for every real construct the corpus covers"
----
+# 0340 — `lower_call`'s agent-construction and sum-variant-construction branches read `Callee` instead of re-deriving it — a bounded first step on P6.21, not the full cutover
 
-## ADR: partial-callee-driven-call-dispatch
-
-title: `lower_call`'s agent-construction and sum-variant-construction branches read `Callee` instead of re-deriving it — a bounded first step on P6.21, not the full cutover
+- **Status:** Accepted (v0.248.8)
 
 summary: Converts the two branches of `emitter/lower.rs`'s `lower_call` that already have real `Callee` backing, leaving the two that don't (`HttpResult`/`QueueResult` bare-variant construction, `Events.emit`) on their existing `Ty`-based path until a real checker-side design decision gives them one
 
