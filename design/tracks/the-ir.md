@@ -925,10 +925,33 @@ full corpus afterward found zero remaining panics. Dormant as of landing, same p
 `Question`/`Is`. Full reasoning: `design/pending/p6-20-pre-store-query-ir-lowering.md`'s own ADR.
 
 This closes the completion plan's own open risk item ("verify empirically... before P6.20") with a
-real answer rather than an assumption — P6.20 itself is no longer blocked on an unknown safety gap,
-though it remains a separate, not-yet-started slice.
+real answer rather than an assumption — P6.20 itself is no longer blocked on an unknown safety gap.
 
----
+**Correction (2026-08-18): P6.20, as the completion plan scoped it, is not implementable — a real
+architectural boundary, not an unscheduled slice.** Traced directly while attempting to scope it for
+real: `plan_agent_given_deps` (`project.rs:2651`) is called at `project.rs:1972`, **before**
+`check_unit_files` (`:1977`) runs for that same unit — no `CheckedProgram` exists yet for it at that
+point, let alone one for every *other* unit `instantiate_provider_expr` (`:2799`) recurses into
+cross-context. Both functions operate over `unit_tables: &HashMap<String, UnitTable>`
+(`bynk-check::symbols::UnitTable`) — a project-wide, pre-check symbol table carrying raw
+`Arc<AgentDecl>`/`ProviderDecl` and `Arc<TypeDecl>`, never a resolved `TyId`. `lower_agent_item_ir`/
+`lower_provider_item_ir` both require `&CheckedProgram` in their own signatures — there is no
+`CheckedProgram` to hand them here, for this unit or any of the others this cross-context compose
+phase reaches, by the pipeline's own design (a single unit's post-check state cannot answer a
+project-wide "who wires to whom" question spanning units that haven't all been checked, or checked in
+an order matching the query).
+
+This is why "the given-clause reads inside are already converted, #1200/#1204" held up while a full
+enumerator does not: `lower_handler_given_ir`/`lower_provider_given_ir` (`ir/lower.rs:1943,1955`) take
+only the raw `&ProviderDecl`/`&Handler` — a one-line `CapRef → CapRefIr` syntactic adapter needing no
+resolved type info at all, categorically narrower than `lower_agent_item_ir`/`lower_provider_item_ir`'s
+own full body/type lowering. P6.20 conflated the two: a real `IrItem` enumerator here would need an
+entirely new "keep every unit's `CheckedProgram` alive simultaneously, in dependency order, across a
+whole project compose" architecture — a different-natured, much larger change than any slice this
+track has scoped so far, and out of this track's own frame (P6.6's row scoped `IrItem` construction
+per-unit, immediately after that unit's own `checker::certify`, never a cross-unit persistence layer).
+Not scoped here; named as a real forward reference (§7) rather than left as a silently-stale "not
+yet started" row.
 
 ## 7. Out of scope — forward references, not refusals
 
@@ -940,6 +963,7 @@ though it remains a separate, not-yet-started slice.
 | Severing `bynk-emit`'s dependency on `bynk-check` | 7 or later | the IR is proven complete enough (post this track) that `bynk-emit`'s remaining `Ir → TsProgram` logic never falls back to a `bynk-check` type — not one of this phase's own reference rules (trajectory §3 omits R10.1/R10.2 from phase 6's list) |
 | Part 14's E7 (durable capability-provider transactional participation) | *unopened — no trigger yet* | a real durable `Idempotency` (or equivalent) provider proposal appearing, not the worked exercise alone (§3.6, Q6) |
 | Incrementality — query granularity, `UnitSignature`, the firewall | 8 | phases 0, 3 and 4 complete (already true; phase 8 itself waits on phase 7 per the trajectory's stated order) |
+| A cross-unit `CheckedProgram` persistence layer, the real prerequisite for a full `IrItem::Agent`/`Provider` enumerator in `project.rs`'s own compose-time wiring (`plan_agent_given_deps`/`instantiate_provider_expr`, formerly "P6.20" in a completion-plan draft) | *unopened — no trigger yet* | a real need for cross-unit post-check state at compose time beyond the syntactic `CapRef`/`given`-clause reads `lower_handler_given_ir`/`lower_provider_given_ir` already cover — see the slice-history correction above for why this is a different-natured architectural change, not a routine conversion |
 
 ---
 
