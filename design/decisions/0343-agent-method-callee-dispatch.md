@@ -1,11 +1,6 @@
----
-level: patch
-changelog: "P6.21 (partial, continued): emitter/lower.rs's two agent-method-call branches (inline `Agent(key).method(args)` and let-bound `x.method(args)` after `let x = Agent(key)`) now read Callee::Agent (P6.0) instead of cx.local_agents.contains(&name.name)/cx.local_agent_vars.contains_key(&id.name) -- a real instance of R6.5's name-matched-receiver defect class: the checker records Callee::Agent uniformly whenever a receiver's checked type resolves to an agent, covering both AST shapes (and the self-agent WebSocket-transfer special case nested inside the first) from one classification, where the old code re-derived the same fact twice from a bare name. cx.local_agent_vars stays consulted inside the let-bound branch's own body -- it still answers which agent a bound name refers to (needed for record_agent_call's bookkeeping and the #908 rename resolution), a different question from whether the receiver is an agent instance at all. Verified by a full zero-diff bless against the entire e2e fixture corpus"
----
+# 0343 — `lower_method_call`'s two agent-invocation branches read `Callee::Agent` instead of re-deriving it from `cx.local_agents`/`cx.local_agent_vars`
 
-## ADR: agent-method-callee-dispatch
-
-title: `lower_method_call`'s two agent-invocation branches read `Callee::Agent` instead of re-deriving it from `cx.local_agents`/`cx.local_agent_vars`
+- **Status:** Accepted (v0.248.11)
 
 summary: Continues P6.21's own incremental pattern into the agent-handler-dispatch branches, closing the same name-matched-receiver defect class already closed for storage fields, agent construction, and sum-variant construction
 
