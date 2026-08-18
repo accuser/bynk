@@ -1059,6 +1059,18 @@ zero-diff bless against the entire e2e corpus, including the exact two fixtures
 (`814_messages_icu_date_styles`, `917_bytes_in_test_case`) that caught the original gap. Full reasoning:
 `design/pending/p6-21-intrinsic-callee-dispatch-and-test-body-fix.md`'s own ADR.
 
+**Twenty-eighth: P6.21's incremental approach converts the two agent-method-call branches.**
+`Agent(key).method(args)` and `let x = Agent(key); x.method(args)` were each guarded by a
+name-matched lookup (`cx.local_agents.contains(&name.name)` / `cx.local_agent_vars.contains_key(&id.name)`)
+re-deriving what the checker's own `Callee::Agent{agent, handler}` already resolved once — recorded
+uniformly whenever a receiver's checked type resolves to a declared agent, covering both AST shapes
+and the self-agent WebSocket-transfer special case nested inside the first branch's own body from one
+classification. Both guards now read `Callee::Agent` directly. `cx.local_agent_vars` stays consulted
+inside the let-bound branch's own body — it answers a different question (*which* agent a bound name
+refers to, for `record_agent_call`'s bookkeeping and the `#908` rename resolution) than the one
+`Callee` now settles. Verified by a full zero-diff bless against the entire e2e fixture corpus. Full
+reasoning: `design/pending/p6-21-agent-method-callee-dispatch.md`'s own ADR.
+
 ## 7. Out of scope — forward references, not refusals
 
 | Item | Phase | Entry condition |
